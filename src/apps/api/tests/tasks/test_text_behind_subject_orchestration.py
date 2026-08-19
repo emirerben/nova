@@ -10,6 +10,7 @@ verification.
 
 from __future__ import annotations
 
+import json
 import types
 
 import pytest
@@ -223,7 +224,16 @@ def test_behind_subject_windows_starts_are_frame_aligned():
 # ── _resolve_subject_matte_for_burn: cache / compute / strip-on-failure ─────────
 
 
-def _patch_matte_module(monkeypatch, *, compute=None, sane=True, provider="PROVIDER"):
+def _patch_matte_module(
+    monkeypatch,
+    *,
+    compute=None,
+    sane=True,
+    provider="PROVIDER",
+    backbone=None,
+    stats_attrs=None,
+    sidecar_backbone=None,
+):
     import app.pipeline.subject_matte as sm_mod
 
     calls: dict = {"compute": [], "compute_kw": [], "downloads": [], "uploads": [], "deletes": []}
@@ -233,7 +243,12 @@ def _patch_matte_module(monkeypatch, *, compute=None, sane=True, provider="PROVI
         calls["compute_kw"].append(kw)
         if compute == "none":
             return None
-        return types.SimpleNamespace(mean_coverage=0.3, max_coverage=0.5)
+        stats = types.SimpleNamespace(mean_coverage=0.3, max_coverage=0.5)
+        if backbone is not None:
+            stats.backbone = backbone
+        for key, value in (stats_attrs or {}).items():
+            setattr(stats, key, value)
+        return stats
 
     monkeypatch.setattr(sm_mod, "compute_subject_matte", _fake_compute, raising=False)
     monkeypatch.setattr(sm_mod, "matte_is_sane", lambda stats: sane, raising=False)
@@ -248,6 +263,11 @@ def _patch_matte_module(monkeypatch, *, compute=None, sane=True, provider="PROVI
         # Write a dummy file so a caller that also downloads the BASE through this
         # same mock (e.g. _reburn_text_on_base's base_gcs_path download, which
         # runs before matte resolution) doesn't hit a FileNotFoundError later.
+        if sidecar_backbone is not None and str(gcs).endswith(".json"):
+            # Real sidecar JSON so the resolver's backbone peek succeeds.
+            with open(local, "w") as f:
+                json.dump({"backbone": sidecar_backbone}, f)
+            return
         with open(local, "wb") as f:
             f.write(b"\x00" * 8)
 
@@ -309,7 +329,7 @@ def test_matte_reburn_with_cache_downloads_never_recomputes(monkeypatch, tmp_pat
     monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
     calls = _patch_matte_module(monkeypatch)
     overlays = [{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}]
-    cached = "generative-jobs/j/base_1_x.mp4.matte.v2.mp4"
+    cached = "generative-jobs/j/base_1_x.mp4.matte.v3.mp4"
     provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
         video_path="/local/base.mp4",
         overlays=overlays,
@@ -342,11 +362,11 @@ def test_matte_reburn_toggle_on_without_cache_computes_and_persists(monkeypatch,
         variant_id="v",
     )
     assert provider == "PROVIDER"
-    assert matte_path == "generative-jobs/j/base_1_x.mp4.matte.v2.mp4"
+    assert matte_path == "generative-jobs/j/base_1_x.mp4.matte.v3.mp4"
     assert len(calls["compute"]) == 1
     assert calls["uploads"] == [
-        "generative-jobs/j/base_1_x.mp4.matte.v2.mp4",
-        "generative-jobs/j/base_1_x.mp4.matte.v2.mp4.json",
+        "generative-jobs/j/base_1_x.mp4.matte.v3.mp4",
+        "generative-jobs/j/base_1_x.mp4.matte.v3.mp4.json",
     ]
     assert out_overlays is overlays
 
@@ -392,9 +412,261 @@ def test_matte_insane_stats_strips_and_persists_unstable_sentinel(monkeypatch, t
         cut_boundaries_s=[1.0],
     )
     assert provider is None
-    assert matte_path == "generative-jobs/j/base_1_x.mp4.matte.v2.unstable"
+    assert matte_path == "generative-jobs/j/base_1_x.mp4.matte.v3.unstable"
     assert "behind_subject" not in out_overlays[0]
     assert calls["uploads"] == []  # sentinel is a marker, not an object
+
+
+def test_matte_insane_no_person_without_depth_verdict_mints_retryable_sentinel(
+    monkeypatch, tmp_path
+):
+    """A gate rejection where the person pass found NOBODY and the depth
+    pass never delivered a conclusive verdict (flag off during dark ship,
+    model missing, budget, crash — stats.depth_rejected False) is
+    circumstantial, not a property of the footage. The PERMANENT sentinel
+    (which would lock the base out of depth occlusion forever) must not
+    mint — the RETRYABLE `.nodepth.unstable` sentinel is minted instead."""
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    calls = _patch_matte_module(
+        monkeypatch, sane=False, stats_attrs={"max_coverage": 0.0, "mean_coverage": 0.0}
+    )
+    overlays = [{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}]
+    provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=overlays,
+        tmpdir=str(tmp_path),
+        cached_matte_path=None,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+        cut_boundaries_s=[1.0],
+    )
+    assert provider is None
+    assert matte_path == "generative-jobs/j/base_1_x.mp4.matte.v3.nodepth.unstable"
+    assert "behind_subject" not in out_overlays[0]
+    assert calls["uploads"] == []  # sentinel is a marker, not an object
+
+
+def test_nodepth_sentinel_short_circuits_while_depth_flag_off(monkeypatch, tmp_path):
+    """While MATTE_DEPTH_OCCLUDER_ENABLED stays off, the retryable sentinel
+    short-circuits exactly like the permanent one — recomputing could only
+    repeat the person-only rejection, so a text edit must not pay the full
+    matte budget every time (the perf contract the permanent sentinel was
+    built for)."""
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "matte_depth_occluder_enabled", False, raising=False)
+    calls = _patch_matte_module(monkeypatch)
+    sentinel = "generative-jobs/j/base_1_x.mp4.matte.v3.nodepth.unstable"
+    overlays = [{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}]
+    provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=overlays,
+        tmpdir=str(tmp_path),
+        cached_matte_path=sentinel,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+    )
+    assert provider is None
+    assert matte_path == sentinel  # persists unchanged
+    assert "behind_subject" not in out_overlays[0]
+    assert calls["compute"] == [] and calls["downloads"] == []
+
+
+def test_nodepth_sentinel_recomputes_once_depth_flag_on(monkeypatch, tmp_path):
+    """Once the depth flag flips on, the retryable sentinel no longer
+    short-circuits: it falls through the stale-suffix branch into a real,
+    now depth-eligible recompute — the whole point of keeping it distinct
+    from the permanent sentinel. On success the stale sentinel is freed."""
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "matte_depth_occluder_enabled", True, raising=False)
+    calls = _patch_matte_module(monkeypatch)
+    sentinel = "generative-jobs/j/base_1_x.mp4.matte.v3.nodepth.unstable"
+    overlays = [{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}]
+    provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=overlays,
+        tmpdir=str(tmp_path),
+        cached_matte_path=sentinel,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+    )
+    assert provider == "PROVIDER"
+    assert matte_path == "generative-jobs/j/base_1_x.mp4.matte.v3.mp4"
+    assert len(calls["compute"]) == 1  # NOT short-circuited — a real recompute ran
+    assert calls["deletes"] == [sentinel, f"{sentinel}.json"]
+    assert out_overlays is overlays
+
+
+def test_matte_insane_no_person_with_depth_rejection_mints_sentinel(monkeypatch, tmp_path):
+    """Same no-person rejection, but the depth pass DID run to completion
+    and was itself gate-rejected (stats.depth_rejected True): that verdict
+    is conclusive about the footage, so the permanent sentinel is minted as
+    for any other definitive rejection."""
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    calls = _patch_matte_module(
+        monkeypatch,
+        sane=False,
+        stats_attrs={"max_coverage": 0.0, "mean_coverage": 0.0, "depth_rejected": True},
+    )
+    overlays = [{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}]
+    provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=overlays,
+        tmpdir=str(tmp_path),
+        cached_matte_path=None,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+        cut_boundaries_s=[1.0],
+    )
+    assert provider is None
+    assert matte_path == "generative-jobs/j/base_1_x.mp4.matte.v3.unstable"
+    assert "behind_subject" not in out_overlays[0]
+    assert calls["uploads"] == []
+
+
+def test_healthy_v2_blob_stays_a_cache_hit(monkeypatch, tmp_path):
+    """A `.matte.v2.mp4` BLOB is an accepted cache hit, never a stale-suffix
+    recompute: v2 blobs only exist where the person pass found a real
+    subject and the person write contract is unchanged in v3 — recomputing
+    them fleet-wide would be pure churn (one ~90s recompute + GCS churn per
+    cached base, red-team finding)."""
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    calls = _patch_matte_module(monkeypatch)
+    cached = "generative-jobs/j/base_1_x.mp4.matte.v2.mp4"
+    overlays = [{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}]
+    provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=overlays,
+        tmpdir=str(tmp_path),
+        cached_matte_path=cached,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+    )
+    assert provider == "PROVIDER"
+    assert matte_path == cached  # persists unchanged — no v3 migration
+    assert calls["compute"] == []
+    assert calls["deletes"] == []
+    assert out_overlays is overlays
+
+
+def test_v2_blob_recompute_failure_keeps_v2_cache(monkeypatch, tmp_path):
+    """When a v2 blob hit falls to a recompute (broken blob here) and THAT
+    recompute gate-fails, the keeping-cache guard applies to the v2 blob
+    exactly as it does to a v3 one — the accepted-suffix list feeds
+    had_current_cache, so a window-local failure never destroys it."""
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    calls = _patch_matte_module(monkeypatch, sane=False, provider=None)
+    cached = "generative-jobs/j/base_1_x.mp4.matte.v2.mp4"
+    provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=[{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}],
+        tmpdir=str(tmp_path),
+        cached_matte_path=cached,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+        cut_boundaries_s=[1.0],
+    )
+    assert provider is None
+    assert matte_path == cached  # v2 blob kept — no sentinel, no delete
+    assert calls["deletes"] == []
+    assert "behind_subject" not in out_overlays[0]
+
+
+def test_stale_v1_blob_survives_retryable_rejection(monkeypatch, tmp_path):
+    """A real previous-version matte BLOB (v1) must survive a
+    NON-conclusive rejection during migration: the current windows showing
+    no person (text moved to a person-free span, segmenter flake) is not
+    license to destroy user data — keep the blob and its path, retry the
+    migration next burn. Only conclusive rejections and successful uploads
+    free the stale blob (red-team finding)."""
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    calls = _patch_matte_module(
+        monkeypatch, sane=False, stats_attrs={"max_coverage": 0.0, "mean_coverage": 0.0}
+    )
+    v1 = "generative-jobs/j/base_1_x.mp4.matte.mp4"
+    provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=[{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}],
+        tmpdir=str(tmp_path),
+        cached_matte_path=v1,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+        cut_boundaries_s=[1.0],
+    )
+    assert provider is None
+    assert matte_path == v1  # blob and path survive — retryable, no sentinel
+    assert calls["deletes"] == []
+    assert "behind_subject" not in out_overlays[0]
+
+
+def test_cached_depth_matte_evicted_when_flag_off(monkeypatch, tmp_path):
+    """Rollback support: a v3 cache hit whose sidecar says
+    backbone="depth" while MATTE_DEPTH_OCCLUDER_ENABLED is off must NOT
+    keep occluding (a rollback usually means those mattes look wrong).
+    It's evicted: the recompute finds no person, the retryable sentinel is
+    minted, and the depth blob is freed."""
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "matte_depth_occluder_enabled", False, raising=False)
+    calls = _patch_matte_module(
+        monkeypatch,
+        sane=False,
+        stats_attrs={"max_coverage": 0.0, "mean_coverage": 0.0},
+        sidecar_backbone="depth",
+    )
+    cached = "generative-jobs/j/base_1_x.mp4.matte.v3.mp4"
+    provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=[{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}],
+        tmpdir=str(tmp_path),
+        cached_matte_path=cached,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+        cut_boundaries_s=[1.0],
+    )
+    assert provider is None
+    assert matte_path == "generative-jobs/j/base_1_x.mp4.matte.v3.nodepth.unstable"
+    assert len(calls["compute"]) == 1  # evicted → real recompute ran
+    assert calls["deletes"] == [cached, f"{cached}.json"]  # depth blob freed
+    assert "behind_subject" not in out_overlays[0]
+
+
+def test_cached_depth_matte_reused_when_flag_on(monkeypatch, tmp_path):
+    """Steady state: with the depth flag ON, a depth-backbone cache hit is
+    reused like any other matte — the eviction above is rollback-only."""
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "matte_depth_occluder_enabled", True, raising=False)
+    calls = _patch_matte_module(monkeypatch, sidecar_backbone="depth")
+    cached = "generative-jobs/j/base_1_x.mp4.matte.v3.mp4"
+    overlays = [{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}]
+    provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=overlays,
+        tmpdir=str(tmp_path),
+        cached_matte_path=cached,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+    )
+    assert provider == "PROVIDER"
+    assert matte_path == cached
+    assert calls["compute"] == []
+    assert out_overlays is overlays
 
 
 def test_matte_insane_without_cut_hints_never_mints_sentinel(monkeypatch, tmp_path):
@@ -423,7 +695,7 @@ def test_matte_cached_unstable_sentinel_short_circuits(monkeypatch, tmp_path):
     no recompute — the fix for the pay-90s-per-reburn migration retry loop."""
     monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
     calls = _patch_matte_module(monkeypatch)
-    sentinel = "generative-jobs/j/base_1_x.mp4.matte.v2.unstable"
+    sentinel = "generative-jobs/j/base_1_x.mp4.matte.v3.unstable"
     overlays = [{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}]
     provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
         video_path="/local/base.mp4",
@@ -439,6 +711,36 @@ def test_matte_cached_unstable_sentinel_short_circuits(monkeypatch, tmp_path):
     assert matte_path == sentinel  # persists unchanged
     assert "behind_subject" not in out_overlays[0]
     assert calls["compute"] == [] and calls["downloads"] == []
+
+
+def test_stale_v2_unstable_sentinel_does_not_short_circuit(monkeypatch, tmp_path):
+    """An OLD v2 unstable sentinel (minted before the v3 depth-occluder
+    backbone existed) must NOT hit the known-unstable short-circuit above —
+    it no longer matches the current `_MATTE_UNSTABLE_SUFFIX` (".matte.v3.
+    unstable"), so it falls into the generic stale-suffix branch instead: a
+    real recompute is attempted, now eligible for the depth backbone. This
+    is the mechanism by which a person-only rejection recorded under v2
+    against object/landmark footage gets a second chance."""
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    calls = _patch_matte_module(monkeypatch)
+    old_sentinel = "generative-jobs/j/base_1_x.mp4.matte.v2.unstable"
+    overlays = [{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}]
+    provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=overlays,
+        tmpdir=str(tmp_path),
+        cached_matte_path=old_sentinel,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+    )
+    assert provider == "PROVIDER"
+    assert matte_path == "generative-jobs/j/base_1_x.mp4.matte.v3.mp4"
+    assert len(calls["compute"]) == 1  # NOT short-circuited — a real recompute ran
+    assert calls["downloads"] == []  # nothing to download for a non-mp4 sentinel path
+    assert calls["deletes"] == [old_sentinel, f"{old_sentinel}.json"]
+    assert out_overlays is overlays  # success path returns overlays untouched
 
 
 def test_matte_insane_migration_deletes_v1_and_persists_sentinel(monkeypatch, tmp_path):
@@ -457,7 +759,7 @@ def test_matte_insane_migration_deletes_v1_and_persists_sentinel(monkeypatch, tm
         cut_boundaries_s=[1.0],
     )
     assert provider is None
-    assert matte_path == "generative-jobs/j/base_1_x.mp4.matte.v2.unstable"
+    assert matte_path == "generative-jobs/j/base_1_x.mp4.matte.v3.unstable"
     assert calls["deletes"] == [v1, f"{v1}.json"]  # glitchy v1 freed
 
 
@@ -476,7 +778,7 @@ def test_matte_cache_open_failure_falls_back_keeps_old_cache_path(monkeypatch, t
     monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
     _patch_matte_module(monkeypatch, provider=None)  # SubjectMatteProvider.open → None
     overlays = [{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}]
-    cached = "generative-jobs/j/base_1_x.mp4.matte.v2.mp4"
+    cached = "generative-jobs/j/base_1_x.mp4.matte.v3.mp4"
     provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
         video_path="/local/base.mp4",
         overlays=overlays,
@@ -543,7 +845,7 @@ def test_render_generative_variant_flag_on_computes_matte_and_burns_with_provide
     )
     assert res["ok"] is True
     assert res["intro_behind_subject"] is True
-    assert res["subject_matte_path"] == "generative-jobs/j/base_3_original_text.mp4.matte.v2.mp4"
+    assert res["subject_matte_path"] == "generative-jobs/j/base_3_original_text.mp4.matte.v3.mp4"
     assert burn_calls, "burn_text_overlays_skia was never called"
     assert burn_calls[-1]["matte"] == "PROVIDER"
     assert any(ov.get("behind_subject") for ov in burn_calls[-1]["overlays"])
@@ -654,7 +956,7 @@ def test_reburn_text_on_base_toggle_on_computes_matte_and_persists_path(monkeypa
     )
     assert result["render_status"] == "ready"
     assert result["intro_behind_subject"] is True
-    assert result["subject_matte_path"] == f"{result['video_path']}.matte.v2.mp4"
+    assert result["subject_matte_path"] == f"{result['video_path']}.matte.v3.mp4"
     assert burn_calls[-1]["matte"] == "PROVIDER"
 
 
@@ -770,7 +1072,7 @@ def test_compose_subtitled_resolves_matte_and_passes_provider(monkeypatch, tmp_p
 
     assert len(calls["compute"]) == 1
     assert burn_seen["matte"] == "PROVIDER"
-    assert matte_path == "generative-jobs/j/variant_1_subtitled_base.mp4.matte.v2.mp4"
+    assert matte_path == "generative-jobs/j/variant_1_subtitled_base.mp4.matte.v3.mp4"
     assert final.endswith("subtitled_final.mp4")
     # Subtitled variants are single-clip — the resolver forwards no cut hints.
     assert calls["compute_kw"][-1].get("cut_boundaries_s") is None
@@ -783,7 +1085,7 @@ def test_compose_subtitled_cached_matte_reused_no_recompute(monkeypatch, tmp_pat
     calls = _patch_matte_module(monkeypatch)
     burn_seen: dict = {}
     _patch_subtitled_compose(monkeypatch, burn_seen)
-    cached = "generative-jobs/j/variant_1_subtitled_base.mp4.matte.v2.mp4"
+    cached = "generative-jobs/j/variant_1_subtitled_base.mp4.matte.v3.mp4"
 
     _final, matte_path = gb._compose_subtitled_final(
         str(tmp_path / "base.mp4"),
@@ -925,7 +1227,39 @@ def test_resolver_records_computed_trace_event(monkeypatch, tmp_path):
             {
                 "variant_id": "v",
                 "source": "computed",
-                "matte_path": "generative-jobs/j/base_1_x.mp4.matte.v2.mp4",
+                "matte_path": "generative-jobs/j/base_1_x.mp4.matte.v3.mp4",
+            },
+        )
+    ]
+
+
+def test_resolver_records_computed_trace_event_with_depth_backbone(monkeypatch, tmp_path):
+    """Freshly-computed stats carrying backbone="depth" (the non-person
+    scene-occluder pass) must surface on the SUCCESS trace payload too, not
+    just the unstable-rejection one — admin job-debug visibility into which
+    backbone actually rendered (prod job 30b717b9 had none at all)."""
+    monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
+    _patch_matte_module(monkeypatch, backbone="depth")
+    events = _capture_trace_events(monkeypatch)
+    gb._resolve_subject_matte_for_burn(
+        video_path="/local/base.mp4",
+        overlays=[{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}],
+        tmpdir=str(tmp_path),
+        cached_matte_path=None,
+        upload_key_base="generative-jobs/j/base_1_x.mp4",
+        duration_s=5.0,
+        job_id="j",
+        variant_id="v",
+    )
+    assert events == [
+        (
+            "overlay",
+            "subject_matte_resolved",
+            {
+                "variant_id": "v",
+                "source": "computed",
+                "matte_path": "generative-jobs/j/base_1_x.mp4.matte.v3.mp4",
+                "backbone": "depth",
             },
         )
     ]
@@ -935,7 +1269,7 @@ def test_resolver_records_cache_trace_event(monkeypatch, tmp_path):
     monkeypatch.setattr(gb.settings, "text_behind_subject_enabled", True, raising=False)
     _patch_matte_module(monkeypatch)
     events = _capture_trace_events(monkeypatch)
-    cached = "generative-jobs/j/base_1_x.mp4.matte.v2.mp4"
+    cached = "generative-jobs/j/base_1_x.mp4.matte.v3.mp4"
     gb._resolve_subject_matte_for_burn(
         video_path="/local/base.mp4",
         overlays=[{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}],
@@ -1008,7 +1342,7 @@ def test_stale_v1_cache_triggers_recompute_under_v2_key(monkeypatch, tmp_path):
         variant_id="v",
     )
     assert provider == "PROVIDER"
-    assert matte_path == "generative-jobs/j/base_1_x.mp4.matte.v2.mp4"
+    assert matte_path == "generative-jobs/j/base_1_x.mp4.matte.v3.mp4"
     assert len(calls["compute"]) == 1  # v1 cache did NOT satisfy the burn
     assert v1 not in calls["downloads"]
     assert calls["deletes"] == [v1, f"{v1}.json"]
@@ -1222,7 +1556,7 @@ def test_v2_cache_coverage_mismatch_triggers_recompute(monkeypatch, tmp_path):
         return narrow if "cached" in path else "FRESH"
 
     monkeypatch.setattr(sm_mod.SubjectMatteProvider, "open", staticmethod(_open), raising=False)
-    cached = "generative-jobs/j/base_1_x.mp4.matte.v2.mp4"
+    cached = "generative-jobs/j/base_1_x.mp4.matte.v3.mp4"
     provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
         video_path="/local/base.mp4",
         overlays=[{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}],
@@ -1250,7 +1584,7 @@ def test_v2_cache_matching_coverage_reused(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sm_mod.SubjectMatteProvider, "open", staticmethod(lambda path: covering), raising=False
     )
-    cached = "generative-jobs/j/base_1_x.mp4.matte.v2.mp4"
+    cached = "generative-jobs/j/base_1_x.mp4.matte.v3.mp4"
     provider, matte_path, _ = gb._resolve_subject_matte_for_burn(
         video_path="/local/base.mp4",
         overlays=[{"start_s": 0.5, "end_s": 2.0, "behind_subject": True}],
@@ -1278,7 +1612,7 @@ def test_v2_cache_broken_blob_recomputes_instead_of_poisoning(monkeypatch, tmp_p
         return None if "cached" in path else "FRESH"
 
     monkeypatch.setattr(sm_mod.SubjectMatteProvider, "open", staticmethod(_open), raising=False)
-    cached = "generative-jobs/j/base_1_x.mp4.matte.v2.mp4"
+    cached = "generative-jobs/j/base_1_x.mp4.matte.v3.mp4"
     provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
         video_path="/local/base.mp4",
         overlays=[{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}],
@@ -1307,7 +1641,7 @@ def test_matte_insane_after_coverage_miss_keeps_v2_cache_no_sentinel(monkeypatch
     monkeypatch.setattr(
         sm_mod.SubjectMatteProvider, "open", staticmethod(lambda path: narrow), raising=False
     )
-    cached = "generative-jobs/j/base_1_x.mp4.matte.v2.mp4"
+    cached = "generative-jobs/j/base_1_x.mp4.matte.v3.mp4"
     provider, matte_path, out_overlays = gb._resolve_subject_matte_for_burn(
         video_path="/local/base.mp4",
         overlays=[{"start_s": 0.0, "end_s": 2.0, "behind_subject": True}],

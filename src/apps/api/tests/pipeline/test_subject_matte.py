@@ -31,9 +31,14 @@ from app.pipeline.subject_matte import (
 # ---------------------------------------------------------------------------
 
 
-def _stats(mean: float, min_: float = 0.0, max_: float = 0.5) -> MatteStats:
+def _stats(mean: float, min_: float = 0.0, max_: float = 0.5, backbone: str = "rvm") -> MatteStats:
     return MatteStats(
-        mean_coverage=mean, min_coverage=min_, max_coverage=max_, frame_count=10, windows=[]
+        mean_coverage=mean,
+        min_coverage=min_,
+        max_coverage=max_,
+        frame_count=10,
+        windows=[],
+        backbone=backbone,
     )
 
 
@@ -143,6 +148,73 @@ class TestMatteIsSane:
         stats = _stats(0.1, max_=0.4)
         assert stats.large_jump_count == 0
         assert matte_is_sane(stats) is True
+
+    def test_depth_backbone_low_mean_coverage_is_degenerate(self) -> None:
+        # The depth branch's floor is on MEAN coverage, not max: a scene
+        # occluder is spatially large/stable by construction, so a near-zero
+        # mean means the epsilon threshold found essentially nothing nearer
+        # than the sky/far layer.
+        stats = _stats(0.01, max_=0.9, backbone="depth")
+        assert matte_is_sane(stats) is False
+
+    def test_depth_backbone_small_but_real_occluder_is_sane(self) -> None:
+        # A real (if smallish) landmark against sky — mean coverage clears
+        # the depth floor with healthy stability stats.
+        stats = _stats(0.10, max_=1.0, backbone="depth")
+        stats.shape_stability_iou = 0.95
+        stats.iou_pair_count = 100
+        assert matte_is_sane(stats) is True
+
+    def test_depth_backbone_wall_of_mask_is_degenerate(self) -> None:
+        # Mean coverage above 85% — the epsilon threshold classified nearly
+        # the whole frame as occluder (a cluttered scene with no real
+        # far/sky layer); occluding with it would just hide the text.
+        stats = _stats(0.90, max_=1.0, backbone="depth")
+        assert matte_is_sane(stats) is False
+
+    def test_person_floor_uses_max_coverage_not_mean(self) -> None:
+        # Regression: the person branch must keep using max_coverage as its
+        # floor, unaffected by the new depth branch. A near-zero-mean/real-
+        # peak combo (a small/distant subject) is legitimate on the person
+        # path but would be REJECTED as degenerate on the depth path — same
+        # numbers, opposite verdicts, proving the branches are genuinely
+        # distinct.
+        person_stats = _stats(0.001, max_=0.05, backbone="rvm")
+        assert matte_is_sane(person_stats) is True
+        depth_stats = _stats(0.001, max_=0.05, backbone="depth")
+        assert matte_is_sane(depth_stats) is False
+
+
+class TestMatteRejectionIsRetryable:
+    """The resolver's sentinel guard: a gate-failed compute may only mint
+    the permanent `.unstable` sentinel when the rejection is CONCLUSIVE —
+    a person was actually found (pre-depth behavior), or the depth pass ran
+    to completion and was itself gate-rejected. Everything else (depth flag
+    off during dark ship, model missing, budget, crash) must stay
+    retryable, or the base is locked out of depth occlusion forever."""
+
+    def test_no_person_and_no_depth_verdict_is_retryable(self) -> None:
+        stats = _stats(0.0, max_=0.005)  # below _PERSON_MAX_COVERAGE_FLOOR
+        assert subject_matte.matte_rejection_is_retryable(stats) is True
+
+    def test_no_person_but_depth_conclusively_rejected_is_not_retryable(self) -> None:
+        stats = _stats(0.0, max_=0.005)
+        stats.depth_rejected = True
+        assert subject_matte.matte_rejection_is_retryable(stats) is False
+
+    def test_person_found_rejection_is_never_retryable(self) -> None:
+        # A found-but-unstable person (flips/jumps rejection) is a verdict
+        # on the footage — sentinel semantics unchanged from pre-depth.
+        stats = _stats(0.05, max_=0.3)
+        assert subject_matte.matte_rejection_is_retryable(stats) is False
+
+    def test_pre_field_stats_object_defaults_to_retryable(self) -> None:
+        # Stats objects without the depth_rejected field (deserialized
+        # legacy sidecars, test doubles) must read as "not conclusive".
+        import types
+
+        legacy = types.SimpleNamespace(max_coverage=0.0)
+        assert subject_matte.matte_rejection_is_retryable(legacy) is True
 
 
 # ---------------------------------------------------------------------------
@@ -1347,3 +1419,590 @@ class TestRvmBackbone:
 
         monkeypatch.setitem(sys.modules, "app.config", types.ModuleType("app.config"))
         assert subject_matte._rvm_enabled() is True
+
+
+# ---------------------------------------------------------------------------
+# Depth-occluder backbone — the non-person scene-occluder pass. Fake
+# onnxruntime injected via sys.modules (same pattern as _install_fake_
+# onnxruntime for RVM), runs everywhere.
+# ---------------------------------------------------------------------------
+
+
+def _split_disparity(
+    size: int | None = None,
+    low: float = 0.0,
+    high: float = 200.0,
+    split_frac: float = 0.5,
+) -> np.ndarray:
+    """Synthetic raw disparity map: the top ``split_frac`` fraction of rows
+    hold ``low`` (a sky/far background), the rest hold ``high`` (a nearer
+    foreground/landmark) — the square (``_DEPTH_INPUT_SIZE``-shaped) output
+    the fake depth session returns, mirroring the model's own contract."""
+    size = size or subject_matte._DEPTH_INPUT_SIZE
+    d = np.full((size, size), low, dtype=np.float32)
+    split_row = int(size * split_frac)
+    d[split_row:, :] = high
+    return d
+
+
+class _FakeOrtTensorInfo:
+    def __init__(self, name: str, type_str: str = "tensor(float)") -> None:
+        self.name = name
+        self.type = type_str
+
+
+class _FakeDepthSession:
+    """Mimics the onnxruntime InferenceSession contract _DepthBackbone
+    relies on: get_inputs()/get_outputs() (name + dtype introspection for
+    the fp16 cast) and run(output_names, feeds) -> [raw_disparity]. Returns
+    ``disparity_fn(call_index)`` (default: a constant top/bottom sky/hill
+    split) per call, so a test can vary the returned map across inferences."""
+
+    def __init__(
+        self,
+        disparity_fn: object | None = None,
+        input_dtype: str = "tensor(float)",
+    ) -> None:
+        self.run_calls: list[np.ndarray] = []
+        self._disparity_fn = disparity_fn or (lambda call_index: _split_disparity())
+        self._input_meta = _FakeOrtTensorInfo("pixel_values", input_dtype)
+        self._output_meta = _FakeOrtTensorInfo("predicted_depth")
+
+    def get_inputs(self) -> list:
+        return [self._input_meta]
+
+    def get_outputs(self) -> list:
+        return [self._output_meta]
+
+    def run(self, output_names: object, feeds: dict) -> list:
+        idx = len(self.run_calls)
+        src = feeds[self._input_meta.name]
+        self.run_calls.append(np.array(src, copy=True))
+        disparity = self._disparity_fn(idx)
+        return [disparity[None, None, :, :].astype(np.float32)]
+
+
+def _install_fake_depth_onnxruntime(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    disparity_fn: object | None = None,
+    input_dtype: str = "tensor(float)",
+) -> _FakeDepthSession:
+    """Fake onnxruntime module (sys.modules) whose InferenceSession returns a
+    _FakeDepthSession for MATTE_DEPTH_MODEL_PATH, plus a dummy model file on
+    disk so `_create_depth_backbone` resolves it. Mirrors
+    _install_fake_onnxruntime's dummy-file pattern for the depth model.
+
+    Callers exercising the full compute_subject_matte selection flow must
+    still call `_install_fake_mediapipe` (AFTER this helper) to force the
+    person pass through a deterministic fake — otherwise `_create_backbone`
+    resolves the REAL committed RVM model path and this fake session (which
+    only knows the depth path) raises KeyError on it; `_create_backbone`
+    catches that broadly and falls back to mediapipe anyway, but
+    `_install_fake_mediapipe` makes the fallback deterministic and GL-free.
+    """
+    import sys
+    import types
+
+    depth_session = _FakeDepthSession(disparity_fn=disparity_fn, input_dtype=input_dtype)
+    depth_path = tmp_path / "fake_depth.onnx"
+    depth_path.write_bytes(b"onnx-depth")
+
+    def _make_session(path: str, sess_options: object = None, providers: object = None) -> object:
+        if path == str(depth_path):
+            return depth_session
+        raise KeyError(f"unexpected onnxruntime model path in test: {path}")
+
+    ort_mod = types.ModuleType("onnxruntime")
+    ort_mod.InferenceSession = _make_session  # type: ignore[attr-defined]
+    ort_mod.SessionOptions = _FakeSessionOptions  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "onnxruntime", ort_mod)
+
+    monkeypatch.setattr(subject_matte, "MATTE_DEPTH_MODEL_PATH", str(depth_path))
+    return depth_session
+
+
+class TestNormalizeDisparity:
+    def test_percentile_clip_ignores_single_pixel_outliers(self) -> None:
+        # A naive min/max normalize would let two single-pixel sensor
+        # outliers crush the whole bulk toward one end of [0, 1]; the
+        # p1/p99 clip instead spreads the bulk across most of the range.
+        d = np.linspace(0.0, 100.0, 100 * 100, dtype=np.float32).reshape(100, 100)
+        d[0, 0] = 1_000_000.0
+        d[-1, -1] = -1_000_000.0
+        norm = subject_matte._normalize_disparity(d)
+        assert norm.dtype == np.float32
+        assert float(norm.min()) >= 0.0
+        assert float(norm.max()) <= 1.0
+        assert float(norm[50, 50]) > 0.3
+
+    def test_constant_map_normalizes_to_zero(self) -> None:
+        # lo == hi -> span floors to the 1e-6 epsilon -> every pixel clips
+        # to exactly 0, never NaN/inf from a zero division.
+        d = np.full((32, 32), 42.0, dtype=np.float32)
+        norm = subject_matte._normalize_disparity(d)
+        assert np.allclose(norm, 0.0)
+
+    def test_epsilon_binarization_sky_vs_hill(self) -> None:
+        # Sky rows (disparity 0, the far/background mode) normalize to 0 and
+        # sit below _DEPTH_SKY_EPS; hill rows normalize to ~1 and clear it —
+        # the fixed-epsilon threshold _collect_window_masks_depth applies.
+        d = _split_disparity(size=64, low=0.0, high=200.0, split_frac=0.5)
+        norm = subject_matte._normalize_disparity(d)
+        occluder = norm > subject_matte._DEPTH_SKY_EPS
+        assert not occluder[:32, :].any()
+        assert occluder[32:, :].all()
+
+
+@needs_ffmpeg
+class TestDepthBackbone:
+    def test_sparse_sampling_call_count_matches_tick_stride(self, tmp_path: Path) -> None:
+        """ViT inference is far heavier than RVM/mediapipe, so
+        _collect_window_masks_depth only infers every _DEPTH_INFER_TICK_STRIDE
+        output ticks (holding the latest sample between inferences) instead
+        of once per tick like the person path."""
+        import time
+
+        import cv2
+
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        session = _FakeDepthSession()
+        backbone = subject_matte._DepthBackbone(session)
+        cap = cv2.VideoCapture(str(video_path))
+        try:
+            window = MatteWindow(0.0, 1.0)  # 30 output ticks @ MATTE_FPS
+            masks, inferences = subject_matte._collect_window_masks_depth(
+                cap, backbone, window, 30.0, time.monotonic(), None
+            )
+        finally:
+            cap.release()
+
+        assert len(masks) == 30
+        expected_inferences = -(-30 // subject_matte._DEPTH_INFER_TICK_STRIDE)  # ceil(30/3)
+        assert inferences == expected_inferences
+        assert len(session.run_calls) == expected_inferences
+
+    def test_held_ticks_reuse_last_disparity_sample(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Held ticks reuse the FRESH inference's already-normalized result:
+        _normalize_disparity runs exactly once per inference (not once per
+        tick — re-normalizing a bit-identical held map every tick was ~2/3
+        wasted percentile work), and the masks written for held ticks stay
+        identical to their inference group's mask while consecutive groups
+        genuinely differ."""
+        import time
+
+        import cv2
+
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        session = _FakeDepthSession(
+            disparity_fn=lambda idx: _split_disparity(high=(idx + 1) * 10.0)
+        )
+        backbone = subject_matte._DepthBackbone(session)
+
+        seen: list[np.ndarray] = []
+        orig_normalize = subject_matte._normalize_disparity
+
+        def _spy_normalize(disparity: np.ndarray) -> np.ndarray:
+            seen.append(disparity.copy())
+            return orig_normalize(disparity)
+
+        monkeypatch.setattr(subject_matte, "_normalize_disparity", _spy_normalize)
+
+        # The hold is now an OBJECT reuse (the binarized result of the last
+        # fresh inference is appended verbatim on held ticks): probe the
+        # identity of what actually enters the temporal treatment per tick.
+        appended_ids: list[int] = []
+        orig_post = subject_matte._postprocess_mask
+
+        def _spy_post(recent_soft: object) -> np.ndarray:
+            appended_ids.append(id(recent_soft[-1]))
+            return orig_post(recent_soft)
+
+        monkeypatch.setattr(subject_matte, "_postprocess_mask", _spy_post)
+
+        cap = cv2.VideoCapture(str(video_path))
+        try:
+            window = MatteWindow(0.0, 1.0)
+            masks, inferences = subject_matte._collect_window_masks_depth(
+                cap, backbone, window, 30.0, time.monotonic(), None
+            )
+        finally:
+            cap.release()
+
+        stride = subject_matte._DEPTH_INFER_TICK_STRIDE
+        assert inferences == 30 // stride
+        assert len(seen) == inferences  # normalize ONCE per inference, never per held tick
+        # Fresh maps really do differ across inference groups (the fake
+        # session varies its output per call) — proves the identity checks
+        # below pin "held", not a fake returning one map.
+        assert not np.array_equal(seen[0], seen[1])
+        assert len(masks) == 30
+        for tick in range(30):
+            group_start = (tick // stride) * stride
+            assert appended_ids[tick] == appended_ids[group_start], (
+                f"tick {tick} did not reuse the held result from its "
+                f"inference group starting at tick {group_start}"
+            )
+        # ...and each new inference group swaps in a NEW result object.
+        assert appended_ids[0] != appended_ids[stride]
+
+
+def _build_testsrc_clip_landscape(out_path: Path, duration: float = 1.0) -> Path:
+    """Landscape variant of _build_testsrc_clip — real-camera landmark/
+    scenery shots (the Acropolis prod job the depth backbone exists for) are
+    wider than tall; the depth path must handle non-portrait source frames
+    identically, while the matte is still STORED at the fixed portrait
+    _MATTE_WIDTH x _MATTE_HEIGHT resolution regardless of source aspect."""
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        f"testsrc=duration={duration}:size=568x320:rate=30",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        "-pix_fmt",
+        "yuv420p",
+        str(out_path),
+    ]
+    subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+    return out_path
+
+
+@needs_ffmpeg
+class TestDepthBackboneDtype:
+    """The fp16-export input cast: ORT will not silently upcast a float32
+    feed for a float16 graph input, so _DepthBackbone must cast its feed to
+    match the input metadata — the committed prod model IS the fp16 export,
+    making this the branch every real inference takes."""
+
+    def test_fp16_input_meta_casts_feed_to_float16(self) -> None:
+        session = _FakeDepthSession(input_dtype="tensor(float16)")
+        backbone = subject_matte._DepthBackbone(session)
+        out = backbone.infer(np.zeros((64, 48, 3), dtype=np.uint8))
+        assert session.run_calls[-1].dtype == np.float16
+        assert out.shape == (64, 48)  # resized back to input H×W
+        assert out.dtype == np.float32  # disparity contract stays float32
+
+    def test_float32_input_meta_feeds_float32(self) -> None:
+        session = _FakeDepthSession()
+        backbone = subject_matte._DepthBackbone(session)
+        backbone.infer(np.zeros((64, 48, 3), dtype=np.uint8))
+        assert session.run_calls[-1].dtype == np.float32
+
+
+class TestDepthSelectionFlow:
+    """End-to-end compute_subject_matte selection between the person and
+    depth backbones. The person pass always runs through the deterministic
+    fake mediapipe (never the real segmenter — GL-less CI can't create one);
+    the depth pass runs through the fake onnxruntime session above."""
+
+    def test_person_zero_flag_on_depth_sane_promotes_depth_stats(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "matte_depth_occluder_enabled", True, raising=False)
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        depth_session = _install_fake_depth_onnxruntime(monkeypatch, tmp_path)
+        mp_calls: list[float] = []
+        _install_fake_mediapipe(monkeypatch, mp_calls)  # zero mask -> person finds nothing
+
+        out_path = tmp_path / "matte.mp4"
+        result = compute_subject_matte(str(video_path), [MatteWindow(0.0, 1.0)], str(out_path))
+
+        assert result is not None
+        assert result.backbone == "depth"
+        assert len(depth_session.run_calls) > 0
+        # Default split disparity (~half occluder, half sky) sane-gates
+        # between the depth floor (0.02) and ceiling (0.85).
+        assert 0.3 < result.mean_coverage < 0.7
+
+        sidecar = json.loads((tmp_path / "matte.mp4.json").read_text())
+        assert sidecar["backbone"] == "depth"
+        assert sidecar["stats"]["backbone"] == "depth"
+        # Scratch attempt file is replaced onto out_path, never left behind.
+        assert not (tmp_path / "matte.mp4.depth_attempt.mp4").exists()
+        assert not (tmp_path / "matte.mp4.depth_attempt.mp4.json").exists()
+
+    def test_person_zero_flag_on_depth_also_degenerate_keeps_person_stats(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A cluttered/near-uniform depth map (no real far/sky layer) fails
+        the depth sanity gate too — the caller must keep the (degenerate)
+        person stats byte-identically, never promote the rejected depth
+        attempt, and clean up its scratch files."""
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "matte_depth_occluder_enabled", True, raising=False)
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        # 95% of the frame reads as "nearer than sky" -> mean_coverage > 0.85
+        # -> rejected by the depth branch's swallowed-frame ceiling.
+        depth_session = _install_fake_depth_onnxruntime(
+            monkeypatch,
+            tmp_path,
+            disparity_fn=lambda idx: _split_disparity(low=0.0, high=200.0, split_frac=0.05),
+        )
+        mp_calls: list[float] = []
+        _install_fake_mediapipe(monkeypatch, mp_calls)
+
+        out_path = tmp_path / "matte.mp4"
+        result = compute_subject_matte(str(video_path), [MatteWindow(0.0, 1.0)], str(out_path))
+
+        assert result is not None
+        assert result.backbone != "depth"
+        assert result.backbone == "mediapipe"
+        assert len(depth_session.run_calls) > 0  # the attempt really ran
+        # A completed-but-gate-rejected depth pass is a CONCLUSIVE verdict on
+        # the footage: recorded on the person stats so the resolver may mint
+        # its permanent unstable sentinel (matte_rejection_is_retryable False).
+        assert result.depth_rejected is True
+        assert subject_matte.matte_rejection_is_retryable(result) is False
+
+        sidecar = json.loads((tmp_path / "matte.mp4.json").read_text())
+        assert sidecar["backbone"] == "mediapipe"
+        assert not (tmp_path / "matte.mp4.depth_attempt.mp4").exists()
+        assert not (tmp_path / "matte.mp4.depth_attempt.mp4.json").exists()
+
+    def test_person_found_flag_on_depth_never_invoked(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The depth pass only runs when the person pass finds NOTHING —
+        a healthy person coverage must never even construct the depth
+        backbone, regardless of the flag."""
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "matte_depth_occluder_enabled", True, raising=False)
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        depth_session = _install_fake_depth_onnxruntime(monkeypatch, tmp_path)
+        mp_calls: list[float] = []
+        blob = np.zeros((16, 16), dtype=np.float32)
+        blob[4:12, 4:12] = 0.95  # healthy, well above the person floor
+        _install_fake_mediapipe(monkeypatch, mp_calls, mask_value=blob)
+
+        result = compute_subject_matte(
+            str(video_path), [MatteWindow(0.0, 1.0)], str(tmp_path / "matte.mp4")
+        )
+        assert result is not None
+        assert result.backbone == "mediapipe"
+        assert depth_session.run_calls == []
+
+    def test_flag_off_kill_switch_depth_never_touched_byte_identical(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Flag off + person finds nothing: the depth session must never be
+        invoked, and output must be byte-identical to a baseline run where
+        the depth onnxruntime fake was never even installed — proof this is
+        the same code path as before the depth backbone existed, not merely
+        "happened to skip it this run"."""
+        import sys
+
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "matte_depth_occluder_enabled", False, raising=False)
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+
+        depth_session = _install_fake_depth_onnxruntime(monkeypatch, tmp_path)
+        mp_calls_off: list[float] = []
+        _install_fake_mediapipe(monkeypatch, mp_calls_off)
+        out_off = tmp_path / "matte_off.mp4"
+        result_off = compute_subject_matte(str(video_path), [MatteWindow(0.0, 1.0)], str(out_off))
+        assert result_off is not None
+        assert depth_session.run_calls == []
+
+        # Baseline: depth onnxruntime fake never installed at all.
+        monkeypatch.delitem(sys.modules, "onnxruntime", raising=False)
+        mp_calls_baseline: list[float] = []
+        _install_fake_mediapipe(monkeypatch, mp_calls_baseline)
+        out_baseline = tmp_path / "matte_baseline.mp4"
+        result_baseline = compute_subject_matte(
+            str(video_path), [MatteWindow(0.0, 1.0)], str(out_baseline)
+        )
+        assert result_baseline is not None
+
+        from dataclasses import asdict
+
+        assert asdict(result_off) == asdict(result_baseline)
+        assert out_off.read_bytes() == out_baseline.read_bytes()
+        assert (tmp_path / "matte_off.mp4.json").read_text() == (
+            tmp_path / "matte_baseline.mp4.json"
+        ).read_text()
+
+    def test_landscape_source_masks_still_stored_at_matte_resolution(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A landscape (wider-than-tall) source — the real Acropolis prod
+        shot's shape — must still resolve through the depth backbone, with
+        the stored matte at the fixed portrait _MATTE_WIDTH x _MATTE_HEIGHT
+        the store contract requires (mask_at upscales to canvas from there
+        regardless of the source's own aspect)."""
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "matte_depth_occluder_enabled", True, raising=False)
+        video_path = _build_testsrc_clip_landscape(tmp_path / "landscape.mp4", duration=1.0)
+        depth_session = _install_fake_depth_onnxruntime(monkeypatch, tmp_path)
+        mp_calls: list[float] = []
+        _install_fake_mediapipe(monkeypatch, mp_calls)
+
+        out_path = tmp_path / "matte.mp4"
+        result = compute_subject_matte(str(video_path), [MatteWindow(0.0, 0.5)], str(out_path))
+
+        assert result is not None
+        assert result.backbone == "depth"
+        assert len(depth_session.run_calls) > 0
+        sidecar = json.loads((tmp_path / "matte.mp4.json").read_text())
+        assert sidecar["size"] == [subject_matte._MATTE_WIDTH, subject_matte._MATTE_HEIGHT]
+
+        provider = SubjectMatteProvider.open(str(out_path))
+        assert provider is not None
+        mask = provider.mask_at(0.1)
+        assert mask is not None
+        assert mask.shape == (subject_matte._OUTPUT_HEIGHT, subject_matte._OUTPUT_WIDTH)
+
+    def test_budget_exceeded_estimate_skips_depth_pass(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A window total whose ESTIMATED inference count (ceil(ticks /
+        stride)) exceeds _DEPTH_MAX_INFERENCES must skip the depth pass up
+        front, the same guard shape as _RVM_MAX_TOTAL_TICKS for the person
+        path — never burn the budget attempting an inference count already
+        known to be too expensive."""
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "matte_depth_occluder_enabled", True, raising=False)
+        monkeypatch.setattr(subject_matte, "_DEPTH_MAX_INFERENCES", 2)
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        depth_session = _install_fake_depth_onnxruntime(monkeypatch, tmp_path)
+        mp_calls: list[float] = []
+        _install_fake_mediapipe(monkeypatch, mp_calls)
+
+        result = compute_subject_matte(
+            str(video_path), [MatteWindow(0.0, 1.0)], str(tmp_path / "matte.mp4")
+        )
+        assert result is not None
+        assert result.backbone != "depth"
+        assert depth_session.run_calls == []
+        # A budget SKIP is not a verdict on the footage — the rejection must
+        # stay retryable so no permanent unstable sentinel gets minted.
+        assert result.depth_rejected is False
+        assert subject_matte.matte_rejection_is_retryable(result) is True
+
+    def test_missing_depth_model_file_keeps_person_stats_retryable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The exact production failure mode of shipping code without the
+        model blob (or a botched image build): `_create_depth_backbone`
+        aborts on the missing file, the generic best-effort except keeps
+        the person stats, and — critically — the rejection stays RETRYABLE
+        (depth never delivered a verdict), so no permanent sentinel can be
+        minted from a deployment gap. Mirrors
+        test_missing_rvm_model_falls_back_to_mediapipe."""
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "matte_depth_occluder_enabled", True, raising=False)
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        depth_session = _install_fake_depth_onnxruntime(monkeypatch, tmp_path)
+        # Point PAST the dummy file the helper wrote: the model is missing.
+        monkeypatch.setattr(subject_matte, "MATTE_DEPTH_MODEL_PATH", str(tmp_path / "missing.onnx"))
+        mp_calls: list[float] = []
+        _install_fake_mediapipe(monkeypatch, mp_calls)
+
+        result = compute_subject_matte(
+            str(video_path), [MatteWindow(0.0, 1.0)], str(tmp_path / "matte.mp4")
+        )
+        assert result is not None
+        assert result.backbone != "depth"
+        assert depth_session.run_calls == []  # session never constructed
+        assert result.depth_rejected is False
+        assert subject_matte.matte_rejection_is_retryable(result) is True
+
+    def test_nonfinite_depth_output_is_transient_not_conclusive(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A NaN/Inf disparity map (fp16 graphs can produce one on
+        degenerate frames) must abort the depth pass as a TRANSIENT failure.
+        Left unguarded it would silently binarize to an all-zero mask
+        (NaN > eps is False), read as a "conclusive" no-occluder verdict,
+        and mint the permanent unstable sentinel from a one-off numerical
+        glitch."""
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "matte_depth_occluder_enabled", True, raising=False)
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        nan_map = np.full(
+            (subject_matte._DEPTH_INPUT_SIZE, subject_matte._DEPTH_INPUT_SIZE),
+            np.nan,
+            dtype=np.float32,
+        )
+        depth_session = _install_fake_depth_onnxruntime(
+            monkeypatch, tmp_path, disparity_fn=lambda idx: nan_map
+        )
+        mp_calls: list[float] = []
+        _install_fake_mediapipe(monkeypatch, mp_calls)
+
+        out_path = tmp_path / "matte.mp4"
+        result = compute_subject_matte(str(video_path), [MatteWindow(0.0, 1.0)], str(out_path))
+        assert result is not None
+        assert result.backbone != "depth"
+        assert len(depth_session.run_calls) > 0  # the attempt ran, died mid-flight
+        assert result.depth_rejected is False  # NOT a conclusive verdict
+        assert subject_matte.matte_rejection_is_retryable(result) is True
+        assert not (tmp_path / "matte.mp4.depth_attempt.mp4").exists()
+
+    def test_depth_promote_failure_drops_both_out_path_artifacts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The two-step scratch→out promotion isn't atomic: if the sidecar
+        replace fails after the video replace succeeded, a half-promoted
+        pair (depth video with the person sidecar) must never survive at
+        out_path — both artifacts are dropped so the caller's (insane,
+        retryable) person stats fall back cleanly instead of describing a
+        mismatched file."""
+        import os as os_mod
+
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "matte_depth_occluder_enabled", True, raising=False)
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        _install_fake_depth_onnxruntime(monkeypatch, tmp_path)
+        mp_calls: list[float] = []
+        _install_fake_mediapipe(monkeypatch, mp_calls)
+
+        real_replace = os_mod.replace
+
+        def _failing_replace(src: str, dst: str) -> None:
+            if str(dst).endswith(".json"):
+                raise OSError("disk full")
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(subject_matte.os, "replace", _failing_replace)
+
+        out_path = tmp_path / "matte.mp4"
+        result = compute_subject_matte(str(video_path), [MatteWindow(0.0, 1.0)], str(out_path))
+        assert result is not None
+        assert result.backbone != "depth"  # promotion failed — person stats kept
+        assert result.depth_rejected is False  # transient, retryable
+        assert not out_path.exists()
+        assert not (tmp_path / "matte.mp4.json").exists()
+        assert not (tmp_path / "matte.mp4.depth_attempt.mp4").exists()
+        assert not (tmp_path / "matte.mp4.depth_attempt.mp4.json").exists()
+
+    def test_depth_occluder_enabled_defaults_false_on_config_failure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Inverse of test_rvm_enabled_defaults_true_on_config_failure: an
+        unreadable config must never turn ON a brand-new inference path —
+        the dark-ship accessor fails CLOSED."""
+        import sys
+        import types
+
+        monkeypatch.setitem(sys.modules, "app.config", types.ModuleType("app.config"))
+        assert subject_matte._depth_occluder_enabled() is False
