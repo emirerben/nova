@@ -770,6 +770,26 @@ def orchestrate_generative_job(self, job_id: str) -> None:
                     error=str(exc),
                     exc_info=True,
                 )
+                # The user-facing message is deliberately generic; without this
+                # event the real cause (e.g. an ffmpeg filter error) exists only
+                # in worker logs — invisible to the admin job-debug view, which
+                # made the 2026-08-19 landscape-rotation failures untriageable
+                # from the DB alone.
+                cause = exc.__cause__ or exc.__context__
+                if cause is not None:
+                    from app.services.pipeline_trace import (  # noqa: PLC0415
+                        record_pipeline_event,
+                    )
+
+                    record_pipeline_event(
+                        "assembly",
+                        "guided_story_failure_cause",
+                        {
+                            "failure_reason": exc.code,
+                            "cause_class": type(cause).__name__,
+                            "cause_tail": str(cause)[-300:],
+                        },
+                    )
                 mark_failed_phase(job_id)
                 _fail_job(job_id, str(exc), failure_reason=exc.code)
                 return

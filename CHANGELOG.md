@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.40.0.2] — 2026-08-19
+
+### Fixed
+- **Guided stories with phone footage no longer fail to render at all.** Videos recorded in portrait carry a rotation flag instead of rotated pixels; the guided-story pipeline read the un-rotated dimensions, chose a landscape canvas for footage that is actually portrait, and then crashed the renderer within seconds ("An approved story video could not be rendered") — every retry replayed the same approved plan and failed identically (six production jobs from two users on 2026-08-19). Guided stories now normalize rotation at download exactly like the montage pipeline (same `ORIENTATION_NORMALIZE_ENABLED` kill switch), and the video reframer's 16:9 fast-path — which could ask ffmpeg for a crop wider than the frame on the landscape canvas — was replaced with the same safe fill-and-crop used for every other source. Previously stuck approved plans render on the next retry without re-approval.
+- **Failed guided-story renders are now diagnosable from the admin job-debug view.** The generic failure message used to be all that was persisted; the real cause (e.g. the ffmpeg filter error) lived only in worker logs. The pipeline trace now records a `guided_story_failure_cause` event with the underlying error class and tail.
+
 ## [0.40.0.1] — 2026-08-19
 
 ### Fixed

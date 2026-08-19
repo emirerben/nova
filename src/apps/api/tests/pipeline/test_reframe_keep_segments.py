@@ -259,11 +259,12 @@ class TestKeepSegmentsCommand:
 
     def test_punch_in_16x9_uses_portrait_output_dims(self) -> None:
         # T4s geometry pin (review 2026-07-11): aspect_ratio describes the
-        # INPUT — the 16:9 vf branch still outputs portrait W:H
-        # (scale=-2:H, crop=W:H), so punch dims must be the SAME portrait
-        # pair as the 9:16 case. The earlier swapped-dims branch emitted
-        # landscape odd segments against portrait even ones → concat abort
-        # on landscape sources; this pins the corrected geometry.
+        # INPUT — the 16:9 vf chain still outputs portrait W:H (safe
+        # fill+crop, since 2026-08-19 the same generic form as every other
+        # crop-mode source), so punch dims must be the SAME portrait pair as
+        # the 9:16 case. The earlier swapped-dims branch emitted landscape
+        # odd segments against portrait even ones → concat abort on
+        # landscape sources; this pins the corrected geometry.
         cmd = _capture_cmd(
             **_base_kwargs(
                 aspect_ratio="16:9",
@@ -273,11 +274,11 @@ class TestKeepSegmentsCommand:
         )
         fc = cmd[cmd.index("-filter_complex") + 1]
         chains = {p.split("]", 1)[0].lstrip("["): p for p in fc.split(";")}
-        # The [base] chain is the 16:9 vf variant, not the 9:16 EXPECTED_VF.
         expected_vf_16x9 = (
             "colorspace=all=bt709:iall=bt709"
             f",framerate=fps={settings.output_fps}"
-            f",scale=-2:{settings.output_height}"
+            f",scale={settings.output_width}:{settings.output_height}"
+            ":force_original_aspect_ratio=increase"
             f",crop={settings.output_width}:{settings.output_height}"
         )
         assert chains["0:v"] == f"[0:v]{expected_vf_16x9}[base]"

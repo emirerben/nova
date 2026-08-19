@@ -949,6 +949,28 @@ def _download_selected(plan: dict[str, Any], tmpdir: str) -> tuple[dict[str, str
             raise GuidedStoryError(
                 "guided_story_media_missing", f"Approved media {media_id} could not be loaded."
             ) from exc
+        # Identity receipt hashes the UNTOUCHED download (bytes as approved in
+        # GCS) — compute before any normalization mutates the local file.
+        size_bytes = os.path.getsize(local)
+        sha256 = _sha256(local)
+        if row["kind"] == "video":
+            # Phone clips ship landscape pixels + a Display-Matrix rotation
+            # flag. FFmpeg autorotates at decode, but probe_video classifies
+            # by stored dims, so a rotated portrait clip reads as "16:9" and
+            # reframe builds a crop wider than the decoded frame → instant
+            # ffmpeg failure (prod jobs ca168a9f/4467f18a/d9e4833c, 2026-08-19).
+            # The montage path normalizes at ingest (Stage 0.5); guided
+            # stories must too. In-place; kill switch
+            # ORIENTATION_NORMALIZE_ENABLED honored inside.
+            from app.pipeline.orientation import normalize_orientation  # noqa: PLC0415
+
+            try:
+                normalize_orientation(local)
+            except Exception as exc:  # noqa: BLE001
+                raise GuidedStoryError(
+                    "guided_story_render_failed",
+                    f"Approved media {media_id} could not be orientation-normalized.",
+                ) from exc
         try:
             if row["kind"] == "video":
                 probe = probe_video(local)
@@ -975,8 +997,8 @@ def _download_selected(plan: dict[str, Any], tmpdir: str) -> tuple[dict[str, str
                 "gcs_path": row["gcs_path"],
                 "generation": row["generation"],
                 "kind": actual_kind,
-                "bytes": os.path.getsize(local),
-                "sha256": _sha256(local),
+                "bytes": size_bytes,
+                "sha256": sha256,
                 "duration_s": duration_s,
             },
         )
