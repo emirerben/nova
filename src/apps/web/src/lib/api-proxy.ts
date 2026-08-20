@@ -138,25 +138,48 @@ async function proxy(
     // {"detail":{"code":<whitelisted>,"message":<str>}} is a deliberate,
     // human-safe error the backend wrote on purpose (not a stack trace), so
     // pass its message through instead of flattening it to the generic copy.
+    //
+    // Only even attempt to read the body when it looks like a small JSON
+    // object — a non-JSON content-type or an oversized body can't be the
+    // whitelisted shape, so skip buffering it at all (the original "never
+    // read an upstream exception body" safety property for anything that
+    // doesn't pass this cheap header check).
+    const upstreamContentType = upstreamRes.headers.get("content-type") ?? "";
+    const upstreamContentLength = Number(upstreamRes.headers.get("content-length") ?? "");
+    const looksLikeSmallJson =
+      upstreamContentType.includes("application/json") &&
+      (Number.isNaN(upstreamContentLength) || upstreamContentLength <= 8192);
     let passthroughMessage: string | null = null;
     let passthroughCode: string | null = null;
-    try {
-      const buf = await upstreamRes.arrayBuffer();
-      const parsed = JSON.parse(Buffer.from(buf).toString("utf8")) as {
-        detail?: { code?: unknown; message?: unknown };
-      };
-      const code = parsed?.detail?.code;
-      const message = parsed?.detail?.message;
-      if (
-        typeof code === "string" &&
-        typeof message === "string" &&
-        PASSTHROUGH_5XX_CODES.has(code)
-      ) {
-        passthroughCode = code;
-        passthroughMessage = message.slice(0, PASSTHROUGH_MESSAGE_MAX);
+    if (looksLikeSmallJson) {
+      try {
+        const buf = await upstreamRes.arrayBuffer();
+        const parsed = JSON.parse(Buffer.from(buf).toString("utf8")) as {
+          detail?: { code?: unknown; message?: unknown };
+        };
+        const code = parsed?.detail?.code;
+        const message = parsed?.detail?.message;
+        if (
+          typeof code === "string" &&
+          typeof message === "string" &&
+          PASSTHROUGH_5XX_CODES.has(code)
+        ) {
+          passthroughCode = code;
+          // Array.from (not String.slice) splits on code points, not UTF-16
+          // code units, so a 300-char cap can't bisect a surrogate pair.
+          passthroughMessage = Array.from(message).slice(0, PASSTHROUGH_MESSAGE_MAX).join("");
+        }
+      } catch {
+        // Not JSON, or doesn't match the whitelisted shape — stays generic below.
       }
-    } catch {
-      // Not JSON, or doesn't match the whitelisted shape — stays generic below.
+    } else {
+      // Doesn't even look like a candidate — never buffer it (large body /
+      // non-JSON content-type), just release the stream.
+      try {
+        await upstreamRes.body?.cancel();
+      } catch {
+        // A body that is already closed is equivalent to cancelled here.
+      }
     }
     console.error("[api-proxy] upstream server error", {
       requestId,
@@ -167,24 +190,24 @@ async function proxy(
       stage: "upstream_response",
       errorCode: passthroughCode ?? "upstream_error",
     });
-    if (passthroughMessage && passthroughCode) {
-      return NextResponse.json(
-        { detail: passthroughMessage, code: passthroughCode, retryable: true },
-        {
-          status: upstreamRes.status,
-          headers: { "X-Request-Id": requestId, "X-Correlation-Id": correlationId },
-        },
-      );
-    }
     return NextResponse.json(
-      {
-        detail: "Kria couldn't complete that request. Retry in a moment.",
-        code: "upstream_error",
-        stage: "upstream_response",
-        retryable: true,
-        request_id: requestId,
-        correlation_id: correlationId,
-      },
+      passthroughMessage && passthroughCode
+        ? {
+            detail: passthroughMessage,
+            code: passthroughCode,
+            stage: "upstream_response",
+            retryable: true,
+            request_id: requestId,
+            correlation_id: correlationId,
+          }
+        : {
+            detail: "Kria couldn't complete that request. Retry in a moment.",
+            code: "upstream_error",
+            stage: "upstream_response",
+            retryable: true,
+            request_id: requestId,
+            correlation_id: correlationId,
+          },
       {
         status: upstreamRes.status,
         headers: { "X-Request-Id": requestId, "X-Correlation-Id": correlationId },
