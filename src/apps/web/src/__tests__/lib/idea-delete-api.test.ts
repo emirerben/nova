@@ -280,14 +280,12 @@ describe("authenticated proxy response transport", () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
-  it("sanitizes upstream 500 bodies without reading or forwarding them", async () => {
+  it("sanitizes an arbitrary upstream 500 body instead of forwarding it", async () => {
     const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
     const arrayBuffer = jest.fn().mockResolvedValue(Buffer.from("Internal Server Error"));
-    const cancel = jest.fn().mockResolvedValue(undefined);
     mockFetch.mockResolvedValueOnce({
       status: 500,
       arrayBuffer,
-      body: { cancel },
       headers: new Headers({ "content-type": "text/plain" }),
     });
     mockGetServerSession.mockResolvedValueOnce({ user: { id: "user-1" } });
@@ -308,8 +306,7 @@ describe("authenticated proxy response transport", () => {
     expect(body.detail).toBe("Kria couldn't complete that request. Retry in a moment.");
     expect(body.detail).not.toMatch(/internal server error/i);
     expect(body.request_id).toEqual(expect.any(String));
-    expect(arrayBuffer).not.toHaveBeenCalled();
-    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(arrayBuffer).toHaveBeenCalledTimes(1);
     expect(errorSpy).toHaveBeenCalledWith(
       "[api-proxy] upstream server error",
       expect.objectContaining({
@@ -317,6 +314,99 @@ describe("authenticated proxy response transport", () => {
         errorCode: "upstream_error",
       }),
     );
+  });
+
+  it("stays generic for a 5xx JSON body whose code isn't on the pass-through whitelist", async () => {
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const detail = { detail: { code: "some_other_failure", message: "Raw internal detail." } };
+    const arrayBuffer = jest.fn().mockResolvedValue(Buffer.from(JSON.stringify(detail)));
+    mockFetch.mockResolvedValueOnce({
+      status: 500,
+      arrayBuffer,
+      headers: new Headers({ "content-type": "application/json" }),
+    });
+    mockGetServerSession.mockResolvedValueOnce({ user: { id: "user-1" } });
+    const { makeProxyHandlers } = await import("@/lib/api-proxy");
+    const request = {
+      method: "POST",
+      nextUrl: { search: "" },
+      headers: { get: () => null },
+      arrayBuffer: jest.fn().mockResolvedValue(new ArrayBuffer(0)),
+    };
+
+    const response = await makeProxyHandlers().POST(
+      request as never,
+      { params: Promise.resolve({ path: ["plan-items", "item-1", "edit-proposal", "conversation"] }) },
+    );
+    const body = JSON.parse(String((response as unknown as { body: unknown }).body));
+    expect(response.status).toBe(500);
+    expect(body.detail).toBe("Kria couldn't complete that request. Retry in a moment.");
+    expect(body).not.toMatchObject({ detail: "Raw internal detail." });
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[api-proxy] upstream server error",
+      expect.objectContaining({ errorCode: "upstream_error" }),
+    );
+  });
+
+  it("passes through a whitelisted guided-edit 5xx code's message verbatim", async () => {
+    jest.spyOn(console, "error").mockImplementation(() => {});
+    const detail = {
+      detail: { code: "edit_guide_failed", message: "Kria couldn't finish planning this edit." },
+    };
+    const arrayBuffer = jest.fn().mockResolvedValue(Buffer.from(JSON.stringify(detail)));
+    mockFetch.mockResolvedValueOnce({
+      status: 502,
+      arrayBuffer,
+      headers: new Headers({ "content-type": "application/json" }),
+    });
+    mockGetServerSession.mockResolvedValueOnce({ user: { id: "user-1" } });
+    const { makeProxyHandlers } = await import("@/lib/api-proxy");
+    const request = {
+      method: "POST",
+      nextUrl: { search: "" },
+      headers: { get: () => null },
+      arrayBuffer: jest.fn().mockResolvedValue(new ArrayBuffer(0)),
+    };
+
+    const response = await makeProxyHandlers().POST(
+      request as never,
+      { params: Promise.resolve({ path: ["plan-items", "item-1", "edit-proposal", "conversation"] }) },
+    );
+    const body = JSON.parse(String((response as unknown as { body: unknown }).body));
+    expect(response.status).toBe(502);
+    expect(body).toEqual({
+      detail: "Kria couldn't finish planning this edit.",
+      code: "edit_guide_failed",
+      retryable: true,
+    });
+  });
+
+  it("caps a whitelisted pass-through message at 300 characters", async () => {
+    jest.spyOn(console, "error").mockImplementation(() => {});
+    const longMessage = "x".repeat(400);
+    const detail = { detail: { code: "proposal_dispatch_failed", message: longMessage } };
+    const arrayBuffer = jest.fn().mockResolvedValue(Buffer.from(JSON.stringify(detail)));
+    mockFetch.mockResolvedValueOnce({
+      status: 500,
+      arrayBuffer,
+      headers: new Headers({ "content-type": "application/json" }),
+    });
+    mockGetServerSession.mockResolvedValueOnce({ user: { id: "user-1" } });
+    const { makeProxyHandlers } = await import("@/lib/api-proxy");
+    const request = {
+      method: "POST",
+      nextUrl: { search: "" },
+      headers: { get: () => null },
+      arrayBuffer: jest.fn().mockResolvedValue(new ArrayBuffer(0)),
+    };
+
+    const response = await makeProxyHandlers().POST(
+      request as never,
+      { params: Promise.resolve({ path: ["plan-items", "item-1", "edit-proposal", "conversation"] }) },
+    );
+    const body = JSON.parse(String((response as unknown as { body: unknown }).body));
+    expect(body.code).toBe("proposal_dispatch_failed");
+    expect(body.detail).toHaveLength(300);
   });
 
   it("preserves an actionable upstream 4xx body", async () => {

@@ -20,6 +20,13 @@ const API_BASE =
   process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY ?? "";
 
+// Narrow 5xx pass-through whitelist (G5): these two codes carry a message
+// worth showing a creator verbatim (guided-edit chat failures) — everything
+// else on a 5xx stays the generic safe envelope below. Length-capped so an
+// unexpectedly large upstream message can't blow up the response.
+const PASSTHROUGH_5XX_CODES = new Set(["edit_guide_failed", "proposal_dispatch_failed"]);
+const PASSTHROUGH_MESSAGE_MAX = 300;
+
 type RouteCtx = { params: Promise<{ path: string[] }> };
 
 async function proxy(
@@ -125,12 +132,31 @@ async function proxy(
   }
 
   if (upstreamRes.status >= 500) {
-    // Do not buffer an upstream exception body: it may contain raw provider or
-    // application details and the creator must only receive the safe envelope.
+    // The generic envelope below is still the default — an upstream exception
+    // body may contain raw provider or application details the creator must
+    // never see. The one narrow exception: a body shaped exactly
+    // {"detail":{"code":<whitelisted>,"message":<str>}} is a deliberate,
+    // human-safe error the backend wrote on purpose (not a stack trace), so
+    // pass its message through instead of flattening it to the generic copy.
+    let passthroughMessage: string | null = null;
+    let passthroughCode: string | null = null;
     try {
-      await upstreamRes.body?.cancel();
+      const buf = await upstreamRes.arrayBuffer();
+      const parsed = JSON.parse(Buffer.from(buf).toString("utf8")) as {
+        detail?: { code?: unknown; message?: unknown };
+      };
+      const code = parsed?.detail?.code;
+      const message = parsed?.detail?.message;
+      if (
+        typeof code === "string" &&
+        typeof message === "string" &&
+        PASSTHROUGH_5XX_CODES.has(code)
+      ) {
+        passthroughCode = code;
+        passthroughMessage = message.slice(0, PASSTHROUGH_MESSAGE_MAX);
+      }
     } catch {
-      // A body that is already closed is equivalent to cancelled here.
+      // Not JSON, or doesn't match the whitelisted shape — stays generic below.
     }
     console.error("[api-proxy] upstream server error", {
       requestId,
@@ -139,8 +165,17 @@ async function proxy(
       route,
       upstreamStatus: upstreamRes.status,
       stage: "upstream_response",
-      errorCode: "upstream_error",
+      errorCode: passthroughCode ?? "upstream_error",
     });
+    if (passthroughMessage && passthroughCode) {
+      return NextResponse.json(
+        { detail: passthroughMessage, code: passthroughCode, retryable: true },
+        {
+          status: upstreamRes.status,
+          headers: { "X-Request-Id": requestId, "X-Correlation-Id": correlationId },
+        },
+      );
+    }
     return NextResponse.json(
       {
         detail: "Kria couldn't complete that request. Retry in a moment.",
