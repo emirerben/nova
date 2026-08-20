@@ -1466,3 +1466,102 @@ transcript guarantee.
 **Revisit if:** synthetic windows show up in a rendered-quality regression (the windows are still
 duration buckets, not content-aware — see the "Content-aware `_fallback_moments()`" TODO), or a
 new consumer starts trusting `best_moments` energy/timing without checking `moments_synthetic`.
+
+## [2026-08-19] Depth-occluder backbone closes the "behind-arbitrary-objects" gap (prod job 30b717b9)
+
+Closes the trade-off explicitly deferred in the 2026-07-27 entry above ("RVM
+mattes people, not arbitrary objects ... Behind-arbitrary-objects would need
+a salient-object/video-segmentation model"). Prod job `30b717b9-90ab-4d99-
+a311-ea1103a5e80e` (plan item `85d1de16-ba11-4533-9290-927a45819cd3`,
+"ACROPOLIS"/"ATHENS" `behind_subject: true` text on a person-less landscape
+shot) rendered fully in front of the landmark: the person-only matte engine
+found nobody, `matte_is_sane` rejected on `max_coverage < 0.01`, and the
+resolver silently stripped the effect.
+
+Decisions:
+- **New depth backbone, selected only when the person pass finds nothing.**
+  `compute_subject_matte` runs RVM/MediaPipe first as always; a depth pass is
+  attempted only when `stats.max_coverage < _PERSON_MAX_COVERAGE_FLOOR`
+  (0.01, factored out of the existing gate literal) AND
+  `MATTE_DEPTH_OCCLUDER_ENABLED` is true. `MatteStats` gains
+  `backbone: str = "rvm"` (`"rvm" | "mediapipe" | "depth"`), threaded into
+  the matte sidecar JSON and the `subject_matte_resolved` pipeline-trace
+  event, so the admin job-debug view shows which segmenter actually produced
+  a given occlusion.
+- **Model: Depth Anything V2 Small, fp16 ONNX, ~47.3MB.** License verified
+  Apache-2.0 for both the small checkpoint and the specific onnx-community
+  export committed — same verify-before-commit bar the 2026-07-27 RVM
+  GPL-3.0 note set, but this model is permissively licensed outright (no
+  server-side-only carve-out needed). Provenance: HF
+  `onnx-community/depth-anything-v2-small` `onnx/model_fp16.onnx` at commit
+  `4472b7362082ad9968fee890ca0f1e5aca36b93d`, SHA256
+  `2df6223f206b5164e21f664ace61dabeb9bb6a49b8b5a3e00510b4807d0f5b04`;
+  license evidence: DepthAnything/Depth-Anything-V2 README ("Depth-Anything-
+  V2-Small model is under the Apache-2.0 license"; Base/Large/Giant are
+  CC-BY-NC-4.0 and must never be substituted in) plus the export repo's
+  `license: apache-2.0` metadata inheriting from the small checkpoint.
+  Benchmarked (local M-series; Fly shared vCPUs assumed ~half): ~194ms/frame
+  CPU at the SHIPPED native 518×518 input (`_DEPTH_INPUT_SIZE`); a reduced
+  patch-multiple 266×476 measured ~87ms/frame and remains a future perf
+  lever, not adopted because E2E occlusion verification ran at 518×518.
+  Sampled at `_DEPTH_INFER_FPS = 10` (disparity held between samples) to
+  stay inside the existing 90s per-burn wall-clock budget even when
+  person-less footage pays for both the person pass and the depth pass.
+- **Threshold: sky-epsilon on robustly-normalized disparity, not Otsu.** An
+  Otsu (bimodal-histogram) threshold was tried first and rejected —
+  validated empirically on the real Acropolis footage, raw disparity is
+  skewed rather than bimodal (sky/far-background clusters near ~0,
+  near-foreground dominates the rest of the histogram), so Otsu's split
+  misclassified the landmark itself as background. Shipped rule instead:
+  per sampled frame, clip disparity to its own [p1, p99] range and rescale
+  to `[0, 1]`; occluder = `normalized_disparity > _DEPTH_SKY_EPS` (0.05) —
+  anything measurably nearer than the far-background mode occludes. A scene
+  with no identifiable far layer over-occludes and is caught by the
+  existing `mean_coverage <= 0.85` sanity-gate ceiling rather than shipping
+  a bad mask. `matte_is_sane` additionally floors the depth branch at
+  `mean_coverage >= 0.02` (`_DEPTH_MIN_MEAN_COVERAGE`) — depth has no
+  per-pixel subject-confidence prior the way person segmentation does, so a
+  near-zero split is more likely threshold noise than a real occluder.
+  Shape-stability and oscillation/large-jump gates are unchanged and apply
+  identically to both backbones.
+- **Cache key bumped `.matte.v2.*` → `.matte.v3.*` for NEW writes; healthy
+  v2 BLOBS stay accepted** (`_MATTE_CACHE_SUFFIX`,
+  `_MATTE_ACCEPTED_CACHE_SUFFIXES`, `_MATTE_UNSTABLE_SUFFIX` in
+  `generative_build.py`). A `.matte.v2.unstable` sentinel (a definitive
+  person-only rejection) predates the depth backbone, so it must not be
+  trusted as "no usable occluder" — its suffix no longer matches, making it
+  a cache miss with one recompute now eligible for depth. But v2 BLOBS only
+  exist where the person pass found a real subject, and the person write
+  contract is unchanged in v3 — invalidating them (the ship-review red
+  team's finding) would have recomputed identical mattes fleet-wide for
+  pure churn AND funneled working v2 blobs through a delete hazard. No data
+  migration needed; the fix reaches existing person-REJECTED renders on
+  their next burn.
+- **Dual-sentinel retryability** (ship-review finding train: Codex
+  dark-ship poisoning → Claude adversarial transient-conclusive confusion →
+  performance per-reburn tax). A gate rejection where the person pass found
+  nobody is only CONCLUSIVE if the depth pass ran to completion and was
+  itself gate-rejected (`MatteStats.depth_rejected`,
+  `matte_rejection_is_retryable`); only conclusive rejections mint the
+  permanent `.matte.v3.unstable`. Inconclusive ones (flag off, model
+  missing, budget, crash, NaN output) mint `.matte.v3.nodepth.unstable`:
+  short-circuits while the depth flag is off, reads as stale (one
+  depth-eligible recompute) once it flips on. A real previous-version BLOB
+  survives any inconclusive rejection instead of minting either sentinel.
+- **Dark by default.** `MATTE_DEPTH_OCCLUDER_ENABLED` (`app/config.py`
+  `matte_depth_occluder_enabled`), default `False`, fails closed on
+  config-import failure. Off: `compute_subject_matte` behaves exactly as it
+  did before this feature (person pass only). Rollback: `fly secrets set
+  MATTE_DEPTH_OCCLUDER_ENABLED=false --app nova-video` + worker restart —
+  and cached depth mattes are EVICTED on their next burn (sidecar
+  `backbone: "depth"` + flag off → recompute → retryable sentinel), so
+  rollback stops depth occlusion already in the cache too. No
+  `NEXT_PUBLIC_` twin — this is a render-time backbone choice, not a
+  user-facing toggle; `TEXT_BEHIND_SUBJECT_ENABLED` remains the single kill
+  switch for the feature as a whole.
+
+See `docs/pipelines/text-behind-subject.md` ("Non-person occlusion: depth
+backbone") for the full mechanics. Deferred: surfacing `fallback_stripped`
+to users, relaxing `match_overlay_format.txt` for landmark shots, ROI
+refinement for depth (same deferral list as 2026-07-27, now scoped down by
+one item).

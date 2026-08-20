@@ -33,6 +33,19 @@ orchestrator) so a clip's silhouette never bleeds into the next clip —
 without the reset, ~2 frames of the previous clip's mask occlude text at
 every cut.
 
+When the person pass finds nothing at all (no person in frame — a landmark,
+object, or scenery shot), and ``MATTE_DEPTH_OCCLUDER_ENABLED`` is set, a
+second best-effort pass runs a monocular depth model (Depth Anything V2
+small, ``_DepthBackbone``) so "text behind subject" can occlude against a
+non-person foreground instead: pixels whose robustly-normalized relative
+disparity clears a small fixed epsilon above the far/sky background mode
+are treated as the occluder. This pass is sparsely sampled
+(``_DEPTH_INFER_FPS``, far below RVM's per-frame rate — ViT inference is
+much heavier) and only attempted within its own inference budget; on any
+failure or sanity-gate rejection it is discarded and the (degenerate) person
+result is returned unchanged, so the depth path can never make output worse
+than before it existed.
+
 CRITICAL: Never use MoviePy — see CLAUDE.md. Decoding goes through
 cv2.VideoCapture; the matte is muxed via a direct ffmpeg subprocess.
 """
@@ -44,6 +57,7 @@ import os
 import subprocess
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 
 import cv2
@@ -80,6 +94,62 @@ _RVM_INTRA_OP_THREADS = 3
 # of the budget. Typical intro windows are 300-400 ticks.
 _RVM_MAX_TOTAL_TICKS = 900
 MATTE_WALL_CLOCK_BUDGET_S = 90
+
+# Depth Anything V2 small (ONNX, fp16) — the non-person scene-occluder
+# backbone, attempted when the person pass finds nothing at all.
+# Apache-2.0 (the small checkpoint only — Base/Large/Giant are
+# CC-BY-NC-4.0); exact export provenance (HF repo, commit, SHA256) in
+# agents/DECISIONS.md 2026-08-19.
+MATTE_DEPTH_MODEL_PATH = "assets/models/depth_anything_v2_vits_fp16.onnx"
+# Sparse sampling rate for the depth backbone: ViT inference is far heavier
+# per-frame than RVM (mobilenet) or the mediapipe selfie-segmenter, so it
+# runs at a fraction of MATTE_FPS with the latest disparity sample held
+# between inferences (see _collect_window_masks_depth) rather than at every
+# output tick.
+_DEPTH_INFER_FPS = 10
+_DEPTH_INFER_TICK_STRIDE = MATTE_FPS // _DEPTH_INFER_FPS  # 30 // 10 = 3
+# Depth inference budget guard, same role as _RVM_MAX_TOTAL_TICKS but scaled
+# for the sparser sampling rate: _RVM_MAX_TOTAL_TICKS budgets 900 *output*
+# ticks at (effectively) full-rate RVM sampling. Depth only infers once
+# every _DEPTH_INFER_TICK_STRIDE ticks, so the same tick budget implies
+# 900 / 3 = 300 depth INFERENCES. Measured ~194ms/inference CPU at the
+# shipped 518x518 input (local M-series bench; assume Fly shared vCPUs
+# ~half that, like the RVM budget note above) → ~58-117s worst case, held
+# inside the shared MATTE_WALL_CLOCK_BUDGET_S by the per-tick _budget_check
+# (an abort falls back to the person stats, retryable — never a hard
+# fail). Typical behind_subject windows are a few seconds ≈ 30-60
+# inferences, well clear of the ceiling.
+_DEPTH_MAX_INFERENCES = 300
+# Depth Anything V2's published default input resolution (also its ViT-14
+# patch size's natural multiple: 518 = 37 * 14). Resize is aspect-agnostic
+# (matches the model's own preprocessing contract). Measured (same local
+# bench as above): ~194ms/frame at this 518x518; ~87ms/frame at a reduced
+# patch-multiple 266x476 — a future perf lever, NOT adopted because the
+# prod-footage E2E verification (occlusion quality + _DEPTH_SKY_EPS
+# calibration) ran against 518x518 output.
+_DEPTH_INPUT_SIZE = 518
+_DEPTH_IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+_DEPTH_IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+# Robust per-frame normalization percentiles for the raw disparity map
+# (clips outlier extrema before scaling to [0, 1] — see
+# _normalize_disparity).
+_DEPTH_NORM_LOW_PCTL = 1.0
+_DEPTH_NORM_HIGH_PCTL = 99.0
+# Fixed absolute threshold on the robustly-normalized [0, 1] disparity map:
+# occluder = norm > _DEPTH_SKY_EPS. NOT an Otsu/variance split — validated
+# on prod job 30b717b9 (Acropolis footage): monocular relative disparity
+# maps the far background (sky) to exactly 0 while nearby foreground
+# (trees) dominates the histogram, so a variance-based split (Otsu, even
+# 3-class) locks onto the trees-vs-rest boundary and misclassifies the
+# mid-distance landmark (the hill the text must hide behind) as background
+# (measured: sky p95=0.0, hill ridge p50=31, lower rock p50=59, trees
+# p50=86 on a 0-255 scale; Otsu chose 56 — hill excluded). A small
+# epsilon above the sky mode is correct and robust instead: eps in 8..20
+# (of 255, i.e. ~0.03..0.08 normalized) all give sky=0.00% coverage and the
+# full hill in the occluder. Degenerate-scene safety (no far layer at all)
+# comes from matte_is_sane's _DEPTH_MIN_MEAN_COVERAGE/0.85 gates, not from
+# this threshold being adaptive.
+_DEPTH_SKY_EPS = 0.05
 
 # Stored matte resolution (~1/4 of 1080x1920). Hold-to-EOF overlays (see
 # generative_overlays.py's _HOLD_TO_END_S) span windows up to the full clip,
@@ -173,11 +243,36 @@ class MatteStats:
     # hard cuts are excluded, so legit montage cuts don't inflate the count.
     large_jump_count: int = 0
     large_jumps_per_s: float = 0.0
+    # Which segmentation backbone produced this matte: "rvm" | "mediapipe"
+    # (person-segmentation backbones) or "depth" (the non-person
+    # scene-occluder backbone). matte_is_sane branches its degenerate-floor
+    # check on this. Sidecar JSON carries the same value at its top level.
+    backbone: str = "rvm"
+    # Set on PERSON-pass stats when the depth-occluder second pass ran to
+    # completion and its matte was itself gate-rejected — the only case in
+    # which a "person pass found nobody" rejection is conclusive about the
+    # footage. When False with a near-zero max_coverage, the depth pass was
+    # skipped or died mid-flight (flag off, model missing, inference budget,
+    # wall-clock abort) and a later attempt could still succeed — see
+    # matte_rejection_is_retryable.
+    depth_rejected: bool = False
 
 
 class _MatteAbort(RuntimeError):
     """Internal control-flow signal for a graceful (non-bug) best-effort abort."""
 
+
+# matte_is_sane's "the segmenter never confidently found anyone" floor for
+# the person branch (max_coverage). Factored out of the literal so the
+# depth branch's analogous-but-distinct floor (below) sits next to it.
+_PERSON_MAX_COVERAGE_FLOOR = 0.01
+# Depth branch's degenerate floor is on MEAN coverage, not max like the
+# person branch: a real scene occluder (landmark/object against sky) is
+# spatially large and stable by construction — the _DEPTH_SKY_EPS threshold
+# either finds a substantial nearer region or it doesn't. A tiny mean
+# coverage means it found essentially nothing nearer than the far/sky
+# layer, the depth equivalent of the person branch's near-zero max.
+_DEPTH_MIN_MEAN_COVERAGE = 0.02
 
 # Presence below this treated-mask mean means "essentially nothing kept"
 # (a single min-area component feathered over the frame averages ~0.002).
@@ -221,8 +316,18 @@ def matte_is_sane(stats: MatteStats) -> bool:
     whose presence flaps on/off (segmenter dropouts on hard footage) is
     rejected too: occlusion that blinks is worse than plain text, and the
     engine is best-effort by design.
+
+    The degenerate-floor check is backbone-aware: person backbones
+    ("rvm"/"mediapipe") use ``max_coverage`` (a real subject peaks high even
+    if rarely visible); the "depth" backbone uses ``mean_coverage`` instead
+    (a scene occluder is spatially stable, so a near-zero MEAN means the
+    epsilon threshold found nothing). The swallowed-frame ceiling and every
+    stability/jump gate below are shared, unchanged, for both.
     """
-    if stats.max_coverage < 0.01 or stats.mean_coverage > 0.85:
+    if stats.backbone == "depth":
+        if stats.mean_coverage < _DEPTH_MIN_MEAN_COVERAGE or stats.mean_coverage > 0.85:
+            return False
+    elif stats.max_coverage < _PERSON_MAX_COVERAGE_FLOOR or stats.mean_coverage > 0.85:
         return False
     if (
         stats.presence_flips > _MAX_PRESENCE_FLIPS
@@ -239,6 +344,22 @@ def matte_is_sane(stats: MatteStats) -> bool:
     ):
         return False
     return True
+
+
+def matte_rejection_is_retryable(stats: MatteStats) -> bool:
+    """True when a gate-failed compute must NOT be recorded as a permanent
+    footage-level rejection: the person pass never found anyone AND the
+    depth-occluder pass did not conclusively reject the footage either — it
+    was disabled (dark ship), the model was missing, the inference budget or
+    wall-clock ran out, or it crashed. A later burn under better conditions
+    (e.g. after MATTE_DEPTH_OCCLUDER_ENABLED flips on) could still succeed,
+    so the caller falls back for the current burn only instead of minting
+    its permanent unstable sentinel. getattr guards pre-field stats objects
+    (tests, any deserialized legacy stats) — absent means "not conclusive".
+    """
+    return stats.max_coverage < _PERSON_MAX_COVERAGE_FLOOR and not getattr(
+        stats, "depth_rejected", False
+    )
 
 
 def _resolve_asset_path(rel_path: str) -> str:
@@ -324,7 +445,87 @@ def compute_subject_matte(
         )
         _cleanup_partial(out_path)
         return None
-    return stats
+
+    depth_stats = _maybe_attempt_depth_occlusion(
+        video_path, windows, out_path, start_time, cut_boundaries_s, stats
+    )
+    return depth_stats if depth_stats is not None else stats
+
+
+def _maybe_attempt_depth_occlusion(
+    video_path: str,
+    windows: list[MatteWindow],
+    out_path: str,
+    start_time: float,
+    cut_boundaries_s: list[float] | None,
+    person_stats: MatteStats,
+) -> MatteStats | None:
+    """Best-effort depth-occluder second pass, run only when the person
+    pass found essentially nothing (max_coverage below the "never found
+    anyone" floor) — never runs when a person WAS detected, and never
+    raises. On success, the depth matte has ALREADY been promoted over
+    ``out_path`` (+ sidecar) and its stats are returned; on any gate
+    rejection or failure this returns None and leaves ``out_path``
+    untouched — the caller keeps the person stats, byte-identical to
+    before this path existed.
+
+    Shares ``start_time`` with the person pass that already ran, so the
+    combined wall-clock of both passes stays inside
+    MATTE_WALL_CLOCK_BUDGET_S.
+    """
+    if person_stats.max_coverage >= _PERSON_MAX_COVERAGE_FLOOR:
+        return None
+    if not _depth_occluder_enabled():
+        return None
+
+    total_ticks = sum(
+        max(1, round((w.end_s - w.start_s) * MATTE_FPS)) for w in windows if w.end_s > w.start_s
+    )
+    # Ceiling division: a partial final stride still costs one inference.
+    estimated_inferences = -(-total_ticks // _DEPTH_INFER_TICK_STRIDE)
+    if estimated_inferences > _DEPTH_MAX_INFERENCES:
+        return None
+
+    scratch_path = f"{out_path}.depth_attempt.mp4"
+    try:
+        depth_stats = _compute_depth_matte_inner(
+            video_path, windows, scratch_path, start_time, cut_boundaries_s=cut_boundaries_s
+        )
+        if not matte_is_sane(depth_stats):
+            # The depth pass ran to completion and its matte was itself
+            # gate-rejected: unlike every skip/crash path in this function,
+            # this is a conclusive verdict on the footage, so mark the
+            # person stats sentinel-eligible (matte_rejection_is_retryable
+            # returns False) — the resolver may persist its permanent
+            # unstable sentinel.
+            person_stats.depth_rejected = True
+            raise _MatteAbort("depth matte failed sanity gate")
+    except Exception as exc:  # noqa: BLE001 — best-effort: any failure keeps the person stats
+        log.info(
+            "subject_matte_depth_occlusion_skipped",
+            error=str(exc),
+            video_path=video_path,
+        )
+        _cleanup_partial(scratch_path)
+        return None
+    try:
+        os.replace(scratch_path, out_path)
+        os.replace(f"{scratch_path}.json", f"{out_path}.json")
+    except OSError as exc:
+        # The two replaces aren't atomic together: if the second fails, a
+        # half-promoted pair (depth video with the person sidecar) must
+        # never survive at out_path — drop BOTH artifacts so the caller's
+        # (insane, retryable) person stats fall back cleanly instead of
+        # describing a mismatched file.
+        log.warning(
+            "subject_matte_depth_promote_failed",
+            error=str(exc),
+            video_path=video_path,
+        )
+        _cleanup_partial(scratch_path)
+        _cleanup_partial(out_path)
+        return None
+    return depth_stats
 
 
 def _budget_check(start_time: float) -> None:
@@ -472,6 +673,60 @@ class _MediapipeBackbone:
         self._segmenter.close()
 
 
+class _DepthBackbone:
+    """Monocular depth (Depth Anything V2 small) via onnxruntime — the
+    non-person scene-occluder backbone.
+
+    ``infer`` takes an RGB uint8 frame and returns a float32 2-D
+    RELATIVE-DISPARITY map (higher = nearer) resized back to the INPUT
+    frame's original H×W — same "caller never sees the model's internal
+    resolution" contract as the RVM/mediapipe backbones. Stateless (no
+    recurrence, unlike RVM): ``reset()`` is a no-op kept only so callers can
+    treat all three backbones uniformly (mirrors _MediapipeBackbone).
+    """
+
+    kind = "depth"
+
+    def __init__(self, session: object) -> None:
+        self._session = session
+        input_meta = session.get_inputs()[0]
+        self._input_name = input_meta.name
+        # fp16 export: cast the preprocessed tensor to match, since ORT
+        # will not silently upcast a float32 feed for a float16 graph input.
+        self._input_is_fp16 = "float16" in str(input_meta.type)
+        self._output_name = session.get_outputs()[0].name
+
+    def reset(self) -> None:  # stateless — nothing to reset
+        pass
+
+    def infer(self, rgb: np.ndarray) -> np.ndarray:
+        h, w = rgb.shape[:2]
+        size = _DEPTH_INPUT_SIZE
+        resized = cv2.resize(rgb, (size, size), interpolation=cv2.INTER_LINEAR)
+        normalized = (
+            resized.astype(np.float32) / 255.0 - _DEPTH_IMAGENET_MEAN
+        ) / _DEPTH_IMAGENET_STD
+        chw = normalized.transpose(2, 0, 1)[None]
+        dtype = np.float16 if self._input_is_fp16 else np.float32
+        src = np.ascontiguousarray(chw.astype(dtype))
+        (raw,) = self._session.run([self._output_name], {self._input_name: src})
+        disparity = np.squeeze(np.asarray(raw, dtype=np.float32))
+        if disparity.ndim != 2:
+            raise _MatteAbort(f"unexpected depth model output shape {disparity.shape}")
+        if not np.isfinite(disparity).all():
+            # fp16 graphs can NaN/Inf on degenerate frames. Left unguarded,
+            # NaN silently binarizes to an ALL-ZERO mask (NaN > eps is
+            # False), which reads as a "conclusive" no-occluder verdict and
+            # can mint the permanent unstable sentinel from a one-off
+            # numerical glitch. Raise instead: the failure stays transient
+            # (depth_rejected False → retryable).
+            raise _MatteAbort("non-finite depth model output")
+        return cv2.resize(disparity, (w, h), interpolation=cv2.INTER_LINEAR)
+
+    def close(self) -> None:
+        self._session = None
+
+
 def _rvm_enabled() -> bool:
     try:
         from app.config import settings  # noqa: PLC0415
@@ -479,6 +734,40 @@ def _rvm_enabled() -> bool:
         return bool(getattr(settings, "matte_rvm_enabled", True))
     except Exception:  # noqa: BLE001 — config import must never break the matte
         return True
+
+
+def _depth_occluder_enabled() -> bool:
+    """Mirrors _rvm_enabled's shape but defaults FALSE on config-import
+    failure (dark-ship default: an unreadable config must never turn on a
+    brand-new inference path, unlike the RVM kill switch which defaults
+    the established backbone ON)."""
+    try:
+        from app.config import settings  # noqa: PLC0415
+
+        return bool(getattr(settings, "matte_depth_occluder_enabled", False))
+    except Exception:  # noqa: BLE001 — config import must never break the matte
+        return False
+
+
+def _create_ort_session(model_path: str) -> object:
+    """Shared onnxruntime InferenceSession construction for both matte
+    backbones that use ORT (RVM + depth): pinned intra-op threads, no
+    spin-wait — the worker shares 4 vCPUs with the ffmpeg mux subprocess;
+    ORT's all-cores spinning default starves the box for the whole compute.
+    Lazy import: this module must stay importable without onnxruntime
+    installed (the structural eval-CI constraint other lazy-imported
+    pipeline deps share).
+    """
+    import onnxruntime as ort  # noqa: PLC0415 — lazy: eval CI has no onnxruntime
+
+    opts = ort.SessionOptions()
+    opts.intra_op_num_threads = _RVM_INTRA_OP_THREADS
+    opts.inter_op_num_threads = 1
+    try:
+        opts.add_session_config_entry("session.intra_op.allow_spinning", "0")
+    except Exception:  # noqa: BLE001 — config entry name varies across ORT versions
+        pass
+    return ort.InferenceSession(model_path, sess_options=opts, providers=["CPUExecutionProvider"])
 
 
 def _create_backbone(prefer_rvm: bool = True) -> _RvmBackbone | _MediapipeBackbone:
@@ -494,21 +783,7 @@ def _create_backbone(prefer_rvm: bool = True) -> _RvmBackbone | _MediapipeBackbo
         try:
             if not os.path.isfile(rvm_path):
                 raise FileNotFoundError(rvm_path)
-            import onnxruntime as ort  # noqa: PLC0415 — lazy: eval CI has no onnxruntime
-
-            opts = ort.SessionOptions()
-            # Pinned threads + no spin-wait: the worker shares 4 vCPUs with
-            # the ffmpeg mux subprocess; ORT's all-cores spinning default
-            # starves the box for the whole compute.
-            opts.intra_op_num_threads = _RVM_INTRA_OP_THREADS
-            opts.inter_op_num_threads = 1
-            try:
-                opts.add_session_config_entry("session.intra_op.allow_spinning", "0")
-            except Exception:  # noqa: BLE001 — config entry name varies across ORT versions
-                pass
-            session = ort.InferenceSession(
-                rvm_path, sess_options=opts, providers=["CPUExecutionProvider"]
-            )
+            session = _create_ort_session(rvm_path)
             return _RvmBackbone(session)
         except Exception as exc:  # noqa: BLE001 — fall back to mediapipe
             log.warning("subject_matte_rvm_unavailable", error=str(exc), model_path=rvm_path)
@@ -530,6 +805,71 @@ def _create_backbone(prefer_rvm: bool = True) -> _RvmBackbone | _MediapipeBackbo
         output_category_mask=False,
     )
     return _MediapipeBackbone(mp, mp_vision.ImageSegmenter.create_from_options(options))
+
+
+def _create_depth_backbone() -> _DepthBackbone:
+    """Mirrors _create_backbone's missing-file/import-failure handling for
+    the depth model: raises (any exception) when the backbone can't be
+    created — best-effort contract: the caller catches it and falls back to
+    the already-computed person stats, never a failed render.
+    """
+    depth_path = _resolve_asset_path(MATTE_DEPTH_MODEL_PATH)
+    if not os.path.isfile(depth_path):
+        raise _MatteAbort(f"matte depth model not found at {depth_path}")
+    session = _create_ort_session(depth_path)
+    return _DepthBackbone(session)
+
+
+def _treat_account_and_write(
+    treated: list[np.ndarray],
+    window: MatteWindow,
+    cut_boundaries_s: list[float] | None,
+    write: Callable[[bytes], object],
+    coverages: list[float],
+    iou_values: list[float],
+) -> tuple[int, int]:
+    """Per-tick stats accounting + streaming write, shared by the person
+    path (collect_window_masks) and the depth path
+    (_collect_window_masks_depth) so both backbones produce IDENTICAL stats
+    semantics and matte-stream framing.
+
+    ``treated`` is one TREATED uint8 mask (matte res) per output tick.
+    Appends this window's per-tick mean coverage to ``coverages`` and any
+    valid adjacent-pair IoU to ``iou_values`` — both accumulated across all
+    windows by the caller — writes each mask's raw bytes via ``write``
+    (``proc.stdin.write``), and returns (produced_frame_count,
+    presence_flips) for this window.
+
+    Pairs that straddle a known hard cut are legit discontinuities, not
+    segmenter/backbone instability — excluded from every stability stat so
+    montage cuts can't inflate flip/jump counts. The post-cut warmup tick
+    is excluded too: its median is built from 1-2 samples and settles on
+    the next frame.
+    """
+    cut_ticks = _window_boundary_ticks(window, cut_boundaries_s)
+    stat_boundary_ticks = cut_ticks | {t + 1 for t in cut_ticks}
+    prev_present: bool | None = None
+    prev_binary: np.ndarray | None = None
+    presence_flips = 0
+    produced = 0
+    for tick, treated_mask in enumerate(treated):
+        at_cut = tick in stat_boundary_ticks
+        mean_frac = float(np.mean(treated_mask)) / 255.0
+        coverages.append(mean_frac)
+        present = mean_frac >= _PRESENCE_COVERAGE_FLOOR
+        if prev_present is not None and present != prev_present and not at_cut:
+            presence_flips += 1
+        binary = treated_mask >= 128 if present else None
+        if binary is not None and prev_binary is not None and not at_cut:
+            union = int(np.count_nonzero(binary | prev_binary))
+            if union > 0:
+                intersection = int(np.count_nonzero(binary & prev_binary))
+                iou_values.append(intersection / union)
+        prev_present = present
+        prev_binary = binary
+        write(treated_mask.tobytes())
+        produced += 1
+    return produced, presence_flips
 
 
 def _compute_subject_matte_inner(
@@ -722,33 +1062,10 @@ def _compute_subject_matte_inner(
                     )
 
             frame_count += inferences
-            # Pairs that straddle a known hard cut are legit discontinuities,
-            # not segmenter instability — exclude them from every stability
-            # stat so montage cuts can't inflate flip/jump counts. The
-            # post-cut warmup tick is excluded too: its median is built from
-            # 1-2 samples and settles on the next frame.
-            cut_ticks = _window_boundary_ticks(window, cut_boundaries_s)
-            stat_boundary_ticks = cut_ticks | {t + 1 for t in cut_ticks}
-            prev_present: bool | None = None
-            prev_binary: np.ndarray | None = None
-            produced = 0
-            for tick, treated_mask in enumerate(treated):
-                at_cut = tick in stat_boundary_ticks
-                mean_frac = float(np.mean(treated_mask)) / 255.0
-                coverages.append(mean_frac)
-                present = mean_frac >= _PRESENCE_COVERAGE_FLOOR
-                if prev_present is not None and present != prev_present and not at_cut:
-                    presence_flips += 1
-                binary = treated_mask >= 128 if present else None
-                if binary is not None and prev_binary is not None and not at_cut:
-                    union = int(np.count_nonzero(binary | prev_binary))
-                    if union > 0:
-                        intersection = int(np.count_nonzero(binary & prev_binary))
-                        iou_values.append(intersection / union)
-                prev_present = present
-                prev_binary = binary
-                proc.stdin.write(treated_mask.tobytes())
-                produced += 1
+            produced, window_flips = _treat_account_and_write(
+                treated, window, cut_boundaries_s, proc.stdin.write, coverages, iou_values
+            )
+            presence_flips += window_flips
 
             if produced == 0:
                 continue
@@ -791,6 +1108,7 @@ def _compute_subject_matte_inner(
         large_jumps_per_s=large_jump_count / (total_produced / MATTE_FPS)
         if total_produced
         else 0.0,
+        backbone=backbone.kind,
     )
 
     sidecar = {
@@ -798,6 +1116,133 @@ def _compute_subject_matte_inner(
         "fps": MATTE_FPS,
         "size": [_MATTE_WIDTH, _MATTE_HEIGHT],
         "stats": asdict(stats),
+        "backbone": backbone.kind,
+    }
+    with open(f"{out_path}.json", "w") as f:
+        json.dump(sidecar, f)
+
+    return stats
+
+
+def _compute_depth_matte_inner(
+    video_path: str,
+    windows: list[MatteWindow],
+    out_path: str,
+    start_time: float,
+    cut_boundaries_s: list[float] | None = None,
+) -> MatteStats:
+    """Depth-occluder counterpart of _compute_subject_matte_inner — same
+    windows/mux/stats/sidecar contract, backed by _DepthBackbone +
+    _collect_window_masks_depth instead of the person backbones, and the
+    SAME shared _treat_account_and_write accounting/write tail. Raises
+    (never caught here) on any failure — the caller
+    (_maybe_attempt_depth_occlusion) is the best-effort boundary.
+    """
+    if not windows:
+        raise _MatteAbort("no windows requested")
+
+    _budget_check(start_time)
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        cap.release()
+        raise _MatteAbort(f"cannot open video: {video_path}")
+
+    _budget_check(start_time)
+
+    try:
+        backbone = _create_depth_backbone()
+    except Exception:
+        cap.release()
+        raise
+    log.info("subject_matte_backbone", kind=backbone.kind)
+
+    src_fps = _source_fps(cap)
+
+    proc: subprocess.Popen | None = None
+    written_windows: list[tuple[float, float]] = []
+    coverages: list[float] = []
+    frame_count = 0
+    presence_flips = 0
+    total_produced = 0
+    iou_values: list[float] = []
+
+    try:
+        proc = _spawn_matte_writer(out_path)
+        assert proc.stdin is not None
+
+        for window in windows:
+            _budget_check(start_time)
+            if window.end_s <= window.start_s:
+                log.warning(
+                    "subject_matte_skipping_empty_window",
+                    start_s=window.start_s,
+                    end_s=window.end_s,
+                )
+                continue
+
+            treated, inferences = _collect_window_masks_depth(
+                cap, backbone, window, src_fps, start_time, cut_boundaries_s
+            )
+            if not treated:
+                continue
+
+            frame_count += inferences
+            produced, window_flips = _treat_account_and_write(
+                treated, window, cut_boundaries_s, proc.stdin.write, coverages, iou_values
+            )
+            presence_flips += window_flips
+
+            if produced == 0:
+                continue
+            total_produced += produced
+            effective_end_s = window.start_s + produced / MATTE_FPS
+            written_windows.append((window.start_s, effective_end_s))
+
+        # communicate() sends EOF on stdin itself; closing it first makes the
+        # flush inside communicate() raise "flush of closed file" on py3.11.
+        remaining = max(1.0, MATTE_WALL_CLOCK_BUDGET_S - (time.monotonic() - start_time))
+        _, stderr = proc.communicate(timeout=min(remaining, _FFMPEG_MUX_TIMEOUT_S))
+        if proc.returncode != 0:
+            raise _MatteAbort(f"ffmpeg matte mux failed: {stderr.decode(errors='replace')[:500]}")
+    finally:
+        backbone.close()
+        cap.release()
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+    if not written_windows or frame_count == 0:
+        raise _MatteAbort("no depth matte frames produced")
+
+    large_jump_count = sum(1 for v in iou_values if v < _LARGE_JUMP_IOU)
+    stats = MatteStats(
+        mean_coverage=float(np.mean(coverages)),
+        min_coverage=float(np.min(coverages)),
+        max_coverage=float(np.max(coverages)),
+        frame_count=frame_count,
+        windows=written_windows,
+        presence_flips=presence_flips,
+        presence_flips_per_s=presence_flips / (total_produced / MATTE_FPS)
+        if total_produced
+        else 0.0,
+        shape_stability_iou=float(np.median(iou_values))
+        if len(iou_values) >= _MIN_IOU_PAIRS
+        else None,
+        iou_pair_count=len(iou_values),
+        large_jump_count=large_jump_count,
+        large_jumps_per_s=large_jump_count / (total_produced / MATTE_FPS)
+        if total_produced
+        else 0.0,
+        backbone=backbone.kind,
+    )
+
+    sidecar = {
+        "windows": [list(w) for w in written_windows],
+        "fps": MATTE_FPS,
+        "size": [_MATTE_WIDTH, _MATTE_HEIGHT],
+        "stats": asdict(stats),
+        "backbone": backbone.kind,
     }
     with open(f"{out_path}.json", "w") as f:
         json.dump(sidecar, f)
@@ -846,6 +1291,125 @@ def _spawn_matte_writer(out_path: str) -> subprocess.Popen:
     return subprocess.Popen(
         cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
     )
+
+
+def _normalize_disparity(disparity: np.ndarray) -> np.ndarray:
+    """Robust per-frame normalize of a raw relative-disparity map to
+    float32 [0, 1]. Percentile clipping (not min/max) absorbs single-pixel
+    sensor/model outliers that would otherwise blow out the scale.
+    """
+    lo, hi = np.percentile(disparity, (_DEPTH_NORM_LOW_PCTL, _DEPTH_NORM_HIGH_PCTL))
+    span = max(float(hi) - float(lo), 1e-6)
+    return np.clip((disparity - float(lo)) / span, 0.0, 1.0).astype(np.float32)
+
+
+def _collect_window_masks_depth(
+    cap: cv2.VideoCapture,
+    backbone: _DepthBackbone,
+    window: MatteWindow,
+    src_fps: float,
+    start_time: float,
+    cut_boundaries_s: list[float] | None,
+) -> tuple[list[np.ndarray], int]:
+    """Depth-occluder counterpart of collect_window_masks (person path):
+    one TREATED uint8 mask (matte res) per output tick, same contract
+    (masks, inference_count) as the person path.
+
+    Two-stage, per the plan:
+
+    Stage 1 — sparse sampling: reuses the same time-aligned frame-advance
+    decode loop as collect_window_masks (frames_read tracks source time so
+    inference always runs on the newest frame covering the tick), but
+    ``backbone.infer`` only runs every ``_DEPTH_INFER_TICK_STRIDE`` output
+    ticks — ViT inference is far heavier than RVM/mediapipe, so full
+    MATTE_FPS sampling would blow the wall-clock budget. Between
+    inferences the latest disparity sample is held (matching the person
+    path's "hold the last treated mask" behavior when the source itself
+    lags). Each held/fresh disparity is robustly normalized to [0, 1]
+    per-frame (_normalize_disparity) and thresholded at the fixed
+    ``_DEPTH_SKY_EPS`` — occluder = disparity ABOVE the sky/background
+    mode, i.e. nearer (see _DEPTH_SKY_EPS for why a fixed epsilon is used
+    instead of an Otsu/variance split).
+
+    Stage 2 — the shared v3 "solid object" temporal treatment
+    (_postprocess_mask: median-3, hard cut, min-component, feather) is
+    applied to the per-tick binary samples exactly like the person path
+    applies it to soft confidence — a binary 0/1 input is just a
+    degenerate case of the same [0, 1] soft-mask contract.
+
+    Recurrent state doesn't exist for this backbone (stateless), but the
+    temporal-median deque IS reset at cut boundaries like the person path,
+    so a clip's occluder mask never bleeds into the next clip.
+    """
+    cap.set(cv2.CAP_PROP_POS_MSEC, window.start_s * 1000.0)
+    num_output_frames = max(1, round((window.end_s - window.start_s) * MATTE_FPS))
+    boundary_ticks = _window_boundary_ticks(window, cut_boundaries_s)
+
+    masks: list[np.ndarray] = []
+    recent_soft: deque[np.ndarray] = deque(maxlen=_TEMPORAL_MEDIAN_FRAMES)
+    frames_read = 0
+    inferences = 0
+    last_disparity: np.ndarray | None = None
+    last_binary_soft: np.ndarray | None = None
+    source_exhausted = False
+    backbone.reset()
+
+    cut_pending = False
+    for i in range(num_output_frames):
+        _budget_check(start_time)
+        if i in boundary_ticks:
+            recent_soft.clear()
+            backbone.reset()
+            last_disparity = None
+            last_binary_soft = None
+            cut_pending = True
+        target_reads = int(i * src_fps / MATTE_FPS + 1e-6) + 1
+
+        frame = None
+        while frames_read < target_reads and not source_exhausted:
+            ok, next_frame = cap.read()
+            if not ok:
+                source_exhausted = True
+                break
+            frame = next_frame
+            frames_read += 1
+
+        if frame is not None and (last_disparity is None or i % _DEPTH_INFER_TICK_STRIDE == 0):
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            disparity = backbone.infer(rgb)
+            inferences += 1
+            last_disparity = cv2.resize(
+                disparity, (_MATTE_WIDTH, _MATTE_HEIGHT), interpolation=cv2.INTER_LINEAR
+            )
+            # Normalize + threshold ONCE per fresh inference: held ticks
+            # reuse this bit-identical result instead of re-running two
+            # percentile passes over an unchanged disparity map every tick
+            # (~2/3 of all ticks at the 10fps sampling stride).
+            last_binary_soft = (_normalize_disparity(last_disparity) > _DEPTH_SKY_EPS).astype(
+                np.float32
+            )
+            binary_soft = last_binary_soft
+        elif last_binary_soft is not None:
+            binary_soft = last_binary_soft
+        elif cut_pending:
+            # No fresh frame at the cut tick yet (sub-src_fps source or
+            # decode hiccup): never re-derive from the PRE-cut disparity —
+            # that ghost is exactly what the reset removes. A zero mask
+            # ("nothing nearer than sky" — exactly what zero disparity
+            # normalizes to) holds until a real post-cut frame arrives.
+            binary_soft = np.zeros((_MATTE_HEIGHT, _MATTE_WIDTH), dtype=np.float32)
+        else:
+            # Video shorter than the window — nothing usable yet.
+            break
+
+        if frame is not None:
+            cut_pending = False
+
+        recent_soft.append(binary_soft)
+        last = np.clip(_postprocess_mask(recent_soft) * 255.0, 0, 255).astype(np.uint8)
+        masks.append(last)
+
+    return masks, inferences
 
 
 @dataclass
