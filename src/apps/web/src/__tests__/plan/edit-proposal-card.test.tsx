@@ -6,16 +6,42 @@ import {
   draftEditProposal,
   editProposalConversationTurn,
   updateEditProposal,
+  PlanApiError,
   type EditProposal,
   type PlanItem,
 } from "@/lib/plan-api";
 
-jest.mock("@/lib/plan-api", () => ({
-  draftEditProposal: jest.fn(),
-  editProposalConversationTurn: jest.fn(),
-  updateEditProposal: jest.fn(),
-  approveEditProposal: jest.fn(),
-}));
+jest.mock("@/lib/plan-api", () => {
+  class PlanApiError extends Error {
+    status: number;
+    code: string;
+    retryable: boolean;
+    constructor({
+      message,
+      status = 500,
+      code = "request_failed",
+      retryable = false,
+    }: {
+      message: string;
+      status?: number;
+      code?: string;
+      retryable?: boolean;
+    }) {
+      super(message);
+      this.name = "PlanApiError";
+      this.status = status;
+      this.code = code;
+      this.retryable = retryable;
+    }
+  }
+  return {
+    draftEditProposal: jest.fn(),
+    editProposalConversationTurn: jest.fn(),
+    updateEditProposal: jest.fn(),
+    approveEditProposal: jest.fn(),
+    PlanApiError,
+  };
+});
 
 const mockDraft = draftEditProposal as jest.MockedFunction<typeof draftEditProposal>;
 const mockConversation = editProposalConversationTurn as jest.MockedFunction<
@@ -248,13 +274,14 @@ describe("EditProposalCard", () => {
     expect(onChanged).toHaveBeenCalledWith(analyzing);
   });
 
-  it("resumes a reloaded in-flight conversation without allowing a generic plan", () => {
+  it("resumes a reloaded in-flight conversation, keeping the composer typeable but Send disabled", () => {
     const briefing = proposal("briefing");
     briefing.conversation_in_progress = true;
     render(<EditProposalCard item={item(briefing)} onChanged={jest.fn()} />);
 
     expect(screen.getByRole("status")).toHaveTextContent("Thinking it through");
-    expect(screen.getByLabelText("Tell Kria what you want in the edit")).toBeDisabled();
+    expect(screen.getByLabelText("Tell Kria what you want in the edit")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Send direction" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Build this edit plan" })).toBeDisabled();
   });
 
@@ -412,7 +439,7 @@ describe("EditProposalCard", () => {
     expect(onChanged).toHaveBeenCalledWith(analyzing);
   });
 
-  it("lets the creator request a draft change in plain language", async () => {
+  it("continues the same thread when moving from briefing into draft review", async () => {
     const starting = proposal();
     starting.conversation = [
       { role: "user", phase: "briefing", content: "Make it reflective", suggestions: [] },
@@ -426,6 +453,7 @@ describe("EditProposalCard", () => {
     const revised = proposal();
     revised.proposal_version = 3;
     revised.conversation = [
+      ...starting.conversation,
       { role: "user", content: "Put food first and make it slower", suggestions: [] },
       {
         role: "agent",
@@ -446,8 +474,10 @@ describe("EditProposalCard", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Tell Kria what to change" }));
     expect(screen.getByText("Shape the draft with Kria")).toBeInTheDocument();
-    expect(screen.getByText(/What would you change about this draft/)).toBeInTheDocument();
-    expect(screen.queryByText("I’m ready to draft a reflective plan.")).toBeNull();
+    // Real chat thread: the prior briefing-phase turn stays visible instead of
+    // being replaced by a fresh review greeting — Kria has already spoken.
+    expect(screen.getByText("I’m ready to draft a reflective plan.")).toBeInTheDocument();
+    expect(screen.queryByText(/What would you change about this draft/)).toBeNull();
     expect(screen.getByRole("button", { name: "Put food first" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Build this edit plan" })).toBeNull();
     expect(screen.getByRole("button", { name: "Close conversation" })).toBeVisible();
@@ -464,6 +494,31 @@ describe("EditProposalCard", () => {
       );
     });
     expect(onChanged).toHaveBeenCalledWith(revisedItem);
+  });
+
+  it("renders every persisted turn as a bubble, in conversation order", () => {
+    const starting = proposal();
+    starting.conversation = [
+      { role: "user", phase: "briefing", content: "Make it reflective", suggestions: [] },
+      { role: "agent", phase: "briefing", content: "Got it — reflective it is.", suggestions: [] },
+      { role: "user", phase: "review", content: "Prioritize the food scenes", suggestions: [] },
+      { role: "agent", phase: "review", content: "I moved food first.", suggestions: [] },
+    ];
+    render(<EditProposalCard item={item(starting)} onChanged={jest.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Tell Kria what to change" }));
+
+    const order = [
+      "Make it reflective",
+      "Got it — reflective it is.",
+      "Prioritize the food scenes",
+      "I moved food first.",
+    ].map((text) => screen.getByText(text));
+    for (let i = 1; i < order.length; i += 1) {
+      // eslint-disable-next-line no-bitwise
+      expect(
+        order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    }
   });
 
   it("saves manual draft edits before asking Kria for a revision", async () => {
@@ -538,5 +593,110 @@ describe("EditProposalCard", () => {
     ));
     await waitFor(() => expect(mockApprove).toHaveBeenLastCalledWith("item-1", 4));
     expect(onChanged).toHaveBeenLastCalledWith(approvedV5);
+  });
+
+  it("shows an optimistic pending bubble while sending, then clears it on success", async () => {
+    let resolveTurn!: (value: PlanItem) => void;
+    mockConversation.mockReturnValue(new Promise((done) => { resolveTurn = done; }));
+    const briefing = proposal("briefing");
+    render(<EditProposalCard item={item(briefing)} onChanged={jest.fn()} />);
+
+    fireEvent.change(screen.getByLabelText("Tell Kria what you want in the edit"), {
+      target: { value: "Make it about the coastline" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send direction" }));
+
+    expect(await screen.findByText("Make it about the coastline")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Thinking it through");
+
+    await act(async () => resolveTurn(item(proposal("briefing"))));
+
+    await waitFor(() => {
+      expect(screen.queryByText("Make it about the coastline")).toBeNull();
+    });
+  });
+
+  it("drops the pending bubble, restores the composer text, and shows friendly copy for a raw request-failed error", async () => {
+    mockConversation.mockRejectedValueOnce(new Error("Request failed (429)"));
+    const briefing = proposal("briefing");
+    const onRefresh = jest.fn();
+    render(<EditProposalCard item={item(briefing)} onChanged={jest.fn()} onRefresh={onRefresh} />);
+
+    const input = screen.getByLabelText("Tell Kria what you want in the edit");
+    fireEvent.change(input, { target: { value: "Slow it down" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send direction" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Kria couldn't think that through.",
+    );
+    expect(input).toHaveValue("Slow it down");
+    // The pending echo bubble is gone — the only match left is the textarea
+    // itself (React renders a controlled textarea's value as a text child,
+    // so getByText legitimately matches it too).
+    expect(screen.queryAllByText("Slow it down")).toHaveLength(1);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the empty-media nudge copy for a 409 media_required race", async () => {
+    mockConversation.mockRejectedValueOnce(
+      new PlanApiError({ message: "media_required", status: 409, code: "media_required" }),
+    );
+    const briefing = proposal("briefing");
+    render(<EditProposalCard item={item(briefing)} onChanged={jest.fn()} />);
+
+    fireEvent.change(screen.getByLabelText("Tell Kria what you want in the edit"), {
+      target: { value: "Go" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send direction" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Add a photo or video first — Kria plans from your real footage",
+    );
+  });
+
+  it("shows an empty-media nudge and disables Send when there's no footage yet", () => {
+    const briefing = proposal("briefing");
+    const noMedia: PlanItem = { ...item(briefing), clip_gcs_paths: [], clip_assignments: [] };
+    render(<EditProposalCard item={noMedia} onChanged={jest.fn()} />);
+
+    expect(
+      screen.getByText("Add a photo or video first — Kria plans from your real footage"),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Tell Kria what you want in the edit"), {
+      target: { value: "Something" },
+    });
+    expect(screen.getByRole("button", { name: "Send direction" })).toBeDisabled();
+  });
+
+  it("shows fallback chips when the last agent turn gave none and the brief isn't ready", () => {
+    const briefing = proposal("briefing");
+    briefing.conversation = [
+      { role: "user", content: "Not sure yet", suggestions: [] },
+      { role: "agent", content: "Tell me more about what you want.", suggestions: [] },
+    ];
+    briefing.brief_ready = false;
+    render(<EditProposalCard item={item(briefing)} onChanged={jest.fn()} />);
+
+    expect(screen.getByRole("button", { name: "Make it more personal" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Keep it short and punchy" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "You decide — build the plan" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the composer typeable while a turn is in flight", async () => {
+    mockConversation.mockReturnValue(new Promise(() => {}));
+    const briefing = proposal("briefing");
+    render(<EditProposalCard item={item(briefing)} onChanged={jest.fn()} />);
+
+    const input = screen.getByLabelText("Tell Kria what you want in the edit");
+    fireEvent.change(input, { target: { value: "First message" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send direction" }));
+
+    await screen.findByText("First message");
+    expect(input).toBeEnabled();
+    fireEvent.change(input, { target: { value: "typing more" } });
+    expect(input).toHaveValue("typing more");
+    expect(screen.getByRole("button", { name: "Send direction" })).toBeDisabled();
   });
 });
