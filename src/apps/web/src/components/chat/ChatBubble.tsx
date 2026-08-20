@@ -23,7 +23,7 @@ export function ChatBubble({
   return (
     <div
       className={[
-        "whitespace-pre-line rounded-[18px] px-3.5 py-2.5 text-sm leading-5",
+        "whitespace-pre-line break-words rounded-[18px] px-3.5 py-2.5 text-sm leading-5",
         isUser
           ? "ml-auto max-w-[85%] rounded-br-md bg-[#0c0c0e] text-white"
           : "mr-auto max-w-[85%] rounded-bl-md bg-zinc-100 text-[#0c0c0e]",
