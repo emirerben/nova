@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.42.0.0] — 2026-08-20
+
+### Changed
+- **Planning an edit with Kria is now a real conversation.** The plan-edit panel shows the whole exchange as a chat thread — your messages and Kria's replies as bubbles, your words echoed instantly while Kria thinks (with a progressive "thinking" indicator), and the composer stays typeable while a reply is in flight. Suggestion chips stay relevant to the current phase and never disappear after the first message.
+- **Errors in the planning chat are now human.** Rate limits and server hiccups show friendly, actionable copy instead of raw error codes; your typed message is restored to the composer instead of being lost; and items with footage only in the visuals pool can start the conversation instead of being told to "add a photo or video first."
+
+### Fixed
+- **Kria's reply appears the moment it arrives.** The page adopts the server's response immediately instead of reverting to the opening prompt for a refetch cycle, and a slow in-flight poll can no longer overwrite a newer reply (your message can't silently vanish from the thread).
+
 ## [0.41.0.0] — 2026-08-20
 
 ### Added
