@@ -26,7 +26,14 @@ export function usePolledJobStatus<T>(
   intervalMs: number = POLL_INTERVAL_MS,
   isTerminal: (data: T) => boolean,
   maxPollMs: number = DEFAULT_MAX_POLL_MS,
-): { data: T | null; error: Error | null; refetch: () => void } {
+): {
+  data: T | null;
+  error: Error | null;
+  refetch: () => void;
+  /** Thin setData wrapper — applies a locally-known authoritative value (e.g.
+   *  a POST response) immediately, without waiting for the next poll tick. */
+  applyData: (updater: (prev: T | null) => T | null) => void;
+} {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const isTerminalRef = useRef(isTerminal);
@@ -87,6 +94,11 @@ export function usePolledJobStatus<T>(
     void doFetch();
   }, [doFetch]);
 
+  const applyData = useCallback((updater: (prev: T | null) => T | null) => {
+    if (!mountedRef.current) return;
+    setData(updater);
+  }, []);
+
   // Initial fetch + interval.
   useEffect(() => {
     mountedRef.current = true;
@@ -137,5 +149,5 @@ export function usePolledJobStatus<T>(
     return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, [doFetch]);
 
-  return { data, error, refetch };
+  return { data, error, refetch, applyData };
 }

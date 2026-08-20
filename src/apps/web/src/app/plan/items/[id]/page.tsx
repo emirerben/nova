@@ -703,6 +703,7 @@ export default function PlanItemPage() {
     data,
     error: pollError,
     refetch,
+    applyData,
   } = usePolledJobStatus(fetcher, undefined, isTerminalFn);
 
   useEffect(() => {
@@ -2076,7 +2077,14 @@ export default function PlanItemPage() {
               <EditProposalCard
                 item={item}
                 onRefresh={refetch}
-                onChanged={() => {
+                onChanged={(updated) => {
+                  // Apply the authoritative response immediately (G3) — the
+                  // conversation POST/PATCH already returned the fresh item,
+                  // so don't make the creator wait a poll tick to see it.
+                  // Still force-fetch + refetch right after: this keeps the
+                  // job-status half of `data` in sync and re-arms polling
+                  // (e.g. for conversation_in_progress / analyzing states).
+                  applyData((prev) => (prev ? { ...prev, item: updated } : prev));
                   forceFreshFetchRef.current = true;
                   refetch();
                 }}
