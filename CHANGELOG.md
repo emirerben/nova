@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.41.0.0] — 2026-08-20
+
+### Added
+- **Text can now go behind scenery, not just people (dark launch).** "Behind subject" text on a clip with nobody in frame — a landmark, hill, or building against the sky — now tucks behind the scene's foreground instead of silently falling back to text-on-top (the Acropolis case: "ACROPOLIS"/"ATHENS" rendered in front of the hill it was meant to peek out from). A depth model estimates what's nearer than the sky/far background and occludes the text behind it; shots where no clear foreground/background split exists still fall back to plain text. Off by default behind `MATTE_DEPTH_OCCLUDER_ENABLED`; with the flag off, behavior is unchanged.
+
+### Changed
+- **Behind-subject processing recovers better from failures.** Clips whose occlusion was rejected before the depth engine existed automatically get a fresh attempt once it's enabled; a transient failure (missing model, time budget, glitchy inference frame) can no longer permanently disable occlusion for a clip; a working occlusion mask is never destroyed by an inconclusive re-check; and rolling the feature flag back also stops depth occlusion on clips that were already processed with it.
+
 ## [0.40.0.2] — 2026-08-19
 
 ### Fixed

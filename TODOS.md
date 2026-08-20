@@ -376,6 +376,30 @@ PR1 shipped the capability-complete core behind `NEXT_PUBLIC_MOBILE_EDITOR_ENABL
 - **LightTransport accent (P3, XS).** `accent-lime-500` → `accent-lime-600`
   (D16); deviation documented in DESIGN.md §14.
 
+## Depth-occluder backbone — deferrals (from matte-depth-occluder PR, 2026-08-20)
+
+### Surface behind-subject fallbacks to users (editor/copilot)
+**What:** When the matte engine strips `behind_subject` (trace outcomes `fallback_stripped` / `unstable_rejected` / `unstable_rejected_retryable`), the user gets plain text with zero feedback — the original Acropolis complaint was only diagnosable via /admin/jobs. The trace now carries `backbone` + outcome; nothing reads it user-side.
+**Why:** A user toggle that silently does nothing is the same failure class the depth backbone just fixed one instance of.
+**How:** Bubble the last `subject_matte_resolved` outcome onto the variant (or read it from the trace store) and render an editor hint ("couldn't separate a subject in this clip") + let the copilot explain it.
+**Effort:** M (CC: half-day) **Priority:** P2 **Depends on:** MATTE_DEPTH_OCCLUDER_ENABLED flip
+
+### Relax match_overlay_format prompt for landmark shots
+**What:** The auto-decision prompt (`match_overlay_format.txt`) still refuses `behind_subject` on landscape/scenery shots — correct pre-depth, now overly conservative. Needs `prompt_version` bump + live evals per the prompt-change rule.
+**Why:** The depth backbone only fires when something requests `behind_subject`; the agent never will on the exact footage class the backbone was built for.
+**Effort:** S-M (CC: 2-3h + live evals) **Priority:** P2 **Depends on:** MATTE_DEPTH_OCCLUDER_ENABLED flip + a week of prod depth-matte quality signal
+
+### Depth perf levers: reduced input + adaptive stride for long windows
+**What:** Shipped depth input is 518×518 (~194ms/frame local); a patch-multiple 266×476 measured ~87ms/frame but was not adopted (E2E calibration ran at 518). `_DEPTH_MAX_INFERENCES=300` caps depth-eligible windows at ~30s — hold-to-EOF overlays on long clips skip depth entirely (retryable sentinel; with the flag on they re-check per burn, person-pass cost each time).
+**Why:** The cap excludes a chunk of the feature's own use case (long establishing shots), and worker CPU cost bounds the sampling rate.
+**How:** Re-run the sky-epsilon calibration + E2E at 266×476; if parity holds, drop `_DEPTH_INPUT_SIZE` and raise `_DEPTH_MAX_INFERENCES` (or stretch `_DEPTH_INFER_TICK_STRIDE` adaptively for long windows).
+**Effort:** M (CC: half-day incl. re-verification) **Priority:** P3 **Depends on:** —
+
+### Depth review deferrals (red team, 2026-08-19)
+**What:** Three recorded non-blocking findings: (1) `SoftTimeLimitExceeded` is swallowed by the matte engine's blanket best-effort handlers (pre-existing person-pass pattern; the depth pass widens the window it can land in). (2) Unhinted cuts ghost ~150-170ms of previous-clip occluder under the depth backbone (vs ~2 frames person-path), and a SANE depth matte computed without cut hints caches those ghosts. (3) Pre-existing `created_storage_paths` cleanup race: a stale reburn losing the DB generation guard can delete a winner's committed matte for non-generation-scoped keys (identical under v2; the provider's ±2-frame sidecar/stream check makes a mismatched pair self-heal).
+**Why:** Each is real but low-probability under the dark flag; re-weigh at flag-flip review.
+**Effort:** S each **Priority:** P3 **Depends on:** MATTE_DEPTH_OCCLUDER_ENABLED flip decision
+
 ## Text-behind-subject consistency train — deferrals (from behind-subject-consistency PR, 2026-07-26)
 
 ### Matte cache staleness vs visual-blocks / motion / camera bases
