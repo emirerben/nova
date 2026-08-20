@@ -13038,9 +13038,10 @@ def _render_subtitled_variant(
         "mix": 1.0,
         "user_style_knobs": None,
         "base_video_path": None,
-        # GCS key of the cached subject matte ({base_key}.matte.mp4) once a
-        # behind_subject text element has rendered — reburns reuse it instead
-        # of recomputing (same field/semantics as the montage lane).
+        # GCS key of the cached subject matte ({base_key} + the current
+        # _MATTE_CACHE_SUFFIX) once a behind_subject text element has
+        # rendered — reburns reuse it instead of recomputing (same
+        # field/semantics as the montage lane).
         "subject_matte_path": None,
         # Editable caption cues [{text, start_s, end_s}] (base/clip time). Drives the
         # on-video caption editor; reburned onto base_video_path when the creator edits.
@@ -13709,8 +13710,8 @@ def _render_subtitled_variant(
 
         final_path = os.path.join(variant_dir, "final.mp4")
         # Deterministic caption-free-base key — also the matte cache anchor
-        # (`{key}.matte.mp4`), so build it once here and reuse it for the
-        # conditional base upload below.
+        # (`{key}` + `_MATTE_CACHE_SUFFIX`), so build it once here and reuse
+        # it for the conditional base upload below.
         base_gcs_key = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_base.mp4"
         subtitled_matte_path = base.get("subject_matte_path")
         subtitled_created_storage: list[str] = []

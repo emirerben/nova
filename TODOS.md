@@ -389,8 +389,8 @@ PR1 shipped the capability-complete core behind `NEXT_PUBLIC_MOBILE_EDITOR_ENABL
 **Why:** The depth backbone only fires when something requests `behind_subject`; the agent never will on the exact footage class the backbone was built for.
 **Effort:** S-M (CC: 2-3h + live evals) **Priority:** P2 **Depends on:** MATTE_DEPTH_OCCLUDER_ENABLED flip + a week of prod depth-matte quality signal
 
-### Depth perf levers: reduced input + adaptive stride for long windows
-**What:** Shipped depth input is 518×518 (~194ms/frame local); a patch-multiple 266×476 measured ~87ms/frame but was not adopted (E2E calibration ran at 518). `_DEPTH_MAX_INFERENCES=300` caps depth-eligible windows at ~30s — hold-to-EOF overlays on long clips skip depth entirely (retryable sentinel; with the flag on they re-check per burn, person-pass cost each time).
+### Depth perf/quality levers: reduced input, adaptive stride, ROI refinement
+**What:** Shipped depth input is 518×518 (~194ms/frame local); a patch-multiple 266×476 measured ~87ms/frame but was not adopted (E2E calibration ran at 518). `_DEPTH_MAX_INFERENCES=300` caps depth-eligible windows at ~30s — hold-to-EOF overlays on long clips skip depth entirely (retryable sentinel; with the flag on they re-check per burn, person-pass cost each time). Also deferred from the same DECISIONS entry: ROI refinement for depth (inference on/around the text region instead of the full aspect-squashed frame — better boundary quality and a cheaper input at once).
 **Why:** The cap excludes a chunk of the feature's own use case (long establishing shots), and worker CPU cost bounds the sampling rate.
 **How:** Re-run the sky-epsilon calibration + E2E at 266×476; if parity holds, drop `_DEPTH_INPUT_SIZE` and raise `_DEPTH_MAX_INFERENCES` (or stretch `_DEPTH_INFER_TICK_STRIDE` adaptively for long windows).
 **Effort:** M (CC: half-day incl. re-verification) **Priority:** P3 **Depends on:** —
