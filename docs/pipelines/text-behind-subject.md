@@ -316,7 +316,9 @@ up and the original (all-zero) person stats are returned — the fallback
 path this doc already describes is byte-identical either way.
 
 **Sky-epsilon threshold on normalized disparity.** The depth backbone (Depth
-Anything V2 Small, fp16 ONNX, ~47.3MB, Apache-2.0; see `agents/DECISIONS.md`
+Anything V2 Small, fp16 ONNX, ~47.3MB, Apache-2.0; model asset
+`assets/models/depth_anything_v2_vits_fp16.onnx`, `MATTE_DEPTH_MODEL_PATH`
+in `subject_matte.py`; see `agents/DECISIONS.md`
 2026-08-19) infers a per-frame relative-disparity map — nearer pixels get
 higher raw values. An **Otsu threshold was tried first and rejected**:
 validated against the real Acropolis footage, raw disparity is heavily
