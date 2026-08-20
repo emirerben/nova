@@ -969,14 +969,21 @@ def _build_video_filter(
         # behind itself. Crisper but reads more "letterbox-y."
         filters.append(f"scale={ow}:{oh}:force_original_aspect_ratio=decrease")
         filters.append(f"pad={ow}:{oh}:(ow-iw)/2:(oh-ih)/2:color=black")
-    elif aspect_ratio == "16:9":
-        filters.append(f"scale=-2:{oh}")
-        filters.append(f"crop={ow}:{oh}")
     else:
         # Default crop mode: scale-fill the canvas (no bars), trim overflow.
         # `force_original_aspect_ratio=increase` grows BOTH source dims until
         # they cover the target, preserving aspect; `crop` center-trims the
         # overflow to exact target dims.
+        #
+        # There is deliberately NO 16:9 fast-path here anymore. The old
+        # `scale=-2:{oh},crop={ow}:{oh}` special case assumed the scaled width
+        # always overshoots the canvas width — true only on the portrait
+        # canvas. On LANDSCAPE, any source in the 16:9 classification bucket
+        # but under 1.778 (or a rotation-flagged clip whose decoded frames are
+        # portrait) scales to a width below `ow` and ffmpeg's crop fails with
+        # "Invalid too big or non positive size" (prod jobs ca168a9f et al.,
+        # 2026-08-19). The generic fill+crop below produces identical output
+        # for true 16:9 sources and is safe for every source/canvas pairing.
         filters.append(f"scale={ow}:{oh}:force_original_aspect_ratio=increase")
         filters.append(f"crop={ow}:{oh}")
 

@@ -1100,3 +1100,94 @@ def test_receipt_fault_injection_never_publishes_a_missing_required_stage(
             music_applied=False,
         )
     assert exc.value.code in {"guided_story_text_missing", "guided_story_receipt_mismatch"}
+
+
+@pytest.mark.skipif(
+    shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
+    reason="ffmpeg/ffprobe not installed",
+)
+def test_selected_rotated_video_is_normalized_without_changing_source_receipt(
+    tmp_path, monkeypatch
+) -> None:
+    """Regression for prod jobs ca168a9f/4467f18a/d9e4833c (2026-08-19): phone
+    clips with a -90° Display Matrix reached reframe unnormalized (the montage
+    path runs Stage 0.5, guided stories did not), so probe misclassified them
+    and the landscape render crashed. The download step must normalize the
+    local file in place while the identity receipt keeps the UNTOUCHED
+    download's bytes/sha."""
+    import subprocess as sp
+
+    from app.pipeline.orientation import detect_rotation_and_dims
+
+    stored = tmp_path / "stored.mp4"
+    source = tmp_path / "uploaded.mp4"
+    sp.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=red:s=64x36:d=0.4:r=30",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-pix_fmt",
+            "yuv420p",
+            str(stored),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=60,
+    )
+    sp.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-display_rotation",
+            "-90",
+            "-i",
+            str(stored),
+            "-c",
+            "copy",
+            str(source),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=60,
+    )
+    source_bytes = source.read_bytes()
+
+    def download(_path: str, local: str, *, generation: str) -> None:
+        assert generation == "14"
+        shutil.copy2(source, local)
+
+    monkeypatch.setattr("app.storage.download_generation_to_file", download)
+    plan = {
+        "selected_media_ids": ["tortoise-video"],
+        "story_timeline": [
+            {
+                "media_id": "tortoise-video",
+                "gcs_path": "users/u/VID_20260813.mp4",
+                "generation": "14",
+                "kind": "video",
+            }
+        ],
+    }
+
+    local_by_id, receipts = _download_selected(plan, str(tmp_path))
+
+    # Local render source: rotation flag stripped, pixels portrait.
+    rotation, width, height = detect_rotation_and_dims(local_by_id["tortoise-video"])
+    assert rotation == 0
+    assert (width, height) == (36, 64)
+    # Identity receipt: the untouched download, not the normalized bytes.
+    assert receipts[0]["bytes"] == len(source_bytes)
+    assert receipts[0]["sha256"] == hashlib.sha256(source_bytes).hexdigest()
