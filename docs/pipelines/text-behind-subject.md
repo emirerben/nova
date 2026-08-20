@@ -1,7 +1,8 @@
 # Text-behind-subject pipeline — internals
 
 Reference doc for deep pipeline internals. CLAUDE.md carries the design contract
-(flag name, one-line behavior, rollback command); this file carries the mechanics.
+(flag names, one-line behavior); this file carries the mechanics and the
+rollback commands ("Flag + rollback" / "Flag semantics + rollback" below).
 
 See also: `docs/pipelines/generative.md` for the variant/reburn machinery this
 feature plugs into, `agents/VIDEO_CONTEXT.md` for FFmpeg subprocess patterns.
@@ -141,9 +142,14 @@ here.
    likewise when a real previous-version BLOB exists but the recompute's
    rejection is non-conclusive (`matte insane but retryable (keeping stale
    cache)`) — a circumstantial rejection never destroys a working matte. A DEFINITIVE
-   failure — stats computed, `matte_is_sane` False, AND the rejection is
+   failure — stats computed, `matte_is_sane` False, the rejection is
    conclusive per `matte_rejection_is_retryable` (a person was actually
-   found, or the depth pass ran to completion and was itself gate-rejected)
+   found, or the depth pass ran to completion and was itself gate-rejected),
+   AND cut hints were available (`cut_boundaries_s`: a gate rejection
+   computed WITHOUT cut hints — legacy variants, subtitled — bails to plain
+   text for that burn only and never mints ANY sentinel; that no-cut-hints
+   branch deliberately outranks even a conclusive depth verdict, because
+   the depth stats were computed under the same missing hints)
    — persists the `.matte.v3.unstable` sentinel (`_MATTE_UNSTABLE_SUFFIX`,
    a path-shaped marker with no GCS object): reburns reuse the same base
    video, so the gate would reject the same way on every text edit while
@@ -215,7 +221,9 @@ for its authored-text underlay burn and returns
 matte path** into its variant patch (the plumbing args are required
 keyword-only so a future call site can't silently reintroduce the
 no-matte no-op this path originally shipped with). The matte caches under
-`{variant_..._base.mp4}.matte.mp4` next to the caption-free base. Captions
+`{variant_..._base.mp4}.matte.v3.mp4` (`_MATTE_CACHE_SUFFIX`; healthy
+`.matte.v2.mp4` blobs still read via `_MATTE_ACCEPTED_CACHE_SUFFIXES`)
+next to the caption-free base. Captions
 themselves burn through libass afterwards and are **never occluded** — only
 Skia text elements are. Camera-effect rerenders (and first renders with
 camera moves) recompute against the warped substrate under a camera-scoped
@@ -273,10 +281,14 @@ jump pairs hid among 308 stable ones; presence never flipped (the mask never
 fully vanished), so that gate was blind too. `MatteStats` therefore also
 counts `large_jump_count` / `large_jumps_per_s`: adjacent present-pairs with
 IoU < `_LARGE_JUMP_IOU = 0.50`, boundary-crossing pairs at known cuts
-excluded. The gate rejects when count > `_MAX_LARGE_JUMPS = 3` AND rate >
-`_MAX_LARGE_JUMPS_PER_S = 0.60` (AND-gate, same shape as the presence gate).
-Anchors: beach matte ≈ 15 jumps @ 1.34/s (reject); stable footage ≈ 0; a
-single in-window whip-pan ≈ 0.1/s (keep). With cut boundaries provided,
+excluded. The gate rejects when count > `_MAX_LARGE_JUMPS = 3` AND count >
+`_MAX_LARGE_JUMP_FRAC = 0.02` × present-pair count — an absolute floor plus
+a FRACTION of present pairs, deliberately NOT a per-second rate (a rate
+dilutes linearly with window length, so the beach strobe would pass inside
+a long hold-to-EOF window). Anchors: beach matte (mediapipe control)
+≈ 48/307 pairs ≈ 15.6% (reject); original beach matte ≈ 15/308 ≈ 4.9%
+(reject); stable footage ≈ 0; a single in-window whip-pan ≈ 1-2/300 < 1%
+(keep). With cut boundaries provided,
 legit montage cuts contribute zero jumps.
 
 The gate is **backbone-aware**: see "Non-person occlusion: depth backbone"
@@ -302,18 +314,25 @@ explicitly deferred "behind-arbitrary-objects" — closed by this backbone.
 **Selection flow.** `compute_subject_matte` always runs the person pass
 first, exactly as before — the depth backbone never replaces it, it only
 fills the gap the person pass leaves. A depth pass is attempted only when
-BOTH hold: the person pass's `stats.max_coverage` is below the same
+ALL THREE hold: the person pass's `stats.max_coverage` is below the same
 `_PERSON_MAX_COVERAGE_FLOOR` (0.01) the sanity gate uses for "nobody found",
-AND `_depth_occluder_enabled()` reads true (`MATTE_DEPTH_OCCLUDER_ENABLED`,
-default `False` — dark by default, see "Flag + rollback" below). The depth
+`_depth_occluder_enabled()` reads true (`MATTE_DEPTH_OCCLUDER_ENABLED`,
+default `False` — dark by default, see "Flag + rollback" below), AND the
+window set fits the inference budget (`_DEPTH_MAX_INFERENCES = 300` — see
+"Depth window cap" under Known limits). The depth
 pass runs to a scratch path under the *same* wall-clock budget the person
 pass started against (`MATTE_WALL_CLOCK_BUDGET_S = 90`, not a fresh budget)
 — person-less footage pays for both passes, but never more than the
 existing per-burn time budget allows. If the depth stats pass
 `matte_is_sane`, the scratch matte + sidecar replace the person-pass output
-(`os.replace`) and depth stats are returned; if not, the scratch is cleaned
-up and the original (all-zero) person stats are returned — the fallback
-path this doc already describes is byte-identical either way.
+(`os.replace`) and depth stats are returned; if the depth matte is
+gate-REJECTED, the scratch is cleaned up and the person stats are returned
+with `depth_rejected = True` set — the depth pass got its conclusive look,
+so `matte_rejection_is_retryable` flips False and the resolver mints the
+PERMANENT `.matte.v3.unstable` sentinel (when cut hints were available;
+see "Matte lifecycle"). Only a non-conclusive skip (model missing, budget,
+inference error — anything that aborts before the gate ran) leaves the
+person stats untouched and retryable.
 
 **Sky-epsilon threshold on normalized disparity.** The depth backbone (Depth
 Anything V2 Small, fp16 ONNX, ~47.3MB, Apache-2.0; model asset
@@ -339,8 +358,10 @@ above (trailing 3-frame temporal median → hard cut → tiny-fragment drop →
 thin edge feather) and the same stats/write tail as the person path — the
 depth backbone is a second mask *source*, not a second treatment or a second
 file format. Benchmarked at ~194ms/frame CPU at the shipped 518×518 input
-(`_DEPTH_INPUT_SIZE`, the model's native ViT-14 patch multiple) on the
-worker VM class; a reduced patch-multiple 266×476 input measured ~87ms/frame
+(`_DEPTH_INPUT_SIZE`, the model's native ViT-14 patch multiple) on a LOCAL
+M-series bench — Fly shared vCPUs are assumed roughly half that, same as
+the RVM budget note (`subject_matte.py`, `agents/DECISIONS.md`
+2026-08-19); a reduced patch-multiple 266×476 input measured ~87ms/frame
 and remains a future perf lever (not adopted — E2E occlusion verification
 ran at 518×518).
 
@@ -391,7 +412,15 @@ the cache: on a cache hit whose sidecar says `backbone: "depth"` while the
 flag is off, the resolver EVICTS it (`text_behind_subject_depth_cache_
 evicted`) — the recompute finds no person, mints the retryable
 `.nodepth.unstable` sentinel, frees the depth blob, and later burns
-short-circuit cheaply to plain text until the flag returns. No `NEXT_PUBLIC_` twin: this is a
+short-circuit cheaply to plain text until the flag returns. Caveat: on
+lanes WITHOUT cut hints (subtitled, legacy variants) the post-eviction
+recompute hits the no-cut-hints bail first (see "Matte lifecycle"), so no
+sentinel mints and each subsequent burn repeats the recompute — rollback
+there is still correct (plain text) but not cheap. Dark-ship telemetry:
+`text_behind_subject_retryable_rejection` (`generative_build.py`, the
+primary watch signal while the flag is off),
+`subject_matte_depth_occlusion_skipped` and
+`subject_matte_depth_promote_failed` (`subject_matte.py`). No `NEXT_PUBLIC_` twin: this is a
 render-time backbone choice, not a user-facing toggle — the existing
 `behind_subject` UI/flag surface (`TEXT_BEHIND_SUBJECT_ENABLED`) is
 unchanged and still the single kill switch for the feature as a whole.
