@@ -2076,6 +2076,14 @@ export default function PlanItemPage() {
             {guidedEditActive && (
               <EditProposalCard
                 item={item}
+                // P1-2: mirrors the backend's own media gate for a conversation
+                // turn (routes/plan_items.py) — clip_assignments OR any pool
+                // asset still finishing analysis (queued/analyzing) or ready.
+                // Unrelated to guidedEditAutoDesign (hasReadyPoolMedia above),
+                // which only gates the Generate button.
+                hasPoolMedia={poolAssets.some((asset) =>
+                  ["queued", "analyzing", "ready"].includes(asset.status),
+                )}
                 onRefresh={refetch}
                 onChanged={(updated) => {
                   // Apply the authoritative response immediately (G3) — the

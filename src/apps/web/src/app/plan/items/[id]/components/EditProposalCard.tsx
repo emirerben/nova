@@ -154,10 +154,16 @@ export default function EditProposalCard({
   item,
   onChanged,
   onRefresh,
+  hasPoolMedia = false,
 }: {
   item: PlanItem;
   onChanged: (item: PlanItem) => void;
   onRefresh?: () => void;
+  /** Mirrors the backend's own media gate for a conversation turn: a pool
+   *  asset still finishing analysis (queued/analyzing) or ready also counts,
+   *  not just clip_assignments/clip_gcs_paths — a pool-only item (nothing
+   *  attached to a shot yet) must not get locked out of chat. */
+  hasPoolMedia?: boolean;
 }) {
   const proposal = item.edit_proposal ?? null;
   const conversationEnabled = item.guided_edit_conversation_available === true;
@@ -182,7 +188,9 @@ export default function EditProposalCard({
   const conversationRetryRequired = proposal?.conversation_retry_required === true;
   const conversationBlocked = conversationInProgress || conversationRetryRequired;
   const hasMedia =
-    (item.clip_gcs_paths?.length ?? 0) > 0 || (item.clip_assignments?.length ?? 0) > 0;
+    (item.clip_gcs_paths?.length ?? 0) > 0 ||
+    (item.clip_assignments?.length ?? 0) > 0 ||
+    hasPoolMedia;
   // Poll responses recreate the draft object; only the CAS version denotes a
   // durable server revision that should replace the creator's unsaved edits.
   const appliedProposalRevision = useRef<string | null>(null);
@@ -228,6 +236,11 @@ export default function EditProposalCard({
     setError(null);
     setMessage("");
     setPendingMessage(trimmed);
+    // Durable save from a dirty draft, held back from onChanged until we know
+    // the outcome of the turn that follows it (see catch below) — calling
+    // onChanged for both the intermediate save AND the final turn made one
+    // submit visibly flicker (save → draft view → turn reply).
+    let savedFromDirtyDraft: PlanItem | null = null;
     try {
       let expectedVersion = proposal?.proposal_version ?? 0;
       if (reviewing && proposal?.draft && draft) {
@@ -239,7 +252,7 @@ export default function EditProposalCard({
           if (!savedVersion) throw new Error("The saved plan could not be verified.");
           // Make manual edits durable before Kria reads/revises the proposal.
           // If the conversation fails, retry continues from this saved version.
-          onChanged(saved);
+          savedFromDirtyDraft = saved;
           expectedVersion = savedVersion;
         }
       }
@@ -253,6 +266,10 @@ export default function EditProposalCard({
       // beyond the `finally` below.
       onChanged(updated);
     } catch (err) {
+      // The manual-edit save above succeeded even though the turn that
+      // followed it failed — surface that durable save so a retry advances
+      // from its CAS version instead of resending a now-stale one.
+      if (savedFromDirtyDraft) onChanged(savedFromDirtyDraft);
       setMessage(trimmed);
       const code = err instanceof PlanApiError ? err.code : undefined;
       setError(
@@ -347,14 +364,22 @@ export default function EditProposalCard({
           : "What do you want this video to feel like—and what should people remember after watching it?";
     const lastAgentTurn = [...conversation].reverse().find((turn) => turn.role === "agent");
     // The opener greeting only earns its place once — as soon as Kria has
-    // said anything real, the durable thread carries the conversation.
+    // said anything real (in EITHER phase), the durable thread carries the
+    // conversation and a fresh greeting would be redundant.
     const showOpener = !lastAgentTurn;
-    const suggestions = !lastAgentTurn
+    // Suggestion chips, unlike the opener, must stay phase-scoped (P2-1): a
+    // briefing turn's suggestions must never leak into the review surface
+    // (or vice versa) just because it happens to be the most recent turn
+    // overall. Turns predating the "phase" field are treated as briefing.
+    const phaseAgentTurn = [...conversation].reverse().find(
+      (turn) => turn.role === "agent" && (reviewing ? turn.phase === "review" : turn.phase !== "review"),
+    );
+    const suggestions = !phaseAgentTurn
       ? reviewing
         ? REVIEW_SUGGESTIONS
         : BRIEFING_STARTER_SUGGESTIONS
-      : lastAgentTurn.suggestions.length > 0
-        ? lastAgentTurn.suggestions
+      : phaseAgentTurn.suggestions.length > 0
+        ? phaseAgentTurn.suggestions
         : reviewing
           ? REVIEW_SUGGESTIONS
           : proposal?.brief_ready
@@ -943,8 +968,10 @@ export default function EditProposalCard({
 /**
  * The scrolling bubble thread: every persisted turn (both "briefing" and
  * "review" phases, oldest first) plus an optional leading opener bubble and
- * a trailing optimistic/pending bubble. Turns are server-appended only
- * (never reordered or removed), so an index-based key is stable.
+ * a trailing optimistic/pending bubble. The server keeps only the last 20
+ * turns (older ones drop off the front), so a turn's position in the array
+ * — and therefore its index — shifts over the item's lifetime; keys are
+ * derived from the turn's own content instead of a bare index.
  */
 function ConversationThread({
   showOpener,
@@ -955,7 +982,7 @@ function ConversationThread({
 }: {
   showOpener: boolean;
   opener: string;
-  turns: Array<{ role: "user" | "agent"; content: string }>;
+  turns: Array<{ role: "user" | "agent"; phase?: "briefing" | "review"; content: string }>;
   pendingMessage: string | null;
   sending: boolean;
 }) {
@@ -965,14 +992,23 @@ function ConversationThread({
     sending,
   ]);
   return (
+    // role="log": an append-only running transcript, keyboard-scrollable
+    // (tabIndex) for creators who can't drag the scrollbar. No aria-live
+    // here — ChatThinking already owns its own role="status"/aria-live, and
+    // a live region on the whole thread would announce the creator's own
+    // pending echo back at them as if Kria had said it.
     <div
       ref={threadRef}
+      role="log"
+      tabIndex={0}
       className="mt-3 max-h-[320px] space-y-3 overflow-y-auto"
-      aria-live="polite"
     >
       {showOpener && <ChatBubble role="assistant">{opener}</ChatBubble>}
       {turns.map((turn, index) => (
-        <ChatBubble key={`turn-${index}-${turn.role}`} role={turn.role === "user" ? "user" : "assistant"}>
+        <ChatBubble
+          key={`${turn.role}-${turn.phase ?? "briefing"}-${index}-${turn.content.slice(0, 24)}`}
+          role={turn.role === "user" ? "user" : "assistant"}
+        >
           {turn.content}
         </ChatBubble>
       ))}

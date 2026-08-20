@@ -561,9 +561,44 @@ describe("EditProposalCard", () => {
         expect.objectContaining({ title: "My own Corfu title" }),
       );
     });
+    await waitFor(() => {
+      expect(mockConversation).toHaveBeenCalledWith("item-1", 3, "Put food first");
+    });
+    // P3 (review double-fire): the intermediate dirty-draft save must NOT
+    // surface its own onChanged — only the turn's final response does, so a
+    // single submit doesn't visibly flicker save → draft view → turn reply.
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
+    expect(onChanged).toHaveBeenCalledWith(item(revisedProposal));
+  });
+
+  it("surfaces the dirty-draft save (not a duplicate onChanged) when the turn that follows it fails", async () => {
+    const starting = proposal();
+    const savedProposal = {
+      ...proposal(),
+      proposal_version: 3,
+      draft: { ...snapshot(), title: "My own Corfu title" },
+    };
+    mockUpdate.mockResolvedValue(item(savedProposal));
+    mockConversation.mockRejectedValueOnce(new Error("Kria is temporarily unavailable"));
+    const onChanged = jest.fn();
+    render(<EditProposalCard item={item(starting)} onChanged={onChanged} />);
+
+    fireEvent.change(screen.getByLabelText("Title"), {
+      target: { value: "My own Corfu title" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Tell Kria what to change" }));
+    fireEvent.change(screen.getByLabelText("Tell Kria what you want in the edit"), {
+      target: { value: "Put food first" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send direction" }));
+
+    await waitFor(() => {
+      expect(mockConversation).toHaveBeenCalledWith("item-1", 3, "Put food first");
+    });
+    // The save landed even though the turn failed — the creator's retry
+    // needs that CAS version, so it's the ONE onChanged call here.
+    expect(onChanged).toHaveBeenCalledTimes(1);
     expect(onChanged).toHaveBeenCalledWith(item(savedProposal));
-    expect(mockConversation).toHaveBeenCalledWith("item-1", 3, "Put food first");
-    expect(onChanged).toHaveBeenLastCalledWith(item(revisedProposal));
   });
 
   it("surfaces a saved draft when approval fails so retry advances from the new CAS version", async () => {
@@ -595,25 +630,43 @@ describe("EditProposalCard", () => {
     expect(onChanged).toHaveBeenLastCalledWith(approvedV5);
   });
 
-  it("shows an optimistic pending bubble while sending, then clears it on success", async () => {
+  it("replaces the pending bubble with the durable turn once the parent applies onChanged", async () => {
     let resolveTurn!: (value: PlanItem) => void;
     mockConversation.mockReturnValue(new Promise((done) => { resolveTurn = done; }));
     const briefing = proposal("briefing");
-    render(<EditProposalCard item={item(briefing)} onChanged={jest.fn()} />);
+    const view = render(<EditProposalCard item={item(briefing)} onChanged={jest.fn()} />);
 
     fireEvent.change(screen.getByLabelText("Tell Kria what you want in the edit"), {
       target: { value: "Make it about the coastline" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Send direction" }));
 
+    // Exactly one bubble while pending: the optimistic echo.
     expect(await screen.findByText("Make it about the coastline")).toBeInTheDocument();
+    expect(screen.getAllByText("Make it about the coastline")).toHaveLength(1);
     expect(screen.getByRole("status")).toHaveTextContent("Thinking it through");
 
-    await act(async () => resolveTurn(item(proposal("briefing"))));
+    const revised = proposal("briefing");
+    revised.proposal_version = 3;
+    revised.conversation = [
+      { role: "user", content: "Make it about the coastline", suggestions: [] },
+      { role: "agent", content: "Coastline it is — I'll lead with the coast.", suggestions: [] },
+    ];
+    await act(async () => resolveTurn(item(revised)));
+    // The parent (page.tsx) applies the authoritative response via
+    // usePolledJobStatus's applyData; simulate that here by re-rendering
+    // with the item onChanged was called with.
+    view.rerender(<EditProposalCard item={item(revised)} onChanged={jest.fn()} />);
 
-    await waitFor(() => {
-      expect(screen.queryByText("Make it about the coastline")).toBeNull();
-    });
+    // The durable turn REPLACED the pending bubble — still exactly one
+    // match for the creator's message, not zero (P1-1: a test that only
+    // asserts the pending bubble disappeared can't tell "replaced" from
+    // "clobbered back to nothing").
+    expect(screen.getAllByText("Make it about the coastline")).toHaveLength(1);
+    expect(
+      screen.getByText("Coastline it is — I'll lead with the coast."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("drops the pending bubble, restores the composer text, and shows friendly copy for a raw request-failed error", async () => {
@@ -682,6 +735,45 @@ describe("EditProposalCard", () => {
     expect(
       screen.getByRole("button", { name: "You decide — build the plan" }),
     ).toBeInTheDocument();
+  });
+
+  it("never leaks a briefing turn's own suggestions into the review surface (P2-1)", () => {
+    const starting = proposal();
+    starting.conversation = [
+      { role: "user", phase: "briefing", content: "Make it upbeat", suggestions: [] },
+      {
+        role: "agent",
+        phase: "briefing",
+        content: "Got it — upbeat it is.",
+        suggestions: ["Focus on the beach", "Add friends", "Keep it short"],
+      },
+    ];
+    render(<EditProposalCard item={item(starting)} onChanged={jest.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Tell Kria what to change" }));
+
+    // The briefing turn's OWN chips must never leak into the review surface.
+    expect(screen.queryByRole("button", { name: "Focus on the beach" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add friends" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Keep it short" })).toBeNull();
+    // No review-phase turn exists yet, so review falls back to its own trio.
+    expect(screen.getByRole("button", { name: "Make it more personal" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Use less text" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Put food first" })).toBeInTheDocument();
+  });
+
+  it("treats a pool-only item (nothing assigned to a shot yet) as having media via hasPoolMedia (P1-2)", () => {
+    const briefing = proposal("briefing");
+    const poolOnly: PlanItem = { ...item(briefing), clip_gcs_paths: [], clip_assignments: [] };
+    render(<EditProposalCard item={poolOnly} onChanged={jest.fn()} hasPoolMedia />);
+
+    expect(
+      screen.queryByText("Add a photo or video first — Kria plans from your real footage"),
+    ).toBeNull();
+    fireEvent.change(screen.getByLabelText("Tell Kria what you want in the edit"), {
+      target: { value: "Something" },
+    });
+    expect(screen.getByRole("button", { name: "Send direction" })).toBeEnabled();
   });
 
   it("keeps the composer typeable while a turn is in flight", async () => {
