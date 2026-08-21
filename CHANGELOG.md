@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.42.0.3] — 2026-08-21
+
+### Fixed
+- **The guided-edit canvas now picks portrait for rotated phone footage.** A video recorded upright but stored with a rotation flag (the common iPhone case) reported its un-rotated pixel dimensions as landscape (1920x1080) even though it plays back as portrait — so the auto-selected output canvas could end up landscape for footage that's actually portrait. Clip analysis now reads the container's rotation flag alongside pixel dimensions and persists the true DISPLAY width/height, and the canvas vote reads those first. Already-cached clip analyses from before this fix are detected as stale and re-derived automatically on next touch — no manual backfill needed. (This is a canvas-choice fix only; PR #860 already fixed the render itself from crashing on rotated footage.)
+
 ## [0.42.0.2] — 2026-08-21
 
 ### Fixed

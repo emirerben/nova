@@ -11,7 +11,11 @@ from celery.exceptions import Retry
 
 import app.tasks.edit_proposal_build as proposal_build
 from app.schemas.edit_proposal import EditProposal, ProposalBrief, parse_edit_proposal
-from app.tasks.autoplace import AnalysisTemporarilyUnavailableError, AssetUnreadableError
+from app.tasks.autoplace import (
+    ANALYSIS_VERSION,
+    AnalysisTemporarilyUnavailableError,
+    AssetUnreadableError,
+)
 
 # Exact prod clip_assignments payload (plan item 85d1de16-ba11-4533-9290-927a45819cd3):
 # one 6.77s landscape .mov, zero pool assets, edit_proposal.status="failed" with
@@ -29,6 +33,14 @@ _PROD_CLIP_ASSIGNMENT = json.loads(
 "generation": "1787000010652201", "machine_matched": false}
 """
 )
+# The literal payload above is frozen at the analysis_version that was live
+# when it was captured (5). Every OTHER test in this file uses it purely as a
+# generation-matched cache-HIT fixture unrelated to rotation-staleness, so
+# keep it pinned to the CURRENT ANALYSIS_VERSION here rather than let it rot
+# stale (and start triggering real re-analysis / network calls) on every
+# future version bump. The rotation-staleness tests below build their own
+# explicitly-versioned copies instead of relying on this module-level value.
+_PROD_CLIP_ASSIGNMENT["analysis"]["analysis_version"] = ANALYSIS_VERSION
 
 
 class _Result:
@@ -861,3 +873,109 @@ def test_duplicate_task_invocation_while_a_newer_attempt_is_active_is_a_no_op(
     assert persisted.status == "analyzing"  # untouched by the stale invocation
     assert db.commits == 0
     assert dispatch_calls == []
+
+
+# ── clip-lane rotation-aware cache staleness (autoplace ANALYSIS_VERSION 6) ────
+
+
+def test_clip_assignment_reanalyzes_rotation_naive_cached_analysis(monkeypatch) -> None:
+    """A generation-matched cache hit whose analysis is pre-v6 (rotation-naive)
+    must be treated as a MISS, not reused verbatim — otherwise bumping
+    ANALYSIS_VERSION alone never re-derives display dims for already-cached
+    clip-lane rows."""
+
+    calls: list[str] = []
+
+    def _analyze(local_path: str):
+        calls.append(local_path)
+        return (
+            {"subject": "coast", "source": "clip_metadata", "analysis_version": ANALYSIS_VERSION},
+            0.5625,
+            6.768333,
+            (1080, 1920),
+        )
+
+    monkeypatch.setattr("app.tasks.autoplace.analyze_pool_video", _analyze)
+    monkeypatch.setattr(
+        "app.storage.object_metadata",
+        lambda _path: SimpleNamespace(
+            content_type="video/quicktime", generation="1787000010652201"
+        ),
+    )
+    monkeypatch.setattr("app.storage.download_generation_to_file", lambda *_a, **_kw: None)
+
+    # Generation matches _PROD_CLIP_ASSIGNMENT but its analysis carries
+    # analysis_version=5, pre-dating the rotation-aware display dims fix.
+    stale_entry = dict(_PROD_CLIP_ASSIGNMENT)
+    stale_entry["analysis"] = {**stale_entry["analysis"], "analysis_version": 5}
+
+    entry, ref = proposal_build._analyze_clip_assignment(stale_entry, {})
+
+    assert len(calls) == 1
+    assert entry["analysis"]["analysis_version"] == ANALYSIS_VERSION
+    assert ref.analysis["analysis_version"] == ANALYSIS_VERSION
+
+
+def test_clip_assignment_reuses_current_version_cached_analysis(monkeypatch) -> None:
+    """The mirror case: a generation-matched cache hit already at the current
+    ANALYSIS_VERSION must NOT trigger a re-download/re-analyze."""
+
+    fresh_entry = dict(_PROD_CLIP_ASSIGNMENT)
+    fresh_entry["analysis"] = {
+        **fresh_entry["analysis"],
+        "analysis_version": ANALYSIS_VERSION,
+    }
+    monkeypatch.setattr(
+        "app.storage.object_metadata",
+        lambda _path: SimpleNamespace(
+            content_type="video/quicktime", generation="1787000010652201"
+        ),
+    )
+
+    def _boom(_local_path):
+        raise AssertionError("must not re-analyze a current-version cached row")
+
+    monkeypatch.setattr("app.tasks.autoplace.analyze_pool_video", _boom)
+
+    entry, ref = proposal_build._analyze_clip_assignment(fresh_entry, {})
+
+    assert entry["analysis"]["analysis_version"] == ANALYSIS_VERSION
+    assert ref.analysis["subject"] == "Acropolis of Athens"
+
+
+def test_keyless_clip_analysis_stamps_version_so_it_never_reanalyzes(monkeypatch) -> None:
+    """Trap: without stamping analysis_version on a keyless (no-Gemini-key)
+    result, the persisted analysis dict has no analysis_version key at all,
+    which analysis_is_stale() reads as version 1 — forever stale — causing
+    every subsequent draft attempt to re-download and re-probe the clip."""
+
+    media_id = str(uuid.uuid4())
+    path = "users/u/plan/i/corfu.mov"
+    generation = "42"
+    calls: list[str] = []
+
+    def _analyze(local_path: str):
+        calls.append(local_path)
+        return None, 0.5625, 4.0, (1080, 1920)  # keyless: no Gemini analysis dict
+
+    monkeypatch.setattr("app.tasks.autoplace.analyze_pool_video", _analyze)
+    monkeypatch.setattr(
+        "app.storage.object_metadata",
+        lambda _path: SimpleNamespace(content_type="video/quicktime", generation=generation),
+    )
+    monkeypatch.setattr("app.storage.download_generation_to_file", lambda *_a, **_kw: None)
+
+    entry, _ref = proposal_build._analyze_clip_assignment(
+        {"media_id": media_id, "gcs_path": path},
+        {},
+    )
+
+    assert len(calls) == 1
+    assert entry["analysis"]["analysis_version"] == ANALYSIS_VERSION
+
+    # Re-run with the persisted entry as the incoming cache row: same
+    # generation, now-stamped analysis_version -> must be a cache HIT.
+    entry2, _ref2 = proposal_build._analyze_clip_assignment(entry, {})
+
+    assert len(calls) == 1
+    assert entry2["analysis"]["analysis_version"] == ANALYSIS_VERSION

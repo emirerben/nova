@@ -213,7 +213,12 @@ def _pool_refs(db, item: PlanItem, owner_id: uuid.UUID) -> list[MediaRef]:  # no
 
 def _analyze_clip_assignment(raw: dict, pool_by_path: dict[str, MediaRef]) -> tuple[dict, MediaRef]:
     from app import storage  # noqa: PLC0415
-    from app.tasks.autoplace import analyze_pool_image, analyze_pool_video  # noqa: PLC0415
+    from app.tasks.autoplace import (  # noqa: PLC0415
+        ANALYSIS_VERSION,
+        analysis_is_stale,
+        analyze_pool_image,
+        analyze_pool_video,
+    )
 
     entry = dict(raw)
     path = str(entry["gcs_path"])
@@ -236,6 +241,8 @@ def _analyze_clip_assignment(raw: dict, pool_by_path: dict[str, MediaRef]) -> tu
     kind = _kind(metadata.content_type, path)
     cached = entry.get("analysis") if entry.get("generation") == metadata.generation else None
     analysis = dict(cached or {})
+    if analysis and kind == "video" and analysis_is_stale(analysis, kind=kind):
+        analysis = {}  # rotation-naive pre-v6 row -- fall through to re-derive display dims
     duration = entry.get("duration_s")
     aspect = entry.get("aspect")
     if not analysis:
@@ -253,6 +260,8 @@ def _analyze_clip_assignment(raw: dict, pool_by_path: dict[str, MediaRef]) -> tu
                 analysis = result or {}
                 if dims:
                     analysis.update({"width": dims[0], "height": dims[1]})
+                analysis.setdefault("analysis_version", ANALYSIS_VERSION)
+                analysis.setdefault("source", "probe_only")
     entry.update(
         {
             "generation": metadata.generation,
