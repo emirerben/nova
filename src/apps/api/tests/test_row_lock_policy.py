@@ -52,10 +52,12 @@ enclosing ``with ... as <session>:`` block removed all four.
 
 The allow-list is a BUG BACKLOG, not an approval list
 =====================================================
-Both entries below are verified live instances, read and confirmed to share one
-session with their unlocked pre-read. They are quarantined so the gate can start
-protecting new code immediately, NOT because they are believed correct. The list
-may shrink; it must never grow. Tracked in issue #845.
+It was seeded with two verified live instances, read and confirmed to share one
+session with their unlocked pre-read, so the gate could start protecting new
+code immediately without blocking on individually reviewing each one. It is now
+EMPTY -- both were fixed (issue #845; ``populate_existing=True`` added to each
+locked re-read). ``test_known_stale_lock_backlog_does_not_grow`` enforces that
+it stays empty: fix new violations at the source, never re-add an entry here.
 
 The count is still a floor: matching keys on the source text of the identifier
 expression, so ``db.get(PlanItem, content_plan_item_id)`` followed by
@@ -71,12 +73,10 @@ import pathlib
 APP_ROOT = pathlib.Path(__file__).resolve().parents[1] / "app"
 
 # (module path relative to app/, enclosing function, Model, identifier source)
-KNOWN_STALE_LOCK_READS: frozenset[tuple[str, str, str, str]] = frozenset(
-    {
-        ("tasks/conformance_build.py", "_run", "PlanItem", "iid"),
-        ("tasks/generative_build.py", "_lock_owned_entry_job", "Job", "job_uuid"),
-    }
-)
+# Empty as of issue #845 -- keep it that way. Fix new violations at the
+# source (add populate_existing=True to the locked read); do not quarantine
+# them here.
+KNOWN_STALE_LOCK_READS: frozenset[tuple[str, str, str, str]] = frozenset()
 
 
 def _get_call_key(call: ast.Call) -> tuple[str, str, str] | None:
