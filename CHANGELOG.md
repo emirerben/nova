@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.44.0.0] — 2026-08-21
+## [0.44.1.0] — 2026-08-21
 
 ### Added
 - **Returning creators can start with footage and reach the editor in one flow.** The
