@@ -64,7 +64,10 @@ from app.schemas.montage_preset import (
     coerce_montage_preset,
     is_collage_montage_preset,
 )
-from app.services.generative_jobs import CONTENT_PLAN_PRIMARY_VARIANT_POLICY
+from app.services.generative_jobs import (
+    CONTENT_PLAN_ORIGINAL_VARIANT_POLICY,
+    CONTENT_PLAN_PRIMARY_VARIANT_POLICY,
+)
 from app.services.job_phases import (
     job_heartbeat,
     mark_failed_phase,
@@ -207,8 +210,10 @@ _NO_RERUN_STATUSES = frozenset(
 )
 
 _CANCELLED_JOB_STATUS = "cancelled"
-_CONTENT_PLAN_FENCE: contextvars.ContextVar[tuple[str, int] | None] = contextvars.ContextVar(
-    "generative_content_plan_owner_fence", default=None
+_PLAN_OWNED_JOB_MODES = frozenset({"content_plan", "manual_draft"})
+_CONTENT_PLAN_FENCE_UNSET = object()
+_CONTENT_PLAN_FENCE: contextvars.ContextVar[tuple[str, int] | None | object] = (
+    contextvars.ContextVar("generative_content_plan_owner_fence", default=_CONTENT_PLAN_FENCE_UNSET)
 )
 _GUIDED_TASK_ATTEMPT_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "guided_story_task_attempt_id", default=None
@@ -246,7 +251,7 @@ def _lock_owned_entry_job(db, job_id: str) -> tuple[Job, int | None] | None:  # 
         return job_ref, None
     content_plan_item_id = getattr(job_ref, "content_plan_item_id", None)
     is_plan_job = (
-        getattr(job_ref, "mode", None) == "content_plan" or content_plan_item_id is not None
+        getattr(job_ref, "mode", None) in _PLAN_OWNED_JOB_MODES or content_plan_item_id is not None
     )
     if not is_plan_job:
         # job_ref above already cached this row unlocked, so without
@@ -282,7 +287,7 @@ def _lock_owned_entry_job(db, job_id: str) -> tuple[Job, int | None] | None:  # 
         or item.current_job_id != job.id
         or job.content_plan_item_id != item.id
         or job.user_id != plan.user_id
-        or job.mode != "content_plan"
+        or job.mode not in _PLAN_OWNED_JOB_MODES
     ):
         log.error("generative_plan_owner_gate_link_mismatch", job_id=job_id)
         return None
@@ -334,10 +339,36 @@ def _with_owned_job_fence(fn):  # noqa: ANN001, ANN202
 
 
 def _content_plan_write_rejected(db, job: Job, *, operation: str) -> bool:  # noqa: ANN001
-    """Revalidate the entry ownership epoch before a post-external Job write."""
+    """Revalidate plan ownership before a post-external Job write.
+
+    A standalone orchestrator can be promoted into a plan while it is still
+    rendering.  Such a task captured no entry fence, so derive its fence from
+    the now-bound Job instead of treating ``None`` as a permanent bypass.
+    """
 
     expected = _CONTENT_PLAN_FENCE.get()
-    if expected is None or expected[0] != str(job.id):
+    if expected is _CONTENT_PLAN_FENCE_UNSET:
+        # Direct helper calls (tests, maintenance scripts) did not enter a task
+        # ownership boundary. Only an explicit ``None`` minted by
+        # _owned_job_task_fence means "this task started standalone" and may
+        # dynamically adopt a plan binding created while it was rendering.
+        return False
+    is_plan_job = (
+        getattr(job, "mode", None) in _PLAN_OWNED_JOB_MODES
+        or getattr(job, "content_plan_item_id", None) is not None
+    )
+    if expected is None and not is_plan_job:
+        return False
+    if (
+        expected is None
+        and getattr(job, "mode", None) == "manual_draft"
+        and getattr(job, "content_plan_item_id", None) is None
+    ):
+        # A draft can fail before its first-export dispatch finishes binding the
+        # circular plan link. Keep that existing failure persistence path alive;
+        # first-ready promotion always has an item link and is validated below.
+        return False
+    if expected is not None and expected[0] != str(job.id):
         return False
     from app.models import ContentPlan, Persona, PlanItem  # noqa: PLC0415
     from app.services.content_plan_persona import is_plan_persona_owned  # noqa: PLC0415
@@ -345,14 +376,19 @@ def _content_plan_write_rejected(db, job: Job, *, operation: str) -> bool:  # no
     item = db.get(PlanItem, job.content_plan_item_id) if job.content_plan_item_id else None
     plan = db.get(ContentPlan, item.content_plan_id) if item is not None else None
     persona = db.get(Persona, plan.persona_id) if plan is not None else None
+    bound_epoch_raw = getattr(job, "content_plan_ownership_epoch", None)
+    bound_epoch = 0 if bound_epoch_raw is None else int(bound_epoch_raw)
+    expected_epoch = expected[1] if expected is not None else bound_epoch
     valid = bool(
         item is not None
         and plan is not None
         and item.current_job_id == job.id
         and job.content_plan_item_id == item.id
         and job.user_id == plan.user_id
-        and job.mode == "content_plan"
-        and int(getattr(plan, "ownership_epoch", 0) or 0) == expected[1]
+        and job.mode in _PLAN_OWNED_JOB_MODES
+        and bound_epoch >= 0
+        and bound_epoch == expected_epoch
+        and int(getattr(plan, "ownership_epoch", 0) or 0) == expected_epoch
         and is_plan_persona_owned(plan, persona)
     )
     if valid:
@@ -8893,6 +8929,21 @@ def _update_variant_entry(
                     )
                     return False
                 variants[i] = {**v, **{k: val for k, val in patch.items() if k != "variant_id"}}
+                if getattr(job, "mode", None) == "manual_draft":
+                    # The first successful EditorShell Save is the draft's
+                    # export boundary. Promote into the normal content-plan job
+                    # lifecycle only after a real playable output exists.
+                    render_status = variants[i].get("render_status")
+                    if render_status == "ready" and (
+                        variants[i].get("video_path") or variants[i].get("output_url")
+                    ):
+                        job.mode = "content_plan"
+                        job.status = "variants_ready"
+                    elif render_status == "failed":
+                        # A failed first export is still a resumable draft, not
+                        # a finished-library failure. Keep it hidden and let the
+                        # editor submit the same timeline again.
+                        job.status = "draft"
                 break
         else:
             return False
@@ -9322,6 +9373,8 @@ def _specs_for_archetype(
                 "caption_style": "word" if voiceover_caption_style == "word" else "sentence",
             }
         ]
+    if variant_policy == CONTENT_PLAN_ORIGINAL_VARIANT_POLICY:
+        return [{"variant_id": "original_text", "text_mode": "agent_text", "track": None}]
     if variant_policy == CONTENT_PLAN_PRIMARY_VARIANT_POLICY:
         return [_content_plan_primary_montage_spec(best_track)]
     return _variant_specs(best_track)
@@ -16935,6 +16988,10 @@ def _finalize_job(
                     "style_set_id": r.get("style_set_id"),
                     "output_url": r.get("output_url"),
                     "video_path": r.get("video_path"),
+                    # Initial/guided renders can carry an ownership token too.
+                    # The row-locked final merge uses it to distinguish this
+                    # result from a newer editor render started after first-ready.
+                    "render_generation_id": r.get("render_generation_id"),
                     "render_status": r.get("render_status"),
                     "ok": bool(r.get("ok")),
                     "error": r.get("error"),
@@ -17125,6 +17182,7 @@ def _finalize_job(
                 for r in results
             ],
         },
+        merge_finalized_variants=True,
         **speech_cut_status_kwargs,
     )
     if accepted is False:
@@ -17211,11 +17269,55 @@ def _persist_guided_render_failure(job_id: str, code: str) -> None:
         log.warning("guided_story_render_failure_persist_failed", job_id=job_id, error=str(exc))
 
 
+def _merge_finalized_variants(
+    current_variants: Any,
+    finalized_variants: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Merge an orchestrator's terminal snapshot with the row-locked live state.
+
+    A first-ready variant can be promoted and edited while its siblings are
+    still rendering.  The original orchestrator therefore reaches finalization
+    with a stale result for that variant.  A different render-generation token
+    proves the live entry is newer, so preserve it wholesale.  Otherwise merge
+    the terminal result over the live entry while retaining editor metadata that
+    the finalizer does not own.  Live-only variants are retained as well.
+    """
+
+    live_rows = [row for row in (current_variants or []) if isinstance(row, dict)]
+    live_by_id = {
+        row.get("variant_id"): row for row in live_rows if isinstance(row.get("variant_id"), str)
+    }
+    merged: list[dict[str, Any]] = []
+    finalized_ids: set[str] = set()
+    for finalized in finalized_variants:
+        variant_id = finalized.get("variant_id")
+        live = live_by_id.get(variant_id) if isinstance(variant_id, str) else None
+        if live is None:
+            merged.append(finalized)
+        else:
+            live_generation = live.get("render_generation_id")
+            finalized_generation = finalized.get("render_generation_id")
+            if live_generation is not None and live_generation != finalized_generation:
+                merged.append(live)
+            else:
+                merged.append({**live, **finalized})
+        if isinstance(variant_id, str):
+            finalized_ids.add(variant_id)
+
+    merged.extend(
+        row
+        for row in live_rows
+        if not isinstance(row.get("variant_id"), str) or row["variant_id"] not in finalized_ids
+    )
+    return merged
+
+
 def _set_status(
     job_id: str,
     status: str,
     extra_plan: dict[str, Any] | None = None,
     *,
+    merge_finalized_variants: bool = False,
     expected_speech_cut_operation_id: str | None = None,
     expected_speech_cut_attempt_id: str | None = None,
 ) -> bool:
@@ -17241,7 +17343,16 @@ def _set_status(
         job.status = status
         if extra_plan is not None:
             existing = job.assembly_plan or {}
-            job.assembly_plan = {**existing, **extra_plan}
+            plan_patch = extra_plan
+            if merge_finalized_variants and isinstance(extra_plan.get("variants"), list):
+                plan_patch = {
+                    **extra_plan,
+                    "variants": _merge_finalized_variants(
+                        existing.get("variants"),
+                        extra_plan["variants"],
+                    ),
+                }
+            job.assembly_plan = {**existing, **plan_patch}
         db.commit()
     return True
 

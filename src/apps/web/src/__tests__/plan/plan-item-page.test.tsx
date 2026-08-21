@@ -83,7 +83,7 @@ jest.mock("@/lib/generative-api", () => ({
   // this mock can't drift from it (they are pure, no network).
   ...jest.requireActual("@/lib/generative-api"),
   getGenerativeStyleSets: jest.fn().mockResolvedValue([]),
-  uploadVoiceover: (...args: unknown[]) => mockUploadVoiceover(...args),
+  uploadOwnedVoiceover: (...args: unknown[]) => mockUploadVoiceover(...args),
   // The focused-variant timeline session lazy-GETs on mount; a never-resolving
   // promise keeps the "Edit clips" entry hidden without act() noise.
   getTimeline: jest.fn(() => new Promise(() => {})),
@@ -314,6 +314,193 @@ function makeVariant(id: string, renderStatus: string, url: string | null = null
 }
 
 // ===== Tests =====
+
+describe("PlanItemPage — progressive setup audio choice", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    window.localStorage.clear();
+    mockUpdatePlanItem.mockResolvedValue(makeItem() as never);
+  });
+
+  it("persists original-audio preference without turning a direction note into voiceover", async () => {
+    const item = makeItem({ edit_format: "montage" });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Original audio/i }));
+    });
+
+    expect(mockUpdatePlanItem).toHaveBeenCalledWith("test-item-id", {
+      audio_mode: "original",
+    });
+    expect(window.localStorage.getItem("kria:audio-preference:test-item-id")).toBe("original");
+    expect(mockSetItemVoiceover).not.toHaveBeenCalled();
+  });
+
+  it("switches the item to narrated-ready only for a final voiceover", async () => {
+    const item = makeItem({ edit_format: "montage" });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Final voiceover/i }));
+    });
+
+    expect(mockUpdatePlanItem).toHaveBeenCalledWith("test-item-id", {
+      audio_mode: "voiceover",
+      edit_format: "narrated_ready",
+    });
+    expect(window.localStorage.getItem("kria:audio-preference:test-item-id")).toBe("voiceover");
+  });
+
+  it("upgrades narrated-planned for voiceover and leaves every narrated sub-mode for original audio", async () => {
+    const planned = makeItem({ edit_format: "narrated_planned", audio_mode: "kria" });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item: planned, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    const view = render(<PlanItemPage />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Final voiceover/i }));
+    });
+    expect(mockUpdatePlanItem).toHaveBeenLastCalledWith("test-item-id", {
+      audio_mode: "voiceover",
+      edit_format: "narrated_ready",
+    });
+
+    view.unmount();
+    jest.clearAllMocks();
+    mockUpdatePlanItem.mockResolvedValue(makeItem() as never);
+    window.localStorage.setItem("kria:audio-preference:test-item-id", "original");
+    const narratedReady = makeItem({ edit_format: "narrated_ready", audio_mode: "voiceover" });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item: narratedReady, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+    render(<PlanItemPage />);
+    expect(screen.getByRole("button", { name: /Final voiceover/i })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Original audio/i }));
+    });
+    expect(mockUpdatePlanItem).toHaveBeenLastCalledWith("test-item-id", {
+      audio_mode: "original",
+      edit_format: "montage",
+    });
+  });
+
+  it("selects original_text for original audio even though its text_mode is agent_text", async () => {
+    const item = makeItem({ status: "ready", edit_format: "montage", audio_mode: "original" });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: {
+        item,
+        job: makeJob({
+          status: "completed",
+          variants: [
+            { ...makeVariant("song_text", "ready", "https://storage/song.mp4"), rank: 0 },
+            { ...makeVariant("original_text", "ready", "https://storage/original.mp4"), rank: 1 },
+          ],
+        }),
+      },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    await waitFor(() =>
+      expect(document.querySelector('[data-variant-preview="original_text"]')).toBeInTheDocument(),
+    );
+    expect(document.querySelector('[data-variant-preview="song_text"]')).not.toBeInTheDocument();
+  });
+
+  it("keeps Generate in mobile-safe stable chrome", async () => {
+    const item = makeItem({ edit_format: "montage" });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    const chrome = screen.getByRole("button", { name: "Generate video" }).parentElement;
+    expect(chrome?.className).toContain("sticky");
+    expect(chrome?.className).toContain("safe-area-inset-bottom");
+    expect(chrome?.className).not.toContain("sm:static");
+  });
+
+  it("shows keyboard focus on the direction audio upload control", async () => {
+    const item = makeItem({ edit_format: "montage" });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    render(<PlanItemPage />);
+    fireEvent.click(screen.getByText("Add a voice note to Kria"));
+    const input = screen.getByLabelText("Upload audio");
+    expect(input.parentElement?.className).toContain("focus-within:outline");
+  });
+
+  it("settles an idle manual draft but keeps polling during its first export", async () => {
+    const item = makeItem({ status: "draft", current_job_id: "draft-job" });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: {
+        item,
+        job: {
+          status: "draft",
+          variants: [{ variant_id: "original_text", render_status: "draft" }],
+        },
+      },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+    const terminal = mockUsePolledJobStatus.mock.calls.find(
+      (call) => typeof call[2] === "function",
+    )?.[2];
+    expect(terminal).toBeDefined();
+    expect(
+      terminal({
+        item,
+        job: { status: "draft", variants: [{ render_status: "draft" }] },
+      }),
+    ).toBe(true);
+    expect(
+      terminal({
+        item,
+        job: { status: "draft", variants: [{ render_status: "rendering" }] },
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("PlanItemPage — masonry collage item UX", () => {
   function renderMasonryItem(extra = {}) {

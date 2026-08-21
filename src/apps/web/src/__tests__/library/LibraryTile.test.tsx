@@ -73,3 +73,20 @@ it("does not claim a live public post is waiting in the inbox", () => {
   expect(screen.getByText("Live on TikTok")).not.toBeNull();
   expect(screen.queryByText("Waiting in your TikTok app inbox")).toBeNull();
 });
+
+it("uses structured failure taxonomy without exposing raw worker status", () => {
+  const job: LibraryJob = {
+    ...baseJob,
+    status: "failed",
+    raw_status: "variants_failed",
+    failure_reason: "processing_timeout",
+    output_url: null,
+  };
+
+  render(
+    <LibraryTile job={job} plan={null} onPinned={jest.fn()} canPublishToTikTok={false} />,
+  );
+
+  expect(screen.getByText("The render took too long")).not.toBeNull();
+  expect(screen.queryByText(/variants_failed/)).toBeNull();
+});

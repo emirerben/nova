@@ -26,6 +26,7 @@ TODOS.md        — deferred work backlog, grouped by the PR that deferred it
 
 ## Features
 
+- **Footage-first creation (flagged rollout)** — start with videos or photos at `/create`, optionally direct Kria by text or voice note, then open the first ready cut in the existing editor ([implementation and rollout guide](plans/017-qendresa-creation-flow.md))
 - **Template mode** — drop your clips into a viral template; Gemini analyzes each clip and matches it to the right slot
 - **Music beat-sync** — browse a music gallery, pick a song, upload clips; every cut lands on a detected beat (`/music`)
 - **Guided Plan edit** — describe the story you want in ordinary language, review how Kria uses all uploaded photos and videos, then approve before rendering ([pipeline and rollout guide](docs/pipelines/guided-edit.md))

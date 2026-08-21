@@ -59,7 +59,13 @@ def test_create_generative_job_unauthenticated_uses_synthetic_user():
     _passthrough = "app.routes.generative_jobs._validate_clip_path_prefixes"
     with patch("app.tasks.generative_build.orchestrate_generative_job") as mock_task:
         mock_task.apply_async = MagicMock()
-        with patch(_passthrough, side_effect=lambda v: v):
+        with (
+            patch(_passthrough, side_effect=lambda v: v),
+            patch(
+                "app.routes.generative_jobs.storage.object_metadata",
+                return_value=SimpleNamespace(size=10_000, content_type="video/mp4"),
+            ),
+        ):
             client = _make_client(db)
             # No Authorization or X-User-Id headers — exercises synthetic fallback.
             client.post(

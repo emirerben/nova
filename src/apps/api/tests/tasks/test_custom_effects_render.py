@@ -73,6 +73,9 @@ def _patch_session(monkeypatch: pytest.MonkeyPatch, job: _FakeJob) -> None:
             pass
 
     monkeypatch.setattr(cer, "_sync_session", lambda: _Sess())
+    # The media-layer reapply decision refreshes through generative_build's
+    # session after the effect render. Keep that read on the same fake Job.
+    monkeypatch.setattr(gb, "_sync_session", lambda: _Sess())
 
 
 def _capture_updates(monkeypatch: pytest.MonkeyPatch, job: _FakeJob) -> list[dict]:

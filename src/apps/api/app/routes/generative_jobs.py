@@ -59,7 +59,7 @@ from app.pipeline.look_presets import (
 from app.routes.admin_music import _validate_clip_path_prefixes, _validate_voiceover_path
 from app.routes.music_jobs import classify_slot_kind
 from app.routes.waitlist import get_real_ip
-from app.schemas.montage_preset import is_collage_montage_preset
+from app.schemas.montage_preset import MASONRY_MONTAGE_PRESET, is_collage_montage_preset
 from app.services.content_plan_persona import (
     PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
     PlanPersonaOwnershipError,
@@ -87,6 +87,8 @@ router = APIRouter()
 
 _MAX_CLIPS = 20
 _DIRECT_UPLOAD_MAX_BYTES = 200 * 1024 * 1024
+_DIRECT_UPLOAD_MAX_TOTAL_BYTES = 1024 * 1024 * 1024
+_IMAGE_CLIP_EXTENSIONS = frozenset({".avif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".webp"})
 
 # TextElement feature flag (kill switch).  Apply:
 #   fly secrets set TEXT_ELEMENTS_ENABLED=false --app nova-video + worker restart.
@@ -250,15 +252,29 @@ async def validate_direct_uploads(
 
     The signing request's byte count is only an early UX guard. The object in GCS
     is authoritative, so this check runs immediately before a render job is
-    queued. Legacy proxy-upload paths are intentionally skipped during rollout.
+    queued. Legacy clip paths remain compatible only for the synthetic public
+    user. Authenticated callers use owned clip paths; legacy voiceovers have a
+    temporary, metadata-validated compatibility window behind the strict flag.
     """
+    from app.auth import SYNTHETIC_USER_ID  # noqa: PLC0415
+
     user_id = str(current_user.id)
     direct: list[tuple[str, Literal["clip", "voiceover"]]] = []
     expected_clip_prefix = f"{DIRECT_CLIP_PREFIX}{user_id}/generative/"
+    expected_persistent_prefix = f"users/{user_id}/"
+    is_synthetic = current_user.id == SYNTHETIC_USER_ID
     for path in req.clip_gcs_paths:
-        if not path.startswith(DIRECT_CLIP_PREFIX):
+        if path.startswith(DIRECT_CLIP_PREFIX):
+            if not path.startswith(expected_clip_prefix):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN, detail="Upload owner mismatch"
+                )
+            direct.append((path, "clip"))
             continue
-        if not path.startswith(expected_clip_prefix):
+        if is_synthetic:
+            direct.append((path, "clip"))
+            continue
+        if not path.startswith(expected_persistent_prefix):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN, detail="Upload owner mismatch"
             )
@@ -272,8 +288,18 @@ async def validate_direct_uploads(
                 status_code=status.HTTP_403_FORBIDDEN, detail="Upload owner mismatch"
             )
         direct.append((voiceover_path, "voiceover"))
+    elif (
+        voiceover_path and not is_synthetic and settings.generative_direct_voiceover_strict_enabled
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Upload owner mismatch")
+    elif voiceover_path:
+        # Narrow API-first compatibility window: the request schema has already
+        # restricted this to voiceover-uploads/* and validate_one still verifies
+        # the stored object is real audio. Direct paths never enter this branch,
+        # so another user's direct namespace remains denied even while flag-off.
+        direct.append((voiceover_path, "voiceover"))
 
-    async def validate_one(path: str, role: Literal["clip", "voiceover"]) -> None:
+    async def validate_one(path: str, role: Literal["clip", "voiceover"]) -> int:
         try:
             metadata = await run_in_threadpool(storage.object_metadata, path)
         except FileNotFoundError as exc:
@@ -308,8 +334,14 @@ async def validate_direct_uploads(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Clip upload must be video or image",
             )
+        return metadata.size
 
-    await asyncio.gather(*(validate_one(path, role) for path, role in direct))
+    sizes = await asyncio.gather(*(validate_one(path, role) for path, role in direct))
+    if sum(sizes) > _DIRECT_UPLOAD_MAX_TOTAL_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Uploads are too large together. Maximum 1 GB combined per project.",
+        )
 
 
 class UnplacedShot(BaseModel):
@@ -1113,7 +1145,8 @@ class StyleSetListResponse(BaseModel):
 # so they are READ-able via the status endpoint (the plan item page polls it). The
 # mutate endpoints (swap-song / retext / change-style) stay generative-only — those
 # are generative-UX affordances that don't apply to a plan item.
-_READABLE_MODES = ("generative", "content_plan")
+_READABLE_MODES = ("generative", "content_plan", "manual_draft")
+_PLAN_OWNED_READ_MODES = frozenset({"content_plan", "manual_draft"})
 
 
 async def _load_generative_job(
@@ -1138,7 +1171,7 @@ async def _load_generative_job(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     ensure_job_owner(job.user_id, current_user)
 
-    if job.mode == "content_plan":
+    if job.mode in _PLAN_OWNED_READ_MODES:
         item_id = getattr(job, "content_plan_item_id", None)
         item_ref = await db.get(PlanItem, item_id) if item_id is not None else None
         if item_ref is None:
@@ -1187,7 +1220,7 @@ async def _load_generative_job(
             or item.current_job_id != locked_job.id
             or locked_job.content_plan_item_id != item.id
             or locked_job.user_id != plan.user_id
-            or locked_job.mode != "content_plan"
+            or locked_job.mode not in _PLAN_OWNED_READ_MODES
         ):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -4378,6 +4411,18 @@ def _durable_sources_prefix(job: Job) -> str:
     Anything else on a slot's `source_gcs_path` is a legacy/pre-feature job whose
     raw uploads may already be swept — treated as expired for editing purposes.
     """
+    assembly_plan = getattr(job, "assembly_plan", None)
+    all_candidates = getattr(job, "all_candidates", None)
+    has_manual_source_provenance = (
+        getattr(job, "mode", None) == "manual_draft"
+        or (isinstance(assembly_plan, dict) and assembly_plan.get("manual_draft") is True)
+        or (isinstance(all_candidates, dict) and all_candidates.get("manual_draft") is True)
+    )
+    if has_manual_source_provenance and getattr(job, "content_plan_item_id", None) is not None:
+        # Manual drafts attach directly to the persistent per-item prefix. They
+        # have not gone through the generative orchestrator's source-copy pass
+        # yet, but their uploads are still durable and ownership-scoped.
+        return f"users/{job.user_id}/plan/{job.content_plan_item_id}/"
     return f"generative-jobs/{job.id}/sources/"
 
 
@@ -7211,6 +7256,16 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 
+def _creation_montage_preset(clip_paths: list[str]) -> str:
+    """Route still photos through the renderer that supports image inputs."""
+
+    if any(
+        Path(path.split("?", 1)[0]).suffix.lower() in _IMAGE_CLIP_EXTENSIONS for path in clip_paths
+    ):
+        return MASONRY_MONTAGE_PRESET
+    return "classic"
+
+
 @router.post(
     "/upload-url",
     response_model=GenerativeUploadUrlResponse,
@@ -7264,6 +7319,22 @@ async def create_generative_job(
 ) -> GenerativeJobResponse:
     """Create a generative edit job (auto song + AI text, three variants)."""
     await validate_direct_uploads(req, current_user)
+    first_image_path = next(
+        (
+            path
+            for path in req.clip_gcs_paths
+            if Path(path.split("?", 1)[0]).suffix.lower() in _IMAGE_CLIP_EXTENSIONS
+        ),
+        None,
+    )
+    if req.voiceover_gcs_path and first_image_path:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"{Path(first_image_path).name} is a photo. Final voiceover edits currently "
+                "support video footage only. Remove the photo or remove the final voiceover."
+            ),
+        )
     # Single source of truth for Job shape + clip validation, shared with the
     # content-plan per-item task. Prefixes were already validated by the request
     # schema; build_generative_job re-validates (cheap defense-in-depth).
@@ -7298,6 +7369,7 @@ async def create_generative_job(
         user_style=user_style_raw,
         item_theme=req.topic or "",
         item_idea=req.intent or "",
+        montage_preset=_creation_montage_preset(req.clip_gcs_paths),
     )
     db.add(job)
     await db.commit()

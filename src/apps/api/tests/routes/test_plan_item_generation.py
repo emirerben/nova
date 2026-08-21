@@ -85,6 +85,7 @@ def _owned_item(user_id: uuid.UUID, *, clips=None, filming_guide=None):
     item.smart_captions_enabled = False
     item.montage_preset = "classic"
     item.voiceover_gcs_path = None
+    item.audio_mode = "kria"
     item.voiceover_bed_level = None
     item.voiceover_caption_style = None
     plan = MagicMock()
@@ -415,7 +416,8 @@ def test_generate_rejects_photo_clip_for_classic_montage(client: TestClient) -> 
     app.dependency_overrides[get_db] = lambda: db
     resp = client.post(f"/plan-items/{item.id}/generate")
     assert resp.status_code == 422
-    assert resp.json()["detail"] == "Photos require a collage preset"
+    assert "Photo collage" in resp.json()["detail"]
+    assert "remove it from Main footage" in resp.json()["detail"]
 
 
 def test_generate_auto_design_never_bypasses_narrated_voiceover_requirement(
@@ -487,7 +489,8 @@ def test_generate_auto_design_never_bypasses_photo_collage_requirement(
     resp = client.post(f"/plan-items/{item.id}/generate")
 
     assert resp.status_code == 422
-    assert resp.json()["detail"] == "Photos require a collage preset"
+    assert "Photo collage" in resp.json()["detail"]
+    assert "remove it from Main footage" in resp.json()["detail"]
     assert apply_calls == []
 
 
@@ -531,6 +534,29 @@ def test_generate_allows_narrated_without_voiceover_when_self_narration_on(
     dispatch.assert_called_once_with(str(item.id), 0)
 
 
+def test_generate_voiceover_mode_requires_recording_even_with_self_narration_on(
+    monkeypatch, client: TestClient
+) -> None:
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "narrated_self_narration_enabled", True, raising=False)
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[f"users/{user.id}/plan/0/a.mp4"])
+    item.edit_format = "narrated_ready"
+    item.audio_mode = "voiceover"
+    item.voiceover_gcs_path = None
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with _patch_dispatch_ok() as dispatch:
+        resp = client.post(f"/plan-items/{item.id}/generate")
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "Record or upload your final voiceover before generating"
+    dispatch.assert_not_called()
+
+
 def test_generate_self_narration_on_still_requires_clips(monkeypatch, client: TestClient) -> None:
     """Self-narration ON does not relax the clips requirement — zero clips still 409."""
     from app.config import settings as app_settings
@@ -562,17 +588,79 @@ def test_generate_allows_narrated_with_voiceover(client: TestClient) -> None:
     dispatch.assert_called_once_with(str(item.id), 0)
 
 
-def test_set_voiceover_stores_path(client: TestClient) -> None:
+def test_set_voiceover_stores_path_and_selects_voiceover_audio_mode(
+    monkeypatch, client: TestClient
+) -> None:
+    from app.config import settings as app_settings
+    from app.storage import ObjectMetadata
+
+    monkeypatch.setattr(
+        app_settings, "generative_direct_voiceover_strict_enabled", True, raising=False
+    )
     user = _user()
     item, plan = _owned_item(user.id)
     item.voiceover_gcs_path = None
     db = _db_for(item, plan)
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
-    gcs_path = "voiceover-uploads/some-vo.webm"
-    resp = client.patch(f"/plan-items/{item.id}/voiceover", json={"voiceover_gcs_path": gcs_path})
+    gcs_path = f"voiceover-uploads/direct/{user.id}/some-vo.webm"
+    with patch(
+        "app.routes.plan_items.storage.object_metadata",
+        return_value=ObjectMetadata(
+            path=gcs_path,
+            generation="1",
+            etag=None,
+            size=10_000,
+            content_type="audio/webm",
+        ),
+    ):
+        resp = client.patch(
+            f"/plan-items/{item.id}/voiceover", json={"voiceover_gcs_path": gcs_path}
+        )
     assert resp.status_code == 200
     assert item.voiceover_gcs_path == gcs_path
+    assert item.audio_mode == "voiceover"
+
+
+@pytest.mark.parametrize("path_kind", ["legacy", "synthetic_direct"])
+def test_set_voiceover_flag_off_accepts_metadata_validated_old_client_path(
+    path_kind: str, monkeypatch, client: TestClient
+) -> None:
+    from app.auth import SYNTHETIC_USER_ID
+    from app.config import settings as app_settings
+    from app.storage import ObjectMetadata
+
+    monkeypatch.setattr(
+        app_settings, "generative_direct_voiceover_strict_enabled", False, raising=False
+    )
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    gcs_path = (
+        "voiceover-uploads/legacy/old-recorder.webm"
+        if path_kind == "legacy"
+        else f"voiceover-uploads/direct/{SYNTHETIC_USER_ID}/old-recorder/voice.webm"
+    )
+    with patch(
+        "app.routes.plan_items.storage.object_metadata",
+        return_value=ObjectMetadata(
+            path=gcs_path,
+            generation="1",
+            etag=None,
+            size=10_000,
+            content_type="audio/webm",
+        ),
+    ) as metadata:
+        resp = client.patch(
+            f"/plan-items/{item.id}/voiceover", json={"voiceover_gcs_path": gcs_path}
+        )
+
+    assert resp.status_code == 200
+    metadata.assert_called_once_with(gcs_path)
+    assert item.voiceover_gcs_path == gcs_path
+    assert item.audio_mode == "voiceover"
 
 
 def test_set_voiceover_rejects_bad_prefix(client: TestClient) -> None:
@@ -587,6 +675,116 @@ def test_set_voiceover_rejects_bad_prefix(client: TestClient) -> None:
     assert resp.status_code == 422
 
 
+def test_set_voiceover_strict_mode_rejects_another_users_direct_recording(
+    monkeypatch, client: TestClient
+) -> None:
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(
+        app_settings, "generative_direct_voiceover_strict_enabled", True, raising=False
+    )
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.patch(
+        f"/plan-items/{item.id}/voiceover",
+        json={"voiceover_gcs_path": f"voiceover-uploads/direct/{uuid.uuid4()}/take.webm"},
+    )
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "Voiceover recording does not belong to this account"
+
+
+def test_set_voiceover_flag_off_still_rejects_another_users_direct_recording(
+    monkeypatch, client: TestClient
+) -> None:
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(
+        app_settings, "generative_direct_voiceover_strict_enabled", False, raising=False
+    )
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    with patch("app.routes.plan_items.storage.object_metadata") as metadata:
+        resp = client.patch(
+            f"/plan-items/{item.id}/voiceover",
+            json={"voiceover_gcs_path": f"voiceover-uploads/direct/{uuid.uuid4()}/take.webm"},
+        )
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "Voiceover recording does not belong to this account"
+    metadata.assert_not_called()
+
+
+@pytest.mark.parametrize("path_kind", ["legacy", "synthetic_direct"])
+def test_set_voiceover_strict_mode_rejects_old_client_paths_before_metadata(
+    path_kind: str, monkeypatch, client: TestClient
+) -> None:
+    from app.auth import SYNTHETIC_USER_ID
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(
+        app_settings, "generative_direct_voiceover_strict_enabled", True, raising=False
+    )
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    gcs_path = (
+        "voiceover-uploads/legacy/old-recorder.webm"
+        if path_kind == "legacy"
+        else f"voiceover-uploads/direct/{SYNTHETIC_USER_ID}/old-recorder/voice.webm"
+    )
+    with patch("app.routes.plan_items.storage.object_metadata") as metadata:
+        resp = client.patch(
+            f"/plan-items/{item.id}/voiceover", json={"voiceover_gcs_path": gcs_path}
+        )
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "Voiceover recording does not belong to this account"
+    metadata.assert_not_called()
+
+
+def test_set_voiceover_flag_off_rejects_non_audio_object(monkeypatch, client: TestClient) -> None:
+    from app.config import settings as app_settings
+    from app.storage import ObjectMetadata
+
+    monkeypatch.setattr(
+        app_settings, "generative_direct_voiceover_strict_enabled", False, raising=False
+    )
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    gcs_path = "voiceover-uploads/legacy/not-audio.mp4"
+    with patch(
+        "app.routes.plan_items.storage.object_metadata",
+        return_value=ObjectMetadata(
+            path=gcs_path,
+            generation="1",
+            etag=None,
+            size=10_000,
+            content_type="video/mp4",
+        ),
+    ):
+        resp = client.patch(
+            f"/plan-items/{item.id}/voiceover", json={"voiceover_gcs_path": gcs_path}
+        )
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "Voiceover recording must be audio"
+    assert item.voiceover_gcs_path is None
+    assert item.audio_mode == "kria"
+
+
 def test_set_voiceover_clears_with_null(client: TestClient) -> None:
     user = _user()
     item, plan = _owned_item(user.id)
@@ -597,6 +795,97 @@ def test_set_voiceover_clears_with_null(client: TestClient) -> None:
     resp = client.patch(f"/plan-items/{item.id}/voiceover", json={"voiceover_gcs_path": None})
     assert resp.status_code == 200
     assert item.voiceover_gcs_path is None
+
+
+def test_direction_audio_upload_url_uses_owned_separate_prefix(client: TestClient) -> None:
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    expected_path = f"users/{user.id}/plan/{item.id}/direction-audio/note.webm"
+    with patch(
+        "app.storage.presigned_put_url_for_plan_item",
+        return_value=("https://signed.example/direction", expected_path),
+    ) as signed:
+        resp = client.post(
+            f"/plan-items/{item.id}/direction-audio/upload-url",
+            json={
+                "filename": "note.webm",
+                "content_type": "audio/webm",
+                "file_size_bytes": 2048,
+            },
+        )
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "upload_url": "https://signed.example/direction",
+        "gcs_path": expected_path,
+    }
+    assert signed.call_args.kwargs["filename"].startswith("direction-audio/")
+
+
+def test_direction_audio_transcript_updates_notes_not_voiceover(client: TestClient) -> None:
+    user = _user()
+    item, plan = _owned_item(user.id)
+    item.notes = "Keep the candid moments."
+    item.voiceover_gcs_path = "voiceover-uploads/keep-this.webm"
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    gcs_path = f"users/{user.id}/plan/{item.id}/direction-audio/note.webm"
+    metadata = SimpleNamespace(size=2048, content_type="audio/webm")
+    transcript = SimpleNamespace(full_text="Make the opening feel faster.")
+    with (
+        patch("app.storage.object_metadata", return_value=metadata),
+        patch("app.storage.download_to_file"),
+        patch("app.services.audio_download.probe_duration", return_value=12.0),
+        patch("app.pipeline.transcribe.transcribe_whisper", return_value=transcript),
+    ):
+        resp = client.post(
+            f"/plan-items/{item.id}/direction-audio/transcribe",
+            json={"gcs_path": gcs_path},
+        )
+    assert resp.status_code == 200
+    assert resp.json() == {"notes": "Keep the candid moments.\nMake the opening feel faster."}
+    assert item.notes == "Keep the candid moments.\nMake the opening feel faster."
+    assert item.voiceover_gcs_path == "voiceover-uploads/keep-this.webm"
+
+
+def test_direction_audio_transcript_rejects_long_recording(client: TestClient) -> None:
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    gcs_path = f"users/{user.id}/plan/{item.id}/direction-audio/note.webm"
+    metadata = SimpleNamespace(size=2048, content_type="audio/webm")
+    with (
+        patch("app.storage.object_metadata", return_value=metadata),
+        patch("app.storage.download_to_file"),
+        patch("app.services.audio_download.probe_duration", return_value=90.1),
+        patch("app.pipeline.transcribe.transcribe_whisper") as transcribe,
+    ):
+        resp = client.post(
+            f"/plan-items/{item.id}/direction-audio/transcribe",
+            json={"gcs_path": gcs_path},
+        )
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "Direction notes must be 90 seconds or shorter"
+    transcribe.assert_not_called()
+
+
+def test_direction_audio_transcript_rejects_foreign_item_path(client: TestClient) -> None:
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    resp = client.post(
+        f"/plan-items/{item.id}/direction-audio/transcribe",
+        json={"gcs_path": f"users/{user.id}/plan/{uuid.uuid4()}/direction-audio/note.webm"},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "Direction recording does not belong to this item"
 
 
 def test_attach_clips_rejects_foreign_prefix(client: TestClient) -> None:
@@ -679,7 +968,8 @@ def test_attach_clips_rejects_non_video_pool_asset(client: TestClient) -> None:
         json={"clip_gcs_paths": [pool_path]},
     )
     assert resp.status_code == 422
-    assert resp.json()["detail"] == "Photos require a collage preset"
+    assert "Photo collage" in resp.json()["detail"]
+    assert "remove it from Main footage" in resp.json()["detail"]
 
 
 def test_attach_clips_rejects_pool_path_without_asset_row(client: TestClient) -> None:
@@ -780,7 +1070,37 @@ def test_upload_urls_rejects_images_for_classic_montage(client: TestClient) -> N
         },
     )
     assert resp.status_code == 400
-    assert resp.json()["detail"] == "Photos require a collage preset"
+    assert "x.jpg" in resp.json()["detail"]
+    assert "remove it from Main footage" in resp.json()["detail"]
+
+
+@pytest.mark.parametrize("preset", ["classic", "masonry", "polaroid_wall"])
+def test_upload_urls_rejects_images_for_manual_draft_before_signing(
+    preset: str, client: TestClient
+) -> None:
+    user = _user()
+    item, plan = _owned_item(user.id)
+    item.montage_preset = preset
+    item.current_job = MagicMock(mode="manual_draft", status="draft")
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    with patch(
+        "app.storage.presigned_put_url_for_plan_item",
+        return_value=("https://signed.example/put", f"users/{user.id}/plan/{item.id}/x.jpg"),
+    ) as signed:
+        resp = client.post(
+            f"/plan-items/{item.id}/upload-urls",
+            json={
+                "files": [
+                    {"filename": "x.jpg", "content_type": "image/jpeg", "file_size_bytes": 1000}
+                ]
+            },
+        )
+    assert resp.status_code == 400
+    assert "x.jpg" in resp.json()["detail"]
+    assert "remove it from Main footage" in resp.json()["detail"]
+    signed.assert_not_called()
 
 
 @pytest.mark.parametrize("preset", ["masonry", "polaroid_wall"])
@@ -829,7 +1149,8 @@ def test_upload_urls_rejects_images_when_stale_collage_preset_is_not_montage(
         },
     )
     assert resp.status_code == 400
-    assert resp.json()["detail"] == "Photos require a collage preset"
+    assert "x.jpg" in resp.json()["detail"]
+    assert "remove it from Main footage" in resp.json()["detail"]
 
 
 # ── filming_guide serialization ───────────────────────────────────────────────

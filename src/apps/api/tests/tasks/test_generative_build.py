@@ -400,6 +400,15 @@ def test_content_plan_primary_montage_uses_original_without_track():
     assert specs[0]["track"] is None
 
 
+def test_content_plan_original_audio_forces_no_track_variant():
+    specs = gb._specs_for_archetype(
+        "montage",
+        _track(),
+        variant_policy=gb.CONTENT_PLAN_ORIGINAL_VARIANT_POLICY,
+    )
+    assert specs == [{"variant_id": "original_text", "text_mode": "agent_text", "track": None}]
+
+
 def test_content_plan_primary_voiceover_prefers_music_when_track_matches():
     specs = gb._specs_for_archetype(
         "voiceover",
@@ -590,7 +599,9 @@ def test_finalize_status_all_ok(monkeypatch):
     monkeypatch.setattr(
         gb,
         "_set_status",
-        lambda jid, status, extra_plan=None: seen.update(status=status, plan=extra_plan),
+        lambda jid, status, extra_plan=None, **kwargs: seen.update(
+            status=status, plan=extra_plan, kwargs=kwargs
+        ),
     )
     gb._finalize_job(
         "j",
@@ -613,12 +624,15 @@ def test_finalize_status_all_ok(monkeypatch):
     )
     assert seen["status"] == "variants_ready"
     assert len(seen["plan"]["variants"]) == 2
+    assert seen["kwargs"]["merge_finalized_variants"] is True
 
 
 def test_finalize_status_partial(monkeypatch):
     seen = {}
     monkeypatch.setattr(
-        gb, "_set_status", lambda jid, status, extra_plan=None: seen.update(status=status)
+        gb,
+        "_set_status",
+        lambda jid, status, extra_plan=None, **kwargs: seen.update(status=status),
     )
     gb._finalize_job(
         "j",
@@ -633,10 +647,212 @@ def test_finalize_status_partial(monkeypatch):
 def test_finalize_status_all_failed(monkeypatch):
     seen = {}
     monkeypatch.setattr(
-        gb, "_set_status", lambda jid, status, extra_plan=None: seen.update(status=status)
+        gb,
+        "_set_status",
+        lambda jid, status, extra_plan=None, **kwargs: seen.update(status=status),
     )
     gb._finalize_job("j", [{"variant_id": "a", "rank": 1, "text_mode": "lyrics", "ok": False}])
     assert seen["status"] == "variants_failed"
+
+
+def _patch_promoted_job_graph(
+    monkeypatch,
+    job,
+    *,
+    live_epoch: int = 7,
+    linked: bool = True,
+    quarantined: bool = False,
+):
+    user_id = "user-1"
+    item_id = "item-1"
+    plan_id = "plan-1"
+    persona_id = "persona-1"
+    job.user_id = user_id
+    job.mode = "content_plan"
+    job.content_plan_item_id = item_id
+    job.content_plan_ownership_epoch = 7
+    item = types.SimpleNamespace(
+        id=item_id,
+        content_plan_id=plan_id,
+        current_job_id=job.id if linked else "different-job",
+    )
+    plan = types.SimpleNamespace(
+        id=plan_id,
+        user_id=user_id,
+        persona_id=persona_id,
+        ownership_epoch=live_epoch,
+        ownership_quarantined_at=object() if quarantined else None,
+    )
+    persona = types.SimpleNamespace(id=persona_id, user_id=user_id)
+
+    class _PromotedSession:
+        def __init__(self):
+            self.commit_count = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, model, _pk, **kwargs):
+            return {
+                "Job": job,
+                "PlanItem": item,
+                "ContentPlan": plan,
+                "Persona": persona,
+            }[model.__name__]
+
+        def commit(self):
+            self.commit_count += 1
+
+    session = _PromotedSession()
+    monkeypatch.setattr(gb, "_sync_session", lambda: session)
+    return session
+
+
+def test_finalize_after_early_promotion_preserves_newer_editor_generation(monkeypatch):
+    """A promoted first cut may be edited before its sibling finishes.
+
+    The standalone orchestrator must still finalize after promotion, but its
+    stale first-cut result must not replace the newer editor-owned generation.
+    """
+
+    job = _FakeJob(
+        status="rendering",
+        job_id="11111111-1111-1111-1111-111111111111",
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "first-ready",
+                    "rank": 1,
+                    "text_mode": "agent_text",
+                    "ok": True,
+                    "render_status": "ready",
+                    "render_generation_id": "editor-new",
+                    "output_url": "https://play.example/editor-new.mp4",
+                    "video_path": "generative-jobs/j/editor-new.mp4",
+                    "user_timeline": {"slots": [{"id": "edited-slot"}]},
+                    "text_elements": [{"id": "edited-title", "text": "New title"}],
+                },
+                {
+                    "variant_id": "sibling",
+                    "rank": 2,
+                    "text_mode": "agent_text",
+                    "render_status": "rendering",
+                },
+            ],
+            "promotion_marker": "keep",
+        },
+    )
+    # Promotion atomically changes the mode while the original standalone task
+    # keeps running without a content-plan fence captured at task entry.
+    session = _patch_promoted_job_graph(monkeypatch, job)
+
+    fence_token = gb._CONTENT_PLAN_FENCE.set(None)
+    try:
+        gb._finalize_job(
+            "11111111-1111-1111-1111-111111111111",
+            [
+                {
+                    "variant_id": "first-ready",
+                    "rank": 1,
+                    "text_mode": "agent_text",
+                    "ok": True,
+                    "render_status": "ready",
+                    "render_generation_id": "initial-render",
+                    "output_url": "https://play.example/initial.mp4",
+                    "video_path": "generative-jobs/j/initial.mp4",
+                },
+                {
+                    "variant_id": "sibling",
+                    "rank": 2,
+                    "text_mode": "agent_text",
+                    "ok": True,
+                    "render_status": "ready",
+                    "output_url": "https://play.example/sibling.mp4",
+                    "video_path": "generative-jobs/j/sibling.mp4",
+                },
+            ],
+        )
+    finally:
+        gb._CONTENT_PLAN_FENCE.reset(fence_token)
+
+    variants = {row["variant_id"]: row for row in job.assembly_plan["variants"]}
+    first = variants["first-ready"]
+    assert first["render_generation_id"] == "editor-new"
+    assert first["output_url"] == "https://play.example/editor-new.mp4"
+    assert first["video_path"] == "generative-jobs/j/editor-new.mp4"
+    assert first["user_timeline"] == {"slots": [{"id": "edited-slot"}]}
+    assert first["text_elements"] == [{"id": "edited-title", "text": "New title"}]
+    assert variants["sibling"]["render_status"] == "ready"
+    assert variants["sibling"]["output_url"] == "https://play.example/sibling.mp4"
+    assert job.assembly_plan["promotion_marker"] == "keep"
+    assert job.status == "variants_ready"
+    assert job.mode == "content_plan"
+    assert session.commit_count == 1
+
+
+@pytest.mark.parametrize(
+    ("graph_change", "graph_kwargs"),
+    [
+        ("ownership epoch", {"live_epoch": 8}),
+        ("circular link", {"linked": False}),
+        ("plan quarantine", {"quarantined": True}),
+    ],
+)
+def test_finalize_after_early_promotion_rejects_invalid_live_ownership(
+    monkeypatch,
+    graph_change,
+    graph_kwargs,
+):
+    job = _FakeJob(
+        status="rendering",
+        job_id="11111111-1111-1111-1111-111111111111",
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "first-ready",
+                    "rank": 1,
+                    "text_mode": "agent_text",
+                    "ok": True,
+                    "render_status": "ready",
+                    "output_url": "https://play.example/first.mp4",
+                }
+            ]
+        },
+    )
+    session = _patch_promoted_job_graph(monkeypatch, job, **graph_kwargs)
+    discarded = []
+    monkeypatch.setattr(
+        gb,
+        "_discard_generation_storage",
+        lambda result, **kwargs: discarded.append(result["variant_id"]),
+    )
+
+    fence_token = gb._CONTENT_PLAN_FENCE.set(None)
+    try:
+        accepted = gb._finalize_job(
+            str(job.id),
+            [
+                {
+                    "variant_id": "first-ready",
+                    "rank": 1,
+                    "text_mode": "agent_text",
+                    "ok": True,
+                    "render_status": "ready",
+                    "output_url": "https://play.example/stale-finalize.mp4",
+                }
+            ],
+        )
+    finally:
+        gb._CONTENT_PLAN_FENCE.reset(fence_token)
+
+    assert accepted is False, graph_change
+    assert job.status == "rendering"
+    assert job.assembly_plan["variants"][0]["output_url"] == ("https://play.example/first.mp4")
+    assert discarded == ["first-ready"]
+    assert session.commit_count == 0
 
 
 # ── No-music render branch: audio passthrough (NO _mix_template_audio) ───────────

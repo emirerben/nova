@@ -13,8 +13,10 @@ import { fmtTime, useAudioRecorder, type AudioTake } from "@/hooks/useAudioRecor
  */
 export function VoiceRecorder({
   onVoiceover,
+  upload = uploadVoiceover,
 }: {
   onVoiceover: (gcsPath: string | null) => void;
+  upload?: typeof uploadVoiceover;
 }) {
   const [uploading, setUploading] = useState(false);
   const [uploadedName, setUploadedName] = useState<string | null>(null);
@@ -25,7 +27,7 @@ export function VoiceRecorder({
       setUploading(true);
       setError(null);
       try {
-        const r = await uploadVoiceover(take.blob, take.filename);
+        const r = await upload(take.blob, take.filename);
         setUploadedName(displayName);
         onVoiceover(r.gcs_path);
       } catch (e) {
@@ -35,7 +37,7 @@ export function VoiceRecorder({
         setUploading(false);
       }
     },
-    [onVoiceover],
+    [onVoiceover, upload],
   );
 
   const onTake = useCallback(

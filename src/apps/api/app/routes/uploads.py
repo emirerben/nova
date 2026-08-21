@@ -622,7 +622,9 @@ _RELAY_MAX_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB — matches the presigned clip
 
 
 def _validate_relay_url(signed_url: str, user_id: str) -> str:
-    from urllib.parse import urlparse  # noqa: PLC0415
+    from urllib.parse import parse_qs, urlparse  # noqa: PLC0415
+
+    from app.auth import SYNTHETIC_USER_ID  # noqa: PLC0415
 
     parsed = urlparse(signed_url)
     if parsed.scheme != "https" or parsed.hostname != "storage.googleapis.com":
@@ -638,14 +640,25 @@ def _validate_relay_url(signed_url: str, user_id: str) -> str:
             detail="Relay URL is not for this bucket.",
         )
     object_path = path[len(bucket_prefix) :]
+    if not parse_qs(parsed.query).get("X-Goog-Signature"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Relay requires a signed storage URL.",
+        )
     # Every browser-minted upload path is user-scoped or a dev-user path this
     # user owns. Restrict the relay to the caller's own prefixes.
-    allowed = (
-        f"users/{user_id}/",
-        f"dev-user/{user_id}/",
-        f"voiceover-uploads/direct/{user_id}/",
-        "slot-uploads/",
-    )
+    if user_id == str(SYNTHETIC_USER_ID):
+        # A direct Fly fallback has no NextAuth proxy header. The V4 signed PUT
+        # URL is already the write capability; allow its encoded object scope
+        # while retaining exact GCS host + configured-bucket validation above.
+        allowed = ("users/", "dev-user/", "voiceover-uploads/direct/", "slot-uploads/")
+    else:
+        allowed = (
+            f"users/{user_id}/",
+            f"dev-user/{user_id}/",
+            f"voiceover-uploads/direct/{user_id}/",
+            "slot-uploads/",
+        )
     if not object_path.startswith(allowed):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

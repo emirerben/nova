@@ -268,6 +268,17 @@ describe("EditorShell orientation", () => {
     expect(
       window.sessionStorage.getItem("nova-editor-draft:item-1:song_text"),
     ).not.toBeNull();
+
+    mockCommitEditorSession.mockResolvedValueOnce({
+      ok: true,
+      generation: "gen-retry",
+      sections: { orientation: true },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(mockCommitEditorSession).toHaveBeenCalledTimes(2));
+    expect(mockCommitEditorSession.mock.calls[1][2]).toMatchObject({
+      base_generation: "gen-next",
+    });
   });
 
   it("keeps the recovery draft when the save request reports an error", async () => {

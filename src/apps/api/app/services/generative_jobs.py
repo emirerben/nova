@@ -24,6 +24,7 @@ from app.services.generative_upload_paths import direct_clip_owner
 
 DEFAULT_PLATFORMS = ["tiktok", "instagram", "youtube"]
 CONTENT_PLAN_PRIMARY_VARIANT_POLICY = "content_plan_primary"
+CONTENT_PLAN_ORIGINAL_VARIANT_POLICY = "content_plan_original"
 _SMART_PRESET_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 
 
@@ -257,8 +258,11 @@ def build_generative_job(
         "language": language,
         "edit_format": coerce_edit_format(edit_format),
     }
-    if variant_policy == CONTENT_PLAN_PRIMARY_VARIANT_POLICY:
-        all_candidates["variant_policy"] = CONTENT_PLAN_PRIMARY_VARIANT_POLICY
+    if variant_policy in {
+        CONTENT_PLAN_PRIMARY_VARIANT_POLICY,
+        CONTENT_PLAN_ORIGINAL_VARIANT_POLICY,
+    }:
+        all_candidates["variant_policy"] = variant_policy
     smart_context = _build_smart_captions_context(smart_captions)
     if smart_context is not None and all_candidates["edit_format"] == "subtitled":
         all_candidates["smart_captions"] = smart_context

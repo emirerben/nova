@@ -61,8 +61,9 @@ Rules:
 - `src/apps/api/app/routes/admin_generative.py` — `/admin/generative` dashboard list
 - `src/apps/api/app/tasks/generative_build.py` — `orchestrate_generative_job` Celery task (see `docs/pipelines/generative.md`)
 - `src/apps/api/app/pipeline/generative_overlays.py` — agent-authored intro overlay injector
-- `src/apps/web/src/app/generative/` — redirects to /plan (v0.44; siblings = shared editor modules); `admin/generative/` — admin dashboard
+- `src/apps/web/src/app/generative/` — redirects to /plan (v0.45; siblings = shared editor modules); `admin/generative/` — admin dashboard
 - `src/apps/web/src/app/plan/new/` — New-video chooser; /plan home = create block + past-edits grid (`WorkspaceHome.tsx`)
+- `src/apps/web/src/app/create/` + `src/apps/api/app/routes/{me,manual_drafts}.py` — dark flagged footage-first creation + manual drafts (UI superseded by /plan home, backend live); `PlanItem.audio_mode` is `kria|original|voiceover` (`plans/017-qendresa-creation-flow.md`)
 - `src/apps/api/app/pipeline/music_recipe.py` — beat-snap recipe generator (see `docs/pipelines/music.md`)
 - `src/apps/api/app/tasks/music_orchestrate.py` — Celery tasks: beat analysis + music job orchestration
 - `src/apps/api/app/services/audio_download.py` — yt-dlp audio download + beat detection via FFmpeg
@@ -70,7 +71,7 @@ Rules:
 - `.../plan/_components/ui/SeedProvenanceBadge.tsx` — "From your idea" lime badge on the item page
 - `src/apps/api/prompts/` — LLM prompt templates (template analysis, transcription)
 - `agents/` — project-level agent context (VIDEO_CONTEXT.md, STACK.md, DECISIONS.md)
-- `plans/` — implementation plans (`plans/README.md` has status; 001–004 June-audit + 005–014 post-audit)
+- `plans/` — implementation plans (`plans/README.md` has status; 001–017)
 
 ## Local dev
 ```bash
@@ -138,8 +139,7 @@ python scripts/admin.py --prod POST templates/abc/publish                     # 
 - Curated assets (`music/*`, `templates/*`) are NOT matched by the rule and persist forever.
 - Signed-URL TTL in `storage.py` is 1 day to match the object lifetime.
 - **`generative-jobs/*` exception:** blobs persist forever but `upload_public_read` signs `output_url` for only 1 day → expired URLs show blank video after 24h. Fix is read-time re-signing via `_variants_for_response` in `routes/generative_jobs.py` (`PLAYBACK_URL_TTL_MIN`). Pinned by `test_variants_for_response_resigns_ready_variant`. See agents/DECISIONS.md "Storage retention incidents" for the full narrative.
-- `JobClip.storage_expires_at` is informational only — no sweeper reads it.
-- **When auth/login lands:** revisit `infra/gcs-lifecycle.json`. Put authenticated-user content under a new prefix (e.g. `users/{user_id}/`) that the delete rule does NOT match.
+- Authenticated uploads live under `users/{user_id}/`, outside the 24h delete prefixes.
 
 ## ⚠️ Anti-pattern: do NOT use MoviePy / VideoFileClip
 VideoFileClip(path) buffers the entire video into RAM. On a 2GB source file this crashes.
@@ -187,6 +187,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - DATABASE_URL
 - OPENAI_API_KEY
 - GEMINI_API_KEY — clip + template analysis
+- `NEXT_PUBLIC_CREATION_HUB_ENABLED` / `GENERATIVE_DIRECT_VOICEOVER_STRICT_ENABLED` / `NEXT_PUBLIC_MANUAL_EDITOR_ENABLED` — default `false`; enable Fly strict validation before the hub, and keep manual drafts off pending plan 017 acceptance.
 - `EDIT_WIDE_LOOKS_ENABLED` — off; rollout: `docs/pipelines/generative.md`.
 - `ORIENTATION_NORMALIZE_ENABLED` — defaults to `true`. Set to `false` and restart workers to make `normalize_orientation` a no-op (safety valve for orientation regressions).
 - `LYRIC_DYNAMIC_CROSSFADE_ENABLED` — defaults to `true`. Set to `false` to roll back to legacy `_inject_line` behavior byte-identically. **WARNING: disabling re-introduces the stacked-text bug — emergency rollback ONLY.** Kill-switch test: `tests/pipeline/test_lyric_injector_no_stacking.py::test_kill_switch_disabled_reproduces_pre_fix_output`. Apply: `fly secrets set LYRIC_DYNAMIC_CROSSFADE_ENABLED=false --app nova-video` + `fly machine restart <id>`. See agents/DECISIONS.md "Kill-switch incidents" for the full warning.
@@ -202,7 +203,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - `SUBTITLED_ARCHETYPE_ENABLED` — **ON in prod since 2026-07-02** (code default `false`). Gates the subtitled single-clip edit style (talk-to-camera clip → auto-language captions, editable + reburnable, sentence-per-cue pop-in; TR/EN). Off ⇒ falls back to montage. Dual-flag with `NEXT_PUBLIC_SUBTITLED_ENABLED` (Vercel, also ON) — inlined at Next.js build time, so changing it needs a `vercel --prod` rebuild, not just an env flip. Companions: `SUBTITLED_CAPTION_CORRECTION_ENABLED` (default `true` — fixes whisper mishearings per cue, timing preserved) + `CAPTION_CORRECTION_MODEL` (default `gpt-4o`; mini missed TR case errors 4/4). Rollback: `fly secrets set SUBTITLED_ARCHETYPE_ENABLED=false --app nova-video` (api + worker) + `vercel env rm NEXT_PUBLIC_SUBTITLED_ENABLED production` + `vercel --prod`.
 - `NARRATED_SELF_NARRATION_ENABLED` — defaults **`false`**. Narrated items generate WITHOUT a recorded voiceover when the footage's own audio carries the voice: 1 clip → `subtitled` (captions), 2+ → `talking_head` (speech spine); no speech → montage + reason persisted on `assembly_plan["archetype_fallback"]` (item-page banner). SOLE gate — deliberately bypasses the two archetype flags above (they gate declared formats). Dual-flag `NEXT_PUBLIC_NARRATED_SELF_NARRATION_ENABLED` (Vercel); flip Fly first. Voiceover, when recorded, still wins (narrated archetype unchanged). Guards: flag-off pins in `tests/tasks/test_generative_dispatch.py`.
 - `CAPTION_PUNCTUATION_ENABLED` — defaults `true`. `_transcribe_openai` restores punctuation/case from full-text onto the timed word stream via `align_punctuated_text()` (`transcribe.py`): casefold+strip match, k<=3 number-split merge, bounded 2-token resync; ANY residual mismatch bails the WHOLE transcript (fail-open). `false` ⇒ byte-identical; `_transcribe_local` unaffected. Apply: `fly secrets set CAPTION_PUNCTUATION_ENABLED=false` + restart.
-- `SILENCE_CUT_ENABLED` — defaults **`false`**. Auto-cuts silences + fillers ("uh", "ııı") from speech render paths ONLY (subtitled + talking_head spine; self-narration inherits; music/beat paths structurally excluded — guard: `tests/tasks/test_silence_cut_isolation.py`). Engine: `app/pipeline/silence_cut.py` (pure CutPlan) inside `reframe_and_export(keep_segments=…)` with alternating punch-in; captions rebuilt from remapped words, fillers stripped. Fail-open: any failure ⇒ uncut render. `RETAKE_CUT_ENABLED` remains an independent default-false kill switch. TR+EN parity passed 2026-08-09; launch BOTH only after production approval, with independent rollback. Reviewable candidates use ownership/revision-guarded public apply/restore actions and a dedicated full speech rerender; no browser-side cut. Behavior pin: `tests/pipeline/test_silence_cut_golden.py`; plans/010. Apply both: `fly secrets set SILENCE_CUT_ENABLED=true RETAKE_CUT_ENABLED=true --app nova-video` + worker restart.
+- `SILENCE_CUT_ENABLED` — defaults **`false`**. Cuts silence/fillers only on speech paths; music/beat paths are excluded (`test_silence_cut_isolation.py`). Fail-open to the uncut render. `RETAKE_CUT_ENABLED` is an independent default-false switch. Candidates use revision-guarded apply/restore and a full speech rerender; no browser-side cut. Behavior pin: `test_silence_cut_golden.py`; plans/010. Enable both only after production approval: `fly secrets set SILENCE_CUT_ENABLED=true RETAKE_CUT_ENABLED=true --app nova-video` + worker restart.
 
 ## Agent evals
 - Per-agent quality eval harness lives at `src/apps/api/tests/evals/`. Covers the Big 5 (`template_recipe`, `clip_metadata`, `creative_direction`, `song_classifier`, `music_matcher`) plus the in-pipeline `transcript`, `platform_copy`, `audio_template`, and `template_text` agents.

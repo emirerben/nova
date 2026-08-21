@@ -12,6 +12,8 @@ leave an item stuck "generating" forever.
 from __future__ import annotations
 
 import asyncio
+import os
+import tempfile
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal, NoReturn
@@ -19,6 +21,7 @@ from typing import Annotated, Literal, NoReturn
 import structlog
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, status
 from fastapi import UploadFile as MultipartFile
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,7 +31,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app import storage
 from app.agents._schemas.edit_format import coerce_edit_format
 from app.agents.music_matcher import _sanitize_text
-from app.auth import CurrentUser
+from app.auth import SYNTHETIC_USER_ID, CurrentUser
 from app.config import settings
 from app.database import get_db
 from app.limiter import limiter
@@ -50,6 +53,7 @@ from app.routes._omni import (
     get_omni_asset,
     start_omni_asset,
 )
+from app.routes.admin_music import _validate_voiceover_path
 from app.routes.generative_jobs import (
     CAPTION_EDIT_ARCHETYPES,
     BedLevelRequest,
@@ -115,6 +119,7 @@ from app.routes.generative_jobs import (
     validate_sound_effects_for_user,
     visual_block_variant_duration,
 )
+from app.routes.music_jobs import classify_slot_kind
 from app.routes.waitlist import get_real_ip
 from app.schemas.edit_proposal import (
     EditProposalResponse,
@@ -134,6 +139,7 @@ from app.services.content_plan_persona import (
     load_owned_plan_persona,
     require_plan_persona_owned,
 )
+from app.services.generative_upload_paths import DIRECT_VOICEOVER_PREFIX
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
 from app.services.media_overlay_preview import (
     convert_heif_overlay_preview,
@@ -227,6 +233,35 @@ _SFX_ALLOWED_CONTENT_TYPES = {
 _MAX_SFX_CARDS = 20  # max placements per variant
 _MAX_SFX_FILE_BYTES = 50 * 1024 * 1024  # 50 MB per effect
 
+# A direction note is planning input, never soundtrack media. Keeping its object
+# under the owned plan-item prefix makes the authorization boundary inspectable
+# without sharing the lifecycle/allowlist used by final voiceovers.
+_DIRECTION_AUDIO_ALLOWED_CONTENT_TYPES = {
+    "audio/mpeg",
+    "audio/mp4",
+    "audio/wav",
+    "audio/x-wav",
+    "audio/aac",
+    "audio/ogg",
+    "audio/webm",
+    "video/mp4",  # MediaRecorder/Safari may wrap an audio-only take as MP4.
+}
+_MAX_DIRECTION_AUDIO_BYTES = 50 * 1024 * 1024
+_MAX_DIRECTION_NOTE_CHARS = 4000
+_MAX_DIRECTION_AUDIO_DURATION_S = 90.0
+_DIRECTION_TRANSCRIPTION_TIMEOUT_S = 50.0
+_MAX_VOICEOVER_BYTES = 200 * 1024 * 1024
+
+
+def _direction_audio_rate_key(request: Request) -> str:
+    """Key paid direction-note transcription by authenticated proxy identity."""
+
+    user_id = request.headers.get("x-user-id", "").strip()
+    if user_id:
+        return f"user:{user_id[:128]}"
+    return f"ip:{get_real_ip(request)}"
+
+
 # Job.status buckets — single-sourced with the dispatch-time active-render
 # re-check in tasks/content_plan_build.py (plans/014): the two must never drift.
 _JOB_READY = PLAN_ITEM_JOB_READY
@@ -239,6 +274,14 @@ def _is_image_clip_path(path: str) -> bool:
     return any(clean.endswith(ext) for ext in _IMAGE_FILE_EXTS)
 
 
+def _photo_main_footage_detail(path_or_name: str) -> str:
+    name = (path_or_name or "This file").split("?", 1)[0].split("/")[-1]
+    return (
+        f"{name} is a photo. Choose Photo collage to use photos as main footage, "
+        "or remove it from Main footage."
+    )
+
+
 def _item_uses_collage_preset(item: PlanItem) -> bool:
     return coerce_edit_format(
         getattr(item, "edit_format", None)
@@ -246,17 +289,24 @@ def _item_uses_collage_preset(item: PlanItem) -> bool:
 
 
 def _allowed_item_upload_content_types(item: PlanItem) -> set[str]:
+    if getattr(getattr(item, "current_job", None), "mode", None) == "manual_draft":
+        # Manual initialization and virtual preview are intentionally video-only
+        # until the photo timeline/export acceptance gates pass. Never mint a
+        # persistent image upload that the next step must reject.
+        return _ALLOWED_CONTENT_TYPES
     if _item_uses_collage_preset(item):
         return _ALLOWED_CONTENT_TYPES | _IMAGE_CONTENT_TYPES
     return _ALLOWED_CONTENT_TYPES
 
 
 def derive_item_status(item: PlanItem) -> str:
-    """idea | awaiting_clips | generating | ready | failed — derived, never stored."""
+    """idea | draft | awaiting_clips | generating | ready | failed — derived."""
     job = item.current_job
     if job is None:
         # No job minted yet: row state is the source of truth (idea/awaiting_clips).
         return item.item_status
+    if job.status == "draft":
+        return "draft"
     if job.status in _JOB_READY:
         return "ready"
     if job.status in _JOB_FAILED:
@@ -412,6 +462,8 @@ class PlanItemResponse(BaseModel):
     # Narrated-walkthrough voiceover (0056+). GCS key under voiceover-uploads/.
     # NULL = no voiceover attached; non-null = user has recorded or uploaded one.
     voiceover_gcs_path: str | None = None
+    # Soundtrack policy: Kria chooses, force original audio, or use voiceover.
+    audio_mode: Literal["kria", "original", "voiceover"] = "kria"
     # Landscape-clip fit preference. "fit" (letterbox, default) | "fill" (crop).
     # Only affects clips where width > height; portrait/square always crop.
     landscape_fit: Literal["fit", "fill"] = "fit"
@@ -504,6 +556,11 @@ def plan_item_response(
         smart_captions_unavailable_reason=smart_captions_unavailable_reason,
         montage_preset=coerce_montage_preset(getattr(item, "montage_preset", None)),
         voiceover_gcs_path=item.voiceover_gcs_path,
+        audio_mode=(
+            _am
+            if (_am := getattr(item, "audio_mode", None)) in {"kria", "original", "voiceover"}
+            else "kria"
+        ),
         landscape_fit=(
             # Membership check (not just isinstance) guards against arbitrary strings
             # from direct SQL writes or future vocab expansions reaching the Literal model.
@@ -610,6 +667,7 @@ class PlanItemEdit(BaseModel):
     landscape_fit: Literal["fit", "fill"] | None = None
     # Montage visual preset. Only affects montage renders; default classic.
     montage_preset: MontagePreset | None = None
+    audio_mode: Literal["kria", "original", "voiceover"] | None = None
     # Per-item content_mode override (montage plan-vs-have toggle, 0058+).
     # When set, supersedes the persona-level content_mode for this item only.
     # "create_new" = "Planning to film"; "existing_footage" = "I already have footage".
@@ -681,6 +739,8 @@ async def edit_plan_item(
         item.landscape_fit = updates["landscape_fit"]  # Pydantic Literal already validates
     if "montage_preset" in updates and updates["montage_preset"] is not None:
         item.montage_preset = updates["montage_preset"]  # Pydantic Literal already validates
+    if "audio_mode" in updates and updates["audio_mode"] is not None:
+        item.audio_mode = updates["audio_mode"]  # Pydantic Literal already validates
     if "content_mode" in updates and updates["content_mode"] is not None:
         item.content_mode = updates["content_mode"]  # Pydantic Literal already validates
     if updates:
@@ -995,7 +1055,7 @@ async def create_upload_urls(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
-                    "Photos require a collage preset"
+                    _photo_main_footage_detail(f.filename)
                     if f.content_type in _IMAGE_CONTENT_TYPES
                     else f"Unsupported content type: {f.content_type}"
                 ),
@@ -1174,7 +1234,7 @@ async def attach_clips(
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=(
-                        "Photos require a collage preset"
+                        _photo_main_footage_detail(p)
                         if kind_by_path.get(p) == "image"
                         else "Only video visuals from the pool can be used in the edit"
                     ),
@@ -1406,6 +1466,174 @@ class VoiceoverBody(BaseModel):
     voiceover_gcs_path: str | None = None
 
 
+class DirectionAudioUploadBody(BaseModel):
+    filename: str = Field(..., min_length=1, max_length=255)
+    content_type: str
+    file_size_bytes: int = Field(..., gt=0, le=_MAX_DIRECTION_AUDIO_BYTES)
+
+
+class DirectionAudioUploadResponse(BaseModel):
+    upload_url: str
+    gcs_path: str
+
+
+class DirectionAudioTranscribeBody(BaseModel):
+    gcs_path: str = Field(..., min_length=1, max_length=1024)
+
+
+class DirectionAudioTranscribeResponse(BaseModel):
+    notes: str
+
+
+@router.post(
+    "/{item_id}/direction-audio/upload-url",
+    response_model=DirectionAudioUploadResponse,
+)
+async def create_direction_audio_upload_url(
+    item_id: str,
+    body: DirectionAudioUploadBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> DirectionAudioUploadResponse:
+    """Create an owned direct-upload URL for a voice note addressed to Kria.
+
+    This is intentionally separate from ``voiceover-uploads/``: direction audio
+    is transcribed into notes and can never be selected as the video's audio.
+    """
+    item = await _load_owned_item(item_id, user.id, db)
+    if body.content_type not in _DIRECTION_AUDIO_ALLOWED_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Direction note must be an audio recording",
+        )
+    safe_name = body.filename.split("/")[-1].split("\\")[-1]
+    upload_url, gcs_path = storage.presigned_put_url_for_plan_item(
+        user_id=str(user.id),
+        plan_item_id=str(item.id),
+        filename=f"direction-audio/{uuid.uuid4().hex}-{safe_name}",
+        content_type=body.content_type,
+    )
+    return DirectionAudioUploadResponse(upload_url=upload_url, gcs_path=gcs_path)
+
+
+@router.post(
+    "/{item_id}/direction-audio/transcribe",
+    response_model=DirectionAudioTranscribeResponse,
+)
+@limiter.limit("5/minute", key_func=_direction_audio_rate_key)
+async def transcribe_direction_audio(
+    request: Request,
+    item_id: str,
+    body: DirectionAudioTranscribeBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> DirectionAudioTranscribeResponse:
+    """Transcribe an owned direction voice note into ``PlanItem.notes``.
+
+    ``voiceover_gcs_path`` is deliberately neither accepted nor assigned here.
+    The two audio roles therefore cannot be confused even by a malformed client.
+    """
+    item = await _load_owned_item(item_id, user.id, db)
+    owned_item_id = str(item.id)
+    expected_prefix = f"users/{user.id}/plan/{owned_item_id}/direction-audio/"
+    if not body.gcs_path.startswith(expected_prefix):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Direction recording does not belong to this item",
+        )
+    # Release the read transaction and its connection before storage + Whisper;
+    # ownership is re-checked under the canonical lock chain before persistence.
+    await db.rollback()
+
+    try:
+        metadata = await run_in_threadpool(storage.object_metadata, body.gcs_path)
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Direction recording is missing — record it again",
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 — storage outage is retryable
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Direction recording is unavailable — try again",
+        ) from exc
+    if metadata.size <= 0 or metadata.size > _MAX_DIRECTION_AUDIO_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Direction recording is empty or too large",
+        )
+    if metadata.content_type not in _DIRECTION_AUDIO_ALLOWED_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Direction note must be an audio recording",
+        )
+
+    suffix = os.path.splitext(body.gcs_path.split("?", 1)[0])[1] or ".webm"
+    local_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            local_path = tmp.name
+        await run_in_threadpool(storage.download_to_file, body.gcs_path, local_path)
+        from app.services.audio_download import probe_duration  # noqa: PLC0415
+
+        duration_s = await run_in_threadpool(probe_duration, local_path)
+        if duration_s is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="We couldn't read that direction note — record it again",
+            )
+        if duration_s > _MAX_DIRECTION_AUDIO_DURATION_S:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Direction notes must be 90 seconds or shorter",
+            )
+        from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
+
+        transcript = await asyncio.wait_for(
+            run_in_threadpool(transcribe_whisper, local_path),
+            timeout=_DIRECTION_TRANSCRIPTION_TIMEOUT_S,
+        )
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Direction transcription timed out — try again",
+        ) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 — transcription errors are repairable
+        log.warning(
+            "direction_audio_transcription_failed",
+            item_id=owned_item_id,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="We couldn't understand that direction note — record it again",
+        ) from exc
+    finally:
+        if local_path and os.path.exists(local_path):
+            os.unlink(local_path)
+
+    notes = _sanitize_text(transcript.full_text or "")[:_MAX_DIRECTION_NOTE_CHARS].strip()
+    if not notes:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="We couldn't hear any direction in that recording",
+        )
+    # Acquire locks only for the short persistence step; transcription can take
+    # seconds and must not hold the plan/persona/item lock chain open.
+    locked_item = await _load_owned_item(item_id, user.id, db, for_update=True)
+    current_notes = _sanitize_text((locked_item.notes or "").strip())
+    if current_notes:
+        keep_existing = max(0, _MAX_DIRECTION_NOTE_CHARS - len(notes) - 1)
+        locked_item.notes = f"{current_notes[:keep_existing].rstrip()}\n{notes}".strip()
+    else:
+        locked_item.notes = notes
+    locked_item.user_edited = True
+    await db.commit()
+    return DirectionAudioTranscribeResponse(notes=locked_item.notes)
+
+
 @router.patch("/{item_id}/voiceover", response_model=PlanItemResponse)
 async def set_item_voiceover(
     item_id: str,
@@ -1415,19 +1643,78 @@ async def set_item_voiceover(
 ) -> PlanItemResponse:
     """Attach or clear the narrated-walkthrough voiceover for a plan item.
 
-    The GCS path must be under the voiceover-uploads/ prefix (validated by the
-    narrated archetype at generate time). Passing null clears a prior recording.
+    Strict mode requires this signed-in user's direct-upload prefix. During the
+    API-first rollout, flag-off also accepts metadata-validated legacy paths and
+    the old anonymous recorder's synthetic-user direct prefix. Passing null
+    clears a prior recording.
     No re-render is triggered — the user still needs to click Generate.
     """
-    from app.routes.admin_music import _validate_voiceover_path  # noqa: PLC0415
-
-    item = await _load_owned_item(item_id, user.id, db, for_update=True)
-    if body.voiceover_gcs_path is not None:
+    voiceover_path = body.voiceover_gcs_path
+    if voiceover_path is None:
+        item = await _load_owned_item(item_id, user.id, db, for_update=True)
+        item.voiceover_gcs_path = None
+    else:
+        # Establish item ownership before touching storage, but do not hold the
+        # plan/persona/item lock chain across the external metadata call.
+        await _load_owned_item(item_id, user.id, db)
         try:
-            _validate_voiceover_path(body.voiceover_gcs_path)
+            _validate_voiceover_path(voiceover_path)
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
-    item.voiceover_gcs_path = body.voiceover_gcs_path
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+
+        own_direct_prefix = f"{DIRECT_VOICEOVER_PREFIX}{user.id}/"
+        synthetic_direct_prefix = f"{DIRECT_VOICEOVER_PREFIX}{SYNTHETIC_USER_ID}/"
+        strict = settings.generative_direct_voiceover_strict_enabled
+        if strict and not voiceover_path.startswith(own_direct_prefix):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Voiceover recording does not belong to this account",
+            )
+        if (
+            voiceover_path.startswith(DIRECT_VOICEOVER_PREFIX)
+            and not voiceover_path.startswith(own_direct_prefix)
+            and not (not strict and voiceover_path.startswith(synthetic_direct_prefix))
+        ):
+            # Never let compatibility mode turn another signed-in user's direct
+            # namespace into a shared capability.
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Voiceover recording does not belong to this account",
+            )
+        await db.rollback()
+        try:
+            metadata = await run_in_threadpool(storage.object_metadata, voiceover_path)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Voiceover recording is missing — upload it again",
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 — storage outage is retryable
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Voiceover recording is unavailable — try again",
+            ) from exc
+        if metadata.size <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Voiceover recording is empty",
+            )
+        if metadata.size > _MAX_VOICEOVER_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Voiceover is too large. Maximum 200 MB.",
+            )
+        if classify_slot_kind(voiceover_path.rsplit("/", 1)[-1], metadata.content_type) != "audio":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Voiceover recording must be audio",
+            )
+        item = await _load_owned_item(item_id, user.id, db, for_update=True)
+        item.voiceover_gcs_path = voiceover_path
+        item.audio_mode = "voiceover"
     await db.commit()
     reloaded = await _load_owned_item(item_id, user.id, db)
     instruction_level = await _get_instruction_level(reloaded, db)
@@ -2607,6 +2894,11 @@ async def generate_item(
     # audio" dogfood bug). With self-narration ON the footage's own audio may carry
     # the voice, so dispatch proceeds and _resolve_archetype routes by speech; a
     # no-speech clip set falls back to montage WITH a persisted, user-visible reason.
+    if getattr(item, "audio_mode", "kria") == "voiceover" and not item.voiceover_gcs_path:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Record or upload your final voiceover before generating",
+        )
     if (
         (item.edit_format or "") in NARRATED_EDIT_FORMATS
         and not item.voiceover_gcs_path
@@ -2621,7 +2913,9 @@ async def generate_item(
     ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Photos require a collage preset",
+            detail=_photo_main_footage_detail(
+                next(p for p in (item.clip_gcs_paths or []) if _is_image_clip_path(p))
+            ),
         )
 
     if settings.guided_edit_enforcement_enabled:
@@ -4214,7 +4508,17 @@ async def editor_commit_item(
     # observes the committed sections + generation token. If the kick fails the
     # persist stands — the honest partial state ("saved, rendering didn't
     # start") the plan's §9 table describes.
-    enqueue_editor_commit_render(str(locked_job.id), variant_id, prep)
+    render_started = True
+    try:
+        enqueue_editor_commit_render(str(locked_job.id), variant_id, prep)
+    except Exception:  # noqa: BLE001 — persistence already committed; report partial success
+        render_started = False
+        log.exception(
+            "plan_item_editor_commit_enqueue_failed",
+            item_id=item_id,
+            variant_id=variant_id,
+            generation=prep["generation"],
+        )
 
     log.info(
         "plan_item_editor_commit",
@@ -4232,7 +4536,7 @@ async def editor_commit_item(
         ),
     )
     return EditorCommitResponse(
-        ok=True,
+        ok=render_started,
         generation=prep["generation"],
         sections=EditorCommitSections(
             text_elements=prep["sections"]["text_elements"],

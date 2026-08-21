@@ -1697,3 +1697,45 @@ def test_masonry_preset_forwarded_to_build_generative_job() -> None:
 
     kwargs = mock_build.call_args.kwargs
     assert kwargs["montage_preset"] == "masonry"
+
+
+@pytest.mark.parametrize(
+    ("audio_mode", "expected_voiceover", "expected_policy"),
+    [
+        ("voiceover", "voiceover-uploads/u/take.webm", "content_plan_primary"),
+        ("original", None, "content_plan_original"),
+        ("kria", None, "content_plan_primary"),
+    ],
+)
+def test_audio_mode_controls_active_soundtrack(
+    audio_mode: str,
+    expected_voiceover: str | None,
+    expected_policy: str,
+) -> None:
+    item = MagicMock()
+    item.id = uuid.uuid4()
+    item.content_plan_id = uuid.uuid4()
+    item.clip_gcs_paths = ["users/u/plan/i/a.mp4"]
+    item.theme = "morning"
+    item.idea = "make a short"
+    item.audio_mode = audio_mode
+    item.voiceover_gcs_path = "voiceover-uploads/u/take.webm"
+
+    plan = MagicMock(user_id=uuid.uuid4(), persona_id=uuid.uuid4())
+    persona_row = MagicMock()
+    persona_row.persona = {"tone": "direct", "content_pillars": []}
+    job = MagicMock(id=uuid.uuid4())
+
+    with (
+        patch(
+            "app.tasks.content_plan_build.sync_session",
+            return_value=_session_with(item, plan, persona_row),
+        ),
+        patch("app.services.generative_jobs.build_generative_job", return_value=job) as mock_build,
+        patch("app.services.job_dispatch.enqueue_orchestrator_sync"),
+    ):
+        generate_plan_item_videos.run(str(item.id))
+
+    kwargs = mock_build.call_args.kwargs
+    assert kwargs["voiceover_gcs_path"] == expected_voiceover
+    assert kwargs["variant_policy"] == expected_policy

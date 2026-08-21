@@ -570,6 +570,7 @@ export type RenderedMontagePreset = Exclude<MontagePreset, "classic">;
 /** Derived server-side from the linked Job.status — never a stored column. */
 export type PlanItemStatus =
   | "idea"
+  | "draft"
   | "awaiting_clips"
   | "generating"
   | "ready"
@@ -637,6 +638,8 @@ export interface PlanItem {
   content_mode?: "existing_footage" | "create_new" | "mixed";
   /** Narrated-walkthrough voiceover GCS key (0056+). Null = no voiceover recorded yet. */
   voiceover_gcs_path?: string | null;
+  /** Server-authoritative soundtrack selection for the next render. */
+  audio_mode?: "kria" | "original" | "voiceover";
   /**
    * Landscape-clip fit preference.
    * "fit"  = letterbox (full-width, black bars top & bottom, never enlarged) — default.
@@ -773,6 +776,7 @@ export function updatePlanItem(
     landscape_fit?: "fit" | "fill";
     /** Per-item content_mode override (montage plan-vs-have toggle, 0058+). */
     content_mode?: "existing_footage" | "create_new" | "mixed";
+    audio_mode?: "kria" | "original" | "voiceover";
   },
 ): Promise<PlanItem> {
   return request<PlanItem>(`/plan-items/${id}`, {
@@ -826,6 +830,28 @@ export async function requestUploadUrls(
     body: JSON.stringify({ files }),
   });
   return res.urls;
+}
+
+/** Signed upload for a voice note addressed to Kria (never a final voiceover). */
+export function requestDirectionAudioUploadUrl(
+  itemId: string,
+  file: { filename: string; content_type: string; file_size_bytes: number },
+): Promise<UploadUrl> {
+  return request<UploadUrl>(`/plan-items/${itemId}/direction-audio/upload-url`, {
+    method: "POST",
+    body: JSON.stringify(file),
+  });
+}
+
+/** Transcribe an uploaded direction note into PlanItem.notes. */
+export function transcribeDirectionAudio(
+  itemId: string,
+  gcsPath: string,
+): Promise<{ notes: string }> {
+  return request<{ notes: string }>(`/plan-items/${itemId}/direction-audio/transcribe`, {
+    method: "POST",
+    body: JSON.stringify({ gcs_path: gcsPath }),
+  });
 }
 
 /** PUT a file straight to GCS (direct, not through the proxy — avoids buffering bytes). */
@@ -1042,6 +1068,40 @@ export function attachClips(
       clip_gcs_paths: clipGcsPaths,
       ...(assignments !== undefined ? { assignments } : {}),
     }),
+  });
+}
+
+// ── Hidden manual-editor draft lifecycle (Slice 3) ──────────────────────
+
+export interface ManualDraftResponse {
+  plan_item_id: string;
+  job_id: string;
+  variant_id: string | null;
+  status: "draft";
+}
+
+export interface ManualDraftMedia {
+  gcs_path: string;
+  duration_s: number;
+  kind: "video" | "image";
+}
+
+/** Create the caller's manual draft, or return their latest unexported one. */
+export function createOrResumeManualDraft(title?: string): Promise<ManualDraftResponse> {
+  return request<ManualDraftResponse>("/plan-items/manual-drafts", {
+    method: "POST",
+    body: JSON.stringify({ ...(title?.trim() ? { title: title.trim() } : {}) }),
+  });
+}
+
+/** Seed the canonical editor variant from the draft's attached media order. */
+export function initializeManualDraft(
+  itemId: string,
+  media: ManualDraftMedia[],
+): Promise<ManualDraftResponse> {
+  return request<ManualDraftResponse>(`/plan-items/${itemId}/manual-draft/initialize`, {
+    method: "POST",
+    body: JSON.stringify({ media }),
   });
 }
 
@@ -1610,7 +1670,9 @@ export interface PlanItemVariant {
   duration_s?: number | null;
   // Literal union (not bare string) to match EditableVariant — every plan
   // consumer compares against these literals, so this is non-breaking.
-  render_status: "ready" | "rendering" | "failed" | null;
+  render_status: "draft" | "ready" | "rendering" | "failed" | null;
+  /** Hidden manual-editor lifecycle. The first Save exports this variant. */
+  manual_draft?: boolean;
   // Edit controls: swap-song is hidden when music_track_id is null (the
   // original-audio variant has no song), and the style picker reflects style_set_id.
   text_mode: "lyrics" | "agent_text" | "none";

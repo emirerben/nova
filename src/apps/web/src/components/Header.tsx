@@ -15,6 +15,7 @@ export default function Header() {
   const isLanding = pathname === "/" || pathname === "/auto-story";
   const { status: authStatus } = useSession();
   const [progress, setProgress] = useState(0);
+  const creationHubEnabled = process.env.NEXT_PUBLIC_CREATION_HUB_ENABLED === "true";
 
   useEffect(() => {
     if (isAdmin) return;
@@ -42,6 +43,7 @@ export default function Header() {
   const isLight =
     isLanding ||
     pathname.startsWith("/plan") ||
+    pathname.startsWith("/create") ||
     pathname.startsWith("/library") ||
     pathname.startsWith("/tiktok") ||
     pathname.startsWith("/generative") ||
@@ -82,11 +84,11 @@ export default function Header() {
               href="/plan"
               className={`text-sm transition-colors ${
                 isLight
-                  ? `hover:text-[#0c0c0e] ${pathname.startsWith("/plan") ? "text-[#0c0c0e]" : "text-[#71717a]"}`
-                  : `hover:text-white ${pathname.startsWith("/plan") ? "text-white" : "text-zinc-400"}`
+                  ? `hover:text-[#0c0c0e] ${pathname.startsWith("/plan") || pathname.startsWith("/create") ? "text-[#0c0c0e]" : "text-[#71717a]"}`
+                  : `hover:text-white ${pathname.startsWith("/plan") || pathname.startsWith("/create") ? "text-white" : "text-zinc-400"}`
               }`}
             >
-              Plan
+              {creationHubEnabled ? "Create" : "Plan"}
             </Link>
           )}
           <AuthControl isLight={isLight} isLanding={isLanding} />

@@ -1195,9 +1195,13 @@ export default function EditorShell({
     );
     setCarouselMomentDirty(true);
   }, [carouselClips, carouselMoment, carouselMomentDirty, clip.loadState, variant]);
+  const manualDraftPendingExport =
+    variant?.manual_draft === true &&
+    !variant.output_url &&
+    (variant.render_status === "draft" || variant.render_status === "failed");
   const clipDirty = useMemo(
-    () => slotsDifferFromBaseline(clip.state.baseline, slots),
-    [clip.state.baseline, slots],
+    () => manualDraftPendingExport || slotsDifferFromBaseline(clip.state.baseline, slots),
+    [clip.state.baseline, manualDraftPendingExport, slots],
   );
   const [virtualFallback, setVirtualFallback] = useState(false);
   const virtualRefetchAttemptedRef = useRef(false);
@@ -1747,6 +1751,10 @@ export default function EditorShell({
     "idle" | "saving" | "conflict" | "error" | "partial"
   >("idle");
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  // When persistence succeeds but the broker kick fails, the server returns
+  // the committed generation. A Retry must advance to that baseline instead of
+  // replaying the pre-commit token and tripping a false cross-tab conflict.
+  const partialCommitGenerationRef = useRef<string | null>(null);
   const saving = saveState === "saving";
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [musicAlignmentPrompt, setMusicAlignmentPrompt] = useState(false);
@@ -5502,6 +5510,9 @@ export default function EditorShell({
         orientation,
         variant,
       });
+      if (partialCommitGenerationRef.current) {
+        commitRequest.base_generation = partialCommitGenerationRef.current;
+      }
       const res = await commitEditorSession(
         itemId,
         variant.variant_id,
@@ -5510,6 +5521,7 @@ export default function EditorShell({
       // Partial: persist landed (we got a 2xx) but the render kick failed —
       // the response's `ok` flag tells us. Working state stays, Retry re-kicks.
       if (res && res.ok === false) {
+        partialCommitGenerationRef.current = res.generation;
         setSaveState("partial");
         setSaveMessage("Saved, but rendering didn't start.");
         return;
@@ -5532,6 +5544,7 @@ export default function EditorShell({
       // Full success: the stack is void (no undoing into a pre-persist world),
       // the draft is spent, and the item-page hero shows the rendering state.
       draftPersistenceSuspendedRef.current = true;
+      partialCommitGenerationRef.current = null;
       history.clear();
       clearDraft();
       setDraftDoc(null);
