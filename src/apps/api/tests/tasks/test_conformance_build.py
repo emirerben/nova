@@ -74,13 +74,27 @@ def _owned_persona_loader(monkeypatch: pytest.MonkeyPatch):
 
 
 def _make_session_ctx(item=None, plan=None, persona=None):
-    """Return (context_manager, mock_session) for sync_session()."""
-    mock_session = MagicMock()
+    """Return (context_manager, mock_session) for sync_session().
 
-    def _get_side_effect(cls, pk, **_kwargs):
+    ``mock_session.get_calls`` records every ``.get()`` call as
+    ``(model, pk, with_for_update, populate_existing)`` so tests can assert on
+    the lock/refresh kwargs actually passed, not just the returned value.
+    """
+    mock_session = MagicMock()
+    mock_session.get_calls = []
+
+    def _get_side_effect(cls, pk, **kwargs):
         from app.models import ContentPlan, PlanItem  # noqa: PLC0415
         from app.models import Persona as PersonaRow  # noqa: PLC0415
 
+        mock_session.get_calls.append(
+            (
+                cls,
+                pk,
+                bool(kwargs.get("with_for_update")),
+                bool(kwargs.get("populate_existing")),
+            )
+        )
         if cls is PlanItem:
             return item
         if cls is ContentPlan:
@@ -398,6 +412,68 @@ def _run_with_mocks(item, *, agent_outputs, meta=None):
         MockAgent.return_value.run.side_effect = list(agent_outputs)
         _run(_ITEM_ID)
         return persist_item, MockAgent
+
+
+# ---------------------------------------------------------------------------
+# Stale-lock-read regression (#813/#845)
+# ---------------------------------------------------------------------------
+
+
+class TestConformanceBuildLockPolicy:
+    def test_locked_plan_item_reread_carries_populate_existing(self) -> None:
+        """_run reads PlanItem unlocked (item_ref, ~line 95) then re-reads it
+        locked (~line 116) in the SAME session. Without populate_existing, the
+        locked read returns the stale pre-lock cached row instead of fresh
+        clip_gcs_paths/filming_guide/conformance values (#813/#845).
+
+        The SECOND `with sync_session()` block (persist, ~line 290) is a
+        deliberately different session with nothing cached, so its locked
+        PlanItem read is correctly left unpaired -- this test only inspects
+        the first (load) session.
+        """
+        from app.tasks.conformance_build import _run
+
+        item = _make_item()
+        plan = _make_plan()
+        persona = _make_persona()
+        persist_item = _make_item(clip_assignments=[{"gcs_path": _CLIP, "shot_id": None}])
+        cm1, session1 = _make_session_ctx(item=item, plan=plan, persona=persona)
+        cm2, _session2 = _make_session_ctx(item=persist_item, plan=plan, persona=persona)
+        calls = {"n": 0}
+
+        def _session_factory():
+            calls["n"] += 1
+            return cm1 if calls["n"] == 1 else cm2
+
+        with (
+            patch("app.tasks.conformance_build.sync_session", side_effect=_session_factory),
+            patch("app.tasks.conformance_build.tempfile.TemporaryDirectory") as mock_tmpdir,
+            patch(
+                "app.pipeline.agents.gemini_analyzer.gemini_upload_and_wait",
+                return_value=MagicMock(),
+            ),
+            patch("app.pipeline.agents.gemini_analyzer.analyze_clip", return_value=_meta()),
+            patch("app.storage.download_to_file"),
+            patch("app.agents.conformance_feedback.ConformanceFeedbackAgent") as MockAgent,
+            patch("app.agents._model_client.default_client", return_value=MagicMock()),
+        ):
+            mock_ctx = MagicMock()
+            mock_ctx.__enter__ = MagicMock(return_value="/tmp/fake")
+            mock_ctx.__exit__ = MagicMock(return_value=False)
+            mock_tmpdir.return_value = mock_ctx
+            MockAgent.return_value.run.return_value = _verdict("Morning Routine")
+            _run(_ITEM_ID)
+
+        locked_plan_item_calls = [
+            call for call in session1.get_calls if call[0].__name__ == "PlanItem" and call[2]
+        ]
+        assert locked_plan_item_calls, "expected a locked PlanItem re-read in the load session"
+        for cls, pk, _with_for_update, populate_existing in locked_plan_item_calls:
+            assert populate_existing, (
+                f"{cls.__name__}[{pk}] was locked without populate_existing in the "
+                "session that already read it unlocked earlier -- returns the "
+                "stale pre-lock cached row (#813/#845)"
+            )
 
 
 class TestConformanceDefenseInDepth:

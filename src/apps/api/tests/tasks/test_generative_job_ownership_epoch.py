@@ -21,10 +21,17 @@ class _GraphSession:
         self.job = job
         self.item = item
         self.plan = plan
-        self.get_calls: list[tuple[type, object, bool]] = []
+        self.get_calls: list[tuple[type, object, bool, bool]] = []
 
     def get(self, model, key, **kwargs):  # noqa: ANN001, ANN201
-        self.get_calls.append((model, key, bool(kwargs.get("with_for_update"))))
+        self.get_calls.append(
+            (
+                model,
+                key,
+                bool(kwargs.get("with_for_update")),
+                bool(kwargs.get("populate_existing")),
+            )
+        )
         if model is Job and key == self.job.id:
             return self.job
         if model is PlanItem and self.item is not None and key == self.item.id:
@@ -32,6 +39,32 @@ class _GraphSession:
         if model is ContentPlan and self.plan is not None and key == self.plan.id:
             return self.plan
         return None
+
+
+class _StaleAwareSession:
+    """Fakes the real staleness rule from #813/#845: the FIRST ``.get()`` for
+    a primary key in a session wins and is cached; every later ``.get()`` for
+    that same key returns the SAME cached object unless ``populate_existing``
+    is also passed -- ``with_for_update`` alone does not refresh it. This is
+    what a real SQLAlchemy ``Session`` does, and it is precisely what lets a
+    genuine row lock hand back pre-lock data.
+    """
+
+    def __init__(self, *, plan, job_seed, job_fresh, item_seed, item_fresh):  # noqa: ANN001
+        self._plan = plan
+        self._seed = {Job: job_seed, PlanItem: item_seed}
+        self._fresh = {Job: job_fresh, PlanItem: item_fresh}
+        self._cache: dict[tuple[type, object], object] = {}
+
+    def get(self, model, key, **kwargs):  # noqa: ANN001, ANN201
+        if model is ContentPlan:
+            return self._plan if key == self._plan.id else None
+        cache_key = (model, key)
+        if cache_key not in self._cache:
+            self._cache[cache_key] = self._seed[model]
+        elif kwargs.get("populate_existing"):
+            self._cache[cache_key] = self._fresh[model]
+        return self._cache[cache_key]
 
 
 def _plan_job_graph(*, live_epoch: int, bound_epoch: int | None):
@@ -130,9 +163,115 @@ def test_public_non_plan_job_bypasses_the_plan_epoch_graph() -> None:
 
     assert entry == (job, None)
     assert session.get_calls == [
-        (Job, job.id, False),
-        (Job, job.id, True),
+        (Job, job.id, False, False),
+        (Job, job.id, True, True),
     ]
+
+
+def test_all_locked_gets_carry_populate_existing() -> None:
+    """Every ``with_for_update=True`` call on ``Job``/``PlanItem`` -- the two
+    models this function also reads unlocked earlier in the same session --
+    must also pass ``populate_existing=True``, or the lock hands back the
+    stale cached row instead of the freshly-locked one (#813/#845). Covers
+    both the content-plan graph path and the public non-plan-job bypass.
+
+    ``ContentPlan`` is deliberately excluded: its locked read is this
+    function's FIRST read of that model in the session, so there is nothing
+    stale to refresh.
+    """
+    plan_job, _item, _plan, plan_session = _plan_job_graph(live_epoch=3, bound_epoch=3)
+    with patch(
+        "app.services.content_plan_persona.load_owned_plan_persona_sync",
+        return_value=SimpleNamespace(),
+    ):
+        gb._lock_owned_entry_job(plan_session, str(plan_job.id))
+
+    public_job = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        status="queued",
+        mode="generative",
+        content_plan_item_id=None,
+        content_plan_ownership_epoch=None,
+    )
+    public_session = _GraphSession(job=public_job)
+    gb._lock_owned_entry_job(public_session, str(public_job.id))
+
+    for session in (plan_session, public_session):
+        locked_calls = [
+            call for call in session.get_calls if call[2] and call[0] in (Job, PlanItem)
+        ]
+        assert locked_calls, "expected at least one Job/PlanItem with_for_update=True call"
+        for model, key, _with_for_update, populate_existing in locked_calls:
+            assert populate_existing, (
+                f"{model.__name__}[{key}] was locked without populate_existing -- "
+                "it will return the stale pre-lock cached row if this session "
+                "already read that primary key unlocked earlier (#813/#845)"
+            )
+
+
+def test_gate_depends_on_populate_existing_refreshed_value_not_stale_cache() -> None:
+    """Simulates SQLAlchemy's real staleness rule directly: a locked re-read
+    of an already-cached PK returns the STALE cached object unless
+    ``populate_existing=True`` is also passed. Proves the ownership gate
+    (``item.current_job_id != job.id``) is decided by the FRESH, post-lock
+    row -- not whatever ``job_ref``/``item_ref`` looked like before the lock.
+
+    This reproduces the #813 shape: a concurrent writer binds
+    ``item.current_job_id`` to this job between the unlocked pre-read and the
+    lock. Fails if ``populate_existing`` is ever dropped from the locked
+    ``PlanItem``/``Job`` reads in ``_lock_owned_entry_job``.
+    """
+    user_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    item_id = uuid.uuid4()
+    plan_id = uuid.uuid4()
+
+    plan = SimpleNamespace(
+        id=plan_id, user_id=user_id, ownership_epoch=2, ownership_quarantined_at=None
+    )
+    # Seed: what the UNLOCKED pre-reads (job_ref/item_ref) see -- a concurrent
+    # writer hasn't finished binding the item to this job yet.
+    job_seed = SimpleNamespace(
+        id=job_id,
+        user_id=user_id,
+        status="queued",
+        mode="content_plan",
+        content_plan_item_id=item_id,
+        content_plan_ownership_epoch=None,
+    )
+    item_seed = SimpleNamespace(id=item_id, content_plan_id=plan_id, current_job_id=None)
+    # Fresh: what the DB actually holds once the lock is acquired -- the
+    # concurrent writer finished binding item -> job first.
+    job_fresh = SimpleNamespace(
+        id=job_id,
+        user_id=user_id,
+        status="queued",
+        mode="content_plan",
+        content_plan_item_id=item_id,
+        content_plan_ownership_epoch=2,
+    )
+    item_fresh = SimpleNamespace(id=item_id, content_plan_id=plan_id, current_job_id=job_id)
+
+    session = _StaleAwareSession(
+        plan=plan,
+        job_seed=job_seed,
+        job_fresh=job_fresh,
+        item_seed=item_seed,
+        item_fresh=item_fresh,
+    )
+
+    with patch(
+        "app.services.content_plan_persona.load_owned_plan_persona_sync",
+        return_value=SimpleNamespace(),
+    ):
+        entry = gb._lock_owned_entry_job(session, str(job_id))
+
+    # Correct behavior reads the FRESH, post-lock binding and accepts. Without
+    # populate_existing on the locked re-reads, item/job stay at their stale
+    # seed values (current_job_id=None), the ownership gate rejects, and this
+    # assertion fails.
+    assert entry == (job_fresh, 2)
 
 
 def test_wrapped_tasks_do_not_leak_content_plan_epoch_between_calls() -> None:

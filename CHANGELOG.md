@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.42.0.1] — 2026-08-21
+
+### Fixed
+- **Closed the last two known stale-lock reads from the Generate-twice race (#813).** `_lock_owned_entry_job` (the worker-entry ownership gate for content-plan renders) and the clip-conformance task's plan-item re-read each took a genuine row lock after an unlocked pre-read of the same row in the same session — the lock serialized correctly, but SQLAlchemy handed back the cached pre-lock object, so the ownership gate and the conformance verdict could act on stale data. Both locked re-reads now pass `populate_existing=True`. The `KNOWN_STALE_LOCK_READS` backlog (`tests/test_row_lock_policy.py`, issue #845) is now empty; the regression gate keeps it that way going forward.
+
 ## [0.42.0.0] — 2026-08-20
 
 ### Changed

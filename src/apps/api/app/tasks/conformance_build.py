@@ -113,7 +113,11 @@ def _run(plan_item_id: str, *, expected_ownership_epoch: int | None = None) -> N
             return
         content_plan_id = plan.id
         ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
-        item = session.get(PlanItem, iid, with_for_update=True)
+        # item_ref above already cached this row unlocked, so without
+        # populate_existing the lock serializes but item stays at its
+        # pre-lock values (e.g. stale clip_gcs_paths/filming_guide) -- the
+        # #813 failure mode.
+        item = session.get(PlanItem, iid, with_for_update=True, populate_existing=True)
         if item is None or item.content_plan_id != plan.id:
             log.warning("conformance_build.missing_item", plan_item_id=plan_item_id)
             return
