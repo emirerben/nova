@@ -306,7 +306,7 @@ function PlanPageInner() {
     return (
       <LightShell size={isPayoffStep ? "wide" : "narrow"}>
         {error && (
-          <div className="mb-6 rounded border border-zinc-200 bg-[#fafaf8] px-4 py-3 text-[#3f3f46]">
+          <div className="mb-6 rounded border border-zinc-200 bg-[#ffffff] px-4 py-3 text-[#3f3f46]">
             {error}
           </div>
         )}
@@ -517,7 +517,7 @@ function PlanPageInner() {
 
 function WorkspaceHomeSkeleton() {
   return (
-    <div className="min-h-screen bg-[#fafaf8]">
+    <div className="min-h-screen bg-[#ffffff]">
       <div className="mx-auto max-w-[760px] px-6 pb-24 pt-14">
         <div className="flex items-baseline justify-between gap-6">
           <div className="h-11 w-32 rounded bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer" />

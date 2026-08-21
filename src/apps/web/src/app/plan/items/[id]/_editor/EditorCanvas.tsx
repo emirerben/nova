@@ -1152,7 +1152,7 @@ export default function EditorCanvas({
       role="region"
       aria-label={`Video canvas, ${outputFormatLabel}`}
       data-look-preview={lookPreset}
-      className={`relative h-full w-full min-h-0 min-w-0 overflow-auto bg-[#fafaf8] ${
+      className={`relative h-full w-full min-h-0 min-w-0 overflow-auto bg-[#ffffff] ${
         tool === "pan" && zoom > 1 ? "cursor-grab active:cursor-grabbing" : ""
       }`}
       onPointerDown={onViewportPointerDown}

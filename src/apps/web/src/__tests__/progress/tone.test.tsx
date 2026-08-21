@@ -113,7 +113,7 @@ describe("PhaseChipRow tone contract", () => {
       />
     );
     const divs = Array.from(container.querySelectorAll("div"));
-    expect(divs.some((el) => el.className.includes("from-[#fafaf8]"))).toBe(true);
+    expect(divs.some((el) => el.className.includes("from-[#ffffff]"))).toBe(true);
   });
 
   it("test_phase_chip_row_dark_default_uses_black_fade_mask: dark default preserves black fade mask", () => {
@@ -221,6 +221,6 @@ describe("EditPayoff sub-component tone pins", () => {
       />
     );
     const divs = Array.from(container.querySelectorAll("div"));
-    expect(divs.some((el) => el.className.includes("from-[#fafaf8]"))).toBe(true);
+    expect(divs.some((el) => el.className.includes("from-[#ffffff]"))).toBe(true);
   });
 });

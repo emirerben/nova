@@ -1753,7 +1753,7 @@ export default function PlanItemPage() {
                     onChange={(e) => setExpandContext(e.currentTarget.value)}
                     maxLength={800}
                     rows={3}
-                    className="mt-2 w-full resize-none rounded-lg border border-zinc-200 bg-[#fafaf8] px-3 py-2 text-base text-[#0c0c0e] placeholder-zinc-400 focus:border-lime-500/60 focus:outline-none"
+                    className="mt-2 w-full resize-none rounded-lg border border-zinc-200 bg-[#ffffff] px-3 py-2 text-base text-[#0c0c0e] placeholder-zinc-400 focus:border-lime-500/60 focus:outline-none"
                     placeholder="A rough goal or detail is enough..."
                   />
                 </label>
@@ -1882,7 +1882,7 @@ export default function PlanItemPage() {
 
             {/* Narrated walkthrough: sticky voice recorder bar — shown for both narrated sub-modes */}
             {isNarrated && (
-              <div className="sticky top-0 z-10 -mx-6 mb-6 border-b border-zinc-100 bg-[#fafaf8] px-6 py-3">
+              <div className="sticky top-0 z-10 -mx-6 mb-6 border-b border-zinc-100 bg-[#ffffff] px-6 py-3">
                 <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
                   Voice recording
                 </p>
@@ -4829,7 +4829,7 @@ function PoolUploadCard({
             return (
               <li
                 key={a.gcs_path}
-                className="min-w-[190px] max-w-[220px] rounded-lg border border-zinc-200 bg-[#fafaf8] p-2"
+                className="min-w-[190px] max-w-[220px] rounded-lg border border-zinc-200 bg-[#ffffff] p-2"
               >
                 <div className="flex gap-2">
                   <span
@@ -4898,7 +4898,7 @@ function PoolUploadCard({
             <li
               key={p.localId}
               data-testid="pending-clip-card"
-              className="min-w-[190px] max-w-[220px] rounded-lg border border-zinc-200 bg-[#fafaf8] p-2"
+              className="min-w-[190px] max-w-[220px] rounded-lg border border-zinc-200 bg-[#ffffff] p-2"
             >
               <div className="flex min-w-0 items-start justify-between gap-2">
                 <span

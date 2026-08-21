@@ -52,7 +52,7 @@ export default function Header() {
     <header
       className={`z-40 h-14 ${
         isLight
-          ? `bg-[#fafaf8] ${isLanding ? "" : "border-b border-zinc-200/70"}`
+          ? `bg-[#ffffff] ${isLanding ? "" : "border-b border-zinc-200/70"}`
           : "sticky top-0"
       }`}
       style={
@@ -202,14 +202,14 @@ function AuthControl({
           <Link
             href="/plan"
             onClick={() => setOpen(false)}
-            className={`block px-3 py-2 text-sm ${isLight ? "text-[#3f3f46] hover:bg-[#fafaf8]" : "text-zinc-200 hover:bg-zinc-900"}`}
+            className={`block px-3 py-2 text-sm ${isLight ? "text-[#3f3f46] hover:bg-[#ffffff]" : "text-zinc-200 hover:bg-zinc-900"}`}
           >
             My plan
           </Link>
           <Link
             href="/plan/persona"
             onClick={() => setOpen(false)}
-            className={`block px-3 py-2 text-sm ${isLight ? "text-[#3f3f46] hover:bg-[#fafaf8]" : "text-zinc-200 hover:bg-zinc-900"}`}
+            className={`block px-3 py-2 text-sm ${isLight ? "text-[#3f3f46] hover:bg-[#ffffff]" : "text-zinc-200 hover:bg-zinc-900"}`}
           >
             Your persona
           </Link>
@@ -219,7 +219,7 @@ function AuthControl({
                 setResetError(null);
                 setConfirming(true);
               }}
-              className={`block w-full px-3 py-2 text-left text-sm ${isLight ? "text-[#71717a] hover:bg-[#fafaf8] hover:text-[#0c0c0e]" : "text-zinc-400 hover:bg-zinc-900 hover:text-white"}`}
+              className={`block w-full px-3 py-2 text-left text-sm ${isLight ? "text-[#71717a] hover:bg-[#ffffff] hover:text-[#0c0c0e]" : "text-zinc-400 hover:bg-zinc-900 hover:text-white"}`}
             >
               Start over
             </button>
@@ -252,7 +252,7 @@ function AuthControl({
                     setResetError(null);
                   }}
                   disabled={resetting}
-                  className={`rounded px-2 py-1 text-xs font-medium disabled:opacity-60 ${isLight ? "text-[#3f3f46] hover:bg-[#fafaf8]" : "text-zinc-300 hover:bg-zinc-800"}`}
+                  className={`rounded px-2 py-1 text-xs font-medium disabled:opacity-60 ${isLight ? "text-[#3f3f46] hover:bg-[#ffffff]" : "text-zinc-300 hover:bg-zinc-800"}`}
                 >
                   Cancel
                 </button>
@@ -264,7 +264,7 @@ function AuthControl({
           )}
           <button
             onClick={() => signOut({ callbackUrl: "/" })}
-            className={`block w-full px-3 py-2 text-left text-sm ${isLight ? "text-[#71717a] hover:bg-[#fafaf8] hover:text-[#0c0c0e]" : "text-zinc-400 hover:bg-zinc-900 hover:text-white"}`}
+            className={`block w-full px-3 py-2 text-left text-sm ${isLight ? "text-[#71717a] hover:bg-[#ffffff] hover:text-[#0c0c0e]" : "text-zinc-400 hover:bg-zinc-900 hover:text-white"}`}
           >
             Sign out
           </button>

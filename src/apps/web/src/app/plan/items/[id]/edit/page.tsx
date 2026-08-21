@@ -29,7 +29,7 @@ function EditPageInner() {
 
 export default function EditPage() {
   return (
-    <Suspense fallback={<div className="fixed inset-0 z-50 bg-[#fafaf8]" />}>
+    <Suspense fallback={<div className="fixed inset-0 z-50 bg-[#ffffff]" />}>
       <EditPageInner />
     </Suspense>
   );

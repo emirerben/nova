@@ -39,7 +39,7 @@ export default function TikTokProductWorkspace({ videoSrc }: { videoSrc: string 
   }
 
   return (
-    <main className="min-h-screen bg-[#fafaf8] text-[#0c0c0e]">
+    <main className="min-h-screen bg-[#ffffff] text-[#0c0c0e]">
       <div className="mx-auto max-w-[1180px] px-6 pb-24 pt-14">
         <header className="border-b border-zinc-200 pb-10">
           <p className="mb-3 text-xs font-semibold uppercase text-lime-700">Product workspace</p>

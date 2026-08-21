@@ -12,7 +12,7 @@ interface LightShellProps {
 export function LightShell({ children, size = "narrow", className = "" }: LightShellProps) {
   const maxW = size === "wide" ? "max-w-[1180px]" : "max-w-[680px]";
   return (
-    <div className={`min-h-screen bg-[#fafaf8] ${className}`}>
+    <div className={`min-h-screen bg-[#ffffff] ${className}`}>
       <div className={`mx-auto ${maxW} px-6 pb-24 pt-16`}>{children}</div>
     </div>
   );

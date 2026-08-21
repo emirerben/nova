@@ -244,7 +244,7 @@ export default function TeleprompterRecorder({
       </p>
 
       {rec.micBlocked && (
-        <div className="mb-3 rounded border border-zinc-200 bg-[#fafaf8] px-3 py-2 text-sm text-[#3f3f46]">
+        <div className="mb-3 rounded border border-zinc-200 bg-[#ffffff] px-3 py-2 text-sm text-[#3f3f46]">
           Mic blocked — enable microphone access in your browser settings, then try
           again.
         </div>
@@ -275,7 +275,7 @@ export default function TeleprompterRecorder({
       </div>
 
       {/* ── Record bar ── (docked at bottom on mobile) */}
-      <div className="mt-4 shrink-0 border-t border-zinc-100 bg-[#fafaf8] pt-4">
+      <div className="mt-4 shrink-0 border-t border-zinc-100 bg-[#ffffff] pt-4">
         {recordControls}
       </div>
     </div>

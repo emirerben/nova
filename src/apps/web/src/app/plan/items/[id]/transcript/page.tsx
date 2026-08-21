@@ -257,7 +257,7 @@ export default function TranscriptTakeoverPage() {
   }
 
   return (
-    <div className="flex min-h-[100dvh] flex-col bg-[#fafaf8] md:flex-row">
+    <div className="flex min-h-[100dvh] flex-col bg-[#ffffff] md:flex-row">
       <StepRail steps={transcriptSteps(step)} onGoBack={goBack} />
 
       {/* min-w-0 lets this flex child shrink instead of overflowing on phones. */}

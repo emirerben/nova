@@ -383,7 +383,7 @@ export default function OnboardingShell({
   // ── Layout ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex min-h-[100dvh] flex-col bg-[#fafaf8] md:flex-row">
+    <div className="flex min-h-[100dvh] flex-col bg-[#ffffff] md:flex-row">
       <StepRail steps={onboardingSteps(step, tiktokStatus)} onGoBack={goBack} />
 
       {/* Right pane */}

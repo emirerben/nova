@@ -6412,7 +6412,7 @@ export default function EditorShell({
 
   return (
     <div
-      className="fixed inset-0 z-50 grid overflow-hidden bg-[#fafaf8]"
+      className="fixed inset-0 z-50 grid overflow-hidden bg-[#ffffff]"
       style={{
         gridTemplateRows:
           layoutMode === "light"
@@ -7950,7 +7950,7 @@ function LightEditSheet({
  * grid footprint so the transition to the loaded editor doesn't jump). */
 function Frame({ children }: { children: React.ReactNode }) {
   return (
-    <div className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-[#fafaf8]">
+    <div className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-[#ffffff]">
       <div className="h-14 flex-none border-b border-zinc-200 bg-white" />
       {children}
     </div>

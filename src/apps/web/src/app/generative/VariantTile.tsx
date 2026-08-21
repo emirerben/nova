@@ -113,7 +113,7 @@ export function VariantTile({
       )}
 
       {clipsOpen && (
-        <div className="rounded-xl border border-zinc-200 bg-[#fafaf8] p-3">
+        <div className="rounded-xl border border-zinc-200 bg-[#ffffff] p-3">
           <InlineClipsEditor
             ownerId={jobId}
             variantId={variant.variant_id}

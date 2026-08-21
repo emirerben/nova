@@ -424,7 +424,7 @@ export default function EditProposalCard({
         ) : null}
 
         {!hasMedia ? (
-          <p role="status" className="mt-3 rounded-lg border border-zinc-200 bg-[#fafaf8] px-3 py-2 text-sm text-[#71717a]">
+          <p role="status" className="mt-3 rounded-lg border border-zinc-200 bg-[#ffffff] px-3 py-2 text-sm text-[#71717a]">
             {EMPTY_MEDIA_MESSAGE}
           </p>
         ) : null}
@@ -572,7 +572,7 @@ export default function EditProposalCard({
             maxLength={500}
             rows={3}
             placeholder="For example: show what surprised me about the food, town, and beaches."
-            className="mt-2 w-full resize-none rounded-lg border border-zinc-200 bg-[#fafaf8] px-3 py-2 text-base font-normal outline-none focus:border-lime-500 focus:ring-2 focus:ring-lime-500/30"
+            className="mt-2 w-full resize-none rounded-lg border border-zinc-200 bg-[#ffffff] px-3 py-2 text-base font-normal outline-none focus:border-lime-500 focus:ring-2 focus:ring-lime-500/30"
           />
         </label>
 
@@ -698,7 +698,7 @@ export default function EditProposalCard({
           </p>
         ) : null}
         {proposal?.failure ? (
-          <p className="mb-4 rounded-lg border border-zinc-200 bg-[#fafaf8] px-3 py-2 text-sm text-[#3f3f46]">
+          <p className="mb-4 rounded-lg border border-zinc-200 bg-[#ffffff] px-3 py-2 text-sm text-[#3f3f46]">
             {proposal.failure.message}
           </p>
         ) : null}
@@ -738,11 +738,11 @@ export default function EditProposalCard({
           {visibleDraft.story_beats.length} moments · {selectedSourceCount(visibleDraft)} sources · about {visibleDraft.duration_s}s
         </p>
         {proposal?.failure ? (
-          <p className="mt-3 rounded-lg border border-zinc-200 bg-[#fafaf8] px-3 py-2 text-sm text-[#3f3f46]">
+          <p className="mt-3 rounded-lg border border-zinc-200 bg-[#ffffff] px-3 py-2 text-sm text-[#3f3f46]">
             {proposal.failure.message}
           </p>
         ) : proposal?.render_failure ? (
-          <p className="mt-3 rounded-lg border border-zinc-200 bg-[#fafaf8] px-3 py-2 text-sm text-[#3f3f46]">
+          <p className="mt-3 rounded-lg border border-zinc-200 bg-[#ffffff] px-3 py-2 text-sm text-[#3f3f46]">
             {proposal.render_failure.message}
           </p>
         ) : null}
@@ -926,7 +926,7 @@ export default function EditProposalCard({
                     layout: event.currentTarget.value as "fullscreen" | "supporting_card",
                   })
                 }
-                className="mt-1 min-h-11 w-full rounded-lg border border-zinc-200 bg-[#fafaf8] px-3 text-base outline-none focus:border-lime-500 focus:ring-2 focus:ring-lime-500/30"
+                className="mt-1 min-h-11 w-full rounded-lg border border-zinc-200 bg-[#ffffff] px-3 text-base outline-none focus:border-lime-500 focus:ring-2 focus:ring-lime-500/30"
               >
                 <option value="fullscreen">Full screen</option>
                 <option value="supporting_card">Supporting card</option>
@@ -949,7 +949,7 @@ export default function EditProposalCard({
                 }
                 maxLength={280}
                 rows={2}
-                className="mt-1 w-full resize-none rounded-lg border border-zinc-200 bg-[#fafaf8] px-3 py-2 text-base outline-none focus:border-lime-500 focus:ring-2 focus:ring-lime-500/30"
+                className="mt-1 w-full resize-none rounded-lg border border-zinc-200 bg-[#ffffff] px-3 py-2 text-base outline-none focus:border-lime-500 focus:ring-2 focus:ring-lime-500/30"
               />
             </label>
           </li>
