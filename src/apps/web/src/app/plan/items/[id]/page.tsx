@@ -1662,7 +1662,10 @@ export default function PlanItemPage() {
                 startCollapsed={
                   (item.clip_gcs_paths?.length ?? 0) > 0 ||
                   (item.filming_guide?.length ?? 0) > 0 ||
-                  Boolean(item.voiceover_gcs_path)
+                  Boolean(item.voiceover_gcs_path) ||
+                  // Arriving from the /plan/new chooser: the type was just
+                  // picked there, so open on receipts with the uploader first.
+                  searchParams.get("setup") === "done"
                 }
                 onPatch={async (updates) => {
                   // Rejections propagate so the picker can drop its optimistic

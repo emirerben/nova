@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import LibraryTile from "@/app/library/_components/LibraryTile";
+import LibraryTile from "@/components/library/LibraryTile";
 import type { LibraryJob } from "@/lib/me-api";
 
 const baseJob: LibraryJob = {

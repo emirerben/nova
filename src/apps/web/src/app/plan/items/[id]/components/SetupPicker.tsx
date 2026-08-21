@@ -26,14 +26,14 @@ export type SetupPatch = {
   content_mode?: "existing_footage" | "create_new";
 };
 
-const TYPE_MEDIA: Record<PickerEditFormat, { poster: string; video: string }> = {
+export const TYPE_MEDIA: Record<PickerEditFormat, { poster: string; video: string }> = {
   montage: { poster: "/plan/type-posters/montage.jpg", video: "/plan/type-posters/montage.mp4" },
   narrated_planned: { poster: "/plan/type-posters/voiceover.jpg", video: "/plan/type-posters/voiceover.mp4" },
   subtitled: { poster: "/plan/type-posters/talking.jpg", video: "/plan/type-posters/talking.mp4" },
   talking_head: { poster: "/plan/type-posters/broll.jpg", video: "/plan/type-posters/broll.mp4" },
 };
 
-const TYPE_COPY: Record<
+export const TYPE_COPY: Record<
   PickerEditFormat,
   { label: string; desc: string; meta: string }
 > = {
@@ -88,6 +88,13 @@ const STYLE_TILES: {
     video: "/plan/style-tiles/polaroid.mp4",
   },
 ];
+
+/** The stored edit_format a TYPE card selection persists. Single source of
+    truth for the legacy narrated_planned → narrated_ready upgrade — used by
+    both this picker's selectType and the standalone /plan/new chooser. */
+export function persistedEditFormatFor(value: PickerEditFormat): string {
+  return value === "narrated_planned" ? "narrated_ready" : value;
+}
 
 type OpenSection = "type" | "style" | null;
 
@@ -246,7 +253,7 @@ function DisclosureSection({
   );
 }
 
-function MediaRadioCard({
+export function MediaRadioCard({
   active,
   saving,
   poster,
@@ -385,7 +392,7 @@ export default function SetupPicker({
     setOpenSection(value === "montage" ? "style" : null);
     // Compare against the stored edit_format, not the folded picker value —
     // a legacy narrated_planned item clicking Voiceover must still upgrade.
-    const targetFormat = value === "narrated_planned" ? "narrated_ready" : value;
+    const targetFormat = persistedEditFormatFor(value);
     // Re-clicking the already-selected Montage card is not always a no-op:
     // default items land on montage + create_new + no guide with nothing in
     // the DOM to upload clips into (PR #833 removed the mode toggle). Fall

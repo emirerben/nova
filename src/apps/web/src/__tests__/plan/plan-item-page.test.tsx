@@ -113,7 +113,7 @@ jest.mock("@/app/plan/_components/SignInPrompt", () => ({
   __esModule: true,
   default: () => <div data-testid="sign-in-prompt" />,
 }));
-jest.mock("@/app/library/_components/FeedbackButtons", () => ({
+jest.mock("@/components/library/FeedbackButtons", () => ({
   __esModule: true,
   default: () => <div data-testid="feedback-buttons" />,
 }));

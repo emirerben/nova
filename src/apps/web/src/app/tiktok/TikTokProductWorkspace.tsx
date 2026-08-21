@@ -55,7 +55,7 @@ export default function TikTokProductWorkspace({ videoSrc }: { videoSrc: string 
               </p>
             </div>
             <Link
-              href="/library"
+              href="/plan"
               className="inline-flex min-h-11 items-center justify-center rounded-full bg-[#0c0c0e] px-6 py-2 text-sm font-semibold text-white hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600"
             >
               Open live product
@@ -346,7 +346,7 @@ export default function TikTokProductWorkspace({ videoSrc }: { videoSrc: string 
         <footer className="flex flex-col gap-4 border-t border-zinc-200 pt-8 text-sm text-[#71717a] sm:flex-row sm:items-center sm:justify-between">
           <p className="text-pretty">Kria is a creator workspace for planning, editing, and delivering short-form video.</p>
           <nav className="flex gap-5" aria-label="Legal and product links">
-            <Link href="/library" className="inline-flex min-h-11 items-center hover:text-[#0c0c0e] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-600">Live product</Link>
+            <Link href="/plan" className="inline-flex min-h-11 items-center hover:text-[#0c0c0e] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-600">Live product</Link>
             <Link href="/terms" className="inline-flex min-h-11 items-center hover:text-[#0c0c0e] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-600">Terms</Link>
             <Link href="/privacy" className="inline-flex min-h-11 items-center hover:text-[#0c0c0e] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-600">Privacy</Link>
           </nav>

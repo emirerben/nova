@@ -1161,6 +1161,6 @@ function publicationErrorMessage(error: string | null) {
 }
 
 function currentReturnTo() {
-  if (typeof window === "undefined") return "/library";
+  if (typeof window === "undefined") return "/plan";
   return `${window.location.pathname}${window.location.search}`;
 }

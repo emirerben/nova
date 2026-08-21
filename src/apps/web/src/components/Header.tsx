@@ -89,18 +89,6 @@ export default function Header() {
               Plan
             </Link>
           )}
-          {authStatus === "authenticated" && (
-            <Link
-              href="/library"
-              className={`text-sm transition-colors ${
-                isLight
-                  ? `hover:text-[#0c0c0e] ${pathname.startsWith("/library") ? "text-[#0c0c0e]" : "text-[#71717a]"}`
-                  : `hover:text-white ${pathname.startsWith("/library") ? "text-white" : "text-zinc-400"}`
-              }`}
-            >
-              Library
-            </Link>
-          )}
           <AuthControl isLight={isLight} isLanding={isLanding} />
         </nav>
       </div>
@@ -217,13 +205,6 @@ function AuthControl({
             className={`block px-3 py-2 text-sm ${isLight ? "text-[#3f3f46] hover:bg-[#fafaf8]" : "text-zinc-200 hover:bg-zinc-900"}`}
           >
             My plan
-          </Link>
-          <Link
-            href="/library"
-            onClick={() => setOpen(false)}
-            className={`block px-3 py-2 text-sm ${isLight ? "text-[#3f3f46] hover:bg-[#fafaf8]" : "text-zinc-200 hover:bg-zinc-900"}`}
-          >
-            My videos
           </Link>
           <Link
             href="/plan/persona"
