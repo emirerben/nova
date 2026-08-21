@@ -7,6 +7,7 @@ import { downloadVideo } from "@/lib/download-video";
 import FeedbackButtons from "./FeedbackButtons";
 import { TikTokPublishDialog } from "@/components/TikTokPublishDialog";
 import { getTikTokPublication, shouldPollTikTokPublication, type TikTokPublication } from "@/lib/tiktok-api";
+import { jobFailureCopy } from "@/lib/job-failure-copy";
 
 /**
  * One 9:16 video in the library. Light editorial canvas (D20/D21).
@@ -22,6 +23,7 @@ export default function LibraryTile({
   onPinned: (planItemId: string) => void;
   canPublishToTikTok: boolean;
 }) {
+  const failureCopy = jobFailureCopy(job.error_class ?? job.failure_reason ?? job.raw_status);
   const [publishOpen, setPublishOpen] = useState(false);
   const [latestPublication, setLatestPublication] = useState<TikTokPublication | null>(
     job.tiktok_publication,
@@ -49,8 +51,14 @@ export default function LibraryTile({
           />
         ) : job.status === "failed" ? (
           <div className="flex h-full w-full flex-col items-center justify-center gap-2 p-4 text-center">
-            <span className="text-sm text-[#3f3f46]">This render didn&apos;t finish</span>
-            <span className="text-xs text-[#a1a1aa]">{job.raw_status.replace(/_/g, " ")}</span>
+            <span className="text-sm font-medium text-[#3f3f46]">{failureCopy.title}</span>
+            <span className="text-xs text-[#71717a]">{failureCopy.detail}</span>
+            {failureCopy.action === "contact_support" && (
+              <span className="text-[11px] text-[#a1a1aa]">
+                Support reference:{" "}
+                <code className="select-all font-mono">{job.id}</code>
+              </span>
+            )}
           </div>
         ) : (
           <div className="flex h-full w-full items-center justify-center bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer">

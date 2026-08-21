@@ -58,7 +58,8 @@ export interface EditableVariant {
   base_video_path?: string | null;
   /** "none" means the variant's text was removed. */
   text_mode: "lyrics" | "agent_text" | "none";
-  render_status: "ready" | "rendering" | "failed" | null;
+  /** "draft" is the virtual-source manual-editor state before first export. */
+  render_status: "draft" | "ready" | "rendering" | "failed" | null;
   /** Render-completion fingerprint — the commit watcher keys off this. */
   render_finished_at?: string | null;
   output_url: string | null;

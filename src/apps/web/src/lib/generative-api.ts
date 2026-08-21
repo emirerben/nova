@@ -358,6 +358,7 @@ async function legacyUpload(file: File, errorLabel: string): Promise<GenerativeU
 }
 
 async function relaySignedUpload(
+  relayUrl: string,
   uploadUrl: string,
   file: File,
   contentType: string,
@@ -370,17 +371,27 @@ async function relaySignedUpload(
   form.append("file_size_bytes", String(file.size));
   const ifGenerationMatch = uploadHeaders["x-goog-if-generation-match"];
   if (ifGenerationMatch) form.append("if_generation_match", ifGenerationMatch);
-  const res = await fetch(`${API_BASE}/uploads/relay`, { method: "POST", body: form });
+  const res = await fetch(relayUrl, { method: "POST", body: form });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail ?? "Upload failed");
   }
 }
 
-async function uploadGenerativeFile(file: File): Promise<GenerativeUploadResult> {
+async function uploadGenerativeFile(
+  file: File,
+  options: {
+    endpoint?: string;
+    relayEndpoint?: string;
+    allowLegacyFallback?: boolean;
+  } = {},
+): Promise<GenerativeUploadResult> {
+  const endpoint = options.endpoint ?? `${API_BASE}/generative-jobs`;
+  const relayEndpoint = options.relayEndpoint ?? `${API_BASE}/uploads/relay`;
+  const allowLegacyFallback = options.allowLegacyFallback ?? true;
   await acquireDirectUploadSlot();
   try {
-    const initRes = await fetch(`${API_BASE}/generative-jobs/upload-url`, {
+    const initRes = await fetch(`${endpoint}/upload-url`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -391,7 +402,7 @@ async function uploadGenerativeFile(file: File): Promise<GenerativeUploadResult>
     });
     // Vercel may update before Fly during a split deploy. Only an absent route
     // uses the legacy byte proxy; validation/server failures stay visible.
-    if (initRes.status === 404 || initRes.status === 405) {
+    if (allowLegacyFallback && (initRes.status === 404 || initRes.status === 405)) {
       return legacyUpload(file, "Upload failed");
     }
     if (!initRes.ok) {
@@ -412,7 +423,13 @@ async function uploadGenerativeFile(file: File): Promise<GenerativeUploadResult>
       // origins can be blocked before a response exists; relay the SAME signed
       // request through Fly only for that network-level browser failure.
       if (error instanceof TypeError) {
-        await relaySignedUpload(init.upload_url, file, init.content_type, uploadHeaders);
+        await relaySignedUpload(
+          relayEndpoint,
+          init.upload_url,
+          file,
+          init.content_type,
+          uploadHeaders,
+        );
       } else {
         throw error;
       }
@@ -427,6 +444,24 @@ export async function uploadGenerativeClip(
   file: File,
 ): Promise<{ gcs_path: string; kind: "video" | "image" }> {
   const result = await uploadGenerativeFile(file);
+  if (result.kind === "audio") throw new Error("Clip upload must be a video or image");
+  return { gcs_path: result.gcs_path, kind: result.kind };
+}
+
+/** Authenticated upload initialization. The signed media PUT goes directly to
+ * storage; only a network-level PUT failure falls back to Fly's streaming
+ * relay, using that exact signed URL as the upload capability. */
+export async function uploadOwnedGenerativeClip(
+  file: File,
+): Promise<{ gcs_path: string; kind: "video" | "image" }> {
+  const result = await uploadGenerativeFile(file, {
+    endpoint: "/api/plan/generative-jobs",
+    // Keep fallback bytes off the Vercel request boundary: its proxy buffers
+    // multipart bodies and rejects normal-sized videos. The signed GCS URL is
+    // the exact-object capability the Fly relay validates.
+    relayEndpoint: `${API_BASE}/uploads/relay`,
+    allowLegacyFallback: false,
+  });
   if (result.kind === "audio") throw new Error("Clip upload must be a video or image");
   return { gcs_path: result.gcs_path, kind: result.kind };
 }
@@ -459,6 +494,33 @@ export async function uploadVoiceover(
   return body;
 }
 
+/** Authenticated counterpart to uploadVoiceover for the signed-in create flow. */
+export async function uploadOwnedVoiceover(
+  file: File | Blob,
+  filename = "voiceover.webm",
+): Promise<{ gcs_path: string; kind: string }> {
+  let uploadFile: File;
+  if (file instanceof File) {
+    const name = file.name.toLowerCase();
+    uploadFile =
+      name.endsWith(".mp4") && !(file.type || "").toLowerCase().startsWith("audio/")
+        ? new File([file], file.name.replace(/\.mp4$/i, ".m4a"), {
+            type: "audio/mp4",
+            lastModified: file.lastModified,
+          })
+        : file;
+  } else {
+    uploadFile = new File([file], filename, { type: file.type || "audio/webm" });
+  }
+  const body = await uploadGenerativeFile(uploadFile, {
+    endpoint: "/api/plan/generative-jobs",
+    relayEndpoint: `${API_BASE}/uploads/relay`,
+    allowLegacyFallback: false,
+  });
+  if (body.kind !== "audio") throw new Error("Voiceover upload must be an audio file");
+  return body;
+}
+
 export async function createGenerativeJob(
   clip_gcs_paths: string[],
   voiceover_gcs_path: string | null = null,
@@ -488,6 +550,82 @@ export async function createGenerativeJob(
 export async function getGenerativeJobStatus(jobId: string): Promise<GenerativeJobStatus> {
   const res = await fetch(`${API_BASE}/generative-jobs/${jobId}/status`);
   if (!res.ok) throw new Error(`Failed to get job status: ${res.status}`);
+  return res.json();
+}
+
+/** Create a user-owned generative job through the authenticated proxy. */
+export async function createOwnedGenerativeJob(
+  clip_gcs_paths: string[],
+  voiceover_gcs_path: string | null = null,
+  opts: { topic?: string; intent?: string } = {},
+): Promise<GenerativeJobResponse> {
+  const res = await fetch("/api/plan/generative-jobs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      clip_gcs_paths,
+      voiceover_gcs_path,
+      topic: opts.topic ?? undefined,
+      intent: opts.intent ?? undefined,
+    }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw uploadError(detail.detail, "Failed to create generative job");
+  }
+  return res.json();
+}
+
+/** Read an owned generative job through the authenticated proxy. */
+export async function getOwnedGenerativeJobStatus(
+  jobId: string,
+): Promise<GenerativeJobStatus> {
+  const res = await fetch(
+    `/api/plan/generative-jobs/${encodeURIComponent(jobId)}/status`,
+  );
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw uploadError(detail.detail, `Failed to get job status: ${res.status}`);
+  }
+  return res.json();
+}
+
+export interface OpenGenerativeJobInEditorResponse {
+  plan_item_id: string;
+  variant_id: string;
+}
+
+/** Retry the same failed owned job so its persisted uploads and direction stay authoritative. */
+export async function retryOwnedGenerativeJob(
+  jobId: string,
+): Promise<{ job_id: string; status: "queued" }> {
+  const res = await fetch(`/api/me/jobs/${encodeURIComponent(jobId)}/retry`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw uploadError(detail.detail, "The render could not be retried");
+  }
+  return res.json();
+}
+
+/** Idempotently promote a ready owned job into the canonical plan editor. */
+export async function openGenerativeJobInEditor(
+  jobId: string,
+  title?: string,
+): Promise<OpenGenerativeJobInEditorResponse> {
+  const res = await fetch(
+    `/api/me/jobs/${encodeURIComponent(jobId)}/open-in-editor`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(title ? { title } : {}),
+    },
+  );
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw uploadError(detail.detail, "Your edit is ready, but the editor could not open");
+  }
   return res.json();
 }
 

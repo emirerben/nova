@@ -38,6 +38,8 @@ import {
   type PlanItemVariant,
   type MontagePreset,
   requestUploadUrls,
+  requestDirectionAudioUploadUrl,
+  transcribeDirectionAudio,
   retextPlanItem,
   setPlanItemIntroSize,
   swapPlanItemSong,
@@ -63,6 +65,7 @@ import {
   patchPlanItemSceneTiming,
   type SceneTimingPatch,
 } from "@/lib/plan-api";
+import { fmtTime, useAudioRecorder, type AudioTake } from "@/hooks/useAudioRecorder";
 import { buildPromotedAssignments } from "@/lib/plan-clip-promotion";
 import {
   FINISHING_UPLOAD_HINT,
@@ -79,7 +82,7 @@ import {
   getGenerativeStyleSets,
   type GenerativeStyleSet,
   isGenerativeJobSettled,
-  uploadVoiceover,
+  uploadOwnedVoiceover,
 } from "@/lib/generative-api";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 import { FONT_FACES } from "@/lib/font-faces";
@@ -90,6 +93,7 @@ import {
   type OverlayEffectState,
 } from "@/lib/overlay-effect-groups";
 import { variantFailureCopy, unplacedShotCopy } from "@/lib/variant-failure-copy";
+import { jobFailureCopy } from "@/lib/job-failure-copy";
 import { stripRationalePrefix } from "@/lib/plan-text";
 import { GENERATIVE_PHASE_ORDER, GENERATIVE_PHASE_LABEL } from "@/lib/job-phases";
 import { BeamLoader, ProgressTheater } from "@/components/progress";
@@ -595,6 +599,7 @@ export default function PlanItemPage() {
   // when VoiceRecorder fires onVoiceover; reset from item on refetch.
   const [voiceoverGcsPath, setVoiceoverGcsPath] = useState<string | null>(null);
   const [voiceoverSaving, setVoiceoverSaving] = useState(false);
+  const [audioPreference, setAudioPreference] = useState<"kria" | "original" | "voiceover">("kria");
   // Conformance polling: keep fetching for up to 3 extra cycles after clips are attached
   // so the verdict panel appears shortly after the async agent finishes (~6s window).
   const conformancePolls = useRef(0);
@@ -650,12 +655,23 @@ export default function PlanItemPage() {
       // kept polling because `pendingEdits` happened to be non-empty, which it is
       // NOT after a reload mid-render or when the render came from the pocket editor.
       const jobSettled = isGenerativeJobSettled(job?.status, job?.variants);
+      // A manual draft is intentionally not a terminal generative Job status,
+      // but an idle draft has nothing to poll. Resume polling only while its
+      // first export (or a retry) is actively rendering.
+      const manualDraftIdle =
+        item.status === "draft" &&
+        !(job?.variants?.some((variant) => variant.render_status === "rendering") ?? false);
       const baseTerminal =
-        jobSettled &&
+        (jobSettled || manualDraftIdle) &&
         !anyAutoMatching &&
         pending.size === 0 &&
         item.status !== "generating" &&
-        !(item.current_job_id && item.status !== "ready" && item.status !== "failed");
+        !(
+          item.current_job_id &&
+          item.status !== "ready" &&
+          item.status !== "failed" &&
+          item.status !== "draft"
+        );
 
       if (
         GUIDED_EDIT_ENABLED &&
@@ -745,6 +761,18 @@ export default function PlanItemPage() {
   }, [pollError]);
 
   const item = data?.item ?? null;
+
+  useEffect(() => {
+    if (item?.audio_mode) {
+      setAudioPreference(item.audio_mode);
+      window.localStorage.setItem(`kria:audio-preference:${itemId}`, item.audio_mode);
+      return;
+    }
+    const saved = window.localStorage.getItem(`kria:audio-preference:${itemId}`);
+    if (saved === "kria" || saved === "original" || saved === "voiceover") {
+      setAudioPreference(saved);
+    }
+  }, [item?.audio_mode, itemId]);
 
   useEffect(() => {
     if (!focusShotListAfterAccept || (item?.filming_guide?.length ?? 0) === 0) return;
@@ -868,11 +896,21 @@ export default function PlanItemPage() {
       if (focusedVariantId !== null) setFocusedVariantId(null);
       return;
     }
-    if (!variants.some((v) => v.variant_id === focusedVariantId)) {
-      const firstReady = variants.find((v) => v.output_url) ?? variants[0];
+    const focusedVariant = variants.find((v) => v.variant_id === focusedVariantId);
+    if (
+      !focusedVariant ||
+      (audioPreference === "original" && focusedVariant.variant_id !== "original_text")
+    ) {
+      const originalReady = variants.find(
+        (v) => v.output_url && v.variant_id === "original_text",
+      );
+      const firstReady =
+        (audioPreference === "original" ? originalReady : null) ??
+        variants.find((v) => v.output_url) ??
+        variants[0];
       setFocusedVariantId(firstReady.variant_id);
     }
-  }, [variants, focusedVariantId]);
+  }, [variants, focusedVariantId, audioPreference]);
 
   // "✓ Updated" cue: detect when the focused variant's render_finished_at advances
   // (the exact moment StableVideo swaps in fresh bytes) and flash a transient badge.
@@ -1238,7 +1276,7 @@ export default function PlanItemPage() {
           throw new Error("Upload one voiceover audio file at a time");
         }
         if (voiceoverFiles.length === 1) {
-          const uploaded = await uploadVoiceover(voiceoverFiles[0]);
+          const uploaded = await uploadOwnedVoiceover(voiceoverFiles[0]);
           if (uploaded.kind !== "audio") {
             throw new Error("Upload an audio file for the voiceover");
           }
@@ -1336,6 +1374,31 @@ export default function PlanItemPage() {
       return false;
     } finally {
       setVoiceoverSaving(false);
+    }
+  }
+
+  async function handleAudioPreference(next: "kria" | "original" | "voiceover") {
+    if (!item || next === audioPreference) return;
+    const previous = audioPreference;
+    setAudioPreference(next);
+    try {
+      const editFormat =
+        next === "voiceover"
+          ? isNarratedReady
+            ? undefined
+            : "narrated_ready"
+          : isNarrated
+            ? "montage"
+            : undefined;
+      await updatePlanItem(item.id, {
+        audio_mode: next,
+        ...(editFormat ? { edit_format: editFormat } : {}),
+      });
+      window.localStorage.setItem(`kria:audio-preference:${itemId}`, next);
+      refetch();
+    } catch (cause) {
+      setAudioPreference(previous);
+      setError(cause instanceof Error ? cause.message : "Couldn't change the audio choice");
     }
   }
 
@@ -1469,6 +1532,7 @@ export default function PlanItemPage() {
   // This drives the ProgressTheater "Try again" button below.
   const allVariantsFailed =
     variants.length > 0 && variants.every((v) => v.render_status === "failed");
+  const zeroVariantFailure = jobFailureCopy(data?.job?.failure_reason);
   // Conformance in-flight: clips attached + guide present + verdict pending,
   // bounded by the poll window — resolves to the tile, the on-track line, or
   // (when guards skipped the run) silently vanishes. Never hangs.
@@ -1629,26 +1693,44 @@ export default function PlanItemPage() {
             )}
 
             {showSetupControls && (
-              <>
-            {/* Notes textarea — editable, saves on blur */}
-            <textarea
-              defaultValue={item.notes ?? ""}
-              onBlur={async (e) => {
-                const val = e.currentTarget.value.trim() || null;
-                if (val !== (item.notes ?? null)) {
-                  await updatePlanItem(item.id, { notes: val ?? undefined }).catch(() => null);
+              <div className="flex flex-col">
+            {/* Direction is optional and subordinate to footage. The voice-note
+                path transcribes into this same field; it never sets voiceover. */}
+            <section className="order-2 mb-5" aria-labelledby="direction-heading">
+              <p id="direction-heading" className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
+                2 · Optional direction for Kria
+              </p>
+              <textarea
+                key={item.notes ?? "empty-direction"}
+                defaultValue={item.notes ?? ""}
+                onBlur={async (e) => {
+                  const val = e.currentTarget.value.trim() || null;
+                  if (val !== (item.notes ?? null)) {
+                    await updatePlanItem(item.id, { notes: val ?? undefined }).catch(() => null);
+                    refetch();
+                  }
+                }}
+                placeholder="For example: start fast and keep the candid moments"
+                aria-label="Direction for Kria"
+                rows={2}
+                className="w-full resize-none rounded-lg border border-zinc-200 bg-transparent px-3 py-2 text-sm text-[#3f3f46] placeholder-zinc-400 focus:border-lime-500/60 focus:outline-none"
+              />
+              <DirectionVoiceNote
+                itemId={item.id}
+                onTranscribed={() => {
+                  forceFreshFetchRef.current = true;
                   refetch();
-                }
-              }}
-              placeholder="Add notes…"
-              aria-label="Notes"
-              rows={2}
-              className="mb-4 mt-2 w-full resize-none rounded-lg border border-zinc-200 bg-transparent px-3 py-2 text-sm text-[#3f3f46] placeholder-zinc-400 focus:border-lime-500/60 focus:outline-none"
-            />
+                }}
+              />
+            </section>
 
             {/* TYPE / STYLE accordion — poster cards collapse to receipts after
                 each choice (design: Paper "Item page — Format card explorations"). */}
             {item.status !== "generating" && item.status !== "ready" && variants.length === 0 && (
+              <details className="order-6 mb-4 rounded-xl border border-zinc-200 bg-white px-4 py-3">
+                <summary className="min-h-11 cursor-pointer py-2 text-sm font-medium text-[#3f3f46]">
+                  Advanced video style
+                </summary>
               <SetupPicker
                 resolvedFormat={resolvedFormat}
                 rawEditFormat={rawEditFormat}
@@ -1674,6 +1756,7 @@ export default function PlanItemPage() {
                   }
                 }}
               />
+              </details>
             )}
 
             {/* Landscape-clip fit picker — only appears once a wide clip is detected on
@@ -1683,7 +1766,7 @@ export default function PlanItemPage() {
               item.status !== "ready" &&
               variants.length === 0 &&
               hasLandscapeClip && (
-              <div className="mb-4">
+              <div className="order-6 mb-4">
                 <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
                   Landscape clip detected
                 </p>
@@ -1718,7 +1801,7 @@ export default function PlanItemPage() {
 
             {/* AI plan proposal — available only until the item has a shot list. */}
             {totalShots === 0 && clipCount === 0 && !expandProposal && !expandContextOpen && (
-              <div className="mb-4">
+              <div className="order-4 mb-4">
                 <button
                   type="button"
                   disabled={expanding}
@@ -1730,7 +1813,7 @@ export default function PlanItemPage() {
                   className="flex min-h-11 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[12px] text-[#71717a] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
                 >
                   <span aria-hidden>✦</span>
-                  Plan this for me
+                  4 · Plan this for me with Kria (optional)
                 </button>
                 {expandError && (
                   <p className="mt-2 text-xs text-[#71717a]">{expandError}</p>
@@ -1739,7 +1822,7 @@ export default function PlanItemPage() {
             )}
 
             {totalShots === 0 && clipCount === 0 && !expandProposal && expandContextOpen && (
-              <div className="mb-4 rounded-xl border border-zinc-200 bg-white p-4">
+              <div className="order-4 mb-4 rounded-xl border border-zinc-200 bg-white p-4">
                 <p className="font-display text-lg font-medium text-[#0c0c0e]">
                   A little context helps.
                 </p>
@@ -1789,7 +1872,7 @@ export default function PlanItemPage() {
 
             {/* AI plan proposal card */}
             {totalShots === 0 && clipCount === 0 && expandProposal && (
-              <div className="mb-4">
+              <div className="order-4 mb-4">
                 <div className="rounded-xl border border-lime-200 bg-lime-50 p-4">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-lime-700">
                     AI SUGGESTION
@@ -1875,15 +1958,51 @@ export default function PlanItemPage() {
               </div>
             )}
 
-            {hasGuide && !isInstructed && <CompactPlanSummary item={item} />}
+            {hasGuide && !isInstructed && (
+              <div className="order-4"><CompactPlanSummary item={item} /></div>
+            )}
+
+            <fieldset className="order-3 mb-5">
+              <legend className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
+                3 · Audio choice
+              </legend>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {([
+                  ["kria", "Kria decides", "Best fit for the footage"],
+                  ["original", "Original audio", "Open the original-audio cut"],
+                  ["voiceover", "Final voiceover", "Use your recorded narration"],
+                ] as const).map(([value, label, description]) => {
+                  const selected = audioPreference === value;
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => void handleAudioPreference(value)}
+                      className={`min-h-11 rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                        selected
+                          ? "border-lime-300 bg-lime-50"
+                          : "border-zinc-200 bg-white hover:border-zinc-400"
+                      }`}
+                    >
+                      <span className="block text-sm font-medium text-[#0c0c0e]">{label}</span>
+                      <span className="mt-0.5 block text-xs text-[#71717a]">{description}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </fieldset>
 
             {/* Narrated walkthrough: sticky voice recorder bar — shown for both narrated sub-modes */}
             {isNarrated && (
-              <div className="sticky top-0 z-10 -mx-6 mb-6 border-b border-zinc-100 bg-[#fafaf8] px-6 py-3">
+              <div className="order-3 -mx-6 mb-6 border-y border-zinc-100 bg-[#fafaf8] px-6 py-3">
                 <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
-                  Voice recording
+                  3 · Final-video voiceover
                 </p>
-                <VoiceRecorder onVoiceover={handleVoiceover} />
+                <p className="mb-3 text-sm text-[#71717a]">
+                  This recording becomes the soundtrack. It is separate from a voice note to Kria.
+                </p>
+                <VoiceRecorder onVoiceover={handleVoiceover} upload={uploadOwnedVoiceover} />
                 {voiceoverSaving && (
                   <p className="mt-1 text-xs text-zinc-400">Saving…</p>
                 )}
@@ -1915,7 +2034,7 @@ export default function PlanItemPage() {
                 Talk-to-camera auto-generates WITH subtitles by default; both are
                 tunable after generation, not before. */}
             {(isNarrated || isSubtitled) && (
-              <p className="mb-4 text-xs text-[#a1a1aa]">
+              <p className="order-3 mb-4 text-xs text-[#a1a1aa]">
                 {isSubtitled
                   ? "Subtitles are added automatically and editable after you generate."
                   : "Background sound and captions can be tuned after you generate."}
@@ -1930,6 +2049,13 @@ export default function PlanItemPage() {
                 4. isInstructed (create_new/mixed + guide present) → ShotSlotUploader
                 5. isFilmThis, no guide → pool upload (Plan-this-for-me offered above)
                 6. existing_footage → PoolUploadCard (use footage you already have) */}
+            <section className="order-1 mb-6" aria-labelledby="main-footage-heading">
+              <p id="main-footage-heading" className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
+                1 · Main footage
+              </p>
+              <p className="mb-4 text-sm text-[#71717a]">
+                Videos drive the timeline. Choose Photo collage before using photos as main footage.
+              </p>
             {isSubtitled ? (
               <div>
                 <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
@@ -2048,11 +2174,13 @@ export default function PlanItemPage() {
                 />
               </>
             )}
+            </section>
 
             {/* Visuals pool — screenshots/screen recordings that feed AI overlay
                 auto-placement (plans/005 PR0). Renders nothing unless
                 NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED=true (gate lives inside). */}
             {showVisualPools && (
+              <div className="order-1">
               <AssetPool
                 itemId={itemId}
                 attachedPaths={item.clip_assignments?.map((a) => a.gcs_path) ?? []}
@@ -2071,9 +2199,11 @@ export default function PlanItemPage() {
                   );
                 }}
               />
+              </div>
             )}
 
             {guidedEditActive && (
+              <div className="order-4">
               <EditProposalCard
                 item={item}
                 // P1-2: mirrors the backend's own media gate for a conversation
@@ -2097,6 +2227,7 @@ export default function PlanItemPage() {
                   refetch();
                 }}
               />
+              </div>
             )}
 
             {/* Suggestion rail — AI overlay auto-placement review for the
@@ -2135,7 +2266,7 @@ export default function PlanItemPage() {
             {/* Generate + hint caption compose the shared upload/format gate with
                 the guided-edit approval gate. */}
             {!isGenerating && (
-              <div className="mt-4 space-y-2">
+              <div className="order-5 sticky bottom-0 z-20 -mx-4 mt-4 space-y-2 border-t border-zinc-200 bg-[#fafaf8]/95 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur">
                 <InkButton
                   onClick={handleGenerate}
                   disabled={
@@ -2165,9 +2296,9 @@ export default function PlanItemPage() {
               </div>
             )}
 
-            {/* Kria helper — inline, below Generate when there is an actual read. */}
+            {/* Optional planning/conformance conversation stays before Generate. */}
             {showKriaHelper && (
-              <div className="mt-4">
+              <div className="order-4 mt-4">
               <KriaHelper
                 item={item}
                 conformanceChecking={conformanceChecking}
@@ -2189,7 +2320,7 @@ export default function PlanItemPage() {
               />
               </div>
             )}
-              </>
+              </div>
             )}
 
             {/* Error banner — outside the fork so it shows on both item types */}
@@ -2202,9 +2333,18 @@ export default function PlanItemPage() {
             {/* With no preview, setup remains the progress/failure fallback. */}
             {!showResults && renderProgress && <div className="mt-8">{renderProgress}</div>}
             {item.status === "failed" && variants.length === 0 && (
-              <p className="mt-2 text-sm text-[#71717a]">
-                Generation failed before any variant rendered. Try generating again.
-              </p>
+              <div className="mt-3 rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm text-[#3f3f46]">
+                <p className="font-medium text-[#0c0c0e]">{zeroVariantFailure.title}</p>
+                <p className="mt-1 text-[#71717a]">{zeroVariantFailure.detail}</p>
+                {item.current_job_id && zeroVariantFailure.action === "contact_support" && (
+                  <p className="mt-2 text-xs text-[#71717a]">
+                    Support reference:{" "}
+                    <code className="select-all rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] text-[#3f3f46]">
+                      {item.current_job_id}
+                    </code>
+                  </p>
+                )}
+              </div>
             )}
             {/* Style-downgrade explanation: the narrated render fell back to
                 montage (no speech found / unreadable clip / flag-skew window).
@@ -2321,6 +2461,138 @@ export default function PlanItemPage() {
         )}
       </div>
     </LightShell>
+  );
+}
+
+function DirectionVoiceNote({
+  itemId,
+  onTranscribed,
+}: {
+  itemId: string;
+  onTranscribed: (notes: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [receipt, setReceipt] = useState<string | null>(null);
+
+  const uploadAndTranscribe = useCallback(
+    async (take: AudioTake) => {
+      setBusy(true);
+      setError(null);
+      setReceipt(null);
+      try {
+        const contentType = take.blob.type || "audio/webm";
+        const file = new File([take.blob], take.filename, { type: contentType });
+        const signed = await requestDirectionAudioUploadUrl(itemId, {
+          filename: file.name,
+          content_type: contentType,
+          file_size_bytes: file.size,
+        });
+        await uploadToGcs(signed.upload_url, file);
+        const result = await transcribeDirectionAudio(itemId, signed.gcs_path);
+        setReceipt("Added to your direction");
+        onTranscribed(result.notes);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "Couldn't transcribe that note");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [itemId, onTranscribed],
+  );
+
+  const rec = useAudioRecorder({
+    onTake: (take) => void uploadAndTranscribe(take),
+    onClear: () => {
+      setError(null);
+      setReceipt(null);
+    },
+  });
+
+  return (
+    <details className="mt-3 rounded-lg border border-zinc-200 bg-white px-3 py-2">
+      <summary className="min-h-11 cursor-pointer py-2 text-sm text-[#3f3f46]">
+        Add a voice note to Kria
+      </summary>
+      <p className="mb-3 text-xs text-[#71717a]">
+        We&apos;ll transcribe this into direction. It will not play in the final video.
+      </p>
+      {rec.micBlocked && (
+        <p className="mb-2 text-sm text-[#71717a]">Mic blocked — upload an audio file instead.</p>
+      )}
+      {error && (
+        <p className="mb-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-[#71717a]">
+          {error}
+        </p>
+      )}
+      {receipt && <p className="mb-2 text-sm text-lime-700">{receipt}</p>}
+      {rec.phase === "idle" && (
+        <div className="flex flex-wrap gap-2">
+          {rec.recordSupported && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void rec.start()}
+              className="min-h-11 rounded-full border border-zinc-200 px-4 py-2 text-sm text-[#3f3f46] hover:border-zinc-400 disabled:opacity-50"
+            >
+              Record direction
+            </button>
+          )}
+          <label className="inline-flex min-h-11 cursor-pointer items-center rounded-full border border-zinc-200 px-4 py-2 text-sm text-[#3f3f46] hover:border-zinc-400 focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[#0c0c0e]">
+            Upload audio
+            <input
+              type="file"
+              accept="audio/*,.m4a,.mp3,.wav,.webm,.ogg,.aac"
+              className="sr-only"
+              disabled={busy}
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                if (file) rec.useFile(file);
+              }}
+            />
+          </label>
+        </div>
+      )}
+      {rec.phase === "recording" && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between text-sm text-[#3f3f46]">
+            <span>Recording direction…</span>
+            <span className="tabular-nums text-[#71717a]">{fmtTime(rec.elapsed)}</span>
+          </div>
+          <canvas
+            ref={rec.canvasRef}
+            aria-hidden
+            width={640}
+            height={64}
+            className="h-16 w-full rounded border border-zinc-200 bg-zinc-100"
+          />
+          <button
+            type="button"
+            onClick={rec.stop}
+            className="min-h-11 rounded-full border border-zinc-200 px-4 py-2 text-sm text-[#3f3f46]"
+          >
+            Stop and transcribe
+          </button>
+        </div>
+      )}
+      {rec.phase === "review" && (
+        <div className="space-y-2">
+          {rec.audioUrl && (
+            <audio src={rec.audioUrl} controls className="w-full">
+              <track kind="captions" />
+            </audio>
+          )}
+          <div className="flex items-center gap-3 text-sm text-[#71717a]">
+            <span>{busy ? "Adding direction…" : receipt ?? "Direction take ready"}</span>
+            {!busy && (
+              <button type="button" onClick={rec.reset} className="min-h-11 underline underline-offset-2">
+                Remove take
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </details>
   );
 }
 

@@ -25,6 +25,10 @@ export interface LibraryJob {
   mode: string;
   status: LibraryJobStatus;
   raw_status: string;
+  /** Structured, safe-to-map failure category. Optional during API rollout. */
+  failure_reason?: string | null;
+  /** Lowest-rank failed variant category when no output was produced. */
+  error_class?: string | null;
   output_url: string | null;
   /** Fresh attachment-signed URL when the job retains its owned GCS path. */
   download_url?: string | null;

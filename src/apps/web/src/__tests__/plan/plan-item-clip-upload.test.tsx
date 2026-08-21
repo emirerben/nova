@@ -106,7 +106,7 @@ jest.mock("@/lib/plan-api", () => ({
 jest.mock("@/lib/generative-api", () => ({
   ...jest.requireActual("@/lib/generative-api"),
   getGenerativeStyleSets: jest.fn().mockResolvedValue([]),
-  uploadVoiceover: jest.fn(),
+  uploadOwnedVoiceover: jest.fn(),
   getTimeline: jest.fn(() => new Promise(() => {})),
   TimelineApiError: class TimelineApiError extends Error {
     status = 0;
