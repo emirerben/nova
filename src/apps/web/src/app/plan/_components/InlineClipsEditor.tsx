@@ -1220,7 +1220,7 @@ export function InlineClipsEditor({
                 type="button"
                 aria-label="Move up"
                 disabled={allIdx === 0}
-                className="min-h-8 min-w-8 shrink-0 rounded text-[#71717a] hover:bg-[#ffffff] hover:text-[#0c0c0e] disabled:opacity-30"
+                className="min-h-8 min-w-8 shrink-0 rounded text-[#71717a] hover:bg-zinc-100 hover:text-[#0c0c0e] disabled:opacity-30"
                 onClick={() =>
                   dispatch({ type: "REORDER", from: allIdx, to: allIdx - 1 })
                 }
@@ -1231,7 +1231,7 @@ export function InlineClipsEditor({
                 type="button"
                 aria-label="Move down"
                 disabled={allIdx === state.slots.length - 1}
-                className="min-h-8 min-w-8 shrink-0 rounded text-[#71717a] hover:bg-[#ffffff] hover:text-[#0c0c0e] disabled:opacity-30"
+                className="min-h-8 min-w-8 shrink-0 rounded text-[#71717a] hover:bg-zinc-100 hover:text-[#0c0c0e] disabled:opacity-30"
                 onClick={() =>
                   dispatch({ type: "REORDER", from: allIdx, to: allIdx + 1 })
                 }
@@ -1241,7 +1241,7 @@ export function InlineClipsEditor({
               <button
                 type="button"
                 aria-label="Remove"
-                className="min-h-8 min-w-8 shrink-0 rounded text-[#71717a] hover:bg-[#ffffff] hover:text-[#0c0c0e]"
+                className="min-h-8 min-w-8 shrink-0 rounded text-[#71717a] hover:bg-zinc-100 hover:text-[#0c0c0e]"
                 onClick={() => {
                   dispatch({ type: "REMOVE", key: slot.key });
                   if (selectedKey === slot.key) setSelectedKey(null);
@@ -1259,7 +1259,7 @@ export function InlineClipsEditor({
         <button
           type="button"
           disabled={state.past.length === 0}
-          className="min-h-9 rounded border border-zinc-200 bg-white px-2 text-xs text-[#3f3f46] hover:bg-[#ffffff] disabled:opacity-30"
+          className="min-h-9 rounded border border-zinc-200 bg-white px-2 text-xs text-[#3f3f46] hover:bg-zinc-100 disabled:opacity-30"
           onClick={() => dispatch({ type: "UNDO" })}
         >
           ↩ Undo
@@ -1267,7 +1267,7 @@ export function InlineClipsEditor({
         <button
           type="button"
           disabled={state.future.length === 0}
-          className="min-h-9 rounded border border-zinc-200 bg-white px-2 text-xs text-[#3f3f46] hover:bg-[#ffffff] disabled:opacity-30"
+          className="min-h-9 rounded border border-zinc-200 bg-white px-2 text-xs text-[#3f3f46] hover:bg-zinc-100 disabled:opacity-30"
           onClick={() => dispatch({ type: "REDO" })}
         >
           ↪ Redo
@@ -1275,7 +1275,7 @@ export function InlineClipsEditor({
         <button
           type="button"
           disabled={submitting}
-          className="min-h-9 rounded border border-zinc-200 bg-white px-2 text-xs text-[#3f3f46] hover:bg-[#ffffff] disabled:opacity-50"
+          className="min-h-9 rounded border border-zinc-200 bg-white px-2 text-xs text-[#3f3f46] hover:bg-zinc-100 disabled:opacity-50"
           onClick={handleReset}
         >
           Reset
