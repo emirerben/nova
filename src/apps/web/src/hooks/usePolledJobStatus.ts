@@ -26,7 +26,14 @@ export function usePolledJobStatus<T>(
   intervalMs: number = POLL_INTERVAL_MS,
   isTerminal: (data: T) => boolean,
   maxPollMs: number = DEFAULT_MAX_POLL_MS,
-): { data: T | null; error: Error | null; refetch: () => void } {
+): {
+  data: T | null;
+  error: Error | null;
+  refetch: () => void;
+  /** Thin setData wrapper — applies a locally-known authoritative value (e.g.
+   *  a POST response) immediately, without waiting for the next poll tick. */
+  applyData: (updater: (prev: T | null) => T | null) => void;
+} {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const isTerminalRef = useRef(isTerminal);
@@ -36,6 +43,15 @@ export function usePolledJobStatus<T>(
   const mountedRef = useRef(true);
   const intervalMsRef = useRef(intervalMs);
   const maxPollMsRef = useRef(maxPollMs);
+  // Monotonic request generation (P1-1 fix). Bumped at the START of every
+  // doFetch AND on every applyData call. A fetch that resolves after the
+  // counter has moved on — a newer fetch started, or an authoritative
+  // applyData landed while it was in flight — is stale: its result is
+  // dropped entirely rather than clobbering the fresher value. Without this,
+  // a poll started before a conversation POST could resolve AFTER
+  // applyData(updatedItem) and silently overwrite the creator's message +
+  // Kria's reply until the next tick.
+  const generationRef = useRef(0);
 
   // Keep refs fresh without triggering re-subscriptions.
   isTerminalRef.current = isTerminal;
@@ -44,9 +60,11 @@ export function usePolledJobStatus<T>(
   maxPollMsRef.current = maxPollMs;
 
   const doFetch = useCallback(async () => {
+    const requestGeneration = (generationRef.current += 1);
     try {
       const result = await fetcherRef.current();
       if (!mountedRef.current) return;
+      if (generationRef.current !== requestGeneration) return;
       setData(result);
       setError(null);
       // Stop polling if terminal.
@@ -76,6 +94,7 @@ export function usePolledJobStatus<T>(
       }
     } catch (e) {
       if (!mountedRef.current) return;
+      if (generationRef.current !== requestGeneration) return;
       setError(e instanceof Error ? e : new Error(String(e)));
       // Do NOT stop polling on transient error — let the interval re-arm.
     }
@@ -86,6 +105,17 @@ export function usePolledJobStatus<T>(
   const refetch = useCallback(() => {
     void doFetch();
   }, [doFetch]);
+
+  const applyData = useCallback((updater: (prev: T | null) => T | null) => {
+    if (!mountedRef.current) return;
+    // Invalidate any fetch already in flight — see generationRef above.
+    generationRef.current += 1;
+    setData(updater);
+    // A fresher authoritative value supersedes whatever error a stale poll
+    // may have surfaced (e.g. a transient network blip right before the
+    // conversation POST resolved).
+    setError(null);
+  }, []);
 
   // Initial fetch + interval.
   useEffect(() => {
@@ -137,5 +167,5 @@ export function usePolledJobStatus<T>(
     return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, [doFetch]);
 
-  return { data, error, refetch };
+  return { data, error, refetch, applyData };
 }

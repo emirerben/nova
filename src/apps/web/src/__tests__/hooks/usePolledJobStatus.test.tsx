@@ -170,3 +170,102 @@ describe("usePolledJobStatus max-poll ceiling", () => {
     expect(fetcher.mock.calls.length).toBeGreaterThan(callsAtRearm + 1);
   });
 });
+
+/**
+ * P1-1 (adversarial review, guided-edit chat thread): doFetch had no
+ * request-generation guard. A poll started BEFORE applyData(updatedItem)
+ * could resolve AFTER it and silently write the older item back — the
+ * creator's message + Kria's reply would vanish until the next poll tick.
+ * The fix is a monotonic generation counter bumped at the start of every
+ * doFetch AND on every applyData call; a fetch that resolves once the
+ * counter has moved on is dropped instead of adopted.
+ */
+describe("usePolledJobStatus applyData generation guard (P1-1)", () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  interface FakeData {
+    seq: number;
+    source: string;
+  }
+
+  it("discards an older in-flight fetch that resolves after applyData already landed", async () => {
+    let resolveFirstFetch!: (value: FakeData) => void;
+    const fetcher = jest.fn(
+      () => new Promise<FakeData>((resolve) => { resolveFirstFetch = resolve; }),
+    );
+    const { result } = renderHook(() =>
+      usePolledJobStatus<FakeData>(fetcher, 2000, () => false),
+    );
+
+    // Mount kicks off the first fetch; leave it unresolved (in flight),
+    // simulating a poll tick that started before the creator's message sent.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(result.current.data).toBeNull();
+
+    // Meanwhile the conversation POST resolves and the page applies the
+    // authoritative response directly (bypassing the poll entirely).
+    act(() => {
+      result.current.applyData(() => ({ seq: 2, source: "applied" }));
+    });
+    expect(result.current.data).toEqual({ seq: 2, source: "applied" });
+
+    // NOW the stale poll that started before applyData resolves. Adopting it
+    // would silently revert the creator's message + Kria's reply.
+    await act(async () => {
+      resolveFirstFetch({ seq: 1, source: "poll" });
+      await Promise.resolve();
+    });
+
+    expect(result.current.data).toEqual({ seq: 2, source: "applied" });
+  });
+
+  it("still adopts a fetch that starts AFTER applyData", async () => {
+    let next: FakeData = { seq: 1, source: "poll" };
+    const fetcher = jest.fn(async () => next);
+    const { result } = renderHook(() =>
+      usePolledJobStatus<FakeData>(fetcher, 2000, () => false),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    act(() => {
+      result.current.applyData(() => ({ seq: 99, source: "applied" }));
+    });
+    expect(result.current.data).toEqual({ seq: 99, source: "applied" });
+
+    next = { seq: 3, source: "poll" };
+    await act(async () => {
+      result.current.refetch();
+      await Promise.resolve();
+    });
+    // This fetch started after applyData, so it's the freshest known state —
+    // unlike the stale fetch above, it must win.
+    expect(result.current.data).toEqual({ seq: 3, source: "poll" });
+  });
+
+  it("clears a stale poll error once applyData lands a fresher value", async () => {
+    const fetcher = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("transient poll failure"))
+      .mockResolvedValue({ seq: 1, source: "poll" });
+    const { result } = renderHook(() =>
+      usePolledJobStatus<FakeData>(fetcher, 2000, () => false),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.error).not.toBeNull();
+
+    act(() => {
+      result.current.applyData(() => ({ seq: 5, source: "applied" }));
+    });
+
+    expect(result.current.error).toBeNull();
+    expect(result.current.data).toEqual({ seq: 5, source: "applied" });
+  });
+});

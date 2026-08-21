@@ -1,17 +1,35 @@
 "use client";
 
+/**
+ * Guided-edit planning conversation.
+ *
+ * DESIGN.md's editorial-interview stance (see AskKriaPanel.tsx: "Editorial
+ * interview, not a chat app — NO bubbles, NO avatar") is deliberately
+ * overridden for THIS surface per explicit founder direction: the durable
+ * multi-turn server thread (`edit_proposal.conversation`, up to 20 turns)
+ * reads better as a real chat — every turn visible, an optimistic echo while
+ * Kria thinks, honest errors. Visual language matches the edit copilot's
+ * bubbles (`_editor/CopilotDrawer.tsx`) via the shared `components/chat/`
+ * primitives; CopilotDrawer itself is untouched.
+ */
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   approveEditProposal,
   draftEditProposal,
   editProposalConversationTurn,
   updateEditProposal,
+  PlanApiError,
   type EditProposalDirection,
   type EditProposalPace,
   type EditProposalSnapshot,
   type PlanItem,
 } from "@/lib/plan-api";
 import { InfoDot } from "@/components/ui/InfoDot";
+import { ChatBubble } from "@/components/chat/ChatBubble";
+import { ChatThinking } from "@/components/chat/ChatThinking";
+import { useAutoScrollToEnd } from "@/components/chat/useAutoScrollToEnd";
+import { chatErrorMessage } from "@/lib/chat-errors";
 
 const DIRECTION_OPTIONS: Array<{
   value: EditProposalDirection;
@@ -49,6 +67,24 @@ const PACE_LABELS: Record<EditProposalPace, string> = {
 };
 
 const DURATION_OPTIONS = [15, 20, 24, 30, 45, 60];
+
+// Starter chips shown before Kria has said anything at all.
+const BRIEFING_STARTER_SUGGESTIONS = [
+  "A personal travel diary",
+  "Fast highlights, little text",
+  "Explain what stood out",
+];
+const REVIEW_SUGGESTIONS = ["Make it more personal", "Use less text", "Put food first"];
+// Fallback chips when the last agent turn came back with none of its own
+// (briefing only shows these while the brief still isn't ready — once it is,
+// the "Build this edit plan" CTA is the next step, not more chat prompting).
+const BRIEFING_FALLBACK_SUGGESTIONS = [
+  "Make it more personal",
+  "Keep it short and punchy",
+  "You decide — build the plan",
+];
+
+const EMPTY_MEDIA_MESSAGE = "Add a photo or video first — Kria plans from your real footage";
 
 function durationOptions(current: number): number[] {
   return Array.from(new Set([current, ...DURATION_OPTIONS])).sort((a, b) => a - b);
@@ -118,10 +154,16 @@ export default function EditProposalCard({
   item,
   onChanged,
   onRefresh,
+  hasPoolMedia = false,
 }: {
   item: PlanItem;
   onChanged: (item: PlanItem) => void;
   onRefresh?: () => void;
+  /** Mirrors the backend's own media gate for a conversation turn: a pool
+   *  asset still finishing analysis (queued/analyzing) or ready also counts,
+   *  not just clip_assignments/clip_gcs_paths — a pool-only item (nothing
+   *  attached to a shot yet) must not get locked out of chat. */
+  hasPoolMedia?: boolean;
 }) {
   const proposal = item.edit_proposal ?? null;
   const conversationEnabled = item.guided_edit_conversation_available === true;
@@ -137,11 +179,18 @@ export default function EditProposalCard({
   const [editingApproved, setEditingApproved] = useState(false);
   const [draft, setDraft] = useState<EditProposalSnapshot | null>(proposal?.draft ?? null);
   const [error, setError] = useState<string | null>(null);
+  // Local optimistic echo of the in-flight message: shown as a pending bubble
+  // until the server's durable turn (onChanged) or a failure clears it.
+  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const working = workingAction !== null;
   const conversationInProgress = proposal?.conversation_in_progress === true;
   const conversationRetryRequired = proposal?.conversation_retry_required === true;
   const conversationBlocked = conversationInProgress || conversationRetryRequired;
+  const hasMedia =
+    (item.clip_gcs_paths?.length ?? 0) > 0 ||
+    (item.clip_assignments?.length ?? 0) > 0 ||
+    hasPoolMedia;
   // Poll responses recreate the draft object; only the CAS version denotes a
   // durable server revision that should replace the creator's unsaved edits.
   const appliedProposalRevision = useRef<string | null>(null);
@@ -175,16 +224,23 @@ export default function EditProposalCard({
   );
 
   const conversation = proposal?.conversation ?? [];
-  const lastAgentTurn = [...conversation].reverse().find((turn) => turn.role === "agent");
-  const lastUserTurn = [...conversation].reverse().find((turn) => turn.role === "user");
   const brief = proposal?.brief ?? DEFAULT_BRIEF;
 
   async function sendConversation(text: string, reviewing = false) {
     const trimmed = text.trim();
-    if (!trimmed || working) return;
+    // The Send button already disables on conversationInProgress, but the
+    // composer stays typeable (Enter still submits) — guard here too so a
+    // reload-resumed in-flight turn can't be double-submitted via keyboard.
+    if (!trimmed || working || conversationInProgress || !hasMedia) return;
     setWorkingAction("conversation");
     setError(null);
     setMessage("");
+    setPendingMessage(trimmed);
+    // Durable save from a dirty draft, held back from onChanged until we know
+    // the outcome of the turn that follows it (see catch below) — calling
+    // onChanged for both the intermediate save AND the final turn made one
+    // submit visibly flicker (save → draft view → turn reply).
+    let savedFromDirtyDraft: PlanItem | null = null;
     try {
       let expectedVersion = proposal?.proposal_version ?? 0;
       if (reviewing && proposal?.draft && draft) {
@@ -196,7 +252,7 @@ export default function EditProposalCard({
           if (!savedVersion) throw new Error("The saved plan could not be verified.");
           // Make manual edits durable before Kria reads/revises the proposal.
           // If the conversation fails, retry continues from this saved version.
-          onChanged(saved);
+          savedFromDirtyDraft = saved;
           expectedVersion = savedVersion;
         }
       }
@@ -205,16 +261,29 @@ export default function EditProposalCard({
         expectedVersion,
         trimmed,
       );
+      // The server response carries the new turn durably — the pending echo
+      // above is superseded by the real thread, no separate clear needed
+      // beyond the `finally` below.
       onChanged(updated);
     } catch (err) {
+      // The manual-edit save above succeeded even though the turn that
+      // followed it failed — surface that durable save so a retry advances
+      // from its CAS version instead of resending a now-stale one.
+      if (savedFromDirtyDraft) onChanged(savedFromDirtyDraft);
       setMessage(trimmed);
-      setError(err instanceof Error ? err.message : "Kria couldn't think that through.");
+      const code = err instanceof PlanApiError ? err.code : undefined;
+      setError(
+        code === "media_required"
+          ? EMPTY_MEDIA_MESSAGE
+          : chatErrorMessage(err, "Kria couldn't think that through."),
+      );
       // A network timeout is ambiguous: the server may have committed the
       // turn even though this response was lost. Reconcile before a retry so
       // the browser adopts that durable version instead of resending stale CAS.
       onRefresh?.();
     } finally {
       setWorkingAction(null);
+      setPendingMessage(null);
     }
   }
 
@@ -293,64 +362,72 @@ export default function EditProposalCard({
         : reviewing
           ? "What would you change about this draft? You can be as specific or as rough as you like."
           : "What do you want this video to feel like—and what should people remember after watching it?";
-    const contextualAgentTurn = reviewing
-      ? [...conversation].reverse().find(
-          (turn) => turn.role === "agent" && turn.phase === "review",
-        )
-      : lastAgentTurn;
-    const contextualUserTurn = reviewing
-      ? [...conversation].reverse().find(
-          (turn) => turn.role === "user" && turn.phase === "review",
-        )
-      : lastUserTurn;
-    const reply = contextualAgentTurn?.content ?? opener;
-    const suggestions = contextualAgentTurn
-      ? contextualAgentTurn.suggestions
-      : reviewing
-        ? ["Make it more personal", "Use less text", "Put food first"]
-        : ["A personal travel diary", "Fast highlights, little text", "Explain what stood out"];
+    const lastAgentTurn = [...conversation].reverse().find((turn) => turn.role === "agent");
+    // The opener greeting only earns its place once — as soon as Kria has
+    // said anything real (in EITHER phase), the durable thread carries the
+    // conversation and a fresh greeting would be redundant.
+    const showOpener = !lastAgentTurn;
+    // Suggestion chips, unlike the opener, must stay phase-scoped (P2-1): a
+    // briefing turn's suggestions must never leak into the review surface
+    // (or vice versa) just because it happens to be the most recent turn
+    // overall. Turns predating the "phase" field are treated as briefing.
+    const phaseAgentTurn = [...conversation].reverse().find(
+      (turn) => turn.role === "agent" && (reviewing ? turn.phase === "review" : turn.phase !== "review"),
+    );
+    const suggestions = !phaseAgentTurn
+      ? reviewing
+        ? REVIEW_SUGGESTIONS
+        : BRIEFING_STARTER_SUGGESTIONS
+      : phaseAgentTurn.suggestions.length > 0
+        ? phaseAgentTurn.suggestions
+        : reviewing
+          ? REVIEW_SUGGESTIONS
+          : proposal?.brief_ready
+            ? []
+            : BRIEFING_FALLBACK_SUGGESTIONS;
     const showBrief = Boolean(proposal);
+    const sending = workingAction === "conversation" || conversationInProgress;
+    const chipsDisabled = working || conversationInProgress || !hasMedia;
 
     return (
       <div data-testid="edit-guide-conversation">
         <p className="text-[11px] font-semibold uppercase tracking-[.18em] text-lime-700">
           {reviewing ? "Shape the draft with Kria" : "Plan with Kria"}
         </p>
-        {contextualUserTurn ? (
-          <blockquote className="mt-3 border-l-2 border-lime-600 pl-3">
-            <p className="line-clamp-3 text-sm text-[#71717a]">{contextualUserTurn.content}</p>
-          </blockquote>
-        ) : null}
-        <p
-          className="mt-3 max-w-prose font-display text-xl leading-snug text-[#0c0c0e]"
-          aria-live="polite"
-        >
-          {reply}
-        </p>
 
-        {workingAction === "conversation" || conversationInProgress ? (
-          <p role="status" className="mt-3 flex items-center gap-2 text-sm text-[#71717a]">
-            <span className="h-1.5 w-1.5 rounded-full bg-lime-600 motion-safe:animate-ping" />
-            Thinking it through…
-          </p>
-        ) : conversationRetryRequired ? (
+        <ConversationThread
+          showOpener={showOpener}
+          opener={opener}
+          turns={conversation}
+          pendingMessage={pendingMessage}
+          sending={sending}
+        />
+
+        {conversationRetryRequired ? (
           <p role="status" className="mt-3 text-sm text-[#71717a]">
             That reply took too long. Send your direction again to continue.
           </p>
-        ) : (
+        ) : !sending ? (
           <div className="mt-4 flex flex-wrap gap-2">
             {suggestions.map((suggestion) => (
               <button
                 key={suggestion}
                 type="button"
+                disabled={chipsDisabled}
                 onClick={() => void sendConversation(suggestion, reviewing)}
-                className="min-h-11 rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm text-[#3f3f46] outline-none transition-colors hover:border-lime-600 hover:text-[#0c0c0e] focus-visible:ring-2 focus-visible:ring-lime-600"
+                className="min-h-11 rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm text-[#3f3f46] outline-none transition-colors hover:border-lime-600 hover:text-[#0c0c0e] focus-visible:ring-2 focus-visible:ring-lime-600 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {suggestion}
               </button>
             ))}
           </div>
-        )}
+        ) : null}
+
+        {!hasMedia ? (
+          <p role="status" className="mt-3 rounded-lg border border-zinc-200 bg-[#fafaf8] px-3 py-2 text-sm text-[#71717a]">
+            {EMPTY_MEDIA_MESSAGE}
+          </p>
+        ) : null}
 
         <form
           className="mt-4 flex items-end gap-2 rounded-2xl border border-zinc-200 bg-white px-3 py-2 focus-within:border-lime-500 focus-within:ring-2 focus-within:ring-lime-500/20"
@@ -373,7 +450,6 @@ export default function EditProposalCard({
                 void sendConversation(message, reviewing);
               }
             }}
-            disabled={working || conversationInProgress}
             rows={1}
             maxLength={1000}
             placeholder={reviewing ? "For example: focus more on the food…" : "Tell me in your own words…"}
@@ -381,7 +457,7 @@ export default function EditProposalCard({
           />
           <button
             type="submit"
-            disabled={working || conversationInProgress || !message.trim()}
+            disabled={working || conversationInProgress || !message.trim() || !hasMedia}
             aria-label="Send direction"
             className="flex min-h-11 min-w-11 items-center justify-center rounded-full bg-[#0c0c0e] text-white outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2 disabled:opacity-25"
           >
@@ -886,5 +962,62 @@ export default function EditProposalCard({
       </div>
       {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
     </section>
+  );
+}
+
+/**
+ * The scrolling bubble thread: every persisted turn (both "briefing" and
+ * "review" phases, oldest first) plus an optional leading opener bubble and
+ * a trailing optimistic/pending bubble. The server keeps only the last 20
+ * turns (older ones drop off the front), so a turn's position in the array
+ * — and therefore its index — shifts over the item's lifetime; keys are
+ * derived from the turn's own content instead of a bare index.
+ */
+function ConversationThread({
+  showOpener,
+  opener,
+  turns,
+  pendingMessage,
+  sending,
+}: {
+  showOpener: boolean;
+  opener: string;
+  turns: Array<{ role: "user" | "agent"; phase?: "briefing" | "review"; content: string }>;
+  pendingMessage: string | null;
+  sending: boolean;
+}) {
+  const threadRef = useAutoScrollToEnd<HTMLDivElement>([
+    turns.length,
+    pendingMessage,
+    sending,
+  ]);
+  return (
+    // role="log": an append-only running transcript, keyboard-scrollable
+    // (tabIndex) for creators who can't drag the scrollbar. No aria-live
+    // here — ChatThinking already owns its own role="status"/aria-live, and
+    // a live region on the whole thread would announce the creator's own
+    // pending echo back at them as if Kria had said it.
+    <div
+      ref={threadRef}
+      role="log"
+      tabIndex={0}
+      className="mt-3 max-h-[320px] space-y-3 overflow-y-auto"
+    >
+      {showOpener && <ChatBubble role="assistant">{opener}</ChatBubble>}
+      {turns.map((turn, index) => (
+        <ChatBubble
+          key={`${turn.role}-${turn.phase ?? "briefing"}-${index}-${turn.content.slice(0, 24)}`}
+          role={turn.role === "user" ? "user" : "assistant"}
+        >
+          {turn.content}
+        </ChatBubble>
+      ))}
+      {pendingMessage !== null && (
+        <ChatBubble role="user" pending>
+          {pendingMessage}
+        </ChatBubble>
+      )}
+      {sending && <ChatThinking />}
+    </div>
   );
 }
