@@ -70,7 +70,7 @@ const TOC: { n: string; title: string }[] = [
 
 export default function PrivacyPage() {
   return (
-    <main className="min-h-screen bg-[#fafaf8] text-[#0c0c0e]">
+    <main className="min-h-screen bg-[#ffffff] text-[#0c0c0e]">
       <div className="mx-auto max-w-[680px] px-6 pb-24 pt-16">
         <Eyebrow tone="lime" className="mb-3">
           Legal
@@ -130,7 +130,7 @@ export default function PrivacyPage() {
         </div>
 
         {/* ── TOC ───────────────────────────────────────────────────────── */}
-        <nav className="mb-10 rounded-2xl border border-zinc-200 bg-[#fafaf8] p-5">
+        <nav className="mb-10 rounded-2xl border border-zinc-200 bg-[#ffffff] p-5">
           <Eyebrow tone="muted" className="mb-3">
             Contents
           </Eyebrow>
@@ -240,7 +240,7 @@ export default function PrivacyPage() {
           </p>
           <div className="overflow-x-auto rounded-lg border border-zinc-200">
             <table className="w-full text-left text-[13px]">
-              <thead className="bg-[#fafaf8] text-[11px] uppercase tracking-[0.06em] text-[#a1a1aa]">
+              <thead className="bg-[#ffffff] text-[11px] uppercase tracking-[0.06em] text-[#a1a1aa]">
                 <tr>
                   <th className="px-3 py-2 font-semibold">Processor</th>
                   <th className="px-3 py-2 font-semibold">What it receives</th>

@@ -917,7 +917,7 @@ function SlotWell({ shot, shotIndex, state, anyFilled, accept, onFile, onCancel,
     const prog = state.progress ?? 0;
     const filename = state.filename ?? "";
     return (
-      <div className="min-h-[56px] rounded-[10px] border border-zinc-100 bg-[#fafaf8] px-4 py-3">
+      <div className="min-h-[56px] rounded-[10px] border border-zinc-100 bg-[#ffffff] px-4 py-3">
         <div className="mb-1 flex items-center justify-between">
           <span className="max-w-[200px] truncate text-xs text-[#71717a]">{filename}</span>
           {phase === "uploading" && (

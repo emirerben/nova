@@ -62,7 +62,7 @@ export function ToolDock({
     <nav
       aria-label="Editor tools"
       data-testid="pocket-dock"
-      className="flex flex-row border-t border-zinc-200 bg-[#fafaf8] pb-[max(8px,env(safe-area-inset-bottom))] pt-1.5"
+      className="flex flex-row border-t border-zinc-200 bg-[#ffffff] pb-[max(8px,env(safe-area-inset-bottom))] pt-1.5"
     >
       {tools.map((tool) => {
         const active = activeTool === tool.id;

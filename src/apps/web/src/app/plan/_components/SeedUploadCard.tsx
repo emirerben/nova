@@ -184,13 +184,13 @@ export default function SeedUploadCard({
         </p>
       )}
       {done === "activated_empty" && (
-        <div className="mb-4 rounded border border-zinc-200 bg-[#fafaf8] px-4 py-3 text-sm text-[#3f3f46]">
+        <div className="mb-4 rounded border border-zinc-200 bg-[#ffffff] px-4 py-3 text-sm text-[#3f3f46]">
           We couldn&apos;t confidently match those clips to a day — no problem. Pick a day below and
           film for it, or try a different batch.
         </div>
       )}
       {done === "failed" && (
-        <div className="mb-4 rounded border border-zinc-200 bg-[#fafaf8] px-4 py-3 text-sm text-[#3f3f46]">
+        <div className="mb-4 rounded border border-zinc-200 bg-[#ffffff] px-4 py-3 text-sm text-[#3f3f46]">
           Something went wrong matching your clips. Try uploading again.
         </div>
       )}

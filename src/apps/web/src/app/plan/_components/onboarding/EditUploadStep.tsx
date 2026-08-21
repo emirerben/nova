@@ -87,7 +87,7 @@ export function EditUploadStep({
       {!atMax && (
         <button
           onClick={() => inputRef.current?.click()}
-          className="w-full rounded-2xl border-2 border-dashed border-[#e4e4e7] bg-[#fafaf8] hover:border-lime-600 hover:bg-lime-50 transition py-10 text-center focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
+          className="w-full rounded-2xl border-2 border-dashed border-[#e4e4e7] bg-[#ffffff] hover:border-lime-600 hover:bg-lime-50 transition py-10 text-center focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
         >
           <p className="text-[#71717a]">+ Add videos</p>
         </button>

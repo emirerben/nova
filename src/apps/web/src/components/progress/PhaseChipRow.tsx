@@ -53,7 +53,7 @@ export function PhaseChipRow({ phases, phaseLabels, currentPhase, tone = "dark" 
     });
   }, [currentPhase]);
 
-  const fadeMaskColor = tone === "light" ? "from-[#fafaf8]" : "from-black";
+  const fadeMaskColor = tone === "light" ? "from-[#ffffff]" : "from-black";
 
   return (
     <div className="relative">

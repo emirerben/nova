@@ -125,7 +125,7 @@ export function ClipGroupStep({
             onKeyDown={(e) => e.key === "Enter" && confirmGroup()}
             placeholder="What's this group about? (optional)"
             autoFocus
-            className="flex-1 rounded-xl border border-[#e4e4e7] bg-[#fafaf8] px-4 py-3 text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:outline-none focus:ring-2 focus:ring-lime-600"
+            className="flex-1 rounded-xl border border-[#e4e4e7] bg-[#ffffff] px-4 py-3 text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:outline-none focus:ring-2 focus:ring-lime-600"
           />
           <button
             onClick={confirmGroup}
@@ -143,7 +143,7 @@ export function ClipGroupStep({
           {groups.map((group) => (
             <div
               key={group.id}
-              className="rounded-xl border border-[#e4e4e7] bg-[#fafaf8] px-4 py-3 flex items-start gap-3"
+              className="rounded-xl border border-[#e4e4e7] bg-[#ffffff] px-4 py-3 flex items-start gap-3"
             >
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-[#0c0c0e] font-medium truncate">

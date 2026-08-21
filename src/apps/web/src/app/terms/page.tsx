@@ -74,7 +74,7 @@ const TOC: { n: string; title: string }[] = [
 
 export default function TermsPage() {
   return (
-    <main className="min-h-screen bg-[#fafaf8] text-[#0c0c0e]">
+    <main className="min-h-screen bg-[#ffffff] text-[#0c0c0e]">
       <div className="mx-auto max-w-[680px] px-6 pb-24 pt-16">
         <Eyebrow tone="lime" className="mb-3">
           Legal
@@ -110,7 +110,7 @@ export default function TermsPage() {
         </div>
 
         {/* ── TOC ───────────────────────────────────────────────────────── */}
-        <nav className="mb-10 rounded-2xl border border-zinc-200 bg-[#fafaf8] p-5">
+        <nav className="mb-10 rounded-2xl border border-zinc-200 bg-[#ffffff] p-5">
           <Eyebrow tone="muted" className="mb-3">
             Contents
           </Eyebrow>

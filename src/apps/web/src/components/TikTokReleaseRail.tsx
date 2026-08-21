@@ -370,7 +370,7 @@ function ReleasePreparationPane({
                     Reconnect TikTok here
                   </button>
                 ) : (
-                  <Link href="/library" className="mt-2 inline-flex min-h-11 items-center font-medium text-lime-700 underline underline-offset-4">
+                  <Link href="/plan#tiktok" className="mt-2 inline-flex min-h-11 items-center font-medium text-lime-700 underline underline-offset-4">
                     Reconnect TikTok
                   </Link>
                 )}
@@ -390,7 +390,7 @@ function ReleasePreparationPane({
                 Connect TikTok here
               </button>
             ) : (
-              <Link href="/library" className="mt-2 inline-flex min-h-11 items-center font-medium text-lime-700 underline underline-offset-4">
+              <Link href="/plan#tiktok" className="mt-2 inline-flex min-h-11 items-center font-medium text-lime-700 underline underline-offset-4">
                 Connect TikTok
               </Link>
             )}
@@ -647,7 +647,7 @@ function TikTokHistory({ publications, onClose }: { publications: TikTokPublicat
   return (
     <div className="fixed inset-0 z-[120] bg-black/20" role="dialog" aria-modal="true" aria-labelledby="tiktok-history-title">
       <button type="button" aria-label="Close TikTok history" onClick={onClose} tabIndex={-1} className="absolute inset-0 hidden cursor-default md:block" />
-      <section ref={sheetRef} className="absolute inset-0 ml-auto flex w-full flex-col border-l border-zinc-200 bg-[#fafaf8] shadow-[-24px_0_60px_rgba(0,0,0,0.08)] md:w-[480px]">
+      <section ref={sheetRef} className="absolute inset-0 ml-auto flex w-full flex-col border-l border-zinc-200 bg-[#ffffff] shadow-[-24px_0_60px_rgba(0,0,0,0.08)] md:w-[480px]">
         <header className="flex min-h-[86px] items-center justify-between border-b border-zinc-200 px-5 md:px-7">
           <h2 id="tiktok-history-title" className="font-display text-2xl text-[#0c0c0e]">TikTok history ({publications.length})</h2>
           <button ref={closeRef} type="button" onClick={onClose} aria-label="Close" className="flex h-11 w-11 items-center justify-center rounded-full text-xl text-[#3f3f46] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600">×</button>

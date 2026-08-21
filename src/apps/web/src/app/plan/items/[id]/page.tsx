@@ -1744,7 +1744,10 @@ export default function PlanItemPage() {
                 startCollapsed={
                   (item.clip_gcs_paths?.length ?? 0) > 0 ||
                   (item.filming_guide?.length ?? 0) > 0 ||
-                  Boolean(item.voiceover_gcs_path)
+                  Boolean(item.voiceover_gcs_path) ||
+                  // Arriving from the /plan/new chooser: the type was just
+                  // picked there, so open on receipts with the uploader first.
+                  searchParams.get("setup") === "done"
                 }
                 onPatch={async (updates) => {
                   // Rejections propagate so the picker can drop its optimistic
@@ -1833,7 +1836,7 @@ export default function PlanItemPage() {
                     onChange={(e) => setExpandContext(e.currentTarget.value)}
                     maxLength={800}
                     rows={3}
-                    className="mt-2 w-full resize-none rounded-lg border border-zinc-200 bg-[#fafaf8] px-3 py-2 text-base text-[#0c0c0e] placeholder-zinc-400 focus:border-lime-500/60 focus:outline-none"
+                    className="mt-2 w-full resize-none rounded-lg border border-zinc-200 bg-[#ffffff] px-3 py-2 text-base text-[#0c0c0e] placeholder-zinc-400 focus:border-lime-500/60 focus:outline-none"
                     placeholder="A rough goal or detail is enough..."
                   />
                 </label>
@@ -1995,7 +1998,7 @@ export default function PlanItemPage() {
 
             {/* Narrated walkthrough: sticky voice recorder bar — shown for both narrated sub-modes */}
             {isNarrated && (
-              <div className="order-3 -mx-6 mb-6 border-y border-zinc-100 bg-[#fafaf8] px-6 py-3">
+              <div className="order-3 -mx-6 mb-6 border-y border-zinc-100 bg-[#ffffff] px-6 py-3">
                 <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
                   3 · Final-video voiceover
                 </p>
@@ -2266,7 +2269,7 @@ export default function PlanItemPage() {
             {/* Generate + hint caption compose the shared upload/format gate with
                 the guided-edit approval gate. */}
             {!isGenerating && (
-              <div className="order-5 sticky bottom-0 z-20 -mx-4 mt-4 space-y-2 border-t border-zinc-200 bg-[#fafaf8]/95 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur">
+              <div className="order-5 sticky bottom-0 z-20 -mx-4 mt-4 space-y-2 border-t border-zinc-200 bg-[#ffffff]/95 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur">
                 <InkButton
                   onClick={handleGenerate}
                   disabled={
@@ -5098,7 +5101,7 @@ function PoolUploadCard({
             return (
               <li
                 key={a.gcs_path}
-                className="min-w-[190px] max-w-[220px] rounded-lg border border-zinc-200 bg-[#fafaf8] p-2"
+                className="min-w-[190px] max-w-[220px] rounded-lg border border-zinc-200 bg-[#ffffff] p-2"
               >
                 <div className="flex gap-2">
                   <span
@@ -5167,7 +5170,7 @@ function PoolUploadCard({
             <li
               key={p.localId}
               data-testid="pending-clip-card"
-              className="min-w-[190px] max-w-[220px] rounded-lg border border-zinc-200 bg-[#fafaf8] p-2"
+              className="min-w-[190px] max-w-[220px] rounded-lg border border-zinc-200 bg-[#ffffff] p-2"
             >
               <div className="flex min-w-0 items-start justify-between gap-2">
                 <span

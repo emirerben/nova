@@ -117,7 +117,7 @@ it("offers publishing only for a connected account with permission", () => {
     />,
   );
   expect(screen.getByText("Connect TikTok before publishing.")).not.toBeNull();
-  expect(screen.getByRole("link", { name: "Connect TikTok" }).getAttribute("href")).toBe("/library");
+  expect(screen.getByRole("link", { name: "Connect TikTok" }).getAttribute("href")).toBe("/plan#tiktok");
   expect(screen.queryByRole("button", { name: "Publish to TikTok" })).toBeNull();
 
   rerender(
@@ -135,7 +135,7 @@ it("offers publishing only for a connected account with permission", () => {
     />,
   );
   expect(screen.getByText("TikTok publishing access needs to be reconnected.")).not.toBeNull();
-  expect(screen.getByRole("link", { name: "Reconnect TikTok" }).getAttribute("href")).toBe("/library");
+  expect(screen.getByRole("link", { name: "Reconnect TikTok" }).getAttribute("href")).toBe("/plan#tiktok");
 });
 
 it("keeps download in the release overflow without lifecycle tabs", () => {

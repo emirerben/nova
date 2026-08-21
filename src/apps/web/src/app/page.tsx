@@ -19,7 +19,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
   const storyMode = searchParams?.mode === "scroll" ? "scroll" : "auto";
 
   return (
-    <main className="min-h-screen bg-[#fafaf8] text-[#0c0c0e]">
+    <main className="min-h-screen bg-[#ffffff] text-[#0c0c0e]">
       <KriaEditStory mode={storyMode} />
     </main>
   );

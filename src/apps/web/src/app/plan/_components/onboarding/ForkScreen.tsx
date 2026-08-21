@@ -21,7 +21,7 @@ export function ForkScreen({
       {/* Primary: footage card */}
       <button
         onClick={onFootage}
-        className="w-full rounded-2xl border-2 border-lime-700 bg-[#fafaf8] p-6 text-left hover:bg-lime-50 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
+        className="w-full rounded-2xl border-2 border-lime-700 bg-[#ffffff] p-6 text-left hover:bg-lime-50 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
       >
         <p className="font-display text-xl text-[#0c0c0e] mb-1">
           I have footage to use

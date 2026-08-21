@@ -283,7 +283,7 @@ export function TikTokPublishDialog({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[100] bg-[#fafaf8]"
+      className="fixed inset-0 z-[100] bg-[#ffffff]"
       role="dialog"
       aria-modal="true"
       aria-labelledby="tiktok-publish-title"
@@ -291,9 +291,9 @@ export function TikTokPublishDialog({
       <section
         ref={sheetRef}
         data-testid="tiktok-publish-workspace"
-        className="fixed inset-0 flex w-full flex-col bg-[#fafaf8]"
+        className="fixed inset-0 flex w-full flex-col bg-[#ffffff]"
       >
-        <header className="border-b border-zinc-200 bg-[#fafaf8]">
+        <header className="border-b border-zinc-200 bg-[#ffffff]">
           <div className="mx-auto grid min-h-[72px] w-full max-w-[1280px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 px-4 md:px-8">
             <button
               ref={initialFocusRef}
@@ -457,7 +457,7 @@ export function TikTokPublishDialog({
         </div>
 
         {options && state !== "loading" && state !== "error" && (
-          <footer className="border-t border-zinc-200 bg-[#fafaf8]">
+          <footer className="border-t border-zinc-200 bg-[#ffffff]">
             <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-3 px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3 md:px-8 lg:flex-row lg:items-center lg:justify-between lg:gap-8">
               <div className="min-w-0" aria-live="polite">
                 {error && (
@@ -1161,6 +1161,6 @@ function publicationErrorMessage(error: string | null) {
 }
 
 function currentReturnTo() {
-  if (typeof window === "undefined") return "/library";
+  if (typeof window === "undefined") return "/plan";
   return `${window.location.pathname}${window.location.search}`;
 }

@@ -215,7 +215,7 @@ export default function PersonaEditor({
         )}
 
         {error && (
-          <div className="mb-6 rounded border border-zinc-200 bg-[#fafaf8] px-4 py-3 text-[#3f3f46]">
+          <div className="mb-6 rounded border border-zinc-200 bg-[#ffffff] px-4 py-3 text-[#3f3f46]">
             {error}
           </div>
         )}
@@ -238,7 +238,7 @@ export default function PersonaEditor({
           className={cn(
             "mt-8 mb-8 flex flex-wrap items-center gap-4",
             pinned &&
-              "sticky bottom-0 z-10 -mx-5 border-t border-zinc-200 bg-[#fafaf8] px-5 pt-4 pb-[max(16px,env(safe-area-inset-bottom))] md:mx-0 md:px-0",
+              "sticky bottom-0 z-10 -mx-5 border-t border-zinc-200 bg-[#ffffff] px-5 pt-4 pb-[max(16px,env(safe-area-inset-bottom))] md:mx-0 md:px-0",
           )}
         >
           <button
@@ -327,7 +327,7 @@ export default function PersonaEditor({
       )}
 
       {error && (
-        <div className="mb-6 rounded border border-zinc-200 bg-[#fafaf8] px-4 py-3 text-[#3f3f46]">
+        <div className="mb-6 rounded border border-zinc-200 bg-[#ffffff] px-4 py-3 text-[#3f3f46]">
           {error}
         </div>
       )}

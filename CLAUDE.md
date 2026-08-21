@@ -51,7 +51,6 @@ Rules:
 - `DESIGN.md` — design-system source of truth (tokens, loading rules, anti-slop, a11y); design reviews calibrate against it.
 - `src/apps/web/` — Next.js frontend (upload UI, progress tracker, result viewer)
 - `src/apps/web/src/app/admin/templates/[id]/components/` — visual overlay editor (OverlayPreview, OverlayTimeline, PropertyPanel, overlay-constants.ts)
-- `src/apps/web/src/app/music/` — music gallery page
 - `src/apps/web/src/app/admin/music/` — admin music management; `/admin/music/[id]` Config + Test tabs
 - `src/apps/web/src/lib/music-api.ts` — typed API client for music routes
 - `src/apps/api/` — Python API (upload endpoint, job queue, FFmpeg pipeline)
@@ -62,13 +61,14 @@ Rules:
 - `src/apps/api/app/routes/admin_generative.py` — `/admin/generative` dashboard list
 - `src/apps/api/app/tasks/generative_build.py` — `orchestrate_generative_job` Celery task (see `docs/pipelines/generative.md`)
 - `src/apps/api/app/pipeline/generative_overlays.py` — agent-authored intro overlay injector
-- `src/apps/web/src/app/generative/` + `admin/generative/` — public generative UI + admin dashboard
-- `src/apps/web/src/app/create/` + `src/apps/api/app/routes/{me,manual_drafts}.py` — flagged footage-first creation, promotion, and manual drafts; `PlanItem.audio_mode` is `kria|original|voiceover` (`plans/017-qendresa-creation-flow.md`)
+- `src/apps/web/src/app/generative/` — redirects to /plan (v0.45; siblings = shared editor modules); `admin/generative/` — admin dashboard
+- `src/apps/web/src/app/plan/new/` — New-video chooser; /plan home = create block + past-edits grid (`WorkspaceHome.tsx`)
+- `src/apps/web/src/app/create/` + `src/apps/api/app/routes/{me,manual_drafts}.py` — dark flagged footage-first creation + manual drafts (UI superseded by /plan home, backend live); `PlanItem.audio_mode` is `kria|original|voiceover` (`plans/017-qendresa-creation-flow.md`)
 - `src/apps/api/app/pipeline/music_recipe.py` — beat-snap recipe generator (see `docs/pipelines/music.md`)
 - `src/apps/api/app/tasks/music_orchestrate.py` — Celery tasks: beat analysis + music job orchestration
 - `src/apps/api/app/services/audio_download.py` — yt-dlp audio download + beat detection via FFmpeg
 - `src/apps/api/app/services/seed_provenance.py` — token-set matcher (`match_specs_to_seeds`) that links generated plan items back to the idea seed they honour; called at plan-generation time to set `PlanItem.source_idea_seed_id` and flip matched seeds to `in_plan`
-- `src/apps/web/src/app/plan/_components/ui/SeedProvenanceBadge.tsx` — "From your idea" lime badge rendered on TodayCard, PlanItemCard, and item detail page; driven by `source_idea_seed_text` from the API
+- `.../plan/_components/ui/SeedProvenanceBadge.tsx` — "From your idea" lime badge on the item page
 - `src/apps/api/prompts/` — LLM prompt templates (template analysis, transcription)
 - `agents/` — project-level agent context (VIDEO_CONTEXT.md, STACK.md, DECISIONS.md)
 - `plans/` — implementation plans (`plans/README.md` has status; 001–017)

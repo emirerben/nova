@@ -79,13 +79,13 @@ export function VoiceRecorder({
       </p>
 
       {rec.micBlocked && (
-        <div className="rounded border border-zinc-200 bg-[#fafaf8] px-3 py-2 text-sm text-[#3f3f46]">
+        <div className="rounded border border-zinc-200 bg-[#ffffff] px-3 py-2 text-sm text-[#3f3f46]">
           Mic blocked. Upload an audio file instead, or enable mic in your browser
           settings.
         </div>
       )}
       {error && (
-        <div className="rounded border border-zinc-200 bg-[#fafaf8] px-3 py-2 text-sm text-red-600">
+        <div className="rounded border border-zinc-200 bg-[#ffffff] px-3 py-2 text-sm text-red-600">
           {error}
         </div>
       )}

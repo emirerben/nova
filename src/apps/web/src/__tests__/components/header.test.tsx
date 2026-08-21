@@ -44,7 +44,7 @@ describe("Header — isLight predicate", () => {
   it("test_header_light_on_landing: / is light, borderless, and leaves actions to the story", () => {
     const { container } = renderWithPathname("/");
     const header = container.querySelector("header");
-    expect(header!.className).toContain("bg-[#fafaf8]");
+    expect(header!.className).toContain("bg-[#ffffff]");
     expect(header!.className).not.toContain("border-b");
     expect(screen.queryByRole("link", { name: /create my first edit/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /sign in/i })).not.toBeInTheDocument();
@@ -55,7 +55,7 @@ describe("Header — isLight predicate", () => {
   it("test_header_light_on_auto_story: /auto-story is light and borderless", () => {
     const { container } = renderWithPathname("/auto-story");
     const header = container.querySelector("header");
-    expect(header!.className).toContain("bg-[#fafaf8]");
+    expect(header!.className).toContain("bg-[#ffffff]");
     expect(header!.className).not.toContain("border-b");
     expect(screen.queryByRole("link", { name: /create my first edit/i })).not.toBeInTheDocument();
   });
@@ -63,7 +63,7 @@ describe("Header — isLight predicate", () => {
   it("test_header_light_on_plan: /plan keeps the standard light auth header", () => {
     const { container } = renderWithPathname("/plan");
     const header = container.querySelector("header");
-    expect(header!.className).toContain("bg-[#fafaf8]");
+    expect(header!.className).toContain("bg-[#ffffff]");
     expect(header!.className).toContain("border-b");
     expect(screen.getByRole("button", { name: /sign in/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Terms" })).toBeInTheDocument();
@@ -73,31 +73,31 @@ describe("Header — isLight predicate", () => {
   it("test_header_light_on_plan_items: /plan/items/x is light", () => {
     const { container } = renderWithPathname("/plan/items/abc123");
     const header = container.querySelector("header");
-    expect(header!.className).toContain("bg-[#fafaf8]");
+    expect(header!.className).toContain("bg-[#ffffff]");
   });
 
   it("test_header_light_on_library: /library is light", () => {
     const { container } = renderWithPathname("/library");
     const header = container.querySelector("header");
-    expect(header!.className).toContain("bg-[#fafaf8]");
+    expect(header!.className).toContain("bg-[#ffffff]");
   });
 
   it("test_header_light_on_generative: /generative is light", () => {
     const { container } = renderWithPathname("/generative");
     const header = container.querySelector("header");
-    expect(header!.className).toContain("bg-[#fafaf8]");
+    expect(header!.className).toContain("bg-[#ffffff]");
   });
 
   it("test_header_light_on_tiktok: /tiktok is light", () => {
     const { container } = renderWithPathname("/tiktok");
     const header = container.querySelector("header");
-    expect(header!.className).toContain("bg-[#fafaf8]");
+    expect(header!.className).toContain("bg-[#ffffff]");
   });
 
   it("test_header_dark_on_template_jobs: /template-jobs/x is NOT light", () => {
     const { container } = renderWithPathname("/template-jobs/abc123");
     const header = container.querySelector("header");
-    expect(header!.className).not.toContain("bg-[#fafaf8]");
+    expect(header!.className).not.toContain("bg-[#ffffff]");
   });
 });
 

@@ -306,7 +306,7 @@ function PlanPageInner() {
     return (
       <LightShell size={isPayoffStep ? "wide" : "narrow"}>
         {error && (
-          <div className="mb-6 rounded border border-zinc-200 bg-[#fafaf8] px-4 py-3 text-[#3f3f46]">
+          <div className="mb-6 rounded border border-zinc-200 bg-[#ffffff] px-4 py-3 text-[#3f3f46]">
             {error}
           </div>
         )}
@@ -516,25 +516,23 @@ function PlanPageInner() {
 }
 
 function WorkspaceHomeSkeleton() {
+  // Mirrors the real WorkspaceHome layout (create block + PAST EDITS tile
+  // grid at max-w-[900px]) so the loading state doesn't jump on swap.
   return (
-    <div className="min-h-screen bg-[#fafaf8]">
-      <div className="mx-auto max-w-[760px] px-6 pb-24 pt-14">
-        <div className="flex items-baseline justify-between gap-6">
-          <div className="h-11 w-32 rounded bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
-          <div className="hidden h-4 w-48 rounded bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer sm:block" />
+    <div className="min-h-screen bg-[#ffffff]">
+      <div className="mx-auto flex max-w-[900px] flex-col gap-10 px-6 pb-24 pt-14">
+        <div>
+          <div className="h-9 w-64 rounded bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
+          <div className="mt-3 h-4 w-80 max-w-full rounded bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
+          <div className="mt-5 h-12 w-full rounded-full bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer sm:w-40" />
         </div>
-        <div className="mt-4 h-4 w-56 rounded bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
-        <div className="mt-10 flex flex-col gap-0">
-          {[0, 1, 2, 3].map((row) => (
-            <div
-              key={row}
-              className="grid min-h-[48px] grid-cols-[2rem_1fr_auto] items-start gap-3 border-t border-zinc-100 py-2.5"
-            >
-              <div className="h-5 w-4 rounded bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
-              <div className="h-4 w-full max-w-md rounded bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
-              <div className="h-5 w-20 rounded-full bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
-            </div>
-          ))}
+        <div>
+          <div className="mb-4 h-3 w-24 rounded bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+            {[0, 1, 2, 3].map((tile) => (
+              <div key={tile} className="aspect-[9/16] rounded-xl border border-zinc-200 bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
+            ))}
+          </div>
         </div>
       </div>
     </div>

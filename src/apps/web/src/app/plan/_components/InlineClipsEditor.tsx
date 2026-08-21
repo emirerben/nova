@@ -389,7 +389,7 @@ function SourcePanel({
       </p>
       <div
         ref={srcBarRef}
-        className="relative h-14 select-none rounded-lg bg-[#fafaf8] [touch-action:pan-y]"
+        className="relative h-14 select-none rounded-lg bg-[#ffffff] [touch-action:pan-y]"
       >
         {/* Unused region (dimmed) */}
         <div className="absolute inset-x-0 top-4 h-6 rounded bg-zinc-100" />
@@ -459,7 +459,7 @@ function SourcePanel({
           <button
             type="button"
             aria-label="Nudge in-point earlier"
-            className="min-h-11 rounded border border-zinc-200 bg-[#fafaf8] text-sm font-semibold text-[#0c0c0e] disabled:opacity-40"
+            className="min-h-11 rounded border border-zinc-200 bg-[#ffffff] text-sm font-semibold text-[#0c0c0e] disabled:opacity-40"
             disabled={!canNudgeInEarlier}
             onClick={() => onNudgeIn(-0.1)}
           >
@@ -469,7 +469,7 @@ function SourcePanel({
           <button
             type="button"
             aria-label="Nudge in-point later"
-            className="min-h-11 rounded border border-zinc-200 bg-[#fafaf8] text-sm font-semibold text-[#0c0c0e] disabled:opacity-40"
+            className="min-h-11 rounded border border-zinc-200 bg-[#ffffff] text-sm font-semibold text-[#0c0c0e] disabled:opacity-40"
             disabled={!canNudgeInLater}
             onClick={() => onNudgeIn(0.1)}
           >
@@ -480,7 +480,7 @@ function SourcePanel({
           <button
             type="button"
             aria-label="Nudge out-point earlier"
-            className="min-h-11 rounded border border-zinc-200 bg-[#fafaf8] text-sm font-semibold text-[#0c0c0e] disabled:opacity-40"
+            className="min-h-11 rounded border border-zinc-200 bg-[#ffffff] text-sm font-semibold text-[#0c0c0e] disabled:opacity-40"
             disabled={!canNudgeOutEarlier}
             onClick={() => onNudgeOut(-0.1)}
           >
@@ -490,7 +490,7 @@ function SourcePanel({
           <button
             type="button"
             aria-label="Nudge out-point later"
-            className="min-h-11 rounded border border-zinc-200 bg-[#fafaf8] text-sm font-semibold text-[#0c0c0e] disabled:opacity-40"
+            className="min-h-11 rounded border border-zinc-200 bg-[#ffffff] text-sm font-semibold text-[#0c0c0e] disabled:opacity-40"
             disabled={!canNudgeOutLater}
             onClick={() => onNudgeOut(0.1)}
           >
@@ -982,7 +982,7 @@ export function InlineClipsEditor({
           <TimeRuler totalS={totalS || 1} />
           <div
             ref={outputBarRef}
-            className="relative mt-1 min-h-14 select-none rounded-lg bg-[#fafaf8] [touch-action:pan-y]"
+            className="relative mt-1 min-h-14 select-none rounded-lg bg-[#ffffff] [touch-action:pan-y]"
           >
             {outputBars.map((bar, barIndex) => {
               const { slot, slotIndex: i, window: win, leftPct, widthPct } = bar;
@@ -1220,7 +1220,7 @@ export function InlineClipsEditor({
                 type="button"
                 aria-label="Move up"
                 disabled={allIdx === 0}
-                className="min-h-8 min-w-8 shrink-0 rounded text-[#71717a] hover:bg-[#fafaf8] hover:text-[#0c0c0e] disabled:opacity-30"
+                className="min-h-8 min-w-8 shrink-0 rounded text-[#71717a] hover:bg-zinc-100 hover:text-[#0c0c0e] disabled:opacity-30"
                 onClick={() =>
                   dispatch({ type: "REORDER", from: allIdx, to: allIdx - 1 })
                 }
@@ -1231,7 +1231,7 @@ export function InlineClipsEditor({
                 type="button"
                 aria-label="Move down"
                 disabled={allIdx === state.slots.length - 1}
-                className="min-h-8 min-w-8 shrink-0 rounded text-[#71717a] hover:bg-[#fafaf8] hover:text-[#0c0c0e] disabled:opacity-30"
+                className="min-h-8 min-w-8 shrink-0 rounded text-[#71717a] hover:bg-zinc-100 hover:text-[#0c0c0e] disabled:opacity-30"
                 onClick={() =>
                   dispatch({ type: "REORDER", from: allIdx, to: allIdx + 1 })
                 }
@@ -1241,7 +1241,7 @@ export function InlineClipsEditor({
               <button
                 type="button"
                 aria-label="Remove"
-                className="min-h-8 min-w-8 shrink-0 rounded text-[#71717a] hover:bg-[#fafaf8] hover:text-[#0c0c0e]"
+                className="min-h-8 min-w-8 shrink-0 rounded text-[#71717a] hover:bg-zinc-100 hover:text-[#0c0c0e]"
                 onClick={() => {
                   dispatch({ type: "REMOVE", key: slot.key });
                   if (selectedKey === slot.key) setSelectedKey(null);
@@ -1259,7 +1259,7 @@ export function InlineClipsEditor({
         <button
           type="button"
           disabled={state.past.length === 0}
-          className="min-h-9 rounded border border-zinc-200 bg-white px-2 text-xs text-[#3f3f46] hover:bg-[#fafaf8] disabled:opacity-30"
+          className="min-h-9 rounded border border-zinc-200 bg-white px-2 text-xs text-[#3f3f46] hover:bg-zinc-100 disabled:opacity-30"
           onClick={() => dispatch({ type: "UNDO" })}
         >
           ↩ Undo
@@ -1267,7 +1267,7 @@ export function InlineClipsEditor({
         <button
           type="button"
           disabled={state.future.length === 0}
-          className="min-h-9 rounded border border-zinc-200 bg-white px-2 text-xs text-[#3f3f46] hover:bg-[#fafaf8] disabled:opacity-30"
+          className="min-h-9 rounded border border-zinc-200 bg-white px-2 text-xs text-[#3f3f46] hover:bg-zinc-100 disabled:opacity-30"
           onClick={() => dispatch({ type: "REDO" })}
         >
           ↪ Redo
@@ -1275,7 +1275,7 @@ export function InlineClipsEditor({
         <button
           type="button"
           disabled={submitting}
-          className="min-h-9 rounded border border-zinc-200 bg-white px-2 text-xs text-[#3f3f46] hover:bg-[#fafaf8] disabled:opacity-50"
+          className="min-h-9 rounded border border-zinc-200 bg-white px-2 text-xs text-[#3f3f46] hover:bg-zinc-100 disabled:opacity-50"
           onClick={handleReset}
         >
           Reset

@@ -24,7 +24,7 @@ export function EditContextStep({
         value={topic}
         onChange={(e) => setTopic(e.target.value)}
         placeholder="e.g. hiking trip with friends last weekend"
-        className="w-full rounded-xl border border-[#e4e4e7] bg-[#fafaf8] px-4 py-3 text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:outline-none focus:ring-2 focus:ring-lime-600 resize-none min-h-[80px]"
+        className="w-full rounded-xl border border-[#e4e4e7] bg-[#ffffff] px-4 py-3 text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:outline-none focus:ring-2 focus:ring-lime-600 resize-none min-h-[80px]"
         rows={3}
       />
 

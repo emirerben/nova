@@ -209,7 +209,7 @@ export default function StyleAgentInterview({ onDone }: { onDone?: () => void })
       )}
 
       {/* Input — sticky on mobile when keyboard opens */}
-      <div className="sticky bottom-0 z-10 mt-8 bg-[#fafaf8] pb-[env(safe-area-inset-bottom)]">
+      <div className="sticky bottom-0 z-10 mt-8 bg-[#ffffff] pb-[env(safe-area-inset-bottom)]">
         <div className="flex items-center gap-3 rounded-2xl border border-zinc-200 bg-white px-4 py-2">
           <textarea
             ref={inputRef}

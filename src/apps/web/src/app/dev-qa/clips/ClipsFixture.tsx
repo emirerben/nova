@@ -69,7 +69,7 @@ export default function ClipsFixture() {
   }));
 
   return (
-    <main className="min-h-screen bg-[#fafaf8] px-4 py-6 text-[#0c0c0e]">
+    <main className="min-h-screen bg-[#ffffff] px-4 py-6 text-[#0c0c0e]">
       <div className="mx-auto max-w-[760px]">
         <InlineClipsEditor
           ownerId="dev-qa-owner"

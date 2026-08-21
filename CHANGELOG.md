@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.45.0.0] — 2026-08-21
+
+### Features
+- **/plan is now the create-a-new-video page (basic home).** The ideas ledger is gone
+  (tester feedback: /plan read as a content-ideas list, not an edit tool). The home
+  leads with "Make a new video." → the new `/plan/new` chooser ("What kind of video?"
+  poster cards, reusing SetupPicker's cards + a shared `persistedEditFormatFor` rule),
+  which mints a plan item (`addIdea` + `updatePlanItem`) and lands on the item page
+  with `?setup=done` (SetupPicker collapsed, uploader first). A PAST EDITS grid
+  (ex-/library tiles) sits below, with the TikTok connection card at `/plan#tiktok`.
+- **/library and /generative routes retired.** Both redirect to /plan; the Header's
+  Library/My-videos links are removed; library components moved to
+  `components/library/`; the orphaned generative `VariantTile` was deleted.
+
+### Design
+- **Pure-white canvas.** Site-wide sweep of the cream `#fafaf8` canvas (92 uses, 42
+  files, incl. the `--cream` token) to `#ffffff`; hover states that matched the new
+  canvas moved to `zinc-100`; the /plan loading skeleton now mirrors the new layout.
+  DESIGN.md §1/§2/§12 updated (§12 is now the basic-home + chooser spec).
+
+### Changed
+- **Supersedes #870's UI direction** (founder call): the flagged `/create` hub and
+  the ideas-ledger "quieter path" are unmounted from /plan — #870's backend
+  (migration 0078, owned-media job lifecycle, audio modes, manual-draft
+  foundation) is retained, dark behind its flags.
+
 ## [0.44.1.0] — 2026-08-21
 
 ### Added

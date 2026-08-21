@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import TikTokConnectionCard from "@/app/library/_components/TikTokConnectionCard";
+import TikTokConnectionCard from "@/components/library/TikTokConnectionCard";
 import {
   disconnectTikTok,
   getTikTokConnection,

@@ -390,7 +390,7 @@ export default function CreatePage() {
             />
           </details>
 
-          <div className="sticky bottom-0 -mx-6 mt-8 border-t border-zinc-200 bg-[#fafaf8]/95 px-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-4 backdrop-blur">
+          <div className="sticky bottom-0 -mx-6 mt-8 border-t border-zinc-200 bg-[#ffffff]/95 px-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-4 backdrop-blur">
             <button
               type="button"
               onClick={() => void handleGenerate()}
