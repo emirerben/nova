@@ -15,13 +15,14 @@ Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJE
 
 ## Post-audit plans
 
-Feature/incident plans written after the June audit (005-013 live alongside; only actively tracked rows listed here):
+Feature/incident plans written after the June audit (005–017 live alongside; only actively tracked rows listed here):
 
 | Plan | Title | Status |
 |------|-------|--------|
 | 014 | Synchronous job registration for plan-item Generate (frozen "Starting…" incident, 2026-08-04) | DONE |
 | 015 | Intro-writer anti-slop: pattern-class ban + exemplar guard + conflict evals (monkey/marketing incident, 2026-08-05) | IN PROGRESS (PR #780; blocked on T5 live judge run) |
 | 016 | Strict guided-story renderer and exact Corfu acceptance preview | IN PROGRESS (code complete; merge, dark deploy, and Corfu preview pending) |
+| 017 | Footage-first creation, owned first-cut promotion, and resumable manual drafts | IN PROGRESS (implemented; staged rollout pending) |
 | 010 | Automatic speech cuts + reviewable Director apply/restore | DONE (implemented behind default-off flags; production activation pending) |
 
 ## Dependency notes
