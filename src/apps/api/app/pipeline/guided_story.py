@@ -25,7 +25,7 @@ from app.schemas.edit_proposal import EditProposalSnapshot, canonical_media_dige
 
 log = structlog.get_logger()
 
-COMPILER_VERSION = 3
+COMPILER_VERSION = 4
 VARIANT_ID = "guided_story"
 _FRAME_S = 1.0 / 30.0
 _ALLOCATION_EPSILON_S = 0.0005
@@ -115,7 +115,7 @@ class GuidedStoryExecutionPlan(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    compiler_version: Literal[1, 2, 3]
+    compiler_version: Literal[1, 2, 3, 4]
     proposal_version: int = Field(ge=1)
     media_digest: str = Field(min_length=64, max_length=64)
     direction: Literal["guided_story", "fast_montage", "text_explainer"]
@@ -364,6 +364,146 @@ def _source_window(ref, duration_s: float) -> tuple[float, float]:  # noqa: ANN0
     return round(start, 3), round(start + duration_s, 3)
 
 
+def _allocate_beat_windows(
+    snapshot,
+    *,
+    by_id: dict,
+    policy: dict,
+    transition_type: str,
+    transition_duration_s: float,
+) -> list[float]:
+    """Water-fill each beat's resolved duration against ITS OWN clips' capacity,
+    not just the approved weight ratio, so a rounding-inflated beat can never be
+    asked to exceed what its selected videos can actually supply (guided_story_
+    duration_impossible after approval -- job 0be72363).
+    """
+
+    weight_total = sum(float(beat.duration_s) for beat in snapshot.story_beats)
+    moment_count = sum(len(beat.media_ids) for beat in snapshot.story_beats)
+    min_moment_s = float(policy["min_moment_s"])
+
+    floors: list[float] = []
+    caps: list[float] = []
+    ideals: list[float] = []
+    moment_index = 0
+    for beat in snapshot.story_beats:
+        beat_refs = [by_id[media_id] for media_id in beat.media_ids]
+        overlaps_s = [
+            transition_duration_s
+            if transition_type != "none" and moment_index + offset != moment_count - 1
+            else 0.0
+            for offset in range(len(beat_refs))
+        ]
+        capacities_b = [
+            math.inf if ref.kind == "image" else max(0.0, float(ref.duration_s or 0.0) - overlap)
+            for ref, overlap in zip(beat_refs, overlaps_s, strict=True)
+        ]
+        floors.append(min_moment_s * len(beat.media_ids))
+        caps.append(sum(capacities_b))
+        ideals.append(float(snapshot.duration_s) * float(beat.duration_s) / weight_total)
+        moment_index += len(beat_refs)
+
+    allocated = [
+        min(max(ideal, floor), cap) for ideal, floor, cap in zip(ideals, floors, caps, strict=True)
+    ]
+    deficit = float(snapshot.duration_s) - sum(allocated)
+    if deficit > _ALLOCATION_EPSILON_S:
+        active = [
+            index
+            for index in range(len(allocated))
+            if math.isinf(caps[index]) or caps[index] - allocated[index] > _ALLOCATION_EPSILON_S
+        ]
+        remaining = deficit
+        while remaining > _ALLOCATION_EPSILON_S:
+            if not active:
+                raise GuidedStoryError(
+                    "guided_story_duration_impossible",
+                    "The approved story is longer than its approved videos can support.",
+                )
+            share = remaining / len(active)
+            consumed = 0.0
+            next_active: list[int] = []
+            for index in active:
+                headroom = caps[index] - allocated[index]
+                addition = share if math.isinf(headroom) else min(share, max(0.0, headroom))
+                allocated[index] += addition
+                consumed += addition
+                if math.isinf(headroom) or headroom - addition > _ALLOCATION_EPSILON_S:
+                    next_active.append(index)
+            if consumed <= _ALLOCATION_EPSILON_S:
+                raise GuidedStoryError(
+                    "guided_story_duration_impossible",
+                    "The approved story is longer than its approved videos can support.",
+                )
+            remaining -= consumed
+            active = next_active
+    elif deficit < -_ALLOCATION_EPSILON_S:
+        active = [
+            index
+            for index in range(len(allocated))
+            if allocated[index] - floors[index] > _ALLOCATION_EPSILON_S
+        ]
+        remaining = -deficit
+        while remaining > _ALLOCATION_EPSILON_S:
+            if not active:
+                raise GuidedStoryError(
+                    "guided_story_duration_impossible",
+                    "The approved story is too short to show all approved media clearly.",
+                )
+            share = remaining / len(active)
+            consumed = 0.0
+            next_active = []
+            for index in active:
+                headroom = allocated[index] - floors[index]
+                reduction = min(share, max(0.0, headroom))
+                allocated[index] -= reduction
+                consumed += reduction
+                if headroom - reduction > _ALLOCATION_EPSILON_S:
+                    next_active.append(index)
+            if consumed <= _ALLOCATION_EPSILON_S:
+                raise GuidedStoryError(
+                    "guided_story_duration_impossible",
+                    "The approved story is too short to show all approved media clearly.",
+                )
+            remaining -= consumed
+            active = next_active
+
+    resolved: list[float] = []
+    for value, cap in zip(allocated, caps, strict=True):
+        rounded_value = _round_frame(value)
+        if not math.isinf(cap):
+            frame_cap = math.floor((cap + _FRAME_FLOOR_EPSILON_S) / _FRAME_S) * _FRAME_S
+            rounded_value = min(rounded_value, round(frame_cap, 3))
+        resolved.append(rounded_value)
+
+    residual = round(float(snapshot.duration_s) - sum(resolved), 3)
+    if residual > 0:
+        for index in reversed(range(len(resolved))):
+            headroom = caps[index] - resolved[index]
+            addition = residual if math.isinf(headroom) else min(residual, headroom)
+            if addition <= 0:
+                continue
+            resolved[index] = round(resolved[index] + addition, 3)
+            residual = round(residual - addition, 3)
+            if residual <= 0:
+                break
+    elif residual < 0:
+        for index in reversed(range(len(resolved))):
+            reduction = min(-residual, resolved[index] - floors[index])
+            if reduction <= 0:
+                continue
+            resolved[index] = round(resolved[index] - reduction, 3)
+            residual = round(residual + reduction, 3)
+            if residual >= 0:
+                break
+    if abs(residual) > _DURATION_MATCH_TOLERANCE_S:
+        raise GuidedStoryError(
+            "guided_story_duration_impossible",
+            "The approved story timing could not be allocated safely.",
+        )
+    return resolved
+
+
 def _allocate_beat_durations(
     refs: list[Any],
     *,
@@ -467,7 +607,7 @@ def _text_elements(
     beat_windows: list[dict],
     policy: dict,
     *,
-    compiler_version: Literal[1, 2, 3],
+    compiler_version: Literal[1, 2, 3, 4],
 ) -> list[dict]:
     total_s = float(snapshot.duration_s)
     title_end = min(total_s, 3.2 if snapshot.direction != "fast_montage" else 2.2)
@@ -575,7 +715,7 @@ def _compile_execution_plan_version(
     guided_snapshot: object,
     *,
     track: dict[str, Any] | None,
-    compiler_version: Literal[1, 2, 3],
+    compiler_version: Literal[1, 2, 3, 4],
 ) -> dict[str, Any]:
     """Compile a deterministic plan with an explicitly versioned allocator."""
 
@@ -603,8 +743,21 @@ def _compile_execution_plan_version(
     moments: list[dict[str, Any]] = []
     moment_count = sum(len(beat.media_ids) for beat in snapshot.story_beats)
     cursor = 0.0
+    planned_beats = (
+        _allocate_beat_windows(
+            snapshot,
+            by_id=by_id,
+            policy=policy,
+            transition_type=transition_type,
+            transition_duration_s=transition_duration_s,
+        )
+        if compiler_version >= 4
+        else None
+    )
     for beat_index, beat in enumerate(snapshot.story_beats):
-        if beat_index == len(snapshot.story_beats) - 1:
+        if planned_beats is not None:
+            resolved_beat_s = planned_beats[beat_index]
+        elif beat_index == len(snapshot.story_beats) - 1:
             resolved_beat_s = round(float(snapshot.duration_s) - cursor, 3)
         else:
             resolved_beat_s = _round_frame(

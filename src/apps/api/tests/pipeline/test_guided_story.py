@@ -164,7 +164,7 @@ def test_compiler_uses_only_beat_selected_media_and_hits_target_duration() -> No
     assert plan["selected_media_ids"] == ["food-photo", "town-photo", "coast-video"]
     assert "unused-photo" not in {row["media_id"] for row in plan["story_timeline"]}
     assert plan["resolved_duration_s"] == 18
-    assert plan["compiler_version"] == 3
+    assert plan["compiler_version"] == 4
     assert plan["proposal_version"] == 7
     assert [row["beat_id"] for row in plan["beat_windows"]] == ["food", "town", "coast"]
     assert {row["layout"] for row in plan["story_timeline"]} == {
@@ -471,6 +471,11 @@ def test_execution_plan_rejects_any_semantic_drift_from_approval(mutate) -> None
 
 
 def test_compiler_fails_instead_of_dropping_media_when_duration_is_too_short() -> None:
+    # Pinned to v3: v4's cross-beat water-fill (see test_undershooting_beat_
+    # weights_never_inflate_past_clip_capacity) can legitimately satisfy a
+    # severely underweighted beat's floor by borrowing headroom from another
+    # beat -- a different, intentional capability, not a regression of this
+    # naive per-beat-ratio scenario.
     raw = _guided_snapshot(direction="text_explainer")
     proposal = raw["approved_proposal"]
     proposal["story_beats"][0]["media_ids"] = ["food-photo", "town-photo", "coast-video"]
@@ -480,7 +485,7 @@ def test_compiler_fails_instead_of_dropping_media_when_duration_is_too_short() -
     proposal["duration_s"] = 10
 
     with pytest.raises(GuidedStoryError, match="too short") as exc:
-        compile_execution_plan(raw, track=None)
+        _compile_execution_plan_version(raw, track=None, compiler_version=3)
     assert exc.value.code == "guided_story_duration_impossible"
 
 
@@ -563,18 +568,27 @@ def test_compiler_accepts_video_at_minimum_without_transition_overlap(
 
 
 def test_compiler_rejects_selected_video_without_duration() -> None:
+    # Pinned to v3: v4's beat-window pre-clamp reaches the generic per-beat
+    # floor check in _allocate_beat_durations before its capacity loop, so the
+    # specific "no usable duration" message is only guaranteed at this
+    # explicit version. Both versions still raise guided_story_duration_
+    # impossible -- only the message text differs.
     raw = _guided_snapshot()
     proposal = raw["approved_proposal"]
     coast = next(row for row in proposal["media"] if row["media_id"] == "coast-video")
     coast["duration_s"] = None
 
     with pytest.raises(GuidedStoryError, match="no usable duration") as exc:
-        compile_execution_plan(raw, track=None)
+        _compile_execution_plan_version(raw, track=None, compiler_version=3)
 
     assert exc.value.code == "guided_story_duration_impossible"
 
 
 def test_compiler_rejects_video_too_short_after_transition_overlap() -> None:
+    # Pinned to v3 for the same reason as test_compiler_rejects_selected_
+    # video_without_duration above -- the specific message is a v3-scoped
+    # guarantee; v4 still rejects this, just via the generic beat-floor
+    # message.
     raw = _guided_snapshot()
     proposal = raw["approved_proposal"]
     coast = next(row for row in proposal["media"] if row["media_id"] == "coast-video")
@@ -600,7 +614,7 @@ def test_compiler_rejects_video_too_short_after_transition_overlap() -> None:
     ]
 
     with pytest.raises(GuidedStoryError, match="too short to show clearly") as exc:
-        compile_execution_plan(raw, track=None)
+        _compile_execution_plan_version(raw, track=None, compiler_version=3)
 
     assert exc.value.code == "guided_story_duration_impossible"
 
@@ -629,6 +643,140 @@ def test_compiler_rejects_all_video_beat_without_enough_total_footage() -> None:
 
     with pytest.raises(GuidedStoryError, match="longer than its approved videos") as exc:
         compile_execution_plan(raw, track=None)
+
+    assert exc.value.code == "guided_story_duration_impossible"
+
+
+def _clamped_beat_snapshot() -> dict:
+    """A beat-weight-undershoots-total snapshot (prod job 0be72363 shape).
+
+    weight_total (6) < duration_s (12), so the naive ratio formula inflates
+    every beat's resolved_beat_s by the same 2x factor. The video beat's
+    clip sits right at its real capacity (3.9s) -- just under the 4.0s the
+    naive ratio would demand -- so v3's per-beat allocator cannot fit it,
+    while v4's beat-window water-fill clamps it to capacity and gives the
+    saved time to the (uncapped) image beats instead.
+    """
+    raw = _guided_snapshot()
+    proposal = raw["approved_proposal"]
+    coast = next(row for row in proposal["media"] if row["media_id"] == "coast-video")
+    coast["duration_s"] = 3.9
+    coast["analysis"]["duration_s"] = 3.9
+    coast["analysis"]["best_moments"] = []
+    proposal["duration_s"] = 12
+    proposal["story_beats"] = [
+        {
+            "beat_id": "food",
+            "topic": "Food",
+            "thought": "Small treats made the hot afternoons better.",
+            "media_ids": ["food-photo"],
+            "layout": "fullscreen",
+            "duration_s": 2,
+        },
+        {
+            "beat_id": "town",
+            "topic": "Architecture",
+            "thought": "The old streets reward slow wandering.",
+            "media_ids": ["town-photo"],
+            "layout": "fullscreen",
+            "duration_s": 2,
+        },
+        {
+            "beat_id": "coast",
+            "topic": "Coast",
+            "thought": "The water changes the pace of the whole day.",
+            "media_ids": ["coast-video"],
+            "layout": "fullscreen",
+            "duration_s": 2,
+        },
+    ]
+    return raw
+
+
+def test_undershooting_beat_weights_never_inflate_past_clip_capacity() -> None:
+    raw = _clamped_beat_snapshot()
+
+    plan = _compile_execution_plan_version(raw, track=None, compiler_version=4)
+
+    assert plan["resolved_duration_s"] == raw["approved_proposal"]["duration_s"]
+    by_media = {row["media_id"]: row for row in raw["approved_proposal"]["media"]}
+    for row in plan["story_timeline"]:
+        if row["kind"] != "video":
+            continue
+        ref_duration_s = float(by_media[row["media_id"]]["duration_s"])
+        assert row["source_end_s"] <= ref_duration_s + 0.001
+
+
+def test_v3_still_fails_where_v4_redistributes() -> None:
+    raw = _clamped_beat_snapshot()
+
+    with pytest.raises(GuidedStoryError, match="longer than its approved videos") as exc:
+        _compile_execution_plan_version(raw, track=None, compiler_version=3)
+
+    assert exc.value.code == "guided_story_duration_impossible"
+
+
+def test_execution_plan_accepts_v3_timing_across_compiler_upgrade() -> None:
+    raw = _guided_snapshot()
+    plan = _compile_execution_plan_version(raw, track=None, compiler_version=3)
+
+    assert plan["compiler_version"] == 3
+    assert validate_execution_plan(plan, raw) == plan
+
+
+def test_compiler_beat_windows_still_sum_to_the_approved_total_when_clamped() -> None:
+    raw = _clamped_beat_snapshot()
+
+    plan = _compile_execution_plan_version(raw, track=None, compiler_version=4)
+
+    beat_windows = plan["beat_windows"]
+    assert sum(row["resolved_duration_s"] for row in beat_windows) == pytest.approx(
+        raw["approved_proposal"]["duration_s"], abs=0.001
+    )
+    for index in range(1, len(beat_windows)):
+        assert beat_windows[index]["start_s"] == beat_windows[index - 1]["end_s"]
+
+
+def test_compiler_still_rejects_a_total_no_beat_can_hold() -> None:
+    raw = _guided_snapshot()
+    proposal = raw["approved_proposal"]
+    for row in proposal["media"]:
+        row["kind"] = "video"
+        row["duration_s"] = 2.0
+    for row in raw["media_identities"]:
+        row["kind"] = "video"
+    media = [MediaRef.model_validate(row) for row in proposal["media"]]
+    raw["media_digest"] = canonical_media_digest(media)
+    proposal["duration_s"] = 10
+    proposal["story_beats"] = [
+        {
+            "beat_id": "food",
+            "topic": "Food",
+            "thought": "Small treats made the hot afternoons better.",
+            "media_ids": ["food-photo"],
+            "layout": "fullscreen",
+            "duration_s": 3,
+        },
+        {
+            "beat_id": "town",
+            "topic": "Architecture",
+            "thought": "The old streets reward slow wandering.",
+            "media_ids": ["town-photo"],
+            "layout": "fullscreen",
+            "duration_s": 3,
+        },
+        {
+            "beat_id": "coast",
+            "topic": "Coast",
+            "thought": "The water changes the pace of the whole day.",
+            "media_ids": ["coast-video"],
+            "layout": "fullscreen",
+            "duration_s": 4,
+        },
+    ]
+
+    with pytest.raises(GuidedStoryError, match="longer than its approved videos") as exc:
+        _compile_execution_plan_version(raw, track=None, compiler_version=4)
 
     assert exc.value.code == "guided_story_duration_impossible"
 
