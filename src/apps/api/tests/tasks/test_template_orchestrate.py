@@ -462,6 +462,113 @@ class TestOrchestratePipelineHelpers:
         assert normal.moments_synthetic is False
         assert image.best_moments == []
 
+    def test_synthetic_energy_tracks_visual_density_and_speech(self):
+        """Energy must be a real function of the preserved Gemini signals
+        (visual_density + speech density), not a flat 5.0 for every static
+        clip — prod jobs 82fb4c57/f95b43b8 got wrong music energy because
+        every synthetic moment looked identically mid-energy."""
+        from app.tasks.template_orchestrate import _synthetic_moment_energy
+
+        quiet = _make_clip_meta("clip_quiet")
+        quiet.visual_density = 0.0
+        quiet.transcript = ""
+
+        busy = _make_clip_meta("clip_busy")
+        busy.visual_density = 10.0
+        busy.transcript = "word " * 30  # 30 words
+
+        clip_dur = 10.0
+        # By hand: quiet -> density=0.0, words=0 -> speech=0
+        #   energy = 0.65*0.0 + 0.35*0.0 = 0.0
+        # busy -> density=10.0, wps=30/10=3.0, speech=min(10,(3.0/2.5)*10)=10.0
+        #   energy = 0.65*10.0 + 0.35*10.0 = 10.0
+        quiet_energy = _synthetic_moment_energy(quiet, clip_dur)
+        busy_energy = _synthetic_moment_energy(busy, clip_dur)
+
+        assert quiet_energy == 0.0
+        assert busy_energy == 10.0
+        assert busy_energy > quiet_energy
+        assert quiet_energy < 3.0
+        assert busy_energy > 7.0
+
+    def test_synthetic_energy_fails_open_to_five(self):
+        """Any missing/out-of-range input must fail open to exactly 5.0,
+        byte-identical to the pre-fix flat placeholder — never a partial or
+        garbage-derived score."""
+        from app.tasks.template_orchestrate import _synthetic_moment_energy
+
+        no_density = _make_clip_meta("clip_no_density")
+        no_density.visual_density = None
+        assert _synthetic_moment_energy(no_density, 10.0) == 5.0
+
+        bad_density = _make_clip_meta("clip_bad_density")
+        bad_density.visual_density = 99.0
+        assert _synthetic_moment_energy(bad_density, 10.0) == 5.0
+
+        no_transcript = _make_clip_meta("clip_no_transcript")
+        no_transcript.transcript = None
+        assert _synthetic_moment_energy(no_transcript, 10.0) == 5.0
+
+    def test_synthetic_moments_carry_derived_energy_not_flat_five(self):
+        """The real backfill path (_backfill_cached_empty_moments) must wire
+        the derived energy onto every synthesized moment, not the old flat
+        5.0 placeholder."""
+        from app.tasks.template_orchestrate import (
+            _backfill_cached_empty_moments,
+            _synthetic_moment_energy,
+        )
+
+        meta = _make_clip_meta("clip_dense")
+        meta.best_moments = []
+        meta.visual_density = 8.0
+        meta.transcript = ""
+
+        _backfill_cached_empty_moments([meta], None)
+
+        # probe_map=None -> _clip_duration falls back to its 30.0 default.
+        expected_energy = _synthetic_moment_energy(meta, 30.0)
+        assert expected_energy != 5.0
+        assert len(meta.best_moments) > 0
+        for moment in meta.best_moments:
+            assert moment["energy"] == expected_energy
+
+    def test_whisper_fallback_moments_stay_at_flat_five(self):
+        """The Whisper degraded-clip fallback call site has no Gemini meta
+        to derive energy from — it must stay byte-identical to the pre-fix
+        flat 5.0 placeholder (no energy= kwarg passed)."""
+        from app.tasks.template_orchestrate import _fallback_moments
+
+        moments = _fallback_moments(12.0)
+
+        assert len(moments) > 0
+        for moment in moments:
+            assert moment["energy"] == 5.0
+
+    def test_synthetic_windows_stay_inside_the_probed_clip(self):
+        """Content-aware window timing must never escape [0, clip_dur], and
+        the bucket-count contract (3 normally, 4 when clip_dur > 21s) that
+        the matcher's slot-range coverage relies on must stay unchanged."""
+        from app.tasks.template_orchestrate import _fallback_moments
+
+        for clip_dur in [1.0, 2.5, 4.0, 12.0, 30.0]:
+            moments = _fallback_moments(clip_dur)
+            expected_count = 4 if clip_dur > 21.0 else 3
+            assert len(moments) == expected_count, clip_dur
+            for moment in moments:
+                assert 0.0 <= moment["start_s"] < moment["end_s"] <= clip_dur, (
+                    clip_dur,
+                    moment,
+                )
+
+    def test_short_clip_gets_no_lead_in(self):
+        """A clip too short for the lead-in (< 3s) must still start its
+        first moment at 0.0 — no dead air carved out of a 2s clip."""
+        from app.tasks.template_orchestrate import _fallback_moments
+
+        moments = _fallback_moments(2.0)
+
+        assert moments[0]["start_s"] == 0.0
+
     def test_moments_backfilled_records_phase_log_event(self):
         """The backfill branch must record a `gemini_moments_backfilled`
         sub-phase so the admin job-debug view shows which clips got synthetic

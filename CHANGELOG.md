@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.42.0.2] — 2026-08-21
+
+### Fixed
+- **Music now matches static clips by their actual energy, not a coin-flip guess.** When a calm single-shot clip (talking-head, product b-roll) gets synthetic fallback moments backfilled instead of real Gemini-detected ones (see 0.40.0.1), every one of those moments used to carry a flat, identical "5.0" energy score — so the music matcher saw every static clip as equally mid-energy no matter how busy or wordy it actually was (prod jobs 82fb4c57/f95b43b8 got mismatched music energy from this). Synthetic moments now derive their energy from the clip's own preserved Gemini `visual_density` and speech density from its transcript, so a quiet, empty-frame clip and a dense, talkative one score differently. The synthesized moment windows are also no longer identically anchored at the start of the clip. Any missing or malformed signal still falls open to the same flat 5.0 as before; the unrelated degraded-clip Whisper fallback (no Gemini analysis available) is unchanged.
+
 ## [0.42.0.1] — 2026-08-21
 
 ### Fixed

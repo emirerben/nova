@@ -2366,7 +2366,9 @@ def _analyze_clips_parallel(
                         )
                 clip_dur = _clip_duration(path, probe_map, 30.0)
                 meta.best_moments = _fallback_moments(
-                    clip_dur, description=_synthetic_moment_description(meta)
+                    clip_dur,
+                    description=_synthetic_moment_description(meta),
+                    energy=_synthetic_moment_energy(meta, clip_dur),
                 )
                 meta.moments_synthetic = True
                 if record_sub_phases and job_id is not None:
@@ -2459,21 +2461,68 @@ def _synthetic_moment_description(meta: "ClipMeta") -> str:
     return label[:80] if label else "fallback"
 
 
-def _fallback_moments(clip_dur: float, description: str = "fallback") -> list[dict]:
+_SYNTHETIC_LEAD_IN_S = 0.5
+_SYNTHETIC_SPEECH_WPS_FULL = 2.5  # ~normal conversational rate -> full speech score
+
+
+def _synthetic_moment_energy(meta: ClipMeta, clip_dur: float) -> float:
+    """Derive 0-10 energy for synthetic moments from the PRESERVED Gemini analysis.
+
+    Two real, already-paid-for signals: Gemini's own `visual_density` (how busy
+    the frame is, 0=empty..10=cluttered, already on ClipMeta) and speech density
+    from the transcript over the probed duration. The music matcher scores
+    -abs(moment.energy - slot.energy), so a flat 5.0 on every backfilled clip
+    made every static clip look identically mid-energy. Fail-open: any missing
+    or out-of-range input (density absent/out of [0,10], transcript absent)
+    returns exactly 5.0, byte-identical to the pre-fix behavior — a *valid*
+    0.0 or empty transcript is not "missing" and still drives a real score.
+    """
+    try:
+        density = getattr(meta, "visual_density", None)
+        if density is None:
+            raise ValueError("missing visual_density")
+        density = float(density)
+        if not (0.0 <= density <= 10.0):
+            raise ValueError("visual_density out of range")
+        transcript = getattr(meta, "transcript", None)
+        if transcript is None:
+            raise ValueError("missing transcript")
+        words = len(transcript.split())
+        wps = words / max(float(clip_dur), 0.5)
+        speech = min(10.0, (wps / _SYNTHETIC_SPEECH_WPS_FULL) * 10.0)
+        return round(max(0.0, min(10.0, 0.65 * density + 0.35 * speech)), 1)
+    except Exception:
+        return 5.0
+
+
+def _fallback_moments(
+    clip_dur: float, description: str = "fallback", *, energy: float = 5.0
+) -> list[dict]:
     """Generate overlapping moments at multiple durations for fallback clips.
 
     Covers short (3–5s), medium (8–12s), and long (15s+) slot ranges so that
     a fallback clip can satisfy template slots of any target_duration_s.
     """
+    lead = _SYNTHETIC_LEAD_IN_S if clip_dur >= 3.0 else 0.0
+    usable = max(clip_dur - lead, 0.5)
+
+    def _window(target: float) -> tuple[float, float]:
+        span = min(target, usable)
+        start = lead + max(0.0, (usable - span) / 2.0) if target > 5.0 else lead
+        return round(start, 3), round(min(start + span, clip_dur), 3)
+
+    start5, end5 = _window(5.0)
+    start10, end10 = _window(10.0)
+    start15, end15 = _window(15.0)
     moments = [
-        {"start_s": 0.0, "end_s": min(clip_dur, 5.0), "energy": 5.0, "description": description},
-        {"start_s": 0.0, "end_s": min(clip_dur, 10.0), "energy": 5.0, "description": description},
-        {"start_s": 0.0, "end_s": min(clip_dur, 15.0), "energy": 5.0, "description": description},
+        {"start_s": start5, "end_s": end5, "energy": energy, "description": description},
+        {"start_s": start10, "end_s": end10, "energy": energy, "description": description},
+        {"start_s": start15, "end_s": end15, "energy": energy, "description": description},
     ]
     # Add a full-clip moment only if it meaningfully extends beyond 15s
     if clip_dur > 21.0:
         moments.append(
-            {"start_s": 0.0, "end_s": clip_dur, "energy": 5.0, "description": description}
+            {"start_s": 0.0, "end_s": clip_dur, "energy": energy, "description": description}
         )
     return moments
 
@@ -2491,7 +2540,9 @@ def _backfill_cached_empty_moments(clip_metas_ordered: list, probe_map: dict | N
             continue
         clip_dur = _clip_duration(meta.clip_path, probe_map, 30.0)
         meta.best_moments = _fallback_moments(
-            clip_dur, description=_synthetic_moment_description(meta)
+            clip_dur,
+            description=_synthetic_moment_description(meta),
+            energy=_synthetic_moment_energy(meta, clip_dur),
         )
         meta.moments_synthetic = True
 
