@@ -5,6 +5,8 @@
  * suggested a retry that couldn't fix a language problem (the Chinese-lyrics
  * incident, dogfood feedback #6).
  */
+import { jobFailureCopy } from "./job-failure-copy";
+
 /**
  * Plain-language explanation for a clip that couldn't be placed in a variant.
  * Returned as a sentence that slots into "Shot N – <copy>".
@@ -27,11 +29,11 @@ export function variantFailureCopy(errorClass?: string | null): string {
     case "lyric_alignment_error":
       return "The lyrics couldn't be timed to this song — try a different song.";
     case "timeout":
-      return "This render ran out of time — generating again usually works.";
+      return jobFailureCopy("timeout").detail;
     case "storage_error":
-      return "We couldn't fetch the footage for this one — try again.";
+      return jobFailureCopy("storage_error").detail;
     case "encoder_error":
-      return "Something went wrong while rendering — try again.";
+      return jobFailureCopy("encoder_error").detail;
     default:
       // Was "Changing the song or style starts a fresh try" — wrong for any
       // archetype with no song/style concept (e.g. subtitled). The "Try again"

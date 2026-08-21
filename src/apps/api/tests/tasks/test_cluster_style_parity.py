@@ -413,7 +413,7 @@ def test_finalize_job_preserves_cluster_style(monkeypatch):
     """
     captured: dict = {}
 
-    def _capture_set_status(job_id, status, extra_plan=None):
+    def _capture_set_status(job_id, status, extra_plan=None, **kwargs):
         captured["plan"] = extra_plan
 
     monkeypatch.setattr(gb, "_set_status", _capture_set_status)

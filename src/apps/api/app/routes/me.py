@@ -1,7 +1,8 @@
 """Per-user "my" surface — the video library + one-off → plan attach (Phase 1 spine).
 
-GET    /me/jobs                       — the signed-in user's videos (the library)
-POST   /me/jobs/{job_id}/add-to-plan  — pin a standalone video onto a plan day
+GET    /me/jobs                           — the signed-in user's videos (the library)
+POST   /me/jobs/{job_id}/add-to-plan      — pin a standalone video onto a plan day
+POST   /me/jobs/{job_id}/open-in-editor   — promote a ready first cut into the editor
 GET    /me/export                     — data-portability bundle (privacy policy §9)
 POST   /me/account/delete-request     — step 1/2 of account erasure: emails a code
 POST   /me/account/delete-confirm     — step 2/2: verify the code, permanently erase
@@ -22,7 +23,7 @@ import structlog
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,6 +63,120 @@ _JOB_FAILED = PLAN_ITEM_JOB_FAILED
 
 _DEFAULT_LIMIT = 24
 _MAX_LIMIT = 60
+OPEN_IN_EDITOR_NOT_READY_DETAIL = "Video is not ready to open in the editor."
+OPEN_IN_EDITOR_LINK_CONFLICT_DETAIL = "Video is linked to a different plan item."
+
+
+async def _provision_editor_plan(db: AsyncSession, user: User) -> tuple[ContentPlan, bool]:
+    """Provision the minimal plan graph needed by the footage-first editor.
+
+    The user row serializes two first-time promotions. Re-checking for a plan
+    after that lock makes provisioning idempotent without a new schema object.
+    The boolean says whether the returned plan's persona is already locked and
+    ownership-validated by construction.
+    """
+    locked_user = (
+        await db.execute(
+            select(User)
+            .where(User.id == user.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if locked_user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    plan = (
+        await db.execute(
+            select(ContentPlan)
+            .where(ContentPlan.user_id == user.id)
+            .order_by(ContentPlan.created_at.desc())
+            .limit(1)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if plan is not None:
+        return plan, False
+
+    persona = (
+        await db.execute(
+            select(Persona)
+            .where(Persona.user_id == user.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if persona is None:
+        persona = Persona(
+            id=uuid.uuid4(),
+            user_id=user.id,
+            questionnaire={},
+            persona={},
+            persona_status="ready",
+            idea_seeds=[],
+        )
+        db.add(persona)
+        await db.flush()
+
+    plan = ContentPlan(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        persona_id=persona.id,
+        plan_status="ready",
+        horizon_days=30,
+        ownership_epoch=0,
+    )
+    db.add(plan)
+    await db.flush()
+    return plan, True
+
+
+def _variant_rank(variant: dict, fallback: int) -> tuple[int, int]:
+    """Stable rank key for task-owned variant dictionaries.
+
+    Legacy rows can lack ``rank`` or contain a malformed value. Keep their list
+    order after explicitly ranked variants without letting a bool masquerade as
+    an integer rank.
+    """
+    raw = variant.get("rank")
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        return raw, fallback
+    return 1_000_000 + fallback, fallback
+
+
+def _lowest_rank_ready_variant(job: Job) -> dict | None:
+    variants = (job.assembly_plan or {}).get("variants")
+    if not isinstance(variants, list):
+        return None
+    ready = [
+        (index, variant)
+        for index, variant in enumerate(variants)
+        if isinstance(variant, dict)
+        and variant.get("render_status") == "ready"
+        and isinstance(variant.get("variant_id"), str)
+        and variant["variant_id"].strip()
+    ]
+    if not ready:
+        return None
+    return min(ready, key=lambda pair: _variant_rank(pair[1], pair[0]))[1]
+
+
+def _job_failure_metadata(job: Job) -> tuple[str | None, str | None]:
+    """Return structured, UI-safe failure vocabulary without raw error detail."""
+    reason = job.failure_reason if isinstance(job.failure_reason, str) else None
+    variants = (job.assembly_plan or {}).get("variants")
+    if not isinstance(variants, list):
+        return reason, None
+    failed = [
+        (index, variant)
+        for index, variant in enumerate(variants)
+        if isinstance(variant, dict) and isinstance(variant.get("error_class"), str)
+    ]
+    if not failed:
+        return reason, None
+    variant = min(failed, key=lambda pair: _variant_rank(pair[1], pair[0]))[1]
+    return reason, variant["error_class"]
 
 
 def _derived_status(job: Job) -> str:
@@ -135,6 +250,10 @@ class LibraryJob(BaseModel):
     tiktok_publication: LibraryTikTokPublication | None = None
     created_at: datetime
     content_plan_item_id: str | None
+    # Structured, allowlisted taxonomy only. Raw ``Job.error_detail`` and per-
+    # variant ``error`` stay off this user-facing response.
+    failure_reason: str | None = None
+    error_class: str | None = None
     # The thumb the user left on this video (up | down | more_like_this), or None.
     # Populated batched in list_my_jobs; defaults None elsewhere (the tile keeps its
     # own optimistic state after a write).
@@ -149,6 +268,7 @@ def _to_library_job(
     tiktok_publication: TikTokPublication | None = None,
 ) -> LibraryJob:
     output_url, output_variant_id, output_path = _preview(job)
+    failure_reason, error_class = _job_failure_metadata(job)
     download_url: str | None = None
     if output_path:
         try:
@@ -199,6 +319,8 @@ def _to_library_job(
             if content_plan_item_id is not None
             else (str(job.content_plan_item_id) if job.content_plan_item_id else None)
         ),
+        failure_reason=failure_reason,
+        error_class=error_class,
         feedback_signal=feedback_signal,
     )
 
@@ -220,7 +342,9 @@ async def list_my_jobs(
     Keyset-paginated on `created_at` (indexed): pass the prior page's `next_cursor`
     back as `cursor` to fetch older rows.
     """
-    q = select(Job).where(Job.user_id == user.id)
+    # Manual drafts are resumable through their plan item, but are not finished
+    # videos and must never appear in the library before first export.
+    q = select(Job).where(Job.user_id == user.id, Job.status != "draft")
     if cursor:
         try:
             before = datetime.fromisoformat(cursor)
@@ -290,6 +414,342 @@ class AddToPlanBody(BaseModel):
     day_index: int
 
 
+class OpenInEditorBody(BaseModel):
+    title: str | None = Field(default=None, max_length=500)
+
+
+class OpenInEditorResponse(BaseModel):
+    plan_item_id: str
+    variant_id: str
+
+
+class RetryJobResponse(BaseModel):
+    job_id: str
+    status: Literal["queued"] = "queued"
+
+
+def _clean_optional_text(value: object, *, limit: int = 500) -> str | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()[:limit]
+    return cleaned or None
+
+
+@router.post("/jobs/{job_id}/retry", response_model=RetryJobResponse)
+async def retry_failed_job(
+    job_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> RetryJobResponse:
+    """Retry a failed standalone first-cut job without duplicating its uploads."""
+    try:
+        jid = uuid.UUID(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad id") from exc
+
+    snapshot = (await db.execute(select(Job).where(Job.id == jid))).scalar_one_or_none()
+    if snapshot is None or snapshot.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if snapshot.mode != "generative" or snapshot.content_plan_item_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This video cannot be retried from Create.",
+        )
+
+    locked_job = (
+        await db.execute(
+            select(Job)
+            .where(Job.id == jid)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if locked_job is None or locked_job.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if locked_job.mode != "generative" or locked_job.content_plan_item_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This video cannot be retried from Create.",
+        )
+    if locked_job.status not in (_JOB_FAILED - {"cancelled", "posting_failed"}):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only a failed video can be retried.",
+        )
+
+    locked_job.status = "queued"
+    locked_job.error_detail = None
+    locked_job.failure_reason = None
+    locked_job.current_phase = None
+    locked_job.worker_heartbeat_at = None
+    locked_job.started_at = None
+    locked_job.finished_at = None
+    locked_job.celery_task_id = None
+    locked_job.phase_log = []
+    await db.commit()
+
+    from app.services.job_dispatch import enqueue_orchestrator  # noqa: PLC0415
+    from app.tasks.generative_build import orchestrate_generative_job  # noqa: PLC0415
+
+    try:
+        await enqueue_orchestrator(orchestrate_generative_job, locked_job.id, db)
+    except Exception as exc:  # noqa: BLE001 — preserve a retryable terminal row
+        await db.execute(
+            update(Job)
+            .where(Job.id == locked_job.id, Job.status == "queued")
+            .values(
+                status="processing_failed",
+                failure_reason="dispatch_publish_failed",
+                error_detail="The job couldn't be handed to the queue. Please try again.",
+            )
+        )
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The render queue is temporarily unavailable. Please try again.",
+        ) from exc
+    return RetryJobResponse(job_id=str(locked_job.id))
+
+
+@router.post("/jobs/{job_id}/open-in-editor", response_model=OpenInEditorResponse)
+async def open_job_in_editor(
+    job_id: str,
+    user: CurrentUser,
+    body: OpenInEditorBody | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> OpenInEditorResponse:
+    """Promote a caller-owned ready first cut into the canonical plan editor.
+
+    The operation is idempotent: once a Job is linked to a PlanItem, refreshes
+    and duplicate requests return that item instead of creating another. Locks
+    follow the shared mutation order ContentPlan -> Persona -> PlanItem(s) ->
+    Job, so promotion cannot deadlock with plan edits or cancellation.
+    """
+    try:
+        jid = uuid.UUID(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad id") from exc
+
+    # Read-only ownership check before acquiring the wider plan lock set. The
+    # Job is re-fetched FOR UPDATE at the end of the canonical lock order.
+    snapshot = (await db.execute(select(Job).where(Job.id == jid))).scalar_one_or_none()
+    if snapshot is None or snapshot.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if snapshot.status == "cancelled" or _lowest_rank_ready_variant(snapshot) is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=OPEN_IN_EDITOR_NOT_READY_DETAIL,
+        )
+
+    if snapshot.content_plan_item_id:
+        # Resolve an existing link without a write lock first, then lock its
+        # ContentPlan separately. A joined FOR UPDATE would lock PlanItem before
+        # Persona and violate the repository's canonical lock order.
+        linked_plan_id = (
+            await db.execute(
+                select(PlanItem.content_plan_id)
+                .join(ContentPlan, ContentPlan.id == PlanItem.content_plan_id)
+                .where(
+                    ContentPlan.user_id == user.id,
+                    PlanItem.id == snapshot.content_plan_item_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if linked_plan_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No content plan to open the video in",
+            )
+        # Existing links win idempotently, including links to an older plan.
+        plan_stmt = (
+            select(ContentPlan)
+            .where(
+                ContentPlan.user_id == user.id,
+                ContentPlan.id == linked_plan_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    else:
+        plan_stmt = (
+            select(ContentPlan)
+            .where(ContentPlan.user_id == user.id)
+            .order_by(ContentPlan.created_at.desc())
+            .limit(1)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    plan = (await db.execute(plan_stmt)).scalar_one_or_none()
+    persona_already_locked = False
+    if plan is None and snapshot.content_plan_item_id is None:
+        plan, persona_already_locked = await _provision_editor_plan(db, user)
+    if plan is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No content plan to open the video in",
+        )
+    if not persona_already_locked:
+        try:
+            await load_owned_plan_persona(db, plan, for_update=True)
+        except PlanPersonaOwnershipError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
+            ) from exc
+
+    items_stmt = (
+        select(PlanItem)
+        .where(PlanItem.content_plan_id == plan.id)
+        .order_by(PlanItem.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    plan_items = list((await db.execute(items_stmt)).scalars().all())
+    items_by_id = {item.id: item for item in plan_items}
+
+    locked_job = (
+        await db.execute(
+            select(Job)
+            .where(Job.id == jid)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if locked_job is None or locked_job.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    ready_variant = _lowest_rank_ready_variant(locked_job)
+    if locked_job.status == "cancelled" or ready_variant is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=OPEN_IN_EDITOR_NOT_READY_DETAIL,
+        )
+
+    if locked_job.content_plan_item_id:
+        existing_item = items_by_id.get(locked_job.content_plan_item_id)
+        if existing_item is None:
+            # The link changed to a different plan between the snapshot and the
+            # Job lock. Never create a duplicate or lock PlanItem after Job.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=OPEN_IN_EDITOR_LINK_CONFLICT_DETAIL,
+            )
+        if existing_item.current_job_id not in (None, locked_job.id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=OPEN_IN_EDITOR_LINK_CONFLICT_DETAIL,
+            )
+        needs_commit = False
+        if existing_item.current_job_id is None:
+            existing_item.current_job_id = locked_job.id
+            needs_commit = True
+        if locked_job.content_plan_ownership_epoch != plan.ownership_epoch:
+            locked_job.content_plan_ownership_epoch = plan.ownership_epoch
+            needs_commit = True
+        if locked_job.mode != "content_plan":
+            locked_job.mode = "content_plan"
+            needs_commit = True
+        if needs_commit:
+            await db.commit()
+        return OpenInEditorResponse(
+            plan_item_id=str(existing_item.id),
+            variant_id=ready_variant["variant_id"],
+        )
+
+    candidates = locked_job.all_candidates or {}
+    if not isinstance(candidates, dict):
+        candidates = {}
+    raw_clip_paths = candidates.get("clip_paths")
+    if not isinstance(raw_clip_paths, list):
+        raw_clip_paths = []
+    clip_paths = [path for path in raw_clip_paths if isinstance(path, str) and path.strip()]
+    persona_context = candidates.get("persona")
+    if not isinstance(persona_context, dict):
+        persona_context = {}
+    requested_title = _clean_optional_text(body.title if body else None)
+    item_theme = requested_title or _clean_optional_text(persona_context.get("theme"))
+    item_idea = (
+        requested_title
+        or _clean_optional_text(persona_context.get("idea"))
+        or item_theme
+        or "Kria first cut"
+    )
+    clip_notes = candidates.get("clip_notes")
+    if not isinstance(clip_notes, dict):
+        clip_notes = {}
+    assignments = [
+        {
+            "gcs_path": path,
+            "shot_id": None,
+            **(
+                {"user_note": note.strip()[:200]}
+                if isinstance((note := clip_notes.get(path)), str) and note.strip()
+                else {}
+            ),
+        }
+        for path in clip_paths
+    ]
+    next_position = max((item.position for item in plan_items), default=0) + 1
+    item_id = uuid.uuid4()
+    item = PlanItem(
+        id=item_id,
+        content_plan_id=plan.id,
+        day_index=None,
+        position=next_position,
+        theme=item_theme,
+        idea=item_idea,
+        notes=_clean_optional_text(persona_context.get("idea")),
+        item_status="idea",
+        content_mode="existing_footage",
+        edit_format=_clean_optional_text(candidates.get("edit_format"), limit=100) or "montage",
+        montage_preset=(
+            _clean_optional_text(candidates.get("montage_preset"), limit=100) or "classic"
+        ),
+        landscape_fit=(_clean_optional_text(candidates.get("landscape_fit"), limit=20) or "fill"),
+        clip_gcs_paths=clip_paths,
+        clip_assignments=assignments,
+        filming_guide=(
+            list(candidates.get("filming_guide") or [])
+            if isinstance(candidates.get("filming_guide"), list)
+            else []
+        ),
+        voiceover_gcs_path=_clean_optional_text(candidates.get("voiceover_gcs_path"), limit=2_000),
+        audio_mode="voiceover" if candidates.get("voiceover_gcs_path") else "kria",
+        voiceover_bed_level=(
+            float(candidates["voiceover_bed_level"])
+            if isinstance(candidates.get("voiceover_bed_level"), (int, float))
+            and not isinstance(candidates.get("voiceover_bed_level"), bool)
+            else None
+        ),
+        voiceover_caption_style=(
+            candidates.get("voiceover_caption_style")
+            if candidates.get("voiceover_caption_style") == "word"
+            else None
+        ),
+        current_job_id=locked_job.id,
+        user_edited=True,
+    )
+    db.add(item)
+    # The EditorShell render path is guarded as plan-owned. Transition the
+    # standalone job at the same atomic boundary as both foreign-key links so
+    # its first Save cannot be rejected by the worker ownership fence.
+    locked_job.mode = "content_plan"
+    locked_job.content_plan_item_id = item.id
+    locked_job.content_plan_ownership_epoch = plan.ownership_epoch
+    await db.commit()
+    log.info(
+        "open_job_in_editor",
+        job_id=job_id,
+        plan_item_id=str(item.id),
+        variant_id=ready_variant["variant_id"],
+        user_id=str(user.id),
+    )
+    return OpenInEditorResponse(
+        plan_item_id=str(item.id),
+        variant_id=ready_variant["variant_id"],
+    )
+
+
 @router.post("/jobs/{job_id}/add-to-plan", response_model=LibraryJob)
 async def add_job_to_plan(
     job_id: str,
@@ -335,10 +795,12 @@ async def add_job_to_plan(
 
     item = (
         await db.execute(
-            select(PlanItem).where(
+            select(PlanItem)
+            .where(
                 PlanItem.content_plan_id == plan.id,
                 PlanItem.day_index == body.day_index,
-            ).with_for_update()
+            )
+            .with_for_update()
         )
     ).scalar_one_or_none()
     if item is None:

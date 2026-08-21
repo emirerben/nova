@@ -55,6 +55,10 @@ def test_status_generating_while_job_in_flight() -> None:
     assert derive_item_status(_item("idea", "queued")) == "generating"
 
 
+def test_status_draft_for_manual_draft_job() -> None:
+    assert derive_item_status(_item("idea", "draft")) == "draft"
+
+
 # ── routes ─────────────────────────────────────────────────────────────────
 
 

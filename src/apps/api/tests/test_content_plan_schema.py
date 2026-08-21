@@ -68,6 +68,7 @@ _EXPECTED_CHAIN = {
     "0074": "0073",
     "0075": "0074",
     "0077": "0076",
+    "0078": "0077",
 }
 
 
@@ -79,7 +80,7 @@ def script_dir() -> ScriptDirectory:
 
 def test_single_alembic_head(script_dir: ScriptDirectory) -> None:
     heads = script_dir.get_heads()
-    assert heads == ["0077"], f"expected a single head 0077, got {heads}"
+    assert heads == ["0078"], f"expected a single head 0078, got {heads}"
 
 
 def test_migration_chain_is_linear(script_dir: ScriptDirectory) -> None:
@@ -792,3 +793,30 @@ def test_0067_upgrades_only_cigdem_v1_rows(monkeypatch) -> None:
     assert len(executed) == 1
     assert "SET preset_version = 'v1'" in executed[0]
     assert "WHERE preset_id = 'cigdem' AND preset_version = 'v2'" in executed[0]
+
+
+def test_0078_upgrade_backfills_voiceover_audio_mode_after_adding_column(monkeypatch) -> None:
+    migration = importlib.import_module("app.migrations.versions.0078_plan_item_audio_mode")
+    events: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(
+        migration.op,
+        "add_column",
+        lambda table, column: events.append(("add", (table, column))),
+    )
+    monkeypatch.setattr(
+        migration.op,
+        "execute",
+        lambda statement: events.append(("execute", str(statement))),
+    )
+
+    migration.upgrade()
+
+    assert [event[0] for event in events] == ["add", "execute"]
+    table, column = events[0][1]
+    assert table == "plan_items"
+    assert column.name == "audio_mode"
+    sql = " ".join(str(events[1][1]).split()).lower()
+    assert (
+        "update plan_items set audio_mode = 'voiceover' where voiceover_gcs_path is not null"
+    ) in sql

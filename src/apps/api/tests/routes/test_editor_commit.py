@@ -2934,6 +2934,32 @@ def test_endpoint_happy_path_title_and_text(client: TestClient, monkeypatch) -> 
     regen.apply_async.assert_called_once()
 
 
+def test_endpoint_enqueue_failure_returns_committed_generation_for_retry(
+    client: TestClient, monkeypatch
+) -> None:
+    _arm(monkeypatch)
+    user = _user()
+    job = _job()
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan, job)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    with patch(REGEN) as regen:
+        regen.apply_async.side_effect = ConnectionError("broker unavailable")
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/song_text/editor-commit",
+            json={
+                "text_elements": [dict(_VALID_ELEMENT)],
+                "base_generation": "2026-07-01T00:00:00Z",
+            },
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["ok"] is False
+    assert resp.json()["generation"] == job.assembly_plan["variants"][0]["render_generation_id"]
+    db.commit.assert_awaited_once()
+
+
 def test_endpoint_media_motion_loads_asset_pool_without_visual_block_edit(
     client: TestClient, monkeypatch
 ) -> None:

@@ -14,7 +14,12 @@ interface IdeasHomeProps {
 
 type MutState = "idle" | "saving" | "error";
 
-const CONFIRM_DELETE_STATUSES = new Set<PlanItemStatus>(["ready", "generating", "rerolling"]);
+const CONFIRM_DELETE_STATUSES = new Set<PlanItemStatus>([
+  "draft",
+  "ready",
+  "generating",
+  "rerolling",
+]);
 const RECONCILE_TIMEOUT_MS = 3000;
 
 export function IdeasHome({ plan, onRefresh, onPlanChange }: IdeasHomeProps) {
@@ -353,7 +358,11 @@ function IdeaLedgerRow({
         {ordinal}
       </span>
       <Link
-        href={`/plan/items/${item.id}`}
+        href={
+          item.status === "draft"
+            ? `/plan/items/${encodeURIComponent(item.id)}/edit?variant=original_text`
+            : `/plan/items/${encodeURIComponent(item.id)}`
+        }
         className="line-clamp-2 min-w-0 text-[15px] leading-snug text-[#0c0c0e] transition-colors hover:text-lime-700 focus-visible:rounded focus-visible:outline-2 focus-visible:outline-[#0c0c0e]"
       >
         {item.idea}
@@ -435,6 +444,9 @@ function StatusSlot({
         Didn&apos;t render — open to retry
       </span>
     );
+  }
+  if (status === "draft") {
+    return <span className="whitespace-nowrap text-[12px] text-[#71717a]">Draft · continue editing</span>;
   }
   if (status === "awaiting_clips") {
     return <span className="whitespace-nowrap text-[12px] text-[#71717a]">Needs footage</span>;

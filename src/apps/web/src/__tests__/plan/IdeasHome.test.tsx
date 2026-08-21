@@ -131,6 +131,7 @@ describe("IdeasHome", () => {
   });
 
   it.each<[PlanItemStatus, string]>([
+    ["draft", "Draft · continue editing"],
     ["ready", "Ready to post"],
     ["generating", "Rendering…"],
     ["rerolling", "Rendering…"],
@@ -147,6 +148,23 @@ describe("IdeasHome", () => {
     );
 
     expect(screen.getByText(label)).toBeInTheDocument();
+  });
+
+  it("opens a manual draft directly in the canonical editor", () => {
+    render(
+      <IdeasHome
+        plan={makePlan([
+          makeItem({ id: "draft/id", idea: "Unfinished manual cut", status: "draft" }),
+        ])}
+        onRefresh={jest.fn()}
+        onPlanChange={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Unfinished manual cut" })).toHaveAttribute(
+      "href",
+      "/plan/items/draft%2Fid/edit?variant=original_text",
+    );
   });
 
   it("shows the localized production date next to a ready status", () => {
@@ -182,7 +200,7 @@ describe("IdeasHome", () => {
     },
   );
 
-  it.each<PlanItemStatus>(["ready", "generating", "rerolling"])(
+  it.each<PlanItemStatus>(["draft", "ready", "generating", "rerolling"])(
     "shows delete confirmation for %s rows",
     (status) => {
       render(

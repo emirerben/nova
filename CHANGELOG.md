@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.44.1.0] — 2026-08-21
+
+### Added
+- **Returning creators can start with footage and reach the editor in one flow.** The
+  flagged Create hub leads with “Make a video with Kria,” `/create` uploads footage
+  before asking for optional direction or voiceover, and the first ready cut opens in
+  the existing full-screen editor without creating duplicate plan items on refresh.
+- **Voice notes can direct Kria without becoming the video's soundtrack.** Direction
+  recordings are transcribed into the item's notes, while final voiceover remains a
+  separate, explicit audio choice.
+- **Manual editing now has a resumable draft foundation behind a disabled flag.** Drafts
+  reuse plan items, jobs, uploads, and the canonical editor, preserve authored clip
+  order across refreshes, and stay out of the finished-video library until export.
+
+### Changed
+- **Video setup is now progressive and recoverable.** Footage comes first, followed by
+  optional direction, a clear Kria/original-audio/voiceover choice, optional planning,
+  and a stable Generate action. Failed renders keep uploads and choices in place and
+  explain whether to replace media, retry storage, retry encoding, or share a support ID.
+- **Mixed footage uses image-compatible editing automatically.** Projects containing
+  videos and photos route to the masonry renderer; incompatible photo/voiceover or
+  manual-draft combinations are stopped before rendering with actionable copy.
+
+### Fixed
+- **Early first cuts can be edited safely while sibling variants finish.** Promotion,
+  worker ownership checks, and finalization now preserve newer editor generations and
+  reject stale writes after plan ownership, links, or quarantine state changes.
+- **Signed-in uploads stay inside the creator's storage boundary.** Authenticated create
+  jobs enforce owned media, a 1 GB combined project limit, audio metadata validation,
+  and account-scoped voiceovers, with a temporary API-first compatibility flag for the
+  old recorder during the staged rollout.
+
 ## [0.43.0.1] — 2026-08-21
 
 ### Docs
