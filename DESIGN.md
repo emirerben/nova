@@ -279,20 +279,20 @@ tool); /plan is now openly the create-a-new-video page.
 - **Initial load:** SHIMMER tier — 4 ghost 9:16 tiles.
 
 ### New-video chooser (`/plan/new`)
-- Full-screen step on white: 44px `×` back to /plan + "Step 1 of 2" muted label; Fraunces `text-[30px]` "What kind of video?" + muted "Kria edits each kind differently."
-- Poster radio-cards reuse SetupPicker's `MediaRadioCard` + `TYPE_MEDIA`/`TYPE_COPY` (montage / voiceover / talking-to-camera; talking_head stays legacy-only). Selection = lime ring + "Selected" chip, same as the item page.
-- Pinned bottom bar (white, `border-t border-zinc-200`, safe-area padding): full-width ink pill "Continue" + centered muted "Next: add your footage".
-- Continue mints the item (`addIdea` + `updatePlanItem`) → `/plan/items/{id}?setup=done` (SetupPicker arrives collapsed; uploader leads). Abandon creates nothing. Errors are quiet zinc `role="alert"` lines; never red.
+- Full-screen steps on white: 44px `×`/`‹` back + "Step N of M" muted label (montage = 3 steps: kind → style → footage; other types = 2). Fraunces `text-[30px]` titles ("What kind of video?" / "Pick a style.").
+- Poster radio-cards reuse SetupPicker's `MediaRadioCard` + `TYPE_MEDIA`/`TYPE_COPY`/`STYLE_TILES` (montage / voiceover / talking-to-camera; talking_head stays legacy-only). Selection = lime ring + "Selected" chip, same as the item page. Style step (montage only): Classic / Masonry collage / Polaroid wall, Classic preselected.
+- Pinned bottom bar (white, `border-t border-zinc-200`, safe-area padding): full-width ink pill "Continue" + centered muted next-step hint ("Next: pick a style" / "Next: add your footage").
+- The FINAL Continue mints the item (`addIdea` + `updatePlanItem` incl. `montage_preset`) → `/plan/items/{id}?setup=done`. Abandon creates nothing. Errors are quiet zinc `role="alert"` lines; never red.
 
-### Expand-with-AI context + proposal card (item detail page; trigger "✦ Plan this for me")
-- Shown only while the item has no `filming_guide`; trigger button matches Generate-with-AI token pattern.
-- Trigger opens an inline context panel before generation. Panel card: `rounded-xl border border-zinc-200 bg-white p-4`, Fraunces `text-lg` title "A little context helps.", visible textarea label tailored to the selected edit style, `text-base` textarea, primary `bg-lime-600 text-white` "Generate plan", secondary zinc "Skip and generate". The context ask is skippable; never block planning on form completion.
-- Proposal card: `rounded-xl border border-lime-200 bg-lime-50 p-4`. Eyebrow `text-[11px] uppercase tracking-[.15em] text-lime-700`. Theme in Fraunces `text-lg font-medium`. Filming suggestion `text-sm text-[#3f3f46]`.
-- Shot list renders inside the card: italic Fraunces numerals `text-[17px] text-lime-600`, shot `what` `text-[15px] font-medium text-[#0c0c0e]`, `how` `text-[13.5px] text-[#3f3f46]`, duration chip `text-[11px] border-zinc-200 bg-white text-[#3f3f46]`.
-- Accept CTA: `bg-lime-600 text-white rounded-lg text-[12px] font-semibold` copy "Use this plan". Dismiss: `border-zinc-200 bg-white text-[#71717a]`. Rationale `text-xs italic text-[#71717a]` under the card.
-- Non-slot accepted plans (existing-footage montage, Voiceover, talking-to-camera) show a compact white `Plan summary` reference above the uploader instead of converting the flow to shot slots.
-
----
+### Per-type item setup (`/plan/items/[id]`, pre-generation — V2 redesign)
+Design source: Paper "Kria Plan Redesign", page "V2 — Item setup per type". Each edit
+type shows ONLY what it needs; there is no generic audio/caption chrome.
+- **Header:** back link "← your videos"; lime eyebrow setup receipt (`MONTAGE · CLASSIC` — type + montage style) with a quiet "Change" toggle that mounts the SetupPicker poster rail inline (the old nested "Advanced video style" `<details>` is gone); per-type Fraunces title ("Add your clips." / "Your voice tells the story." / "Add your clip."). Items minted by /plan/new are untitled (idea = type label) — the release desk shows the receipt eyebrow instead of an h1 reading "Montage".
+- **Montage:** 1·Your clips (helper "3 or more clips work best. Kria cuts them to the beat of a matched song."; collage presets say photos work too) → 2·Direction (optional, with voice note) → Generate. NO audio section (music is automatic), no captions/voiceover UI.
+- **Voiceover (narrated_ready):** 1·Your clips → 2·Your voiceover (white card, recorder + flag-gated script-helper link; "this becomes the soundtrack") → 3·Direction → Generate (gate requires the voiceover unless self-narration flag).
+- **Talking to camera (subtitled):** 1·Your clip (single slot, maxClips 1; helper "Its own audio is the soundtrack — Kria captions every sentence…" + "Captions and dead-air cleanup happen automatically.") → 2·Direction → Generate.
+- **Talking-head B-roll (legacy):** one pool, helper "First clip: you talking. Then extra footage to cut in."
+- **Removed for good:** the "Audio choice" fieldset (it could silently re-type items — type changes go through the receipt only), "From your idea" seed badge, day badge, "Plan this for me" panels (filming-guide summaries still render for legacy guided items), generic "Photo collage" copy.
 
 ## §13 Teleprompter surface (transcript voiceover helper)
 

@@ -59,7 +59,7 @@ export const TYPE_COPY: Record<
   },
 };
 
-const STYLE_TILES: {
+export const STYLE_TILES: {
   value: MontagePreset;
   label: string;
   desc: string;

@@ -63,8 +63,20 @@ describe("/plan/new chooser", () => {
     expect(screen.getByText("What kind of video?")).toBeInTheDocument();
   });
 
-  it("Continue creates the item, stamps montage + existing_footage, lands with ?setup=done", async () => {
+  async function throughStyleStep() {
+    // Montage inserts Step 2 "Pick a style." before the item is created.
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByText("Pick a style.")).toBeInTheDocument();
+    expect(mockAddIdea).not.toHaveBeenCalled();
+  }
+
+  it("Montage: kind → style (classic default) → item minted with montage_preset, lands with ?setup=done", async () => {
     await ready();
+    await throughStyleStep();
+    expect(screen.getByRole("radio", { name: /Classic/ })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await waitFor(() =>
       expect(push).toHaveBeenCalledWith("/plan/items/item-1?setup=done"),
@@ -73,13 +85,36 @@ describe("/plan/new chooser", () => {
     expect(mockUpdatePlanItem).toHaveBeenCalledWith("item-1", {
       edit_format: "montage",
       content_mode: "existing_footage",
+      montage_preset: "classic",
     });
   });
 
-  it("Voiceover persists as narrated_ready (shared legacy-upgrade rule)", async () => {
+  it("Montage: picking Masonry persists montage_preset masonry", async () => {
+    await ready();
+    await throughStyleStep();
+    fireEvent.click(screen.getByRole("radio", { name: /Masonry/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(push).toHaveBeenCalled());
+    expect(mockUpdatePlanItem).toHaveBeenCalledWith("item-1", {
+      edit_format: "montage",
+      content_mode: "existing_footage",
+      montage_preset: "masonry",
+    });
+  });
+
+  it("Back from the style step returns to kind with nothing created", async () => {
+    await ready();
+    await throughStyleStep();
+    fireEvent.click(screen.getByRole("button", { name: "Back to video kind" }));
+    expect(await screen.findByText("What kind of video?")).toBeInTheDocument();
+    expect(mockAddIdea).not.toHaveBeenCalled();
+  });
+
+  it("Voiceover skips the style step and persists as narrated_ready", async () => {
     await ready();
     fireEvent.click(screen.getByRole("radio", { name: /Voiceover/ }));
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(screen.queryByText("Pick a style.")).not.toBeInTheDocument();
     await waitFor(() =>
       expect(push).toHaveBeenCalledWith("/plan/items/item-1?setup=done"),
     );
@@ -92,6 +127,7 @@ describe("/plan/new chooser", () => {
   it("addIdea failure stays on the chooser with a retryable error — nothing created", async () => {
     mockAddIdea.mockRejectedValueOnce(new Error("nope"));
     await ready();
+    await throughStyleStep();
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/try again/i);
     expect(push).not.toHaveBeenCalled();
@@ -106,6 +142,7 @@ describe("/plan/new chooser", () => {
   it("updatePlanItem failure still lands on the item page WITHOUT setup=done", async () => {
     mockUpdatePlanItem.mockRejectedValueOnce(new Error("patch failed"));
     await ready();
+    await throughStyleStep();
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await waitFor(() => expect(push).toHaveBeenCalledWith("/plan/items/item-1"));
   });
@@ -118,6 +155,7 @@ describe("/plan/new chooser", () => {
       }),
     );
     await ready();
+    await throughStyleStep();
     const btn = screen.getByRole("button", { name: "Continue" });
     fireEvent.click(btn);
     fireEvent.click(btn);

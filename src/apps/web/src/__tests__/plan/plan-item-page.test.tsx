@@ -315,193 +315,6 @@ function makeVariant(id: string, renderStatus: string, url: string | null = null
 
 // ===== Tests =====
 
-describe("PlanItemPage — progressive setup audio choice", () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    window.localStorage.clear();
-    mockUpdatePlanItem.mockResolvedValue(makeItem() as never);
-  });
-
-  it("persists original-audio preference without turning a direction note into voiceover", async () => {
-    const item = makeItem({ edit_format: "montage" });
-    mockUsePolledJobStatus.mockReturnValue({
-      data: { item, job: null },
-      error: null,
-      refetch: mockRefetch,
-    });
-
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Original audio/i }));
-    });
-
-    expect(mockUpdatePlanItem).toHaveBeenCalledWith("test-item-id", {
-      audio_mode: "original",
-    });
-    expect(window.localStorage.getItem("kria:audio-preference:test-item-id")).toBe("original");
-    expect(mockSetItemVoiceover).not.toHaveBeenCalled();
-  });
-
-  it("switches the item to narrated-ready only for a final voiceover", async () => {
-    const item = makeItem({ edit_format: "montage" });
-    mockUsePolledJobStatus.mockReturnValue({
-      data: { item, job: null },
-      error: null,
-      refetch: mockRefetch,
-    });
-
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Final voiceover/i }));
-    });
-
-    expect(mockUpdatePlanItem).toHaveBeenCalledWith("test-item-id", {
-      audio_mode: "voiceover",
-      edit_format: "narrated_ready",
-    });
-    expect(window.localStorage.getItem("kria:audio-preference:test-item-id")).toBe("voiceover");
-  });
-
-  it("upgrades narrated-planned for voiceover and leaves every narrated sub-mode for original audio", async () => {
-    const planned = makeItem({ edit_format: "narrated_planned", audio_mode: "kria" });
-    mockUsePolledJobStatus.mockReturnValue({
-      data: { item: planned, job: null },
-      error: null,
-      refetch: mockRefetch,
-    });
-
-    const view = render(<PlanItemPage />);
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Final voiceover/i }));
-    });
-    expect(mockUpdatePlanItem).toHaveBeenLastCalledWith("test-item-id", {
-      audio_mode: "voiceover",
-      edit_format: "narrated_ready",
-    });
-
-    view.unmount();
-    jest.clearAllMocks();
-    mockUpdatePlanItem.mockResolvedValue(makeItem() as never);
-    window.localStorage.setItem("kria:audio-preference:test-item-id", "original");
-    const narratedReady = makeItem({ edit_format: "narrated_ready", audio_mode: "voiceover" });
-    mockUsePolledJobStatus.mockReturnValue({
-      data: { item: narratedReady, job: null },
-      error: null,
-      refetch: mockRefetch,
-    });
-    render(<PlanItemPage />);
-    expect(screen.getByRole("button", { name: /Final voiceover/i })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Original audio/i }));
-    });
-    expect(mockUpdatePlanItem).toHaveBeenLastCalledWith("test-item-id", {
-      audio_mode: "original",
-      edit_format: "montage",
-    });
-  });
-
-  it("selects original_text for original audio even though its text_mode is agent_text", async () => {
-    const item = makeItem({ status: "ready", edit_format: "montage", audio_mode: "original" });
-    mockUsePolledJobStatus.mockReturnValue({
-      data: {
-        item,
-        job: makeJob({
-          status: "completed",
-          variants: [
-            { ...makeVariant("song_text", "ready", "https://storage/song.mp4"), rank: 0 },
-            { ...makeVariant("original_text", "ready", "https://storage/original.mp4"), rank: 1 },
-          ],
-        }),
-      },
-      error: null,
-      refetch: mockRefetch,
-    });
-
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-
-    await waitFor(() =>
-      expect(document.querySelector('[data-variant-preview="original_text"]')).toBeInTheDocument(),
-    );
-    expect(document.querySelector('[data-variant-preview="song_text"]')).not.toBeInTheDocument();
-  });
-
-  it("keeps Generate in mobile-safe stable chrome", async () => {
-    const item = makeItem({ edit_format: "montage" });
-    mockUsePolledJobStatus.mockReturnValue({
-      data: { item, job: null },
-      error: null,
-      refetch: mockRefetch,
-    });
-
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-
-    const chrome = screen.getByRole("button", { name: "Generate video" }).parentElement;
-    expect(chrome?.className).toContain("sticky");
-    expect(chrome?.className).toContain("safe-area-inset-bottom");
-    expect(chrome?.className).not.toContain("sm:static");
-  });
-
-  it("shows keyboard focus on the direction audio upload control", async () => {
-    const item = makeItem({ edit_format: "montage" });
-    mockUsePolledJobStatus.mockReturnValue({
-      data: { item, job: null },
-      error: null,
-      refetch: mockRefetch,
-    });
-
-    render(<PlanItemPage />);
-    fireEvent.click(screen.getByText("Add a voice note to Kria"));
-    const input = screen.getByLabelText("Upload audio");
-    expect(input.parentElement?.className).toContain("focus-within:outline");
-  });
-
-  it("settles an idle manual draft but keeps polling during its first export", async () => {
-    const item = makeItem({ status: "draft", current_job_id: "draft-job" });
-    mockUsePolledJobStatus.mockReturnValue({
-      data: {
-        item,
-        job: {
-          status: "draft",
-          variants: [{ variant_id: "original_text", render_status: "draft" }],
-        },
-      },
-      error: null,
-      refetch: mockRefetch,
-    });
-
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-    const terminal = mockUsePolledJobStatus.mock.calls.find(
-      (call) => typeof call[2] === "function",
-    )?.[2];
-    expect(terminal).toBeDefined();
-    expect(
-      terminal({
-        item,
-        job: { status: "draft", variants: [{ render_status: "draft" }] },
-      }),
-    ).toBe(true);
-    expect(
-      terminal({
-        item,
-        job: { status: "draft", variants: [{ render_status: "rendering" }] },
-      }),
-    ).toBe(false);
-  });
-});
-
 describe("PlanItemPage — masonry collage item UX", () => {
   function renderMasonryItem(extra = {}) {
     const item = makeItem({
@@ -524,9 +337,12 @@ describe("PlanItemPage — masonry collage item UX", () => {
       renderMasonryItem({ montage_preset: "classic" });
     });
 
-    // Item has a filming guide, so the accordion starts collapsed. Expand the
-    // STYLE disclosure row, which reveals the shelf with real placeholder
-    // footage per tile.
+    // The picker mounts via the setup receipt's "Change" toggle, opening on
+    // the TYPE rail; the STYLE disclosure row then reveals the shelf with
+    // real placeholder footage per tile.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Change" }));
+    });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /^Style/ }));
     });
@@ -549,7 +365,9 @@ describe("PlanItemPage — masonry collage item UX", () => {
         renderMasonryItem({ montage_preset });
       });
 
-      expect(screen.getByText("Your clips")).toBeInTheDocument();
+      expect(
+        screen.getByText((_, el) => el?.textContent === "1 · Your clips"),
+      ).toBeInTheDocument();
       expect(screen.queryByTestId("shot-slot-uploader")).not.toBeInTheDocument();
       expect(
         screen.getByLabelText("Upload video clips for this idea").getAttribute("accept"),
@@ -1595,232 +1413,7 @@ describe("PlanItemPage — guided edit Generate gating", () => {
   });
 });
 
-describe("PlanItemPage — Plan this for me proposal flow", () => {
-  beforeEach(() => {
-    mockExpandIdea.mockReset();
-    mockUpdatePlanItem.mockReset();
-    mockRefetch.mockReset();
-  });
-
-  it("opens a context panel before calling the proposal API", async () => {
-    const item = makeItem({ theme: null, filming_guide: [], status: "ready" });
-    mockUsePolledJobStatus.mockReturnValue({
-      data: { item, job: null },
-      error: null,
-      refetch: mockRefetch,
-    });
-
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Plan this for me/i }));
-    });
-
-    expect(screen.getByText("A little context helps.")).toBeInTheDocument();
-    expect(screen.getByText("What should this edit make people feel or notice?")).toBeInTheDocument();
-    expect(mockExpandIdea).not.toHaveBeenCalled();
-  });
-
-  it("renders the AI proposal card with shot list details after context submit", async () => {
-    const item = makeItem({ theme: null, filming_guide: [], status: "ready" });
-    mockExpandIdea.mockResolvedValue({
-      theme: "A calmer morning reset",
-      filming_suggestion: "Film it as three quiet beats.",
-      rationale: "This gives the edit a clean before-after arc.",
-      filming_guide: [
-        {
-          shot_id: "shot-1",
-          what: "Open on the messy counter",
-          how: "Hold steady from chest height",
-          duration_s: 4,
-        },
-        {
-          shot_id: "shot-2",
-          what: "Wipe and reset the surface",
-          how: "Use a close side angle",
-          duration_s: 6,
-        },
-      ],
-    });
-    mockUsePolledJobStatus.mockReturnValue({
-      data: { item, job: null },
-      error: null,
-      refetch: mockRefetch,
-    });
-
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Plan this for me/i }));
-    });
-    await act(async () => {
-      fireEvent.change(
-        screen.getByPlaceholderText("A rough goal or detail is enough..."),
-        { target: { value: "Make people feel like they can reset quickly." } },
-      );
-      fireEvent.click(screen.getByRole("button", { name: /Generate plan/i }));
-    });
-
-    expect(await screen.findByText("AI SUGGESTION")).toBeInTheDocument();
-    expect(mockExpandIdea).toHaveBeenCalledWith("test-item-id", {
-      creator_context: "Make people feel like they can reset quickly.",
-    });
-    expect(screen.getByText("A calmer morning reset")).toBeInTheDocument();
-    expect(screen.getByText("Film it as three quiet beats.")).toBeInTheDocument();
-    expect(screen.getByText("Open on the messy counter")).toBeInTheDocument();
-    expect(screen.getByText("Hold steady from chest height")).toBeInTheDocument();
-    expect(screen.getByText("~4s")).toBeInTheDocument();
-    expect(screen.getByText("Wipe and reset the surface")).toBeInTheDocument();
-    expect(screen.getByText("Use a close side angle")).toBeInTheDocument();
-    expect(screen.getByText("~6s")).toBeInTheDocument();
-    expect(screen.getByText("This gives the edit a clean before-after arc.")).toBeInTheDocument();
-  });
-
-  it("shows propose failure under the button", async () => {
-    const item = makeItem({ theme: null, filming_guide: [] });
-    mockExpandIdea.mockRejectedValue(new Error("bad gateway"));
-    mockUsePolledJobStatus.mockReturnValue({
-      data: { item, job: null },
-      error: null,
-      refetch: mockRefetch,
-    });
-
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Plan this for me/i }));
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Generate plan/i }));
-    });
-
-    expect(await screen.findByText("Couldn't plan this idea — try again.")).toBeInTheDocument();
-    expect(screen.queryByText("AI SUGGESTION")).toBeNull();
-  });
-
-  it("skips context and sends null context to the proposal API", async () => {
-    const item = makeItem({ theme: null, filming_guide: [] });
-    mockExpandIdea.mockResolvedValue({
-      theme: "Packing reveal",
-      filming_suggestion: "Make the plan feel tactile.",
-      rationale: "The shot progression creates curiosity.",
-      filming_guide: [
-        {
-          shot_id: "shot-1",
-          what: "Start with the packed bag",
-          how: "Shoot from above",
-          duration_s: 5,
-        },
-      ],
-    });
-    mockUsePolledJobStatus.mockReturnValue({
-      data: { item, job: null },
-      error: null,
-      refetch: mockRefetch,
-    });
-
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Plan this for me/i }));
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Skip and generate/i }));
-    });
-
-    expect(await screen.findByText("Packing reveal")).toBeInTheDocument();
-    expect(mockExpandIdea).toHaveBeenCalledWith("test-item-id", {
-      creator_context: null,
-    });
-  });
-
-  it("shows accept failure, preserves the card, and sends shot_ids through untouched", async () => {
-    const item = makeItem({ theme: null, filming_guide: [] });
-    const filmingGuide = [
-      {
-        shot_id: "shot-keep-me",
-        what: "Start with the packed bag",
-        how: "Shoot from above",
-        duration_s: 5,
-      },
-    ];
-    mockExpandIdea.mockResolvedValue({
-      theme: "Packing reveal",
-      filming_suggestion: "Make the plan feel tactile.",
-      rationale: "The shot progression creates curiosity.",
-      filming_guide: filmingGuide,
-    });
-    mockUpdatePlanItem.mockRejectedValue(new Error("save failed"));
-    mockUsePolledJobStatus.mockReturnValue({
-      data: { item, job: null },
-      error: null,
-      refetch: mockRefetch,
-    });
-
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Plan this for me/i }));
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Generate plan/i }));
-    });
-    expect(await screen.findByText("Packing reveal")).toBeInTheDocument();
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Use this plan/i }));
-    });
-
-    expect(await screen.findByText("Couldn't save the plan — try again.")).toBeInTheDocument();
-    expect(screen.getByText("Packing reveal")).toBeInTheDocument();
-    expect(mockUpdatePlanItem).toHaveBeenCalledWith("test-item-id", {
-      theme: "Packing reveal",
-      filming_suggestion: "Make the plan feel tactile.",
-      filming_guide: filmingGuide,
-      // Acceptance re-enters the guided flow even if the type picker had
-      // stamped existing_footage earlier.
-      content_mode: "create_new",
-    });
-  });
-
-  it("shows accepted plan summary above existing-footage uploader", async () => {
-    const item = makeItem({
-      theme: "Packing reveal",
-      content_mode: "existing_footage",
-      filming_suggestion: "Find the bag reveal in your existing clips.",
-      filming_guide: [
-        {
-          shot_id: "shot-existing",
-          what: "Packed bag reveal",
-          how: "Use the cleanest close-up",
-          duration_s: 5,
-        },
-      ],
-    });
-    mockUsePolledJobStatus.mockReturnValue({
-      data: { item, job: null },
-      error: null,
-      refetch: mockRefetch,
-    });
-
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-
-    expect(screen.getByText("Plan summary")).toBeInTheDocument();
-    expect(screen.getByText("Find the bag reveal in your existing clips.")).toBeInTheDocument();
-    expect(screen.getByText("Packed bag reveal")).toBeInTheDocument();
-    expect(screen.getByText("Use the cleanest close-up")).toBeInTheDocument();
-  });
-
+describe("PlanItemPage — per-type uploaders with an accepted plan", () => {
   it("keeps narrated-ready items on pool upload even when a plan exists", async () => {
     const item = makeItem({
       edit_format: "narrated_ready",
@@ -1844,7 +1437,9 @@ describe("PlanItemPage — Plan this for me proposal flow", () => {
     });
 
     expect(screen.getByText("Plan summary")).toBeInTheDocument();
-    expect(screen.getByText("Your clips")).toBeInTheDocument();
+    expect(
+        screen.getByText((_, el) => el?.textContent === "1 · Your clips"),
+      ).toBeInTheDocument();
     expect(screen.queryByText(/shot left/i)).toBeNull();
   });
 
@@ -1918,63 +1513,95 @@ describe("PlanItemPage — Plan this for me proposal flow", () => {
     });
 
     expect(screen.getByText("Plan summary")).toBeInTheDocument();
-    expect(screen.getByText("Your clip")).toBeInTheDocument();
+    expect(
+        screen.getByText((_, el) => el?.textContent === "1 · Your clip"),
+      ).toBeInTheDocument();
     expect(screen.queryByText(/shot left/i)).toBeNull();
   });
 
-  it("hides Plan this for me when a post-render item already has a filming guide", async () => {
-    const item = makeItem({
-      status: "ready",
-      current_job_id: "job-ready",
-      clip_gcs_paths: ["uploads/rendered-source.mp4"],
-      filming_guide: [
-        {
-          shot_id: "shot-existing",
-          what: "creator at the counter",
-          how: "eye level",
-          duration_s: 7,
-        },
-      ],
-    });
-    const job = makeJob({
-      status: "variants_ready",
-      variants: [makeVariant("v1", "ready", "https://cdn/v1.mp4")],
-      finished_at: "2026-06-06T10:02:00Z",
-    });
-    mockUsePolledJobStatus.mockReturnValue({
-      data: { item, job },
-      error: null,
-      refetch: mockRefetch,
-    });
+});
 
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-
-    expect(screen.queryByRole("button", { name: /Plan this for me/i })).toBeNull();
-  });
-
-  it("hides Plan this for me when uploaded clips already exist", async () => {
+describe("PlanItemPage — per-type setup truth table (V2 redesign)", () => {
+  function renderTyped(overrides = {}) {
     const item = makeItem({
       status: "awaiting_clips",
+      theme: null,
       content_mode: "existing_footage",
-      clip_gcs_paths: ["users/u/plan/i/source.mp4"],
-      clip_assignments: [
-        { gcs_path: "users/u/plan/i/source.mp4", shot_id: null, user_note: "" },
-      ],
-      filming_guide: [],
+      ...overrides,
     });
     mockUsePolledJobStatus.mockReturnValue({
       data: { item, job: null },
       error: null,
       refetch: mockRefetch,
     });
+    return render(<PlanItemPage />);
+  }
 
+  it("montage: clips + direction only — no audio choice, no voiceover, no caption copy", async () => {
     await act(async () => {
-      render(<PlanItemPage />);
+      renderTyped({ edit_format: "montage", idea: "Montage", montage_preset: "classic" });
     });
-
-    expect(screen.getByTestId("uploaded-clip-filmstrip")).toBeInTheDocument();
+    expect(screen.getByText("MONTAGE · CLASSIC")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Add your clips." })).toBeInTheDocument();
+    expect(screen.getByText(/Kria cuts them to the beat of a matched song/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Original audio/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Kria decides/i })).toBeNull();
+    expect(screen.queryByText(/Your voiceover/)).toBeNull();
+    expect(screen.queryByText(/captions/i)).toBeNull();
+    expect(screen.queryByText(/Photo collage before using photos/)).toBeNull();
     expect(screen.queryByRole("button", { name: /Plan this for me/i })).toBeNull();
+  });
+
+  it("voiceover (narrated_ready): recorder is step 2, no audio-choice fieldset", async () => {
+    await act(async () => {
+      renderTyped({ edit_format: "narrated_ready", idea: "Voiceover" });
+    });
+    expect(screen.getByText("VOICEOVER")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Your voice tells the story." }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText((_, el) => el?.textContent === "2 · Your voiceover"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText((_, el) => el?.textContent === "3 · Direction for Kria Optional"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Original audio/i })).toBeNull();
+  });
+
+  it("talking to camera (subtitled): single clip slot, own-audio helper, no recorder", async () => {
+    await act(async () => {
+      renderTyped({ edit_format: "subtitled", idea: "Talking to camera" });
+    });
+    expect(screen.getByText("TALKING TO CAMERA")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Add your clip." })).toBeInTheDocument();
+    expect(
+      screen.getByText(/Its own audio is the soundtrack/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Captions and dead-air cleanup happen automatically/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Your voiceover/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /Original audio/i })).toBeNull();
+  });
+
+  it("setup receipt Change toggle mounts the type picker (no nested details)", async () => {
+    await act(async () => {
+      renderTyped({ edit_format: "montage", idea: "Montage" });
+    });
+    expect(screen.queryByText("Advanced video style")).toBeNull();
+    expect(screen.queryByTestId("setup-picker")).toBeNull();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Change" }));
+    });
+    expect(screen.getByTestId("setup-picker")).toBeInTheDocument();
+  });
+
+  it("titled legacy items keep their real title (no type-label takeover)", async () => {
+    await act(async () => {
+      renderTyped({ edit_format: "montage", theme: "Morning Routine", idea: "Film your morning" });
+    });
+    expect(screen.getByRole("heading", { name: "Morning Routine" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Add your clips." })).toBeNull();
   });
 });
