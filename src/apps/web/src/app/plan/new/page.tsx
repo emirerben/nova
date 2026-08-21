@@ -159,6 +159,10 @@ export default function NewVideoPage() {
       <div className="mx-auto flex min-h-screen max-w-[900px] flex-col px-6 pt-6">
         <div className="flex items-center justify-between">
           {onStyleStep ? (
+            /* In-app back only: the kind→style transition is local state, so a
+               hardware/gesture back exits /plan/new entirely (accepted trade-off
+               — a shallow history entry per step isn't worth the App Router
+               complexity; nothing is created until the final Continue). */
             <button
               type="button"
               onClick={() => setStep("kind")}

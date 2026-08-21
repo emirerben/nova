@@ -155,7 +155,6 @@ jest.mock("@/app/plan/items/[id]/components/ShotSlotUploader", () => ({
 
 import {
   attachClips,
-  expandIdea,
   generatePlanItem,
   requestUploadUrls,
   setItemVoiceover,
@@ -166,7 +165,6 @@ import {
 } from "@/lib/plan-api";
 const PlanItemPage = require("@/app/plan/items/[id]/page").default;
 const mockAttachClips = attachClips as jest.MockedFunction<typeof attachClips>;
-const mockExpandIdea = expandIdea as jest.MockedFunction<typeof expandIdea>;
 const mockGeneratePlanItem = generatePlanItem as jest.MockedFunction<typeof generatePlanItem>;
 const mockRequestUploadUrls = requestUploadUrls as jest.MockedFunction<typeof requestUploadUrls>;
 const mockSetItemVoiceover = setItemVoiceover as jest.MockedFunction<typeof setItemVoiceover>;
@@ -1603,5 +1601,35 @@ describe("PlanItemPage — per-type setup truth table (V2 redesign)", () => {
     });
     expect(screen.getByRole("heading", { name: "Morning Routine" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Add your clips." })).toBeNull();
+  });
+});
+
+describe("PlanItemPage — release desk untitled receipt (V2)", () => {
+  it("shows the type receipt eyebrow instead of an h1 reading 'Montage'", async () => {
+    const item = makeItem({
+      status: "ready",
+      theme: null,
+      idea: "Montage",
+      edit_format: "montage",
+      montage_preset: "classic",
+      current_job_id: "job-1",
+      clip_gcs_paths: ["uploads/test.mp4"],
+    });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: {
+        item,
+        job: makeJob({
+          status: "variants_ready",
+          variants: [makeVariant("v1", "ready", "https://cdn/v1.mp4")],
+        }),
+      },
+      error: null,
+      refetch: mockRefetch,
+    });
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+    expect(screen.getByText("MONTAGE · CLASSIC")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Montage" })).toBeNull();
   });
 });

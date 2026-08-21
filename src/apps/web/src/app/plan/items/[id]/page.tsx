@@ -18,7 +18,6 @@ import {
   changePlanItemStyle,
   dismissConformance,
   editPlanItemVariant,
-  expandIdea,
   generatePlanItem,
   getPlanItem,
   getPlanItemFresh,
@@ -32,7 +31,6 @@ import {
   type ClipAssignment,
   type ConformanceVerdict,
   type EditorCapabilities,
-  type IdeaExpandProposal,
   type PlanItem,
   type PlanItemJobStatus,
   type PlanItemVariant,
@@ -2355,7 +2353,10 @@ function DirectionVoiceNote({
     theme — treat those as untitled and lead with the type (+ montage style)
     eyebrow instead of an h1 that literally reads "Montage". */
 function setupIdentityFor(item: PlanItem): { untitled: boolean; receipt: string } {
-  const resolved = resolvePickerFormat(item.edit_format, SUBTITLED_ENABLED);
+  // Label from the item's TRUE type family (subtitledEnabled: true), not the
+  // flag-folded picker value — a flag-skewed render context (preview deploy,
+  // rollback) must never relabel a talking-to-camera item as MONTAGE.
+  const resolved = resolvePickerFormat(item.edit_format, true);
   const untitled =
     !item.theme && Object.values(TYPE_COPY).some((copy) => copy.label === item.idea);
   const styleLabel =
