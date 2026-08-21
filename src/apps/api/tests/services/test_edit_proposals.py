@@ -127,8 +127,13 @@ def test_render_failure_does_not_block_after_a_new_approval() -> None:
 
 
 def test_non_retryable_render_code_blocks_on_the_first_failure() -> None:
+    # guided_story_duration_impossible is a pure function of the pinned plan
+    # + media durations (no I/O), so it's genuinely non-retryable. Codes that
+    # wrap I/O/subprocess calls (e.g. guided_story_media_missing) are
+    # deliberately NOT in this set -- see test_transient_render_code_blocks_
+    # only_at_max_attempts and the comment on _NON_RETRYABLE_GUIDED_RENDER_CODES.
     item = _approved_item()
-    record_proposal_render_failure(item, code="guided_story_media_missing")
+    record_proposal_render_failure(item, code="guided_story_duration_impossible")
 
     assert guided_render_is_blocked(parse_edit_proposal(item.edit_proposal)) is True
     assert proposal_generate_error(item) == "proposal_render_blocked"
@@ -147,6 +152,31 @@ def test_transient_render_code_blocks_only_at_max_attempts() -> None:
     assert proposal_generate_error(item) == "proposal_render_blocked"
 
 
+@pytest.mark.parametrize(
+    "code",
+    [
+        "guided_story_media_missing",
+        "guided_story_media_replaced",
+        "guided_story_music_missing",
+    ],
+)
+def test_media_io_codes_get_the_transient_grace_period_not_first_hit_block(code: str) -> None:
+    """guided_story_media_missing/media_replaced/music_missing are raised from a
+    bare `except Exception` around GCS download / ffprobe / PIL decode / audio
+    mix -- any of those can be a transient blip, not just a genuine "the media
+    changed" condition, so they must NOT block on the very first occurrence."""
+    item = _approved_item()
+    for _ in range(GUIDED_RENDER_MAX_ATTEMPTS - 1):
+        record_proposal_render_failure(item, code=code)
+        assert guided_render_is_blocked(parse_edit_proposal(item.edit_proposal)) is False
+        assert proposal_generate_error(item) is None
+
+    record_proposal_render_failure(item, code=code)
+    assert item.edit_proposal["render_failure"]["attempts"] == GUIDED_RENDER_MAX_ATTEMPTS
+    assert guided_render_is_blocked(parse_edit_proposal(item.edit_proposal)) is True
+    assert proposal_generate_error(item) == "proposal_render_blocked"
+
+
 def test_render_recovery_flag_off_never_blocks(monkeypatch: pytest.MonkeyPatch) -> None:
     """Kill-switch pin: with the flag off, proposal_generate_error must return
 
@@ -156,7 +186,7 @@ def test_render_recovery_flag_off_never_blocks(monkeypatch: pytest.MonkeyPatch) 
     from app.services import edit_proposals as edit_proposals_module
 
     item = _approved_item()
-    record_proposal_render_failure(item, code="guided_story_media_missing")
+    record_proposal_render_failure(item, code="guided_story_duration_impossible")
     assert guided_render_is_blocked(parse_edit_proposal(item.edit_proposal)) is True
 
     monkeypatch.setattr(edit_proposals_module.settings, "guided_render_recovery_enabled", False)

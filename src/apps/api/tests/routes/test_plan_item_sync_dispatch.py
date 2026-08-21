@@ -510,7 +510,13 @@ def test_blocked_approved_plan_is_not_redispatched(monkeypatch: pytest.MonkeyPat
         item.clip_gcs_paths = [path]
         s.commit()
     _approve_clip_proposal(item_id, path=path)
-    _seed_render_failure(item_id, code="guided_story_media_missing")
+    # guided_story_duration_impossible is a pure function of the pinned plan +
+    # media durations (no I/O), so it's genuinely non-retryable on the first
+    # hit. Codes that wrap I/O/subprocess calls (e.g. guided_story_media_missing)
+    # are deliberately NOT non-retryable -- see
+    # tests/services/test_edit_proposals.py::test_media_io_codes_get_the_
+    # transient_grace_period_not_first_hit_block.
+    _seed_render_failure(item_id, code="guided_story_duration_impossible")
 
     with patch(_ENQUEUE) as enqueue:
         result = dispatch_item_render_for(str(item_id))

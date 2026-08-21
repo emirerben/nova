@@ -24,29 +24,33 @@ from app.schemas.edit_proposal import (
 
 # Non-retryable guided-story render failure codes (app/pipeline/guided_story.py
 # GuidedStoryError call sites, enumerated 2026-08-21 -- re-verify against the
-# real code if this list ever looks stale): these all stem from the approved
-# plan/media itself, not a transient render hiccup, so retrying the exact same
-# pinned proposal against the exact same footage will fail identically every
-# time. Everything else raised by guided_story.py (guided_story_render_failed,
-# guided_story_receipt_mismatch, guided_story_text_missing) wraps a subprocess
-# or verification step that COULD be transient (disk pressure, an ffmpeg
-# hiccup, a flaky probe) -- those only block after GUIDED_RENDER_MAX_ATTEMPTS
-# repeats of the exact same code at the exact same approved version.
+# real code if this list ever looks stale): these are raised from pure,
+# deterministic checks against the pinned plan/media state (no I/O, no
+# subprocess, no network), so retrying the exact same pinned proposal against
+# the exact same footage will fail identically every time.
+#
+# Everything else raised by guided_story.py -- including
+# guided_story_media_missing/guided_story_media_replaced (both wrap a bare
+# `except Exception` around a GCS download / ffprobe / PIL decode / image
+# normalize call with no retry logic of their own) and one of
+# guided_story_music_missing's two raise sites (wraps `_mix_template_audio`,
+# also a bare `except Exception`) -- can be triggered by a transient network
+# blip, subprocess hiccup, or disk-pressure failure, not just a genuine
+# "the media changed" condition. Those only block after GUIDED_RENDER_MAX_ATTEMPTS
+# repeats of the exact same code at the exact same approved version, giving a
+# transient blip room to succeed on retry before the user is told to re-plan.
 _NON_RETRYABLE_GUIDED_RENDER_CODES = frozenset(
     {
         # The approved story's timing cannot fit the approved media -- purely
-        # a function of the pinned plan + media durations.
+        # a function of the pinned plan + media durations, no I/O involved.
         "guided_story_duration_impossible",
-        # The approved snapshot itself fails structural validation.
+        # The approved snapshot itself fails structural validation -- a pure
+        # schema check against the pinned proposal, no I/O involved.
         "guided_story_snapshot_invalid",
-        # Approved media is no longer present in storage.
-        "guided_story_media_missing",
-        # Approved media's storage generation no longer matches (replaced
-        # since approval).
-        "guided_story_media_replaced",
-        # Approved music's storage generation no longer matches (replaced or
-        # deleted since approval) -- same shape as media_replaced.
-        "guided_story_music_missing",
+        # NOTE: guided_story_media_missing, guided_story_media_replaced, and
+        # guided_story_music_missing are deliberately NOT in this set -- see
+        # the comment above. They still block, just after
+        # GUIDED_RENDER_MAX_ATTEMPTS repeats instead of on the first hit.
     }
 )
 GUIDED_RENDER_MAX_ATTEMPTS = 3
