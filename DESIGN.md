@@ -10,12 +10,12 @@ Consumers: `/plan-design-review` and `/design-review` skills, implementers, and 
 
 | Surface | Canvas | Accent | Type | Mood |
 |---|---|---|---|---|
-| Landing (`/`, `/auto-story`) | cream `#fafaf8` | Paper lime `#d7ff90` | Inter edit-story statements | light editorial |
-| Light product (`/plan`, `/plan/items/`, `/library`, `/generative`) | cream `#fafaf8` / ink / lime | lime-700 | Fraunces headings | light editorial |
+| Landing (`/`, `/auto-story`) | white `#ffffff` | Paper lime `#d7ff90` | Inter edit-story statements | light editorial |
+| Light product (`/plan`, `/plan/new`, `/plan/items/`) | white `#ffffff` / ink / lime | lime-700 | Fraunces headings | light editorial |
 | Dark render system (`/template-jobs`) | `bg-black` | amber-400/300 | Fraunces headings | dark theater |
 | Admin (`/admin/*`) | `bg-black` | none (white CTAs) | default sans | plain utility |
 
-**Standing rule:** Light editorial = entire user-facing product (landing, /plan, /plan/items, /library, /generative). Dark render system = render-status flow (`/template-jobs/*`) + `/admin/*` only (the `/template/[id]` config flow was deleted in v0.7.8.2). ProgressTheater is tone-aware (`tone="light"` on all light surfaces, default dark for /template-jobs + admin). Intentional, not drift.
+**Standing rule:** Light editorial = entire user-facing product (landing, /plan, /plan/new, /plan/items; /library and /generative are redirects to /plan since v0.44). Dark render system = render-status flow (`/template-jobs/*`) + `/admin/*` only (the `/template/[id]` config flow was deleted in v0.7.8.2). ProgressTheater is tone-aware (`tone="light"` on all light surfaces, default dark for /template-jobs + admin). Intentional, not drift.
 
 ---
 
@@ -23,7 +23,7 @@ Consumers: `/plan-design-review` and `/design-review` skills, implementers, and 
 
 Token source: `src/apps/web/src/app/globals.css` plus `src/apps/web/src/components/KriaEditStory.module.css`.
 
-- **Canvas:** `bg-[#fafaf8]` (`--cream`); alt section surface `bg-white` with `border-y border-zinc-200`.
+- **Canvas:** `bg-[#ffffff]` (`--cream`, now pure white — 2026-08-21 founder call); cards separate via zinc borders + shadows.
 - **Ink scale:** `#0c0c0e` primary (`--ink`), `#3f3f46` secondary, `#71717a` muted, `#a1a1aa` faint.
 - **Landing story accent:** `#d7ff90` (`--story-lime`) is the light Paper-derived lime used only for explanatory feature chips.
 - **Lime accent roles (D16 contrast rule):**
@@ -33,7 +33,7 @@ Token source: `src/apps/web/src/app/globals.css` plus `src/apps/web/src/componen
   - `border-lime-200 bg-lime-50 text-lime-800` — pills / soft cells
   - `border-lime-600` — answer left-border (plan ChatInterview pull-quote)
   - `outline-lime-500` — selection
-- **Cards:** `rounded-2xl border border-zinc-200 shadow-sm`, fill `bg-white` or `bg-[#fafaf8]`.
+- **Cards:** `rounded-2xl border border-zinc-200 shadow-sm`, fill `bg-white` or `bg-[#ffffff]`.
 - **Notice line (light surfaces):** `border-zinc-200 bg-white text-[#3f3f46]` quiet informational line — transient warnings/conflicts (e.g. "another variant is rendering") stay zinc; NO amber on light surfaces (amber is the dark-render-system accent, §9).
 - **Landing story screen:** centered 16:9 frame with a 1px ink border, 44px desktop / 30px mobile radius, and transparent fill until the first shot arrives. The screen contains only the active video; captions, visual effects, and placed media must be reflected inside the rendered footage, never as separate DOM cards layered above it. Surrounding source media has no border.
 - **Type scale:**
@@ -43,7 +43,7 @@ Token source: `src/apps/web/src/app/globals.css` plus `src/apps/web/src/componen
 - **CTA (InkButton):** ink pill `rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white hover:opacity-80`.
   **Single-primary-CTA rule on landing:** one CTA to `/plan` in its original centered position near the bottom of the edit story — never duplicate it in the header or below the story.
 - **Primary-action viewport budget:** on any flow step whose purpose is a single next action, keep that action visible in the first viewport at 1280×720 and 375×667, using realistic maximum AI-generated content length.
-- **Light-surface pinned action bar:** when adaptive pinning is needed on `#fafaf8`, use `sticky bottom-0 z-10 -mx-5 border-t border-zinc-200 bg-[#fafaf8] px-5 pt-4 pb-[max(16px,env(safe-area-inset-bottom))] md:mx-0 md:px-0` (bleeds to the pane edge on mobile, aligns to the text column on desktop). The bar's `border-t` is its only divider — never pair it with a `border-t` on the section that follows.
+- **Light-surface pinned action bar:** when adaptive pinning is needed on `#ffffff`, use `sticky bottom-0 z-10 -mx-5 border-t border-zinc-200 bg-[#ffffff] px-5 pt-4 pb-[max(16px,env(safe-area-inset-bottom))] md:mx-0 md:px-0` (bleeds to the pane edge on mobile, aligns to the text column on desktop). The bar's `border-t` is its only divider — never pair it with a `border-t` on the section that follows.
   Apply it only when the action would otherwise fall below the fold; the existing always-on variant lives in `ChatInterview.tsx`.
 - **Touch pressed state:** on touch surfaces, pressed/drag state replaces hover affordance. Active handles solidify and scale slightly; active chips go `opacity-100`; drags show a floating value readout offset from the thumb.
 - **Landing story rhythm:** `/` starts the timed composition automatically in one viewport, with no mode selector or playback control; `/auto-story` remains a compatibility route. `/?mode=scroll` retains the pinned `760svh` choreography for direct comparison without exposing it in the interface. Source footage and feature chips surround the centered screen, then travel directly into it before the three statements replace one another. The soundtrack starts muted for autoplay compatibility and makes one synchronized audible attempt at the sound-effects beat; browsers may keep it muted when policy forbids unprompted audio.
@@ -78,7 +78,7 @@ Token source: `src/apps/web/src/app/template-jobs/` on origin/main (the `/templa
   - Serif accent moments: `text-lg` / `text-xl` (incl. italic `text-amber-300` in `PersonaEditor`); ChatInterview prior-answer pull-quote is `text-sm text-zinc-400 line-clamp-3` (zinc, not amber)
   - Body: default sans; secondary: `text-sm text-zinc-400`
 - **Radius roles:** `rounded-full` = buttons/pills; `rounded-lg` = inputs/surfaces.
-- **Header:** product routes get sticky scroll-fade header (`rgba(0,0,0,0.6·progress)` + blur); landing routes (`/`, `/auto-story`) get a static, borderless cream header with no anonymous auth action. Their single “Create my first edit” CTA stays centered near the bottom of the story, with Terms and Privacy beneath it rather than in the header. `/admin` hides Header entirely.
+- **Header:** product routes get sticky scroll-fade header (`rgba(0,0,0,0.6·progress)` + blur); landing routes (`/`, `/auto-story`) get a static, borderless white header with no anonymous auth action. Their single “Create my first edit” CTA stays centered near the bottom of the story, with Terms and Privacy beneath it rather than in the header. `/admin` hides Header entirely.
 - **Chat / interview surfaces:** editorial interview, not chat app — left-aligned Fraunces questions, one prior-answer pull-quote (amber left-border on dark surfaces; lime left-border on light surfaces), NO message bubbles, NO bot avatar.
 
 ---
@@ -170,7 +170,7 @@ Theater components draw **no border, no background, no outer padding** — the h
 
 ### Tone variant (D20)
 
-Theater components accept `tone?: "dark" | "light"` (default `"dark"`). Light surfaces (`/plan/items`, `/library`, `/generative`) pass `tone="light"` to `ProgressTheater`; the template render flow and admin pass nothing → default dark is preserved. `UploadBar` is dark-only (only consumers are template flow; a tone prop would be dead code). The D15 host-owns-surface rule is unchanged across both tones — the Theater never draws its own background regardless of tone.
+Theater components accept `tone?: "dark" | "light"` (default `"dark"`). Light surfaces (`/plan`, `/plan/items`) pass `tone="light"` to `ProgressTheater`; the template render flow and admin pass nothing → default dark is preserved. `UploadBar` is dark-only (only consumers are template flow; a tone prop would be dead code). The D15 host-owns-surface rule is unchanged across both tones — the Theater never draws its own background regardless of tone.
 
 ### A11y contract (D17)
 - Status band: `role="status" aria-live="polite"`, each stage announced once.
@@ -261,24 +261,28 @@ Documented here, **not fixed** (D2 decision). Canonicals are user-ratified. Norm
 
 ---
 
-## §12 Idea-centric plan components (v0.4.111+)
+## §12 Plan home + New-video flow (v0.44 redesign; supersedes the ideas ledger)
 
-Rules here supplement §2 (light editorial system).
+Rules here supplement §2 (light editorial system). Design source: Paper file
+"Kria Plan Redesign", page "FINAL — Basic home". The ideas ledger was removed
+2026-08-21 (tester feedback: /plan read as a content-ideas list, not an edit
+tool); /plan is now openly the create-a-new-video page.
 
-### Ideas ledger (`/plan` home)
-- **Canvas:** `bg-[#fafaf8]`; centered column `max-w-[760px] px-6 pt-14`.
-- **Header:** Fraunces `font-display text-[44px] font-medium` "Ideas"; no sub-line (the "Every idea here becomes a video." explainer was removed in the 2026-08 declutter train — status pills carry that meaning).
-- **Stat line:** right-baseline `text-[13px] text-[#71717a]`; zero fragments hidden; whole line hidden when ready+rendering are zero. Ready fragment `font-semibold text-lime-700`; rendering plain zinc; `/library` link hover underline.
-- **Composer:** add input `min-h-[44px] rounded-lg border border-dashed border-zinc-300 bg-white`, focus `border-lime-500/60`, lime `+`, placeholder "A video idea, rough is fine…"; commits on Enter/blur. Button `min-h-[44px] rounded-lg border border-zinc-200 bg-white px-4 text-[12px] text-[#71717a]`, hover `border-lime-400 text-lime-700`, disabled `opacity-50 cursor-not-allowed`, copy "✦ Generate with AI".
-- **Ledger rows:** semantic `ol`; `plan.items` sorted newest-first by `position` descending. Row `min-h-[48px] border-t border-zinc-100 py-2.5`; grid numeral | link | status | delete.
-- **Numeral:** decorative `font-display italic text-[20px] text-zinc-300 w-8`, top-aligned, hidden below 380px.
-- **Idea link:** `text-[15px] leading-snug text-[#0c0c0e] line-clamp-2`; hover `text-lime-700`; focus `outline-2 outline-[#0c0c0e]`.
-- **Status slots:** ready pill `border-lime-200 bg-lime-50 text-lime-800 text-[11px]` "Ready to post"; generating/rerolling `text-[12px] text-[#71717a]` "Rendering…" + lime `motion-safe:animate-ping` dot; failed zinc "Didn't render — open to retry"; awaiting_clips zinc "Needs footage"; idea faint `text-[#a1a1aa]` "Plan this →".
-- **Delete:** `×` button `h-[28px] w-[28px]`; hidden until row hover/focus on hover-capable devices, always visible on touch. `ready|generating|rerolling` rows show inline zinc confirmation "Delete idea? It has a video — Keep / Delete"; other rows delete immediately.
-- **Generating:** top in-list optimistic row with `role="status" aria-live="polite"`, lime ping dot in numeral slot, `motion-safe:animate-shimmer` bar, label "Kria is writing an idea…"; button stays focused and disabled.
-- **Empty:** no card/icon; list zone shows Fraunces `text-[16px] font-medium` "Pitch your first idea."
-- **Failed plan:** quiet dashed `border-zinc-200` tile between composer and ledger, zinc copy "That idea didn't come through. Try again"; no red.
-- **Initial load:** SHIMMER tier — header ghost plus 4 ghost rows.
+### Basic home (`/plan`, `WorkspaceHome.tsx`)
+- **Canvas:** `bg-white`; centered column `max-w-[900px] px-6 pt-14`, sections gap-10.
+- **Create block (leads):** Fraunces `text-[32px] font-medium` "Make a new video." + `text-sm text-[#71717a]` sub-line "Pick what kind, add your footage — Kria edits it into a post." + ink pill `min-h-12 rounded-full bg-[#0c0c0e] text-white` "New video" → `/plan/new` (full-width on mobile, hugging on sm+). One primary CTA on the page.
+- **PAST EDITS section:** eyebrow `text-[11px] font-semibold uppercase tracking-[0.18em] text-[#3f3f46]`; grid `grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4` of `LibraryTile` (from `components/library/`, ex-/library); cursor-driven "Load more" zinc pill. Rendering tiles keep LibraryTile's shimmer; failed stay quiet zinc; no red.
+- **Empty:** one quiet line `text-[15px] text-[#71717a]` "Your edits will live here." — no card, no icon.
+- **Plan generating:** quiet `text-[13px] text-[#71717a]` line under the CTA ("…you can start a video anyway"); creation never blocks on plan state.
+- **SeedUploadCard** still mounts above everything while `activation_status` ∈ {seeding, activating}.
+- **TikTok connection:** `TikTokConnectionCard` at the bottom under `id="tiktok"`; TikTokReleaseRail connect/reconnect links target `/plan#tiktok`.
+- **Initial load:** SHIMMER tier — 4 ghost 9:16 tiles.
+
+### New-video chooser (`/plan/new`)
+- Full-screen step on white: 44px `×` back to /plan + "Step 1 of 2" muted label; Fraunces `text-[30px]` "What kind of video?" + muted "Kria edits each kind differently."
+- Poster radio-cards reuse SetupPicker's `MediaRadioCard` + `TYPE_MEDIA`/`TYPE_COPY` (montage / voiceover / talking-to-camera; talking_head stays legacy-only). Selection = lime ring + "Selected" chip, same as the item page.
+- Pinned bottom bar (white, `border-t border-zinc-200`, safe-area padding): full-width ink pill "Continue" + centered muted "Next: add your footage".
+- Continue mints the item (`addIdea` + `updatePlanItem`) → `/plan/items/{id}?setup=done` (SetupPicker arrives collapsed; uploader leads). Abandon creates nothing. Errors are quiet zinc `role="alert"` lines; never red.
 
 ### Expand-with-AI context + proposal card (item detail page; trigger "✦ Plan this for me")
 - Shown only while the item has no `filming_guide`; trigger button matches Generate-with-AI token pattern.
@@ -323,7 +327,7 @@ in Vercel + redeploy (build-time var) ⇒ legacy light mode (canvas + Nova chat 
 byte-identical. The `<1024px` editor carries full manual editing.
 Rules supplement §2.
 
-- **Tool dock** (`_editor/ToolDock.tsx`): `bg-[#fafaf8] border-t border-zinc-200
+- **Tool dock** (`_editor/ToolDock.tsx`): `bg-[#ffffff] border-t border-zinc-200
   pb-[max(8px,env(safe-area-inset-bottom))]` — deliberate 8px safe-area floor vs
   the pinned-bar's 16px (56px tool targets + label descenders already provide the
   visual bottom space). 7 tools in desktop rail order; 24px icon +
