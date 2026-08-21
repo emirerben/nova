@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.42.0.4] — 2026-08-21
+
+### Fixed
+- **An approved guided story can no longer get permanently stuck because its own timing rounded past its footage.** Beat durations are rescaled proportionally to fit the approved total, and when the planner's beat weights don't sum exactly to that total (common — they're independently rounded), every beat inflates by the same small factor. A beat whose clip was already at capacity could be asked for a fraction of a second more than its selected video could supply, and since draft-time feasibility only checks aggregate footage length (not this per-beat case), the plan passed review, got approved and pinned, and then failed identically on every render retry forever (prod job `0be72363`, a ~0.1s overshoot). New plans (compiler v4) now water-fill each beat's resolved duration against its own clips' real capacity first, giving any reclaimed time to beats with headroom instead of demanding more than a clip can give — the approved total is still hit exactly. Already-approved plans that were wedged by this bug were never successfully pinned (the failure happens inside compile, before pinning), so they pick up the fix automatically on the next render retry with no re-approval needed; already-pinned plans keep recompiling under their original compiler version, byte-identical to before.
+
 ## [0.42.0.3] — 2026-08-21
 
 ### Fixed
