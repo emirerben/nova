@@ -336,3 +336,24 @@ Verdict: APPROVED FOR IMPLEMENTATION. The design closes the original failure
 mode by making completeness machine-verifiable before ready status.
 
 NO UNRESOLVED DECISIONS
+
+## Compatibility addendum — 2026-08-21
+
+The original invariant “guided snapshot present → guided renderer” applies only when the current
+PlanItem intent is guided-compatible. The strict guided renderer is intentionally audio-destructive:
+it mutes source audio, selects a library track (or silent AAC), and burns approved title/thought
+text. It must never be allowed to consume an explicit voiceover or an audio-led format.
+
+The implementation therefore uses one shared, positive guided applicability policy. `montage`,
+`day_vlog`, and `single_hero` without an uploaded voiceover may snapshot and render guided stories.
+Any uploaded voiceover, plus `narrated*`, `subtitled`, and `talking_head`, selects the native
+audio-led program. Route capability/enforcement gates, the lock-owning dispatcher, and the worker
+all recompute that policy. Approved guided proposals remain dormant and byte-for-byte unchanged
+while native intent is selected; switching back to a compatible intent reactivates them.
+
+Mixed-version Jobs receive a worker defense-in-depth check. A dual-state Job with genuine legacy
+clip input ignores the guided snapshot and enters the native resolver. An asset-only Job whose only
+clip is the synthetic guided seed fails closed and asks the creator to Generate again, preventing a
+partial render from silently dropping approved pool media. This compatibility fence supersedes the
+older unconditional “snapshot wins” branch for audio-led intent; guided-only behavior and strict
+failure semantics remain unchanged.

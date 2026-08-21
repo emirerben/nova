@@ -311,6 +311,35 @@ strict receipt. It never enters the legacy montage path. Other legacy editor ope
 Approved title/thought IDs must remain present exactly once with non-blank text; changing wording is
 allowed, silently deleting an approved layer is not.
 
+## Render-program compatibility
+
+An approved proposal is a dormant editorial envelope, not an unconditional render-program switch.
+The server computes one applicability policy from the current item intent at every boundary:
+
+```text
+explicit voiceover OR narrated/subtitled/talking_head format
+        └── native audio-led renderer (guided snapshot ignored)
+montage/day_vlog/single_hero with no voiceover
+        └── strict guided-story renderer
+```
+
+This is required because the guided renderer deliberately removes source audio and replaces it
+with a matched library track (or silent AAC), while its visible title/thought layers are editorial
+observations, not a speech transcript. Audio-led items therefore hide guided capability flags,
+skip proposal enforcement/auto-design, require real clip inputs, and preserve the approved proposal
+unchanged so it can become applicable again if the creator later chooses a guided-compatible intent.
+The lock-owning dispatcher recomputes the policy before validating or stamping a snapshot, closing
+the route/dispatch race. A worker receiving an older dual-state Job skips the guided snapshot and
+uses the native resolver; an asset-only synthetic guided seed fails closed with an actionable
+"Generate again" reason rather than rendering an incomplete native edit. No proposal migration or
+digest change is needed.
+
+For narrated-family content-plan items with uploaded voiceover, the existing narrated assembler is
+selected even if a stale/mismatched format token says `montage`; it transcribes the uploaded audio,
+force-aligns captions, and keeps music/text prework disabled. Generic non-narrated legacy formats
+with a voiceover retain the existing generic voiceover behavior; the product must use a narrated
+format when transcript captions are required.
+
 Ready status requires a verified `render_receipt`: exact beat/media IDs, per-moment FFmpeg evidence,
 per-text rendered-alpha bounds inside the canvas, duration, the selected 1080×1920 or 1920×1080
 H.264 canvas, AAC audio, and the exact uploaded base/output object generations. Live render attempts

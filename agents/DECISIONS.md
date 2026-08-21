@@ -1565,3 +1565,30 @@ backbone") for the full mechanics. Deferred: surfacing `fallback_stripped`
 to users, relaxing `match_overlay_format.txt` for landmark shots, ROI
 refinement for depth (same deferral list as 2026-07-27, now scoped down by
 one item).
+
+## [2026-08-21] Audio-led render intent takes precedence over dormant guided proposals
+
+The production artifact `variant_1_guided_story_8fca41651a0877e9.mp4` contained a generic visual
+description burned into the picture and a music bed instead of the selected voiceover. Media
+forensics proved there was no intelligible speech or subtitle track; the deployed guided renderer
+had stripped source audio, matched music, and rendered proposal title/thought text before the native
+voiceover resolver could run.
+
+**Decisions:**
+
+- One shared pure render-intent policy is authoritative. An explicit uploaded voiceover, or the
+  `narrated*`, `subtitled`, or `talking_head` formats, is native/audio-led. Only `montage`,
+  `day_vlog`, and `single_hero` without voiceover are guided-compatible; unknown non-empty formats
+  fail closed to native.
+- The route, response serializer, lock-owning dispatcher, and worker recompute the same policy.
+  Audio-led items hide guided capability flags, skip guided enforcement/auto-design, require real
+  clip inputs, and never stamp `assembly_plan.guided_edit`.
+- Approved guided proposals remain dormant and unchanged while native intent is selected. They are
+  not marked stale because the media digest intentionally represents media identity, not intent.
+- A mixed-version worker ignores an incompatible guided snapshot when genuine clips exist. An
+  asset-only Job whose only clip is the synthetic guided seed fails closed with a stable reason and
+  asks the creator to Generate again; it must not partially render and drop approved pool media.
+- Content-plan items carrying uploaded voiceover use the existing narrated assembler, including
+  transcription and burned captions, even if a stale format token says `montage`. Generic legacy
+  voiceover formats preserve audio but are not promised transcript captions; narrated format is the
+  product contract when captions are required.

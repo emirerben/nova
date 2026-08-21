@@ -1182,6 +1182,41 @@ describe("PlanItemPage — guided edit Generate gating", () => {
     });
   });
 
+  it("does not let a dormant proposal block an audio-led Generate flow", async () => {
+    const item = makeItem({
+      status: "awaiting_clips",
+      edit_format: "narrated_ready",
+      audio_mode: "voiceover",
+      voiceover_gcs_path: "voiceover-uploads/u/voice.m4a",
+      guided_edit_available: false,
+      guided_edit_conversation_available: false,
+      guided_edit_auto_design: false,
+      edit_proposal: makeGuidedProposal("draft"),
+      clip_gcs_paths: ["users/u1/plan/test-item-id/clip.mp4"],
+    });
+    mockGeneratePlanItem.mockResolvedValue(item);
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.queryByText("Review and approve the edit plan first.")).toBeNull();
+    expect(screen.queryByTestId("edit-proposal-card")).toBeNull();
+    expect(screen.getByRole("button", { name: /generate video/i })).toBeEnabled();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /generate video/i }));
+    });
+    await waitFor(() => {
+      expect(mockGeneratePlanItem).toHaveBeenCalledWith("test-item-id");
+    });
+  });
+
   it("P2-5: a pool-only item becomes generate-able once AssetPool reports a ready asset", async () => {
     const item = guidedItem(null, { autoDesign: true, poolOnly: true });
     mockUsePolledJobStatus.mockReturnValue({

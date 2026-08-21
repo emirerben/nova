@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.46.0.3] — 2026-08-22
+
+### Fixed
+- **Uploaded voiceover now wins over guided-story auto-design.** Audio-led plan items no longer
+  enter the audio-destructive guided renderer, which previously replaced the voiceover with music
+  and burned generic visual-description text. Narrated content uses the native transcript-caption
+  assembler; approved guided proposals remain safely dormant and reusable when a guided-compatible
+  intent is selected again. Mixed-version workers fail closed on asset-only dual-state Jobs instead
+  of rendering an incomplete edit.
+
 ## [0.46.0.2] — 2026-08-22
 
 ### Fixes
@@ -72,7 +82,6 @@ All notable changes to this project will be documented in this file.
   the ideas-ledger "quieter path" are unmounted from /plan — #870's backend
   (migration 0078, owned-media job lifecycle, audio modes, manual-draft
   foundation) is retained, dark behind its flags.
-
 ## [0.44.1.0] — 2026-08-21
 
 ### Added
