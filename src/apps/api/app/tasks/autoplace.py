@@ -915,6 +915,8 @@ def _analyze_video(
             from app.pipeline.orientation import detect_rotation_and_dims  # noqa: PLC0415
 
             rotation, _rw, _rh = detect_rotation_and_dims(local_path)
+        except SoftTimeLimitExceeded:
+            raise
         except Exception:  # noqa: BLE001
             # Fail open to coded dims -- never turn a readable clip unreadable
             # just because rotation detection (a second ffprobe pass) errored.
