@@ -651,6 +651,120 @@ def test_analyze_pool_video_reuses_privacy_safe_single_argument_boundary(monkeyp
     analyze.assert_called_once_with("/tmp/asset.mp4")
 
 
+# ── rotation-aware display dims (ANALYSIS_VERSION 6) ───────────────────────────
+
+
+def _patch_video_gemini(monkeypatch, *, subject: str = "test pattern") -> None:
+    """Shared Gemini stub for the _analyze_video rotation tests below --
+    mirrors test_analyze_video_does_not_treat_plan_item_as_job_owner's setup."""
+    from app.config import settings as _settings
+
+    monkeypatch.setattr(_settings, "gemini_api_key", "gemini-key")
+    file_ref = SimpleNamespace(uri="provider://file", mime_type="video/mp4")
+    monkeypatch.setattr(
+        "app.pipeline.agents.gemini_analyzer.gemini_upload_and_wait",
+        lambda _path: file_ref,
+    )
+    monkeypatch.setattr(
+        "app.pipeline.agents.gemini_analyzer.analyze_clip",
+        MagicMock(
+            return_value=SimpleNamespace(
+                failed=False,
+                best_moments=[],
+                detected_subject=subject,
+                description="",
+                transcript="",
+                brands=[],
+            )
+        ),
+    )
+
+
+def test_analyze_video_persists_rotation_aware_display_dims(monkeypatch) -> None:
+    """A -90 iPhone portrait recording: coded pixels are landscape (1920x1080)
+    but the container Display Matrix says it displays as portrait. dims/aspect
+    and the persisted analysis must reflect the DISPLAY orientation."""
+
+    _patch_video_gemini(monkeypatch)
+    monkeypatch.setattr(
+        "app.pipeline.probe.probe_video",
+        lambda _path: SimpleNamespace(duration_s=4.0, width=1920, height=1080),
+    )
+    monkeypatch.setattr(
+        "app.pipeline.orientation.detect_rotation_and_dims",
+        lambda _path: (-90, 1920, 1080),
+    )
+
+    analysis, aspect, duration, dims = ap._analyze_video("/tmp/rotated.mp4")
+
+    assert dims == (1080, 1920)
+    assert aspect == pytest.approx(0.5625)
+    assert duration == 4.0
+    assert analysis is not None
+    assert analysis["display_width"] == 1080
+    assert analysis["display_height"] == 1920
+    assert analysis["rotation_degrees"] == -90
+
+
+def test_analyze_video_stale_rotation_flag_does_not_double_swap(monkeypatch) -> None:
+    """Pixels are already portrait (height > width) but the container still
+    carries a rotation flag (stale-flag case in orientation.py). Swapping here
+    would double-rotate; dims must stay as-is."""
+
+    _patch_video_gemini(monkeypatch)
+    monkeypatch.setattr(
+        "app.pipeline.probe.probe_video",
+        lambda _path: SimpleNamespace(duration_s=4.0, width=1080, height=1920),
+    )
+    monkeypatch.setattr(
+        "app.pipeline.orientation.detect_rotation_and_dims",
+        lambda _path: (-90, 1080, 1920),
+    )
+
+    analysis, aspect, duration, dims = ap._analyze_video("/tmp/stale-flag.mp4")
+
+    assert dims == (1080, 1920)
+    assert aspect == pytest.approx(0.5625)
+    assert analysis is not None
+    assert analysis["display_width"] == 1080
+    assert analysis["display_height"] == 1920
+
+
+def test_analyze_video_fails_open_when_rotation_probe_errors(monkeypatch) -> None:
+    """detect_rotation_and_dims is a best-effort second ffprobe pass. If it
+    errors, the analysis must still complete using coded dims -- never raise
+    AssetUnreadableError for a perfectly readable clip."""
+
+    _patch_video_gemini(monkeypatch)
+    monkeypatch.setattr(
+        "app.pipeline.probe.probe_video",
+        lambda _path: SimpleNamespace(duration_s=4.0, width=720, height=1280),
+    )
+
+    def _boom(_path):
+        raise RuntimeError("ffprobe exploded")
+
+    monkeypatch.setattr("app.pipeline.orientation.detect_rotation_and_dims", _boom)
+
+    analysis, aspect, duration, dims = ap._analyze_video("/tmp/unprobeable-rotation.mp4")
+
+    assert dims == (720, 1280)
+    assert aspect == pytest.approx(0.5625)
+    assert analysis is not None
+    assert analysis["rotation_degrees"] == 0
+
+
+def test_stub_analysis_is_never_stale_after_the_version_bump() -> None:
+    """The infinite-loop guard (stubs are never stale) must survive the
+    ANALYSIS_VERSION 5 -> 6 bump."""
+
+    asset = _PoolAsset(kind="video")
+    stub = ap._stub_analysis(asset)
+
+    assert stub["analysis_version"] == ap.ANALYSIS_VERSION
+    assert ap.analysis_is_stale(stub, kind="video") is False
+
+
 def test_analyze_pool_asset_persists_timeout_then_propagates(monkeypatch) -> None:
     asset = _PoolAsset(kind="image")
     asset.status = "queued"

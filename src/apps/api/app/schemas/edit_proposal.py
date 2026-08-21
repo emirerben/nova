@@ -99,11 +99,22 @@ class EditProposalSnapshot(BaseModel):
 
 
 def _media_aspect(ref: MediaRef) -> float | None:
-    """Return analyzed display width/height without guessing from filenames."""
+    """Return analyzed DISPLAY width/height without guessing from filenames.
 
+    display_width/display_height (autoplace ANALYSIS_VERSION 6+) are rotation
+    aware; ref.aspect and analysis width/height persisted by older analyses are
+    CODED pixels, so a -90 iPhone portrait clip reads there as 1.78 landscape.
+    """
+    analysis = ref.analysis if isinstance(ref.analysis, dict) else {}
+    try:
+        dw = float(analysis.get("display_width") or 0)
+        dh = float(analysis.get("display_height") or 0)
+        if dw > 0 and dh > 0:
+            return dw / dh
+    except (TypeError, ValueError):
+        pass
     if ref.aspect is not None and math.isfinite(ref.aspect) and ref.aspect > 0:
         return float(ref.aspect)
-    analysis = ref.analysis if isinstance(ref.analysis, dict) else {}
     try:
         width = float(analysis.get("width") or 0)
         height = float(analysis.get("height") or 0)

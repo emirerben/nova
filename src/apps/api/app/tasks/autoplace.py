@@ -747,7 +747,11 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
 # v5 (TikTok E2E follow-up): image + video analyses persist brand/mascot
 # identities in `brands`; v3/v4 real analyses are stale for both kinds so the
 # matcher can suppress already-satisfied brand wishlist rows.
-ANALYSIS_VERSION = 5
+# v6: video analyses persist rotation-aware DISPLAY dims (display_width/
+# display_height/rotation_degrees) — probe_video returns CODED pixels and
+# ignores the container Display Matrix, so a -90 iPhone portrait clip was
+# read as 1920x1080 (landscape).
+ANALYSIS_VERSION = 6
 _MAX_POOL_IMAGE_PIXELS = 50_000_000
 
 
@@ -772,6 +776,18 @@ def _stub_analysis(asset: PlanItemAsset) -> dict:
         "source": "stub",
         "analysis_version": ANALYSIS_VERSION,
     }
+
+
+def display_dims(width: int, height: int, rotation: int) -> tuple[int, int]:
+    """Container-rotation-aware display dims.
+
+    Mirrors normalize_orientation's stale-flag case table in orientation.py:
+    a +/-90/270 flag on pixels that are ALREADY portrait (height > width) is a
+    stale flag, not a rotation to apply -- swapping there would double-rotate.
+    """
+    if abs(int(rotation)) in (90, 270) and int(width) > int(height):
+        return int(height), int(width)
+    return int(width), int(height)
 
 
 def analysis_is_stale(analysis: dict | None, *, kind: str | None = None) -> bool:
@@ -889,14 +905,26 @@ def _analyze_video(
     aspect: float | None = None
     duration: float | None = None
     dims: tuple[int, int] | None = None
+    rotation = 0
     try:
         from app.pipeline.probe import probe_video  # noqa: PLC0415
 
         probe = probe_video(local_path)
         duration = float(probe.duration_s or 0) or None
+        try:
+            from app.pipeline.orientation import detect_rotation_and_dims  # noqa: PLC0415
+
+            rotation, _rw, _rh = detect_rotation_and_dims(local_path)
+        except SoftTimeLimitExceeded:
+            raise
+        except Exception:  # noqa: BLE001
+            # Fail open to coded dims -- never turn a readable clip unreadable
+            # just because rotation detection (a second ffprobe pass) errored.
+            rotation = 0
         if probe.height:
-            aspect = round(probe.width / probe.height, 4)
-            dims = (int(probe.width), int(probe.height))
+            width, height = display_dims(probe.width, probe.height, rotation)
+            aspect = round(width / height, 4)
+            dims = (width, height)
     except SoftTimeLimitExceeded:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -950,6 +978,9 @@ def _analyze_video(
             "brands": list(getattr(meta, "brands", None) or [])[:10],
             "duration_s": duration,
             "analysis_version": ANALYSIS_VERSION,
+            "rotation_degrees": rotation,
+            "display_width": dims[0],
+            "display_height": dims[1],
         }
         return analysis, aspect, duration, dims
     except SoftTimeLimitExceeded:
