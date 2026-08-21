@@ -6,6 +6,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 
+from app.config import settings
 from app.models import PlanItem
 from app.schemas.edit_proposal import (
     EDIT_CONVERSATION_MAX_TURNS,
@@ -17,7 +18,56 @@ from app.schemas.edit_proposal import (
     EditProposal,
     EditProposalSnapshot,
     ProposalBrief,
+    ProposalRenderFailure,
     parse_edit_proposal,
+)
+
+# Non-retryable guided-story render failure codes (app/pipeline/guided_story.py
+# GuidedStoryError call sites, enumerated 2026-08-21 -- re-verify against the
+# real code if this list ever looks stale): these all stem from the approved
+# plan/media itself, not a transient render hiccup, so retrying the exact same
+# pinned proposal against the exact same footage will fail identically every
+# time. Everything else raised by guided_story.py (guided_story_render_failed,
+# guided_story_receipt_mismatch, guided_story_text_missing) wraps a subprocess
+# or verification step that COULD be transient (disk pressure, an ffmpeg
+# hiccup, a flaky probe) -- those only block after GUIDED_RENDER_MAX_ATTEMPTS
+# repeats of the exact same code at the exact same approved version.
+_NON_RETRYABLE_GUIDED_RENDER_CODES = frozenset(
+    {
+        # The approved story's timing cannot fit the approved media -- purely
+        # a function of the pinned plan + media durations.
+        "guided_story_duration_impossible",
+        # The approved snapshot itself fails structural validation.
+        "guided_story_snapshot_invalid",
+        # Approved media is no longer present in storage.
+        "guided_story_media_missing",
+        # Approved media's storage generation no longer matches (replaced
+        # since approval).
+        "guided_story_media_replaced",
+        # Approved music's storage generation no longer matches (replaced or
+        # deleted since approval) -- same shape as media_replaced.
+        "guided_story_music_missing",
+    }
+)
+GUIDED_RENDER_MAX_ATTEMPTS = 3
+
+_GUIDED_RENDER_COPY = {
+    "guided_story_duration_impossible": (
+        "This edit's timing doesn't fit your footage. Open the planner to shorten it "
+        "or add more media."
+    ),
+    "guided_story_media_missing": (
+        "Some media in this edit is no longer available. Open the planner to re-plan it."
+    ),
+    "guided_story_media_replaced": (
+        "The media in this edit changed after it was approved. Open the planner to re-plan it."
+    ),
+    "guided_story_music_missing": (
+        "The music in this edit is no longer available. Open the planner to re-plan it."
+    ),
+}
+_GUIDED_RENDER_DEFAULT_COPY = (
+    "Kria couldn't render this approved edit. Open the planner to revise it and try again."
 )
 
 
@@ -359,6 +409,66 @@ def mark_edit_proposal_stale(item: PlanItem) -> bool:
     return True
 
 
+def record_proposal_render_failure(item: PlanItem, *, code: str) -> bool:
+    """Persist a render failure onto item.edit_proposal, scoped to the currently
+
+    approved version. Returns True if it wrote something (status was
+    "approved" with a last_approved snapshot), False as a no-op otherwise
+    (e.g. the proposal was since revised away from approved -- nothing to
+    attach the failure to). Never raises: called from a worker's exception
+    handler, where a second failure must not mask the first.
+    """
+    current = parse_edit_proposal(item.edit_proposal)
+    if current is None or current.status != "approved" or current.last_approved is None:
+        return False
+    proposal_version = current.last_approved.proposal_version
+    existing = current.render_failure
+    if (
+        existing is not None
+        and existing.proposal_version == proposal_version
+        and existing.code == code
+    ):
+        attempts = existing.attempts + 1
+    else:
+        attempts = 1
+    updated = current.model_copy(
+        update={
+            "render_failure": ProposalRenderFailure(
+                proposal_version=proposal_version,
+                code=code,
+                message=_GUIDED_RENDER_COPY.get(code, _GUIDED_RENDER_DEFAULT_COPY),
+                attempts=attempts,
+                failed_at=datetime.now(UTC),
+            )
+        }
+    )
+    item.edit_proposal = updated.model_dump(mode="json")
+    return True
+
+
+def guided_render_is_blocked(proposal: EditProposal) -> bool:
+    """True when the proposal's render_failure is scoped to the CURRENT approved
+
+    version and is either non-retryable or has hit the attempt cap. Pure read,
+    fails open (False) on anything malformed -- called from
+    proposal_generate_error, which runs under a caller-owned PlanItem row lock
+    and must never raise.
+    """
+    try:
+        rf = proposal.render_failure
+        last_approved = proposal.last_approved
+        if rf is None or last_approved is None:
+            return False
+        if rf.proposal_version != last_approved.proposal_version:
+            return False
+        return (
+            rf.code in _NON_RETRYABLE_GUIDED_RENDER_CODES
+            or rf.attempts >= GUIDED_RENDER_MAX_ATTEMPTS
+        )
+    except Exception:  # noqa: BLE001 - never let a malformed legacy row block Generate
+        return False
+
+
 def proposal_generate_error(item: PlanItem) -> str | None:
     proposal = parse_edit_proposal(item.edit_proposal)
     if proposal is None:
@@ -376,6 +486,8 @@ def proposal_generate_error(item: PlanItem) -> str | None:
         return "proposal_failed"
     if proposal.status != "approved" or proposal.last_approved is None:
         return "proposal_draft"
+    if settings.guided_render_recovery_enabled and guided_render_is_blocked(proposal):
+        return "proposal_render_blocked"
     return None
 
 

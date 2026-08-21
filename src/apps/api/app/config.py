@@ -722,6 +722,20 @@ class Settings(BaseSettings):
         "GUIDED_AUTO_DESIGN_ENABLED=false --app nova-video` + `fly machine restart <id>` for the "
         "api and worker process groups.",
     )
+    guided_render_recovery_enabled: bool = Field(
+        default=True,
+        description=(
+            "Persist an actionable, version-scoped reason on the edit-proposal envelope "
+            "when an APPROVED guided story fails to render, and refuse to re-dispatch the "
+            "same approved version once it has failed non-transiently (or 3 times). Kill "
+            "switch: off restores today's behavior exactly -- the job fails, nothing is "
+            "persisted on the item, and Generate re-mints against the same pinned plan. "
+            "Read by the worker and the sync dispatch path; changing it requires api + "
+            "worker restarts. Apply: `fly secrets set GUIDED_RENDER_RECOVERY_ENABLED=false "
+            "--app nova-video` + `fly machine restart <id>` for the api and worker process "
+            "groups."
+        ),
+    )
 
     @model_validator(mode="after")
     def reject_guided_edit_before_strict_renderer(self) -> "Settings":

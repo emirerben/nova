@@ -798,6 +798,7 @@ def orchestrate_generative_job(self, job_id: str) -> None:
                         },
                     )
                 mark_failed_phase(job_id)
+                _persist_guided_render_failure(job_id, exc.code)
                 _fail_job(job_id, str(exc), failure_reason=exc.code)
                 return
             log.error("generative_job_failed", job_id=job_id, error=str(exc), exc_info=True)
@@ -17177,6 +17178,37 @@ def _persist_archetype_fallback(job_id: str, declared: str, reason: str | None) 
         else:
             return
         db.commit()
+
+
+def _persist_guided_render_failure(job_id: str, code: str) -> None:
+    """Record an approved-plan render failure on the owning PlanItem's proposal.
+
+    Best-effort and fully isolated from the caller's failure handling: a
+    problem here (bad job_id, missing item, DB hiccup) must never prevent
+    _fail_job from still marking the Job itself failed -- see the
+    `except GuidedStoryError` handler in orchestrate_generative_job.
+    """
+    if not settings.guided_render_recovery_enabled:
+        return
+    try:
+        from app.models import PlanItem  # noqa: PLC0415
+        from app.services.edit_proposals import record_proposal_render_failure  # noqa: PLC0415
+
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id))
+            item_id = getattr(job, "content_plan_item_id", None) if job else None
+            if item_id is None:
+                return
+            # populate_existing=True: this repo has an active bug class
+            # (#813/#845) where a locked read returns stale cached data if
+            # the session already touched the row earlier in the same
+            # request/task. Cheap and correct defensively even though this
+            # helper opens its own fresh session.
+            item = db.get(PlanItem, item_id, with_for_update=True, populate_existing=True)
+            if item is not None and record_proposal_render_failure(item, code=code):
+                db.commit()
+    except Exception as exc:  # noqa: BLE001 - never turn a render failure into a crash
+        log.warning("guided_story_render_failure_persist_failed", job_id=job_id, error=str(exc))
 
 
 def _set_status(

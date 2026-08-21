@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.43.0.0] — 2026-08-21
+
+### Fixed
+- **An approved edit that can't render no longer retries forever with no explanation.** Once a plan is approved and pinned, a render failure inside the strict guided-story renderer (timing that doesn't fit the footage, media or music removed since approval, an invalid snapshot) used to leave the item with only a bare "Try again" button — clicking it re-dispatched the exact same pinned plan against the exact same footage, which failed identically every time, silently, forever. Nova now persists an actionable, version-scoped reason on the plan item ("This edit's timing doesn't fit your footage. Open the planner to shorten it or add more media.") and refuses to re-dispatch a render proven non-transiently broken (or repeated 3 times) — the existing "Edit plan" affordance stays the recovery path, so a creator's approved story structure is never silently swapped for a montage without asking. A new approval automatically clears the block. Kill switch: `GUIDED_RENDER_RECOVERY_ENABLED` (default on); off restores today's behavior byte-for-byte.
+
 ## [0.42.0.4] — 2026-08-21
 
 ### Fixed

@@ -451,6 +451,49 @@ def test_guided_failure_keeps_job_non_ready_and_persists_machine_code(monkeypatc
     assert "finished" not in captured
 
 
+def test_guided_story_error_persists_a_user_facing_render_failure(monkeypatch) -> None:
+    """The approved-plan render-recovery lane: a GuidedStoryError must persist
+
+    an actionable render_failure on the owning PlanItem's proposal (so Generate
+    stops re-dispatching the same doomed render forever) IN ADDITION TO the
+    existing _fail_job bookkeeping -- one must never silently replace the other.
+    """
+    from app.pipeline.guided_story import GuidedStoryError
+
+    persisted: dict[str, object] = {}
+    failed: dict[str, object] = {}
+    monkeypatch.setattr(gb, "_owned_job_task_fence", lambda _job_id: _session())
+    monkeypatch.setattr(
+        gb,
+        "_run_generative_job",
+        lambda _job_id: (_ for _ in ()).throw(
+            GuidedStoryError("guided_story_duration_impossible", "Timing doesn't fit.")
+        ),
+    )
+    monkeypatch.setattr(gb, "mark_failed_phase", lambda job_id: None)
+    monkeypatch.setattr(gb, "mark_finished", lambda *_a: None)
+    monkeypatch.setattr(
+        gb,
+        "_persist_guided_render_failure",
+        lambda job_id, code: persisted.update(job_id=job_id, code=code),
+    )
+    monkeypatch.setattr(
+        gb,
+        "_fail_job",
+        lambda job_id, detail, failure_reason=None: failed.update(
+            job_id=job_id, detail=detail, failure_reason=failure_reason
+        ),
+    )
+
+    gb.orchestrate_generative_job.run("12345678-1234-5678-1234-567812345678")
+
+    assert persisted == {
+        "job_id": "12345678-1234-5678-1234-567812345678",
+        "code": "guided_story_duration_impossible",
+    }
+    assert failed["failure_reason"] == "guided_story_duration_impossible"
+
+
 def test_busy_duplicate_delivery_does_not_mark_live_job_finished(monkeypatch) -> None:
     calls: list[str] = []
     monkeypatch.setattr(gb, "_owned_job_task_fence", lambda _job_id: _session())

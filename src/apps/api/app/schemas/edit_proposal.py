@@ -197,6 +197,21 @@ class ProposalFailure(BaseModel):
     detail: str | None = Field(default=None, max_length=2000)
 
 
+class ProposalRenderFailure(BaseModel):
+    """An APPROVED plan that the strict renderer could not execute.
+
+    Scoped to the approved proposal_version that failed, so any new revision
+    (which bumps last_approved.proposal_version) clears the block automatically
+    with no extra bookkeeping.
+    """
+
+    proposal_version: int = Field(ge=1)
+    code: str = Field(min_length=1, max_length=100)
+    message: str = Field(min_length=1, max_length=500)
+    attempts: int = Field(default=1, ge=1)
+    failed_at: datetime
+
+
 class ProposalBrief(BaseModel):
     direction: ProposalDirection = "guided_story"
     goal: str = Field(default="", max_length=500)
@@ -252,6 +267,11 @@ class EditProposal(BaseModel):
     # failure with pool assets present (never silently dropped — see
     # draft_edit_proposal's auto_finalize fallback).
     design_fallback: str | None = Field(default=None, max_length=100)
+    # Set when an APPROVED proposal's strict render fails inside guided_story.py
+    # (GuidedStoryError). Scoped to last_approved.proposal_version so a new
+    # approval clears it automatically. See services/edit_proposals.py
+    # (record_proposal_render_failure / guided_render_is_blocked).
+    render_failure: ProposalRenderFailure | None = None
 
 
 class MediaRefResponse(MediaRef):

@@ -536,6 +536,10 @@ DispatchOutcome = Literal[
     # asset appeared in the gap (P2-4, 2026-08-18 adversarial review) —
     # never silently drop pool media behind a montage.
     "guided_edit_bypass_unsafe",
+    # The approved plan already failed to render non-transiently (see
+    # services/edit_proposals.guided_render_is_blocked); Generate is refused
+    # until the user revises it in the planner.
+    "proposal_render_blocked",
 ]
 
 
