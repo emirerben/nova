@@ -8,6 +8,106 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## Guided-story / guided-edit train — deferred follow-ups (from #847–#862, backlog audit 2026-08-21)
+
+Context: the guided-story/guided-edit train (#847–#862, the AI-designed-edit
+planning conversation) shipped its residuals only in PR bodies, never here —
+this section is that audit landing them where they'll actually be tracked.
+Five bug residuals from this train and #845/#859 are being fixed in a
+2026-08-21 batch (PRs #863–#867, open, not yet merged) — see each entry
+below for status. The two items after those are genuinely open, not covered
+by that batch.
+
+### `guided_story_duration_impossible` rescale gap — fix open in PR #866
+**What:** The compiler's proportional beat rescale can inflate a beat past its
+selected clips' real capacity when beat weights don't sum exactly to the
+approved total, permanently wedging an APPROVED plan (every retry replays
+the same failing compile). Prod repro: job `0be72363`.
+**Status:** Fix open in PR #866 (`app/pipeline/guided_story.py`, new
+`COMPILER_VERSION` 4 — clamps/redistributes beat timing against real clip
+capacity; v1/v2/v3 recompilation left byte-identical, verified by a
+round-trip test). Mark this entry SHIPPED and remove once #866 merges.
+**Priority:** P1
+
+### Orientation auto-select is rotation-naive — fix open in PR #865
+**What:** Clip-orientation analysis reads coded pixel dims, not the
+container's Display Matrix rotation flag, so a rotated phone clip votes the
+wrong (landscape) output canvas. Renders correctly since #860 normalizes
+rotation at download — this is purely the canvas *choice* being wrong.
+**Status:** Fix open in PR #865 (`app/tasks/autoplace.py` + `edit_proposal_build.py`
++ `schemas/edit_proposal.py` — `ANALYSIS_VERSION` 6, rotation-aware display
+dims, existing cached rows self-heal). Mark this entry SHIPPED and remove
+once #865 merges.
+**Priority:** P2
+
+### No signal for approved-plan render failures — fix open in PR #867
+**What:** #858 added a montage fallback for drafting failures only. Once a
+plan is approved and the render fails, the user sees a bare "Try again"
+that re-dispatches the identical pinned plan against the identical footage
+forever, with no explanation.
+**Status:** Fix open in PR #867 (persisted `render_failure` on the edit
+proposal, scoped to the approved version; blocks non-retryable/max-attempt
+codes from re-dispatch; kill switch `guided_render_recovery_enabled`,
+default on). Mark this entry SHIPPED and remove once #867 merges.
+**Priority:** P1
+
+### `_fallback_moments()` hardcoded timing + energy — fix open in PR #863
+**What:** #859's synthetic-moments backfill (for clips with legitimately
+empty `best_moments`) hardcoded `energy: 5.0` and every window starting at
+0.0, so every static clip looked identically mid-energy to the music
+matcher. Prod evidence: jobs `82fb4c57`/`f95b43b8`.
+**Status:** Fix open in PR #863 (`app/tasks/template_orchestrate.py` —
+energy derived from `visual_density` + transcript speech density,
+content-aware window lead-in). **Needs a human `test-template-locally` run
+before merge** (the PR carries `[skip-local-test]` — no Docker/GCS access in
+the authoring environment). Mark this entry SHIPPED and remove once #863
+merges and the local-test run is done.
+**Priority:** P2
+
+### Two quarantined stale-lock reads (issue #845) — fix open in PR #864
+**What:** `_lock_owned_entry_job` and `conformance_build._run` re-read a
+row `with_for_update=True` after the session already cached it unlocked —
+SQLAlchemy returns the stale pre-lock object. The lock is real; the data
+behind it isn't. Feeds the ownership gate `item.current_job_id != job.id`.
+**Status:** Fix open in PR #864 (`populate_existing=True` at all three
+affected sites; `KNOWN_STALE_LOCK_READS` emptied). Mark this entry SHIPPED
+and remove once #864 merges; re-open issue #845 only if the allow-list ever
+grows again.
+**Priority:** P1
+
+### Eval/golden-fixture refresh for the `edit_guide`/`edit_proposal` prompt bumps
+**What:** #858 bumped `edit_guide` to prompt_version 1.0.6 and `edit_proposal`
+to 1.1.0. Per the prompt-change rule (CLAUDE.md), live evals should have run
+against current fixtures before merge — the PR shipped with a deliberate
+follow-up marker instead. Nothing currently asserts the bumped prompts
+against fresh goldens.
+**Why:** Without this, a regression in either prompt's output quality has no
+automated catch — the next person to touch these prompts inherits stale
+goldens as ground truth.
+**How:** Run the live-eval harness (`tests/evals/`, `--with-judge` +
+`NOVA_EVAL_MODE=live`) against both agents, re-record fixtures if the
+current output is good, or fix the prompt first if it isn't.
+**Effort:** S (CC: ~20 min + eval run cost)
+**Priority:** P2
+**Depends on:** —
+
+### `GUIDED_EDIT_*` flag-flip verification cluster
+**What:** `plans/016`'s rollout order is `GUIDED_EDIT_CAPABILITY_ENABLED` →
+`NEXT_PUBLIC_GUIDED_EDIT_ENABLED` → `GUIDED_EDIT_CONVERSATION_ENABLED` →
+`GUIDED_EDIT_ENFORCEMENT_ENABLED`. `.env.example` still shows all four as
+`false`, but #862's PR body claims the first two are already live in prod —
+source defaults and actual prod state may have diverged.
+**Why:** A stale `.env.example` next to a claimed-live prod flag is exactly
+the shape of the version-collision/flag-drift traps that have bitten this
+codebase before (see agents/DECISIONS.md kill-switch incidents).
+**How:** `fly ssh console -a nova-video -C 'env | grep GUIDED_EDIT'` (or the
+admin debug endpoint from #856) against the actual running machines; update
+`.env.example` to match reality; if a flag genuinely isn't flipped yet,
+follow `plans/016`'s stated rollout order for the remaining ones.
+**Effort:** XS (CC: ~10 min, ops verification not code)
+**Priority:** P2
+**Depends on:** —
+
 ## TikTok inbox-copy fix — deferred follow-ups (from red-team review, 2026-08-12)
 
 Context: the "stop calling it TikTok drafts" bug fix (v0.26.2.0) added a
@@ -612,30 +712,6 @@ These were deliberately deferred from the initial slice to keep scope tight.
 **What:** The skill ships `t-tabs` (tab-switch slide), `t-accordion` (height expand), and `t-success-check` (checkmark draw). Apply where appropriate once UX direction is confirmed.
 **Effort:** M per surface (3 surfaces)
 
-## Narrated Walkthrough — frontend slice (backend shipped 2026-06-22)
-
-Backend is complete and tested (narrated_alignment, narrated_assembler, _render_narrated_variant, dispatch). Kill switch `narrated_archetype_enabled=False` (default). These are the remaining frontend tasks before flipping the switch.
-
-### T1 — Script block UI (step spine)
-**What:** Step rows on the plan-item page: faint Fraunces step numeral, editable spoken line (Inter body), lime `~3.2s` duration pill, zinc `timing estimated` / `voice differs` state pills. Reuses existing `ShotSlotUploader` clip wells per step. No new design tokens.
-**Effort:** M (CC: ~45 min)
-
-### T2 — VoiceRecorder mount on plan item page
-**What:** Mount `VoiceRecorder.tsx` on plan item page, sticky once steps exist. Upload via `POST /plan-items/{id}/generate` voiceover path (NOT `/music-jobs/upload-slot` — that's the generative flow). Show `ProgressTheater tone="light"` during transcribe+align (future: separate `/align` endpoint for pre-generate step durations).
-**Effort:** M (CC: ~30 min)
-
-### T3 — narrated sub-mode display branching
-**What:** `narrated_ready` shows `PoolUploadCard`; `narrated_planned` shows `ShotSlotUploader` per step. Already partially committed (commit `495e0eee`) — needs wire-up to actual clip paths + generate gate.
-**Effort:** S (CC: ~20 min)
-
-### T4 — Timeline editor voice-locked mode
-**What:** For narrated variants, `TimelineEditor` exposes only swap-clip / pick-alternate / trim-in-point. Disable cross-step reorder and per-clip length changes. `voice_locked: true` on the variant to signal the editor.
-**Effort:** M (CC: ~30 min)
-
-### T5 — Generate gate + flip kill switch
-**What:** `N of M steps filled` progress pill; Generate disabled until ≥1 clip per step. Then flip `narrated_archetype_enabled=True` on Fly: `fly secrets set NARRATED_ARCHETYPE_ENABLED=true --app nova-video` + worker restart.
-**Effort:** S (CC: ~15 min)
-
 ## Plan dogfood fixes — review-deferred items (2026-06-12)
 
 These surfaced in the pre-PR `/review` (footage pool + Ask Nova + conformance branch).
@@ -725,14 +801,6 @@ _Reconciled 2026-07-09: T-STYLE-2 shipped in #564 (v0.5.9.0), T-STYLE-3 in #565 
 **Effort:** M (CC: ~1h)
 **Priority:** P3
 
-### Clip notes → intro_writer (overlay text uses creator context)
-**Status update (2026-08-05, plans/015 eng review):** SHIPPED — `$clip_notes` landed in `write_intro_text.txt` at prompt_version 2026-06-18 (WS5); `IntroWriterInput.clip_notes` exists and `_run_text_agents` threads it. Verify and remove this entry.
-**What:** `all_candidates["clip_notes"]` already rides every plan-item render job (gcs_path → note). Thread it into `intro_writer`'s prompt so overlay/hook text can use facts like "famous vegan restaurant in Buenos Aires".
-**Why:** Deferred at eng review: intro_writer is the highest-traffic prompt and the prompt-change rule requires live evals — a rushed bump risks hook quality for a nice-to-have. Data is already plumbed; this is prompt-only work.
-**Depends on:** intro_writer live-eval run budget.
-**Effort:** S (CC: ~30min + eval run)
-**Priority:** P2
-
 ### sequence_quote_writer anti-slop pass (plans/015 follow-up)
 **What:** Run the plans/015 treatment (pattern-class review, conflict fixtures, rubric calibration) over `sequence_quote_writer` — the rhythm-mode quote agent that shares the same persona/theme/idea inputs as intro_writer (`generative_build.py:7073`).
 **Why:** Same persona-glue channel, same slop risk — but its product surface is deliberately aphorism-like, so the transformation-frame ban may be WRONG there; it needs its own rubric judgment, not a copy-paste of 015. plans/015's W6 scanner reports on persisted `sequence_quote` values (report-only) to size the problem first.
@@ -764,13 +832,6 @@ _Reconciled 2026-07-09: T-STYLE-2 shipped in #564 (v0.5.9.0), T-STYLE-3 in #565 
 **Priority:** P3
 
 ## Filming guide (v1 shipped in v0.4.79.0)
-
-### Expose edit_format in PlanItemResponse + item detail UI pill
-**What:** `PlanItem.edit_format` is stored but never returned by `plan_item_response()` (read-only, zero consumers so far). A simple `edit_format: str` field on `PlanItemResponse` + a small pill on the item detail page (`/plan/items/[id]`) would show the user what render archetype their idea is heading toward.
-**Why:** Helps the user understand why the filming guide has the shape it does (e.g. why a talking_head plan only shows 1–2 shots vs a montage's 3–4).
-**How:** Add `edit_format: str` to `PlanItemResponse` + expose in `plan_item_response()`. Add a small `bg-zinc-800 text-zinc-400` pill after the rationale callout on `items/[id]/page.tsx`. No new migration needed — field already exists on the row.
-**Effort:** XS (CC: ~5 min)
-**Priority:** P3
 
 ### User-editable shot list (filming_guide PATCH)
 **What:** `filming_guide` is read-only in v1. Let the user add/edit/reorder shots from the item detail page so they can refine the AI-generated guide before filming.
@@ -867,13 +928,6 @@ _Reconciled 2026-07-09: T-STYLE-2 shipped in #564 (v0.5.9.0), T-STYLE-3 in #565 
 **How:** Either (a) merge a separate `template_overrides` JSONB on top of the regenerated recipe, (b) preserve overlays where `subject_part` or other override fields are set, or (c) prompt with a diff before reanalysis overwrites overrides.
 **Effort:** M (human: ~1d / CC: ~30 min)
 **Priority:** P2
-
-### PropertyPanel UI for `subject_part`
-**What:** Surface the new `subject_part` field (added 2026-05-09 for "That one trip to..." city slicing) in the admin overlay PropertyPanel as a select: "first_half" / "second_half" / "full" / null. Today the field is invisible in the editor — set only via the backfill script — so admins editing the recipe could accidentally drop it.
-**Why:** The TS `RecipeTextOverlay` interface (`recipe-types.ts`) carries the field but no form control writes it.
-**How:** Add a Select control in `PropertyPanel.tsx` near the existing role/effect/position controls. Plumb through the existing `UPDATE_OVERLAY_FIELD` action.
-**Effort:** XS (human: ~1h / CC: ~10 min)
-**Priority:** P3
 
 ### Sign-in / auth on the new header
 **What:** The Nova header has a placeholder "Sign in" button. Real auth is its own project.
@@ -1045,18 +1099,6 @@ _Reconciled 2026-07-09: T-STYLE-2 shipped in #564 (v0.5.9.0), T-STYLE-3 in #565 
 
 ---
 
-## Music Beat-Sync (shipped v0.3.0.0, 2026-04-17)
-
-### Auth on POST /music-jobs
-**What:** Replace the synthetic `SYNTHETIC_USER_ID` stub in `music_jobs.py` with real user authentication via `get_current_user(db)`.
-**Why:** `POST /music-jobs` is currently unauthenticated — any caller can trigger Gemini API calls and GCS reads. Acceptable for internal MVP; must be fixed before public launch. See `src/apps/api/app/routes/music_jobs.py:23`.
-**How:** Wire in the existing `get_current_user` dependency (already used by other routes). Add user_id to music job records for attribution.
-**Effort:** XS (human: ~1h / CC: ~5 min)
-**Priority:** P1 — required before public launch
-**Depends on:** Auth infrastructure (already exists in other routes)
-
----
-
 ## P1 — Required before GTM campaigns go live
 
 ### UTM Capture
@@ -1217,31 +1259,12 @@ These TODOs were filed when the first wave of Yasin's prompt rewrites shipped (`
 **Effort:** S (human: ~2h / CC: ~30 min)
 **Priority:** P3
 
-## P0 — pre-existing test failures on main (noticed 2026-05-17)
-
-### Fix overlay-constants snapToNearestZone zone-boundary tests
-**What:** 5 failing tests in `src/apps/web/src/__tests__/admin/overlay-editor.test.tsx` under the `overlay-constants > snapToNearestZone` block. Expected `"center"` / `"top"` but got `"center-above"` at zone boundaries. Surfaced during `/ship` of the admin music Test tab branch on 2026-05-17.
-**Why:** The branch I shipped doesn't touch overlay code, but these failures are on origin/main right now. Whoever introduced `center-above` as a snap zone didn't update the boundary tests. CI will fail for everyone shipping until this is fixed.
-**How:** Either (a) update the tests to expect the new zone labels, or (b) revert the snap-zone change. Check `git log -p src/apps/web/src/lib/admin/overlay-constants.ts` to find the introducing commit.
-**Effort:** XS (human: ~30 min / CC: ~10 min)
-**Priority:** P0
-
----
-
 ## Music-only edits — quality gaps (added 2026-05-17)
 
 Discovered during the `/plan-eng-review` audit for the admin Music Test tab. The
 beat-sync path (`_run_music_job`) works today but has these soft edges. The Test
 tab itself shipped in the same PR — these items only matter once admins start
 producing real music-only edits at volume.
-
-### Authenticate `POST /music-jobs`
-**What:** Replace the `SYNTHETIC_USER_ID = 00000000-...-001` constant in `src/apps/api/app/routes/music_jobs.py:31` with `Depends(get_current_user)`. Right now any caller can POST a music job and burn Gemini quota.
-**Why:** The endpoint comment already calls this out as a known MVP gap. The admin test-job endpoint (added in this PR) is admin-token-gated, so this only blocks public exposure of `/music-jobs` — but it must land before /music goes back to public users.
-**How:** Mirror the `template_jobs.py` auth pattern when that lands. Single dependency swap.
-**Effort:** S (human: ~2h / CC: ~15 min)
-**Priority:** P2
-**Depends on:** "Sign-in / auth on the new header" (above)
 
 ### Music-only output eval harness
 **What:** Extend `src/apps/api/tests/evals/` with `music_assembly_evals.py`. Structural checks: every produced slot's `cumulative_s` is within 0.05s of the nearest beat in `beat_timestamps_s`; no slot's actual duration deviates from `target_duration_s` by more than 0.1s; audio track length matches video length within 0.5s.
@@ -1510,15 +1533,6 @@ Surfaced by prod generative job `d30c61fe-dab3-417d-998a-3a81535f7b50`, which sa
 **Effort:** M (CC: ~1h)
 **Priority:** P2
 **Depends on:** editorial-sequence PR merged (provides the scene/block structure to measure against).
-
-## Media overlay — follow-ups (from instant-preview PR, v0.5.3.0)
-
-### T-OVERLAY-1 — Instant CSS preview for instantEligible variants
-**What:** When a variant satisfies `isInstantEditEligible`, the hero renders `LiveEditPreview` (not `Hero`). The `overlayCards`/`localPreviewUrls` state from the instant-preview PR is only passed to `Hero`. Uploading overlay cards on an `agent_text`/`none` variant with `base_video_url` shows no CSS preview. Fix: pass `overlayCards` + `localPreviewUrls` to `LiveEditPreview` and add the same CSS overlay `<div>` stack inside it.
-**Why:** Deferred because `media_overlays_enabled` defaults to `false` (feature is dark). Adversarial review (both Codex passes) identified this before it could reach users.
-**How:** Extend `LiveEditPreview` props with `overlayCards?: MediaOverlay[]` + `localPreviewUrls?: Record<string,string>`. Render the same `previewableCards.map(card => <div style={{position:'absolute', ...}}>)` stack inside `LiveEditPreview`'s video container.
-**Effort:** XS (CC: ~10 min)
-**Priority:** P2 — must fix before flipping `media_overlays_enabled=true` in prod
 
 ## Sound effects — follow-ups (from SFX deferred-burn / Apply-removal review, 2026-06-29)
 

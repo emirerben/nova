@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.43.0.1] — 2026-08-21
+
+### Docs
+- **TODOS.md cleanup.** Removed nine verified-shipped backlog entries (the persona-owner
+  migration pin, the Narrated Walkthrough frontend slice, clip-notes→intro_writer, the
+  `edit_format` API field, the PropertyPanel `subject_part` control, a duplicated
+  music-jobs auth entry, a stale P0 test-failure block, and the instant-preview overlay
+  card follow-up) and filed the guided-story/guided-edit train's (#847–#862) previously
+  PR-body-only residuals as tracked entries, including cross-references to the open
+  fix PRs (#863–#867) from this batch.
+
 ## [0.43.0.0] — 2026-08-21
 
 ### Fixed
