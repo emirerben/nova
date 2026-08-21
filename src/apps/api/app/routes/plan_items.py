@@ -1817,6 +1817,9 @@ _PROPOSAL_GENERATE_MESSAGES = {
     # drafted (2026-08 guided-auto-design incident). See
     # proposal_generate_error() in services/edit_proposals.py.
     "proposal_failed": "Kria couldn't finish planning this edit — open the planner to try again.",
+    "proposal_render_blocked": (
+        "This approved edit couldn't be rendered — open the planner to revise it."
+    ),
 }
 
 
@@ -1859,6 +1862,7 @@ async def _respond_to_dispatch_result(
         "proposal_stale",
         "proposal_analyzing",
         "proposal_failed",
+        "proposal_render_blocked",
     }:
         _raise_proposal_generate_conflict(result.outcome)
     if result.outcome not in ("dispatched", "already_active"):

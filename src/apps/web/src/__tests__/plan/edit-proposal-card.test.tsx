@@ -363,6 +363,51 @@ describe("EditProposalCard", () => {
     expect(screen.queryByText(/3 sources/)).toBeNull();
   });
 
+  it("surfaces a render failure on an approved plan with a re-plan affordance", () => {
+    const approved = proposal("approved");
+    approved.render_failure = {
+      proposal_version: approved.proposal_version,
+      code: "guided_story_duration_impossible",
+      message: "This edit's timing doesn't fit your footage. Open the planner to shorten it or add more media.",
+      attempts: 1,
+      failed_at: "2026-08-21T10:00:00Z",
+    };
+
+    render(<EditProposalCard item={item(approved)} onChanged={jest.fn()} />);
+
+    expect(
+      screen.getByText(/This edit's timing doesn't fit your footage/),
+    ).toBeInTheDocument();
+    // The re-plan affordance stays reachable — the failure notice must never
+    // hide it.
+    expect(screen.getByRole("button", { name: "Edit plan" })).toBeVisible();
+  });
+
+  it("shows the drafting failure instead of a stale render_failure when both are present", () => {
+    const approved = proposal("approved");
+    approved.failure = {
+      code: "proposal_generation_timeout",
+      message: "Kria took too long to plan this edit. Try again.",
+      retryable: true,
+    };
+    approved.render_failure = {
+      proposal_version: approved.proposal_version,
+      code: "guided_story_duration_impossible",
+      message: "This edit's timing doesn't fit your footage. Open the planner to shorten it or add more media.",
+      attempts: 1,
+      failed_at: "2026-08-21T10:00:00Z",
+    };
+
+    render(<EditProposalCard item={item(approved)} onChanged={jest.fn()} />);
+
+    expect(
+      screen.getByText("Kria took too long to plan this edit. Try again."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/This edit's timing doesn't fit your footage/),
+    ).toBeNull();
+  });
+
   it("replaces an unplayable source preview with an honest file fallback", () => {
     const withPreview = proposal();
     withPreview.draft!.media[1] = {

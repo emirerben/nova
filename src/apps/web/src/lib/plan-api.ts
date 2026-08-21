@@ -2645,6 +2645,17 @@ export interface EditProposal {
     snapshot: EditProposalSnapshot;
   } | null;
   failure: { code: string; message: string; retryable: boolean } | null;
+  render_failure?: ProposalRenderFailure | null;
+}
+
+/** An APPROVED plan that the strict renderer could not execute. Scoped to the
+ * approved proposal_version that failed, so a new approval clears it. */
+export interface ProposalRenderFailure {
+  proposal_version: number;
+  code: string;
+  message: string;
+  attempts: number;
+  failed_at: string;
 }
 
 export interface PlanItem {

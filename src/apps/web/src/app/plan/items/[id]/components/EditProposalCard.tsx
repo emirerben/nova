@@ -737,6 +737,15 @@ export default function EditProposalCard({
         <p className="mt-1 text-sm text-[#3f3f46]">
           {visibleDraft.story_beats.length} moments · {selectedSourceCount(visibleDraft)} sources · about {visibleDraft.duration_s}s
         </p>
+        {proposal?.failure ? (
+          <p className="mt-3 rounded-lg border border-zinc-200 bg-[#fafaf8] px-3 py-2 text-sm text-[#3f3f46]">
+            {proposal.failure.message}
+          </p>
+        ) : proposal?.render_failure ? (
+          <p className="mt-3 rounded-lg border border-zinc-200 bg-[#fafaf8] px-3 py-2 text-sm text-[#3f3f46]">
+            {proposal.render_failure.message}
+          </p>
+        ) : null}
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             type="button"

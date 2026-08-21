@@ -10,13 +10,17 @@ from app.schemas.edit_proposal import (
     ProposalBrief,
     StoryBeat,
     canonical_media_digest,
+    parse_edit_proposal,
 )
 from app.services.edit_proposals import (
+    GUIDED_RENDER_MAX_ATTEMPTS,
     ProposalConflictError,
     approve_proposal,
     begin_proposal_attempt,
+    guided_render_is_blocked,
     mark_edit_proposal_stale,
     proposal_generate_error,
+    record_proposal_render_failure,
     release_edit_conversation_attempt,
     reserve_edit_conversation_attempt,
     save_edit_conversation_turn,
@@ -58,6 +62,135 @@ def _snapshot() -> EditProposalSnapshot:
             )
         ],
     )
+
+
+def _approved_item():
+    item = _item()
+    analyzing = begin_proposal_attempt(item)
+    snapshot = _snapshot()
+    raw = dict(item.edit_proposal)
+    raw["media_digest"] = canonical_media_digest(snapshot.media)
+    raw["status"] = "drafting"
+    item.edit_proposal = raw
+    draft = save_proposal_draft(
+        item, expected_version=analyzing.proposal_version, snapshot=snapshot
+    )
+    approve_proposal(item, expected_version=draft.proposal_version)
+    return item
+
+
+def test_render_failure_is_recorded_against_the_approved_version() -> None:
+    item = _approved_item()
+    approved_version = item.edit_proposal["last_approved"]["proposal_version"]
+
+    assert record_proposal_render_failure(item, code="guided_story_duration_impossible") is True
+
+    render_failure = item.edit_proposal["render_failure"]
+    assert render_failure["proposal_version"] == approved_version
+    assert render_failure["code"] == "guided_story_duration_impossible"
+    assert render_failure["attempts"] == 1
+    # status/last_approved are untouched -- a render failure does not un-approve
+    # the plan or reset the creator's approval.
+    assert item.edit_proposal["status"] == "approved"
+
+
+def test_repeated_same_code_render_failure_increments_attempts() -> None:
+    item = _approved_item()
+
+    record_proposal_render_failure(item, code="guided_story_render_failed")
+    record_proposal_render_failure(item, code="guided_story_render_failed")
+    record_proposal_render_failure(item, code="guided_story_render_failed")
+
+    assert item.edit_proposal["render_failure"]["attempts"] == 3
+
+
+def test_render_failure_does_not_block_after_a_new_approval() -> None:
+    item = _approved_item()
+    record_proposal_render_failure(item, code="guided_story_duration_impossible")
+    assert guided_render_is_blocked(parse_edit_proposal(item.edit_proposal)) is True
+
+    # A fresh draft/approve cycle bumps last_approved.proposal_version.
+    begin_proposal_attempt(item, brief=ProposalBrief())
+    new_snapshot = _snapshot()
+    raw = dict(item.edit_proposal)
+    raw["media_digest"] = canonical_media_digest(new_snapshot.media)
+    raw["status"] = "drafting"
+    item.edit_proposal = raw
+    draft = save_proposal_draft(
+        item, expected_version=raw["proposal_version"], snapshot=new_snapshot
+    )
+    approve_proposal(item, expected_version=draft.proposal_version)
+
+    proposal = parse_edit_proposal(item.edit_proposal)
+    assert guided_render_is_blocked(proposal) is False
+    assert proposal_generate_error(item) is None
+
+
+def test_non_retryable_render_code_blocks_on_the_first_failure() -> None:
+    # guided_story_duration_impossible is a pure function of the pinned plan
+    # + media durations (no I/O), so it's genuinely non-retryable. Codes that
+    # wrap I/O/subprocess calls (e.g. guided_story_media_missing) are
+    # deliberately NOT in this set -- see test_transient_render_code_blocks_
+    # only_at_max_attempts and the comment on _NON_RETRYABLE_GUIDED_RENDER_CODES.
+    item = _approved_item()
+    record_proposal_render_failure(item, code="guided_story_duration_impossible")
+
+    assert guided_render_is_blocked(parse_edit_proposal(item.edit_proposal)) is True
+    assert proposal_generate_error(item) == "proposal_render_blocked"
+
+
+def test_transient_render_code_blocks_only_at_max_attempts() -> None:
+    item = _approved_item()
+    for _ in range(GUIDED_RENDER_MAX_ATTEMPTS - 1):
+        record_proposal_render_failure(item, code="guided_story_render_failed")
+        assert guided_render_is_blocked(parse_edit_proposal(item.edit_proposal)) is False
+        assert proposal_generate_error(item) is None
+
+    record_proposal_render_failure(item, code="guided_story_render_failed")
+    assert item.edit_proposal["render_failure"]["attempts"] == GUIDED_RENDER_MAX_ATTEMPTS
+    assert guided_render_is_blocked(parse_edit_proposal(item.edit_proposal)) is True
+    assert proposal_generate_error(item) == "proposal_render_blocked"
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "guided_story_media_missing",
+        "guided_story_media_replaced",
+        "guided_story_music_missing",
+    ],
+)
+def test_media_io_codes_get_the_transient_grace_period_not_first_hit_block(code: str) -> None:
+    """guided_story_media_missing/media_replaced/music_missing are raised from a
+    bare `except Exception` around GCS download / ffprobe / PIL decode / audio
+    mix -- any of those can be a transient blip, not just a genuine "the media
+    changed" condition, so they must NOT block on the very first occurrence."""
+    item = _approved_item()
+    for _ in range(GUIDED_RENDER_MAX_ATTEMPTS - 1):
+        record_proposal_render_failure(item, code=code)
+        assert guided_render_is_blocked(parse_edit_proposal(item.edit_proposal)) is False
+        assert proposal_generate_error(item) is None
+
+    record_proposal_render_failure(item, code=code)
+    assert item.edit_proposal["render_failure"]["attempts"] == GUIDED_RENDER_MAX_ATTEMPTS
+    assert guided_render_is_blocked(parse_edit_proposal(item.edit_proposal)) is True
+    assert proposal_generate_error(item) == "proposal_render_blocked"
+
+
+def test_render_recovery_flag_off_never_blocks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Kill-switch pin: with the flag off, proposal_generate_error must return
+
+    exactly what it returns today -- the new branch is never reached at all,
+    even when a blocking render_failure is present on the envelope.
+    """
+    from app.services import edit_proposals as edit_proposals_module
+
+    item = _approved_item()
+    record_proposal_render_failure(item, code="guided_story_duration_impossible")
+    assert guided_render_is_blocked(parse_edit_proposal(item.edit_proposal)) is True
+
+    monkeypatch.setattr(edit_proposals_module.settings, "guided_render_recovery_enabled", False)
+    assert proposal_generate_error(item) is None
 
 
 def test_canonical_digest_ignores_editorial_order_but_tracks_generation() -> None:
