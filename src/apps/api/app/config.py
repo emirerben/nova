@@ -71,6 +71,12 @@ class Settings(BaseSettings):
     # Must match INTERNAL_API_KEY in the Next.js environment.
     internal_api_key: str = ""
 
+    # Split-rollout gate for the authenticated creation flow. False keeps the
+    # old VoiceRecorder's validated voiceover-uploads/* paths working while the
+    # API lands ahead of Vercel. After the owned direct uploader is deployed,
+    # set true on Fly to require voiceover-uploads/direct/{user_id}/ exactly.
+    generative_direct_voiceover_strict_enabled: bool = False
+
     # yt-dlp cookies for admin URL imports. Use YTDLP_COOKIES_B64 in hosted
     # environments (secret-safe, decoded into a short-lived 0600 temp file) or
     # YTDLP_COOKIES_PATH for local development / mounted secret files.

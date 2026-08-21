@@ -98,6 +98,19 @@ def test_validate_rejects_wrong_host_and_bucket(mock_settings) -> None:
         _validate_relay_url(f"http://storage.googleapis.com/test-bucket/users/{UID}/f.png", UID)
 
 
+@patch("app.routes.uploads.settings")
+def test_validate_rejects_unsigned_bucket_url(mock_settings) -> None:
+    from fastapi import HTTPException
+
+    mock_settings.storage_bucket = "test-bucket"
+    with pytest.raises(HTTPException) as exc:
+        _validate_relay_url(
+            f"https://storage.googleapis.com/test-bucket/users/{UID}/f.png",
+            UID,
+        )
+    assert exc.value.status_code == 422
+
+
 def test_relay_streams_to_signed_url(client: TestClient) -> None:
     user = _user()
     app.dependency_overrides[get_current_user_or_synthetic] = lambda: user
@@ -135,6 +148,36 @@ def test_relay_streams_to_signed_url(client: TestClient) -> None:
     assert put_call.kwargs["headers"]["Content-Type"] == "video/mp4"
     assert put_call.kwargs["headers"]["Content-Length"] == str(len(b"video-bytes"))
     assert put_call.kwargs["headers"]["x-goog-if-generation-match"] == "0"
+
+
+def test_relay_accepts_signed_owned_url_without_proxy_auth_header(client: TestClient) -> None:
+    payload = b"video-bytes"
+    upstream = MagicMock(status_code=200)
+    async_client = AsyncMock()
+    async_client.__aenter__ = AsyncMock(return_value=async_client)
+    async_client.__aexit__ = AsyncMock(return_value=False)
+    async_client.put = AsyncMock(return_value=upstream)
+    signed = _signed(f"users/{UID}/plan/i/clip.mp4")
+
+    with (
+        patch("app.routes.uploads.settings") as mock_settings,
+        patch("httpx.AsyncClient", return_value=async_client),
+    ):
+        mock_settings.storage_bucket = "test-bucket"
+        response = client.post(
+            "/uploads/relay",
+            files={"file": ("clip.mp4", payload, "video/mp4")},
+            data={
+                "signed_url": signed,
+                "content_type": "video/mp4",
+                "file_size_bytes": str(len(payload)),
+                "if_generation_match": "0",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    async_client.put.assert_awaited_once()
 
 
 @pytest.mark.parametrize(

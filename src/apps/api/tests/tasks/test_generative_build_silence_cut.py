@@ -874,7 +874,7 @@ def test_finalize_job_preserves_silence_cut(monkeypatch):
     the moment the job completes. Mirrors test_finalize_job_preserves_ai_timeline."""
     captured: dict = {}
 
-    def _capture_set_status(job_id, status, extra_plan=None):
+    def _capture_set_status(job_id, status, extra_plan=None, **kwargs):
         captured["status"] = status
         captured["plan"] = extra_plan
 

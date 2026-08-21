@@ -643,6 +643,7 @@ def _dispatch_item_render(
     from app.config import settings  # noqa: PLC0415
     from app.schemas.montage_preset import coerce_montage_preset  # noqa: PLC0415
     from app.services.generative_jobs import (  # noqa: PLC0415
+        CONTENT_PLAN_ORIGINAL_VARIANT_POLICY,
         CONTENT_PLAN_PRIMARY_VARIANT_POLICY,
         build_generative_job,
     )
@@ -730,6 +731,9 @@ def _dispatch_item_render(
         db=session,
     )
     try:
+        audio_mode = getattr(item, "audio_mode", "kria")
+        if audio_mode not in {"kria", "original", "voiceover"}:
+            audio_mode = "kria"
         job = build_generative_job(
             user_id=plan.user_id,
             clip_paths=clip_paths,
@@ -756,7 +760,11 @@ def _dispatch_item_render(
             filming_guide=list(item.filming_guide or []),
             # Narrated-walkthrough: user-recorded voiceover rides all_candidates so the
             # narrated archetype can force-align the script and per-step trim the clips.
-            voiceover_gcs_path=str(item.voiceover_gcs_path) if item.voiceover_gcs_path else None,
+            voiceover_gcs_path=(
+                str(item.voiceover_gcs_path)
+                if audio_mode == "voiceover" and item.voiceover_gcs_path
+                else None
+            ),
             # Landscape-clip preference (plan-item editor). Defaults to "fit" via the
             # column server_default; getattr guard tolerates pre-column in-flight rows.
             landscape_fit=str(getattr(item, "landscape_fit", "fit") or "fit"),
@@ -781,7 +789,11 @@ def _dispatch_item_render(
                 for a in (item.clip_assignments or [])
                 if isinstance(a, dict) and a.get("gcs_path") and a.get("user_note")
             },
-            variant_policy=CONTENT_PLAN_PRIMARY_VARIANT_POLICY,
+            variant_policy=(
+                CONTENT_PLAN_ORIGINAL_VARIANT_POLICY
+                if audio_mode == "original"
+                else CONTENT_PLAN_PRIMARY_VARIANT_POLICY
+            ),
             smart_captions=smart_context,
         )
     except ValueError as exc:

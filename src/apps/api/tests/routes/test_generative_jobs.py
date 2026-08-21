@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException, Request
@@ -20,6 +22,7 @@ from app.routes.generative_jobs import (
     GenerativeUploadUrlRequest,
     RetextRequest,
     SwapSongRequest,
+    create_generative_job,
     create_generative_upload_url,
     list_generative_style_sets,
     validate_direct_uploads,
@@ -43,6 +46,103 @@ def test_valid_request():
         clip_gcs_paths=["music-uploads/a.mp4", "slot-uploads/b.mp4"],
     )
     assert len(req.clip_gcs_paths) == 2
+
+
+def test_two_videos_two_images_are_accepted_in_authored_order():
+    paths = [
+        "slot-uploads/qendresa/001-opening.mp4",
+        "slot-uploads/qendresa/002-detail.mov",
+        "slot-uploads/qendresa/003-menu.jpg",
+        "slot-uploads/qendresa/004-room.png",
+    ]
+    req = CreateGenerativeJobRequest(clip_gcs_paths=paths)
+    assert req.clip_gcs_paths == paths
+
+
+@pytest.mark.asyncio
+async def test_create_route_enqueues_two_videos_two_images_in_authored_order(monkeypatch):
+    paths = [
+        "slot-uploads/qendresa/001-opening.mp4",
+        "slot-uploads/qendresa/002-detail.mov",
+        "slot-uploads/qendresa/003-menu.jpg",
+        "slot-uploads/qendresa/004-room.png",
+    ]
+    req = CreateGenerativeJobRequest(clip_gcs_paths=paths)
+    user = SimpleNamespace(id=uuid.uuid4())
+    job = SimpleNamespace(id=uuid.uuid4(), status="queued")
+    db = SimpleNamespace(
+        add=MagicMock(),
+        commit=AsyncMock(),
+        refresh=AsyncMock(),
+        execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None)),
+    )
+    built: dict = {}
+
+    def fake_build(**kwargs):
+        built.update(kwargs)
+        return job
+
+    monkeypatch.setattr(
+        "app.routes.generative_jobs.validate_direct_uploads",
+        AsyncMock(),
+    )
+    monkeypatch.setattr("app.services.generative_jobs.build_generative_job", fake_build)
+    enqueue = AsyncMock()
+    monkeypatch.setattr("app.services.job_dispatch.enqueue_orchestrator", enqueue)
+
+    response = await create_generative_job(req, user, db)
+
+    assert response.status == "queued"
+    assert built["clip_paths"] == paths
+    assert built["montage_preset"] == "masonry"
+    enqueue.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_create_route_keeps_video_only_jobs_on_classic_montage(monkeypatch):
+    req = CreateGenerativeJobRequest(clip_gcs_paths=["slot-uploads/qendresa/opening.mp4"])
+    user = SimpleNamespace(id=uuid.uuid4())
+    job = SimpleNamespace(id=uuid.uuid4(), status="queued")
+    db = SimpleNamespace(
+        add=MagicMock(),
+        commit=AsyncMock(),
+        refresh=AsyncMock(),
+        execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None)),
+    )
+    built: dict = {}
+
+    monkeypatch.setattr("app.routes.generative_jobs.validate_direct_uploads", AsyncMock())
+    monkeypatch.setattr(
+        "app.services.generative_jobs.build_generative_job",
+        lambda **kwargs: built.update(kwargs) or job,
+    )
+    monkeypatch.setattr("app.services.job_dispatch.enqueue_orchestrator", AsyncMock())
+
+    await create_generative_job(req, user, db)
+
+    assert built["montage_preset"] == "classic"
+
+
+@pytest.mark.asyncio
+async def test_create_route_rejects_photo_with_final_voiceover_before_enqueue(monkeypatch):
+    paths = ["slot-uploads/qendresa/opening.mp4", "slot-uploads/qendresa/menu.jpg"]
+    req = CreateGenerativeJobRequest(
+        clip_gcs_paths=paths,
+        voiceover_gcs_path="voiceover-uploads/legacy/voice.webm",
+    )
+    user = SimpleNamespace(id=uuid.uuid4())
+    db = SimpleNamespace(add=MagicMock())
+    monkeypatch.setattr("app.routes.generative_jobs.validate_direct_uploads", AsyncMock())
+
+    with pytest.raises(HTTPException) as exc:
+        await create_generative_job(req, user, db)
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail == (
+        "menu.jpg is a photo. Final voiceover edits currently support video footage only. "
+        "Remove the photo or remove the final voiceover."
+    )
+    db.add.assert_not_called()
 
 
 def test_target_duration_field_removed():
@@ -231,6 +331,151 @@ async def test_validate_direct_uploads_rejects_cross_user_path():
 
 
 @pytest.mark.asyncio
+async def test_authenticated_create_rejects_global_legacy_clip_namespaces():
+    user = SimpleNamespace(id=uuid.uuid4())
+    for path in ("slot-uploads/other-user/clip.mp4", "music-uploads/other-user/clip.mp4"):
+        with pytest.raises(HTTPException) as exc:
+            await validate_direct_uploads(CreateGenerativeJobRequest(clip_gcs_paths=[path]), user)
+        assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_synthetic_create_keeps_legacy_clip_compatibility():
+    from app.auth import SYNTHETIC_USER_ID
+    from app.storage import ObjectMetadata
+
+    req = CreateGenerativeJobRequest(
+        clip_gcs_paths=["slot-uploads/legacy/clip.mp4", "music-uploads/legacy/clip.mp4"]
+    )
+    with patch(
+        "app.routes.generative_jobs.storage.object_metadata",
+        return_value=ObjectMetadata(
+            path="legacy",
+            generation="1",
+            etag=None,
+            size=10_000,
+            content_type="video/mp4",
+        ),
+    ):
+        await validate_direct_uploads(req, SimpleNamespace(id=SYNTHETIC_USER_ID))
+
+
+@pytest.mark.asyncio
+async def test_synthetic_legacy_uploads_still_enforce_aggregate_budget(monkeypatch):
+    from app.auth import SYNTHETIC_USER_ID
+    from app.storage import ObjectMetadata
+
+    req = CreateGenerativeJobRequest(
+        clip_gcs_paths=[f"slot-uploads/legacy/{index}.mp4" for index in range(6)]
+    )
+    monkeypatch.setattr(
+        "app.routes.generative_jobs.storage.object_metadata",
+        lambda object_path: ObjectMetadata(
+            path=object_path,
+            generation="1",
+            etag=None,
+            size=180 * 1024 * 1024,
+            content_type="video/mp4",
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await validate_direct_uploads(req, SimpleNamespace(id=SYNTHETIC_USER_ID))
+    assert exc.value.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_authenticated_create_accepts_validated_legacy_voiceover_during_rollout(monkeypatch):
+    from app.storage import ObjectMetadata
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    clip_path = f"dev-user/{user.id}/generative/abc123def456/clip.mp4"
+    voiceover_path = "voiceover-uploads/legacy/voice.webm"
+    req = CreateGenerativeJobRequest(
+        clip_gcs_paths=[clip_path],
+        voiceover_gcs_path=voiceover_path,
+    )
+    monkeypatch.setattr(
+        "app.routes.generative_jobs.settings.generative_direct_voiceover_strict_enabled",
+        False,
+    )
+    inspected: list[str] = []
+
+    def object_metadata(path: str) -> ObjectMetadata:
+        inspected.append(path)
+        return ObjectMetadata(
+            path=path,
+            generation="1",
+            etag=None,
+            size=10_000,
+            content_type="audio/webm" if path == voiceover_path else "video/mp4",
+        )
+
+    monkeypatch.setattr("app.routes.generative_jobs.storage.object_metadata", object_metadata)
+
+    await validate_direct_uploads(req, user)
+
+    assert set(inspected) == {clip_path, voiceover_path}
+
+
+@pytest.mark.asyncio
+async def test_authenticated_create_strict_mode_rejects_legacy_voiceover(monkeypatch):
+    user = SimpleNamespace(id=uuid.uuid4())
+    req = CreateGenerativeJobRequest(
+        clip_gcs_paths=[f"dev-user/{user.id}/generative/abc123def456/clip.mp4"],
+        voiceover_gcs_path="voiceover-uploads/legacy/voice.webm",
+    )
+    monkeypatch.setattr(
+        "app.routes.generative_jobs.settings.generative_direct_voiceover_strict_enabled",
+        True,
+    )
+    with pytest.raises(HTTPException) as exc:
+        await validate_direct_uploads(req, user)
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_authenticated_create_strict_mode_rejects_cross_user_direct_voiceover(monkeypatch):
+    user = SimpleNamespace(id=uuid.uuid4())
+    other = uuid.uuid4()
+    req = CreateGenerativeJobRequest(
+        clip_gcs_paths=[f"dev-user/{user.id}/generative/abc123def456/clip.mp4"],
+        voiceover_gcs_path=f"voiceover-uploads/direct/{other}/abc123def456/voice.webm",
+    )
+    monkeypatch.setattr(
+        "app.routes.generative_jobs.settings.generative_direct_voiceover_strict_enabled",
+        True,
+    )
+    with pytest.raises(HTTPException) as exc:
+        await validate_direct_uploads(req, user)
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_validate_direct_uploads_enforces_aggregate_budget(monkeypatch):
+    from app.storage import ObjectMetadata
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    paths = [f"dev-user/{user.id}/generative/{index:012x}/clip.mp4" for index in range(6)]
+    req = CreateGenerativeJobRequest(clip_gcs_paths=paths)
+    monkeypatch.setattr(
+        "app.routes.generative_jobs.storage.object_metadata",
+        lambda object_path: ObjectMetadata(
+            path=object_path,
+            generation="1",
+            etag=None,
+            size=180 * 1024 * 1024,
+            content_type="video/mp4",
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await validate_direct_uploads(req, user)
+    assert exc.value.status_code == 413
+    assert exc.value.detail == "Uploads are too large together. Maximum 1 GB combined per project."
+
+
+@pytest.mark.asyncio
 async def test_validate_direct_uploads_rejects_real_oversize_object(monkeypatch):
     import types
 
@@ -336,7 +581,7 @@ async def test_validate_direct_uploads_rejects_non_audio_voiceover(monkeypatch):
     user = types.SimpleNamespace(id=uuid.uuid4())
     voice_path = f"voiceover-uploads/direct/{user.id}/abc123def456/voice.mp4"
     req = CreateGenerativeJobRequest(
-        clip_gcs_paths=["slot-uploads/clip.mp4"],
+        clip_gcs_paths=[f"dev-user/{user.id}/generative/abc123def456/clip.mp4"],
         voiceover_gcs_path=voice_path,
     )
     monkeypatch.setattr(

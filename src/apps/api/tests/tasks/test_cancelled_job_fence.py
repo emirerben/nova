@@ -80,9 +80,7 @@ def test_cancelled_late_finalization_preserves_row_and_deletes_only_fresh_output
     job = _cancelled_job(
         id=job_id,
         assembly_plan={
-            "variants": [
-                {"variant_id": "old", "render_status": "ready", "video_path": old_path}
-            ]
+            "variants": [{"variant_id": "old", "render_status": "ready", "video_path": old_path}]
         },
     )
     before = copy.deepcopy(job.assembly_plan)
@@ -102,11 +100,11 @@ def test_cancelled_late_finalization_preserves_row_and_deletes_only_fresh_output
         accepted = generative_build._finalize_job(  # noqa: SLF001
             str(job_id),
             [
-                    {
-                        "variant_id": "new",
-                        "rank": 1,
-                        "text_mode": "agent_text",
-                        "ok": True,
+                {
+                    "variant_id": "new",
+                    "rank": 1,
+                    "text_mode": "agent_text",
+                    "ok": True,
                     "video_path": fresh_video,
                     "base_video_path": fresh_base,
                     "subject_matte_path": fresh_matte,
@@ -119,6 +117,105 @@ def test_cancelled_late_finalization_preserves_row_and_deletes_only_fresh_output
     session.commit.assert_not_called()
     assert set(deleted) == {fresh_video, fresh_base, fresh_matte, f"{fresh_matte}.json"}
     assert old_path not in deleted
+
+
+def test_manual_draft_first_export_passes_owner_fence_and_promotes_job() -> None:
+    """A linked draft is plan-owned even before its first render changes mode.
+
+    Regression: the shared task fence used to require ``mode=content_plan`` for
+    every linked Job, so manual exports were rejected before FFmpeg could run.
+    """
+    from app.models import ContentPlan, Persona, PlanItem
+
+    job_id = uuid.uuid4()
+    item_id = uuid.uuid4()
+    plan_id = uuid.uuid4()
+    persona_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    job = _cancelled_job(
+        id=job_id,
+        user_id=user_id,
+        status="draft",
+        mode="manual_draft",
+        content_plan_item_id=item_id,
+        content_plan_ownership_epoch=8,
+        assembly_plan={
+            "manual_draft": True,
+            "variants": [{"variant_id": "original_text", "render_status": "rendering"}],
+        },
+    )
+    item = SimpleNamespace(id=item_id, content_plan_id=plan_id, current_job_id=job_id)
+    plan = SimpleNamespace(
+        id=plan_id,
+        user_id=user_id,
+        persona_id=persona_id,
+        ownership_epoch=8,
+        ownership_quarantined_at=None,
+    )
+    persona = SimpleNamespace(id=persona_id, user_id=user_id)
+    session = MagicMock()
+
+    def get(model, _pk, **_kwargs):
+        return {
+            generative_build.Job: job,
+            PlanItem: item,
+            ContentPlan: plan,
+            Persona: persona,
+        }[model]
+
+    session.get.side_effect = get
+
+    @contextmanager
+    def session_factory():
+        yield session
+
+    token = generative_build._CONTENT_PLAN_FENCE.set((str(job_id), 8))  # noqa: SLF001
+    try:
+        with patch.object(generative_build, "_sync_session", session_factory):
+            accepted = generative_build._update_variant_entry(  # noqa: SLF001
+                str(job_id),
+                "original_text",
+                {
+                    "render_status": "ready",
+                    "video_path": f"generative-jobs/{job_id}/manual-export.mp4",
+                },
+            )
+    finally:
+        generative_build._CONTENT_PLAN_FENCE.reset(token)  # noqa: SLF001
+
+    assert accepted is True
+    assert job.mode == "content_plan"
+    assert job.status == "variants_ready"
+    assert job.assembly_plan["variants"][0]["render_status"] == "ready"
+    session.commit.assert_called_once()
+
+
+def test_failed_manual_export_remains_hidden_and_retryable() -> None:
+    job_id = uuid.uuid4()
+    job = _cancelled_job(
+        id=job_id,
+        status="draft",
+        mode="manual_draft",
+        content_plan_item_id=None,
+        assembly_plan={
+            "manual_draft": True,
+            "variants": [{"variant_id": "original_text", "render_status": "rendering"}],
+        },
+    )
+    session_factory, session = _session_context(job)
+
+    with patch.object(generative_build, "_sync_session", session_factory):
+        accepted = generative_build._update_variant_entry(  # noqa: SLF001
+            str(job_id),
+            "original_text",
+            {"render_status": "failed", "error_class": "encoder_error"},
+        )
+
+    assert accepted is True
+    assert job.mode == "manual_draft"
+    assert job.status == "draft"
+    assert job.assembly_plan["variants"][0]["render_status"] == "failed"
+    session.commit.assert_called_once()
 
 
 def test_quarantined_content_plan_job_exits_before_status_agents_or_storage() -> None:
@@ -307,10 +404,7 @@ def test_initial_cancelled_upsert_cleanup_includes_fresh_media_snapshots(
     snapshot_fields: dict[str, str],
 ) -> None:
     job_id = str(uuid.uuid4())
-    result = {
-        key: f"generative-jobs/{job_id}/{name}"
-        for key, name in snapshot_fields.items()
-    }
+    result = {key: f"generative-jobs/{job_id}/{name}" for key, name in snapshot_fields.items()}
     deleted: list[str] = []
     with patch(
         "app.storage.delete_object_best_effort",

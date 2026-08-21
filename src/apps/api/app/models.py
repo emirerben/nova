@@ -960,6 +960,11 @@ class PlanItem(Base):
     # Set via PATCH /plan-items/{id}/voiceover; threaded to build_generative_job at
     # generate time so the narrated archetype can do force-alignment + per-step trimming.
     voiceover_gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Server-authoritative soundtrack policy selected during item setup.
+    # "kria" lets the primary-variant policy choose, "original" forces the
+    # no-track original-audio variant, and "voiceover" activates the separately
+    # stored voiceover_gcs_path. The recording remains resumable when inactive.
+    audio_mode: Mapped[str] = mapped_column(Text, nullable=False, server_default="kria")
     # Original-audio bed level for the narrated archetype (0.0 = voice only,
     # 1.0 = loudest). NULL → Kria's default level. Set via
     # PATCH /plan-items/{id}/voiceover-bed-level; threaded to build_generative_job
