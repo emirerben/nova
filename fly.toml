@@ -62,16 +62,15 @@ kill_timeout = 300
   # when RENDER_AUTOSTOP_ENABLED is on. concurrency=2: these are quick,
   # light, non-FFmpeg tasks — no encode-contention concern like the worker
   # process has.
-  light = "celery -A app.worker worker --loglevel=info --concurrency=2 -Q maintenance"
+  # -B: Celery Beat runs embedded in this process (2026-08-22, cost cut —
+  # replaces the separate `beat` process group + its 256MB machine). Beat
+  # drives the every-5-min stale-job sweeper and the render-worker lifecycle
+  # backstop. Beat does NOT de-duplicate across replicas, so `light` MUST
+  # stay at exactly one machine (`fly scale count light=1`).
+  light = "celery -A app.worker worker --loglevel=info --concurrency=2 -Q maintenance -B"
   # Image/video metadata analysis is network-bound but downloads media, so it
   # must not share the 1GB maintenance VM or wait behind long render jobs.
   autoplace = "celery -A app.worker worker --loglevel=info --concurrency=2 -Q autoplace-jobs"
-  # Celery Beat — single instance, drives the every-5-min stale-job
-  # sweeper (app/tasks/maintenance.py) that catches orphans created when
-  # autoretry budgets are exhausted AND _mark_failed itself failed.
-  # MUST remain a single process group with one machine — Beat doesn't
-  # de-duplicate across replicas. See [[vm]] below for the small VM.
-  beat = "celery -A app.worker beat --loglevel=info"
 
 # ---------------------------------------------------------------------------
 # HTTP service (api process only)
@@ -162,17 +161,8 @@ kill_timeout = 300
   # the worker pool (which has 6144MB).
   memory_mb = 2048
 
-# Beat — tiny VM, schedules periodic tasks (no real CPU/memory needs).
-# Keep at 1 machine; Beat schedule de-duplication across replicas is not
-# trivial and we don't need it for a single 5-min sweeper.
-[[vm]]
-  processes = ["beat"]
-  cpu_kind = "shared"
-  cpus = 1
-  memory_mb = 256
-
-# Light — small always-on VM for the Beat-triggered maintenance tasks
-# (see task_routes in app/worker.py). Deliberately does NOT host any
+# Light — small always-on VM for embedded Beat (-B) + the Beat-triggered
+# maintenance tasks (see task_routes in app/worker.py). Deliberately does NOT host any
 # task that downloads media or loads torch (match_pool_clips,
 # style_vision_build.*, drive_import.*, agentic_template_build_task,
 # analyze_music_track_task all stay on the render worker) — those would
