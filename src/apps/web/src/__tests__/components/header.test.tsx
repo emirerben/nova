@@ -1,5 +1,7 @@
 /**
- * Header isLight predicate tests (D21 — light unification).
+ * Header isLight predicate + account menu tests (D21 — light unification;
+ * Kria Design System Lane A — borderless header, shadcn DropdownMenu account
+ * menu).
  *
  * Verifies that the light editorial design system is applied to all user-facing
  * routes (/plan, /library, /generative) and NOT to dark render job routes.
@@ -7,7 +9,8 @@
 
 // @ts-nocheck
 import React from "react";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 
 let mockPathname = "/";
@@ -16,15 +19,11 @@ jest.mock("next/navigation", () => ({
   usePathname: jest.fn(() => mockPathname),
 }));
 
+const mockSignOut = jest.fn();
 jest.mock("next-auth/react", () => ({
   useSession: jest.fn(() => ({ data: null, status: "unauthenticated" })),
   signIn: jest.fn(),
-  signOut: jest.fn(),
-}));
-
-const mockResetPersona = jest.fn();
-jest.mock("@/lib/plan-api", () => ({
-  resetPersona: (...args: unknown[]) => mockResetPersona(...args),
+  signOut: (...args: unknown[]) => mockSignOut(...args),
 }));
 
 import Header from "@/components/Header";
@@ -60,11 +59,11 @@ describe("Header — isLight predicate", () => {
     expect(screen.queryByRole("link", { name: /create my first edit/i })).not.toBeInTheDocument();
   });
 
-  it("test_header_light_on_plan: /plan keeps the standard light auth header", () => {
+  it("test_header_light_on_plan: /plan is light and borderless, with the standard auth control", () => {
     const { container } = renderWithPathname("/plan");
     const header = container.querySelector("header");
     expect(header!.className).toContain("bg-[#ffffff]");
-    expect(header!.className).toContain("border-b");
+    expect(header!.className).not.toContain("border-b");
     expect(screen.getByRole("button", { name: /sign in/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Terms" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Privacy" })).toBeInTheDocument();
@@ -99,67 +98,74 @@ describe("Header — isLight predicate", () => {
     const header = container.querySelector("header");
     expect(header!.className).not.toContain("bg-[#ffffff]");
   });
-});
 
-describe("Header — Start over (authenticated)", () => {
-  const { useSession } = require("next-auth/react");
-
-  beforeEach(() => {
-    mockPathname = "/plan";
-    mockResetPersona.mockReset();
+  it("test_header_no_plan_link: authenticated header has no Plan/Create nav link, on any route", () => {
     useSession.mockReturnValue({
       data: { user: { name: "Test User", email: "test@example.com", image: null } },
       status: "authenticated",
     });
-    // jsdom doesn't implement window.location.assign; replace with a spy.
-    Object.defineProperty(window, "location", {
-      value: { assign: jest.fn() },
-      writable: true,
+    renderWithPathname("/plan");
+    expect(screen.queryByRole("link", { name: /^plan$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /^create$/i })).not.toBeInTheDocument();
+  });
+});
+
+describe("Header — account menu (authenticated)", () => {
+  const { useSession } = require("next-auth/react");
+
+  beforeEach(() => {
+    mockPathname = "/plan";
+    mockSignOut.mockReset();
+    useSession.mockReturnValue({
+      data: { user: { name: "Test User", email: "test@example.com", image: null } },
+      status: "authenticated",
     });
   });
 
-  function openMenu() {
+  async function openMenu() {
+    const user = userEvent.setup();
     const avatar = screen.getByRole("button", { name: /account menu/i });
-    fireEvent.click(avatar);
+    await user.click(avatar);
+    return user;
   }
 
-  it("test_start_over_visible_in_dropdown", () => {
+  it("test_account_menu_opens_with_my_videos_and_sign_out", async () => {
     render(<Header />);
-    openMenu();
-    expect(screen.getByRole("button", { name: /start over/i })).toBeInTheDocument();
+    await openMenu();
+    expect(await screen.findByRole("menuitem", { name: /my videos/i })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /sign out/i })).toBeInTheDocument();
   });
 
-  it("test_start_over_shows_confirm_on_click", () => {
+  it("test_account_menu_shows_name_label", async () => {
     render(<Header />);
-    openMenu();
-    fireEvent.click(screen.getByRole("button", { name: /^start over$/i }));
-    expect(
-      screen.getByText(/deletes your plan/i),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /yes, start over/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /cancel/i })).toBeInTheDocument();
+    await openMenu();
+    await screen.findByRole("menu");
+    expect(screen.getByText("Test User")).toBeInTheDocument();
   });
 
-  it("test_start_over_cancel_restores_menu", () => {
+  it("test_account_menu_my_videos_links_to_plan", async () => {
     render(<Header />);
-    openMenu();
-    fireEvent.click(screen.getByRole("button", { name: /^start over$/i }));
-    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
-    // "Start over" button is back; confirm text is gone.
-    expect(screen.getByRole("button", { name: /^start over$/i })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /yes, start over/i })).not.toBeInTheDocument();
-    expect(mockResetPersona).not.toHaveBeenCalled();
+    await openMenu();
+    const myVideos = await screen.findByRole("menuitem", { name: /my videos/i });
+    expect(myVideos.getAttribute("href")).toBe("/plan");
   });
 
-  it("test_start_over_confirm_calls_reset_and_navigates", async () => {
-    mockResetPersona.mockResolvedValue({ reset: true });
+  it("test_account_menu_sign_out_calls_signOut", async () => {
     render(<Header />);
-    openMenu();
-    fireEvent.click(screen.getByRole("button", { name: /^start over$/i }));
-    fireEvent.click(screen.getByRole("button", { name: /yes, start over/i }));
+    const user = await openMenu();
+    const signOutItem = await screen.findByRole("menuitem", { name: /sign out/i });
+    await user.click(signOutItem);
     await waitFor(() => {
-      expect(mockResetPersona).toHaveBeenCalledTimes(1);
-      expect(window.location.assign).toHaveBeenCalledWith("/plan");
+      expect(mockSignOut).toHaveBeenCalledWith({ callbackUrl: "/" });
     });
+  });
+
+  it("test_account_menu_has_no_persona_or_start_over", async () => {
+    render(<Header />);
+    await openMenu();
+    await screen.findByRole("menu");
+    expect(screen.queryByRole("menuitem", { name: /your persona/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /start over/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/deletes your plan/i)).not.toBeInTheDocument();
   });
 });

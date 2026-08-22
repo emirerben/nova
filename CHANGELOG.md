@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.47.1.0] — 2026-08-22
+
+### Design system
+- **Borderless header + shadcn account menu (Kria Design System migration,
+  Lane A).** `Header.tsx`: dropped the `border-b` under the light header and
+  the "Plan"/"Create" nav link (+ dead `creationHubEnabled`). The avatar is
+  now a `DropdownMenuTrigger` wrapping `<Button variant="ghost" size="icon">`;
+  the account menu is a shadcn `DropdownMenuContent` (name label · My videos ·
+  separator · Sign out) — "Your persona" and the inline "Start over" reset
+  flow (+ its `resetPersona` call) are removed from the header entirely. Dark
+  routes (`/template-jobs`) get `className="dark"` on the menu content so it
+  keeps its zinc/amber palette. Sign-in uses `<Button variant="outline"
+  size="sm">`. See DESIGN.md §3 "Header" bullet.
+
 ## [0.47.0.0] — 2026-08-22
 
 ### Design system
