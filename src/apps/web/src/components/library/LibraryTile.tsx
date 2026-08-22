@@ -1,30 +1,25 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { ContentPlan } from "@/lib/plan-api";
-import { addJobToPlan, type LibraryJob } from "@/lib/me-api";
-import { downloadVideo } from "@/lib/download-video";
-import FeedbackButtons from "./FeedbackButtons";
-import { TikTokPublishDialog } from "@/components/TikTokPublishDialog";
+import Link from "next/link";
+import type { LibraryJob } from "@/lib/me-api";
 import { getTikTokPublication, shouldPollTikTokPublication, type TikTokPublication } from "@/lib/tiktok-api";
 import { jobFailureCopy } from "@/lib/job-failure-copy";
+import { Badge } from "@/components/ui/badge";
+import { buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/cn";
 
 /**
  * One 9:16 video in the library. Light editorial canvas (D20/D21).
+ *
+ * Poster tile (DESIGN.md §15 / §12, Paper "P1 Home" + "C3 Cards, media &
+ * lists"): media + a status badge, and — when the video is pinned to a plan
+ * item — the whole tile is a `<Link>` to that item's page with a hover/focus
+ * "Open" pill. Download/Publish/Add-to-plan/feedback controls live only on
+ * the item page now; nothing else renders as a footer action row here.
  */
-export default function LibraryTile({
-  job,
-  plan,
-  onPinned,
-  canPublishToTikTok,
-}: {
-  job: LibraryJob;
-  plan: ContentPlan | null;
-  onPinned: (planItemId: string) => void;
-  canPublishToTikTok: boolean;
-}) {
+export default function LibraryTile({ job }: { job: LibraryJob }) {
   const failureCopy = jobFailureCopy(job.error_class ?? job.failure_reason ?? job.raw_status);
-  const [publishOpen, setPublishOpen] = useState(false);
   const [latestPublication, setLatestPublication] = useState<TikTokPublication | null>(
     job.tiktok_publication,
   );
@@ -37,82 +32,84 @@ export default function LibraryTile({
     }, 5000);
     return () => window.clearInterval(timer);
   }, [latestPublication]);
-  return (
-    <div className="motion-safe:animate-fade-up">
-      <div className="relative aspect-[9/16] overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100">
-        {job.status === "ready" && job.output_url ? (
-          <video
-            src={job.output_url}
-            controls
-            preload="metadata"
-            playsInline
-            className="h-full w-full object-cover"
-            aria-label="Your video"
-          />
-        ) : job.status === "failed" ? (
-          <div className="flex h-full w-full flex-col items-center justify-center gap-2 p-4 text-center">
-            <span className="text-sm font-medium text-[#3f3f46]">{failureCopy.title}</span>
-            <span className="text-xs text-[#71717a]">{failureCopy.detail}</span>
-            {failureCopy.action === "contact_support" && (
-              <span className="text-[11px] text-[#a1a1aa]">
-                Support reference:{" "}
-                <code className="select-all font-mono">{job.id}</code>
-              </span>
-            )}
-          </div>
-        ) : (
-          <div className="flex h-full w-full items-center justify-center bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer">
-            <span className="text-sm text-[#71717a]">Rendering…</span>
-          </div>
-        )}
-      </div>
 
-      {job.status === "ready" && (
-        <div className="mt-2">
-          {job.content_plan_item_id ? (
-            <span className="inline-flex items-center text-xs font-medium uppercase tracking-wide text-lime-700">
-              In your plan
+  const href = job.content_plan_item_id ? `/plan/items/${job.content_plan_item_id}` : null;
+  const isFailed = job.status === "failed";
+  const isReady = job.status === "ready" && Boolean(job.output_url);
+
+  const media = (
+    <div
+      className={cn(
+        "relative aspect-[9/16] overflow-hidden rounded-xl border bg-zinc-100",
+        isFailed ? "border-dashed border-zinc-300" : "border-zinc-200",
+      )}
+    >
+      {isReady ? (
+        <video
+          src={job.output_url!}
+          preload="metadata"
+          muted
+          playsInline
+          className="h-full w-full object-cover"
+          aria-label="Your video"
+        />
+      ) : isFailed ? (
+        <div className="flex h-full w-full flex-col items-center justify-center gap-2 p-4 text-center">
+          <span className="font-display text-base text-[#3f3f46]">{failureCopy.title}</span>
+          <span className="text-xs text-[#71717a]">
+            {href ? "Open to retry." : failureCopy.detail}
+          </span>
+          {failureCopy.action === "contact_support" && (
+            <span className="text-[11px] text-[#a1a1aa]">
+              Support reference:{" "}
+              <code className="select-all font-mono">{job.id}</code>
             </span>
-          ) : (
-            <AddToPlan job={job} plan={plan} onPinned={onPinned} />
           )}
-          {job.output_url && (
-            <div className="mt-2 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() =>
-                  downloadVideo(
-                    job.download_url ?? job.output_url!,
-                    `kria-${job.id.slice(0, 8)}.mp4`,
-                    !job.download_url,
-                  )
-                }
-                className="min-h-11 rounded-full border border-zinc-200 px-3 py-1.5 text-xs font-medium text-[#3f3f46] transition-colors hover:border-zinc-400"
-              >
-                Download
-              </button>
-              {canPublishToTikTok && job.tiktok_publishable && (
-                <button
-                  type="button"
-                  onClick={() => setPublishOpen(true)}
-                  className="min-h-11 rounded-full bg-[#0c0c0e] px-3 py-1.5 text-xs font-semibold text-white"
-                >
-                  Publish to TikTok
-                </button>
-              )}
-            </div>
-          )}
-          {latestPublication && <TikTokStatus publication={latestPublication} />}
-          <FeedbackButtons jobId={job.id} initialSignal={job.feedback_signal} />
+        </div>
+      ) : (
+        <div className="h-full w-full bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
+      )}
+
+      {isReady && (
+        <Badge variant="lime-soft" className="absolute bottom-2 left-2 normal-case tracking-normal">
+          Ready to post
+        </Badge>
+      )}
+      {!isReady && !isFailed && (
+        <Badge variant="zinc" className="absolute bottom-2 left-2 gap-1.5 normal-case tracking-normal">
+          <span className="h-1.5 w-1.5 rounded-full bg-lime-500" aria-hidden="true" />
+          Rendering…
+        </Badge>
+      )}
+
+      {href && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-all duration-150 group-hover:bg-black/40 group-hover:opacity-100 group-focus-visible:bg-black/40 group-focus-visible:opacity-100">
+          <span
+            className={cn(
+              buttonVariants({ variant: "outline", size: "pill" }),
+              "border-transparent bg-white text-[#0c0c0e]",
+            )}
+          >
+            Open
+          </span>
         </div>
       )}
-      <TikTokPublishDialog
-        open={publishOpen}
-        jobId={job.id}
-        variantId={job.output_variant_id}
-        onClose={() => setPublishOpen(false)}
-        onPublished={setLatestPublication}
-      />
+    </div>
+  );
+
+  return (
+    <div className="motion-safe:animate-fade-up">
+      {href ? (
+        <Link
+          href={href}
+          className="group block rounded-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0c0c0e]"
+        >
+          {media}
+        </Link>
+      ) : (
+        media
+      )}
+      {latestPublication && <TikTokStatus publication={latestPublication} />}
     </div>
   );
 }
@@ -152,77 +149,4 @@ function TikTokStatus({ publication }: { publication: TikTokPublication }) {
 
 function formatMetric(value: number | null | undefined) {
   return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(value ?? 0);
-}
-
-function AddToPlan({
-  job,
-  plan,
-  onPinned,
-}: {
-  job: LibraryJob;
-  plan: ContentPlan | null;
-  onPinned: (planItemId: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  if (!plan || plan.items.length === 0) {
-    return (
-      <a href="/plan" className="text-xs text-[#71717a] underline-offset-2 hover:underline">
-        Create a plan to pin this →
-      </a>
-    );
-  }
-
-  async function pin(dayIndex: number) {
-    setBusy(true);
-    setError(null);
-    try {
-      const updated = await addJobToPlan(job.id, dayIndex);
-      if (updated.content_plan_item_id) onPinned(updated.content_plan_item_id);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't add to plan");
-    } finally {
-      setBusy(false);
-      setOpen(false);
-    }
-  }
-
-  return (
-    <div>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        disabled={busy}
-        aria-expanded={open}
-        className="min-h-11 rounded-full border border-zinc-200 px-3 py-1.5 text-xs font-medium text-[#3f3f46] transition-colors hover:border-zinc-400 disabled:opacity-60"
-      >
-        {busy ? "Adding…" : "Add to plan"}
-      </button>
-      {open && (
-        <label className="mt-2 block">
-          <span className="sr-only">Choose a plan day</span>
-          <select
-            defaultValue=""
-            onChange={(e) => {
-              const v = e.target.value;
-              if (v) void pin(Number(v));
-            }}
-            className="min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-2 text-sm text-[#3f3f46]"
-          >
-            <option value="" disabled>
-              Pick a day…
-            </option>
-            {plan.items.filter((it) => it.day_index != null).map((it) => (
-              <option key={it.id} value={it.day_index!}>
-                Day {it.day_index} — {it.theme}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
-    </div>
-  );
 }

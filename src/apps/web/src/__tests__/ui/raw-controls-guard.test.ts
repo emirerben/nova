@@ -216,8 +216,16 @@ const LANE_A_BASELINE: Record<string, number> = {
 };
 
 // ── Lane B ──────────────────────────────────────────────────────────────
-// (none yet)
-const LANE_B_BASELINE: Record<string, number> = {};
+// Poster tiles + Integrations row + feedback-pill removal converted every
+// raw control in these three files to shadcn primitives (Button/Badge/
+// DropdownMenu/AlertDialog/Skeleton). `components/library/FeedbackButtons.tsx`
+// is deleted outright, so its Lane 0 baseline entry is now moot (scan() only
+// counts files that still exist).
+const LANE_B_BASELINE: Record<string, number> = {
+  "components/library/LibraryTile.tsx": 0,
+  "components/library/TikTokConnectionCard.tsx": 0,
+  "app/plan/_components/workspace/WorkspaceHome.tsx": 0,
+};
 
 // ── Lane C ──────────────────────────────────────────────────────────────
 // (none yet)

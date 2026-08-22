@@ -25,6 +25,30 @@ All notable changes to this project will be documented in this file.
   routes (`/template-jobs`) get `className="dark"` on the menu content so it
   keeps its zinc/amber palette. Sign-in uses `<Button variant="outline"
   size="sm">`. See DESIGN.md §3 "Header" bullet.
+## [0.47.2.0] — 2026-08-22
+
+### Design system
+- **Poster tiles + Integrations row, feedback pills removed (Kria Design
+  System migration, Lane B).** `/plan` home rebuilt on the shadcn primitives
+  from Lane 0:
+  - `LibraryTile` is now poster + status + one action. A `Badge` shows
+    `lime-soft` "Ready to post" / `zinc` "Rendering…" (6px lime dot) over the
+    media; a failed render swaps to a dashed zinc tile with the structured
+    failure copy. When the job is pinned to a plan item the whole tile is a
+    `<Link>` to `/plan/items/{id}` with a hover/focus "Open" pill; a job with
+    no plan item (legacy standalone generative rows) renders status only.
+    Download, Publish to TikTok, Add to plan, and the three thumb reactions
+    are gone from the tile — Download/Publish live on the item page.
+  - `FeedbackButtons.tsx` deleted outright (backend `sendFeedback`/
+    `clearFeedback` in `me-api.ts` untouched, just unused from the product
+    UI for now).
+  - `TikTokConnectionCard` redrawn as one Integrations row: brand glyph ·
+    name + status `Badge` · one-line meta · a `Button` Connect/Reconnect or
+    a `DropdownMenu` overflow (Sync performance / Disconnect). Disconnect is
+    an `AlertDialog` ("Disconnect TikTok?"), replacing `window.confirm`.
+  - `WorkspaceHome`'s CTA, retry, and load-more controls now use `Button`;
+    the loading grid uses `Skeleton` (keeping the shimmer gradient class).
+  - See DESIGN.md §12 "Basic home" for the updated tile/Integrations spec.
 
 ## [0.47.0.0] — 2026-08-22
 
