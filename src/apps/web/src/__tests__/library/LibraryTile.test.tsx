@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import "@testing-library/jest-dom";
 import LibraryTile from "@/components/library/LibraryTile";
 import type { LibraryJob } from "@/lib/me-api";
 
@@ -36,9 +37,7 @@ it("tells the creator their TikTok upload is waiting in the app inbox, not TikTo
     },
   };
 
-  render(
-    <LibraryTile job={job} plan={null} onPinned={jest.fn()} canPublishToTikTok />,
-  );
+  render(<LibraryTile job={job} />);
 
   expect(screen.getByText("Waiting in your TikTok app inbox")).not.toBeNull();
   expect(screen.getByText(/Open the TikTok app/)).not.toBeNull();
@@ -66,9 +65,7 @@ it("does not claim a live public post is waiting in the inbox", () => {
     },
   };
 
-  render(
-    <LibraryTile job={job} plan={null} onPinned={jest.fn()} canPublishToTikTok />,
-  );
+  render(<LibraryTile job={job} />);
 
   expect(screen.getByText("Live on TikTok")).not.toBeNull();
   expect(screen.queryByText("Waiting in your TikTok app inbox")).toBeNull();
@@ -83,10 +80,55 @@ it("uses structured failure taxonomy without exposing raw worker status", () => 
     output_url: null,
   };
 
-  render(
-    <LibraryTile job={job} plan={null} onPinned={jest.fn()} canPublishToTikTok={false} />,
-  );
+  render(<LibraryTile job={job} />);
 
   expect(screen.getByText("The render took too long")).not.toBeNull();
   expect(screen.queryByText(/variants_failed/)).toBeNull();
+});
+
+it("wraps a pinned video in a single Open link to its plan item — no other controls", () => {
+  const job: LibraryJob = { ...baseJob, content_plan_item_id: "item-42" };
+
+  render(<LibraryTile job={job} />);
+
+  const links = screen.getAllByRole("link");
+  expect(links).toHaveLength(1);
+  expect(links[0]).toHaveAttribute("href", "/plan/items/item-42");
+  expect(screen.getByText("Open")).toBeInTheDocument();
+
+  // Old per-tile action row is gone entirely — those live on the item page now.
+  expect(screen.queryByRole("button", { name: /download/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /publish to tiktok/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /add to plan/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole("group", { name: /rate this video/i })).not.toBeInTheDocument();
+});
+
+it("renders status only, with no Open link, for a job that isn't pinned to a plan item", () => {
+  const job: LibraryJob = { ...baseJob, content_plan_item_id: null };
+
+  render(<LibraryTile job={job} />);
+
+  expect(screen.queryByRole("link")).not.toBeInTheDocument();
+  expect(screen.queryByText("Open")).not.toBeInTheDocument();
+});
+
+it("shows a Ready-to-post badge on a finished video", () => {
+  const job: LibraryJob = { ...baseJob, content_plan_item_id: "item-1" };
+
+  render(<LibraryTile job={job} />);
+
+  expect(screen.getByText("Ready to post")).toBeInTheDocument();
+});
+
+it("shows a Rendering badge while a video is still processing", () => {
+  const job: LibraryJob = {
+    ...baseJob,
+    status: "generating",
+    output_url: null,
+    content_plan_item_id: "item-1",
+  };
+
+  render(<LibraryTile job={job} />);
+
+  expect(screen.getByText("Rendering…")).toBeInTheDocument();
 });

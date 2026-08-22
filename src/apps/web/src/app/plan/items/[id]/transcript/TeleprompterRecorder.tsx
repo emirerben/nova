@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { StableVideo } from "@/components/StableVideo";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { fmtTime, useAudioRecorder, type AudioTake } from "@/hooks/useAudioRecorder";
 import { uploadVoiceover } from "@/lib/generative-api";
@@ -149,24 +150,26 @@ export default function TeleprompterRecorder({
 
   const fontControls = (
     <div className="flex items-center gap-1.5" role="group" aria-label="Transcript text size">
-      <button
+      <Button
         type="button"
+        variant="outline"
         onClick={() => setSizeIndex((i) => Math.max(0, i - 1))}
         disabled={sizeIndex === 0}
         aria-label="Smaller text"
-        className="flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 bg-white text-sm text-[#3f3f46] hover:border-zinc-400 disabled:opacity-40"
+        className="h-9 w-9 p-0 text-sm font-normal"
       >
         A−
-      </button>
-      <button
+      </Button>
+      <Button
         type="button"
+        variant="outline"
         onClick={() => setSizeIndex((i) => Math.min(FONT_SIZES.length - 1, i + 1))}
         disabled={sizeIndex === FONT_SIZES.length - 1}
         aria-label="Larger text"
-        className="flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 bg-white text-sm text-[#3f3f46] hover:border-zinc-400 disabled:opacity-40"
+        className="h-9 w-9 p-0 text-sm font-normal"
       >
         A+
-      </button>
+      </Button>
     </div>
   );
 
@@ -200,29 +203,31 @@ export default function TeleprompterRecorder({
   const recordControls = (
     <div className="flex items-center gap-3">
       {rec.phase === "recording" ? (
-        <button
+        <Button
           type="button"
+          variant="ink"
           onClick={rec.stop}
           disabled={saving}
           aria-label="Stop recording"
           aria-pressed
-          className="inline-flex min-h-[44px] items-center gap-2 rounded-full bg-[#0c0c0e] px-6 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-80 disabled:opacity-40"
+          className="min-h-[44px] gap-2 px-6 py-2 text-sm"
         >
           <span aria-hidden className="h-2.5 w-2.5 rounded-sm bg-white" />
           Stop
-        </button>
+        </Button>
       ) : (
-        <button
+        <Button
           type="button"
+          variant="ink"
           onClick={() => void rec.start()}
           disabled={saving || !rec.recordSupported}
           aria-label="Start recording"
           aria-pressed={false}
-          className="inline-flex min-h-[44px] items-center gap-2 rounded-full bg-[#0c0c0e] px-6 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-80 disabled:opacity-40"
+          className="min-h-[44px] gap-2 px-6 py-2 text-sm"
         >
           <span aria-hidden className="h-2.5 w-2.5 rounded-full bg-red-500" />
           {saving ? "Saving…" : "Record"}
-        </button>
+        </Button>
       )}
       {rec.phase === "recording" && (
         <span className="inline-flex items-center gap-2 text-sm tabular-nums text-[#71717a]">

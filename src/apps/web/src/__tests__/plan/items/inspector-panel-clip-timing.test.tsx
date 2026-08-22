@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom";
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import InspectorPanel from "@/app/plan/items/[id]/_editor/InspectorPanel";
 
@@ -81,7 +82,8 @@ describe("InspectorPanel clip timing", () => {
     expect(onPatchClipLook).toHaveBeenCalledWith("faded_analog");
   });
 
-  it("shows and emits all per-clip controls for a customizable look", () => {
+  it("shows and emits all per-clip controls for a customizable look", async () => {
+    const user = userEvent.setup();
     const onPatchClipLookAdjustments = jest.fn();
     const onRecordClipLookAdjustments = jest.fn();
     render(
@@ -140,25 +142,30 @@ describe("InspectorPanel clip timing", () => {
 
     expect(screen.getByRole("radio", { name: "Olive Film" })).toBeChecked();
     expect(screen.queryByRole("radio", { name: "Golden Hour" })).not.toBeInTheDocument();
-    expect(screen.getByRole("slider", { name: "Look strength" })).toHaveValue("80");
-    expect(screen.getByRole("slider", { name: "Look warmth" })).toHaveValue("10");
-    expect(screen.getByRole("slider", { name: "Look contrast" })).toHaveValue("-20");
-    expect(screen.getByRole("slider", { name: "Look grain" })).toHaveValue("30");
-    expect(screen.getByRole("slider", { name: "Look vignette" })).toHaveValue("40");
+    expect(screen.getByRole("slider", { name: "Look strength" })).toHaveAttribute("aria-valuenow", "80");
+    expect(screen.getByRole("slider", { name: "Look warmth" })).toHaveAttribute("aria-valuenow", "10");
+    expect(screen.getByRole("slider", { name: "Look contrast" })).toHaveAttribute("aria-valuenow", "-20");
+    expect(screen.getByRole("slider", { name: "Look grain" })).toHaveAttribute("aria-valuenow", "30");
+    expect(screen.getByRole("slider", { name: "Look vignette" })).toHaveAttribute("aria-valuenow", "40");
 
+    // A shadcn Slider (Radix), not a native range input — no `.value`/`change`
+    // event to drive; keyboard nudges instead. Each arrow press is its own
+    // undoable gesture (unlike a mouse drag), so it records once per press.
     const warmth = screen.getByRole("slider", { name: "Look warmth" });
-    expect(warmth).toHaveClass("h-11", "focus-visible:outline-lime-500");
-    fireEvent.pointerDown(warmth);
-    fireEvent.change(warmth, {
-      target: { value: "35" },
-    });
-    fireEvent.change(warmth, { target: { value: "36" } });
+    // The 44px touch target is now guaranteed by the shadcn Slider primitive
+    // itself (a `before:inset-[-12px]` hit-area pseudo-element around the
+    // 20px visible thumb, per DESIGN.md §15) rather than an ad-hoc h-11 class
+    // on the native input this replaced.
+    warmth.focus();
+    await user.keyboard("{ArrowRight}");
     expect(onRecordClipLookAdjustments).toHaveBeenCalledTimes(1);
-    expect(onPatchClipLookAdjustments).toHaveBeenCalledWith({ warmth: 0.35 });
-    expect(onPatchClipLookAdjustments).toHaveBeenLastCalledWith({ warmth: 0.36 });
+    expect(onPatchClipLookAdjustments).toHaveBeenCalledWith({ warmth: 0.11 });
+    await user.keyboard("{ArrowRight}");
+    expect(onRecordClipLookAdjustments).toHaveBeenCalledTimes(2);
+    expect(onPatchClipLookAdjustments).toHaveBeenLastCalledWith({ warmth: 0.11 });
 
     fireEvent.click(screen.getByRole("button", { name: "Reset" }));
-    expect(onRecordClipLookAdjustments).toHaveBeenCalledTimes(2);
+    expect(onRecordClipLookAdjustments).toHaveBeenCalledTimes(3);
     expect(onPatchClipLookAdjustments).toHaveBeenLastCalledWith({
       intensity: 1,
       warmth: 0,

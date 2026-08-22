@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { StableVideo } from "@/components/StableVideo";
+import { cn } from "@/lib/cn";
 import {
   INTRO_SIZE_MAX,
   INTRO_SIZE_MIN,
@@ -19,6 +20,14 @@ import { LayoutPreviewCard } from "@/components/variant-editor/LayoutPreviewCard
 import { resolveIntroParams } from "@/components/variant-editor/resolve-intro-params";
 import type { VariantEditSession } from "@/lib/variant-editor/useVariantEditSession";
 import { isInstantEditEligible } from "@/lib/variant-editor/eligibility";
+import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 export const RERENDER_BASELINE_MS = 120_000;
 
 // Re-exported from the shared module so existing `@/app/generative/VariantCard`
@@ -85,6 +94,9 @@ export function VariantCard({
   hideVideoWell?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
+  // Forces the "Swap song…" Select trigger to remount after each pick so it
+  // reverts to the placeholder (a one-shot action, not a persisted value).
+  const [swapKey, setSwapKey] = useState(0);
   const rendering = variant.render_status === "rendering" || busy;
   const failed = variant.render_status === "failed";
 
@@ -289,7 +301,9 @@ export function VariantCard({
 
       <div className="mt-3 flex flex-wrap gap-2">
         {onToggleClips && (
-          <button
+          <Button
+            type="button"
+            variant="ghost"
             onClick={onToggleClips}
             disabled={rendering}
             className={
@@ -299,10 +313,12 @@ export function VariantCard({
             }
           >
             {clipsOpen ? "Hide clips ▲" : "Edit clips ▼"}
-          </button>
+          </Button>
         )}
         {!rendering && !failed && variant.output_url && (
-          <button
+          <Button
+            type="button"
+            variant="ghost"
             onClick={() =>
               downloadVideo(
                 variant.download_url ?? variant.output_url!,
@@ -313,21 +329,25 @@ export function VariantCard({
             className={btnClass}
           >
             Download
-          </button>
+          </Button>
         )}
         {instantEligible && editSession ? (
           // Instant editor entry point — supersedes the prompt()-based text
           // controls below for eligible variants (one batched render on Done).
-          <button
+          <Button
+            type="button"
+            variant="ghost"
             disabled={rendering}
             onClick={editSession.enterEdit}
             className={btnClass}
           >
             Edit text &amp; style
-          </button>
+          </Button>
         ) : (
           <>
-            <button
+            <Button
+              type="button"
+              variant="ghost"
               disabled={rendering || sequenceSynced}
               title={sequenceSynced ? SEQUENCE_TEXT_LOCKED_HINT : undefined}
               onClick={() => {
@@ -337,29 +357,33 @@ export function VariantCard({
               className={btnClass}
             >
               Edit text
-            </button>
-            <button
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
               disabled={rendering || sequenceSynced}
               title={sequenceSynced ? SEQUENCE_TEXT_LOCKED_HINT : undefined}
               onClick={() => run(onRemoveText)}
               className={btnClass}
             >
               Remove text
-            </button>
+            </Button>
           </>
         )}
         {!instantEligible && onResize && curPx != null && (
           <div className={sizeControlClass}>
-            <button
+            <Button
+              type="button"
+              variant="ghost"
               disabled={rendering || curPx <= INTRO_SIZE_MIN}
               onClick={() =>
                 run(() => onResize(Math.max(INTRO_SIZE_MIN, curPx - INTRO_SIZE_STEP)))
               }
               aria-label="Smaller intro text"
-              className={sizeBtnClass}
+              className={cn("h-auto rounded-none", sizeBtnClass)}
             >
               A−
-            </button>
+            </Button>
             <span
               title={
                 variant.intro_size_source === "user"
@@ -370,38 +394,41 @@ export function VariantCard({
             >
               {variant.intro_size_source === "user" ? `${curPx}` : `${curPx} auto`}
             </span>
-            <button
+            <Button
+              type="button"
+              variant="ghost"
               disabled={rendering || curPx >= INTRO_SIZE_MAX}
               onClick={() =>
                 run(() => onResize(Math.min(INTRO_SIZE_MAX, curPx + INTRO_SIZE_STEP)))
               }
               aria-label="Bigger intro text"
-              className={sizeBtnClass}
+              className={cn("h-auto rounded-none", sizeBtnClass)}
             >
               A+
-            </button>
+            </Button>
           </div>
         )}
         {!instantEligible && styleSets.length > 0 && (
-          <select
+          <Select
             disabled={rendering}
-            value={variant.style_set_id ?? ""}
-            onChange={(e) => {
-              if (e.target.value && e.target.value !== variant.style_set_id) {
-                run(() => onChangeStyle(e.target.value));
+            value={variant.style_set_id ?? undefined}
+            onValueChange={(next) => {
+              if (next && next !== variant.style_set_id) {
+                run(() => onChangeStyle(next));
               }
             }}
-            className={selectClass}
           >
-            <option value="" disabled>
-              Style…
-            </option>
-            {styleSets.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.label}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger aria-label="Style" className={cn("h-auto w-auto", selectClass)}>
+              <SelectValue placeholder="Style…" />
+            </SelectTrigger>
+            <SelectContent>
+              {styleSets.map((s) => (
+                <SelectItem key={s.id} value={s.id}>
+                  {s.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         )}
         {onChangeLayout && variant.text_mode === "agent_text" && (() => {
           // Post-render layout pick, shown as two visual preview cards on a dark
@@ -454,22 +481,29 @@ export function VariantCard({
           );
         })()}
         {tracks.length > 0 && variant.music_track_id !== null && (
-          <select
+          // key remounts the trigger after each pick so it always reverts to
+          // the "Swap song…" placeholder — this is a one-shot action, not a
+          // persisted selection (mirrors the native select-with-empty-value reset).
+          <Select
+            key={swapKey}
             disabled={rendering}
-            value=""
-            onChange={(e) => {
-              if (!e.target.value) return;
-              run(() => onSwap(e.target.value));
+            onValueChange={(next) => {
+              if (!next) return;
+              run(() => onSwap(next));
+              setSwapKey((k) => k + 1);
             }}
-            className={selectClass}
           >
-            <option value="">Swap song…</option>
-            {tracks.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.title}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger aria-label="Swap song" className={cn("h-auto w-auto", selectClass)}>
+              <SelectValue placeholder="Swap song…" />
+            </SelectTrigger>
+            <SelectContent>
+              {tracks.map((t) => (
+                <SelectItem key={t.id} value={t.id}>
+                  {t.title}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         )}
       </div>
 

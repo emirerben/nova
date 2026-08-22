@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { InkButton } from "@/components/ui/InkButton";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { fmtTime } from "@/hooks/useAudioRecorder";
 import {
   generateTranscriptScript,
@@ -152,13 +154,14 @@ export default function ScriptStep({
       <div className="max-w-xl">
         <div className="rounded-lg border border-zinc-200 bg-white px-4 py-3">
           <p className="text-sm text-[#3f3f46]">{error}</p>
-          <button
+          <Button
             type="button"
+            variant="link"
             onClick={() => void rewrite()}
-            className="mt-2 text-xs text-[#71717a] underline underline-offset-4 hover:text-[#0c0c0e]"
+            className="mt-2 h-auto p-0 text-xs font-normal text-[#71717a] underline underline-offset-4 hover:text-[#0c0c0e] hover:no-underline"
           >
             Try again
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -182,14 +185,14 @@ export default function ScriptStep({
       </div>
 
       <div className="mt-4 rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-        <textarea
+        <Textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={() => void commitDraft()}
           autoFocus
           aria-label="Edit your script"
           rows={Math.max(6, draft.split("\n").length + 1)}
-          className="w-full resize-none bg-transparent font-display text-xl leading-relaxed text-[#0c0c0e] focus:outline-none"
+          className="min-h-0 resize-none border-0 bg-transparent p-0 font-display text-xl leading-relaxed text-[#0c0c0e] focus-visible:border-transparent focus-visible:ring-0"
         />
       </div>
 
@@ -212,14 +215,15 @@ export default function ScriptStep({
         >
           Record this →
         </InkButton>
-        <button
+        <Button
           type="button"
+          variant="link"
           onClick={() => void rewrite()}
           disabled={rewriting}
-          className="text-sm text-[#71717a] underline underline-offset-4 hover:text-[#0c0c0e] disabled:opacity-50"
+          className="h-auto p-0 text-sm font-normal text-[#71717a] underline underline-offset-4 hover:text-[#0c0c0e] hover:no-underline"
         >
           {rewriting ? "Rewriting…" : "Rewrite"}
-        </button>
+        </Button>
       </div>
     </div>
   );

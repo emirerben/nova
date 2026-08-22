@@ -34,6 +34,8 @@ import { formatTimecode } from "@/lib/timeline/time-format";
 import { normalizeEditableHex } from "./editor-color";
 import { FontSelect, HexInput } from "./inspector-fields";
 import { InfoDot } from "@/components/ui/InfoDot";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 
 /** Caption size range — mirrors the inspector's per-cue override slider so the
  *  global and the override can never express different sizes. */
@@ -298,14 +300,14 @@ export default function CaptionsDrawer({
 
         {enabled && cues.length > 0 && (
           <div className="mt-2">
-            <label
+            <Label
               htmlFor="captions-find"
               className="block text-[12px] font-semibold text-[#3f3f46]"
             >
               Find in captions
-            </label>
+            </Label>
             <div className="mt-1 flex items-center gap-1.5">
-              <input
+              <Input
                 id="captions-find"
                 ref={findRef}
                 type="text"
@@ -322,7 +324,7 @@ export default function CaptionsDrawer({
                     setQuery("");
                   }
                 }}
-                className="min-h-11 min-w-0 flex-1 rounded-lg border border-zinc-200 px-2.5 text-[13px] text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:border-lime-500/60 focus:outline-none"
+                className="min-w-0 flex-1"
               />
               <span
                 role="status"

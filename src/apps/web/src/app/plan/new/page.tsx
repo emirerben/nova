@@ -8,25 +8,37 @@
  * type", board S2) so the template choice is never skipped. Reuses the item
  * page's SetupPicker cards/data so type + style vocabulary live in one place.
  *
- * The plan item is created only on the FINAL Continue (abandon leaves
- * nothing): addIdea → updatePlanItem(edit_format [+ montage_preset]) → item
- * page with ?setup=done so the setup receipt leads and the uploader is first.
+ * Tap-to-advance: selecting a kind card either advances to the style step
+ * (montage) or creates the item immediately (everything else); selecting a
+ * style card creates the item immediately. There is no Continue button —
+ * the plan item is created the moment a final choice is made (abandon before
+ * that leaves nothing): addIdea → updatePlanItem(edit_format [+
+ * montage_preset]) → item page with ?setup=done so the setup receipt leads
+ * and the uploader is first.
+ *
+ * Lane J — `?item=<id>` (+ optional `&step=kind|style`) repurposes this same
+ * chooser as the item-setup page's "Back" destination: no item is created,
+ * the existing item's kind/style is pre-selected from the server, and a tap
+ * PATCHes it via updatePlanItem instead of addIdea, then returns to the item
+ * page. The × / back control cancels to the item page instead of /plan.
  */
 
-import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
 import SignInPrompt from "@/app/plan/_components/SignInPrompt";
 import { LightShell } from "@/components/ui/LightShell";
+import { Button } from "@/components/ui/button";
 import {
   addIdea,
   getContentPlan,
+  getPlanItem,
   updatePlanItem,
   type ContentPlan,
   type MontagePreset,
 } from "@/lib/plan-api";
-import type { PickerEditFormat } from "@/lib/edit-format";
+import { resolvePickerFormat, type PickerEditFormat } from "@/lib/edit-format";
 import {
   MediaRadioCard,
   persistedEditFormatFor,
@@ -53,19 +65,41 @@ function radioGroupKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
 }
 
 export default function NewVideoPage() {
+  return (
+    <Suspense>
+      <NewVideoPageInner />
+    </Suspense>
+  );
+}
+
+function NewVideoPageInner() {
   const { status: authStatus } = useSession();
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Lane J: editing an existing item's kind/style rather than creating a new
+  // one. itemId is read once at mount — the URL doesn't change within this
+  // page's lifetime (a submit navigates away entirely).
+  const [itemId] = useState<string | null>(() => searchParams.get("item"));
+  const [step, setStep] = useState<"kind" | "style">(() =>
+    itemId && searchParams.get("step") === "style" ? "style" : "kind",
+  );
 
   const [plan, setPlan] = useState<ContentPlan | null>(null);
-  const [planState, setPlanState] = useState<"loading" | "ready" | "missing">("loading");
-  const [step, setStep] = useState<"kind" | "style">("kind");
+  const [planState, setPlanState] = useState<"loading" | "ready" | "missing">(
+    itemId ? "ready" : "loading",
+  );
+  const [itemLoadState, setItemLoadState] = useState<"loading" | "ready" | "missing">(
+    itemId ? "loading" : "ready",
+  );
   const [selected, setSelected] = useState<PickerEditFormat>("montage");
   const [selectedStyle, setSelectedStyle] = useState<MontagePreset>("classic");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // New-item mode: fetch the plan so a final tap can addIdea(plan.id, ...).
   useEffect(() => {
-    if (authStatus !== "authenticated") return;
+    if (authStatus !== "authenticated" || itemId) return;
     let cancelled = false;
     getContentPlan()
       .then((p) => {
@@ -83,12 +117,38 @@ export default function NewVideoPage() {
     return () => {
       cancelled = true;
     };
-  }, [authStatus]);
+  }, [authStatus, itemId]);
 
-  // No plan yet (brand-new user) → the /plan router owns onboarding.
+  // Edit-existing-item mode: pre-select the item's current kind/style from
+  // the server instead of defaulting to montage/classic.
+  useEffect(() => {
+    if (authStatus !== "authenticated" || !itemId) return;
+    let cancelled = false;
+    getPlanItem(itemId)
+      .then((it) => {
+        if (cancelled) return;
+        setSelected(resolvePickerFormat(it.edit_format, SUBTITLED_ENABLED));
+        setSelectedStyle((it.montage_preset as MontagePreset | null) ?? "classic");
+        setItemLoadState("ready");
+      })
+      .catch(() => {
+        if (!cancelled) setItemLoadState("missing");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authStatus, itemId]);
+
+  // No plan yet (brand-new user) → the /plan router owns onboarding. Only
+  // applies in new-item mode — edit-existing-item mode never touches the plan.
   useEffect(() => {
     if (planState === "missing") router.replace("/plan");
   }, [planState, router]);
+
+  // Item vanished (deleted / bad id) mid edit-flow → back to the plan list.
+  useEffect(() => {
+    if (itemLoadState === "missing") router.replace("/plan");
+  }, [itemLoadState, router]);
 
   const typeValues: PickerEditFormat[] = [
     "montage",
@@ -101,41 +161,62 @@ export default function NewVideoPage() {
   const isMontage = selected === "montage";
   const totalSteps = isMontage ? 3 : 2;
 
-  const createItem = useCallback(async () => {
-    if (creating || !plan) return;
-    setCreating(true);
-    setError(null);
-    let itemId: string;
-    try {
-      const item = await addIdea(plan.id, TYPE_COPY[selected].label);
-      itemId = item.id;
-    } catch {
-      setError("That didn't go through — try again.");
-      setCreating(false);
-      return;
-    }
-    try {
-      await updatePlanItem(itemId, {
-        edit_format: persistedEditFormatFor(selected),
-        ...(selected === "montage"
-          ? { content_mode: "existing_footage" as const, montage_preset: selectedStyle }
-          : {}),
-      });
-      router.push(`/plan/items/${itemId}?setup=done`);
-    } catch {
-      // Item exists but the type didn't stick — land on the item page with the
-      // TYPE rail open so the user can re-pick there. No dead end.
-      router.push(`/plan/items/${itemId}`);
-    }
-  }, [creating, plan, selected, selectedStyle, router]);
+  // Takes explicit args rather than reading `selected`/`selectedStyle` state:
+  // the caller just called setSelected/setSelectedStyle, and that state read
+  // would still be stale on this render (state updates aren't synchronous).
+  //
+  // Edit-existing-item mode (itemId set): PATCH the existing item instead of
+  // creating a new one, then return to it — never mints a new plan item.
+  const submitSelection = useCallback(
+    async (kind: PickerEditFormat, style: MontagePreset) => {
+      if (creating) return;
 
-  const onContinue = useCallback(() => {
-    if (step === "kind" && selected === "montage") {
-      setStep("style");
-      return;
-    }
-    void createItem();
-  }, [step, selected, createItem]);
+      if (itemId) {
+        setCreating(true);
+        setError(null);
+        try {
+          await updatePlanItem(itemId, {
+            edit_format: persistedEditFormatFor(kind),
+            ...(kind === "montage"
+              ? { content_mode: "existing_footage" as const, montage_preset: style }
+              : {}),
+          });
+          router.push(`/plan/items/${itemId}?setup=done`);
+        } catch {
+          setError("That didn't go through — try again.");
+          setCreating(false);
+        }
+        return;
+      }
+
+      if (!plan) return;
+      setCreating(true);
+      setError(null);
+      let newItemId: string;
+      try {
+        const item = await addIdea(plan.id, TYPE_COPY[kind].label);
+        newItemId = item.id;
+      } catch {
+        setError("That didn't go through — try again.");
+        setCreating(false);
+        return;
+      }
+      try {
+        await updatePlanItem(newItemId, {
+          edit_format: persistedEditFormatFor(kind),
+          ...(kind === "montage"
+            ? { content_mode: "existing_footage" as const, montage_preset: style }
+            : {}),
+        });
+        router.push(`/plan/items/${newItemId}?setup=done`);
+      } catch {
+        // Item exists but the type didn't stick — land on the item page with the
+        // TYPE rail open so the user can re-pick there. No dead end.
+        router.push(`/plan/items/${newItemId}`);
+      }
+    },
+    [creating, plan, router, itemId],
+  );
 
   if (authStatus === "loading") {
     return <LightShell size="narrow">{null}</LightShell>;
@@ -151,8 +232,19 @@ export default function NewVideoPage() {
       </LightShell>
     );
   }
+  // Edit-existing-item mode: hold the picker until the item's real kind/style
+  // loads, so cards never flash the montage/classic defaults for an item that
+  // is actually something else.
+  if (itemId && itemLoadState === "loading") {
+    return <LightShell size="narrow">{null}</LightShell>;
+  }
 
   const onStyleStep = step === "style";
+  // The kind step is the top of the creation flow in BOTH modes. In item mode
+  // it must NOT link back to the item page — the item page's own Back leads
+  // here, so that pairing would be a two-page loop with no exit.
+  const kindStepHref = "/plan";
+  const kindStepLabel = "Back to your videos";
 
   return (
     <div className="min-h-screen bg-white">
@@ -162,23 +254,23 @@ export default function NewVideoPage() {
             /* In-app back only: the kind→style transition is local state, so a
                hardware/gesture back exits /plan/new entirely (accepted trade-off
                — a shallow history entry per step isn't worth the App Router
-               complexity; nothing is created until the final Continue). */
-            <button
+               complexity; nothing is created until a final card tap). */
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               onClick={() => setStep("kind")}
               aria-label="Back to video kind"
-              className="flex h-11 w-11 items-center justify-center rounded-full text-[20px] leading-none text-[#3f3f46] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+              className="text-[20px] leading-none text-[#3f3f46]"
             >
               ‹
-            </button>
+            </Button>
           ) : (
-            <Link
-              href="/plan"
-              aria-label="Back to your videos"
-              className="flex h-11 w-11 items-center justify-center rounded-full text-[22px] leading-none text-[#3f3f46] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
-            >
-              ×
-            </Link>
+            <Button variant="ghost" size="icon" asChild className="text-[22px] leading-none text-[#3f3f46]">
+              <Link href={kindStepHref} aria-label={kindStepLabel}>
+                ×
+              </Link>
+            </Button>
           )}
           <span className="text-[12px] text-[#71717a]">
             {onStyleStep ? `Step 2 of ${totalSteps}` : `Step 1 of ${totalSteps}`}
@@ -194,7 +286,7 @@ export default function NewVideoPage() {
             <p className="mt-1.5 text-sm text-[#71717a]">How your clips are arranged.</p>
 
             <div
-              className="mt-6 grid grid-cols-2 gap-3.5 pb-4 sm:grid-cols-3"
+              className="scrollbar-none mt-6 grid grid-cols-2 gap-3.5 pb-4 sm:grid-cols-3"
               role="radiogroup"
               aria-label="Montage style"
               onKeyDown={radioGroupKeyDown}
@@ -203,13 +295,16 @@ export default function NewVideoPage() {
                 <MediaRadioCard
                   key={tile.value}
                   active={selectedStyle === tile.value}
-                  saving={creating}
+                  saving={creating || planState !== "ready"}
                   poster={tile.poster}
                   video={tile.video}
                   scrim="h-1/2"
                   label={tile.label}
                   desc={tile.desc}
-                  onSelect={() => setSelectedStyle(tile.value)}
+                  onSelect={() => {
+                    setSelectedStyle(tile.value);
+                    void submitSelection("montage", tile.value);
+                  }}
                 />
               ))}
             </div>
@@ -219,10 +314,12 @@ export default function NewVideoPage() {
             <h1 className="font-display mt-6 text-[30px] font-medium leading-tight text-[#0c0c0e]">
               What kind of video?
             </h1>
-            <p className="mt-1.5 text-sm text-[#71717a]">Kria edits each kind differently.</p>
+            <p className="mt-1.5 text-sm text-[#71717a]">
+              Tap one — Kria edits each kind differently.
+            </p>
 
             <div
-              className="-mx-6 mt-6 flex snap-x snap-mandatory gap-3.5 overflow-x-auto px-6 py-1 [scroll-padding-inline:1.5rem] sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:p-0 lg:grid-cols-3"
+              className="scrollbar-none -mx-6 mt-6 flex snap-x snap-mandatory gap-3.5 overflow-x-auto px-6 py-1 [scroll-padding-inline:1.5rem] sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:p-0 lg:grid-cols-3"
               role="radiogroup"
               aria-label="What kind of video"
               onKeyDown={radioGroupKeyDown}
@@ -231,14 +328,21 @@ export default function NewVideoPage() {
                 <MediaRadioCard
                   key={value}
                   active={selected === value}
-                  saving={creating}
+                  saving={creating || planState !== "ready"}
                   poster={TYPE_MEDIA[value].poster}
                   video={TYPE_MEDIA[value].video}
                   scrim="h-3/5"
                   label={TYPE_COPY[value].label}
                   desc={TYPE_COPY[value].desc}
                   meta={TYPE_COPY[value].meta}
-                  onSelect={() => setSelected(value)}
+                  onSelect={() => {
+                    setSelected(value);
+                    if (value === "montage") {
+                      setStep("style");
+                    } else {
+                      void submitSelection(value, selectedStyle);
+                    }
+                  }}
                 />
               ))}
             </div>
@@ -250,20 +354,6 @@ export default function NewVideoPage() {
             {error}
           </p>
         )}
-
-        <div className="sticky bottom-0 z-10 -mx-6 mt-auto border-t border-zinc-200 bg-white px-6 pb-[max(16px,env(safe-area-inset-bottom))] pt-4">
-          <button
-            type="button"
-            onClick={onContinue}
-            disabled={creating || planState !== "ready"}
-            className="min-h-12 w-full rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white hover:opacity-80 disabled:bg-zinc-700"
-          >
-            {creating ? "Setting up…" : "Continue"}
-          </button>
-          <p className="mt-2 text-center text-[12px] text-[#71717a]">
-            {onStyleStep || !isMontage ? "Next: add your footage" : "Next: pick a style"}
-          </p>
-        </div>
       </div>
     </div>
   );

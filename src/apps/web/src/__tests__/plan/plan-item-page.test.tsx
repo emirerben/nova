@@ -27,7 +27,8 @@ Object.defineProperty(window, "matchMedia", {
 });
 window.HTMLMediaElement.prototype.load = jest.fn();
 
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 
 process.env.NEXT_PUBLIC_SUBTITLED_ENABLED = "true";
@@ -112,10 +113,6 @@ jest.mock("@/app/plan/_components/PlanVariantEditor", () => ({
 jest.mock("@/app/plan/_components/SignInPrompt", () => ({
   __esModule: true,
   default: () => <div data-testid="sign-in-prompt" />,
-}));
-jest.mock("@/components/library/FeedbackButtons", () => ({
-  __esModule: true,
-  default: () => <div data-testid="feedback-buttons" />,
 }));
 jest.mock("@/app/plan/_components/AssetPool", () => ({
   __esModule: true,
@@ -330,31 +327,9 @@ describe("PlanItemPage — masonry collage item UX", () => {
     return render(<PlanItemPage />);
   }
 
-  it("renders STYLE tiles with real imagery instead of text-only cards", async () => {
-    await act(async () => {
-      renderMasonryItem({ montage_preset: "classic" });
-    });
-
-    // The picker mounts via the setup receipt's "Change" toggle, opening on
-    // the TYPE rail; the STYLE disclosure row then reveals the shelf with
-    // real placeholder footage per tile.
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Change" }));
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /^Style/ }));
-    });
-    const shelf = screen.getByRole("radiogroup", { name: "Style" });
-    // Tiles are hover-to-play muted loops: poster frame + video source per style.
-    for (const name of ["classic", "masonry", "polaroid"]) {
-      const video = shelf.querySelector(
-        `video[poster="/plan/style-tiles/${name}.jpg"]`,
-      ) as HTMLVideoElement | null;
-      expect(video).not.toBeNull();
-      expect(video?.getAttribute("src")).toBe(`/plan/style-tiles/${name}.mp4`);
-      expect(video?.muted ?? video?.hasAttribute("muted")).toBeTruthy();
-    }
-  });
+  // STYLE-tile imagery is now exclusively picked on /plan/new (Lane J removed
+  // the item page's inline Change toggle + SetupPicker mount) — see
+  // plan-new-chooser.test.tsx for that coverage.
 
   it.each(["masonry", "polaroid_wall"])(
     "uses compact collage uploads for %s even when the item has a filming guide",
@@ -364,7 +339,7 @@ describe("PlanItemPage — masonry collage item UX", () => {
       });
 
       expect(
-        screen.getByText((_, el) => el?.textContent === "1 · Your clips"),
+        screen.getByText((_, el) => el?.textContent === "Your clips"),
       ).toBeInTheDocument();
       expect(screen.queryByTestId("shot-slot-uploader")).not.toBeInTheDocument();
       expect(
@@ -723,9 +698,12 @@ describe("PlanItemPage — result cleanup", () => {
     expect(video).toHaveAttribute("preload", "metadata");
     expect(screen.queryByLabelText("Visual variants")).toBeNull();
 
+    // Lane H: the release desk stacks to a single column below `lg` (video,
+    // then the Card) instead of a cramped 2-up mobile grid.
     const titleSection = screen.getByRole("heading", { name: "Morning Routine" }).closest("section");
+    expect(titleSection?.parentElement).toHaveClass("grid-cols-1");
     expect(titleSection?.parentElement).toHaveClass(
-      "grid-cols-[minmax(132px,0.78fr)_minmax(0,1.22fr)]",
+      "lg:grid-cols-[minmax(210px,0.75fr)_minmax(320px,430px)_minmax(300px,0.95fr)]",
     );
   });
 
@@ -946,9 +924,12 @@ describe("PlanItemPage — conformance verdict tile (D10 redesign)", () => {
     // (no label, no evidence line, no full-tile chrome) — calmer and less opinionated.
     expect(screen.getByTestId("kria-helper")).toBeInTheDocument();
     expect(screen.getByText(/This reads as a guitar session/)).toBeInTheDocument();
-    // Recourse buttons — condensed labels in the one-liner.
-    expect(screen.getByText(/Tell Kria/)).toBeInTheDocument();
-    expect(screen.getByText(/Hide/)).toBeInTheDocument();
+    // Recourse buttons — condensed labels in the one-liner. Scoped to the
+    // KriaHelper tile since the setup zone's "Tell Kria" textarea label now
+    // also matches /Tell Kria/.
+    const kriaHelper = within(screen.getByTestId("kria-helper"));
+    expect(kriaHelper.getByText(/Tell Kria/)).toBeInTheDocument();
+    expect(kriaHelper.getByText(/Hide/)).toBeInTheDocument();
     // Mismatch bullets and suggestions are data, not display.
     expect(screen.queryByText(/Expected kitchen footage/)).toBeNull();
     expect(screen.queryByText(/steady overhead of the cutting board/)).toBeNull();
@@ -1054,7 +1035,7 @@ describe("PlanItemPage — conformance verdict tile (D10 redesign)", () => {
     });
 
     // Generate button should be enabled — off_brief verdict never blocks it.
-    const generateBtn = screen.getByRole("button", { name: /generate video/i });
+    const generateBtn = screen.getAllByRole("button", { name: /generate video/i })[0];
     expect(generateBtn).not.toBeDisabled();
   });
 
@@ -1082,7 +1063,7 @@ describe("PlanItemPage — conformance verdict tile (D10 redesign)", () => {
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /generate video/i }));
+      fireEvent.click(screen.getAllByRole("button", { name: /generate video/i })[0]);
     });
 
     await waitFor(() => {
@@ -1139,8 +1120,8 @@ describe("PlanItemPage — guided edit Generate gating", () => {
       render(<PlanItemPage />);
     });
 
-    expect(screen.getByRole("button", { name: /generate video/i })).toBeDisabled();
-    expect(screen.getByText(hint)).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /generate video/i })[0]).toBeDisabled();
+    expect(screen.getAllByText(hint)[0]).toBeInTheDocument();
   });
 
   it("stays disabled with no approved proposal when guided_edit_auto_design is false", async () => {
@@ -1155,8 +1136,8 @@ describe("PlanItemPage — guided edit Generate gating", () => {
       render(<PlanItemPage />);
     });
 
-    expect(screen.getByRole("button", { name: /generate video/i })).toBeDisabled();
-    expect(screen.getByText("Plan this edit before generating.")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /generate video/i })[0]).toBeDisabled();
+    expect(screen.getAllByText("Plan this edit before generating.")[0]).toBeInTheDocument();
   });
 
   it("enables Generate with media and no approved proposal when auto-design is on", async () => {
@@ -1173,9 +1154,9 @@ describe("PlanItemPage — guided edit Generate gating", () => {
     });
 
     // Clicking just works — Kria designs the edit, no planner step required.
-    expect(screen.getByRole("button", { name: /generate video/i })).toBeEnabled();
+    expect(screen.getAllByRole("button", { name: /generate video/i })[0]).toBeEnabled();
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /generate video/i }));
+      fireEvent.click(screen.getAllByRole("button", { name: /generate video/i })[0]);
     });
     await waitFor(() => {
       expect(mockGeneratePlanItem).toHaveBeenCalledWith("test-item-id");
@@ -1207,10 +1188,10 @@ describe("PlanItemPage — guided edit Generate gating", () => {
 
     expect(screen.queryByText("Review and approve the edit plan first.")).toBeNull();
     expect(screen.queryByTestId("edit-proposal-card")).toBeNull();
-    expect(screen.getByRole("button", { name: /generate video/i })).toBeEnabled();
+    expect(screen.getAllByRole("button", { name: /generate video/i })[0]).toBeEnabled();
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /generate video/i }));
+      fireEvent.click(screen.getAllByRole("button", { name: /generate video/i })[0]);
     });
     await waitFor(() => {
       expect(mockGeneratePlanItem).toHaveBeenCalledWith("test-item-id");
@@ -1230,14 +1211,18 @@ describe("PlanItemPage — guided edit Generate gating", () => {
     });
 
     // No clips, no approval, no known pool media yet -> blocked.
-    expect(screen.getByRole("button", { name: /generate video/i })).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: /generate video/i })[0]).toBeDisabled();
 
+    // AssetPool now lives behind the "Visuals" tab (Lane G) — switch to it
+    // before its mocked test hook is reachable. Radix's Tabs.Trigger needs a
+    // real pointer sequence (userEvent), not a bare fireEvent.click.
+    await userEvent.click(screen.getByRole("tab", { name: /visuals/i }));
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /simulate ready pool asset/i }));
     });
 
     // AssetPool reported a ready pool asset up -> the gate now sees media.
-    expect(screen.getByRole("button", { name: /generate video/i })).toBeEnabled();
+    expect(screen.getAllByRole("button", { name: /generate video/i })[0]).toBeEnabled();
   });
 
   it("shows the designing hint while auto-design is drafting, but stays enabled", async () => {
@@ -1252,8 +1237,8 @@ describe("PlanItemPage — guided edit Generate gating", () => {
       render(<PlanItemPage />);
     });
 
-    expect(screen.getByRole("button", { name: /generate video/i })).toBeEnabled();
-    expect(screen.getByText("Kria is designing your edit…")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /generate video/i })[0]).toBeEnabled();
+    expect(screen.getAllByText("Kria is designing your edit…")[0]).toBeInTheDocument();
   });
 
   it("P3: the render-register watchdog does not fire while auto-design is still designing", async () => {
@@ -1274,7 +1259,7 @@ describe("PlanItemPage — guided edit Generate gating", () => {
     await act(async () => {});
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /generate video/i }));
+      fireEvent.click(screen.getAllByRole("button", { name: /generate video/i })[0]);
     });
     await waitFor(() => {
       expect(mockGeneratePlanItem).toHaveBeenCalledWith("test-item-id");
@@ -1301,7 +1286,7 @@ describe("PlanItemPage — guided edit Generate gating", () => {
     expect(
       screen.queryByText("The render didn't register — give it another go."),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("Kria is designing your edit…")).toBeInTheDocument();
+    expect(screen.getAllByText("Kria is designing your edit…")[0]).toBeInTheDocument();
 
     nowSpy.mockRestore();
   });
@@ -1329,8 +1314,8 @@ describe("PlanItemPage — guided edit Generate gating", () => {
         render(<PlanItemPage />);
       });
 
-      expect(screen.getByText(hint)).toBeInTheDocument();
-      const generateBtn = screen.getByRole("button", { name: /generate video/i });
+      expect(screen.getAllByText(hint)[0]).toBeInTheDocument();
+      const generateBtn = screen.getAllByRole("button", { name: /generate video/i })[0];
       if (autoDesign) {
         expect(generateBtn).toBeEnabled();
       } else {
@@ -1352,7 +1337,7 @@ describe("PlanItemPage — guided edit Generate gating", () => {
       render(<PlanItemPage />);
     });
 
-    const generate = screen.getByRole("button", { name: /generate video/i });
+    const generate = screen.getAllByRole("button", { name: /generate video/i })[0];
     expect(generate).toBeEnabled();
 
     await act(async () => {
@@ -1383,7 +1368,7 @@ describe("PlanItemPage — guided edit Generate gating", () => {
       render(<PlanItemPage />);
     });
 
-    const generate = screen.getByRole("button", { name: /generate video/i });
+    const generate = screen.getAllByRole("button", { name: /generate video/i })[0];
     expect(generate).toBeEnabled();
     expect(screen.queryByText("Add clips to generate")).not.toBeInTheDocument();
 
@@ -1441,6 +1426,8 @@ describe("PlanItemPage — guided edit Generate gating", () => {
       render(<PlanItemPage />);
     });
 
+    // AssetPool now lives behind the "Visuals" tab (Lane G).
+    await userEvent.click(screen.getByRole("tab", { name: /visuals/i }));
     fireEvent.click(screen.getByRole("button", { name: "Simulate asset mutation" }));
     expect(mockRefetch).toHaveBeenCalledTimes(1);
   });
@@ -1471,7 +1458,7 @@ describe("PlanItemPage — per-type uploaders with an accepted plan", () => {
 
     expect(screen.getByText("Plan summary")).toBeInTheDocument();
     expect(
-        screen.getByText((_, el) => el?.textContent === "1 · Your clips"),
+        screen.getByText((_, el) => el?.textContent === "Your clips"),
       ).toBeInTheDocument();
     expect(screen.queryByText(/shot left/i)).toBeNull();
   });
@@ -1547,7 +1534,7 @@ describe("PlanItemPage — per-type uploaders with an accepted plan", () => {
 
     expect(screen.getByText("Plan summary")).toBeInTheDocument();
     expect(
-        screen.getByText((_, el) => el?.textContent === "1 · Your clip"),
+        screen.getByText((_, el) => el?.textContent === "Your clip"),
       ).toBeInTheDocument();
     expect(screen.queryByText(/shot left/i)).toBeNull();
   });
@@ -1593,12 +1580,16 @@ describe("PlanItemPage — per-type setup truth table (V2 redesign)", () => {
     expect(
       screen.getByRole("heading", { name: "Your voice tells the story." }),
     ).toBeInTheDocument();
+    // Lane G: a visible Label + one-line caption inside the Card, replacing
+    // the old sr-only heading + InfoDot popover pattern — no step numeral.
+    expect(screen.getByText("Your voiceover")).toBeInTheDocument();
     expect(
-      screen.getByText((_, el) => el?.textContent === "2 · Your voiceover"),
+      screen.getByText("This recording becomes the soundtrack. It is separate from a note to Kria."),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText((_, el) => el?.textContent === "3 · Direction for Kria Optional"),
-    ).toBeInTheDocument();
+    // Direction/voice-note section is gone — replaced by the single "Tell Kria" field.
+    expect(screen.getByRole("textbox", { name: "Tell Kria" })).toBeInTheDocument();
+    expect(screen.queryByText(/Direction for Kria/)).toBeNull();
+    expect(screen.queryByText(/Add a voice note to Kria/)).toBeNull();
     expect(screen.queryByRole("button", { name: /Original audio/i })).toBeNull();
   });
 
@@ -1648,13 +1639,13 @@ describe("PlanItemPage — per-type setup truth table (V2 redesign)", () => {
     });
 
     await waitFor(() => expect(mockSetItemVoiceover).toHaveBeenCalled());
-    expect(screen.getByRole("button", { name: /generate video/i })).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: /generate video/i })[0]).toBeDisabled();
 
     await act(async () => {
       resolveSave({ ...item, voiceover_gcs_path: "voiceover-uploads/u1/voice.m4a" });
     });
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /generate video/i })).toBeEnabled(),
+      expect(screen.getAllByRole("button", { name: /generate video/i })[0]).toBeEnabled(),
     );
   });
 
@@ -1698,7 +1689,7 @@ describe("PlanItemPage — per-type setup truth table (V2 redesign)", () => {
     });
 
     await waitFor(() => expect(screen.getByText("attachment failed")).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: /generate video/i })).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: /generate video/i })[0]).toBeDisabled();
   });
 
   it("talking to camera (subtitled): single clip slot, own-audio helper, no recorder", async () => {
@@ -1707,26 +1698,39 @@ describe("PlanItemPage — per-type setup truth table (V2 redesign)", () => {
     });
     expect(screen.getByText("TALKING TO CAMERA")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Add your clip." })).toBeInTheDocument();
-    expect(
-      screen.getByText(/Its own audio is the soundtrack/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/Captions and dead-air cleanup happen automatically/),
-    ).toBeInTheDocument();
+    // Lane G: the "Your clip" InfoDot is gone — the dropzone's own subline
+    // carries the short explanation instead (DESIGN.md §12/§15).
+    expect(screen.getByText("One clip of you talking")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "About Your clip" })).toBeNull();
+    expect(screen.queryByText(/Its own audio is the soundtrack/)).toBeNull();
+    expect(screen.queryByText(/Captions and dead-air cleanup happen automatically/)).toBeNull();
     expect(screen.queryByText(/Your voiceover/)).toBeNull();
     expect(screen.queryByRole("button", { name: /Original audio/i })).toBeNull();
   });
 
-  it("setup receipt Change toggle mounts the type picker (no nested details)", async () => {
+  it("Lane J: no Change button, no inline SetupPicker — ever", async () => {
     await act(async () => {
       renderTyped({ edit_format: "montage", idea: "Montage" });
     });
     expect(screen.queryByText("Advanced video style")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Change" })).toBeNull();
     expect(screen.queryByTestId("setup-picker")).toBeNull();
+  });
+
+  it("Lane J: Back returns to the chooser's style step for a montage item", async () => {
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Change" }));
+      renderTyped({ edit_format: "montage", idea: "Montage", montage_preset: "masonry" });
     });
-    expect(screen.getByTestId("setup-picker")).toBeInTheDocument();
+    const back = screen.getByRole("link", { name: /Back/ });
+    expect(back).toHaveAttribute("href", "/plan/new?item=test-item-id&step=style");
+  });
+
+  it("Lane J: Back returns to the chooser's kind step for a non-montage item", async () => {
+    await act(async () => {
+      renderTyped({ edit_format: "narrated_ready", idea: "Voiceover" });
+    });
+    const back = screen.getByRole("link", { name: /Back/ });
+    expect(back).toHaveAttribute("href", "/plan/new?item=test-item-id&step=kind");
   });
 
   it("titled legacy items keep their real title (no type-label takeover)", async () => {

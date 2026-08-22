@@ -13,10 +13,13 @@
  * moved. Anything that changes here changes for both panels by construction.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { INTRO_FONTS, resolveCssFont } from "@/lib/overlay-constants";
 import { normalizeEditableHex } from "./editor-color";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 export function HexInput({
   value,
@@ -39,7 +42,7 @@ export function HexInput({
     else setDraft(value);
   }
   return (
-    <input
+    <Input
       type="text"
       aria-label={ariaLabel}
       value={draft}
@@ -53,7 +56,7 @@ export function HexInput({
       onKeyDown={(e) => {
         if (e.key === "Enter") commit();
       }}
-      className="h-7 w-[76px] rounded-md border border-zinc-200 px-2 text-[12px] uppercase text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
+      className="h-7 w-[76px] rounded-md border-zinc-200 px-2 text-[12px] uppercase text-[#0c0c0e]"
     />
   );
 }
@@ -73,73 +76,58 @@ export function FontSelect({
   ariaLabelPrefix?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const listRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        setOpen(false);
-      }
-    };
-    document.addEventListener("keydown", onKey, true);
-    return () => document.removeEventListener("keydown", onKey, true);
-  }, [open]);
 
   const current = value ?? "Playfair Display";
   const { family, weight } = resolveCssFont(current);
 
   return (
-    <div className="relative">
-      <button
-        type="button"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label={`${ariaLabelPrefix}: ${current}`}
-        onClick={() => setOpen((o) => !o)}
-        className="flex h-9 w-full items-center justify-between rounded-lg border border-zinc-200 bg-white px-3 text-left text-[13px] text-[#0c0c0e] hover:border-zinc-400 focus:border-lime-500/60 focus:outline-none"
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-label={`${ariaLabelPrefix}: ${current}`}
+          className="flex h-9 w-full items-center justify-between rounded-lg px-3 text-left text-[13px] font-normal text-[#0c0c0e]"
+        >
+          <span className="truncate" style={{ fontFamily: family, fontWeight: weight }}>
+            {current}
+          </span>
+          <span aria-hidden className="text-[9px] text-[#a1a1aa]">
+            ⌄
+          </span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        role="listbox"
+        aria-label="Fonts"
+        align="start"
+        className="max-h-64 w-[--radix-popover-trigger-width] overflow-y-auto rounded-lg border-zinc-200 bg-white p-1 shadow-lg"
       >
-        <span className="truncate" style={{ fontFamily: family, fontWeight: weight }}>
-          {current}
-        </span>
-        <span aria-hidden className="text-[9px] text-[#a1a1aa]">
-          ⌄
-        </span>
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-10" aria-hidden onClick={() => setOpen(false)} />
-          <div
-            ref={listRef}
-            role="listbox"
-            aria-label="Fonts"
-            className="absolute left-0 right-0 z-20 mt-1 max-h-64 overflow-y-auto rounded-lg border border-zinc-200 bg-white py-1 shadow-lg"
-          >
-            {INTRO_FONTS.map((f) => {
-              const selected = f.name === current;
-              return (
-                <button
-                  key={f.name}
-                  type="button"
-                  role="option"
-                  aria-selected={selected}
-                  onClick={() => {
-                    onChange(f.name);
-                    setOpen(false);
-                  }}
-                  className={`block w-full truncate px-3 py-1.5 text-left text-[14px] hover:bg-zinc-50 ${
-                    selected ? "bg-lime-50 text-[#0c0c0e]" : "text-[#3f3f46]"
-                  }`}
-                  style={{ fontFamily: f.cssFamily, fontWeight: f.weight }}
-                >
-                  {f.name}
-                </button>
-              );
-            })}
-          </div>
-        </>
-      )}
-    </div>
+        {INTRO_FONTS.map((f) => {
+          const selected = f.name === current;
+          return (
+            <Button
+              key={f.name}
+              type="button"
+              variant="ghost"
+              role="option"
+              aria-selected={selected}
+              onClick={() => {
+                onChange(f.name);
+                setOpen(false);
+              }}
+              className={`block h-auto w-full justify-start truncate rounded-md px-2 py-1.5 text-left text-[14px] font-normal ${
+                selected ? "bg-lime-50 text-[#0c0c0e]" : "text-[#3f3f46]"
+              }`}
+              style={{ fontFamily: f.cssFamily, fontWeight: f.weight }}
+            >
+              {f.name}
+            </Button>
+          );
+        })}
+      </PopoverContent>
+    </Popover>
   );
 }

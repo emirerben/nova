@@ -47,7 +47,7 @@ Token source: `src/apps/web/src/app/globals.css` plus `src/apps/web/src/componen
   Apply it only when the action would otherwise fall below the fold; the existing always-on variant lives in `ChatInterview.tsx`.
 - **Touch pressed state:** on touch surfaces, pressed/drag state replaces hover affordance. Active handles solidify and scale slightly; active chips go `opacity-100`; drags show a floating value readout offset from the thumb.
 - **Landing story rhythm:** `/` starts the timed composition automatically in one viewport, with no mode selector or playback control; `/auto-story` remains a compatibility route. `/?mode=scroll` retains the pinned `760svh` choreography for direct comparison without exposing it in the interface. Source footage and feature chips surround the centered screen, then travel directly into it before the three statements replace one another. The soundtrack starts muted for autoplay compatibility and makes one synchronized audible attempt at the sound-effects beat; browsers may keep it muted when policy forbids unprompted audio.
-- **Shared primitives:** `LightShell`, `LightCard`, `Eyebrow`, `InkButton` in `src/apps/web/src/components/ui/` (canonical location since v0.4.87.0; `plan/_components/ui/` files are re-export stubs for backward compat).
+- **Shared primitives:** `LightShell`, `LightCard`, `Eyebrow`, `InkButton`, `InfoDot`, `ConfirmDialog` in `src/apps/web/src/components/ui/` (canonical location since v0.4.87.0; `plan/_components/ui/` files are re-export stubs for backward compat). Since v0.47.0.0, `LightCard`/`InkButton`/`ConfirmDialog` are thin wrappers over the shadcn/ui primitives (`Card`/`Button`/`AlertDialog`) — see §15 for the full component-library contract; every NEW control should use the shadcn primitives directly rather than the legacy wrapper names.
 - **Editorial interview layout:** Fraunces question, LEFT-aligned answers, one prior-answer pull-quote with accent left-border (lime), NO message bubbles, NO bot avatar.
 - **Editor Nova copilot drawer exception:** the full-screen editor's Nova tool may use texting bubbles because it is a command/receipt surface, not an onboarding interview. Tokens: user bubble `bg-[#0c0c0e] text-white` with 18px radius / 6px bottom-right corner; assistant bubble `bg-zinc-100 text-[#0c0c0e]` with 18px radius / 6px bottom-left corner; change chips `border-lime-200 bg-lime-50 text-lime-800`; rejected chips `border-dashed border-zinc-300 bg-white text-[#71717a]`; suggestion chips `border-zinc-200 bg-white` with lime hover/focus.
 - **D16 lime contrast rule:** lime TEXT under ~18px and text-bearing lime fills → `lime-700`. Display ems, bars, dots, non-text fills → `lime-600`.
@@ -78,7 +78,7 @@ Token source: `src/apps/web/src/app/template-jobs/` on origin/main (the `/templa
   - Serif accent moments: `text-lg` / `text-xl` (incl. italic `text-amber-300` in `PersonaEditor`); ChatInterview prior-answer pull-quote is `text-sm text-zinc-400 line-clamp-3` (zinc, not amber)
   - Body: default sans; secondary: `text-sm text-zinc-400`
 - **Radius roles:** `rounded-full` = buttons/pills; `rounded-lg` = inputs/surfaces.
-- **Header:** product routes get sticky scroll-fade header (`rgba(0,0,0,0.6·progress)` + blur); landing routes (`/`, `/auto-story`) get a static, borderless white header with no anonymous auth action. Their single “Create my first edit” CTA stays centered near the bottom of the story, with Terms and Privacy beneath it rather than in the header. `/admin` hides Header entirely.
+- **Header:** product routes get sticky scroll-fade header (`rgba(0,0,0,0.6·progress)` + blur); landing routes (`/`, `/auto-story`) get a static, borderless white header with no anonymous auth action. Their single “Create my first edit” CTA stays centered near the bottom of the story, with Terms and Privacy beneath it rather than in the header. The light product header (all `isLight` routes) has no border and no nav link — logo left, 32px lime avatar right; the account menu (shadcn `DropdownMenu`) is name · My videos · Sign out. `/admin` hides Header entirely.
 - **Chat / interview surfaces:** editorial interview, not chat app — left-aligned Fraunces questions, one prior-answer pull-quote (amber left-border on dark surfaces; lime left-border on light surfaces), NO message bubbles, NO bot avatar.
 
 ---
@@ -248,7 +248,7 @@ Documented here, **not fixed** (D2 decision). Canonicals are user-ratified. Norm
 | # | Drift | Canonical pick | Note |
 |---|---|---|---|
 | 1 | Landing story radii: 44px screen / 24–13px source media / full feature pills | Role-based: the screen reads as the device; surrounding source media steps down by size; feature controls stay pill-shaped | Not one value — each radius serves a role |
-| 2 | Product radius stragglers: bare `rounded`, lone `rounded-2xl` | `rounded-full` buttons/pills; `rounded-lg` surfaces | Normalize opportunistically |
+| 2 | Product radius stragglers: bare `rounded`, lone `rounded-2xl` | `rounded-full` buttons/pills; `rounded-lg` surfaces | v0.47.0.0: now enforced structurally — the shadcn `Button`/`Badge` primitives hard-code `rounded-full` and `Card`/`Dialog`/`Sheet` hard-code `rounded-2xl`; new call sites can't drift. Pre-existing raw controls still normalize opportunistically as lanes migrate them (see §15 raw-control ratchet). |
 | 3 | `--amber: #d97706` CSS var ≠ shipped amber-400 `#fbbf24` | Tailwind `amber-400` / `amber-300` | CSS var is stale; do not reference it |
 | 4 | Landing raw-hex grays (= zinc-500/400) | `--ink*` CSS vars are the landing-identity tokens | Equivalence noted for greps |
 | 5 | Montserrat 800 imported in `globals.css`, mapped to nothing | Removed in PR1 (light workspace reskin) | Dead import eliminated — closed |
@@ -268,31 +268,48 @@ Rules here supplement §2 (light editorial system). Design source: Paper file
 2026-08-21 (tester feedback: /plan read as a content-ideas list, not an edit
 tool); /plan is now openly the create-a-new-video page.
 
+**Note (v0.47 Kria Design System migration):** the ideas ledger and the
+"Plan this for me" panels referenced below as already-removed were removed in
+PRs #869/#871 — this section documents the post-removal shape, not a
+pending change.
+
 ### Basic home (`/plan`, `WorkspaceHome.tsx`)
 - **Canvas:** `bg-white`; centered column `max-w-[900px] px-6 pt-14`, sections gap-10.
 - **Create block (leads):** Fraunces `text-[32px] font-medium` "Make a new video." + `text-sm text-[#71717a]` sub-line "Pick what kind, add your footage — Kria edits it into a post." + ink pill `min-h-12 rounded-full bg-[#0c0c0e] text-white` "New video" → `/plan/new` (full-width on mobile, hugging on sm+). One primary CTA on the page.
-- **PAST EDITS section:** eyebrow `text-[11px] font-semibold uppercase tracking-[0.18em] text-[#3f3f46]`; grid `grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4` of `LibraryTile` (from `components/library/`, ex-/library); cursor-driven "Load more" zinc pill. Rendering tiles keep LibraryTile's shimmer; failed stay quiet zinc; no red.
+- **PAST EDITS section (v0.47 Kria Design System migration):** eyebrow `text-[11px] font-semibold uppercase tracking-[0.18em] text-[#3f3f46]`; grid `grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4` of `LibraryTile` (from `components/library/`, ex-/library); cursor-driven "Load more" `<Button variant="outline" size="sm">`. A tile is poster + status + one action — nothing more:
+  - **Poster:** 9:16 media, `rounded-xl`, no native `<video controls>` (a still first frame, not a scrubber).
+  - **Status:** absolute bottom-left over the media — `<Badge variant="lime-soft">Ready to post</Badge>` when rendered; `<Badge variant="zinc">` with a 6px lime dot "Rendering…" while in flight; a failed render swaps the whole media box for a dashed zinc tile with the job's structured failure copy (never the raw worker status) and, when the job is pinned to a plan item, "Open to retry.".
+  - **Open:** when `job.content_plan_item_id` is set, the ENTIRE tile is a `<Link href="/plan/items/{id}">`; hover/focus reveals a scrim + one white "Open" pill (`buttonVariants({variant:"outline",size:"pill"})`, no separate focusable element inside the link). A job with no plan item (legacy standalone generative rows, pre-#869/#871) renders status only — no Link, no Open pill.
+  - **Removed for good:** Download, Publish to TikTok, Add to plan, and the three feedback reactions (Like / More like this / Not for me / Add note) — `FeedbackButtons.tsx` is deleted outright. Download/Publish live only on the item page now (`me-api.ts`'s `sendFeedback`/`clearFeedback` stay for a possible future surface; nothing calls them from the product UI).
+  - If a TikTok publication exists for the job, its status block (`TikTokStatus`, inbox/public/metrics copy) still renders below the tile — informational only, not part of the hover reveal.
 - **Empty:** one quiet line `text-[15px] text-[#71717a]` "Your edits will live here." — no card, no icon.
 - **Plan generating:** quiet `text-[13px] text-[#71717a]` line under the CTA ("…you can start a video anyway"); creation never blocks on plan state.
 - **SeedUploadCard** still mounts above everything while `activation_status` ∈ {seeding, activating}.
-- **TikTok connection:** `TikTokConnectionCard` at the bottom under `id="tiktok"`; TikTokReleaseRail connect/reconnect links target `/plan#tiktok`.
-- **Initial load:** SHIMMER tier — 4 ghost 9:16 tiles.
+- **Integrations section (v0.47 Kria Design System migration):** eyebrow `text-[11px] font-semibold uppercase tracking-[0.18em] text-[#a1a1aa]` "Integrations" over a `rounded-2xl border border-zinc-200 bg-white p-4` row (`id="tiktok"` kept — TikTokReleaseRail connect/reconnect links still target `/plan#tiktok`):
+  - 44px `rounded-[12px]` ink square holding the TikTok glyph (24px, `currentColor`, `aria-hidden`) · "TikTok" + a status `Badge` — `lime-soft` "Connected" (with a "Private beta" `Tooltip` while `!audited`), `zinc` "Reconnect required", or `zinc` "Partial access" — · one-line meta (`synced 2h ago`-style, or "Post straight from Kria" when not connected).
+  - Trailing slot: `<Button variant="ink" size="sm">` Connect/Reconnect while disconnected/reconnect-required/partial, otherwise a ghost `size="icon"` overflow (lucide `MoreHorizontal`, `aria-label="More TikTok actions"`) with "Sync performance" (when `can_analyze`) and "Disconnect".
+  - Disconnect is an `AlertDialog` ("Disconnect TikTok?" / "Erases the stored TikTok credentials. Your videos stay." / confirm "Disconnect") — never `window.confirm`.
+- **Initial load:** SHIMMER tier — 4 ghost 9:16 tiles (`<Skeleton>` with the shimmer gradient class, not the default `animate-pulse`).
 
 ### New-video chooser (`/plan/new`)
-- Full-screen steps on white: 44px `×`/`‹` back + "Step N of M" muted label (montage = 3 steps: kind → style → footage; other types = 2). Fraunces `text-[30px]` titles ("What kind of video?" / "Pick a style.").
-- Poster radio-cards reuse SetupPicker's `MediaRadioCard` + `TYPE_MEDIA`/`TYPE_COPY`/`STYLE_TILES` (montage / voiceover / talking-to-camera; talking_head stays legacy-only). Selection = lime ring + "Selected" chip, same as the item page. Style step (montage only): Classic / Masonry collage / Polaroid wall, Classic preselected.
-- Pinned bottom bar (white, `border-t border-zinc-200`, safe-area padding): full-width ink pill "Continue" + centered muted next-step hint ("Next: pick a style" / "Next: add your footage").
-- The FINAL Continue mints the item (`addIdea` + `updatePlanItem` incl. `montage_preset`) → `/plan/items/{id}?setup=done`. Abandon creates nothing. Errors are quiet zinc `role="alert"` lines; never red.
+- Full-screen steps on white: `Button variant="ghost" size="icon"` (44px) `×`/`‹` back + "Step N of M" muted label (montage = 3 steps: kind → style → footage; other types = 2). Fraunces `text-[30px]` titles ("What kind of video?" / "Pick a style.") + one 14px ink-3 line ("Tap one — Kria edits each kind differently." / "How your clips are arranged.").
+- Poster radio-cards reuse SetupPicker's `MediaRadioCard` + `TYPE_MEDIA`/`TYPE_COPY`/`STYLE_TILES` (montage / voiceover / talking-to-camera; talking_head stays legacy-only). Selection = lime ring + "Selected" chip, same as the item page. Style step (montage only): Classic / Masonry collage / Polaroid wall, Classic preselected. Both card scrollers carry `scrollbar-none` — no visible scrollbar, swipe/scroll still works.
+- **Tap-to-advance, no Continue button, no footer:** picking a kind card either advances to the style step (montage) or mints the item immediately (every other kind); picking a style card mints the item immediately. `saving`/`aria-disabled` on the cards (`creating || planState !== "ready"`) blocks re-entry during the mint.
+- A tap that mints the item runs `addIdea` + `updatePlanItem` (incl. `montage_preset`) → `/plan/items/{id}?setup=done`. Abandon before that final tap creates nothing. Errors are quiet zinc `role="alert"` lines; never red — the same card stays tappable to retry.
 
-### Per-type item setup (`/plan/items/[id]`, pre-generation — V2 redesign)
-Design source: Paper "Kria Plan Redesign", page "V2 — Item setup per type". Each edit
-type shows ONLY what it needs; there is no generic audio/caption chrome.
-- **Header:** back link "← your videos"; lime eyebrow setup receipt (`MONTAGE · CLASSIC` — type + montage style) with a quiet "Change" toggle that mounts the SetupPicker poster rail inline (the old nested "Advanced video style" `<details>` is gone); per-type Fraunces title ("Add your clips." / "Your voice tells the story." / "Add your clip."). Items minted by /plan/new are untitled (idea = type label) — the release desk shows the receipt eyebrow instead of an h1 reading "Montage".
-- **Montage:** 1·Your clips (helper "3 or more clips work best. Kria cuts them to the beat of a matched song."; collage presets say photos work too) → 2·Direction (optional, with voice note) → Generate. NO audio section (music is automatic), no captions/voiceover UI.
-- **Voiceover (narrated_ready):** 1·Your clips → 2·Your voiceover (white card, recorder + flag-gated script-helper link; "this becomes the soundtrack") → 3·Direction → Generate (gate requires the voiceover unless self-narration flag).
-- **Talking to camera (subtitled):** 1·Your clip (single slot, maxClips 1; helper "Its own audio is the soundtrack — Kria captions every sentence…" + "Captions and dead-air cleanup happen automatically.") → 2·Direction → Generate.
-- **Talking-head B-roll (legacy):** one pool, helper "First clip: you talking. Then extra footage to cut in."
-- **Removed for good:** the "Audio choice" fieldset (it could silently re-type items — type changes go through the receipt only), "From your idea" seed badge, day badge, "Plan this for me" panels (filming-guide summaries still render for legacy guided items), generic "Photo collage" copy.
+### Per-type item setup (`/plan/items/[id]`, pre-generation — Lane D declutter)
+Design source: Paper "Kria Design System", pages "P3 Item setup" + "C4 Overlays" (Sheet).
+Reads top-to-bottom as **receipt → title → uploader → Tell Kria → Generate** — no step
+numerals anywhere, no generic audio/caption chrome, no inline chat. Each edit type shows
+only what it needs.
+- **Header:** back link "← your videos"; `<Badge variant="lime">` setup receipt (`MONTAGE · CLASSIC` — type + montage style) with a `<Button variant="link" size="sm">` "Change"/"Done" that mounts the SetupPicker poster rail inline; per-type Fraunces title ("Add your clips." / "Your voice tells the story." / "Add your clip."). Items minted by /plan/new are untitled (idea = type label) — the release desk shows the receipt Badge instead of an h1 reading "Montage".
+- **Uploader:** unchanged per-type branching (pool upload / ShotSlotUploader / single-clip); its section heading is now an sr-only `<h2>` (`aria-labelledby`, no visible step numeral). Any explanatory copy that used to run as a visible paragraph next to it is now a single `InfoDot` (e.g. talking-to-camera's "own audio is the soundtrack…" + "captions and dead-air cleanup" merged into one dot).
+- **Tell Kria:** the OLD "Direction for Kria" textarea + its voice-note `<details>` disclosure (`DirectionVoiceNote`) are gone. One field replaces both: `<Label>` "Tell Kria" + inline 12px ink-4 "Optional" + `<Textarea rows={2}>` (`aria-label="Tell Kria"`, placeholder "For example: start fast and keep the candid moments"). Same `notes` → `updatePlanItem` → `refetch` contract as before, `onBlur`.
+- **Voiceover (narrated_ready) only:** a white card between the uploader and Tell Kria holds the recorder; its heading is an sr-only `<h2>` "Your voiceover" + one `InfoDot` ("This recording becomes the soundtrack. It is separate from a note to Kria.") — no step numeral, no second helper paragraph. Generate gate still requires the voiceover unless the self-narration flag is on.
+- **Guided-edit status row:** when `guided_edit_available`, a compact card under Tell Kria — `Badge` status ("Planning…" / "Draft ready" lime-soft / "Approved" lime-soft / "Needs a look" zinc) + one 14px ink-2 sentence + `Button variant="outline" size="sm"` ("Plan with Kria" / "Review Kria's plan" / "Change plan") that opens `PlanThreadPanel`. The multi-turn conversation itself (`EditProposalCard`) no longer mounts inline or morphs the setup zone — it lives ONLY inside the panel now, mounted with `defaultConversationOpen` so it opens straight onto the conversation surface (no "Plan edit" button morph inside the panel either).
+- **`PlanThreadPanel`** (`components/PlanThreadPanel.tsx`): a shadcn `Sheet` — bottom sheet on phones (`inset-x-0 bottom-0 top-auto h-[88dvh] rounded-t-2xl`), right side panel ≥sm (`sm:inset-y-0 sm:left-auto sm:right-0 sm:h-full sm:w-[480px] sm:rounded-none`). Header is Fraunces "Plan with Kria"; body is `<EditProposalCard>` with its existing `applyData`/`forceFreshFetchRef`/`refetch` wiring unchanged.
+- **Generate:** untouched — sticky ink `Button` + the shared upload/format/guided-edit gate hint.
+- **Removed for good:** the "Audio choice" fieldset (it could silently re-type items — type changes go through the receipt only), the Direction textarea + voice-note recorder, step numerals, "From your idea" seed badge, day badge, "Plan this for me" panels (filming-guide summaries still render for legacy guided items), generic "Photo collage" copy.
 
 ## §13 Teleprompter surface (transcript voiceover helper)
 
@@ -376,6 +393,148 @@ Quick right/wrong pairs for common review questions.
 | Product interview | Left-aligned Fraunces question + amber left-border pull-quote | Chat bubbles, bot avatar, centered Q&A |
 | Empty product state | Serif invitation line + single next-step CTA in quiet zinc | Gray inbox icon in a circle + "Nothing here yet!" |
 | Error tile | Dashed zinc tile, plain-language reason | Red alert wall, raw exception message |
+
+---
+
+## §15 Component library (shadcn/ui)
+
+Shipped v0.47.0.0 (Lane 0). **Re-skinned to stock shadcn/ui `new-york`
+(2026-08-22, owner decision):** the component-chrome primitives now render
+exactly as `ui.shadcn.com` ships them — Geist type (§5's Fraunces exception
+no longer applies to primitives), zinc neutral tokens, `rounded-md` controls,
+`ring`-based focus. This **supersedes**, for component chrome only, §2's
+lime-accent rules, §5's Fraunces-headings rule, and §9/D10's "no red walls"
+rule (`--destructive` is stock red again). Those sections still describe the
+landing page and the editorial/interview surfaces around the primitives —
+only the primitives themselves went stock. `/admin` is deferred (keeps its
+dark variant; adopts the primitives later).
+
+### Where primitives live
+
+- **`src/apps/web/src/components/ui/*.tsx` (lowercase filenames) = the shadcn
+  primitives** — `button.tsx`, `input.tsx`, `textarea.tsx`, `select.tsx`,
+  `checkbox.tsx`, `switch.tsx`, `radio-group.tsx`, `label.tsx`, `badge.tsx`,
+  `card.tsx`, `dialog.tsx`, `alert-dialog.tsx`, `sheet.tsx`,
+  `dropdown-menu.tsx`, `popover.tsx`, `tooltip.tsx`, `tabs.tsx`, `toggle.tsx`,
+  `toggle-group.tsx`, `slider.tsx`, `separator.tsx`, `skeleton.tsx`,
+  `scroll-area.tsx`, `progress.tsx`, `sonner.tsx`. Style `new-york`, installed
+  via `npx shadcn@2 add …`. `components.json` aliases `utils` → `@/lib/cn`
+  (no `utils.ts` file — `cn` is hand-authored, shadcn's own).
+- **`src/apps/web/src/components/ui/*.tsx` (PascalCase filenames) = pre-existing
+  wrappers** — `InkButton`, `LightCard`, `ConfirmDialog` are thin wrappers
+  over `Button`/`Card`/`AlertDialog` with **identical props and import
+  paths**; every existing call site keeps working with zero edits.
+  `InfoDot`, `StyleChip`, `Eyebrow`, `LightShell`, `useFocusTrap` are
+  untouched by this migration (§2). New code should reach for the shadcn
+  primitives directly (`<Button variant="default">`, not `<InkButton>`).
+- `<Toaster />` (from `ui/sonner.tsx`) is mounted once in `src/app/layout.tsx`
+  inside `<Providers>`. Call `toast("message")` from `sonner` anywhere — never
+  build a bespoke toast/`useState` toast again.
+
+### Variant aliases
+
+Eight downstream lanes already consume the pre-skin variant/size names —
+these are kept as aliases, byte-identical to the stock base variant they now
+point at, so nothing breaks:
+
+| Alias | Component | Points at (stock base) |
+|---|---|---|
+| `variant="ink"` | `Button` | `default` (`bg-primary`) |
+| `variant="lime"` | `Button` | `secondary` |
+| `size="pill"` | `Button` | same footprint as `size="sm"` |
+| `size="icon-sm"` | `Button` | `h-8 w-8` (unchanged — no stock equivalent) |
+| `variant="ink"` | `Badge` | `default` (`bg-primary`) |
+| `variant="lime"` / `"lime-soft"` | `Badge` | `secondary` |
+| `variant="zinc"` | `Badge` | `outline` |
+
+New code should reach for the stock variant name directly (`default`,
+`secondary`, `outline`, …) rather than an alias.
+
+### Token map
+
+Stock shadcn zinc theme, straight from `hsl(var(--token))` CSS custom
+properties in `src/apps/web/src/app/globals.css` (`@layer base`, after the
+pre-existing `:root` landing-token block) — see that file for the exact HSL
+triplets. `--destructive` is stock red in both themes (no longer zinc — D10
+superseded, see the note above). `--ring` is zinc in both themes (no longer
+lime/amber). `--radius` is `0.5rem`. Dark exists only for `/template-jobs` +
+`/admin`; every user-facing surface, including the editor, stays light.
+
+### DO
+
+- Use `<Button>` for every control that performs an action — `default` for
+  the one primary CTA per surface, everything else `outline`/`secondary`/
+  `ghost`/`link`.
+- `size="icon"` for icon-only controls on touch surfaces.
+- `<AlertDialog>` for every destructive confirmation — never `window.confirm`.
+- `toast("…")` from `sonner` for transient feedback — never a bespoke
+  `useState` toast.
+- `<Select>` for enumerated choices instead of a raw `<select>`.
+- `<Input>`/`<Textarea>` as-is — the 16px-floor sizing is already built in,
+  don't override `text-*`/`h-*` unless you have a specific reason.
+- `<DropdownMenu>` for overflow (`⋯`) actions.
+- `scrollbar-none` on every horizontal scroller (poster rails, kind/style
+  choosers) — hides the scrollbar, keeps the scroll/swipe.
+
+### DON'T
+
+- Raw `<button>`/`<select>`/`<input>`/`<textarea>` with a hand-rolled
+  `className` outside `components/ui/**` — see the raw-control ratchet below.
+- `.dark` on any user-facing surface, **including the editor** — the editor
+  root stays `bg-[#ffffff]` (`EditorShell.tsx`); `.dark` is `/template-jobs` +
+  `/admin` only.
+- Un-gated `tailwindcss-animate` enter/exit on anything that isn't wrapped in
+  a `motion-reduce:` guard.
+- Inline helper paragraphs under a label/control — `InfoDot` (§2) is the only
+  sanctioned home for optional helper copy.
+- Reach for the shadcn `Sheet` (`components/ui/sheet.tsx`) when you mean the
+  editor's gesture `Sheet.tsx` (half-detent, non-modal) — they are different
+  components with the same name.
+- `cmdk` — deliberately not installed; no command-palette pattern yet.
+
+### Raw-control ratchet (enforcement mechanism)
+
+Two layers, both `src/apps/web/`:
+
+1. **`.eslintrc.json` override** on `app/plan/**`, `app/generative/**`,
+   `components/**` (excluding `components/ui/**` and `app/admin/**`):
+   `no-restricted-syntax` **warn** for a raw `<button className>`, `<select>`,
+   `<input className>` (type not `file`/`range`/`checkbox`/`radio`/`hidden`/
+   `color`), or `<textarea className>`. Warn, not error, until the last
+   migration lane flips it.
+2. **`src/__tests__/ui/raw-controls-guard.test.ts`** — a numeric ratchet.
+   Counts the same shapes per file against `RAW_CONTROL_BASELINE`, declared
+   in per-lane blocks (`LANE_0_BASELINE`, `LANE_A_BASELINE`, …) so each lane's
+   diff touches only its own block. A file present in the baseline may only
+   go **down**; a file absent must be **zero** (new files are written with
+   primitives from the start). The last lane to merge flips the ESLint rule
+   to `error` and deletes this test.
+
+### Jest / Radix-in-jsdom notes
+
+`jest.setup.ts` polyfills `ResizeObserver`, pointer-capture
+(`hasPointerCapture`/`setPointerCapture`/`releasePointerCapture`),
+`Element.scrollIntoView`, and `window.matchMedia` — Radix's `Select`,
+`DropdownMenu`, `Tooltip`, and `ScrollArea` call all of these during
+open/position. Tests that open one of those primitives must use
+`@testing-library/user-event`'s `userEvent.click`/`userEvent.hover`, not
+`fireEvent.click` — Radix listens on `pointerdown`, which `fireEvent.click`
+does not synthesize.
+
+### Backlog (deferred from Lane F)
+
+- **`src/apps/web/src/components/TikTokPublishDialog.tsx`** — NOT converted to
+  the shadcn `Dialog` shell. At 1166 lines it is a hand-rolled `createPortal` +
+  `useFocusTrap` sheet with multi-step state (`details`/`confirm`), per-mode
+  idempotency keys in `sessionStorage`, and a 373-line test suite
+  (`src/__tests__/tiktok/TikTokPublishDialog.test.tsx`) that pins exact focus
+  behavior (e.g. `document.activeElement` lands on the step `<h2>` on open,
+  not a button) incompatible with `Dialog`'s default auto-focus. Swapping the
+  outer shell would mean re-deriving that focus contract under Radix, which
+  did not fit Lane F's budget. Left on the raw-control ratchet at its Lane 0
+  baseline (10). A future lane should re-scope this as its own PR: port the
+  focus-trap/step semantics onto `Dialog` deliberately, updating the pinned
+  test assertions alongside it.
 
 ---
 

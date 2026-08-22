@@ -20,6 +20,7 @@
 
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { EditorCapabilities, PlanItem, PlanItemVariant } from "@/lib/plan-api";
 
 class ResizeObserverMock {
@@ -444,21 +445,26 @@ describe("EditorShell — clip lane locks for ANY server timeline ineligibility"
     expect(mockCommitEditorSession.mock.calls[0][2].timeline_slots).toBeUndefined();
   });
 
-  it("records one undo step for an entire look-slider drag", async () => {
+  it("records one undo step per look-slider keyboard nudge", async () => {
+    const user = userEvent.setup();
     await renderShell(makeVariant(EDITABLE_CAPABILITIES));
 
     fireEvent.click(screen.getByRole("button", { name: /^Clip 1,/ }));
     fireEvent.click(await screen.findByRole("radio", { name: "Olive Film" }));
     const warmth = screen.getByRole("slider", { name: "Look warmth" });
+    expect(warmth).toHaveAttribute("aria-valuenow", "0");
 
-    fireEvent.pointerDown(warmth);
-    fireEvent.change(warmth, { target: { value: "20" } });
-    fireEvent.change(warmth, { target: { value: "30" } });
-    expect(screen.getByRole("slider", { name: "Look warmth" })).toHaveValue("30");
+    // A shadcn Slider (Radix), not a native range input — no `.value`/`change`
+    // event to drive a mouse-drag with; keyboard nudges instead. Each press
+    // is its own undoable action (unlike a mouse drag, which the component
+    // only records once via onPointerDown).
+    warmth.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(warmth).toHaveAttribute("aria-valuenow", "1");
 
     fireEvent.click(screen.getByRole("button", { name: "Undo" }));
     expect(screen.getByRole("radio", { name: "Olive Film" })).toBeChecked();
-    expect(screen.getByRole("slider", { name: "Look warmth" })).toHaveValue("0");
+    expect(screen.getByRole("slider", { name: "Look warmth" })).toHaveAttribute("aria-valuenow", "0");
 
     fireEvent.click(screen.getByRole("button", { name: "Undo" }));
     expect(screen.getByRole("radio", { name: "Original" })).toBeChecked();

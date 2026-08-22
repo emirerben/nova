@@ -10,6 +10,18 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 import type { GenerativeStyleSet, LookPreset } from "@/lib/generative-api";
 import type { MusicTrackSummary } from "@/lib/music-api";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
@@ -307,24 +319,12 @@ export default function ToolDrawer({
         title={lyricsToggle.disabled ? lyricsToggle.hint ?? undefined : undefined}
       >
         <span className="text-[12px] font-semibold text-[#3f3f46]">Lyrics</span>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={lyricsToggle.enabled}
+        <Switch
           aria-label="Lyrics"
+          checked={lyricsToggle.enabled}
           disabled={lyricsToggle.disabled}
-          onClick={() => lyricsToggle.onToggle(!lyricsToggle.enabled)}
-          className={`relative h-6 w-11 rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 ${
-            lyricsToggle.enabled ? "bg-[#0c0c0e]" : "bg-zinc-200"
-          }`}
-        >
-          <span
-            aria-hidden
-            className={`absolute top-1 h-4 w-4 rounded-full bg-white transition-transform ${
-              lyricsToggle.enabled ? "translate-x-6" : "translate-x-1"
-            }`}
-          />
-        </button>
+          onCheckedChange={(checked) => lyricsToggle.onToggle(checked)}
+        />
       </div>
     ) : null;
 
@@ -353,51 +353,56 @@ export default function ToolDrawer({
             </h2>
             {lyricsToggleControl}
           </div>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon"
             aria-label="Close drawer"
             onClick={onClose}
-            className="flex h-11 w-11 items-center justify-center rounded-lg text-[13px] text-[#71717a] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+            className="h-11 w-11 rounded-lg text-[13px] font-normal text-[#71717a]"
           >
             ✕
-          </button>
+          </Button>
         </div>
       )}
 
       {tool === "text" && (
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
           <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Basic</p>
-          <button
+          <Button
             type="button"
+            variant="secondary"
             onClick={onAddText}
-            className="min-h-11 w-full rounded-lg bg-zinc-100 text-[13px] font-semibold text-[#0c0c0e] hover:bg-zinc-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+            className="min-h-11 w-full rounded-lg text-[13px] font-semibold text-[#0c0c0e]"
           >
             Add text
-          </button>
+          </Button>
 
           <div className="mt-4 border-t border-zinc-100 pt-4">
             <div className="mb-2 flex items-center justify-between">
               <p className="text-[12px] font-semibold text-[#3f3f46]">Composition</p>
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 onClick={onSmartPlaceAll}
                 disabled={!smartPlaceAllAvailable || !onSmartPlaceAll}
-                className="min-h-8 rounded-lg border border-zinc-200 bg-white px-2.5 text-[11px] font-semibold text-[#0c0c0e] hover:border-zinc-400 disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-[#a1a1aa] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                className="min-h-8 rounded-lg px-2.5 text-[11px] font-semibold text-[#0c0c0e] disabled:bg-zinc-50 disabled:text-[#a1a1aa]"
               >
                 Smart place all
-              </button>
+              </Button>
             </div>
-            <textarea
+            <Textarea
               value={smartTextDraft}
               onChange={(event) => setSmartTextDraft(event.target.value)}
               maxLength={5000}
               rows={3}
               aria-label="Composition text"
               placeholder="Paste lines or a paragraph"
-              className="w-full resize-none rounded-lg border border-zinc-200 px-3 py-2 text-[13px] text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:border-lime-500/60 focus:outline-none"
+              className="min-h-0 resize-none rounded-lg px-3 py-2 text-[13px] text-[#0c0c0e]"
             />
-            <button
+            <Button
               type="button"
+              variant="ink"
               onClick={() => {
                 if (onSplitPlaceText?.(smartTextDraft)) {
                   setSmartTextDraft("");
@@ -408,34 +413,32 @@ export default function ToolDrawer({
                 !onSplitPlaceText ||
                 smartTextDraft.trim().length === 0
               }
-              className="mt-2 min-h-10 w-full rounded-lg bg-[#0c0c0e] px-3 text-[12px] font-semibold text-white hover:bg-[#27272a] disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-[#a1a1aa] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+              className="mt-2 min-h-10 w-full rounded-lg px-3 text-[12px] font-semibold disabled:bg-zinc-100 disabled:text-[#a1a1aa]"
             >
               Split & place
-            </button>
+            </Button>
           </div>
 
           <p className="mb-2 mt-5 text-[12px] font-semibold text-[#3f3f46]">Presets</p>
-          <div className="mb-3 flex flex-wrap gap-1.5" role="tablist" aria-label="Preset categories">
-            {PRESET_CATEGORIES.map((cat) => {
-              const selected = category === cat;
-              return (
-                <button
+          <Tabs
+            value={category}
+            onValueChange={(value) => setCategory(value as TextPresetCategory)}
+          >
+            <TabsList
+              aria-label="Preset categories"
+              className="mb-3 h-auto flex-wrap justify-start gap-1.5 border-none p-0"
+            >
+              {PRESET_CATEGORIES.map((cat) => (
+                <TabsTrigger
                   key={cat}
-                  type="button"
-                  role="tab"
-                  aria-selected={selected}
-                  onClick={() => setCategory(cat)}
-                  className={`inline-flex min-h-11 items-center rounded-full px-4 text-[12px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
-                    selected
-                      ? "bg-[#0c0c0e] font-semibold text-white"
-                      : "border border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
-                  }`}
+                  value={cat}
+                  className="min-h-11 rounded-full border border-zinc-200 border-b-0 bg-white px-4 pb-0 text-[12px] font-normal text-[#3f3f46] data-[state=active]:border-transparent data-[state=active]:bg-[#0c0c0e] data-[state=active]:font-semibold data-[state=active]:text-white"
                 >
                   {CATEGORY_LABEL[cat]}
-                </button>
-              );
-            })}
-          </div>
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
           <PresetGrid
             presets={presets}
             sampleWord={sampleWord}
@@ -797,18 +800,20 @@ function VisualsDrawer({
         <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Add a block</p>
         <div className="grid grid-cols-2 gap-2">
           {(["card", "quote", "statistic", "transition"] as const).map((preset) => (
-            <button
+            <Button
               key={preset}
               type="button"
+              variant="outline"
               onClick={() => onAddTextCard?.(preset)}
-              className="min-h-11 rounded-lg border border-zinc-200 bg-white px-2 text-[12px] font-semibold capitalize text-[#0c0c0e] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+              className="min-h-11 rounded-lg px-2 text-[12px] font-semibold capitalize text-[#0c0c0e]"
             >
               {preset === "card" ? "Text card" : preset}
-            </button>
+            </Button>
           ))}
           {carousel && (
-            <button
+            <Button
               type="button"
+              variant="outline"
               aria-disabled={carousel.capable ? undefined : true}
               aria-describedby={carousel.capable ? undefined : "carousel-block-reason"}
               title={
@@ -831,16 +836,16 @@ function VisualsDrawer({
                 onSelectCarousel?.();
               }}
               aria-pressed={carouselSelected}
-              className={`col-span-2 min-h-11 rounded-lg border px-2 text-[12px] font-semibold text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+              className={`col-span-2 min-h-11 rounded-lg px-2 text-[12px] font-semibold text-[#0c0c0e] ${
                 carousel.capable
                   ? carouselSelected
                     ? "border-lime-600 bg-lime-50 ring-1 ring-lime-600"
-                    : "border-zinc-200 bg-white hover:border-zinc-400"
-                  : "cursor-not-allowed border-zinc-200 bg-white opacity-40"
+                    : ""
+                  : "cursor-not-allowed opacity-40"
               }`}
             >
               Carousel
-            </button>
+            </Button>
           )}
           {carousel && !carousel.capable && (
             <span id="carousel-block-reason" className="sr-only">
@@ -897,17 +902,18 @@ function VisualsDrawer({
             );
           })}
         </div>
-        <button
+        <Button
           type="button"
+          variant="ink"
           disabled={selectedAssetIds.length < 3}
           onClick={() => {
             onAddMontage?.(selectedAssetIds);
             setSelectedAssetIds([]);
           }}
-          className="mt-3 min-h-11 w-full rounded-lg bg-[#0c0c0e] px-3 text-[12px] font-semibold text-white hover:bg-zinc-800 disabled:bg-zinc-100 disabled:text-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+          className="mt-3 min-h-11 w-full rounded-lg px-3 text-[12px] font-semibold disabled:bg-zinc-100 disabled:text-zinc-400"
         >
           Add montage ({selectedAssetIds.length})
-        </button>
+        </Button>
       </section>
 
       <section className="space-y-3 border-t border-zinc-100 pt-4">
@@ -973,26 +979,28 @@ function VisualsDrawer({
                 </p>
               </div>
               <div className="flex gap-1">
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
                   onClick={() => onDuplicateBlock?.(block.id)}
-                  className="min-h-9 rounded-lg px-2 text-[12px] text-[#3f3f46] hover:bg-zinc-100"
+                  className="min-h-9 rounded-lg px-2 text-[12px] font-normal text-[#3f3f46]"
                 >
                   Duplicate
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  variant="ghost"
                   onClick={() => onDeleteBlock?.(block.id)}
-                  className="min-h-9 rounded-lg px-2 text-[12px] text-red-700 hover:bg-red-50"
+                  className="min-h-9 rounded-lg px-2 text-[12px] font-normal text-red-700 hover:bg-red-50"
                 >
                   Delete
-                </button>
+                </Button>
               </div>
             </div>
             <div className="mt-3 grid grid-cols-2 gap-2">
               <label className="text-[11px] text-[#71717a]">
                 Start
-                <input
+                <Input
                   type="number"
                   min={0}
                   step={0.1}
@@ -1000,12 +1008,12 @@ function VisualsDrawer({
                   onChange={(event) =>
                     onPatchBlock?.(block.id, { start_s: Number(event.target.value), timing_mode: "manual" })
                   }
-                  className="mt-1 w-full rounded-md border border-zinc-200 px-2 py-1.5 text-[#0c0c0e]"
+                  className="mt-1 h-8 px-2 py-1.5 text-[#0c0c0e]"
                 />
               </label>
               <label className="text-[11px] text-[#71717a]">
                 End
-                <input
+                <Input
                   type="number"
                   min={0}
                   step={0.1}
@@ -1013,19 +1021,20 @@ function VisualsDrawer({
                   onChange={(event) =>
                     onPatchBlock?.(block.id, { end_s: Number(event.target.value), timing_mode: "manual" })
                   }
-                  className="mt-1 w-full rounded-md border border-zinc-200 px-2 py-1.5 text-[#0c0c0e]"
+                  className="mt-1 h-8 px-2 py-1.5 text-[#0c0c0e]"
                 />
               </label>
             </div>
             {block.kind === "montage" && (
               <div className="mt-3 space-y-2">
-                <button
+                <Button
                   type="button"
+                  variant="outline"
                   onClick={() => onRetimeBlock?.(block.id)}
-                  className="min-h-9 w-full rounded-lg border border-zinc-200 text-[11px] font-semibold hover:border-zinc-400"
+                  className="min-h-9 w-full rounded-lg text-[11px] font-semibold"
                 >
                   Recalculate automatic pacing
-                </button>
+                </Button>
                 {block.shots.map((shot, index) => (
                   <div
                     key={shot.id}
@@ -1053,8 +1062,10 @@ function VisualsDrawer({
                         Shot {index + 1} · {shot.duration_s.toFixed(2)}s
                       </span>
                       <div className="flex gap-1">
-                        <button
+                        <Button
                           type="button"
+                          variant="outline"
+                          size="icon-sm"
                           aria-label={`Move shot ${index + 1} earlier`}
                           disabled={index === 0}
                           onClick={() => {
@@ -1062,12 +1073,14 @@ function VisualsDrawer({
                             [shots[index - 1], shots[index]] = [shots[index], shots[index - 1]];
                             patchShots(block, shots);
                           }}
-                          className="h-8 w-8 rounded border border-zinc-200 disabled:opacity-30"
+                          className="h-8 w-8 rounded font-normal disabled:opacity-30"
                         >
                           ↑
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           type="button"
+                          variant="outline"
+                          size="icon-sm"
                           aria-label={`Move shot ${index + 1} later`}
                           disabled={index === block.shots.length - 1}
                           onClick={() => {
@@ -1075,16 +1088,16 @@ function VisualsDrawer({
                             [shots[index], shots[index + 1]] = [shots[index + 1], shots[index]];
                             patchShots(block, shots);
                           }}
-                          className="h-8 w-8 rounded border border-zinc-200 disabled:opacity-30"
+                          className="h-8 w-8 rounded font-normal disabled:opacity-30"
                         >
                           ↓
-                        </button>
+                        </Button>
                       </div>
                     </div>
                     <div className="mt-2 grid grid-cols-2 gap-2">
                       <label className="text-[10px] text-[#71717a]">
                         Duration
-                        <input
+                        <Input
                           type="number"
                           min={0.1}
                           max={Math.max(0.1, block.end_s - block.start_s - 0.1 * (block.shots.length - 1))}
@@ -1109,15 +1122,15 @@ function VisualsDrawer({
                             );
                             patchShots(block, shots);
                           }}
-                          className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-[11px] text-[#0c0c0e]"
+                          className="mt-1 h-8 px-2 py-1.5 text-[11px] text-[#0c0c0e]"
                         />
                       </label>
-                      <label className="text-[10px] text-[#71717a]">
+                      <div className="text-[10px] text-[#71717a]">
                         Replace
-                        <select
+                        <Select
                           value={shot.asset_id}
-                          onChange={(event) => {
-                            const asset = ready.find((candidate) => candidate.id === event.target.value);
+                          onValueChange={(value) => {
+                            const asset = ready.find((candidate) => candidate.id === value);
                             if (!asset) return;
                             patchShots(
                               block,
@@ -1133,26 +1146,30 @@ function VisualsDrawer({
                               ),
                             );
                           }}
-                          className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-[11px] text-[#0c0c0e]"
                         >
-                          {ready.map((asset) => (
-                            <option key={asset.id} value={asset.id}>
-                              {asset.source_filename || asset.kind}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                          <SelectTrigger aria-label="Replace" className="mt-1 h-8 px-2 py-1.5 text-[11px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {ready.map((asset) => (
+                              <SelectItem key={asset.id} value={asset.id}>
+                                {asset.source_filename || asset.kind}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
                     </div>
-                    <label className="mt-2 block text-[10px] text-[#71717a]">
+                    <div className="mt-2 block text-[10px] text-[#71717a]">
                       Motion
-                      <select
+                      <Select
                         value={shot.motion}
-                        onChange={(event) => {
+                        onValueChange={(value) => {
                           const shots = block.shots.map((entry) =>
                             entry.id === shot.id
                               ? {
                                   ...entry,
-                                  motion: event.target.value as typeof entry.motion,
+                                  motion: value as typeof entry.motion,
                                 }
                               : entry,
                           );
@@ -1161,15 +1178,19 @@ function VisualsDrawer({
                             timing_mode: "manual",
                           } as Partial<VisualBlock>);
                         }}
-                        className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-[11px] text-[#0c0c0e]"
                       >
-                        <option value="none">None</option>
-                        <option value="zoom_in">Zoom in</option>
-                        <option value="zoom_out">Zoom out</option>
-                        <option value="pan_left">Pan left</option>
-                        <option value="pan_right">Pan right</option>
-                      </select>
-                    </label>
+                        <SelectTrigger aria-label="Motion" className="mt-1 h-8 px-2 py-1.5 text-[11px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">None</SelectItem>
+                          <SelectItem value="zoom_in">Zoom in</SelectItem>
+                          <SelectItem value="zoom_out">Zoom out</SelectItem>
+                          <SelectItem value="pan_left">Pan left</SelectItem>
+                          <SelectItem value="pan_right">Pan right</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                     <label className="mt-2 block text-[10px] text-[#71717a]">
                       Crop scale · {shot.crop.scale.toFixed(2)}×
                       <input
@@ -1250,7 +1271,7 @@ function VisualsDrawer({
                     {shot.kind === "video" && (
                       <label className="mt-2 block text-[10px] text-[#71717a]">
                         Source trim start
-                        <input
+                        <Input
                           type="number"
                           min={0}
                           step={0.05}
@@ -1265,23 +1286,24 @@ function VisualsDrawer({
                               ),
                             )
                           }
-                          className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-[11px] text-[#0c0c0e]"
+                          className="mt-1 h-8 px-2 py-1.5 text-[11px] text-[#0c0c0e]"
                         />
                       </label>
                     )}
                     {block.shots.length > 3 && (
-                      <button
+                      <Button
                         type="button"
+                        variant="ghost"
                         onClick={() =>
                           patchShots(
                             block,
                             block.shots.filter((entry) => entry.id !== shot.id),
                           )
                         }
-                        className="mt-2 min-h-8 text-[10px] font-semibold text-red-700"
+                        className="mt-2 min-h-8 px-0 text-[10px] font-semibold text-red-700 hover:bg-transparent hover:text-red-700"
                       >
                         Remove shot
-                      </button>
+                      </Button>
                     )}
                   </div>
                 ))}
@@ -1300,36 +1322,37 @@ function VisualsDrawer({
                 <div>
                   <div className="mb-1 flex items-center justify-between">
                     <p className="text-[10px] font-semibold text-[#71717a]">Linked text</p>
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
                       onClick={() => onAddBlockText?.(block.id)}
-                      className="min-h-8 rounded-md px-2 text-[10px] font-semibold text-[#3f3f46] hover:bg-zinc-100"
+                      className="min-h-8 rounded-md px-2 text-[10px] font-semibold text-[#3f3f46]"
                     >
                       Add text
-                    </button>
+                    </Button>
                   </div>
                   <div className="space-y-1">
                     {textElements
                       .filter((element) => element.visual_block_id === block.id)
                       .map((element, index) => (
-                        <button
+                        <Button
                           key={element.id || `${block.id}-${index}`}
                           type="button"
+                          variant="ghost"
                           disabled={!element.id}
                           onClick={() => element.id && onSelectBlockText?.(element.id)}
-                          className="block min-h-8 w-full truncate rounded-md bg-zinc-50 px-2 text-left text-[10px] text-[#3f3f46] hover:bg-zinc-100"
+                          className="block min-h-8 w-full justify-start truncate rounded-md bg-zinc-50 px-2 text-left text-[10px] font-normal text-[#3f3f46]"
                         >
                           {element.text || "Untitled text"}
-                        </button>
+                        </Button>
                       ))}
                   </div>
                 </div>
-                <label className="block text-[10px] text-[#71717a]">
+                <div className="block text-[10px] text-[#71717a]">
                   Background type
-                  <select
+                  <Select
                     value={block.background.type}
-                    onChange={(event) => {
-                      const type = event.target.value;
+                    onValueChange={(type) => {
                       const firstAsset = ready[0];
                       const background =
                         type === "gradient"
@@ -1353,14 +1376,20 @@ function VisualsDrawer({
                               : { type: "solid" as const, color: "#26382F" };
                       onPatchBlock?.(block.id, { background } as Partial<VisualBlock>);
                     }}
-                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-[11px] text-[#0c0c0e]"
                   >
-                    <option value="solid">Solid colour</option>
-                    <option value="gradient">Gradient</option>
-                    <option value="blur_previous">Blur previous frame</option>
-                    <option value="asset" disabled={ready.length === 0}>Image or video</option>
-                  </select>
-                </label>
+                    <SelectTrigger aria-label="Background type" className="mt-1 h-8 px-2 py-1.5 text-[11px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="solid">Solid colour</SelectItem>
+                      <SelectItem value="gradient">Gradient</SelectItem>
+                      <SelectItem value="blur_previous">Blur previous frame</SelectItem>
+                      <SelectItem value="asset" disabled={ready.length === 0}>
+                        Image or video
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 {block.background.type === "solid" && (
                   <label className="flex items-center justify-between text-[11px] text-[#71717a]">
                     Colour
@@ -1396,7 +1425,7 @@ function VisualsDrawer({
                       } as Partial<VisualBlock>)}
                       className="h-9 w-full rounded border border-zinc-200"
                     />
-                    <input
+                    <Input
                       aria-label="Gradient angle"
                       type="number"
                       min={0}
@@ -1405,7 +1434,7 @@ function VisualsDrawer({
                       onChange={(event) => onPatchBlock?.(block.id, {
                         background: { ...block.background, angle_deg: Number(event.target.value) },
                       } as Partial<VisualBlock>)}
-                      className="h-9 w-full rounded border border-zinc-200 px-2 text-[11px]"
+                      className="h-9 px-2 text-[11px]"
                     />
                   </div>
                 )}
@@ -1425,12 +1454,12 @@ function VisualsDrawer({
                   </label>
                 )}
                 {block.background.type === "asset" && (
-                  <label className="block text-[10px] text-[#71717a]">
+                  <div className="block text-[10px] text-[#71717a]">
                     Background asset
-                    <select
+                    <Select
                       value={block.background.shot.asset_id}
-                      onChange={(event) => {
-                        const asset = ready.find((candidate) => candidate.id === event.target.value);
+                      onValueChange={(value) => {
+                        const asset = ready.find((candidate) => candidate.id === value);
                         if (!asset || block.background.type !== "asset") return;
                         onPatchBlock?.(block.id, {
                           background: {
@@ -1444,13 +1473,19 @@ function VisualsDrawer({
                           },
                         } as Partial<VisualBlock>);
                       }}
-                      className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-[11px] text-[#0c0c0e]"
                     >
-                      {ready.map((asset) => (
-                        <option key={asset.id} value={asset.id}>{asset.source_filename || asset.kind}</option>
-                      ))}
-                    </select>
-                  </label>
+                      <SelectTrigger aria-label="Background asset" className="mt-1 h-8 px-2 py-1.5 text-[11px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ready.map((asset) => (
+                          <SelectItem key={asset.id} value={asset.id}>
+                            {asset.source_filename || asset.kind}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 )}
               </div>
             )}
@@ -1460,68 +1495,84 @@ function VisualsDrawer({
               </p>
             )}
             <div className="mt-3 grid grid-cols-2 gap-2">
-              <label className="text-[10px] text-[#71717a]">
+              <div className="text-[10px] text-[#71717a]">
                 Entrance
-                <select
+                <Select
                   value={block.transition_in}
-                  onChange={(event) => onPatchBlock?.(block.id, {
-                    transition_in: event.target.value as "cut" | "fade",
+                  onValueChange={(value) => onPatchBlock?.(block.id, {
+                    transition_in: value as "cut" | "fade",
                   })}
-                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-[11px] text-[#0c0c0e]"
                 >
-                  <option value="cut">Cut</option>
-                  <option value="fade">Fade</option>
-                </select>
-              </label>
-              <label className="text-[10px] text-[#71717a]">
+                  <SelectTrigger aria-label="Entrance" className="mt-1 h-8 px-2 py-1.5 text-[11px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cut">Cut</SelectItem>
+                    <SelectItem value="fade">Fade</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="text-[10px] text-[#71717a]">
                 Exit
-                <select
+                <Select
                   value={block.transition_out}
-                  onChange={(event) => onPatchBlock?.(block.id, {
-                    transition_out: event.target.value as "cut" | "fade",
+                  onValueChange={(value) => onPatchBlock?.(block.id, {
+                    transition_out: value as "cut" | "fade",
                   })}
-                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-[11px] text-[#0c0c0e]"
                 >
-                  <option value="cut">Cut</option>
-                  <option value="fade">Fade</option>
-                </select>
-              </label>
-              <label className="text-[10px] text-[#71717a]">
+                  <SelectTrigger aria-label="Exit" className="mt-1 h-8 px-2 py-1.5 text-[11px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cut">Cut</SelectItem>
+                    <SelectItem value="fade">Fade</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="text-[10px] text-[#71717a]">
                 Base audio
-                <select
+                <Select
                   value={block.audio_policy.base}
-                  onChange={(event) =>
+                  onValueChange={(value) =>
                     onPatchBlock?.(block.id, {
                       audio_policy: {
                         ...block.audio_policy,
-                        base: event.target.value as "continue" | "mute",
+                        base: value as "continue" | "mute",
                       },
                     } as Partial<VisualBlock>)
                   }
-                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-[11px] text-[#0c0c0e]"
                 >
-                  <option value="continue">Continue</option>
-                  <option value="mute">Mute</option>
-                </select>
-              </label>
-              <label className="text-[10px] text-[#71717a]">
+                  <SelectTrigger aria-label="Base audio" className="mt-1 h-8 px-2 py-1.5 text-[11px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="continue">Continue</SelectItem>
+                    <SelectItem value="mute">Mute</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="text-[10px] text-[#71717a]">
                 Sound effects
-                <select
+                <Select
                   value={block.audio_policy.sfx}
-                  onChange={(event) =>
+                  onValueChange={(value) =>
                     onPatchBlock?.(block.id, {
                       audio_policy: {
                         ...block.audio_policy,
-                        sfx: event.target.value as "continue" | "mute",
+                        sfx: value as "continue" | "mute",
                       },
                     } as Partial<VisualBlock>)
                   }
-                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-[11px] text-[#0c0c0e]"
                 >
-                  <option value="continue">Continue</option>
-                  <option value="mute">Mute</option>
-                </select>
-              </label>
+                  <SelectTrigger aria-label="Sound effects" className="mt-1 h-8 px-2 py-1.5 text-[11px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="continue">Continue</SelectItem>
+                    <SelectItem value="mute">Mute</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </div>
         ))}
@@ -1579,14 +1630,15 @@ function VisualAssetButton({
 
   return (
     <div className="rounded-lg border border-zinc-200 bg-white p-1.5">
-      <button
+      <Button
         type="button"
+        variant="ghost"
         aria-label={`Select ${asset.source_filename || asset.kind}`}
         aria-pressed={selected}
         onClick={onSelect}
-        className={`relative aspect-[9/12] w-full overflow-hidden rounded-md border-2 ${
+        className={`relative block aspect-[9/12] h-auto w-full overflow-hidden rounded-md border-2 p-0 hover:bg-transparent ${
           selected ? "border-lime-500" : "border-transparent"
-        } focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500`}
+        }`}
       >
         {tileSrc && !mediaError ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -1611,50 +1663,53 @@ function VisualAssetButton({
             Extracted frame
           </span>
         )}
-      </button>
+      </Button>
       <div className="mt-1.5 space-y-1 text-[10px] leading-snug">
         <div>
           <div className="flex items-center justify-between gap-1">
             <span className="font-semibold text-[#3f3f46]">You</span>
             {onSaveContext && !editing && (
-              <button
+              <Button
                 type="button"
+                variant="link"
                 onClick={() => setEditing(true)}
-                className="min-h-7 text-lime-700 underline underline-offset-2"
+                className="min-h-7 h-auto p-0 text-lime-700 underline underline-offset-2 hover:text-lime-700"
               >
                 {asset.user_context ? "Edit" : "Add"}
-              </button>
+              </Button>
             )}
           </div>
           {editing ? (
             <div className="space-y-1">
-              <textarea
+              <Textarea
                 rows={3}
                 maxLength={500}
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
-                className="w-full resize-none rounded-md border border-zinc-200 px-1.5 py-1 text-[11px] text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+                className="min-h-0 resize-none rounded-md px-1.5 py-1 text-[11px] text-[#0c0c0e]"
                 placeholder="Context for matching"
               />
               <div className="flex justify-end gap-1">
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
                   onClick={() => {
                     setDraft(asset.user_context ?? "");
                     setEditing(false);
                   }}
-                  className="min-h-7 px-1 text-[#71717a]"
+                  className="min-h-7 h-auto px-1 text-[#71717a]"
                 >
                   Cancel
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  variant="ink"
                   disabled={saving}
                   onClick={save}
-                  className="min-h-7 rounded bg-[#0c0c0e] px-1.5 font-semibold text-white disabled:opacity-50"
+                  className="min-h-7 h-auto rounded px-1.5 font-semibold disabled:opacity-50"
                 >
                   {saving ? "Saving…" : "Save"}
-                </button>
+                </Button>
               </div>
             </div>
           ) : (
@@ -1736,16 +1791,12 @@ function SoundsDrawer({
           {musicTracks.map((track) => {
             const selected = track.id === currentMusicTrackId;
             return (
-              <button
+              <Button
                 key={track.id}
                 type="button"
+                variant={selected ? "ink" : "outline"}
                 onClick={() => onPickMusic?.(track.id)}
-                className={[
-                  "flex min-h-11 w-full items-center justify-between rounded-lg border px-3 text-left text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
-                  selected
-                    ? "border-[#0c0c0e] bg-[#0c0c0e] text-white"
-                    : "border-zinc-200 bg-white text-[#0c0c0e] hover:border-zinc-400",
-                ].join(" ")}
+                className="flex min-h-11 w-full items-center justify-between rounded-lg px-3 text-left text-[13px] font-normal"
               >
                 <span className="min-w-0">
                   <span className="block truncate font-semibold">{track.title}</span>
@@ -1756,7 +1807,7 @@ function SoundsDrawer({
                 <span className="ml-2 shrink-0 text-[11px]">
                   {track.user_slot_count ? `${track.user_slot_count} clips` : "Song"}
                 </span>
-              </button>
+              </Button>
             );
           })}
           {musicTracks.length === 0 && (
@@ -1779,17 +1830,18 @@ function SoundsDrawer({
       ) : (
         <div className="space-y-2">
           {effects.map((effect) => (
-            <button
+            <Button
               key={effect.id}
               type="button"
+              variant="outline"
               onClick={() => onAddSfx?.(effect)}
-              className="flex min-h-11 w-full items-center justify-between rounded-lg border border-zinc-200 bg-white px-3 text-left text-[13px] text-[#0c0c0e] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+              className="flex min-h-11 w-full items-center justify-between rounded-lg px-3 text-left text-[13px] font-normal text-[#0c0c0e]"
             >
               <span className="truncate">{effect.name}</span>
               <span className="ml-2 shrink-0 text-[11px] text-[#71717a]">
                 {effect.duration_s != null ? `${effect.duration_s.toFixed(1)}s` : "SFX"}
               </span>
-            </button>
+            </Button>
           ))}
           {effects.length === 0 && (
             <div className="rounded-lg border border-dashed border-zinc-300 px-3 py-3 text-[12px] text-[#71717a]">

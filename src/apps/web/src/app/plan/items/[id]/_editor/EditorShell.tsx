@@ -6,8 +6,10 @@
  *
  * Full-viewport grid: 56px top bar / minmax(480px,1fr) canvas row / 260px
  * timeline region. Middle row: ToolRail · ToolDrawer · canvas · InspectorPanel
- * (~320px, PERMANENTLY reserved — the canvas never reflows on select/deselect,
- * D6) · InspectorRail (~72px).
+ * (~320px/w-80, PERMANENTLY reserved — the canvas never reflows on
+ * select/deselect, D6). The Basic/Presets switch renders inline at the top
+ * of InspectorPanel (Lane I, DESIGN.md §15) — the old floating InspectorRail
+ * column is gone.
  *
  * First paint: drawer closed, no selection, inspector empty state, Select
  * tool active, playhead 0:00, video paused on frame 0.
@@ -136,7 +138,19 @@ import {
   motionPatchForText,
   type TextMotionConfigV2,
 } from "@/lib/text-motion-v2";
-import { InkButton } from "@/components/ui/InkButton";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useFocusTrap } from "@/components/ui/useFocusTrap";
 import UnifiedTimeline from "@/app/plan/_components/UnifiedTimeline";
@@ -206,7 +220,7 @@ import OverlaySuggestions from "./OverlaySuggestions";
 import { usePoolAssetUploader } from "@/app/plan/_hooks/usePoolAssetUploader";
 import { computeReseedSections } from "./editor-reseed";
 import InspectorPanel from "./InspectorPanel";
-import InspectorRail, { type InspectorTab } from "./InspectorRail";
+import type { InspectorTab } from "./InspectorRail";
 import ToolDrawer from "./ToolDrawer";
 import Sheet from "./Sheet";
 import { ToolDock, type DockTool } from "./ToolDock";
@@ -217,6 +231,7 @@ import {
   pocketReducer,
   type PocketTool,
 } from "./mobile-editor-state";
+import { ArrowLeft as ArrowLeftIcon } from "lucide-react";
 import { PauseIcon, PlayIcon, RedoIcon, UndoIcon } from "./editor-icons";
 import type {
   CaptionCueRow,
@@ -659,27 +674,28 @@ function OrientationToggle({
       aria-label="Output format"
       aria-busy={busy}
       title={title}
-      className="flex min-h-11 items-center rounded-lg border border-zinc-200 bg-white p-0.5"
+      className="flex min-h-11 items-center rounded-md border border-border bg-background p-0.5"
     >
       {(["portrait", "landscape"] as const).map((option) => {
         const selected = value === option;
         return (
-          <button
+          <Button
             key={option}
             type="button"
+            variant="ghost"
             aria-label={option === "portrait" ? "Use 9:16 output" : "Use 16:9 output"}
             aria-pressed={selected}
             disabled={disabled}
             onClick={() => onChange(option)}
             className={[
-              "min-h-10 min-w-[54px] rounded-md px-2 text-[12px] font-semibold",
-              "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
-              selected ? "bg-[#0c0c0e] text-white" : "text-[#3f3f46] hover:bg-zinc-100",
-              disabled ? "cursor-not-allowed opacity-45 hover:bg-transparent" : "",
+              "h-10 min-h-0 min-w-[54px] rounded-md px-2 text-[12px] font-semibold normal-case tracking-normal",
+              selected
+                ? "bg-foreground text-background hover:bg-foreground"
+                : "text-muted-foreground",
             ].join(" ")}
           >
             {option === "portrait" ? "9:16" : "16:9"}
-          </button>
+          </Button>
         );
       })}
     </div>
@@ -1004,7 +1020,11 @@ export default function EditorShell({
   const [timelineFitRequestKey, setTimelineFitRequestKey] = useState(0);
   const [videoMuted, setVideoMuted] = useState(false);
   const [soundMuted, setSoundMuted] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+  // Transient feedback (§15) — sonner owns display/auto-dismiss; this is
+  // just a stable-identity callback so call sites read the same as before.
+  const notify = useCallback((message: string) => {
+    toast(message, { duration: 2600 });
+  }, []);
   const [sfxGlossaryEffects, setSfxGlossaryEffects] = useState<SoundEffectSummary[]>([]);
   const [sfxGlossaryLoading, setSfxGlossaryLoading] = useState(false);
   const [musicTracks, setMusicTracks] = useState<MusicTrackSummary[]>([]);
@@ -1123,7 +1143,7 @@ export default function EditorShell({
           throw new Error("That visual is taking longer than expected. Try again shortly.");
         };
         void finalize()
-          .catch((err) => setToast(err instanceof Error ? err.message : "Couldn't add that overlay."))
+          .catch((err) => notify(err instanceof Error ? err.message : "Couldn't add that overlay."))
           .finally(() => setOverlayUploading(false));
       }
       poolListEpoch.current += 1;
@@ -1310,7 +1330,7 @@ export default function EditorShell({
       .catch(() => {
         // Keep whatever tracks we already have and leave `musicTracksLoaded`
         // false so the picker/virtual-preview gates can trigger a retry later.
-        setToast("Couldn't load music.");
+        notify("Couldn't load music.");
       })
       .finally(() => {
         setMusicTracksLoading(false);
@@ -1318,7 +1338,7 @@ export default function EditorShell({
       });
     musicTracksFetchRef.current = fetchPromise;
     return fetchPromise;
-  }, []);
+  }, [notify]);
 
   useEffect(() => {
     if (!clipDirty && !musicDirty && !backgroundMusicDirty) {
@@ -1330,13 +1350,6 @@ export default function EditorShell({
       virtualMusicAutoFetchRef.current = false;
     }
   }, [backgroundMusicDirty, clipDirty, musicDirty]);
-
-  // Toast auto-clear.
-  useEffect(() => {
-    if (!toast) return;
-    const t = window.setTimeout(() => setToast(null), 2600);
-    return () => window.clearTimeout(t);
-  }, [toast]);
 
   // ── Read-only capability gate (plan §9 / E4) ────────────────────────────────
   // A variant whose editor_capabilities are ALL false is read-only: banner +
@@ -1734,14 +1747,14 @@ export default function EditorShell({
       });
       const validation = validateMotionInstances(candidate, durationFrames);
       if (!validation.ok) {
-        setToast(validation.errors[0] ?? "That Creator Block edit is outside the allowed range.");
+        notify(validation.errors[0] ?? "That Creator Block edit is outside the allowed range.");
         return;
       }
       history.record();
       setLocalMotionScenes(candidate);
       setMotionScenesDirty(true);
     },
-    [clip.state.grid, duration, evolvingTypeExposureEnabled, history, localMotionScenes, motionScenesAllowed, readOnly, slots, variant?.duration_s],
+    [clip.state.grid, duration, evolvingTypeExposureEnabled, history, localMotionScenes, motionScenesAllowed, notify, readOnly, slots, variant?.duration_s],
   );
 
   const motionDurationFrames = useCallback(() => {
@@ -1789,11 +1802,11 @@ export default function EditorShell({
     );
     const validation = validateMotionInstances(candidate, videoEndFrame);
     if (!validation.ok) {
-      setToast(validation.errors[0] ?? "That Creator Block edit is outside the allowed range.");
+      notify(validation.errors[0] ?? "That Creator Block edit is outside the allowed range.");
       return null;
     }
     return candidate;
-  }, [evolvingTypeExposureEnabled, localMotionScenes, motionDurationFrames]);
+  }, [evolvingTypeExposureEnabled, localMotionScenes, motionDurationFrames, notify]);
 
   const beginMotionControl = useCallback(() => {
     if (readOnly || !motionScenesAllowed) return;
@@ -1911,6 +1924,12 @@ export default function EditorShell({
   const saving = saveState === "saving";
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [musicAlignmentPrompt, setMusicAlignmentPrompt] = useState(false);
+  // Song-swap + clip-timing collision (§15 — window.confirm is banned; this
+  // resumes handleSave with confirmedSongReset=true on confirm).
+  const [songResetPrompt, setSongResetPrompt] = useState<{
+    musicAlignment?: "preserve_cuts" | "resync_beats";
+    opts?: { afterCommit?: () => Promise<void>; afterCommitFailedMessage?: string };
+  } | null>(null);
   // Resume-draft notice (plan §9 crash recovery). Non-null → show the notice.
   const [draftDoc, setDraftDoc] = useState<EditorDocument | null>(null);
   // A full save is a terminal navigation handoff. Derived dirty checks still
@@ -2616,7 +2635,7 @@ export default function EditorShell({
         if (!cancelled) setSfxGlossaryEffects(effects);
       })
       .catch(() => {
-        if (!cancelled) setToast("Couldn't load sound effects.");
+        if (!cancelled) notify("Couldn't load sound effects.");
       })
       .finally(() => {
         if (!cancelled) setSfxGlossaryLoading(false);
@@ -2624,7 +2643,7 @@ export default function EditorShell({
     return () => {
       cancelled = true;
     };
-  }, [activeTool, localSfx.length, sfxGlossaryEffects.length]);
+  }, [activeTool, localSfx.length, sfxGlossaryEffects.length, notify]);
 
   const musicPickerShouldLoad =
     (!!variant?.music_track_id ||
@@ -3201,7 +3220,7 @@ export default function EditorShell({
         return;
       }
       if (!lyricsCap.can_toggle_on && !lyricsCap.enabled) {
-        setToast(lyricsToggleHint(lyricsCap.reason) ?? "Lyrics can't be enabled for this edit.");
+        notify(lyricsToggleHint(lyricsCap.reason) ?? "Lyrics can't be enabled for this edit.");
         return;
       }
       const variantId = variant.variant_id;
@@ -3228,15 +3247,15 @@ export default function EditorShell({
       } catch (err) {
         if (err instanceof LyricSeedsError) {
           setLyricSeedsError(err.reason);
-          setToast(err.message);
+          notify(err.message);
         } else {
-          setToast(err instanceof Error ? err.message : "Couldn't load lyrics.");
+          notify(err instanceof Error ? err.message : "Couldn't load lyrics.");
         }
       } finally {
         setLyricSeedsLoading(false);
       }
     },
-    [readOnly, variant, hasLyricBars, lyricsCap, itemId, history],
+    [readOnly, variant, hasLyricBars, lyricsCap, itemId, history, notify],
   );
 
   const applySmartPlacement = useCallback(() => {
@@ -3253,7 +3272,7 @@ export default function EditorShell({
         outputToBaseTimeRef.current(currentTime),
       );
       if (!assignments) {
-        setToast("Not enough empty collage pockets for all overlapping text blocks.");
+        notify("Not enough empty collage pockets for all overlapping text blocks.");
         return;
       }
       history.record();
@@ -3271,6 +3290,7 @@ export default function EditorShell({
     if (!selectedBar || !smartPlacementCandidate) return;
     patchBar(selectedBar.id, smartPlacementPatchForBar(selectedBar, smartPlacementCandidate));
   }, [
+    notify,
     history,
     currentTime,
     patchBar,
@@ -3294,7 +3314,7 @@ export default function EditorShell({
       : smartPlacementCandidate;
     if (!candidate) {
       if (isMasonryVariant(variant)) {
-        setToast("No visible collage pocket can fit this text at this time.");
+        notify("No visible collage pocket can fit this text at this time.");
       }
       return;
     }
@@ -3307,6 +3327,7 @@ export default function EditorShell({
     selectedBar,
     smartPlacementCandidate,
     variant,
+    notify,
   ]);
 
   const pickMusicTrack = useCallback(
@@ -3500,7 +3521,7 @@ export default function EditorShell({
         const source = clip.clips.find((candidate) => candidate.clip_index === clipIndex);
         const roomS = Math.max(0, 60 - slotLayout.totalDurationS);
         if (roomS < 0.1) {
-          setToast("This cut has no room for another clip. Shorten or remove a clip first.");
+          notify("This cut has no room for another clip. Shorten or remove a clip first.");
           return;
         }
         const durationS = Math.min(
@@ -3535,7 +3556,7 @@ export default function EditorShell({
           { type: "ADD", clipIndex },
         );
         if (nextState.slots.length === slots.length) {
-          setToast("This cut has no room for another clip. Shorten or remove a clip first.");
+          notify("This cut has no room for another clip. Shorten or remove a clip first.");
           return;
         }
         nextSlots = nextState.slots;
@@ -3551,7 +3572,7 @@ export default function EditorShell({
       clipAddAllowed,
       guidedStoryV2,
       history,
-      readOnly,
+      notify, readOnly,
       select,
       slotLayout.totalDurationS,
       slots,
@@ -4016,7 +4037,7 @@ export default function EditorShell({
           cards.forEach((card) => select("overlay", card.id));
           setOverlaysDirty(true);
         } catch (err) {
-          setToast(err instanceof Error ? err.message : "Couldn't upload that overlay.");
+          notify(err instanceof Error ? err.message : "Couldn't upload that overlay.");
         } finally {
           setOverlayUploading(false);
         }
@@ -4042,6 +4063,7 @@ export default function EditorShell({
       poolUploader,
       readOnly,
       select,
+      notify,
     ],
   );
 
@@ -4106,7 +4128,7 @@ export default function EditorShell({
         // OV-1: the rail disables the Text/Styles buttons, but this callback
         // is also reachable via preset picks — same gate, honest toast. The
         // copy is text-specific (never the whole-shell "can't be edited").
-        setToast(textElementsLockedCopy(capabilities));
+        notify(textElementsLockedCopy(capabilities));
         return;
       }
       history.record();
@@ -4135,6 +4157,7 @@ export default function EditorShell({
       textElementsLocked,
       capabilities,
       history,
+      notify,
     ],
   );
 
@@ -4142,7 +4165,7 @@ export default function EditorShell({
     (text: string): boolean => {
       if (readOnly) return false;
       if (textElementsLocked) {
-        setToast(textElementsLockedCopy(capabilities));
+        notify(textElementsLockedCopy(capabilities));
         return false;
       }
       const draft = text.trim();
@@ -4159,7 +4182,7 @@ export default function EditorShell({
         remainingElementCount,
       );
       if (sequence === null) {
-        setToast(
+        notify(
           `This edit has room for ${remainingElementCount} more text beat${remainingElementCount === 1 ? "" : "s"}.`,
         );
         return false;
@@ -4193,6 +4216,7 @@ export default function EditorShell({
       state.bars,
       textElementsLocked,
       lyricsOptionalActive,
+      notify,
     ],
   );
 
@@ -4205,7 +4229,7 @@ export default function EditorShell({
       if (readOnly) return;
       const targetBars = visibleTextBars.filter((bar) => !isCaptionBar(bar));
       if (targetBars.length === 0) {
-        setToast("Add text first, then apply a style.");
+        notify("Add text first, then apply a style.");
         return;
       }
       const basePatch: Partial<Omit<TextElementBar, "id" | "role">> = {
@@ -4236,7 +4260,7 @@ export default function EditorShell({
       );
       setAppliedStyleSetId(styleSet.id);
     },
-    [duration, readOnly, visibleTextBars, lyricsOptionalActive, history],
+    [duration, readOnly, visibleTextBars, lyricsOptionalActive, history, notify],
   );
 
   // Legacy lyrics-variant restyle for flag-off clients: route through the
@@ -4318,7 +4342,7 @@ export default function EditorShell({
       if (readOnly || !visualBlocksAllowed) return;
       const { start, end } = nextVisualBlockWindow(2.5);
       if (end - start < 0.75) {
-        setToast("There isn't enough open timeline space for a text card.");
+        notify("There isn't enough open timeline space for a text card.");
         return;
       }
       const id = crypto.randomUUID();
@@ -4373,6 +4397,7 @@ export default function EditorShell({
       readOnly,
       seekPlaybackTo,
       selectText,
+      notify,
     ],
   );
 
@@ -4384,12 +4409,12 @@ export default function EditorShell({
         .filter((asset): asset is PoolAsset => !!asset && asset.status === "ready")
         .slice(0, 12);
       if (selectedAssets.length < 3) {
-        setToast("Choose at least three ready visuals for a montage.");
+        notify("Choose at least three ready visuals for a montage.");
         return;
       }
       const { start, end } = nextVisualBlockWindow(3.0);
       if (end - start < 1.2) {
-        setToast("There isn't enough open timeline space for a montage.");
+        notify("There isn't enough open timeline space for a montage.");
         return;
       }
       const perShot = (end - start) / selectedAssets.length;
@@ -4435,6 +4460,7 @@ export default function EditorShell({
       poolAssets,
       readOnly,
       seekPlaybackTo,
+      notify,
     ],
   );
 
@@ -4527,7 +4553,7 @@ export default function EditorShell({
       const durationS = source.end_s - source.start_s;
       const { start, end } = nextVisualBlockWindow(durationS);
       if (end - start < durationS - 1 / 30) {
-        setToast("There isn't enough open timeline space to duplicate this block.");
+        notify("There isn't enough open timeline space to duplicate this block.");
         return;
       }
       const newId = crypto.randomUUID();
@@ -4591,6 +4617,7 @@ export default function EditorShell({
       readOnly,
       seekPlaybackTo,
       state.bars,
+      notify,
     ],
   );
 
@@ -4607,10 +4634,10 @@ export default function EditorShell({
           setVisualBlocksDirty(true);
         })
         .catch((error) =>
-          setToast(error instanceof Error ? error.message : "Couldn't retime that montage."),
+          notify(error instanceof Error ? error.message : "Couldn't retime that montage."),
         );
     },
-    [history, itemId, localVisualBlocks, variant],
+    [history, itemId, localVisualBlocks, notify, variant],
   );
 
   // Clip-split capability gate (plan §7): missing capabilities → allowed for
@@ -5066,7 +5093,7 @@ export default function EditorShell({
               }, 1400);
             })
             .catch((err) => {
-              setToast(err instanceof Error ? err.message : failureMessage);
+              notify(err instanceof Error ? err.message : failureMessage);
             });
         }
         // Flag off: byte-identical to today — no isRenderTurn/assistantText
@@ -5300,6 +5327,7 @@ export default function EditorShell({
       stepsFeedEnabled,
       startCopilotRenderPoll,
       stopCopilotRenderPoll,
+      notify,
     ],
   );
 
@@ -5330,21 +5358,21 @@ export default function EditorShell({
       clips: carouselClips,
       onChange: (config: CarouselMoment) => {
         if (!carouselCapable) {
-          setToast(carouselReason ?? "Carousel isn't available for this edit.");
+          notify(carouselReason ?? "Carousel isn't available for this edit.");
           return;
         }
         stageCarouselMoment(config);
       },
       onRemove: () => {
         if (!carouselCapable) {
-          setToast(carouselReason ?? "Carousel isn't available for this edit.");
+          notify(carouselReason ?? "Carousel isn't available for this edit.");
           return;
         }
         stageCarouselMoment(null);
       },
-      onDisabledTap: setToast,
+      onDisabledTap: notify,
     }),
-    [carouselCapable, carouselReason, carouselMoment, carouselClips, stageCarouselMoment],
+    [carouselCapable, carouselReason, carouselMoment, carouselClips, stageCarouselMoment, notify],
   );
   const carouselInspectorControl = useMemo(
     () => ({
@@ -5399,7 +5427,7 @@ export default function EditorShell({
     if (selection.kind === "text") {
       const selected = state.bars.find((bar) => bar.id === selection.id);
       if (!isCaptionBar(selected) && !textElementsAllowed) {
-        setToast(textDisabledReason ?? "Text is locked for this story.");
+        notify(textDisabledReason ?? "Text is locked for this story.");
         return;
       }
       if (
@@ -5423,31 +5451,31 @@ export default function EditorShell({
         setLocalSlots(res.slots);
         clear();
       } else {
-        setToast("Keep at least one clip.");
+        notify("Keep at least one clip.");
       }
     } else if (selection.kind === "sfx") {
       if (sfxAllowed) removeSfx(selection.id);
-      else setToast(sfxDisabledReason ?? "Sound effects aren't available for this edit.");
+      else notify(sfxDisabledReason ?? "Sound effects aren't available for this edit.");
     } else if (selection.kind === "overlay") {
       if (overlaysAllowed) removeOverlay(selection.id);
-      else setToast(overlaysDisabledReason ?? "Overlays aren't available for this edit.");
+      else notify(overlaysDisabledReason ?? "Overlays aren't available for this edit.");
     } else if (selection.kind === "visual") {
       if (visualBlocksAllowed) {
         deleteVisualBlock(selection.id);
         clear();
       } else {
-        setToast(visualBlocksDisabledReason ?? "Visual blocks aren't available for this edit.");
+        notify(visualBlocksDisabledReason ?? "Visual blocks aren't available for this edit.");
       }
     } else if (selection.kind === "motion") {
       if (motionScenesAllowed) {
         removeMotionScene(selection.id);
         clear();
       } else {
-        setToast(motionScenesDisabledReason ?? "Motion isn't available for this edit.");
+        notify(motionScenesDisabledReason ?? "Motion isn't available for this edit.");
       }
     } else if (selection.kind === "carousel") {
       if (!carouselCapable || carouselMoment === null) {
-        setToast(
+        notify(
           carouselReason ??
             (carouselMoment === null
               ? "Add a Carousel before removing it."
@@ -5487,6 +5515,7 @@ export default function EditorShell({
     visualBlocksDisabledReason,
     motionScenesAllowed,
     motionScenesDisabledReason,
+    notify,
   ]);
 
   const splitAtPlayhead = useCallback(() => {
@@ -5498,13 +5527,13 @@ export default function EditorShell({
       const bar = selectedBar;
       if (!bar) return;
       if (isLyricBar(bar)) {
-        setToast("Lyric timing is locked to the vocal.");
+        notify("Lyric timing is locked to the vocal.");
         return;
       }
       const at = Math.round(baseCurrentTime * 10) / 10;
       const MIN = 0.2;
       if (at <= bar.start_s + MIN - 1e-9 || at >= bar.end_s - MIN + 1e-9) {
-        setToast("Move the playhead over the text to split it.");
+        notify("Move the playhead over the text to split it.");
         return;
       }
       history.record();
@@ -5519,7 +5548,7 @@ export default function EditorShell({
     } else if (selection.kind === "clip") {
       if (!splitClipsAllowed) return;
       if (guidedStoryV2 && selectedClip?.sourceKind !== "video") {
-        setToast("Images can be resized, but they can’t be split.");
+        notify("Images can be resized, but they can’t be split.");
         return;
       }
       const res = splitSlotAt(
@@ -5533,7 +5562,7 @@ export default function EditorShell({
         history.record();
         setLocalSlots(res.slots);
       } else {
-        setToast("Move the playhead over the clip to split it.");
+        notify("Move the playhead over the clip to split it.");
       }
     }
   }, [
@@ -5547,6 +5576,7 @@ export default function EditorShell({
     selectedBar,
     selectedClip,
     history,
+    notify,
   ]);
 
   const togglePlay = useCallback(() => {
@@ -5733,6 +5763,7 @@ export default function EditorShell({
      * and suppresses the redirect so the user can retry.
      */
     opts?: { afterCommit?: () => Promise<void>; afterCommitFailedMessage?: string },
+    confirmedSongReset = false,
   ) => {
     if (!variant || saveState === "saving" || readOnly) return;
     const commitMusicWindow = musicWindowDirty && !!songWindowState?.editable;
@@ -5740,12 +5771,11 @@ export default function EditorShell({
       setMusicAlignmentPrompt(true);
       return;
     }
-    if (!commitMusicWindow && musicDirty && clipDirty) {
-      const proceed = window.confirm(
-        "Changing the song resets clip cuts to the new beat grid. Save with the new song?",
-      );
-      if (!proceed) return;
+    if (!commitMusicWindow && musicDirty && clipDirty && !confirmedSongReset) {
+      setSongResetPrompt({ musicAlignment, opts });
+      return;
     }
+    setSongResetPrompt(null);
     setMusicAlignmentPrompt(false);
     setSaveState("saving");
     setSaveMessage(null);
@@ -6234,21 +6264,22 @@ export default function EditorShell({
             </p>
             <div className="mt-4 flex items-center justify-center gap-3">
               {loadError && (
-                <button
+                <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => setLoadNonce((n) => n + 1)}
-                  className="min-h-11 rounded-full border border-zinc-200 px-4 text-[13px] text-[#3f3f46] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
                 >
                   Retry
-                </button>
+                </Button>
               )}
-              <button
+              <Button
                 type="button"
+                size="sm"
                 onClick={() => router.push(`/plan/items/${itemId}`)}
-                className="min-h-11 rounded-full bg-[#0c0c0e] px-4 text-[13px] font-semibold text-white hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
               >
                 Back to the video
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -6329,23 +6360,25 @@ export default function EditorShell({
             {upload.stage === "failed" && (
               <div className="mt-1 flex gap-3">
                 {upload.retryable && (
-                  <button
+                  <Button
                     type="button"
+                    variant="link"
                     aria-label={`Retry ${upload.filename}`}
                     onClick={() => poolUploader.retry(upload.localId)}
-                    className="min-h-7 text-lime-700 underline underline-offset-2"
+                    className="h-auto min-h-7 p-0 text-[13px] text-lime-700 underline underline-offset-2 hover:text-lime-700"
                   >
                     Retry
-                  </button>
+                  </Button>
                 )}
-                <button
+                <Button
                   type="button"
+                  variant="link"
                   aria-label={`Remove ${upload.filename}`}
                   onClick={() => poolUploader.remove(upload.localId)}
-                  className="min-h-7 underline underline-offset-2"
+                  className="h-auto min-h-7 p-0 text-[13px] underline underline-offset-2"
                 >
                   Remove
-                </button>
+                </Button>
               </div>
             )}
           </div>
@@ -6367,23 +6400,25 @@ export default function EditorShell({
               {asset.status === "failed" && (
                 <div className="mt-1 flex gap-3">
                   {asset.retryable !== false && (
-                    <button
+                    <Button
                       type="button"
+                      variant="link"
                       aria-label={`Retry analysis ${asset.source_filename ?? "visual"}`}
                       onClick={() => handleRetryPoolAsset(asset)}
-                      className="min-h-7 text-lime-700 underline underline-offset-2"
+                      className="h-auto min-h-7 p-0 text-[13px] text-lime-700 underline underline-offset-2 hover:text-lime-700"
                     >
                       Retry analysis
-                    </button>
+                    </Button>
                   )}
-                  <button
+                  <Button
                     type="button"
+                    variant="link"
                     aria-label={`Remove ${asset.source_filename ?? "visual"}`}
                     onClick={() => handleRemovePoolAsset(asset)}
-                    className="min-h-7 underline underline-offset-2"
+                    className="h-auto min-h-7 p-0 text-[13px] underline underline-offset-2"
                   >
                     Remove
-                  </button>
+                  </Button>
                 </div>
               )}
             </div>
@@ -6464,7 +6499,7 @@ export default function EditorShell({
         setMotionScenesDirty(true);
       }
     }
-    setToast(
+    notify(
       `Restored ${activeGuidedTombstones.length} item${activeGuidedTombstones.length === 1 ? "" : "s"}.`,
     );
   };
@@ -6489,7 +6524,7 @@ export default function EditorShell({
       : (next: boolean) => {
           if (readOnly) return;
           if (next && !lyricsCap.can_toggle_on && !lyricsCap.enabled) {
-            setToast(lyricsToggleHint(lyricsCap.reason) ?? "Lyrics can't be enabled for this edit.");
+            notify(lyricsToggleHint(lyricsCap.reason) ?? "Lyrics can't be enabled for this edit.");
             return;
           }
           if (next === lyricsEnabled) return;
@@ -6511,7 +6546,7 @@ export default function EditorShell({
       disabledHint={orientationToggleHint}
       onChange={(next) => {
         if (orientationToggleDisabled) {
-          setToast(orientationToggleHint ?? "Landscape isn't available for this edit.");
+          notify(orientationToggleHint ?? "Landscape isn't available for this edit.");
           return;
         }
         if (next === orientation) return;
@@ -6609,7 +6644,7 @@ export default function EditorShell({
     onSetCarouselPosition: (position) => {
       if (!carouselMoment || !carouselCapable) {
         if (!carouselCapable) {
-          setToast(carouselReason ?? "Carousel isn't available for this edit.");
+          notify(carouselReason ?? "Carousel isn't available for this edit.");
         }
         return;
       }
@@ -6782,15 +6817,17 @@ export default function EditorShell({
   );
   const pocketTransportSlot = pocketActive ? (
     <div className="flex items-center gap-2">
-      <button
+      <Button
         type="button"
+        variant="ink"
+        size="icon"
         aria-label={playing ? "Pause video" : "Play video"}
         aria-pressed={playing}
         onClick={togglePlay}
-        className="flex h-11 w-11 items-center justify-center rounded-full bg-[#0c0c0e] text-white active:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+        className="active:opacity-80"
       >
         {playing ? <PauseIcon className="h-5 w-5" /> : <PlayIcon className="h-5 w-5" />}
-      </button>
+      </Button>
       <span className="text-[12px] tabular-nums text-[#3f3f46]">
         {formatTimecode(currentTime)}
       </span>
@@ -6817,8 +6854,21 @@ export default function EditorShell({
 
   return (
     <div
-      className="fixed inset-0 z-50 grid overflow-hidden bg-[#ffffff]"
+      // The site body is dark-themed (`bg-black text-white`, DESIGN.md §3)
+      // for the marketing/landing routes; this fixed overlay is a LIGHT
+      // surface (DESIGN.md editor rule — never `.dark`) and must reset the
+      // inherited white text color here at the root, or every unstyled
+      // icon/label/placeholder in the chrome below renders invisible
+      // (white-on-white) instead of just picking up bg-background.
+      className="fixed inset-0 z-50 grid overflow-hidden bg-background text-foreground"
       style={{
+        // Without an explicit column track, the grid's implicit column sizes
+        // to the max-content width of whichever row (e.g. the top bar's
+        // copilot-save notice pill) demands the most space, letting the
+        // whole overlay — and everything docked to its right, like the
+        // mobile Save button — balloon past the viewport instead of
+        // wrapping/truncating in place.
+        gridTemplateColumns: "minmax(0, 1fr)",
         gridTemplateRows:
           layoutMode === "light"
             ? "56px minmax(0, 1fr) auto"
@@ -6854,17 +6904,18 @@ export default function EditorShell({
           orientationToggle={orientationToggle}
         />
       ) : (
-        <header className="flex items-center border-b border-zinc-200 bg-white px-4">
-          <div className="flex flex-1 items-center gap-3">
-            <button
+        <header className="flex h-14 items-center border-b border-border bg-background px-4">
+          <div className="flex flex-1 items-center gap-2">
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               aria-label="Back to the video page"
               onClick={requestLeave}
-              className="flex h-11 w-11 items-center justify-center rounded-full border border-zinc-200 pb-0.5 text-[15px] text-[#3f3f46] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
             >
-              ‹
-            </button>
-            <input
+              <ArrowLeftIcon className="h-4 w-4" />
+            </Button>
+            <Input
               type="text"
               value={title}
               onChange={(e) => {
@@ -6875,76 +6926,71 @@ export default function EditorShell({
                   setTitle(e.target.value);
               }}
               readOnly={!introControlsEditable}
-              placeholder="add title for your video"
+              placeholder="Untitled video"
               aria-label="Video title"
-              className="min-h-11 w-[240px] rounded-md border border-transparent bg-transparent px-2 py-1 text-[13px] text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:border-lime-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-lime-500/25"
+              className="h-9 w-[260px] border-transparent bg-transparent shadow-none hover:bg-muted focus-visible:border-input focus-visible:bg-background"
             />
           </div>
 
-          {/* Center cluster — visually quiet; ink chip only on the active tool */}
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              aria-pressed={canvasTool === "select"}
-              aria-label="Select"
-              title="Select"
-              onClick={() => setCanvasTool("select")}
-              className={`flex h-11 w-11 items-center justify-center rounded-lg text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
-                canvasTool === "select"
-                  ? "bg-[#0c0c0e] text-white"
-                  : "text-[#3f3f46] hover:bg-zinc-100"
-              }`}
+          {/* Center cluster — visually quiet; the active tool gets the muted chip */}
+          <div className="flex items-center gap-2">
+            <ToggleGroup
+              type="single"
+              value={canvasTool}
+              onValueChange={(value) => {
+                if (!value) return; // one tool always stays selected
+                setCanvasTool(value as "select" | "pan");
+              }}
+              className="gap-0.5 rounded-md border border-border bg-background p-0.5"
             >
-              <SelectCursorIcon />
-            </button>
-            <button
-              type="button"
-              aria-pressed={canvasTool === "pan"}
-              aria-label="Pan — drag to move around the canvas when zoomed in"
-              title={panEnabled ? "Pan — drag to move around the canvas when zoomed in" : "Zoom in to pan"}
-              disabled={!panEnabled}
-              onClick={() => setCanvasTool("pan")}
-              className={`flex h-11 w-11 items-center justify-center rounded-lg text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
-                canvasTool === "pan"
-                  ? "bg-[#0c0c0e] text-white"
-                  : "text-[#3f3f46] hover:bg-zinc-100 disabled:text-[#a1a1aa] disabled:hover:bg-transparent"
-              }`}
-            >
-              <PanHandIcon />
-            </button>
+              <ToggleGroupItem value="select" size="sm" aria-label="Select" title="Select">
+                <SelectCursorIcon />
+              </ToggleGroupItem>
+              <ToggleGroupItem
+                value="pan"
+                size="sm"
+                aria-label="Pan — drag to move around the canvas when zoomed in"
+                title={panEnabled ? "Pan — drag to move around the canvas when zoomed in" : "Zoom in to pan"}
+                disabled={!panEnabled}
+              >
+                <PanHandIcon />
+              </ToggleGroupItem>
+            </ToggleGroup>
             {/* Undo/redo — unified document command stack (plan §7). */}
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon-sm"
               aria-label="Undo"
               title="Undo (⌘Z)"
               disabled={!history.canUndo}
               onClick={history.undo}
-              className="flex h-11 w-11 items-center justify-center rounded-lg text-[14px] text-[#3f3f46] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:opacity-40 disabled:hover:bg-transparent"
             >
-              ↺
-            </button>
-            <button
+              <UndoIcon className="h-4 w-4" />
+            </Button>
+            <Button
               type="button"
+              variant="ghost"
+              size="icon-sm"
               aria-label="Redo"
               title="Redo (⇧⌘Z)"
               disabled={!history.canRedo}
               onClick={history.redo}
-              className="flex h-11 w-11 items-center justify-center rounded-lg text-[14px] text-[#3f3f46] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:opacity-40 disabled:hover:bg-transparent"
             >
-              ↻
-            </button>
-            <select
-              aria-label="Canvas zoom"
-              value={zoomPct}
-              onChange={(e) => setZoomPct(Number(e.target.value))}
-              className="ml-1 h-11 rounded-lg border border-zinc-200 bg-white px-2 text-[12px] text-[#3f3f46] focus:border-lime-500 focus:outline-none focus:ring-2 focus:ring-lime-500/25"
-            >
-              {ZOOM_OPTIONS.map((z) => (
-                <option key={z} value={z}>
-                  {z}%
-                </option>
-              ))}
-            </select>
+              <RedoIcon className="h-4 w-4" />
+            </Button>
+            <Select value={String(zoomPct)} onValueChange={(v) => setZoomPct(Number(v))}>
+              <SelectTrigger aria-label="Canvas zoom" className="h-9 w-[88px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {ZOOM_OPTIONS.map((z) => (
+                  <SelectItem key={z} value={String(z)}>
+                    {z}%
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             {orientationToggle}
           </div>
 
@@ -6960,12 +7006,14 @@ export default function EditorShell({
               </button>
             )}
             {showCopilotSaveNotice && (
-              <div className="flex max-w-[360px] items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-[12px] text-[#3f3f46]">
+              <div className="flex max-w-[360px] items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-[12px] text-muted-foreground">
                 <span className="truncate">
                   The preview is a close match — the saved video is rendered exactly.
                 </span>
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="icon-sm"
                   aria-label="Dismiss preview match note"
                   onClick={() => {
                     setCopilotSaveNoticeDismissed(true);
@@ -6975,39 +7023,39 @@ export default function EditorShell({
                       /* localStorage unavailable */
                     }
                   }}
-                  className="min-h-8 px-1 text-[#71717a] hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                  className="h-8 w-8 text-muted-foreground hover:text-foreground"
                 >
                   ✕
-                </button>
+                </Button>
               </div>
             )}
             {saveState === "idle" && saveMessage && (
-              <span className="max-w-[280px] truncate rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-[12px] text-[#3f3f46]">
+              <Badge variant="outline" className="max-w-[280px] truncate font-normal">
                 {saveMessage}
-              </span>
+              </Badge>
             )}
             {(lyricsDirty || orientationDirty) && (
-              <span className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-[12px] font-semibold text-[#3f3f46]">
-                Re-renders on Save
-              </span>
+              <Badge variant="outline">Re-renders on Save</Badge>
             )}
-            <InkButton
-              variant="ghost"
-              size="compact"
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
               className="focus-visible:!outline-lime-500"
               onClick={requestLeave}
             >
               Cancel
-            </InkButton>
-            <InkButton
-              size="compact"
+            </Button>
+            <Button
+              type="button"
+              size="sm"
               className="gap-2 focus-visible:!outline-lime-500"
               disabled={!dirty || saving || readOnly}
               onClick={() => void handleSave()}
             >
               {saving && <SaveSpinner />}
               {saving ? "Saving" : "Save"}
-            </InkButton>
+            </Button>
           </div>
         </header>
       )}
@@ -7105,24 +7153,28 @@ export default function EditorShell({
             canvas={activeCanvas}
           />
           {pocketActive && !pocketSheetOpen && history.canUndo && (
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="icon"
               aria-label="Undo"
               onClick={history.undo}
-              className="absolute left-3 top-3 z-20 flex h-11 w-11 items-center justify-center rounded-full border border-zinc-200 bg-white/90 text-[#3f3f46] shadow-sm active:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+              className="absolute left-3 top-3 z-20 bg-white/90 text-[#3f3f46] shadow-sm active:opacity-80"
             >
               <UndoIcon className="h-5 w-5" />
-            </button>
+            </Button>
           )}
           {pocketActive && !pocketSheetOpen && history.canRedo && (
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="icon"
               aria-label="Redo"
               onClick={history.redo}
-              className="absolute left-[60px] top-3 z-20 flex h-11 w-11 items-center justify-center rounded-full border border-zinc-200 bg-white/90 text-[#3f3f46] shadow-sm active:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+              className="absolute left-[60px] top-3 z-20 bg-white/90 text-[#3f3f46] shadow-sm active:opacity-80"
             >
               <RedoIcon className="h-5 w-5" />
-            </button>
+            </Button>
           )}
           {pocketStripSelection && (
             <div
@@ -7132,18 +7184,20 @@ export default function EditorShell({
             >
               <ContextStrip
                 selection={pocketStripSelection}
-                onDisabledTap={setToast}
+                onDisabledTap={notify}
               />
             </div>
           )}
           {visibleTextBars.length === 0 && !readOnly && !textElementsLocked && (
-            <button
+            <Button
               type="button"
+              variant="secondary"
+              size="sm"
               onClick={() => addTextAtPlayhead()}
-              className="absolute bottom-4 left-1/2 min-h-11 -translate-x-1/2 rounded-full bg-white px-4 text-[13px] font-semibold text-[#0c0c0e] shadow-[0_8px_24px_rgba(12,12,14,0.18)] ring-1 ring-zinc-200 hover:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+              className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white shadow-[0_8px_24px_rgba(12,12,14,0.18)] ring-1 ring-zinc-200 hover:bg-zinc-50"
             >
               Add text
-            </button>
+            </Button>
           )}
         </div>
       ) : (
@@ -7151,8 +7205,8 @@ export default function EditorShell({
           className={[
             "relative grid min-h-0 grid-rows-[minmax(0,1fr)] overflow-hidden",
             layoutMode === "full"
-              ? "grid-cols-[auto_auto_1fr_auto_auto]"
-              : "grid-cols-[auto_1fr_auto_auto]",
+              ? "grid-cols-[auto_auto_1fr_auto]"
+              : "grid-cols-[auto_1fr_auto]",
           ].join(" ")}
         >
         <ToolRail
@@ -7316,7 +7370,7 @@ export default function EditorShell({
           </div>
         )}
         {layoutMode === "overlay" && activeTool === "nova" && (
-          <div className="absolute bottom-4 left-[108px] right-[344px] z-40">
+          <div className="absolute bottom-4 left-[108px] right-[272px] z-40">
             <ToolDrawer
               tool="nova"
               sampleWord={sampleWord}
@@ -7518,10 +7572,6 @@ export default function EditorShell({
           canMergeCaptionNext={!readOnly && captionMergeAvailability.canMergeNext}
           onClose={clear}
           onPickPreset={pickPreset}
-        />
-        <InspectorRail
-          tab={inspectorTab}
-          hasSelection={selection !== null}
           onTab={setInspectorTab}
         />
       </div>
@@ -7609,17 +7659,8 @@ export default function EditorShell({
                     dispatchPocket({ type: "TOGGLE_TOOL", tool });
                   }
                 }}
-                onDisabledTap={setToast}
+                onDisabledTap={notify}
               />
-            )}
-            {toast && (
-              <div
-                role="status"
-                aria-live="polite"
-                className="pointer-events-none absolute bottom-24 left-1/2 z-[120] -translate-x-1/2 whitespace-nowrap rounded-lg bg-[#0c0c0e] px-3 py-1.5 text-[12px] text-white shadow-lg"
-              >
-                {toast}
-              </div>
             )}
           </div>
         ) : (
@@ -7691,15 +7732,6 @@ export default function EditorShell({
             editorMode={editorModeProps}
           />
         </div>
-        {toast && (
-          <div
-            role="status"
-            aria-live="polite"
-            className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-lg bg-[#0c0c0e] px-3 py-1.5 text-[12px] text-white shadow-lg"
-          >
-            {toast}
-          </div>
-        )}
       </div>
       )}
 
@@ -8011,8 +8043,10 @@ export default function EditorShell({
                   : (saveMessage ?? "Couldn't save your edits.")}
             </p>
             {saveState === "conflict" ? (
-              <button
+              <Button
                 type="button"
+                size="sm"
+                className="flex-shrink-0"
                 onClick={() => {
                   setSaveState("idle");
                   setSaveMessage(null);
@@ -8025,18 +8059,19 @@ export default function EditorShell({
                   }
                   setLoadNonce((n) => n + 1);
                 }}
-                className="min-h-11 flex-shrink-0 rounded-full bg-[#0c0c0e] px-4 text-[12px] font-semibold text-white hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
               >
                 Reload
-              </button>
+              </Button>
             ) : (
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                size="sm"
+                className="flex-shrink-0"
                 onClick={() => void handleSave()}
-                className="min-h-11 flex-shrink-0 rounded-full border border-zinc-200 px-4 text-[12px] text-[#3f3f46] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
               >
                 Retry
-              </button>
+              </Button>
             )}
           </div>
         </div>
@@ -8048,20 +8083,12 @@ export default function EditorShell({
           <div className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white px-4 py-2.5 shadow-sm">
             <p className="text-[12px] text-[#3f3f46]">Resume your unsaved edits?</p>
             <div className="flex flex-shrink-0 items-center gap-2">
-              <button
-                type="button"
-                onClick={discardDraft}
-                className="min-h-11 rounded-full px-3 text-[12px] text-[#71717a] hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
-              >
+              <Button type="button" variant="ghost" size="sm" onClick={discardDraft}>
                 Discard
-              </button>
-              <button
-                type="button"
-                onClick={resumeDraft}
-                className="min-h-11 rounded-full bg-[#0c0c0e] px-4 text-[12px] font-semibold text-white hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
-              >
+              </Button>
+              <Button type="button" size="sm" onClick={resumeDraft}>
                 Resume
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -8088,6 +8115,20 @@ export default function EditorShell({
         onCancel={() => setConfirmLeave(false)}
       />
 
+      <ConfirmDialog
+        open={!!songResetPrompt}
+        question="Changing the song resets clip cuts to the new beat grid."
+        detail="Save with the new song?"
+        confirmLabel="Save with new song"
+        cancelLabel="Cancel"
+        onConfirm={() => {
+          const pending = songResetPrompt;
+          setSongResetPrompt(null);
+          void handleSave(pending?.musicAlignment, pending?.opts, true);
+        }}
+        onCancel={() => setSongResetPrompt(null)}
+      />
+
     </div>
   );
 }
@@ -8105,6 +8146,15 @@ export function MusicAlignmentDialog({
   onChoose: (alignment: "preserve_cuts" | "resync_beats") => void;
   onCancel: () => void;
 }) {
+  // NOTE (DESIGN.md §15 / plan Lane E1): this dialog stays hand-rolled rather
+  // than moving to the shadcn `AlertDialog`. Radix's DismissableLayer handles
+  // Escape without `stopImmediatePropagation` on the capturing-phase document
+  // listener, so an outer `keydown` handler (the editor's global shortcut
+  // layer) still observes the Escape that closed this dialog — regressing
+  // MusicAlignmentDialog.test.tsx's "handles Escape once without leaking to
+  // editor shortcuts" guard. Every other control here (Button, styling) is
+  // still on the primitives; only the outer alertdialog shell + focus-trap +
+  // capture-phase Escape isolation are pre-existing hand-rolled code.
   const cardRef = useRef<HTMLDivElement>(null);
   const preserveRef = useRef<HTMLButtonElement>(null);
   const resyncRef = useRef<HTMLButtonElement>(null);
@@ -8143,42 +8193,45 @@ export function MusicAlignmentDialog({
           Your selected song section is saved either way.
         </p>
         <div className="mt-5 space-y-3">
-          <button
+          <Button
             ref={preserveRef}
             type="button"
+            variant="outline"
             disabled={!preserveAvailable}
             onClick={() => onChoose("preserve_cuts")}
-            className="min-h-14 w-full rounded-xl border border-zinc-300 bg-white px-4 text-left text-sm font-semibold text-[#0c0c0e] hover:border-zinc-500 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+            className="h-auto min-h-14 w-full flex-col items-start whitespace-normal rounded-xl px-4 py-3 text-left text-sm normal-case tracking-normal"
           >
             Preserve cuts
             <span className="mt-1 block text-[12px] font-normal text-[#71717a]">
               Keep the current clip order and timing.
             </span>
-          </button>
+          </Button>
           {!preserveAvailable && preserveReason === "linear_timeline_unavailable" && (
             <p className="px-1 text-[11px] text-[#71717a]">
               Preserve cuts isn’t available for this older render.
             </p>
           )}
-          <button
+          <Button
             ref={resyncRef}
             type="button"
+            variant="ink"
             onClick={() => onChoose("resync_beats")}
-            className="min-h-14 w-full rounded-xl bg-[#0c0c0e] px-4 text-left text-sm font-semibold text-white hover:opacity-85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+            className="h-auto min-h-14 w-full flex-col items-start whitespace-normal rounded-xl px-4 py-3 text-left text-sm normal-case tracking-normal"
           >
             Re-sync to beats
             <span className="mt-1 block text-[12px] font-normal text-white/70">
               Rebuild the cuts around the beats in this section.
             </span>
-          </button>
+          </Button>
         </div>
-        <button
+        <Button
           type="button"
-          className="mt-5 min-h-11 w-full text-sm text-[#71717a] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+          variant="link"
+          className="mt-5 min-h-11 w-full text-sm text-[#71717a] hover:underline"
           onClick={onCancel}
         >
           Cancel
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -8209,55 +8262,60 @@ function LightTopBar({
 }) {
   const copilotEnabled = process.env.NEXT_PUBLIC_EDIT_COPILOT_ENABLED === "true";
   return (
-    <header className="flex items-center justify-between gap-2 border-b border-zinc-200 bg-white px-3">
-      <button
+    <header className="flex h-14 items-center justify-between gap-2 border-b border-border bg-background px-3">
+      <Button
         type="button"
+        variant="ghost"
+        size="icon"
         aria-label="Back to the video page"
         onClick={onBack}
-        className="flex h-11 w-11 items-center justify-center rounded-full border border-zinc-200 pb-0.5 text-[15px] text-[#3f3f46] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
       >
-        ‹
-      </button>
+        <ArrowLeftIcon className="h-4 w-4" />
+      </Button>
       <div className="min-w-0 flex-1 text-center">
         {showCopilotNotice ? (
-          <div className="mx-auto flex max-w-[320px] items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-2 py-1 text-[11px] text-[#3f3f46]">
+          <div className="mx-auto flex max-w-[320px] items-center justify-center gap-2 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground">
             <span className="truncate">
               Preview is close; Save renders exactly.
             </span>
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon-sm"
               aria-label="Dismiss preview match note"
               onClick={onDismissCopilotNotice}
-              className="min-h-8 px-1 text-[#71717a] hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+              className="text-muted-foreground hover:text-foreground"
             >
               ✕
-            </button>
+            </Button>
           </div>
         ) : orientationToggle ? (
           <div className="flex justify-center">{orientationToggle}</div>
         ) : (
-          <span className="text-[13px] font-semibold text-[#3f3f46]">Edit video</span>
+          <span className="text-[13px] font-semibold text-foreground">Edit video</span>
         )}
       </div>
       {copilotEnabled && (
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon"
           aria-label="Open Nova"
           disabled={readOnly}
           onClick={onOpenNova}
-          className="flex h-11 w-11 items-center justify-center rounded-lg border border-zinc-200 bg-white text-[15px] text-[#0c0c0e] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-40"
+          className="text-[15px]"
         >
           ✧
-        </button>
+        </Button>
       )}
-      <button
+      <Button
         type="button"
+        size="sm"
         disabled={!dirty || saving || readOnly}
         onClick={onSave}
-        className="min-h-11 rounded-full bg-[#0c0c0e] px-4 text-[13px] font-semibold text-white hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:opacity-40"
       >
         {saveState === "saving" ? "Saving..." : "Save"}
-      </button>
+      </Button>
     </header>
   );
 }
@@ -8278,17 +8336,22 @@ function LightTransport({
   const safeDuration = Math.max(0, duration);
   const safeTime = Math.min(safeDuration || currentTime, Math.max(0, currentTime));
   return (
-    <div className="border-t border-zinc-200 bg-white px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3">
+    <div className="border-t border-border bg-background px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3">
       <div className="mx-auto flex max-w-[720px] items-center gap-3">
-        <button
+        <Button
           type="button"
+          size="icon"
           aria-label={playing ? "Pause video" : "Play video"}
           aria-pressed={playing}
           onClick={onPlayPause}
-          className="flex h-11 w-11 flex-none items-center justify-center rounded-full bg-[#0c0c0e] text-[13px] text-white hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+          className="flex-none text-[13px]"
         >
           {playing ? "❚❚" : "▶"}
-        </button>
+        </Button>
+        {/* Native range (DESIGN.md §15 — "Scrub video" keeps a raw <input
+            type=range>; Slider's discrete-thumb model doesn't fit continuous
+            video scrubbing, and `range` is excluded from the raw-control
+            guard). */}
         <input
           type="range"
           aria-label="Scrub video"
@@ -8302,10 +8365,10 @@ function LightTransport({
         />
         <span
           aria-label="Playback position"
-          className="w-[92px] flex-none text-right text-[12px] tabular-nums text-[#3f3f46]"
+          className="w-[92px] flex-none text-right text-sm tabular-nums text-muted-foreground"
         >
           {formatTimecode(currentTime)}{" "}
-          <span className="text-[#a1a1aa]">/ {formatTimecode(duration)}</span>
+          <span className="text-muted-foreground/60">/ {formatTimecode(duration)}</span>
         </span>
       </div>
     </div>
@@ -8368,27 +8431,29 @@ function LightEditSheet({
             Edit text
           </h2>
         </div>
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon"
           aria-label="Close text editor"
           onClick={onClose}
-          className="flex h-11 w-11 items-center justify-center rounded-lg text-[14px] text-[#71717a] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+          className="text-[14px]"
         >
           ✕
-        </button>
+        </Button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5">
         <label className="block text-[12px] font-semibold text-[#3f3f46]" htmlFor="light-edit-textarea">
           Content
         </label>
-        <textarea
+        <Textarea
           id="light-edit-textarea"
           ref={textareaRef}
           value={bar.text}
           readOnly={readOnly}
           onChange={(e) => onEditText(e.target.value)}
           rows={5}
-          className="mt-2 w-full resize-none rounded-lg border border-zinc-200 px-3 py-3 text-[15px] text-[#0c0c0e] outline-none focus:border-lime-500 focus:ring-2 focus:ring-lime-500/25"
+          className="mt-2 resize-none text-[15px]"
         />
         <p className="mb-3 mt-6 text-[12px] font-semibold text-[#3f3f46]">Presets</p>
         <PresetGrid
@@ -8399,21 +8464,17 @@ function LightEditSheet({
         />
       </div>
       <div className="flex items-center justify-end gap-2 border-t border-zinc-200 px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3">
-        <button
-          type="button"
-          onClick={onClose}
-          className="min-h-11 rounded-full px-4 text-[13px] font-semibold text-[#71717a] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
-        >
+        <Button type="button" variant="link" size="sm" onClick={onClose}>
           Close
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          size="sm"
           disabled={!dirty || saving || readOnly}
           onClick={onSave}
-          className="min-h-11 rounded-full bg-[#0c0c0e] px-6 text-[13px] font-semibold text-white hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:opacity-40"
         >
           {saveState === "saving" ? "Saving..." : "Save"}
-        </button>
+        </Button>
       </div>
     </div>
   );

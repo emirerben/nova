@@ -79,7 +79,6 @@ jest.mock("@/components/ui/LightShell", () => ({
 }));
 jest.mock("@/app/plan/_components/PlanVariantEditor", () => ({ __esModule: true, default: () => <div /> }));
 jest.mock("@/app/plan/_components/SignInPrompt", () => ({ __esModule: true, default: () => <div /> }));
-jest.mock("@/components/library/FeedbackButtons", () => ({ __esModule: true, default: () => <div /> }));
 jest.mock("@/app/plan/_components/AssetPool", () => ({ __esModule: true, default: () => <div /> }));
 jest.mock("@/app/plan/_components/SuggestionRail", () => ({ __esModule: true, default: () => <div /> }));
 jest.mock("@/app/plan/items/[id]/components/ShotSlotUploader", () => ({
