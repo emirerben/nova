@@ -13,6 +13,10 @@ import type { NovaStep } from "@/lib/job-phases";
 import { InfoDot } from "@/components/ui/InfoDot";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { ArrowUp } from "lucide-react";
+import { ChatBubble } from "@/components/chat/ChatBubble";
+import { useAutoScrollToEnd } from "@/components/chat/useAutoScrollToEnd";
 import { CloseIcon } from "./editor-icons";
 
 const STARTERS = [
@@ -149,7 +153,6 @@ export default function CopilotDrawer({
 }) {
   const [draft, setDraft] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const threadRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const elapsed = useElapsed(sending);
   const keyboardOffset = useKeyboardOffset(layoutMode === "light" && open);
@@ -186,11 +189,7 @@ export default function CopilotDrawer({
     onClearRestoredInput();
   }, [onClearRestoredInput, restoredInput]);
 
-  useEffect(() => {
-    const el = threadRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [messages, sending, queued, error]);
+  const threadRef = useAutoScrollToEnd<HTMLDivElement>([messages, sending, queued, error]);
 
   if (layoutMode === "light" && !open) return null;
 
@@ -234,10 +233,8 @@ export default function CopilotDrawer({
         </Button>
       </div>
 
-      <div
-        ref={threadRef}
-        className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 pb-3"
-      >
+      <ScrollArea ref={threadRef} className="min-h-0 flex-1">
+      <div className="space-y-3 px-5 pb-3">
         {director && (
           <DirectorSuggestions
             suggestions={director.suggestions}
@@ -278,16 +275,9 @@ export default function CopilotDrawer({
             isRenderTurnMsg && renderTurnActive && message.id === latestRenderTurn?.id;
           return (
             <div key={message.id} className="space-y-1.5">
-              <div
-                className={[
-                  "whitespace-pre-line px-3.5 py-2.5 text-[13.5px] leading-5",
-                  isUser
-                    ? "ml-auto max-w-[85%] rounded-[18px] rounded-br-md bg-[#0c0c0e] text-white"
-                    : "mr-auto max-w-[85%] rounded-[18px] rounded-bl-md bg-zinc-100 text-[#0c0c0e]",
-                ].join(" ")}
-              >
+              <ChatBubble role={isUser ? "user" : "assistant"}>
                 {message.text}
-              </div>
+              </ChatBubble>
 
               {/* Server-render turn (artboard 03): disclosure + live compact
                   NovaActivityFeed while THIS mount is polling; a historical
@@ -365,22 +355,19 @@ export default function CopilotDrawer({
                   </ul>
                   <div className="flex items-center gap-3 pl-1">
                     {remainingSlots > 0 && (
-                      <button
+                      <Button
                         type="button"
+                        variant="ghost"
+                        size="sm"
                         onClick={() => setExpanded((cur) => ({ ...cur, [message.id]: true }))}
-                        className="min-h-8 text-[12px] text-[#3f3f46] underline underline-offset-2 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
                       >
                         +{remainingSlots} more
-                      </button>
+                      </Button>
                     )}
                     {showUndo && (
-                      <button
-                        type="button"
-                        onClick={onUndo}
-                        className="min-h-8 text-[12px] text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
-                      >
+                      <Button type="button" variant="ghost" size="sm" onClick={onUndo}>
                         Undo
-                      </button>
+                      </Button>
                     )}
                   </div>
                 </div>
@@ -410,22 +397,20 @@ export default function CopilotDrawer({
                       </span>
                     ))}
                   {remainingSlots > 0 && (
-                    <button
+                    <Button
                       type="button"
+                      variant="outline"
+                      size="sm"
                       onClick={() => setExpanded((cur) => ({ ...cur, [message.id]: true }))}
-                      className="min-h-8 rounded-full border border-zinc-200 px-3 text-[12px] text-[#3f3f46] hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                      className="hover:border-lime-400 hover:text-lime-700"
                     >
                       +{remainingSlots} more
-                    </button>
+                    </Button>
                   )}
                   {showUndo && (
-                    <button
-                      type="button"
-                      onClick={onUndo}
-                      className="min-h-8 px-1 text-[12px] text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
-                    >
+                    <Button type="button" variant="ghost" size="sm" onClick={onUndo}>
                       Undo
-                    </button>
+                    </Button>
                   )}
                 </div>
               )}
@@ -435,40 +420,44 @@ export default function CopilotDrawer({
 
         {sending && <Thinking elapsed={elapsed} onStop={onStop} />}
         {queued && (
-          <div className="ml-auto max-w-[85%] rounded-[18px] rounded-br-md border border-dashed border-zinc-300 bg-white px-3.5 py-2.5 text-[13px] text-[#3f3f46]">
-            <p className="mb-1 text-[11px] uppercase tracking-wide text-[#a1a1aa]">
+          <div className="ml-auto max-w-[85%] rounded-lg rounded-br-sm border border-dashed border-border bg-background px-3.5 py-2.5 text-[13px] text-foreground">
+            <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">
               Queued after current edit
             </p>
-            <button
+            <Button
               type="button"
+              variant="link"
               onClick={() => {
                 setDraft(queued.text);
                 inputRef.current?.focus();
               }}
-              className="block text-left text-[#0c0c0e] underline decoration-zinc-300 underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+              className="block h-auto w-full whitespace-normal p-0 text-left text-foreground"
             >
               {queued.text}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
               aria-label="Cancel queued message"
               onClick={onCancelQueued}
-              className="mt-2 min-h-8 rounded-full px-2 text-[12px] text-[#71717a] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+              className="mt-2"
             >
               Cancel
-            </button>
+            </Button>
           </div>
         )}
         {error && (
           <div
             role="status"
             aria-live="polite"
-            className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[12.5px] text-[#3f3f46]"
+            className="rounded-lg border border-border bg-background px-3 py-2 text-[12.5px] text-foreground"
           >
             {error}
           </div>
         )}
       </div>
+      </ScrollArea>
 
       <div aria-live="polite" className="sr-only">
         {latestChanged?.applied?.length
@@ -558,19 +547,20 @@ export default function CopilotDrawer({
             aria-label="Tell Nova what to change"
           />
           {draft.length >= MAX_CHARS * 0.8 && (
-            <p className="mt-1 text-right text-[11px] text-[#71717a]">
+            <p className="mt-1 text-right text-[11px] text-muted-foreground">
               {draft.length}/{MAX_CHARS}
             </p>
           )}
         </div>
-        <button
+        <Button
           type="submit"
+          size="icon"
           disabled={unavailable || draft.trim().length === 0}
           aria-label={sending ? "Queue message" : "Send message"}
-          className="flex h-11 w-11 flex-none items-center justify-center rounded-lg bg-[#0c0c0e] text-[15px] font-semibold text-white hover:opacity-85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-35"
+          className="flex-none"
         >
-          ↑
-        </button>
+          <ArrowUp className="h-4 w-4" />
+        </Button>
       </form>
     </section>
   );
@@ -587,20 +577,16 @@ function Thinking({
   const showStop = elapsed >= 5000;
   const late = elapsed >= 8000;
   return (
-    <div role="status" className="mr-auto max-w-[85%] space-y-2 text-[13px] text-[#71717a]">
+    <div role="status" className="mr-auto max-w-[85%] space-y-2 text-[13px] text-muted-foreground">
       <div className="flex items-center gap-2">
         <span className="h-2 w-2 rounded-full bg-lime-600 motion-safe:animate-ping" />
         {showPlanning && (
           <span>{late ? "Still working — keep editing." : "Planning edits..."}</span>
         )}
         {showStop && (
-          <button
-            type="button"
-            onClick={onStop}
-            className="ml-2 min-h-8 text-[12px] text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
-          >
+          <Button type="button" variant="ghost" size="sm" onClick={onStop} className="ml-2">
             Stop
-          </button>
+          </Button>
         )}
       </div>
       {showPlanning && (

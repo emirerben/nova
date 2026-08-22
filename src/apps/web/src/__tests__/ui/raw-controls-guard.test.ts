@@ -280,6 +280,24 @@ const LANE_F_BASELINE: Record<string, number> = {
   "app/plan/items/[id]/transcript/TeleprompterRecorder.tsx": 0,
 };
 
+// ── Lane K ──────────────────────────────────────────────────────────────
+// Nova copilot, Plan-with-Kria thread, and Ask Kria on shadcn. CopilotDrawer
+// and AskKriaPanel ratchet to zero. EditProposalCard keeps 6 native
+// `<select>`s (Direction/Pace/Target length ×2, per-beat Layout): the
+// component's own test suite (edit-proposal-card.test.tsx) drives every one
+// of them via `fireEvent.change(screen.getByLabelText(...), { target:
+// { value } })`, which only works against a real native `<select>` — Radix's
+// `Select` (@/components/ui/select) renders a button trigger + listbox, not
+// a native element, and doesn't respond to `fireEvent.change`. Converting
+// them would require rewriting that test file's interaction pattern, which
+// is out of this lane's scope; the six selects are styled with the same
+// input/select tokens as their shadcn counterparts.
+const LANE_K_BASELINE: Record<string, number> = {
+  "app/plan/items/[id]/_editor/CopilotDrawer.tsx": 0,
+  "app/plan/items/[id]/components/EditProposalCard.tsx": 6,
+  "app/plan/items/[id]/components/AskKriaPanel.tsx": 0,
+};
+
 const RAW_CONTROL_BASELINE: Record<string, number> = {
   ...LANE_0_BASELINE,
   ...LANE_A_BASELINE,
@@ -288,6 +306,7 @@ const RAW_CONTROL_BASELINE: Record<string, number> = {
   ...LANE_D_BASELINE,
   ...LANE_E_BASELINE,
   ...LANE_F_BASELINE,
+  ...LANE_K_BASELINE,
 };
 
 describe("raw-control ratchet (DESIGN.md §15)", () => {

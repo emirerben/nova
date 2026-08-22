@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ChatBubble } from "./ChatBubble";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const TIER_2_MS = 5000;
 const TIER_3_MS = 8000;
@@ -8,8 +10,9 @@ const SHIMMER_MS = 2000;
 
 /**
  * Progressive-disclosure "thinking" indicator, modeled on CopilotDrawer's
- * `Thinking` (2s/5s/8s copy escalation + shimmer skeleton). Standalone —
- * CopilotDrawer keeps its own inline implementation unchanged.
+ * `Thinking` (2s/5s/8s copy escalation + skeleton line), rendered inside a
+ * shared assistant `ChatBubble` so it sits in the thread like any other
+ * turn.
  *
  * Unlike CopilotDrawer's version, the base copy is visible immediately (t=0):
  * a guided-edit turn can be resumed mid-flight after a page reload, where we
@@ -36,7 +39,7 @@ export function ChatThinking({
     return () => window.clearInterval(id);
   }, [active]);
 
-  const showShimmer = elapsed >= SHIMMER_MS;
+  const showSkeleton = elapsed >= SHIMMER_MS;
   const text =
     elapsed >= TIER_3_MS
       ? "Still working — you can keep typing below."
@@ -45,21 +48,16 @@ export function ChatThinking({
         : label;
 
   return (
-    <div
-      role="status"
-      aria-live="polite"
-      className="mr-auto max-w-[85%] space-y-2 text-[13px] text-[#71717a]"
-    >
-      <div className="flex items-center gap-2">
-        <span aria-hidden className="h-2 w-2 rounded-full bg-lime-600 motion-safe:animate-ping" />
-        <span>{text}</span>
-      </div>
-      {showShimmer && (
-        <div className="space-y-1">
-          <div className="h-2.5 w-4/5 rounded-full bg-[linear-gradient(90deg,#f4f4f5_25%,#fff_50%,#f4f4f5_75%)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
-          <div className="h-2.5 w-1/2 rounded-full bg-[linear-gradient(90deg,#f4f4f5_25%,#fff_50%,#f4f4f5_75%)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
+    <ChatBubble role="assistant">
+      <div role="status" aria-live="polite" className="space-y-2">
+        <div className="flex items-center gap-1.5">
+          <Skeleton aria-hidden className="h-1.5 w-1.5 rounded-full" />
+          <Skeleton aria-hidden className="h-1.5 w-1.5 rounded-full" />
+          <Skeleton aria-hidden className="h-1.5 w-1.5 rounded-full" />
+          <span className="ml-1">{text}</span>
         </div>
-      )}
-    </div>
+        {showSkeleton && <Skeleton className="h-4 w-24" />}
+      </div>
+    </ChatBubble>
   );
 }
