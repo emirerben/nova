@@ -43,7 +43,7 @@ import {
   uploadContentTypeForFile,
   uploadToGcs,
   uploadToGcsWithProgress,
-  requestOverlayUploadUrls,
+  uploadMediaOverlayFiles,
   setVariantMediaOverlays,
   listPoolAssets,
   type PoolAsset,
@@ -119,6 +119,7 @@ import UnifiedTimeline from "../../_components/UnifiedTimeline";
 import { computeIntroTextWindow } from "../../_components/introTextWindow";
 import type { SuggestionLaneEntry } from "../../_components/UnifiedTimelineTypes";
 import { useOverlaySuggestionState } from "../../_components/useOverlaySuggestions";
+import { usePoolAssetUploader } from "../../_hooks/usePoolAssetUploader";
 import { InlineClipsEditor } from "../../_components/InlineClipsEditor";
 import { useClipTimeline } from "../../_components/useClipTimeline";
 import { getSoundEffects, type SoundEffectSummary } from "@/lib/sfx-api";
@@ -586,6 +587,13 @@ export default function PlanItemPage() {
   // when VoiceRecorder fires onVoiceover; reset from item on refetch.
   const [voiceoverGcsPath, setVoiceoverGcsPath] = useState<string | null>(null);
   const [voiceoverSaving, setVoiceoverSaving] = useState(false);
+  // VoiceRecorder invokes its callback after the blob upload, but the plan-item
+  // attachment is a second async request owned by this page. Keep that request
+  // visible to Generate so a click cannot enqueue a job from the pre-voiceover
+  // item snapshot (the local path is intentionally optimistic).
+  const voiceoverSavePromiseRef = useRef<Promise<boolean> | null>(null);
+  const voiceoverSaveQueueRef = useRef<Promise<boolean>>(Promise.resolve(true));
+  const voiceoverSaveGenerationRef = useRef(0);
   // Read-only shadow of item.audio_mode — still drives post-generation variant
   // focus (original_text). The choose-audio UI was removed in the per-type
   // setup redesign; type changes go through the setup receipt only.
@@ -1353,17 +1361,46 @@ export default function PlanItemPage() {
   }
 
   async function handleVoiceover(gcsPath: string | null): Promise<boolean> {
+    const generation = ++voiceoverSaveGenerationRef.current;
     setVoiceoverGcsPath(gcsPath);
     setVoiceoverSaving(true);
+    // Serialize replacement/removal saves. VoiceRecorder lets a user remove a
+    // take while its upload is still settling; concurrent PATCHes could commit
+    // out of order and resurrect the old take after the user cleared it.
+    const savePromise = persistVoiceover(gcsPath, generation);
+    voiceoverSaveQueueRef.current = savePromise;
+    voiceoverSavePromiseRef.current = savePromise;
     try {
-      await setItemVoiceover(itemId, gcsPath);
-      refetch();
+      return await savePromise;
+    } finally {
+      if (voiceoverSavePromiseRef.current === savePromise) {
+        voiceoverSavePromiseRef.current = null;
+      }
+    }
+  }
+
+  async function persistVoiceover(gcsPath: string | null, generation: number): Promise<boolean> {
+    await voiceoverSaveQueueRef.current.catch(() => false);
+    try {
+      const saved = await setItemVoiceover(itemId, gcsPath);
+      if (generation === voiceoverSaveGenerationRef.current) {
+        // Keep the client shadow aligned with the server response. This avoids
+        // a stale poll clearing a successfully persisted attachment while the
+        // next Generate click is being prepared.
+        setVoiceoverGcsPath(saved.voiceover_gcs_path ?? gcsPath);
+        refetch();
+      }
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save voiceover");
+      if (generation === voiceoverSaveGenerationRef.current) {
+        setVoiceoverGcsPath(null);
+        setError(err instanceof Error ? err.message : "Failed to save voiceover");
+      }
       return false;
     } finally {
-      setVoiceoverSaving(false);
+      if (generation === voiceoverSaveGenerationRef.current) {
+        setVoiceoverSaving(false);
+      }
     }
   }
 
@@ -1381,6 +1418,13 @@ export default function PlanItemPage() {
     jobIdBeforeGenerateRef.current = item?.current_job_id ?? null;
     awaitingJobSince.current = Date.now();
     try {
+      // The local voiceover path is optimistic while PATCH /voiceover is in
+      // flight. Await that persistence boundary even if a stale caller invokes
+      // Generate before the button re-renders disabled.
+      const pendingVoiceoverSave = voiceoverSavePromiseRef.current;
+      if (pendingVoiceoverSave && !(await pendingVoiceoverSave)) {
+        throw new Error("Voiceover couldn't be saved — try again before generating.");
+      }
       if (item && needsFormatPersist(item.edit_format)) {
         await updatePlanItem(item.id, { edit_format: resolvedFormat });
       }
@@ -1537,7 +1581,7 @@ export default function PlanItemPage() {
     // gate on them explicitly — the old page-global `uploading` no longer
     // spans the whole transfer. Error cards deliberately do NOT gate:
     // "Finishing upload…" would be a lie for an upload that already failed.
-    uploaderBusy: uploaderBusy || uploading || hasActivePoolUploads,
+    uploaderBusy: uploaderBusy || uploading || hasActivePoolUploads || voiceoverSaving,
     clipCount,
     hasApprovedGuidedMedia,
     hasReadyPoolMedia,
@@ -3291,6 +3335,81 @@ function FocusedVariantControls({
   // Latest overlayCards value for setTimeout closures.
   const overlayCardsRef = useRef(overlayCards);
   overlayCardsRef.current = overlayCards;
+  const localPreviewUrlsRef = useRef<Record<string, string>>({});
+  localPreviewUrlsRef.current = localPreviewUrls;
+  const inlineOverlayUploader = usePoolAssetUploader({
+    itemId,
+    // AssetPool remains the source of the full server count; the backend is
+    // the final quota fence for this independent inline tree.
+    assetCount: 0,
+    maxAssets: 20,
+    onRegistered: (asset, _file, intent, context) => {
+      if (intent !== "inline-overlay") return;
+      const card = context as MediaOverlay;
+      const finalize = async () => {
+        let current = asset;
+        for (let attempt = 0; attempt < 60; attempt += 1) {
+          if (
+            (current.media_status
+              ? current.media_status === "ready"
+              : current.status === "ready") &&
+            (!current.preview_status ||
+              current.preview_status === "ready" ||
+              current.preview_status === "not_needed")
+          ) {
+            setOverlayCards((prev) =>
+              prev.map((row) =>
+                row.id === card.id
+                  ? {
+                      ...row,
+                      src_gcs_path: current.gcs_path,
+                      preview_url: current.preview_url ?? null,
+                    }
+                  : row,
+              ),
+            );
+            overlaysDirtyRef.current = true;
+            return;
+          }
+          if (
+            current.media_status === "failed" ||
+            current.media_status === "unreadable" ||
+            current.preview_status === "failed"
+          ) {
+            throw new Error("Kria couldn't read that visual. Try another file.");
+          }
+          await new Promise((resolve) => window.setTimeout(resolve, 1000));
+          const refreshed = await listPoolAssets(itemId);
+          current = refreshed.assets.find((row) => row.id === asset.id) ?? current;
+        }
+        throw new Error("That visual is taking longer than expected. Try again shortly.");
+      };
+      void finalize()
+        .catch((err) => {
+          setOverlayCards((prev) => prev.filter((row) => row.id !== card.id));
+          const local = localPreviewUrlsRef.current[card.id];
+          if (local) {
+            URL.revokeObjectURL(local);
+            setLocalPreviewUrls((prev) => {
+              const next = { ...prev };
+              delete next[card.id];
+              return next;
+            });
+          }
+          onError(err instanceof Error ? err.message : "Couldn't add that overlay.");
+        })
+        .finally(() => setOverlayUploading(false));
+    },
+    onFailed: (_file, intent, _context) => {
+      if (intent === "inline-overlay") {
+        // Keep the card and its local preview in place so the inline surface
+        // can offer Retry/Remove. Removing it here made a transient network
+        // failure irreversible and left the uploader's failed row orphaned.
+        setOverlayUploading(false);
+      }
+    },
+    onUnavailable: () => onError("Visuals aren't available right now."),
+  });
 
   // Shared clip-timeline data: owned here so ClipsLane header bars and the
   // InlineClipsEditor expanded panel read/write one draft (no double fetch).
@@ -3344,6 +3463,9 @@ function FocusedVariantControls({
   useEffect(() => {
     if (!overlaysDirtyRef.current) return;
     const cards = overlayCardsRef.current;
+    // A card is staged immediately for local preview, but the server must not
+    // receive it until pool registration has supplied its immutable path.
+    if (cards.some((card) => !card.src_gcs_path.trim())) return;
     const timer = setTimeout(async () => {
       overlaysDirtyRef.current = false;
       try {
@@ -3368,99 +3490,89 @@ function FocusedVariantControls({
     files: { file: File; filename: string; content_type: string; file_size_bytes: number }[],
   ) {
     setOverlayUploading(true);
-    try {
-      const POSITION_CYCLE: { position: "top" | "center" | "bottom"; x_frac: number; y_frac: number }[] = [
-        { position: "center", x_frac: 0.5, y_frac: 0.5 },
-        { position: "top", x_frac: 0.5, y_frac: 0.18 },
-        { position: "bottom", x_frac: 0.5, y_frac: 0.82 },
-      ];
-
-      // Build temporary cards (src_gcs_path placeholder) and blob URLs immediately.
-      const tempCards: MediaOverlay[] = files.map((f, i) => {
-        const slot = POSITION_CYCLE[(overlayCards.length + i) % POSITION_CYCLE.length];
-        return {
-          id: crypto.randomUUID(),
-          kind: f.content_type.startsWith("video/") ? "video" : "image",
-          src_gcs_path: "", // filled in after GCS upload completes
-          position: slot.position,
-          x_frac: slot.x_frac,
-          y_frac: slot.y_frac,
-          scale: 0.35,
-          start_s: 0,
-          end_s: +Math.min(5, variantDurationS).toFixed(2),
-          z: overlayCards.length + i,
-        };
+    const positionCycle: {
+      position: "top" | "center" | "bottom";
+      x_frac: number;
+      y_frac: number;
+    }[] = [
+      { position: "center", x_frac: 0.5, y_frac: 0.5 },
+      { position: "top", x_frac: 0.5, y_frac: 0.18 },
+      { position: "bottom", x_frac: 0.5, y_frac: 0.82 },
+    ];
+    const cards = files.map<MediaOverlay>((entry, index) => {
+      const slot = positionCycle[(overlayCards.length + index) % positionCycle.length];
+      return {
+        id: crypto.randomUUID(),
+        kind: entry.content_type.startsWith("video/") ? "video" : "image",
+        src_gcs_path: "",
+        position: slot.position,
+        x_frac: slot.x_frac,
+        y_frac: slot.y_frac,
+        scale: 0.35,
+        start_s: 0,
+        end_s: +Math.min(5, variantDurationS).toFixed(2),
+        z: overlayCards.length + index,
+      };
+    });
+    if ((variant.editor_capabilities?.overlay_upload_mode ?? "legacy") === "legacy") {
+      try {
+        const confirmed = await uploadMediaOverlayFiles(itemId, files);
+        const confirmedCards = cards.map((card, index) => ({
+          ...card,
+          src_gcs_path: confirmed[index].gcs_path,
+          preview_gcs_path: confirmed[index].preview_gcs_path ?? null,
+          preview_url: confirmed[index].preview_url ?? null,
+        }));
+        setOverlayCards((prev) => [...prev, ...confirmedCards]);
+        overlaysDirtyRef.current = true;
+      } catch (err) {
+        onError(err instanceof Error ? err.message : "Couldn't upload that overlay.");
+      } finally {
+        setOverlayUploading(false);
+      }
+      return;
+    }
+    const blobUrls = Object.fromEntries(
+      cards.map((card, index) => [card.id, URL.createObjectURL(files[index].file)]),
+    );
+    setLocalPreviewUrls((prev) => ({ ...prev, ...blobUrls }));
+    setOverlayCards((prev) => [...prev, ...cards]);
+    const accepted = inlineOverlayUploader.addFiles(
+      files.map((entry) => entry.file),
+      {
+        intent: "inline-overlay",
+        context: (_file, index) => cards[index],
+      },
+    );
+    if (accepted === 0) {
+      Object.values(blobUrls).forEach((url) => URL.revokeObjectURL(url));
+      setLocalPreviewUrls((prev) => {
+        const next = { ...prev };
+        cards.forEach((card) => delete next[card.id]);
+        return next;
       });
-      const blobUrls: Record<string, string> = {};
-      tempCards.forEach((card, i) => {
-        blobUrls[card.id] = URL.createObjectURL(files[i].file);
-      });
-
-      // Probe video durations from the local File (fast — just reads container header).
-      const durationsMap: Record<string, number> = {};
-      await Promise.all(
-        tempCards
-          .filter((card) => card.kind === "video")
-          .map(
-            (card) =>
-              new Promise<void>((resolve) => {
-                const v = document.createElement("video");
-                v.preload = "metadata";
-                const done = () => {
-                  if (isFinite(v.duration) && v.duration > 0) {
-                    durationsMap[card.id] = v.duration;
-                  }
-                  v.src = "";
-                  resolve();
-                };
-                v.onloadedmetadata = done;
-                v.onerror = done;
-                setTimeout(done, 3000);
-                v.src = blobUrls[card.id];
-              }),
-          ),
-      );
-
-      // Show cards immediately — trim lane is live, CSS preview is live.
-      const immediateCards = tempCards.map((card) =>
-        durationsMap[card.id] ? { ...card, clip_duration_s: durationsMap[card.id] } : card,
-      );
-      setLocalPreviewUrls((prev) => ({ ...prev, ...blobUrls }));
-      setOverlayCards((prev) => [...prev, ...immediateCards]);
-
-      // Upload to GCS in the background; update src_gcs_path when done.
-      const uploadUrls = await requestOverlayUploadUrls(
-        itemId,
-        files.map((f) => ({
-          filename: f.filename,
-          content_type: f.content_type,
-          file_size_bytes: f.file_size_bytes,
-        })),
-      );
-      await Promise.all(uploadUrls.map((u, i) => uploadToGcs(u.upload_url, files[i].file)));
-
-      // Patch the cards already in state with their real GCS paths, then mark dirty
-      // so the auto-save effect persists them (with real GCS paths) after 2.5 s.
-      setOverlayCards((prev) =>
-        prev.map((card) => {
-          const idx = immediateCards.findIndex((c) => c.id === card.id);
-          if (idx === -1) return card;
-          return { ...card, src_gcs_path: uploadUrls[idx].gcs_path };
-        }),
-      );
-      overlaysDirtyRef.current = true;
-    } catch (err) {
-      // Upload-URL request or GCS upload failed (e.g. backend media_overlays_enabled
-      // off → overlays-upload-urls 404). Surface it instead of throwing uncaught.
-      onError(
-        err instanceof Error
-          ? err.message
-          : "Couldn't upload that overlay. Try again.",
-      );
-    } finally {
+      setOverlayCards((prev) => prev.filter((row) => !cards.some((card) => card.id === row.id)));
       setOverlayUploading(false);
     }
   }
+
+  const removeInlineUpload = useCallback(
+    (localId: string, context: unknown) => {
+      const card = context as MediaOverlay | undefined;
+      inlineOverlayUploader.remove(localId);
+      if (!card) return;
+      setOverlayCards((prev) => prev.filter((row) => row.id !== card.id));
+      setLocalPreviewUrls((prev) => {
+        const local = prev[card.id];
+        if (local) URL.revokeObjectURL(local);
+        if (!local) return prev;
+        const next = { ...prev };
+        delete next[card.id];
+        return next;
+      });
+    },
+    [inlineOverlayUploader, setLocalPreviewUrls, setOverlayCards],
+  );
 
   /** Clear all overlays (restore pre-overlay clean variant). */
   async function handleClearOverlays() {
@@ -3780,6 +3892,38 @@ function FocusedVariantControls({
               Text block exceeds 500 chars — may be truncated on render
             </p>
           )}
+          {inlineOverlayUploader.uploads
+            .filter((upload) => upload.intent === "inline-overlay")
+            .map((upload) => (
+              <div
+                key={upload.localId}
+                className="flex items-center justify-between gap-2 rounded border border-dashed border-amber-400/40 px-2 py-1 text-[11px] text-zinc-300"
+              >
+                <span className="truncate">
+                  {upload.filename}: {upload.stage === "failed" ? upload.message : "Uploading…"}
+                </span>
+                <span className="flex shrink-0 gap-2">
+                  {upload.stage === "failed" && upload.retryable && (
+                    <button
+                      type="button"
+                      className="underline underline-offset-2"
+                      onClick={() => inlineOverlayUploader.retry(upload.localId)}
+                    >
+                      Retry
+                    </button>
+                  )}
+                  {upload.stage === "failed" && (
+                    <button
+                      type="button"
+                      className="underline underline-offset-2"
+                      onClick={() => removeInlineUpload(upload.localId, upload.context)}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </span>
+              </div>
+            ))}
           <div className="rounded-xl bg-[#0c0c0e] border border-white/10 p-3">
             <UnifiedTimeline
               totalDurationS={variantDurationS}
@@ -3861,6 +4005,14 @@ function FocusedVariantControls({
                     externalState={clipTimeline.state}
                     externalDispatch={clipTimeline.dispatch}
                     externalClips={clipTimeline.clips}
+                    externalGuidedTokens={
+                      clipTimeline.revisionNumber != null && clipTimeline.baseGeneration != null
+                        ? {
+                            revision_number: clipTimeline.revisionNumber,
+                            base_generation: clipTimeline.baseGeneration,
+                          }
+                        : null
+                    }
                     onReload={clipTimeline.reload}
                   />
                 ) : null

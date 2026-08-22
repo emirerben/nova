@@ -230,6 +230,68 @@ describe("useEditDirector", () => {
     expect(suggestionsMock).toHaveBeenCalledTimes(2);
   });
 
+  it("silently refreshes a stale 409 against the current revision", async () => {
+    const current = snapshot();
+    suggestionsMock
+      .mockRejectedValueOnce({ status: 409, requestId: "req-stale" })
+      .mockImplementationOnce(async (_itemId, _variantId, body) => ({
+        suggestions: [],
+        snapshot_revision: body.snapshot_revision,
+        requested_model: "gemini-3.1-pro-preview",
+        model_used: "gemini-3.1-pro-preview",
+        fallback_reason: null,
+      }));
+    const { result } = renderHook(() =>
+      useEditDirector({
+        enabled: true,
+        omniEnabled: false,
+        itemId: "item-1",
+        variantId: "variant-1",
+        buildSnapshot: () => current,
+        applyOpsAtomic: jest.fn(() => appliedResult()),
+        onApplied: jest.fn(),
+      }),
+    );
+
+    await loadInitialReview();
+    expect(result.current.error).toBeNull();
+    await loadInitialReview();
+    expect(suggestionsMock).toHaveBeenCalledTimes(2);
+    expect(result.current.error).toBeNull();
+  });
+
+  it.each([
+    [new TypeError("network down"), "reach the review service"],
+    [{ status: 502, code: "edit_director_failed", requestId: "req-model" }, "review model"],
+    [{ status: 503, code: "request_failed", requestId: "req-server" }, "server error"],
+  ])("distinguishes Director failure classes without changing the draft", async (failure, copy) => {
+    const current = snapshot();
+    suggestionsMock.mockRejectedValue(failure);
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const applyOpsAtomic = jest.fn(() => appliedResult());
+    const { result } = renderHook(() =>
+      useEditDirector({
+        enabled: true,
+        omniEnabled: false,
+        itemId: "item-1",
+        variantId: "variant-1",
+        buildSnapshot: () => current,
+        applyOpsAtomic,
+        onApplied: jest.fn(),
+      }),
+    );
+
+    await loadInitialReview();
+
+    expect(result.current.error).toContain(copy);
+    expect(result.current.error).toContain("unchanged");
+    expect(applyOpsAtomic).not.toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalledWith(
+      "Nova Director review failed",
+      expect.objectContaining({ snapshot_revision: directorSnapshotRevision(current) }),
+    );
+  });
+
   it("sends server speech-cut operations to the API without applying them locally", async () => {
     const current = snapshot();
     const cut = suggestion({

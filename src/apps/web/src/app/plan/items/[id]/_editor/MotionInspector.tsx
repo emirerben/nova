@@ -108,6 +108,8 @@ export default function MotionInspector({
   durationS,
   assets,
   evolvingTypeEnabled,
+  editable = true,
+  disabledReason = null,
   showClose = true,
   onPatch,
   onPatchMotionControl,
@@ -122,6 +124,8 @@ export default function MotionInspector({
   durationS: number;
   assets: PoolAsset[];
   evolvingTypeEnabled: boolean;
+  editable?: boolean;
+  disabledReason?: string | null;
   showClose?: boolean;
   onPatch: (id: string, patch: MotionPresetPatch) => void;
   onPatchMotionControl: (id: string, patch: CreatorBlockMotionControlPatch) => void;
@@ -132,7 +136,7 @@ export default function MotionInspector({
   onRemove: (id: string) => void;
   onClose: () => void;
 }) {
-  const controlsEditable = scene.preset_id !== "evolving_type" || evolvingTypeEnabled;
+  const controlsEditable = editable && (scene.preset_id !== "evolving_type" || evolvingTypeEnabled);
   const label = scene.preset_id === "route_trace"
     ? "Route trace"
     : CREATOR_BLOCK_CATALOG.find((entry) => entry.preset_id === scene.preset_id)?.label;
@@ -162,12 +166,19 @@ export default function MotionInspector({
         )}
       </div>
 
+      {!editable && disabledReason && (
+        <p className="mt-5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-[11px] leading-relaxed text-[#52525b]" role="status">
+          {disabledReason}
+        </p>
+      )}
+
       {scene.preset_id === "evolving_type" && !evolvingTypeEnabled && (
         <p className="mt-5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-[11px] leading-relaxed text-[#52525b]">
           This saved Evolving Type block is preserved. Enable Evolving Type to edit its controls.
         </p>
       )}
 
+      <fieldset disabled={!editable} className="contents disabled:opacity-60">
       {scene.preset_id !== "route_trace" && controlsEditable && (
         <fieldset className="mt-5">
           <legend className="text-[12px] font-semibold text-[#3f3f46]">Content</legend>
@@ -284,11 +295,13 @@ export default function MotionInspector({
         type="button"
         variant="destructive"
         size="sm"
+        disabled={!editable}
         onClick={() => onRemove(scene.id)}
         className="mt-6 w-full"
       >
         Remove block
       </Button>
+      </fieldset>
     </div>
   );
 }

@@ -13,7 +13,11 @@ from __future__ import annotations
 import re
 import uuid
 
-from app.agents._schemas.edit_format import DEFAULT_EDIT_FORMAT, coerce_edit_format
+from app.agents._schemas.edit_format import (
+    DEFAULT_EDIT_FORMAT,
+    EDIT_FORMATS,
+    coerce_edit_format,
+)
 from app.models import Job
 from app.routes.admin_music import _validate_clip_path_prefixes, _validate_voiceover_path
 from app.schemas.montage_preset import (
@@ -252,12 +256,21 @@ def build_generative_job(
     _validate_generative_clip_paths(user_id, clip_paths)
     # Declared edit shape (montage default). The orchestrator's archetype dispatch
     # resolves it against the footage and falls back to montage when unsupported.
-    # Coerce here so an unknown/legacy value can never reach the render path.
+    # Keep a bounded normalized copy of an unknown token as a compatibility fence:
+    # the worker must distinguish "unknown/future" from intentional montage when
+    # an API/worker deploy is temporarily mixed.
+    declared_edit_format = (
+        edit_format.strip().lower().replace("-", "_").replace(" ", "_")[:100]
+        if isinstance(edit_format, str)
+        else ""
+    )
     all_candidates: dict = {
         "clip_paths": clip_paths,
         "language": language,
         "edit_format": coerce_edit_format(edit_format),
     }
+    if declared_edit_format and declared_edit_format not in EDIT_FORMATS:
+        all_candidates["declared_edit_format"] = declared_edit_format
     if variant_policy in {
         CONTENT_PLAN_PRIMARY_VARIANT_POLICY,
         CONTENT_PLAN_ORIGINAL_VARIANT_POLICY,

@@ -1,0 +1,26 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-08-22-v28",
+  "input": {
+    "utterance": "trim clip 2 starting from second 1",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["timeline"],
+      "slots": [
+        {"output_start_s": 0, "output_end_s": 4, "duration_s": 4},
+        {"output_start_s": 4, "output_end_s": 9, "duration_s": 5}
+      ],
+      "total_duration_s": 9
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"trim_clip_start\",\"slot_index\":1,\"start_s\":1}],\"confidence\":0.97,\"reply\":\"Trimmed one second from the start of clip 2.\",\"suggestions\":[],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [{"op": "trim_clip_start", "slot_index": 1, "start_s": 1}],
+    "confidence": 0.97,
+    "reply": "Trimmed one second from the start of clip 2.",
+    "suggestions": [],
+    "needs_clarification": false
+  },
+  "meta": {"source": "hand_authored_golden", "case": "explicit clip language uses segment-relative trim, not set_clip_in"}
+}

@@ -29,7 +29,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import flag_modified
 
 from app import storage
-from app.agents._schemas.edit_format import coerce_edit_format
+from app.agents._schemas.edit_format import coerce_edit_format, guided_edit_applicable
 from app.agents.music_matcher import _sanitize_text
 from app.auth import SYNTHETIC_USER_ID, CurrentUser
 from app.config import settings
@@ -288,6 +288,23 @@ def _item_uses_collage_preset(item: PlanItem) -> bool:
     ) == "montage" and is_collage_montage_preset(getattr(item, "montage_preset", None))
 
 
+def _item_has_voiceover_contract(item: PlanItem) -> bool:
+    """Return whether this item has selected, server-owned voiceover audio."""
+
+    return getattr(item, "audio_mode", "kria") == "voiceover" and bool(
+        getattr(item, "voiceover_gcs_path", None)
+    )
+
+
+def _guided_edit_is_applicable(item: PlanItem) -> bool:
+    """Keep guided capability and render eligibility on one server policy."""
+
+    return guided_edit_applicable(
+        getattr(item, "edit_format", None),
+        has_voiceover=_item_has_voiceover_contract(item),
+    )
+
+
 def _allowed_item_upload_content_types(item: PlanItem) -> set[str]:
     if getattr(getattr(item, "current_job", None), "mode", None) == "manual_draft":
         # Manual initialization and virtual preview are intentionally video-only
@@ -522,6 +539,7 @@ def plan_item_response(
         if isinstance(a, dict) and a.get("gcs_path")
     ]
 
+    guided_applicable = _guided_edit_is_applicable(item)
     return PlanItemResponse(
         id=str(item.id),
         day_index=item.day_index,
@@ -537,9 +555,11 @@ def plan_item_response(
         clip_gcs_paths=list(item.clip_gcs_paths or []),
         clip_assignments=reconciled_assignments,
         edit_proposal=_edit_proposal_response(item) if include_edit_proposal else None,
-        guided_edit_available=settings.guided_edit_capability_enabled,
-        guided_edit_conversation_available=settings.guided_edit_conversation_enabled,
-        guided_edit_auto_design=settings.guided_auto_design_enabled,
+        guided_edit_available=settings.guided_edit_capability_enabled and guided_applicable,
+        guided_edit_conversation_available=(
+            settings.guided_edit_conversation_enabled and guided_applicable
+        ),
+        guided_edit_auto_design=settings.guided_auto_design_enabled and guided_applicable,
         status=derive_item_status(item),
         current_job_id=str(item.current_job_id) if item.current_job_id else None,
         finished_at=item.current_job.finished_at if item.current_job is not None else None,
@@ -1953,6 +1973,14 @@ def _require_guided_edit_conversation() -> None:
         )
 
 
+def _require_guided_edit_applicable(item: PlanItem) -> None:
+    if not _guided_edit_is_applicable(item):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Guided editing is unavailable for this audio-led edit.",
+        )
+
+
 def _edit_conversation_rate_key(request: Request) -> str:
     """Key paid edit-guide calls by the authenticated proxy identity."""
 
@@ -2287,6 +2315,8 @@ async def _maybe_auto_design_generate(
 
     if not settings.guided_auto_design_enabled:
         return None
+    if not _guided_edit_is_applicable(item):
+        return None
     if not (item.clip_gcs_paths or []):
         ready_assets = int(
             (
@@ -2484,6 +2514,7 @@ async def edit_proposal_conversation_turn(
     _require_guided_edit_conversation()
     owner_id = user.id
     item = await _load_owned_item(item_id, owner_id, db, for_update=True)
+    _require_guided_edit_applicable(item)
     current = parse_edit_proposal(item.edit_proposal)
     from app.services.edit_proposals import (  # noqa: PLC0415
         ProposalConflictError,
@@ -2687,6 +2718,7 @@ async def draft_item_edit_proposal(
     _ = request
     _require_guided_edit()
     item, plan, _persona = await _load_owned_item_context(item_id, user.id, db, for_update=True)
+    _require_guided_edit_applicable(item)
     current = parse_edit_proposal(item.edit_proposal)
     if current and current.conversation_attempt is not None:
         from app.services.edit_proposals import (  # noqa: PLC0415
@@ -2782,6 +2814,7 @@ async def update_item_edit_proposal(
 
     _require_guided_edit()
     item = await _load_owned_item(item_id, user.id, db, for_update=True)
+    _require_guided_edit_applicable(item)
     from app.schemas.edit_proposal import canonical_media_digest  # noqa: PLC0415
     from app.services.edit_proposals import (  # noqa: PLC0415
         ProposalConflictError,
@@ -2837,6 +2870,7 @@ async def approve_item_edit_proposal(
 
     _require_guided_edit()
     item = await _load_owned_item(item_id, user.id, db, for_update=True)
+    _require_guided_edit_applicable(item)
     from app.services.edit_proposals import (  # noqa: PLC0415
         ProposalConflictError,
         approve_proposal,
@@ -2918,7 +2952,8 @@ async def generate_item(
             ),
         )
 
-    if settings.guided_edit_enforcement_enabled:
+    guided_applicable = _guided_edit_is_applicable(item)
+    if settings.guided_edit_enforcement_enabled and guided_applicable:
         from app.services.edit_proposals import proposal_generate_error  # noqa: PLC0415
 
         if proposal_error := proposal_generate_error(item):
@@ -2928,7 +2963,9 @@ async def generate_item(
             _raise_proposal_generate_conflict(proposal_error)
 
     approved_guided_media = False
-    if settings.guided_edit_capability_enabled or settings.guided_edit_enforcement_enabled:
+    if guided_applicable and (
+        settings.guided_edit_capability_enabled or settings.guided_edit_enforcement_enabled
+    ):
         proposal = parse_edit_proposal(item.edit_proposal)
         approved_guided_media = bool(
             proposal
@@ -4033,11 +4070,16 @@ async def confirm_overlay_uploads(
             status_code=status.HTTP_404_NOT_FOUND, detail="Media overlays not available."
         )
 
-    item, plan, _ = await _load_owned_item_context(item_id, user.id, db)
+    # ``rollback`` below expires every ORM instance associated with this
+    # session.  Capture the primitive owner id before that boundary; reading
+    # ``user.id`` after rollback would trigger an implicit async refresh from a
+    # synchronous f-string/argument and raise MissingGreenlet.
+    owner_id = user.id
+    item, plan, _ = await _load_owned_item_context(item_id, owner_id, db)
     ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
     stable_item_id = item.id
     await db.rollback()
-    prefix = f"users/{user.id}/plan/{stable_item_id}/overlays/"
+    prefix = f"users/{owner_id}/plan/{stable_item_id}/overlays/"
     confirmed: list[OverlayUploadConfirmItem] = []
     try:
         for f in body.files:
@@ -4061,7 +4103,7 @@ async def confirm_overlay_uploads(
             )
         _, locked_plan, _ = await _load_owned_item_context(
             item_id,
-            user.id,
+            owner_id,
             db,
             for_update=True,
         )
@@ -4142,6 +4184,82 @@ async def _require_ready_pool_paths(
         )
 
 
+async def _require_verified_pool_paths(
+    *,
+    item_id: str,
+    user_id: uuid.UUID,
+    payload: object,
+    db: AsyncSession,
+) -> None:
+    """Fence manual pool placements on immutable storage/media readiness.
+
+    AI suggestion consumers still use ``_require_ready_pool_paths`` because
+    they need an analysis payload.  Manual overlays only need a verified source
+    generation and successful decode/preview, so the two contracts stay
+    explicit instead of broadening ``status='ready'`` everywhere.
+    """
+    from app.services.pool_asset_refs import pool_paths_in_payload  # noqa: PLC0415
+
+    try:
+        parsed_item_id = uuid.UUID(item_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad id") from exc
+    prefix = f"users/{user_id}/plan/{parsed_item_id}/pool/"
+    paths = pool_paths_in_payload(payload, prefix=prefix)
+    if not paths:
+        return
+    rows = (
+        (
+            await db.execute(
+                select(PlanItemAsset).where(
+                    PlanItemAsset.plan_item_id == parsed_item_id,
+                    PlanItemAsset.user_id == user_id,
+                    PlanItemAsset.gcs_path.in_(paths),
+                    PlanItemAsset.media_status == "ready",
+                    PlanItemAsset.status.notin_(
+                        {"preparing", "promoting", "cleanup_pending", "deduped"}
+                    ),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    verified_paths: set[str] = set()
+    from app.services.pool_asset_preview import needs_preview  # noqa: PLC0415
+
+    # 0074 made generations nullable so old pool rows could be retained. Lazily
+    # backfill a generation from immutable storage metadata on first use instead
+    # of rejecting every pre-0074 visual with a 409. New registrations always
+    # persist the generation before they can reach this fence.
+    for row in rows:
+        generation = str(getattr(row, "gcs_generation", "") or "")
+        if not generation:
+            try:
+                metadata = await asyncio.to_thread(storage.object_metadata, row.gcs_path)
+                generation = str(getattr(metadata, "generation", "") or "")
+            except Exception:  # noqa: BLE001 - stale legacy bytes fail closed
+                generation = ""
+            if generation:
+                row.gcs_generation = generation
+        if not generation:
+            continue
+        if needs_preview(row.kind, getattr(row, "upload_content_type", None), row.gcs_path):
+            # A browser-hostile asset is not usable in a manual card until its
+            # browser-safe derivative exists. This also rejects legacy rows that
+            # predate the preview backfill rather than saving a blank card.
+            if not getattr(row, "preview_gcs_path", None):
+                continue
+        verified_paths.add(row.gcs_path)
+    if verified_paths != paths:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This visual is still processing. Wait for it to finish, then try again.",
+        )
+    if any(getattr(row, "gcs_generation", None) for row in rows):
+        await db.flush()
+
+
 def _persist_overlay_metadata_only(
     job: Job,
     variant_id: str,
@@ -4213,7 +4331,7 @@ async def set_item_media_overlays(
 
     job = await _locked_owned_item_render_job(item_id, user.id, db)
     require_editable_variant(job, variant_id)
-    await _require_ready_pool_paths(
+    await _require_verified_pool_paths(
         item_id=item_id,
         user_id=user.id,
         payload=body.overlays,
@@ -4341,6 +4459,8 @@ async def set_item_orientation(
         job,
         variant_id,
         orientation=body.orientation,
+        revision_number=body.revision_number,
+        base_generation=body.base_generation,
     )
     log.info(
         "plan_item_set_orientation",
@@ -4401,8 +4521,46 @@ async def editor_commit_item(
     # media/SFX/music/title validation so every unsupported section gets the
     # same stable 422 without performing unrelated lookups or mutations.
     require_guided_story_editor_commit(locked_job, variant_id, body)
+    locked_variant = next(
+        (
+            candidate
+            for candidate in (locked_job.assembly_plan or {}).get("variants") or []
+            if candidate.get("variant_id") == variant_id
+        ),
+        None,
+    )
+    if (
+        isinstance(locked_variant, dict)
+        and locked_variant.get("resolved_archetype") == "guided_story"
+        and settings.guided_story_editor_v2_enabled
+    ):
+        from app.pipeline.guided_story import (  # noqa: PLC0415
+            GuidedStoryError,
+            validate_guided_snapshot,
+        )
+
+        try:
+            _version, _digest, guided_snapshot = validate_guided_snapshot(
+                (locked_job.assembly_plan or {}).get("guided_edit")
+            )
+            media_current = await _proposal_media_is_current(
+                item,
+                guided_snapshot,
+                db,
+                user_id=user.id,
+            )
+        except GuidedStoryError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": exc.code},
+            ) from exc
+        if not media_current:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "guided_story_source_stale"},
+            )
     if body.media_overlays is not None:
-        await _require_ready_pool_paths(
+        await _require_verified_pool_paths(
             item_id=item_id,
             user_id=user.id,
             payload=body.media_overlays,
@@ -4430,11 +4588,24 @@ async def editor_commit_item(
         commit_body = body.model_copy(update={"sound_effects": resolved_sfx})
 
     selected_music_track = None
+    selected_music_track_generation: str | None = None
     selected_background_music_track = None
     if commit_body.music_track_id is not None:
         selected_music_track = (
             await db.execute(select(MusicTrack).where(MusicTrack.id == commit_body.music_track_id))
         ).scalar_one_or_none()
+        if selected_music_track is not None and selected_music_track.audio_gcs_path:
+            try:
+                selected_music_track_generation = (
+                    await run_in_threadpool(
+                        storage.object_metadata, selected_music_track.audio_gcs_path
+                    )
+                ).generation
+            except Exception as exc:  # noqa: BLE001 - unavailable exact object is a 422
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"code": "music_track_unavailable"},
+                ) from exc
     elif commit_body.lyrics is not None or commit_body.music_window is not None:
         locked_variant = next(
             (
@@ -4495,6 +4666,7 @@ async def editor_commit_item(
         commit_body,
         user_id=str(user.id),
         music_track=selected_music_track,
+        music_track_generation=selected_music_track_generation,
         background_music_track=selected_background_music_track,
         visual_assets=visual_assets,
     )
@@ -4538,6 +4710,7 @@ async def editor_commit_item(
     return EditorCommitResponse(
         ok=render_started,
         generation=prep["generation"],
+        revision_number=prep.get("revision_number"),
         sections=EditorCommitSections(
             text_elements=prep["sections"]["text_elements"],
             caption_cues=prep["sections"]["caption_cues"],
@@ -5275,15 +5448,18 @@ def _pool_asset_counts_toward_capacity(now: datetime):
     """Count committed assets and only reservations still inside their grace window."""
     reservation_cutoff = now - _POOL_RESERVATION_CLEANUP_GRACE
     legacy_cutoff = now - (_POOL_RESERVATION_TTL + _POOL_RESERVATION_CLEANUP_GRACE)
-    return or_(
-        PlanItemAsset.status.notin_({"preparing", "promoting"}),
-        and_(
-            PlanItemAsset.status.in_({"preparing", "promoting"}),
-            or_(
-                PlanItemAsset.upload_expires_at >= reservation_cutoff,
-                and_(
-                    PlanItemAsset.upload_expires_at.is_(None),
-                    PlanItemAsset.created_at >= legacy_cutoff,
+    return and_(
+        PlanItemAsset.status != "deduped",
+        or_(
+            PlanItemAsset.status.notin_({"preparing", "promoting"}),
+            and_(
+                PlanItemAsset.status.in_({"preparing", "promoting"}),
+                or_(
+                    PlanItemAsset.upload_expires_at >= reservation_cutoff,
+                    and_(
+                        PlanItemAsset.upload_expires_at.is_(None),
+                        PlanItemAsset.created_at >= legacy_cutoff,
+                    ),
                 ),
             ),
         ),
@@ -5316,6 +5492,7 @@ def _require_asset_pool() -> None:
         _settings.overlay_autoplace_enabled
         or _settings.visual_blocks_enabled
         or _settings.guided_edit_capability_enabled
+        or _settings.media_overlays_enabled
     ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Visual asset pool not available."
@@ -5627,6 +5804,21 @@ class RegisterAssetBody(BaseModel):
     user_context: str | None = Field(default=None, max_length=_MAX_POOL_CONTEXT_CHARS)
 
 
+def _server_content_fingerprint(metadata: object) -> str:
+    """Return a versioned dedupe key from immutable storage metadata.
+
+    GCS supplies an MD5 for browser PUTs.  The generation/size fallback keeps
+    registration deterministic for providers that omit MD5 without trusting a
+    client-supplied digest; such objects simply won't dedupe across uploads.
+    """
+    md5 = str(getattr(metadata, "md5_hash", None) or "").strip()
+    size = int(getattr(metadata, "size", 0) or 0)
+    if md5:
+        return f"gcs-md5-v1:{md5}:{size}"
+    generation = str(getattr(metadata, "generation", "") or "")
+    return f"gcs-generation-v1:{generation}:{size}"
+
+
 async def _delete_verified_pool_upload(
     gcs_path: str,
     generation: str,
@@ -5661,6 +5853,8 @@ class PoolAssetOut(BaseModel):
     id: str
     kind: str
     status: str
+    media_status: str = "pending"
+    preview_status: str = "not_needed"
     error_code: str | None = None
     error_detail: str | None = None
     retryable: bool = False
@@ -5756,10 +5950,43 @@ def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
     visible_status = asset.status
     if visible_status == "queued" and not _settings.pool_asset_queued_status_enabled:
         visible_status = "uploaded"
+    raw_media_status = getattr(asset, "media_status", None)
+    media_status = (
+        raw_media_status
+        if raw_media_status in {"pending", "ready", "unreadable", "failed"}
+        else (
+            "ready"
+            if asset.status == "ready"
+            else "failed"
+            if asset.status == "failed"
+            else "pending"
+        )
+    )
+    try:
+        from app.services.pool_asset_preview import needs_preview  # noqa: PLC0415
+
+        preview_required = needs_preview(
+            asset.kind,
+            getattr(asset, "upload_content_type", None),
+            asset.gcs_path,
+        )
+    except Exception:  # noqa: BLE001 — response serialization must be fail-safe
+        preview_required = asset.kind == "video"
+    preview_status = (
+        "not_needed"
+        if not preview_required
+        else "ready"
+        if preview_path
+        else "pending"
+        if media_status == "pending"
+        else "failed"
+    )
     return PoolAssetOut(
         id=str(asset.id),
         kind=asset.kind,
         status=visible_status,
+        media_status=media_status,
+        preview_status=preview_status,
         error_code=raw_error_code if isinstance(raw_error_code, str) else None,
         error_detail=raw_error_detail if isinstance(raw_error_detail, str) else None,
         retryable=raw_retryable if isinstance(raw_retryable, bool) else False,
@@ -5927,6 +6154,11 @@ async def register_pool_asset(
         ).scalar_one_or_none()
         if reservation is None:
             raise HTTPException(status_code=404, detail="Upload reservation not found.")
+        if reservation.status == "deduped" and reservation.deduplicated_to_asset_id:
+            canonical = await db.get(PlanItemAsset, reservation.deduplicated_to_asset_id)
+            if canonical is not None:
+                return _asset_out(canonical, deduped=True)
+            raise HTTPException(status_code=409, detail="This upload is no longer available.")
         if reservation.status not in {"preparing", "promoting"}:
             if reservation.status == "uploaded":
                 retry_staging_prefix = f"{_staging_prefix}{reservation.id}/"
@@ -6073,12 +6305,26 @@ async def register_pool_asset(
             detail="The uploaded file did not match the selected file. Choose it again and retry.",
         )
 
-    if body.content_hash:
+    server_fingerprint = _server_content_fingerprint(metadata)
+    # GCS normally returns an MD5 and that is the authoritative dedupe key for
+    # all new uploads. Keep the client-hash branch only for legacy providers
+    # and pre-0079 rows that have no server fingerprint; metadata type/size are
+    # still checked above and new GCS objects never enter this branch.
+    dedupe_predicate = PlanItemAsset.content_fingerprint == server_fingerprint
+    if not getattr(metadata, "md5_hash", None) and body.content_hash:
+        dedupe_predicate = or_(
+            dedupe_predicate,
+            and_(
+                PlanItemAsset.content_fingerprint.is_(None),
+                PlanItemAsset.content_hash == body.content_hash,
+            ),
+        )
+    if server_fingerprint:
         existing = (
             await db.execute(
                 select(PlanItemAsset).where(
                     PlanItemAsset.plan_item_id == item.id,
-                    PlanItemAsset.content_hash == body.content_hash,
+                    dedupe_predicate,
                     PlanItemAsset.id != (reservation.id if reservation else uuid.UUID(int=0)),
                     PlanItemAsset.status.in_(_POOL_REUSABLE_STATUSES),
                 )
@@ -6105,7 +6351,12 @@ async def register_pool_asset(
                     reservation_id=str(reservation.id) if reservation else None,
                 )
             if reservation is not None:
-                await db.delete(reservation)
+                # Keep a lightweight hidden receipt so a lost response can be
+                # retried with the same reservation_id and converge on the
+                # canonical asset instead of returning a misleading 404.
+                reservation.status = "deduped"
+                reservation.deduplicated_to_asset_id = existing.id
+                reservation.media_status = "ready"
                 await db.commit()
             return _asset_out(existing, deduped=True)
     if reservation is None:
@@ -6229,13 +6480,19 @@ async def register_pool_asset(
     )
     if reservation is None:
         db.add(asset)
-    asset.content_hash = body.content_hash
+    asset.content_fingerprint = server_fingerprint
+    # Preserve the legacy field only when the storage provider did not expose
+    # an MD5.  New GCS registrations never trust this client value for dedupe.
+    asset.content_hash = body.content_hash if not getattr(metadata, "md5_hash", None) else None
     asset.source_filename = body.source_filename or asset.source_filename
     asset.user_context = _clean_pool_asset_context(body.user_context)
     asset.gcs_generation = metadata.generation
     asset.upload_content_type = expected_type
     asset.upload_size_bytes = metadata.size
     asset.analysis = None
+    asset.media_status = "pending"
+    asset.preview_gcs_generation = None
+    asset.deduplicated_to_asset_id = None
     asset.correlation_id = request.state.correlation_id or asset.correlation_id
     asset.status = "uploaded" if staging_cleanup is not None else "queued"
     from app.services.edit_proposals import mark_edit_proposal_stale  # noqa: PLC0415
@@ -6473,7 +6730,7 @@ async def list_pool_assets(
         .all()
     )
     now = datetime.now(UTC)
-    hidden_statuses = {"preparing", "promoting", "cleanup_pending"}
+    hidden_statuses = {"preparing", "promoting", "cleanup_pending", "deduped"}
     capacity_rows = [
         row
         for row in rows
@@ -6511,6 +6768,8 @@ async def reanalyze_pool_asset(
     db: AsyncSession = Depends(get_db),
 ) -> PoolAssetOut:
     """Idempotently retry a failed/legacy pool-asset analysis."""
+    from app.config import settings as _settings  # noqa: PLC0415
+
     _require_asset_pool()
     item = await _load_owned_item(item_id, user.id, db, for_update=True)
     try:
@@ -6533,7 +6792,26 @@ async def reanalyze_pool_asset(
     ).scalar_one_or_none()
     if asset is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
-    if asset.status in {"queued", "analyzing", "ready"}:
+    if asset.status == "ready":
+        if asset.media_status == "failed" and asset.error_code == "preview_generation_failed":
+            # Preview retries are independent from AI analysis. Reset only the
+            # sentinel and let the lightweight backfill task regenerate it.
+            asset.preview_gcs_path = None
+            asset.preview_gcs_generation = None
+            asset.media_status = "pending"
+            asset.error_code = None
+            asset.error_detail = None
+            asset.error_retryable = False
+            await db.commit()
+            from app.tasks.autoplace import generate_pool_asset_preview  # noqa: PLC0415
+
+            generate_pool_asset_preview.apply_async(
+                args=[str(asset.id)],
+                queue=_settings.pool_asset_analysis_queue,
+            )
+            return _asset_out(asset)
+        return _asset_out(asset)
+    if asset.status in {"queued", "analyzing"}:
         return _asset_out(asset)
     if asset.status not in {"failed", "uploaded"}:
         raise HTTPException(
@@ -6723,6 +7001,26 @@ async def delete_pool_asset(
                     "stage": "remove",
                 },
             )
+        preview_path = getattr(locked_asset, "preview_gcs_path", None) or ""
+        preview_generation = getattr(locked_asset, "preview_gcs_generation", None)
+        if preview_path and preview_path != locked_asset.gcs_path:
+            preview_cleaned = await asyncio.to_thread(
+                storage.delete_object_generation_best_effort
+                if preview_generation
+                else storage.delete_object_best_effort,
+                preview_path,
+                **({"generation": str(preview_generation)} if preview_generation else {}),
+            )
+            if not preview_cleaned:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "message": "Kria couldn't remove this file right now. Retry in a moment.",
+                        "code": "asset_cleanup_temporarily_unavailable",
+                        "retryable": True,
+                        "stage": "remove_preview",
+                    },
+                )
         asset = locked_asset
     from app.services.edit_proposals import mark_edit_proposal_stale  # noqa: PLC0415
 

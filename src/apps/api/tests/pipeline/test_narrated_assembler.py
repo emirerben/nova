@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import io
+import json
+import math
+import struct
 import subprocess
 
 import pytest
@@ -104,20 +108,101 @@ def _make_clip_dur(path, color: str, dur: float) -> None:
     )
 
 
-def _make_voiceover(path, dur: float = 2.0) -> None:
+def _make_voiceover(path, dur: float = 2.0, frequency: int = 440) -> None:
     _run(
         [
             "ffmpeg",
             "-f",
             "lavfi",
             "-i",
-            f"sine=frequency=440:duration={dur}",
+            f"sine=frequency={frequency}:duration={dur}",
             "-c:a",
             "aac",
             "-y",
             str(path),
         ]
     )
+
+
+def _audio_projection(path, frequency: float) -> float:
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-ac",
+            "1",
+            "-ar",
+            "44100",
+            "-f",
+            "f32le",
+            "pipe:1",
+        ],
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
+    samples = struct.unpack(f"<{len(result.stdout) // 4}f", result.stdout)
+    if not samples:
+        return 0.0
+    return math.hypot(
+        sum(
+            sample * math.sin(2 * math.pi * frequency * i / 44100)
+            for i, sample in enumerate(samples)
+        ),
+        sum(
+            sample * math.cos(2 * math.pi * frequency * i / 44100)
+            for i, sample in enumerate(samples)
+        ),
+    ) / len(samples)
+
+
+def _frame_bytes(path, at_s: float) -> bytes:
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-ss",
+            str(at_s),
+            "-i",
+            str(path),
+            "-frames:v",
+            "1",
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "png",
+            "pipe:1",
+        ],
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
+    return result.stdout
+
+
+def _stream_types(path) -> list[str]:
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_streams",
+            "-of",
+            "json",
+            str(path),
+        ],
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
+    return [stream["codec_type"] for stream in json.loads(result.stdout)["streams"]]
 
 
 # ── _fit_clip_segment: reflow short clips so visuals never end early ──────────
@@ -404,13 +489,11 @@ def test_assemble_returns_cues_and_caption_free_base(tmp_path) -> None:
     base = tmp_path / "out_base.mp4"
     _make_clip(clip_a, "red")
     _make_clip(clip_b, "blue")
-    _make_voiceover(voiceover)
+    _make_voiceover(voiceover, frequency=997)
     transcript = Transcript(
         words=[
-            Word(text="welcome", start_s=0.0, end_s=0.5, confidence=1.0),
-            Word(text="to", start_s=0.5, end_s=0.8, confidence=1.0),
-            Word(text="the", start_s=1.0, end_s=1.3, confidence=1.0),
-            Word(text="stadium", start_s=1.3, end_s=1.9, confidence=1.0),
+            Word(text="VOICEOVER", start_s=0.0, end_s=0.8, confidence=1.0),
+            Word(text="SENTINEL", start_s=0.9, end_s=1.8, confidence=1.0),
         ]
     )
 
@@ -431,13 +514,32 @@ def test_assemble_returns_cues_and_caption_free_base(tmp_path) -> None:
     )
 
     # cues are returned for persistence, with the spoken words
-    assert cues and any("stadium" in c["text"] for c in cues)
+    assert cues and any("VOICEOVER SENTINEL" in c["text"] for c in cues)
     assert all({"text", "start_s", "end_s"} <= set(c) for c in cues)
     # both the captioned default AND the caption-free base exist, same length
     assert output.exists() and base.exists()
     assert abs(_duration(output) - _duration(base)) <= 0.2
-    # the base differs from the captioned video (captions burned in only one)
+    # The base differs from the captioned video (captions burned in only one).
     assert output.stat().st_size != base.stat().st_size
+
+    # Final-byte semantics: the shipped output has exactly video+audio, and the
+    # uploaded voiceover's tone survives while a guided music sentinel does not.
+    assert sorted(_stream_types(output)) == ["audio", "video"]
+    assert _audio_projection(output, 997) > 0.01
+    assert _audio_projection(output, 331) < _audio_projection(output, 997) / 10
+
+    # File-size inequality is not enough to prove a burn. Decode the same active
+    # cue frame from both final outputs and require a material pixel delta.
+    from PIL import Image
+
+    captioned = Image.open(io.BytesIO(_frame_bytes(output, 0.4))).convert("RGB")
+    caption_free = Image.open(io.BytesIO(_frame_bytes(base, 0.4))).convert("RGB")
+    differing_pixels = sum(
+        1
+        for left, right in zip(captioned.getdata(), caption_free.getdata(), strict=True)
+        if max(abs(a - b) for a, b in zip(left, right, strict=True)) > 12
+    )
+    assert differing_pixels >= 20
 
 
 def test_burn_captions_on_video(tmp_path) -> None:

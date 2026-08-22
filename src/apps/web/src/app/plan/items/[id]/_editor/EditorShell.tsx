@@ -34,13 +34,11 @@ import {
   isBoundedCreatorImageAsset,
   LyricSeedsError,
   NotAuthenticatedError,
-  confirmOverlayUploads,
   listPoolAssets,
+  uploadMediaOverlayFiles,
   reanalyzePoolAsset,
   retimeVisualBlock,
-  requestOverlayUploadUrls,
   updatePoolAssetContext,
-  uploadToGcs,
   type CameraEffect,
   type CarouselMoment,
   type EditCopilotTurnResponse,
@@ -90,6 +88,7 @@ import {
 import { FONT_FACES } from "@/lib/font-faces";
 import {
   type GenerativeStyleSet,
+  type EditorTransition,
   type LookAdjustments,
   type LookPreset,
   resolveCarouselFocusClipIndex,
@@ -156,7 +155,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useFocusTrap } from "@/components/ui/useFocusTrap";
 import UnifiedTimeline from "@/app/plan/_components/UnifiedTimeline";
 import { useClipTimeline } from "@/app/plan/_components/useClipTimeline";
-import type { DraftSlot } from "@/app/generative/timeline-math";
+import { nextAddedKey, type DraftSlot } from "@/app/generative/timeline-math";
 import { timelineReducer } from "@/app/generative/timeline-reducer";
 import {
   barsToCaptionCues,
@@ -183,6 +182,13 @@ import {
   textElementsLockedCopy,
 } from "./editor-capabilities";
 import {
+  canEditClip,
+  canEditLane,
+  canEditMusic,
+  hasGuidedOperationCapabilities,
+  operationDisabledReason,
+} from "./editor-operation-capabilities";
+import {
   resolveSmartPlacementAssignments,
   isMasonryVariant,
   resolveSmartPlacementCandidate,
@@ -198,7 +204,7 @@ import {
 } from "./editor-text-composition";
 import { splitSlotAt, deleteSlotEnforceFloor, activeSlotCount } from "./slot-split";
 import {
-  applyClipTimingInput,
+  applyManualClipTimingPatch,
   applyTextTimingInput,
   outputTimeForSlotBoundary,
   rangesDiffer,
@@ -1070,13 +1076,81 @@ export default function EditorShell({
   const [poolError, setPoolError] = useState<string | null>(null);
   const poolListEpoch = useRef(0);
   const poolPollInFlight = useRef(false);
+  const editorHistoryRef = useRef<ReturnType<typeof useEditorHistory> | null>(null);
   const poolUploader = usePoolAssetUploader({
     itemId,
     assetCount: poolAssets.length,
     maxAssets: maxPoolAssets,
-    onRegistered: (asset) => {
+    onRegistered: (asset, file, intent, context) => {
+      if (intent === "overlay") {
+        const overlay = context as {
+          id: string;
+          position: "top" | "center" | "bottom";
+          x_frac: number;
+          y_frac: number;
+          start_s: number;
+          end_s: number;
+          z: number;
+        };
+        // Registration proves the immutable object exists. The worker may
+        // still be decoding/provisioning a browser preview, so keep the
+        // overlay out of the draft until the server reports media readiness.
+        const finalize = async () => {
+          let current = asset;
+          for (let attempt = 0; attempt < 60; attempt += 1) {
+            if (
+              (current.media_status
+                ? current.media_status === "ready"
+                : current.status === "ready") &&
+              (!current.preview_status ||
+                current.preview_status === "ready" ||
+                current.preview_status === "not_needed")
+            ) {
+              const previewUrl = URL.createObjectURL(file);
+              const card: MediaOverlay = {
+                id: overlay.id,
+                kind: current.kind,
+                src_gcs_path: current.gcs_path,
+                preview_gcs_path: null,
+                preview_url: current.preview_url ?? null,
+                position: overlay.position,
+                x_frac: overlay.x_frac,
+                y_frac: overlay.y_frac,
+                scale: 0.35,
+                start_s: overlay.start_s,
+                end_s: overlay.end_s,
+                z: overlay.z,
+              };
+              editorHistoryRef.current?.record();
+              setLocalOverlays((cur) => [...cur, card]);
+              setLocalOverlayPreviewUrls((cur) => ({ ...cur, [card.id]: previewUrl }));
+              setOverlaysDirty(true);
+              select("overlay", card.id);
+              setInspectorTab("basic");
+              return;
+            }
+            if (
+              current.media_status === "unreadable" ||
+              current.media_status === "failed" ||
+              current.preview_status === "failed"
+            ) {
+              throw new Error("Kria couldn't read that visual. Try another file.");
+            }
+            await new Promise((resolve) => window.setTimeout(resolve, 1000));
+            const refreshed = await listPoolAssets(itemId);
+            current = refreshed.assets.find((row) => row.id === asset.id) ?? current;
+          }
+          throw new Error("That visual is taking longer than expected. Try again shortly.");
+        };
+        void finalize()
+          .catch((err) => notify(err instanceof Error ? err.message : "Couldn't add that overlay."))
+          .finally(() => setOverlayUploading(false));
+      }
       poolListEpoch.current += 1;
       setPoolAssets((prev) => [...prev.filter((row) => row.id !== asset.id), asset]);
+    },
+    onFailed: (_file, intent) => {
+      if (intent === "overlay") setOverlayUploading(false);
     },
     onUnavailable: () => setPoolUnavailable(true),
     serverReservations: serverPoolReservations,
@@ -1145,6 +1219,10 @@ export default function EditorShell({
   const editWideLookPresets = useMemo(
     () => clip.editWideLookPresets ?? [],
     [clip.editWideLookPresets],
+  );
+  const perClipLookPresets = useMemo(
+    () => clip.lookPresets ?? [],
+    [clip.lookPresets],
   );
   const selectedEditWideLookPreset = useMemo<LookPreset | null>(() => {
     if (slots.length === 0) return null;
@@ -1278,19 +1356,51 @@ export default function EditorShell({
   // Save disabled + every mutating command no-ops. The server's honest reason
   // is surfaced verbatim.
   const capabilities = variant?.editor_capabilities;
+  const guidedStoryV2 = hasGuidedOperationCapabilities(capabilities);
+  const clipCan = useCallback(
+    (operation: Parameters<typeof canEditClip>[1], legacy: boolean) =>
+      canEditClip(capabilities, operation, legacy),
+    [capabilities],
+  );
+  const musicCan = useCallback(
+    (operation: Parameters<typeof canEditMusic>[1], legacy: boolean) =>
+      canEditMusic(capabilities, operation, legacy),
+    [capabilities],
+  );
+  const textElementsAllowed = canEditLane(
+    capabilities,
+    "text",
+    capabilities?.text_elements !== false,
+  );
+  const sfxAllowed = canEditLane(capabilities, "sfx", capabilities?.sfx !== false);
+  const overlaysAllowed = canEditLane(
+    capabilities,
+    "overlays",
+    capabilities?.overlays !== false,
+  );
+  const visualBlocksAllowed = canEditLane(
+    capabilities,
+    "visual_blocks",
+    capabilities?.visual_blocks === true,
+  );
+  const motionScenesAllowed = canEditLane(
+    capabilities,
+    "motion_scenes",
+    capabilities?.motion_scenes === true,
+  );
   const evolvingTypeExposureEnabled =
     EVOLVING_TYPE_PUBLIC_ENABLED && capabilities?.evolving_type === true;
   const readOnly =
     !!capabilities &&
-    capabilities.text_elements === false &&
+    !textElementsAllowed &&
     !lyricsFeatureAvailable &&
-    capabilities.timeline === false &&
-    capabilities.split_clips === false &&
+    !clipCan("trim", capabilities.timeline !== false) &&
+    !clipCan("split", capabilities.split_clips !== false) &&
     capabilities.mix === false &&
-    capabilities.sfx === false &&
-    capabilities.overlays === false &&
-    capabilities.visual_blocks !== true &&
-    capabilities.motion_scenes !== true &&
+    !sfxAllowed &&
+    !overlaysAllowed &&
+    !visualBlocksAllowed &&
+    !motionScenesAllowed &&
     capabilities.camera_effects !== true &&
     capabilities.orientation?.editable !== true &&
     capabilities.music_window?.editable !== true;
@@ -1300,7 +1410,7 @@ export default function EditorShell({
   // subtitled variants the shell is editable, but optional authored text still
   // respects the rollout flag. Caption cue bars remain directly editable.
   const textElementsLocked =
-    !readOnly && capabilities?.text_elements === false && !lyricsFeatureAvailable;
+    !readOnly && !textElementsAllowed && !lyricsFeatureAvailable;
   // Legacy lyrics variants still use the old whole-style-set route when the
   // frontend lyrics editor is off. With the new gate on, projected lyric bars
   // are edited locally and saved through editor-commit's `lyrics` section.
@@ -1312,13 +1422,41 @@ export default function EditorShell({
   // here let lyrics_sync (and any future reason) edit clips freely in the UI
   // only to 422 at save time.
   const clipEditingLocked =
-    capabilities?.timeline === false || variant?.resolved_archetype === "narrated";
+    !clipCan("trim", capabilities?.timeline !== false) ||
+    variant?.resolved_archetype === "narrated";
+  const clipAddAllowed = clipCan("add", !clipEditingLocked);
+  const clipRemoveAllowed = clipCan("remove", !clipEditingLocked);
+  const clipReorderAllowed = clipCan("reorder", !clipEditingLocked);
+  const clipSplitAllowed = clipCan("split", capabilities?.split_clips !== false);
+  const clipLooksAllowed = clipCan("looks", !clipEditingLocked);
+  const clipTransitionsAllowed = clipCan("transitions", !clipEditingLocked);
   const clipDisabledReason =
     capabilities?.reason === "voiceover_bed_fit" ||
     capabilities?.reason === "locked_to_voiceover" ||
     variant?.resolved_archetype === "narrated"
       ? "locked to your voiceover"
       : editorReasonCopy(capabilities?.reason);
+  const clipTimingDisabledReason =
+    operationDisabledReason(capabilities?.clips?.trim) ?? clipDisabledReason;
+  const clipAddDisabledReason =
+    operationDisabledReason(capabilities?.clips?.add) ?? clipDisabledReason;
+  const clipReorderDisabledReason =
+    operationDisabledReason(capabilities?.clips?.reorder) ?? clipDisabledReason;
+  const clipSplitDisabledReason =
+    operationDisabledReason(capabilities?.clips?.split) ?? clipDisabledReason;
+  const clipLooksDisabledReason =
+    operationDisabledReason(capabilities?.clips?.looks) ?? clipDisabledReason;
+  const clipTransitionsDisabledReason =
+    operationDisabledReason(capabilities?.clips?.transitions) ?? clipDisabledReason;
+  const textDisabledReason = operationDisabledReason(capabilities?.lanes?.text);
+  const sfxDisabledReason = operationDisabledReason(capabilities?.lanes?.sfx);
+  const overlaysDisabledReason = operationDisabledReason(capabilities?.lanes?.overlays);
+  const visualBlocksDisabledReason = operationDisabledReason(
+    capabilities?.lanes?.visual_blocks,
+  );
+  const motionScenesDisabledReason = operationDisabledReason(
+    capabilities?.lanes?.motion_scenes,
+  );
 
   // ── Unified undo/redo (plan §7, task T8) ────────────────────────────────────
   const getCurrent = useCallback(
@@ -1415,10 +1553,10 @@ export default function EditorShell({
       // snapshot as an untouched echo — don't blanket-dirty them, or the next
       // save ships a section the backend editor-commit guard 422s the WHOLE
       // commit for (see agents/DECISIONS.md undo/redo dirty-flag bug).
-      if (capabilities?.sfx !== false) setSfxDirty(true);
-      if (capabilities?.overlays !== false) setOverlaysDirty(true);
-      if (capabilities?.visual_blocks !== false) setVisualBlocksDirty(true);
-      if (capabilities?.motion_scenes !== false) setMotionScenesDirty(true);
+      if (sfxAllowed) setSfxDirty(true);
+      if (overlaysAllowed) setOverlaysDirty(true);
+      if (visualBlocksAllowed) setVisualBlocksDirty(true);
+      if (motionScenesAllowed) setMotionScenesDirty(true);
       if (capabilities?.camera_effects !== false) {
         setCameraEffectsDirty(!cameraEffectsEqual(doc.cameraEffects, variant?.camera_effects));
       }
@@ -1431,16 +1569,28 @@ export default function EditorShell({
         setInspectorTab("basic");
       }
     },
-    [state.bars, select, variant, capabilities, lyricsOptionalActive, introControlsEditable],
+    [
+      state.bars,
+      select,
+      variant,
+      capabilities?.camera_effects,
+      introControlsEditable,
+      lyricsOptionalActive,
+      motionScenesAllowed,
+      overlaysAllowed,
+      sfxAllowed,
+      visualBlocksAllowed,
+    ],
   );
 
   const history = useEditorHistory({ getCurrent, apply: applyDocument });
+  editorHistoryRef.current = history;
 
   const applyEditWideLook = useCallback(
     (preset: LookPreset) => {
       if (
         readOnly ||
-        clipEditingLocked ||
+        !clipCan("edit_wide_looks", clipLooksAllowed) ||
         slots.length === 0 ||
         !editWideLookPresets.includes(preset)
       ) {
@@ -1459,7 +1609,7 @@ export default function EditorShell({
         })),
       );
     },
-    [clipEditingLocked, editWideLookPresets, history, readOnly, slots],
+    [clipCan, clipLooksAllowed, editWideLookPresets, history, readOnly, slots],
   );
 
   const motionRuntimeCompatible =
@@ -1476,7 +1626,7 @@ export default function EditorShell({
     if (
       readOnly ||
       !MOTION_SCENES_UI_ENABLED ||
-      capabilities?.motion_scenes === false ||
+      !motionScenesAllowed ||
       !motionRuntimeCompatible ||
       (presetId === "evolving_type" && !evolvingTypeExposureEnabled) ||
       localMotionScenes.length >= MOTION_MAX_INSTANCES
@@ -1544,7 +1694,7 @@ export default function EditorShell({
     setActiveTool("visuals");
     if (pocketActive) dispatchPocket({ type: "OPEN_INSPECTOR" });
   }, [
-    capabilities?.motion_scenes,
+    motionScenesAllowed,
     currentTime,
     history,
     localMotionScenes,
@@ -1562,7 +1712,7 @@ export default function EditorShell({
 
   const patchMotionScene = useCallback(
     (id: string, patch: MotionPresetPatch) => {
-      if (readOnly || capabilities?.motion_scenes === false) return;
+      if (readOnly || !motionScenesAllowed) return;
       const target = localMotionScenes.find((scene) => scene.id === id);
       if (target?.preset_id === "evolving_type" && !evolvingTypeExposureEnabled) return;
       const baseLayoutDuration = sequentialSlotLayout(slots, clip.state.grid).totalDurationS;
@@ -1604,7 +1754,7 @@ export default function EditorShell({
       setLocalMotionScenes(candidate);
       setMotionScenesDirty(true);
     },
-    [capabilities?.motion_scenes, clip.state.grid, duration, evolvingTypeExposureEnabled, history, localMotionScenes, readOnly, slots, variant?.duration_s, notify],
+    [clip.state.grid, duration, evolvingTypeExposureEnabled, history, localMotionScenes, motionScenesAllowed, notify, readOnly, slots, variant?.duration_s],
   );
 
   const motionDurationFrames = useCallback(() => {
@@ -1659,23 +1809,24 @@ export default function EditorShell({
   }, [evolvingTypeExposureEnabled, localMotionScenes, motionDurationFrames, notify]);
 
   const beginMotionControl = useCallback(() => {
-    if (readOnly || capabilities?.motion_scenes === false) return;
+    if (readOnly || !motionScenesAllowed) return;
     if (motionControlGestureOriginRef.current) return;
     motionControlGestureOriginRef.current = {
       document: getCurrent(),
       motionScenesDirty,
     };
-  }, [capabilities?.motion_scenes, getCurrent, motionScenesDirty, readOnly]);
+  }, [getCurrent, motionScenesAllowed, motionScenesDirty, readOnly]);
 
   const previewMotionControl = useCallback((id: string, patch: CreatorBlockMotionControlPatch) => {
-    if (readOnly || capabilities?.motion_scenes === false) return;
+    if (readOnly || !motionScenesAllowed) return;
     const candidate = buildMotionControlScenes(id, patch);
     if (!candidate) return;
     setLocalMotionScenes(candidate);
     setMotionScenesDirty(true);
-  }, [buildMotionControlScenes, capabilities?.motion_scenes, readOnly]);
+  }, [buildMotionControlScenes, motionScenesAllowed, readOnly]);
 
   const commitMotionControl = useCallback((id: string, patch: CreatorBlockMotionControlPatch) => {
+    if (readOnly || !motionScenesAllowed) return;
     const origin = motionControlGestureOriginRef.current;
     if (origin) {
       history.recordDocument(origin.document);
@@ -1684,7 +1835,7 @@ export default function EditorShell({
       history.record();
     }
     previewMotionControl(id, patch);
-  }, [history, previewMotionControl]);
+  }, [history, motionScenesAllowed, previewMotionControl, readOnly]);
 
   const cancelMotionControl = useCallback(() => {
     const origin = motionControlGestureOriginRef.current;
@@ -1695,23 +1846,23 @@ export default function EditorShell({
   }, []);
 
   const patchMotionControl = useCallback((id: string, patch: CreatorBlockMotionControlPatch) => {
-    if (readOnly || capabilities?.motion_scenes === false) return;
+    if (readOnly || !motionScenesAllowed) return;
     const candidate = buildMotionControlScenes(id, patch);
     if (!candidate) return;
     history.record();
     setLocalMotionScenes(candidate);
     setMotionScenesDirty(true);
-  }, [buildMotionControlScenes, capabilities?.motion_scenes, history, readOnly]);
+  }, [buildMotionControlScenes, history, motionScenesAllowed, readOnly]);
 
   const removeMotionScene = useCallback(
     (id: string) => {
-      if (readOnly || capabilities?.motion_scenes === false) return;
+      if (readOnly || !motionScenesAllowed) return;
       history.record();
       setLocalMotionScenes((current) => current.filter((scene) => scene.id !== id));
       setMotionScenesDirty(true);
       if (selection?.kind === "motion" && selection.id === id) clear();
     },
-    [capabilities?.motion_scenes, clear, history, readOnly, selection],
+    [clear, history, motionScenesAllowed, readOnly, selection],
   );
 
   const visibleTextBars = useMemo(() => {
@@ -1768,6 +1919,8 @@ export default function EditorShell({
   // the committed generation. A Retry must advance to that baseline instead of
   // replaying the pre-commit token and tripping a false cross-tab conflict.
   const partialCommitGenerationRef = useRef<string | null>(null);
+  const partialGuidedRevisionRef = useRef<number | null>(null);
+  const partialHistoryVersionRef = useRef<number | null>(null);
   const saving = saveState === "saving";
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [musicAlignmentPrompt, setMusicAlignmentPrompt] = useState(false);
@@ -1842,6 +1995,7 @@ export default function EditorShell({
       durationS: slot.durationS ?? windowDurationS,
       sourceDurationS: source?.duration_s ?? clipSourceDurations[slot.key] ?? null,
       sourceUrl: source?.signed_url ?? null,
+      sourceKind: source?.kind ?? null,
     };
   }, [clip.clips, clipSourceDurations, selection, slotLayout.windows, slots]);
 
@@ -1970,7 +2124,8 @@ export default function EditorShell({
   // positive while a newly loaded variant hydrates its local start offset.
   const musicWindowDirty = !!songWindowState && musicDirty;
   const virtualPreviewRequested =
-    (clipDirty || musicWindowDirty || carouselMomentDirty) &&
+    (clipDirty || musicWindowDirty || carouselMomentDirty ||
+      (guidedStoryV2 && (sfxDirty || overlaysDirty || visualBlocksDirty || motionScenesDirty || textDirty))) &&
     !virtualFallback &&
     clip.loadState === "ready";
   const musicPreviewRequested =
@@ -2108,6 +2263,7 @@ export default function EditorShell({
   const virtualPreview = useVirtualPreview({
     enabled: virtualPreviewRequested,
     slots,
+    baselineSlots: clip.state.baseline,
     clips: clip.clips,
     grid: clip.state.grid,
     carousel: carouselSplice,
@@ -2567,10 +2723,10 @@ export default function EditorShell({
 
   const overlayPoolShouldLoad =
     (MEDIA_OVERLAYS_UI_ENABLED &&
-      capabilities?.overlays !== false &&
+      overlaysAllowed &&
       (activeTool === "nova" || activeTool === "overlays")) ||
     (VISUAL_BLOCKS_UI_ENABLED &&
-      capabilities?.visual_blocks !== false &&
+      visualBlocksAllowed &&
       activeTool === "visuals");
   useEffect(() => {
     if (!overlayPoolShouldLoad) return;
@@ -2600,7 +2756,12 @@ export default function EditorShell({
 
   const hasBusyPoolAssets =
     poolAssets.some(
-      (a) => a.status === "queued" || a.status === "analyzing" || a.status === "uploaded",
+      (a) =>
+        a.status === "queued" ||
+        a.status === "analyzing" ||
+        a.status === "uploaded" ||
+        a.media_status === "pending" ||
+        a.preview_status === "pending",
     ) || serverPoolReservations.some((reservation) => reservation.release_at === null);
   useEffect(() => {
     if (!overlayPoolShouldLoad || !hasBusyPoolAssets || poolUnavailable) return;
@@ -2826,6 +2987,7 @@ export default function EditorShell({
     (id: string, patch: Partial<Omit<TextElementBar, "id" | "role">>) => {
       if (readOnly) return;
       const target = state.bars.find((bar) => bar.id === id);
+      if (target && !isCaptionBar(target) && !textElementsAllowed) return;
       let patchToApply = patch;
       if (
         target &&
@@ -2886,6 +3048,7 @@ export default function EditorShell({
       lyricsOptionalActive,
       readOnly,
       state.bars,
+      textElementsAllowed,
       variant,
     ],
   );
@@ -3335,52 +3498,96 @@ export default function EditorShell({
       key: string,
       patch: Pick<DraftSlot, "inS" | "durationS" | "durationBeats">,
     ) => {
-      if (readOnly || clipEditingLocked) return;
+      if (readOnly || !clipCan("trim", true)) return;
       setLocalSlots((cur) =>
         (cur ?? slots).map((s) => (s.key === key ? { ...s, ...patch } : s)),
       );
     },
-    [clipEditingLocked, readOnly, slots],
+    [clipCan, readOnly, slots],
   );
 
   const addClipToTimeline = useCallback(
     (clipIndex: number) => {
-      if (readOnly || clipEditingLocked) return;
-      if (slots.some((slot) => !slot.removed && slot.clipIndex === clipIndex)) return;
-
-      const nextState = timelineReducer(
-        {
-          ...clip.state,
-          slots,
-          past: [],
-          future: [],
-        },
-        { type: "ADD", clipIndex },
-      );
-      if (nextState.slots.length === slots.length) {
-        notify("This cut has no room for another clip. Shorten or remove a clip first.");
+      if (readOnly || !clipAddAllowed) return;
+      if (
+        !guidedStoryV2 &&
+        slots.some((slot) => !slot.removed && slot.clipIndex === clipIndex)
+      )
         return;
-      }
 
-      const added = nextState.slots[nextState.slots.length - 1];
+      let nextSlots: DraftSlot[];
+      let added: DraftSlot | undefined;
+      if (guidedStoryV2) {
+        const source = clip.clips.find((candidate) => candidate.clip_index === clipIndex);
+        const roomS = Math.max(0, 60 - slotLayout.totalDurationS);
+        if (roomS < 0.1) {
+          notify("This cut has no room for another clip. Shorten or remove a clip first.");
+          return;
+        }
+        const durationS = Math.min(
+          3,
+          source?.kind === "video" ? (source.duration_s ?? 3) : 3,
+          roomS,
+        );
+        added = {
+          key: nextAddedKey(),
+          slotId: null,
+          parentSegmentId: null,
+          clipIndex,
+          inS: 0,
+          durationBeats: null,
+          durationS,
+          removed: false,
+          momentDescription: null,
+          transitionAfter: "cut",
+          transitionDurationS: null,
+          lookPreset: "none",
+          lookAdjustments: null,
+        };
+        nextSlots = [...slots, added];
+      } else {
+        const nextState = timelineReducer(
+          {
+            ...clip.state,
+            slots,
+            past: [],
+            future: [],
+          },
+          { type: "ADD", clipIndex },
+        );
+        if (nextState.slots.length === slots.length) {
+          notify("This cut has no room for another clip. Shorten or remove a clip first.");
+          return;
+        }
+        nextSlots = nextState.slots;
+        added = nextSlots[nextSlots.length - 1];
+      }
       history.record();
-      setLocalSlots(nextState.slots.map((slot) => ({ ...slot })));
+      setLocalSlots(nextSlots.map((slot) => ({ ...slot })));
       if (added) select("clip", added.key);
     },
-    [clip.state, clipEditingLocked, history, notify, readOnly, select, slots],
+    [
+      clip.clips,
+      clip.state,
+      clipAddAllowed,
+      guidedStoryV2,
+      history,
+      notify, readOnly,
+      select,
+      slotLayout.totalDurationS,
+      slots,
+    ],
   );
 
   const patchSelectedClipTiming = useCallback(
     (patch: { inS?: number; outS?: number; durationS?: number }) => {
-      if (!selectedClip || readOnly || clipEditingLocked) return;
+      if (!selectedClip || readOnly || !clipCan("trim", true)) return;
       const current = selectedClip.slot;
       const currentDuration = selectedClip.durationS;
-      const next = applyClipTimingInput({
-        inS: patch.inS ?? current.inS,
-        outS: patch.outS,
-        durationS:
-          patch.durationS ??
-          (patch.outS == null ? currentDuration : undefined),
+      const next = applyManualClipTimingPatch({
+        inS: current.inS,
+        durationS: currentDuration,
+        patch,
         sourceDurationS: selectedClip.sourceDurationS,
       });
       if (
@@ -3393,12 +3600,12 @@ export default function EditorShell({
       history.record();
       previewClipTiming(current.key, next);
     },
-    [clipEditingLocked, history, previewClipTiming, readOnly, selectedClip],
+    [clipCan, history, previewClipTiming, readOnly, selectedClip],
   );
 
   const patchSelectedClipLook = useCallback(
     (preset: LookPreset) => {
-      if (!selectedClip || readOnly || clipEditingLocked) return;
+      if (!selectedClip || readOnly || !clipLooksAllowed) return;
       if ((selectedClip.slot.lookPreset ?? "none") === preset) return;
       history.record();
       setLocalSlots((current) =>
@@ -3413,12 +3620,47 @@ export default function EditorShell({
         ),
       );
     },
-    [clipEditingLocked, history, readOnly, selectedClip, slots],
+    [clipLooksAllowed, history, readOnly, selectedClip, slots],
+  );
+
+  const patchSelectedClipTransition = useCallback(
+    (transition: EditorTransition, durationS?: number) => {
+      if (!selectedClip || readOnly || !clipTransitionsAllowed) return;
+      const nextDuration = transition === "cut" ? null : Math.max(0.1, Math.min(0.3, durationS ?? 0.3));
+      if (
+        (selectedClip.slot.transitionAfter ?? "cut") === transition &&
+        (selectedClip.slot.transitionDurationS ?? null) === nextDuration
+      ) return;
+      history.record();
+      setLocalSlots((current) =>
+        (current ?? slots).map((slot) =>
+          slot.key === selectedClip.slot.key
+            ? { ...slot, transitionAfter: transition, transitionDurationS: nextDuration }
+            : slot,
+        ),
+      );
+    },
+    [clipTransitionsAllowed, history, readOnly, selectedClip, slots],
+  );
+
+  const moveSelectedClip = useCallback(
+    (direction: -1 | 1) => {
+      if (!selectedClip || readOnly || !clipReorderAllowed) return;
+      const index = slots.findIndex((slot) => slot.key === selectedClip.slot.key);
+      const target = index + direction;
+      if (index < 0 || target < 0 || target >= slots.length) return;
+      history.record();
+      const next = [...slots];
+      const [moved] = next.splice(index, 1);
+      next.splice(target, 0, moved);
+      setLocalSlots(next);
+    },
+    [clipReorderAllowed, history, readOnly, selectedClip, slots],
   );
 
   const patchSelectedClipLookAdjustments = useCallback(
     (patch: Partial<LookAdjustments>) => {
-      if (!selectedClip || readOnly || clipEditingLocked) return;
+      if (!selectedClip || readOnly || !clipLooksAllowed) return;
       const preset = selectedClip.slot.lookPreset ?? "none";
       const current = resolveLookAdjustments(preset, selectedClip.slot.lookAdjustments);
       if (!current) return;
@@ -3432,17 +3674,17 @@ export default function EditorShell({
         ),
       );
     },
-    [clipEditingLocked, readOnly, selectedClip, slots],
+    [clipLooksAllowed, readOnly, selectedClip, slots],
   );
 
   const recordSelectedClipLookAdjustment = useCallback(() => {
-    if (!selectedClip || readOnly || clipEditingLocked) return;
+    if (!selectedClip || readOnly || !clipLooksAllowed) return;
     history.record();
-  }, [clipEditingLocked, history, readOnly, selectedClip]);
+  }, [clipLooksAllowed, history, readOnly, selectedClip]);
 
   const previewSelectedClipTiming = useCallback(
     (patch: { inS: number; durationS: number }) => {
-      if (!selectedClip || readOnly || clipEditingLocked) return;
+      if (!selectedClip || readOnly || !clipCan("trim", true)) return;
       previewClipTiming(selectedClip.slot.key, {
         inS: patch.inS,
         durationS: patch.durationS,
@@ -3462,7 +3704,7 @@ export default function EditorShell({
       }
     },
     [
-      clipEditingLocked,
+      clipCan,
       previewClipTiming,
       readOnly,
       seekPlaybackTo,
@@ -3502,7 +3744,7 @@ export default function EditorShell({
 
   const addSfxFromGlossary = useCallback(
     (effect: SoundEffectSummary) => {
-      if (readOnly || capabilities?.sfx === false) return;
+      if (readOnly || !sfxAllowed) return;
       history.record();
       const placement: SoundEffectPlacement = {
         id: crypto.randomUUID(),
@@ -3528,39 +3770,39 @@ export default function EditorShell({
       select("sfx", placement.id);
       setInspectorTab("basic");
     },
-    [capabilities?.sfx, currentTime, duration, history, readOnly, select],
+    [currentTime, duration, history, readOnly, select, sfxAllowed],
   );
 
   const patchSfx = useCallback(
     (id: string, patch: Partial<SoundEffectPlacement>) => {
-      if (readOnly || capabilities?.sfx === false) return;
+      if (readOnly || !sfxAllowed) return;
       history.record();
       setLocalSfx((cur) =>
         cur.map((s) => (s.id === id ? { ...s, ...patch, source: "user" } : s)),
       );
       setSfxDirty(true);
     },
-    [capabilities?.sfx, history, readOnly],
+    [history, readOnly, sfxAllowed],
   );
 
   const removeSfx = useCallback(
     (id: string) => {
-      if (readOnly || capabilities?.sfx === false) return;
+      if (readOnly || !sfxAllowed) return;
       history.record();
       setLocalSfx((cur) => cur.filter((s) => s.id !== id));
       setSfxDirty(true);
       clear();
     },
-    [capabilities?.sfx, clear, history, readOnly],
+    [clear, history, readOnly, sfxAllowed],
   );
 
   const previewOverlayTiming = useCallback(
     (id: string, patch: Pick<MediaOverlay, "start_s" | "end_s">) => {
-      if (readOnly) return;
+      if (readOnly || !overlaysAllowed) return;
       setLocalOverlays((cur) => cur.map((o) => (o.id === id ? { ...o, ...patch } : o)));
       setOverlaysDirty(true);
     },
-    [readOnly],
+    [overlaysAllowed, readOnly],
   );
 
   const previewCameraTiming = useCallback(
@@ -3607,7 +3849,7 @@ export default function EditorShell({
 
   const previewVisualTiming = useCallback(
     (id: string, patch: Pick<VisualBlock, "start_s" | "end_s">) => {
-      if (readOnly) return;
+      if (readOnly || !visualBlocksAllowed) return;
       setLocalVisualBlocks((blocks) =>
         blocks.map((block) =>
           block.id === id
@@ -3638,7 +3880,7 @@ export default function EditorShell({
         setTextDirty(true);
       }
     },
-    [localVisualBlocks, readOnly, state.bars],
+    [localVisualBlocks, readOnly, state.bars, visualBlocksAllowed],
   );
 
   const previewMotionTiming = useCallback(
@@ -3647,7 +3889,7 @@ export default function EditorShell({
       patch: { start_s: number; end_s: number },
       origin: EditorMotionBar,
     ) => {
-      if (readOnly || capabilities?.motion_scenes === false) return;
+      if (readOnly || !motionScenesAllowed) return;
       const target = origin.sourceScene;
       if (!target || (target.preset_id === "evolving_type" && !evolvingTypeExposureEnabled)) {
         return;
@@ -3679,31 +3921,31 @@ export default function EditorShell({
       });
       setMotionScenesDirty(true);
     },
-    [capabilities?.motion_scenes, evolvingTypeExposureEnabled, motionDurationFrames, readOnly],
+    [evolvingTypeExposureEnabled, motionDurationFrames, motionScenesAllowed, readOnly],
   );
 
   const previewOverlayPatch = useCallback(
     (id: string, patch: Partial<MediaOverlay>) => {
-      if (readOnly) return;
+      if (readOnly || !overlaysAllowed) return;
       setLocalOverlays((cur) => cur.map((o) => (o.id === id ? { ...o, ...patch } : o)));
       setOverlaysDirty(true);
     },
-    [readOnly],
+    [overlaysAllowed, readOnly],
   );
 
   const patchOverlay = useCallback(
     (id: string, patch: Partial<MediaOverlay>, options: { record?: boolean } = {}) => {
-      if (readOnly || capabilities?.overlays === false) return;
+      if (readOnly || !overlaysAllowed) return;
       if (options.record !== false) history.record();
       setLocalOverlays((cur) => cur.map((o) => (o.id === id ? { ...o, ...patch } : o)));
       setOverlaysDirty(true);
     },
-    [capabilities?.overlays, history, readOnly],
+    [history, overlaysAllowed, readOnly],
   );
 
   const removeOverlay = useCallback(
     (id: string) => {
-      if (readOnly || capabilities?.overlays === false) return;
+      if (readOnly || !overlaysAllowed) return;
       history.record();
       const removed = removeOverlayEffectGroup(
         {
@@ -3726,7 +3968,7 @@ export default function EditorShell({
       clear();
     },
     [
-      capabilities?.overlays,
+      overlaysAllowed,
       clear,
       history,
       localCameraEffects,
@@ -3738,86 +3980,87 @@ export default function EditorShell({
 
   const patchMixLevel = useCallback(
     (level: number) => {
-      if (readOnly || capabilities?.mix === false) return;
+      if (readOnly || !musicCan("level", capabilities?.mix !== false)) return;
       const next = Math.max(0, Math.min(1, level));
       history.record("mix");
       setMixLevel(next);
       setSoundMuted(next === 0);
       setMixDirty(true);
     },
-    [capabilities?.mix, history, readOnly],
+    [capabilities?.mix, history, musicCan, readOnly],
   );
 
   const handleOverlayUpload = useCallback(
     async (
       files: { file: File; filename: string; content_type: string; file_size_bytes: number }[],
     ) => {
-      if (readOnly || capabilities?.overlays === false || files.length === 0) return;
+      if (readOnly || !overlaysAllowed || files.length === 0) return;
       setOverlayUploading(true);
-      try {
-        const uploadUrls = await requestOverlayUploadUrls(
-          itemId,
-          files.map((f) => ({
-            filename: f.filename,
-            content_type: f.content_type,
-            file_size_bytes: f.file_size_bytes,
-          })),
-        );
-        await Promise.all(uploadUrls.map((u, i) => uploadToGcs(u.upload_url, files[i].file)));
-        const confirmed = await confirmOverlayUploads(
-          itemId,
-          uploadUrls.map((u, i) => ({
-            gcs_path: u.gcs_path,
-            content_type: files[i].content_type,
-          })),
-        );
-        const confirmedByPath = new Map(confirmed.map((c) => [c.gcs_path, c]));
-        const previewUrls: Record<string, string> = {};
-        const start = Math.min(
-          Math.max(0, outputToBaseTimeRef.current(currentTime)),
-          Math.max(0, duration - 0.3),
-        );
-        const cards: MediaOverlay[] = uploadUrls.map((u, i) => {
-          const file = files[i];
-          const id = crypto.randomUUID();
-          previewUrls[id] = URL.createObjectURL(file.file);
-          const confirmedUpload = confirmedByPath.get(u.gcs_path);
-          return {
-            id,
-            kind: file.content_type.startsWith("video/") ? "video" : "image",
-            src_gcs_path: u.gcs_path,
-            preview_gcs_path: confirmedUpload?.preview_gcs_path ?? null,
-            preview_url: confirmedUpload?.preview_url ?? null,
-            position: "center",
-            x_frac: 0.5,
-            y_frac: 0.5,
+      const start = Math.min(
+        Math.max(0, outputToBaseTimeRef.current(currentTime)),
+        Math.max(0, duration - 0.3),
+      );
+      const positionCycle: {
+        position: "top" | "center" | "bottom";
+        x_frac: number;
+        y_frac: number;
+      }[] = [
+        { position: "center", x_frac: 0.5, y_frac: 0.5 },
+        { position: "top", x_frac: 0.5, y_frac: 0.18 },
+        { position: "bottom", x_frac: 0.5, y_frac: 0.82 },
+      ];
+      const drafts = files.map((entry, index) => {
+        const slot = positionCycle[(localOverlays.length + index) % positionCycle.length];
+        return {
+          id: crypto.randomUUID(),
+          kind: entry.content_type.startsWith("video/") ? "video" : "image",
+          position: slot.position,
+          x_frac: slot.x_frac,
+          y_frac: slot.y_frac,
+          start_s: start,
+          end_s: Math.min(duration || start + 5, start + 5),
+          z: localOverlays.length + index,
+        } as const;
+      });
+      if ((capabilities?.overlay_upload_mode ?? "legacy") === "legacy") {
+        try {
+          const confirmed = await uploadMediaOverlayFiles(itemId, files);
+          const cards: MediaOverlay[] = confirmed.map((result, index) => ({
+            ...drafts[index],
+            src_gcs_path: result.gcs_path,
+            preview_gcs_path: result.preview_gcs_path ?? null,
+            preview_url: result.preview_url ?? null,
             scale: 0.35,
-            start_s: start,
-            end_s: Math.min(duration || start + 5, start + 5),
-            z: localOverlays.length + i,
-          };
-        });
-        history.record();
-        setLocalOverlays((cur) => [...cur, ...cards]);
-        setLocalOverlayPreviewUrls((cur) => ({ ...cur, ...previewUrls }));
-        setOverlaysDirty(true);
-        if (cards[0]) {
-          select("overlay", cards[0].id);
-          setInspectorTab("basic");
+          }));
+          history.record();
+          setLocalOverlays((current) => [...current, ...cards]);
+          cards.forEach((card) => select("overlay", card.id));
+          setOverlaysDirty(true);
+        } catch (err) {
+          notify(err instanceof Error ? err.message : "Couldn't upload that overlay.");
+        } finally {
+          setOverlayUploading(false);
         }
-      } catch (err) {
-        notify(err instanceof Error ? err.message : "Couldn't upload that overlay.");
-      } finally {
-        setOverlayUploading(false);
+        return;
       }
+      const accepted = poolUploader.addFiles(
+        files.map((entry) => entry.file),
+        {
+          intent: "overlay",
+          context: (_file, index) => drafts[index],
+        },
+      );
+      if (accepted === 0) setOverlayUploading(false);
     },
     [
-      capabilities?.overlays,
+      capabilities?.overlay_upload_mode,
+      overlaysAllowed,
       currentTime,
       history,
       itemId,
       localOverlays.length,
       duration,
+      poolUploader,
       readOnly,
       select,
       notify,
@@ -3830,7 +4073,7 @@ export default function EditorShell({
   // Persistence rides the normal Save (editor-commit accepted_suggestion_ids).
   const handleAcceptSuggestion = useCallback(
     (suggestion: OverlaySuggestion) => {
-      if (readOnly || capabilities?.overlays === false) return;
+      if (readOnly || !overlaysAllowed) return;
       history.record();
       const effectGroupId = suggestion.overlay.effect_group_id ?? suggestion.id;
       setLocalOverlays((cur) => [
@@ -3844,7 +4087,7 @@ export default function EditorShell({
       setOverlaysDirty(true);
       // SFX child rides only when the sfx section can actually commit —
       // staging it with sound effects disabled would 404 the whole Save.
-      if (suggestion.sfx && capabilities?.sfx !== false) {
+      if (suggestion.sfx && sfxAllowed) {
         const sfx = {
           ...suggestion.sfx,
           source: suggestion.sfx.source ?? "overlay_suggestion",
@@ -3861,7 +4104,7 @@ export default function EditorShell({
       select("overlay", suggestion.overlay.id);
       setInspectorTab("basic");
     },
-    [capabilities?.overlays, capabilities?.sfx, history, readOnly, select],
+    [history, overlaysAllowed, readOnly, select, sfxAllowed],
   );
 
   const recordTimelineDrag = useCallback(() => {
@@ -4096,7 +4339,7 @@ export default function EditorShell({
 
   const addTextCard = useCallback(
     (preset: "card" | "quote" | "statistic" | "transition") => {
-      if (readOnly || capabilities?.visual_blocks === false) return;
+      if (readOnly || !visualBlocksAllowed) return;
       const { start, end } = nextVisualBlockWindow(2.5);
       if (end - start < 0.75) {
         notify("There isn't enough open timeline space for a text card.");
@@ -4148,7 +4391,7 @@ export default function EditorShell({
       seekPlaybackTo(baseToOutputTimeRef.current(start));
     },
     [
-      capabilities?.visual_blocks,
+      visualBlocksAllowed,
       history,
       nextVisualBlockWindow,
       readOnly,
@@ -4160,7 +4403,7 @@ export default function EditorShell({
 
   const addMontageBlock = useCallback(
     (assetIds: string[]) => {
-      if (readOnly || capabilities?.visual_blocks === false) return;
+      if (readOnly || !visualBlocksAllowed) return;
       const selectedAssets = assetIds
         .map((id) => poolAssets.find((asset) => asset.id === id))
         .filter((asset): asset is PoolAsset => !!asset && asset.status === "ready")
@@ -4211,7 +4454,7 @@ export default function EditorShell({
       seekPlaybackTo(baseToOutputTimeRef.current(start));
     },
     [
-      capabilities?.visual_blocks,
+      visualBlocksAllowed,
       history,
       nextVisualBlockWindow,
       poolAssets,
@@ -4263,7 +4506,7 @@ export default function EditorShell({
 
   const patchVisualBlock = useCallback(
     (id: string, patch: Partial<VisualBlock>) => {
-      if (readOnly) return;
+      if (readOnly || !visualBlocksAllowed) return;
       const current = localVisualBlocks.find((block) => block.id === id);
       if (!current) return;
       history.record();
@@ -4285,12 +4528,12 @@ export default function EditorShell({
         setTextDirty(true);
       }
     },
-    [history, localVisualBlocks, readOnly, state.bars],
+    [history, localVisualBlocks, readOnly, state.bars, visualBlocksAllowed],
   );
 
   const deleteVisualBlock = useCallback(
     (id: string) => {
-      if (readOnly) return;
+      if (readOnly || !visualBlocksAllowed) return;
       history.record();
       setLocalVisualBlocks((blocks) => blocks.filter((block) => block.id !== id));
       setVisualBlocksDirty(true);
@@ -4299,12 +4542,12 @@ export default function EditorShell({
         .forEach((bar) => dispatch({ type: "DELETE_BAR", id: bar.id }));
       setTextDirty(true);
     },
-    [history, readOnly, state.bars],
+    [history, readOnly, state.bars, visualBlocksAllowed],
   );
 
   const duplicateVisualBlock = useCallback(
     (id: string) => {
-      if (readOnly || capabilities?.visual_blocks === false) return;
+      if (readOnly || !visualBlocksAllowed) return;
       const source = localVisualBlocks.find((block) => block.id === id);
       if (!source) return;
       const durationS = source.end_s - source.start_s;
@@ -4367,7 +4610,7 @@ export default function EditorShell({
       seekPlaybackTo(baseToOutputTimeRef.current(start));
     },
     [
-      capabilities?.visual_blocks,
+      visualBlocksAllowed,
       history,
       localVisualBlocks,
       nextVisualBlockWindow,
@@ -4399,10 +4642,7 @@ export default function EditorShell({
 
   // Clip-split capability gate (plan §7): missing capabilities → allowed for
   // montage agent_text variants (song_text / original_text), disabled otherwise.
-  const splitClipsAllowed =
-    capabilities?.split_clips !== undefined
-      ? capabilities.split_clips !== false
-      : variant?.text_mode === "agent_text";
+  const splitClipsAllowed = clipSplitAllowed;
   const captionsToolState = useMemo(() => captionToolState(variant), [variant]);
   const toolDisabledReasons = useMemo<Partial<Record<EditorTool, string>>>(
     () =>
@@ -4447,8 +4687,13 @@ export default function EditorShell({
         : !!variant && isCaptionArchetype(variant) && (variant.caption_cues?.length ?? 0) > 0);
     const musicSwappable =
       !!variant?.music_track_id && capabilities?.swap_song !== false && !readOnly;
+    const musicRemovable =
+      musicCan("remove", capabilities?.swap_song !== false) &&
+      !readOnly &&
+      !musicRemoved &&
+      !!effectiveMusicTrackId;
     const titleEditable = introControlsEditable;
-    const mixAllowed = capabilities?.mix !== false && mixLevel !== undefined;
+    const mixAllowed = musicCan("level", capabilities?.mix !== false) && mixLevel !== undefined;
     const introText = variant?.intro_text?.trim() ?? "";
     const introWordCount = introText ? introText.split(/\s+/).filter(Boolean).length : 0;
     const sequenceCapable = variant?.sequence_synced === true || variant?.intro_mode === "sequence";
@@ -4519,6 +4764,7 @@ export default function EditorShell({
       overlaysEnabled: MEDIA_OVERLAYS_UI_ENABLED,
       captionsPresent,
       musicSwappable,
+      musicRemovable,
       mixAllowed,
       renderLayoutSwitchable,
       carouselMomentAvailable,
@@ -4526,9 +4772,9 @@ export default function EditorShell({
       cameraEffectsEnabled: capabilities?.camera_effects !== false,
       transitionsEnabled: EDIT_TRANSITIONS_UI_ENABLED,
       visualBlocksEnabled:
-        VISUAL_BLOCKS_UI_ENABLED && capabilities?.visual_blocks !== false,
+        VISUAL_BLOCKS_UI_ENABLED && visualBlocksAllowed,
       motionScenesEnabled:
-        MOTION_SCENES_UI_ENABLED && capabilities?.motion_scenes === true,
+        MOTION_SCENES_UI_ENABLED && motionScenesAllowed,
       titleEditable,
       openTools,
       readOnly,
@@ -4538,6 +4784,7 @@ export default function EditorShell({
       overlaysEnabled: MEDIA_OVERLAYS_UI_ENABLED,
       captionsPresent,
       musicSwappable,
+      musicRemovable,
       mixAllowed,
       titleEditable,
       openTools,
@@ -4559,6 +4806,7 @@ export default function EditorShell({
       captionTotalCues: captionCuesEditable ? undefined : variant?.caption_cues?.length ?? 0,
       musicState: {
         swappable: musicSwappable,
+        removable: musicRemovable,
         currentTrackId: effectiveMusicTrackId,
         currentTrackTitle: effectiveMusicTitle,
         candidates: musicTracks,
@@ -4574,7 +4822,7 @@ export default function EditorShell({
       visualBlocks: localVisualBlocks,
       motionScenes: localMotionScenes,
       motionScenesEnabled:
-        MOTION_SCENES_UI_ENABLED && capabilities?.motion_scenes === true,
+        MOTION_SCENES_UI_ENABLED && motionScenesAllowed,
       evolvingTypeEnabled: evolvingTypeExposureEnabled,
       readOnly: readOnly || allowedFamilies.length === 0,
       // PR1 (backend, parallel) wires an actual render-step source into this
@@ -4610,13 +4858,17 @@ export default function EditorShell({
     evolvingTypeExposureEnabled,
     history.canUndo,
     history.version,
+    introControlsEditable,
     localOverlays,
     localCameraEffects,
     localVisualBlocks,
     localMotionScenes,
     localSfx,
     mixLevel,
+    musicCan,
     musicTracks,
+    musicRemoved,
+    motionScenesAllowed,
     overlaySuggestions.rows,
     poolAssets,
     timelineDuration,
@@ -4627,6 +4879,7 @@ export default function EditorShell({
     title,
     toolDisabledReasons,
     variant,
+    visualBlocksAllowed,
   ]);
 
   // PR7 (repeat/undo ops): the most recent LOCAL (non-render) copilot turn
@@ -4661,6 +4914,7 @@ export default function EditorShell({
         poolAssets,
         pendingSuggestions: overlaySuggestions.rows,
         musicTrackId: effectiveMusicTrackId,
+        musicRemoved,
         mixLevel,
         title,
         captionMeta,
@@ -4693,6 +4947,7 @@ export default function EditorShell({
       localMotionScenes,
       localSfx,
       mixLevel,
+      musicRemoved,
       overlaySuggestions.rows,
       poolAssets,
       timelineDuration,
@@ -4885,6 +5140,7 @@ export default function EditorShell({
         result.nextCarouselMoment !== undefined ||
         (result.acceptedSuggestionRefs?.length ?? 0) > 0 ||
         result.nextMusicTrackId !== undefined ||
+        result.musicRemoved !== undefined ||
         result.nextMixLevel !== undefined ||
         result.nextTitle !== undefined ||
         result.captionMetaPatch !== undefined;
@@ -4987,6 +5243,12 @@ export default function EditorShell({
         setSelectedMusicTrackId(result.nextMusicTrackId);
         setMusicDirty(result.nextMusicTrackId !== variant?.music_track_id);
       }
+      if (result.musicRemoved !== undefined) {
+        setSelectedMusicTrackId(null);
+        setMusicRemoved(true);
+        setMusicStartS(0);
+        setMusicDirty(true);
+      }
       if (result.nextMixLevel !== undefined) {
         setMixLevel(result.nextMixLevel);
         setSoundMuted(result.nextMixLevel === 0);
@@ -5045,11 +5307,11 @@ export default function EditorShell({
     },
     [
       applyCarouselMoment,
-      capabilities,
       clip.state.grid,
       clear,
       flashCopilotTargets,
       history,
+      introControlsEditable,
       localOverlays,
       localSfx,
       overlaySuggestions,
@@ -5164,7 +5426,12 @@ export default function EditorShell({
     if (!selection || readOnly) return;
     if (selection.kind === "text") {
       const selected = state.bars.find((bar) => bar.id === selection.id);
+      if (!isCaptionBar(selected) && !textElementsAllowed) {
+        notify(textDisabledReason ?? "Text is locked for this story.");
+        return;
+      }
       if (
+        visualBlocksAllowed &&
         selected?.visual_block_id &&
         state.bars.filter((bar) => bar.visual_block_id === selected.visual_block_id).length <= 1
       ) {
@@ -5177,7 +5444,7 @@ export default function EditorShell({
       else setTextDirty(true);
       dispatch({ type: "DELETE_BAR", id: selection.id });
       clear();
-    } else if (selection.kind === "clip" && !clipEditingLocked) {
+    } else if (selection.kind === "clip" && clipRemoveAllowed) {
       const res = deleteSlotEnforceFloor(slots, selection.id);
       if (res.didDelete) {
         history.record();
@@ -5187,15 +5454,25 @@ export default function EditorShell({
         notify("Keep at least one clip.");
       }
     } else if (selection.kind === "sfx") {
-      removeSfx(selection.id);
+      if (sfxAllowed) removeSfx(selection.id);
+      else notify(sfxDisabledReason ?? "Sound effects aren't available for this edit.");
     } else if (selection.kind === "overlay") {
-      removeOverlay(selection.id);
+      if (overlaysAllowed) removeOverlay(selection.id);
+      else notify(overlaysDisabledReason ?? "Overlays aren't available for this edit.");
     } else if (selection.kind === "visual") {
-      deleteVisualBlock(selection.id);
-      clear();
+      if (visualBlocksAllowed) {
+        deleteVisualBlock(selection.id);
+        clear();
+      } else {
+        notify(visualBlocksDisabledReason ?? "Visual blocks aren't available for this edit.");
+      }
     } else if (selection.kind === "motion") {
-      removeMotionScene(selection.id);
-      clear();
+      if (motionScenesAllowed) {
+        removeMotionScene(selection.id);
+        clear();
+      } else {
+        notify(motionScenesDisabledReason ?? "Motion isn't available for this edit.");
+      }
     } else if (selection.kind === "carousel") {
       if (!carouselCapable || carouselMoment === null) {
         notify(
@@ -5212,7 +5489,7 @@ export default function EditorShell({
       deleteCameraEffect(selection.id);
     }
   }, [
-    clipEditingLocked,
+    clipRemoveAllowed,
     selection,
     clear,
     slots,
@@ -5228,6 +5505,16 @@ export default function EditorShell({
     carouselReason,
     deleteCameraEffect,
     state.bars,
+    textElementsAllowed,
+    textDisabledReason,
+    sfxAllowed,
+    sfxDisabledReason,
+    overlaysAllowed,
+    overlaysDisabledReason,
+    visualBlocksAllowed,
+    visualBlocksDisabledReason,
+    motionScenesAllowed,
+    motionScenesDisabledReason,
     notify,
   ]);
 
@@ -5260,6 +5547,10 @@ export default function EditorShell({
       });
     } else if (selection.kind === "clip") {
       if (!splitClipsAllowed) return;
+      if (guidedStoryV2 && selectedClip?.sourceKind !== "video") {
+        notify("Images can be resized, but they can’t be split.");
+        return;
+      }
       const res = splitSlotAt(
         slots,
         clip.state.grid,
@@ -5280,8 +5571,10 @@ export default function EditorShell({
     slots,
     clip.state.grid,
     splitClipsAllowed,
+    guidedStoryV2,
     readOnly,
     selectedBar,
+    selectedClip,
     history,
     notify,
   ]);
@@ -5341,24 +5634,26 @@ export default function EditorShell({
   // Transport enablement (plan §6).
   const canSplit =
     (selection?.kind === "text" && !!selectedBar && !isLyricBar(selectedBar)) ||
-    (selection?.kind === "clip" && splitClipsAllowed && !clipEditingLocked);
+    (selection?.kind === "clip" &&
+      splitClipsAllowed &&
+      (!guidedStoryV2 || selectedClip?.sourceKind === "video"));
   const splitReason =
     selection?.kind === "music"
       ? "Music fits the cut automatically"
       : selection?.kind === "text" && selectedBar && isLyricBar(selectedBar)
         ? "Lyric timing is locked to the vocal."
-      : selection?.kind === "clip" && clipEditingLocked
-        ? "locked to your voiceover"
       : selection?.kind === "clip" && !splitClipsAllowed
-        ? "This variant's clips can't be split"
+        ? clipSplitDisabledReason ?? "This variant's clips can't be split"
+        : selection?.kind === "clip" && guidedStoryV2 && selectedClip?.sourceKind !== "video"
+          ? "Images can be resized, but they can’t be split."
         : undefined;
   const canDelete =
     (selection?.kind === "text" && !!selectedBar && !isLyricBar(selectedBar)) ||
-    (selection?.kind === "clip" && !clipEditingLocked && activeSlotCount(slots) > 1) ||
+    (selection?.kind === "clip" && clipRemoveAllowed && activeSlotCount(slots) > 1) ||
     selection?.kind === "sfx" ||
     selection?.kind === "overlay" ||
-    selection?.kind === "visual" ||
-    selection?.kind === "motion" ||
+    (selection?.kind === "visual" && visualBlocksAllowed) ||
+    (selection?.kind === "motion" && motionScenesAllowed) ||
     (selection?.kind === "carousel" && carouselCapable && carouselMoment !== null) ||
     selection?.kind === "camera";
 
@@ -5490,7 +5785,7 @@ export default function EditorShell({
         ...(lyricsEnabled !== persistedLyricsEnabled(variant) ? { enabled: lyricsEnabled } : {}),
         ...(lyricOverridesDirty ? { line_overrides: lyricLineOverrides } : {}),
       };
-      const commitRequest = buildEditorCommitRequest({
+      let commitRequest = buildEditorCommitRequest({
         // Elements-model lyric_line bars ride the normal text_elements
         // section (they're ordinary persisted elements on that model);
         // legacy leaves them out — they persist via the `lyrics` section
@@ -5538,10 +5833,29 @@ export default function EditorShell({
         lyrics: lyricsRequest,
         orientationDirty,
         orientation,
+        guidedRevisionNumber: guidedStoryV2 ? clip.revisionNumber : undefined,
         variant,
       });
       if (partialCommitGenerationRef.current) {
-        commitRequest.base_generation = partialCommitGenerationRef.current;
+        const draftChangedAfterPartial =
+          partialHistoryVersionRef.current != null &&
+          history.version !== partialHistoryVersionRef.current;
+        if (
+          guidedStoryV2 &&
+          partialGuidedRevisionRef.current != null &&
+          !draftChangedAfterPartial
+        ) {
+          commitRequest = {
+            base_generation: partialCommitGenerationRef.current,
+            guided_revision_number: partialGuidedRevisionRef.current,
+            retry_guided_revision: true,
+          };
+        } else {
+          commitRequest.base_generation = partialCommitGenerationRef.current;
+          if (guidedStoryV2 && partialGuidedRevisionRef.current != null) {
+            commitRequest.guided_revision_number = partialGuidedRevisionRef.current;
+          }
+        }
       }
       const res = await commitEditorSession(
         itemId,
@@ -5552,6 +5866,8 @@ export default function EditorShell({
       // the response's `ok` flag tells us. Working state stays, Retry re-kicks.
       if (res && res.ok === false) {
         partialCommitGenerationRef.current = res.generation;
+        partialGuidedRevisionRef.current = res.revision_number ?? null;
+        partialHistoryVersionRef.current = history.version;
         setSaveState("partial");
         setSaveMessage("Saved, but rendering didn't start.");
         return;
@@ -5575,6 +5891,8 @@ export default function EditorShell({
       // the draft is spent, and the item-page hero shows the rendering state.
       draftPersistenceSuspendedRef.current = true;
       partialCommitGenerationRef.current = null;
+      partialGuidedRevisionRef.current = null;
+      partialHistoryVersionRef.current = null;
       history.clear();
       clearDraft();
       setDraftDoc(null);
@@ -5627,6 +5945,7 @@ export default function EditorShell({
     title,
     router,
     clipDirty,
+    clip.revisionNumber,
     slots,
     mixDirty,
     mixLevel,
@@ -5665,6 +5984,7 @@ export default function EditorShell({
     titleDirty,
     history,
     clearDraft,
+    guidedStoryV2,
   ]);
 
   /**
@@ -5968,7 +6288,12 @@ export default function EditorShell({
   }
 
   const isVoiceoverVariant = variant.variant_id.startsWith("voiceover");
-  const musicSwapEditable = capabilities?.swap_song !== false && !readOnly;
+  const musicSwapEditable = musicCan("swap", capabilities?.swap_song !== false) && !readOnly;
+  const musicRemoveEditable = musicCan("remove", capabilities?.swap_song !== false) && !readOnly;
+  const musicLevelEditable = musicCan("level", capabilities?.mix !== false) && !readOnly;
+  const musicSwapDisabledReason = operationDisabledReason(capabilities?.music_operations?.swap);
+  const musicRemoveDisabledReason = operationDisabledReason(capabilities?.music_operations?.remove);
+  const musicLevelDisabledReason = operationDisabledReason(capabilities?.music_operations?.level);
   const hasPlayableMusic =
     !!effectiveAudioTrackId &&
     (!!virtualMusicAudioUrl ||
@@ -6124,6 +6449,60 @@ export default function EditorShell({
       onSeek={seekPlaybackTo}
     />
   ) : null;
+  const activeGuidedTombstones = (() => {
+    const activeByLane: Record<string, Set<string>> = {
+      text_elements: new Set(state.bars.map((value) => value.id)),
+      sound_effects: new Set(localSfx.map((value) => value.id)),
+      media_overlays: new Set(localOverlays.map((value) => value.id)),
+      visual_blocks: new Set(localVisualBlocks.map((value) => value.id)),
+      motion_scenes: new Set(localMotionScenes.map((value) => value.id)),
+    };
+    return (clip.tombstones ?? []).filter(
+      (value) => !activeByLane[value.lane]?.has(value.record_id),
+    );
+  })();
+  const restoreGuidedTombstones = () => {
+    if (!variant || activeGuidedTombstones.length === 0) return;
+    history.record("restore-guided-tombstones");
+    for (const tombstone of activeGuidedTombstones) {
+      const record = tombstone.record;
+      if (tombstone.lane === "text_elements") {
+        const element = record as unknown as TextElement;
+        const [bar] = seedBarsFromVariant(
+          {
+            ...variant,
+            text_elements: [element],
+            caption_cues: [],
+            text_elements_user_edited: true,
+          },
+          { includeLyrics: true },
+        );
+        if (bar) {
+          originalsRef.current.set(bar.id, element);
+          dispatch({ type: "ADD_TEXT", bar });
+          setTextDirty(true);
+        }
+      } else if (tombstone.lane === "sound_effects") {
+        setLocalSfx((current) => [...current, record as unknown as SoundEffectPlacement]);
+        setSfxDirty(true);
+      } else if (tombstone.lane === "media_overlays") {
+        setLocalOverlays((current) => [...current, record as unknown as MediaOverlay]);
+        setOverlaysDirty(true);
+      } else if (tombstone.lane === "visual_blocks") {
+        setLocalVisualBlocks((current) => [...current, record as unknown as VisualBlock]);
+        setVisualBlocksDirty(true);
+      } else if (tombstone.lane === "motion_scenes") {
+        setLocalMotionScenes((current) => [
+          ...current,
+          record as unknown as MotionPresetInstance,
+        ]);
+        setMotionScenesDirty(true);
+      }
+    }
+    notify(
+      `Restored ${activeGuidedTombstones.length} item${activeGuidedTombstones.length === 1 ? "" : "s"}.`,
+    );
+  };
   const showCopilotSaveNotice = sessionHasCopilotEdits && !copilotSaveNoticeDismissed;
   const lyricsToggle = {
     visible: !!variant && lyricsFeatureAvailable,
@@ -6201,6 +6580,8 @@ export default function EditorShell({
       selectElement("text", id, { preserveOverlayTool: true });
     },
     readOnly,
+    textReadOnly: !textElementsAllowed,
+    textDisabledReason,
     onRecordTimelineEdit: recordTimelineDrag,
     onPreviewTextTiming: previewTextTiming,
     visualBlocks: localVisualBlocks.map((block) => ({
@@ -6210,7 +6591,9 @@ export default function EditorShell({
       end_s: block.end_s,
     })),
     showVisualBlocks:
-      VISUAL_BLOCKS_UI_ENABLED && capabilities?.visual_blocks !== false,
+      VISUAL_BLOCKS_UI_ENABLED && visualBlocksAllowed,
+    visualBlocksReadOnly: !visualBlocksAllowed,
+    visualBlocksDisabledReason,
     onPreviewVisualTiming: previewVisualTiming,
     motionBlocks: localMotionScenes.map((scene) => ({
       id: scene.id,
@@ -6224,7 +6607,9 @@ export default function EditorShell({
       readOnly: scene.preset_id === "evolving_type" && !evolvingTypeExposureEnabled,
     })),
     showMotionBlocks:
-      MOTION_SCENES_UI_ENABLED && capabilities?.motion_scenes !== false,
+      MOTION_SCENES_UI_ENABLED && motionScenesAllowed,
+    motionBlocksReadOnly: !motionScenesAllowed,
+    motionBlocksDisabledReason: motionScenesDisabledReason,
     onPreviewMotionTiming: previewMotionTiming,
     cameraEffects:
       capabilities?.camera_effects === false
@@ -6233,7 +6618,9 @@ export default function EditorShell({
     onPreviewCameraTiming: previewCameraTiming,
     slots,
     clipReadOnly: clipEditingLocked,
+    clipAddReadOnly: !clipAddAllowed,
     clipDisabledReason,
+    clipAddDisabledReason,
     clipSourceDurations,
     onPreviewClipTiming: previewClipTiming,
     onPreviewSeek: seekPreviewToOutput,
@@ -6241,6 +6628,7 @@ export default function EditorShell({
     clipPreviewMode: virtualPreviewActive ? "virtual" : "rendered",
     clipsLoading: clip.loadState === "loading",
     filmstripClips: clip.clips,
+    allowRepeatedSources: guidedStoryV2,
     onAddClip: addClipToTimeline,
     carouselBlock: carouselMoment
       ? {
@@ -6285,6 +6673,8 @@ export default function EditorShell({
         label: p.label ?? null,
       };
     }),
+    sfxReadOnly: !sfxAllowed,
+    sfxDisabledReason,
     onPreviewSfxTiming: previewSfxTiming,
     hasMusic: hasPlayableMusic,
     musicLabel: effectiveMusicTitle,
@@ -6303,7 +6693,7 @@ export default function EditorShell({
     onToggleSoundMute: () => {
       if (readOnly) return;
       const nextMuted = !soundMuted;
-      if (capabilities?.mix !== false && mixLevel != null) {
+      if (musicCan("level", capabilities?.mix !== false) && mixLevel != null) {
         patchMixLevel(nextMuted ? 0 : Math.max(mixLevel, variant.mix ?? 0.2));
       } else {
         history.record();
@@ -6318,6 +6708,8 @@ export default function EditorShell({
       // Provenance until Save: accepted AI suggestions get the dashed ✦ bar.
       suggested: suggestedOverlayIds.has(o.id),
     })),
+    overlaysReadOnly: !overlaysAllowed,
+    overlaysDisabledReason,
     onPreviewOverlayTiming: previewOverlayTiming,
     onOpenSounds: () => setActiveTool("sounds"),
     onScrub: seekTo,
@@ -6603,6 +6995,16 @@ export default function EditorShell({
           </div>
 
           <div className="flex flex-1 items-center justify-end gap-2">
+            {activeGuidedTombstones.length > 0 && (
+              <button
+                type="button"
+                onClick={restoreGuidedTombstones}
+                className="min-h-8 rounded-lg border border-amber-300 bg-amber-50 px-3 text-[12px] text-amber-950 hover:border-amber-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                title="These anchored items were removed because their complete clip interval disappeared."
+              >
+                {activeGuidedTombstones.length} removed · Restore
+              </button>
+            )}
             {showCopilotSaveNotice && (
               <div className="flex max-w-[360px] items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-[12px] text-muted-foreground">
                 <span className="truncate">
@@ -6840,6 +7242,8 @@ export default function EditorShell({
               musicLoading={musicTracksLoading}
               currentMusicTrackId={effectiveAudioTrackId}
               musicEditable={musicSwapEditable}
+              musicRemoveEditable={musicRemoveEditable}
+              musicRemoveDisabledReason={musicRemoveDisabledReason}
               onPickMusic={pickMusicTrack}
               onRemoveMusic={removeMusic}
               musicWindow={musicWindowControl}
@@ -6849,7 +7253,7 @@ export default function EditorShell({
               visualBlocks={localVisualBlocks}
               motionScenes={localMotionScenes}
               selectedMotionId={selection?.kind === "motion" ? selection.id : null}
-              motionAvailable={capabilities?.motion_scenes === true}
+              motionAvailable={motionScenesAllowed}
               motionRuntimeCompatible={motionRuntimeCompatible}
               evolvingTypeEnabled={evolvingTypeExposureEnabled}
               onAddMotion={addMotionScene}
@@ -6926,6 +7330,8 @@ export default function EditorShell({
               musicLoading={musicTracksLoading}
               currentMusicTrackId={effectiveAudioTrackId}
               musicEditable={musicSwapEditable}
+              musicRemoveEditable={musicRemoveEditable}
+              musicRemoveDisabledReason={musicRemoveDisabledReason}
               onPickMusic={pickMusicTrack}
               onRemoveMusic={removeMusic}
               musicWindow={musicWindowControl}
@@ -6935,7 +7341,7 @@ export default function EditorShell({
               visualBlocks={localVisualBlocks}
               motionScenes={localMotionScenes}
               selectedMotionId={selection?.kind === "motion" ? selection.id : null}
-              motionAvailable={capabilities?.motion_scenes === true}
+              motionAvailable={motionScenesAllowed}
               motionRuntimeCompatible={motionRuntimeCompatible}
               evolvingTypeEnabled={evolvingTypeExposureEnabled}
               onAddMotion={addMotionScene}
@@ -7059,6 +7465,8 @@ export default function EditorShell({
           motionDurationS={timelineDuration}
           motionAssets={poolAssets}
           evolvingTypeEnabled={evolvingTypeExposureEnabled}
+          motionEditable={motionScenesAllowed}
+          motionDisabledReason={motionScenesDisabledReason}
           cameraEffect={selectedCameraEffect}
           carousel={carouselInspectorControl}
           tab={inspectorTab}
@@ -7066,7 +7474,11 @@ export default function EditorShell({
           appliedPresetId={appliedPresetId}
           contentRef={contentRef}
           onEditText={(text) => {
-            if (selectedBar && !readOnly) {
+            if (
+              selectedBar &&
+              !readOnly &&
+              (textElementsAllowed || isCaptionBar(selectedBar))
+            ) {
               // Coalesce keystrokes on one bar into a single undo step.
               history.record(`text:${selectedBar.id}`);
               if (isCaptionBar(selectedBar)) {
@@ -7090,19 +7502,35 @@ export default function EditorShell({
           onSetTextBoxPosition={setSelectedTextBoxPosition}
           boxPositionXFrac={selectedTextBoxScreenXFrac}
           onPatchTextTiming={patchSelectedTextTiming}
+          textEditable={textElementsAllowed || (!!selectedBar && isCaptionBar(selectedBar))}
+          textDisabledReason={textDisabledReason}
           onPatchClipTiming={patchSelectedClipTiming}
           onPatchClipLook={patchSelectedClipLook}
-          availableLookPresets={editWideLookPresets}
+          onPatchClipTransition={patchSelectedClipTransition}
+          onMoveClip={moveSelectedClip}
+          clipReorderEditable={clipReorderAllowed}
+          clipTimingEditable={clipCan("trim", true)}
+          clipLooksEditable={clipLooksAllowed}
+          clipTransitionsEditable={clipTransitionsAllowed}
+          clipTimingDisabledReason={clipTimingDisabledReason}
+          clipReorderDisabledReason={clipReorderDisabledReason}
+          clipLooksDisabledReason={clipLooksDisabledReason}
+          clipTransitionsDisabledReason={clipTransitionsDisabledReason}
+          availableLookPresets={perClipLookPresets}
           onPatchClipLookAdjustments={patchSelectedClipLookAdjustments}
           onRecordClipLookAdjustments={recordSelectedClipLookAdjustment}
           onPreviewClipTiming={previewSelectedClipTiming}
           onRecordClipTiming={recordTimelineDrag}
           onPatchSfx={patchSfx}
           onDeleteSfx={removeSfx}
+          sfxEditable={sfxAllowed}
+          sfxDisabledReason={sfxDisabledReason}
           onPatchOverlay={patchOverlay}
           onPreviewOverlay={previewOverlayPatch}
           onRecordOverlay={recordTimelineDrag}
           onDeleteOverlay={removeOverlay}
+          overlayEditable={overlaysAllowed}
+          overlayDisabledReason={overlaysDisabledReason}
           onPatchMotion={patchMotionScene}
           onPatchMotionControl={patchMotionControl}
           onBeginMotionControl={beginMotionControl}
@@ -7113,12 +7541,16 @@ export default function EditorShell({
           onPatchCameraEffect={patchCameraEffect}
           onDeleteCameraEffect={deleteCameraEffect}
           mixLevel={mixLevel}
-          mixEditable={capabilities?.mix !== false && mixLevel != null}
+          mixEditable={musicLevelEditable && mixLevel != null}
+          mixDisabledReason={musicLevelDisabledReason}
           mixLabel={soundBedLabel}
           musicTracks={musicTracks}
           musicLoading={musicTracksLoading}
           currentMusicTrackId={effectiveAudioTrackId}
           musicEditable={musicSwapEditable}
+          musicRemoveEditable={musicRemoveEditable}
+          musicSwapDisabledReason={musicSwapDisabledReason}
+          musicRemoveDisabledReason={musicRemoveDisabledReason}
           backgroundMusic={backgroundMusic}
           backgroundMusicTrackDurationS={backgroundMusicTrackDurationS}
           onPickMusic={pickMusicTrack}
@@ -7280,14 +7712,14 @@ export default function EditorShell({
             onSfxChange={() => {}}
             onSfxUploadRequest={async () => {}}
             overlayCards={localOverlays}
-            overlaysEnabled={capabilities?.overlays !== false && !readOnly}
+            overlaysEnabled={overlaysAllowed && !readOnly}
             overlayUploading={overlayUploading}
             localPreviewUrls={localOverlayPreviewUrls}
             onOverlayUploadRequest={handleOverlayUpload}
             onUpdateCard={patchOverlay}
             onRemoveCard={removeOverlay}
             onClearOverlays={() => {
-              if (readOnly || capabilities?.overlays === false) return;
+              if (readOnly || !overlaysAllowed) return;
               history.record();
               setLocalOverlays([]);
               setLocalOverlayPreviewUrls((current) => {
@@ -7403,6 +7835,8 @@ export default function EditorShell({
             musicLoading={musicTracksLoading}
             currentMusicTrackId={effectiveAudioTrackId}
             musicEditable={musicSwapEditable}
+            musicRemoveEditable={musicRemoveEditable}
+            musicRemoveDisabledReason={musicRemoveDisabledReason}
             onPickMusic={pickMusicTrack}
             onRemoveMusic={removeMusic}
             musicWindow={musicWindowControl}
@@ -7412,7 +7846,7 @@ export default function EditorShell({
             visualBlocks={localVisualBlocks}
             motionScenes={localMotionScenes}
             selectedMotionId={selection?.kind === "motion" ? selection.id : null}
-            motionAvailable={capabilities?.motion_scenes === true}
+            motionAvailable={motionScenesAllowed}
             motionRuntimeCompatible={motionRuntimeCompatible}
             evolvingTypeEnabled={evolvingTypeExposureEnabled}
             onAddMotion={addMotionScene}
@@ -7464,6 +7898,8 @@ export default function EditorShell({
             motionDurationS={timelineDuration}
             motionAssets={poolAssets}
             evolvingTypeEnabled={evolvingTypeExposureEnabled}
+            motionEditable={motionScenesAllowed}
+            motionDisabledReason={motionScenesDisabledReason}
             cameraEffect={selectedCameraEffect}
             carousel={carouselInspectorControl}
             tab={inspectorTab}
@@ -7471,7 +7907,11 @@ export default function EditorShell({
             appliedPresetId={appliedPresetId}
             contentRef={contentRef}
             onEditText={(text) => {
-              if (selectedBar && !readOnly) {
+              if (
+                selectedBar &&
+                !readOnly &&
+                (textElementsAllowed || isCaptionBar(selectedBar))
+              ) {
                 history.record(`text:${selectedBar.id}`);
                 if (isCaptionBar(selectedBar)) {
                   setCaptionDirty(true);
@@ -7494,19 +7934,35 @@ export default function EditorShell({
             onSetTextBoxPosition={setSelectedTextBoxPosition}
             boxPositionXFrac={selectedTextBoxScreenXFrac}
             onPatchTextTiming={patchSelectedTextTiming}
+            textEditable={textElementsAllowed || (!!selectedBar && isCaptionBar(selectedBar))}
+            textDisabledReason={textDisabledReason}
             onPatchClipTiming={patchSelectedClipTiming}
             onPatchClipLook={patchSelectedClipLook}
-            availableLookPresets={editWideLookPresets}
+            onPatchClipTransition={patchSelectedClipTransition}
+            onMoveClip={moveSelectedClip}
+            clipReorderEditable={clipReorderAllowed}
+            clipTimingEditable={clipCan("trim", true)}
+            clipLooksEditable={clipLooksAllowed}
+            clipTransitionsEditable={clipTransitionsAllowed}
+            clipTimingDisabledReason={clipTimingDisabledReason}
+            clipReorderDisabledReason={clipReorderDisabledReason}
+            clipLooksDisabledReason={clipLooksDisabledReason}
+            clipTransitionsDisabledReason={clipTransitionsDisabledReason}
+            availableLookPresets={perClipLookPresets}
             onPatchClipLookAdjustments={patchSelectedClipLookAdjustments}
             onRecordClipLookAdjustments={recordSelectedClipLookAdjustment}
             onPreviewClipTiming={previewSelectedClipTiming}
             onRecordClipTiming={recordTimelineDrag}
             onPatchSfx={patchSfx}
             onDeleteSfx={removeSfx}
+            sfxEditable={sfxAllowed}
+            sfxDisabledReason={sfxDisabledReason}
             onPatchOverlay={patchOverlay}
             onPreviewOverlay={previewOverlayPatch}
             onRecordOverlay={recordTimelineDrag}
             onDeleteOverlay={removeOverlay}
+            overlayEditable={overlaysAllowed}
+            overlayDisabledReason={overlaysDisabledReason}
             onPatchMotion={patchMotionScene}
             onPatchMotionControl={patchMotionControl}
             onBeginMotionControl={beginMotionControl}
@@ -7517,12 +7973,16 @@ export default function EditorShell({
             onPatchCameraEffect={patchCameraEffect}
             onDeleteCameraEffect={deleteCameraEffect}
             mixLevel={mixLevel}
-            mixEditable={capabilities?.mix !== false && mixLevel != null}
+            mixEditable={musicLevelEditable && mixLevel != null}
+            mixDisabledReason={musicLevelDisabledReason}
             mixLabel={soundBedLabel}
             musicTracks={musicTracks}
             musicLoading={musicTracksLoading}
             currentMusicTrackId={effectiveAudioTrackId}
             musicEditable={musicSwapEditable}
+            musicRemoveEditable={musicRemoveEditable}
+            musicSwapDisabledReason={musicSwapDisabledReason}
+            musicRemoveDisabledReason={musicRemoveDisabledReason}
             backgroundMusic={backgroundMusic}
             backgroundMusicTrackDurationS={backgroundMusicTrackDurationS}
             onPickMusic={pickMusicTrack}
@@ -7559,7 +8019,7 @@ export default function EditorShell({
 
       {/* Optional authored text can stay flag-locked while caption cue rows are
           selected and edited directly in the timeline. */}
-      {textElementsLocked && !isCaptionEdit && (
+      {textElementsLocked && !isCaptionEdit && !readOnly && (
         <div className="absolute left-1/2 top-[68px] z-[60] w-[min(560px,90vw)] -translate-x-1/2">
           <div
             data-testid="captions-tab-notice"

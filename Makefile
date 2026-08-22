@@ -171,12 +171,14 @@ carousel-verify: api-install-dev
 		--ssim-min $(SSIM_MIN) \
 		--trace-tol-px $(TRACE_TOL_PX))
 
-# Deterministic editor insert/ripple/resize contract. Keep this targeted so it
-# is cheap enough to run for every future timing feature.
+# Deterministic editor insert/ripple/resize contract, including the desktop
+# Guided Story V2 acceptance fixture. Keep this targeted so it is cheap enough
+# to run for every future timing feature.
 verify-editor-timeline:
 	(cd src/apps/web && npm test -- --runInBand \
 		src/__tests__/plan/items/CarouselPanel.test.tsx \
 		src/__tests__/plan/items/virtual-timeline.test.ts \
+		src/__tests__/guided-story-parity.test.ts \
 		src/__tests__/plan/items/EditorTimelineBody-carousel.test.tsx \
 		src/__tests__/plan/items/carousel-preview-impl/CarouselBlockPreviewImpl.test.tsx \
 		src/__tests__/plan/items/carousel-preview-impl/geometry.test.ts \
@@ -193,7 +195,10 @@ verify-editor-timeline:
 		tests/pipeline/carousel/test_choreography.py \
 		tests/pipeline/carousel/test_segment_kill_switch.py \
 		tests/pipeline/test_motion_scene.py \
+		tests/pipeline/test_guided_story.py \
 		tests/routes/test_editor_commit.py \
+		tests/schemas/test_guided_edit_revision.py \
+		tests/schemas/test_guided_story_parity.py \
 		tests/tasks/test_motion_scene_cache.py \
 		tests/tasks/test_carousel_timed_lane_projection.py)
 

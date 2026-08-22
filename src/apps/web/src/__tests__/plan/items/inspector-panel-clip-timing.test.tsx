@@ -42,7 +42,14 @@ describe("InspectorPanel clip timing", () => {
         onPatchTextTiming={noop}
         onPatchClipTiming={onPatchClipTiming}
         onPatchClipLook={onPatchClipLook}
-        availableLookPresets={["none", "golden_hour", "faded_analog"]}
+        availableLookPresets={[
+          "none",
+          "olive_film",
+          "smoky_split_tone",
+          "stadium_diffusion",
+          "golden_hour",
+          "faded_analog",
+        ]}
         onPreviewClipTiming={noop}
         onRecordClipTiming={noop}
         onPatchSfx={noop}

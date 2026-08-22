@@ -114,7 +114,7 @@ export function StepRail<K extends string | number>({
                     variant="ghost"
                     size="icon"
                     onClick={() => onGoBack(step.key)}
-                    className={cn("rounded-full p-0 hover:bg-transparent hover:opacity-70", FOCUS_RING)}
+                    className={cn("h-11 w-11 rounded-full p-0 hover:bg-transparent hover:opacity-70", FOCUS_RING)}
                   >
                     {dot}
                     <span className="sr-only">{`Back to ${step.label}`}</span>

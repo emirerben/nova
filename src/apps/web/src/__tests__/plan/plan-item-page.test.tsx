@@ -1163,6 +1163,41 @@ describe("PlanItemPage — guided edit Generate gating", () => {
     });
   });
 
+  it("does not let a dormant proposal block an audio-led Generate flow", async () => {
+    const item = makeItem({
+      status: "awaiting_clips",
+      edit_format: "narrated_ready",
+      audio_mode: "voiceover",
+      voiceover_gcs_path: "voiceover-uploads/u/voice.m4a",
+      guided_edit_available: false,
+      guided_edit_conversation_available: false,
+      guided_edit_auto_design: false,
+      edit_proposal: makeGuidedProposal("draft"),
+      clip_gcs_paths: ["users/u1/plan/test-item-id/clip.mp4"],
+    });
+    mockGeneratePlanItem.mockResolvedValue(item);
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.queryByText("Review and approve the edit plan first.")).toBeNull();
+    expect(screen.queryByTestId("edit-proposal-card")).toBeNull();
+    expect(screen.getAllByRole("button", { name: /generate video/i })[0]).toBeEnabled();
+
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole("button", { name: /generate video/i })[0]);
+    });
+    await waitFor(() => {
+      expect(mockGeneratePlanItem).toHaveBeenCalledWith("test-item-id");
+    });
+  });
+
   it("P2-5: a pool-only item becomes generate-able once AssetPool reports a ready asset", async () => {
     const item = guidedItem(null, { autoDesign: true, poolOnly: true });
     mockUsePolledJobStatus.mockReturnValue({
@@ -1556,6 +1591,105 @@ describe("PlanItemPage — per-type setup truth table (V2 redesign)", () => {
     expect(screen.queryByText(/Direction for Kria/)).toBeNull();
     expect(screen.queryByText(/Add a voice note to Kria/)).toBeNull();
     expect(screen.queryByRole("button", { name: /Original audio/i })).toBeNull();
+  });
+
+  it("keeps Generate disabled until the voiceover attachment PATCH settles", async () => {
+    const item = makeItem({
+      status: "awaiting_clips",
+      edit_format: "narrated_ready",
+      clip_gcs_paths: ["users/u1/plan/test-item-id/clip.mp4"],
+      voiceover_gcs_path: null,
+      guided_edit_available: false,
+      guided_edit_conversation_available: false,
+      guided_edit_auto_design: false,
+    });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+    mockUploadVoiceover.mockResolvedValue({
+      gcs_path: "voiceover-uploads/u1/voice.m4a",
+      kind: "audio",
+    });
+    let resolveSave!: (value: typeof item) => void;
+    mockSetItemVoiceover.mockReturnValue(
+      new Promise((resolve) => {
+        resolveSave = resolve as typeof resolveSave;
+      }),
+    );
+
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<PlanItemPage />);
+    });
+
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: jest.fn(() => "blob:voiceover"),
+    });
+    const voiceoverInput = view!.container.querySelector(
+      'input[type="file"][accept*=".mp4"]',
+    ) as HTMLInputElement;
+    expect(voiceoverInput).not.toBeNull();
+    await act(async () => {
+      fireEvent.change(voiceoverInput, {
+        target: { files: [new File(["audio"], "voice.m4a", { type: "audio/mp4" })] },
+      });
+    });
+
+    await waitFor(() => expect(mockSetItemVoiceover).toHaveBeenCalled());
+    expect(screen.getAllByRole("button", { name: /generate video/i })[0]).toBeDisabled();
+
+    await act(async () => {
+      resolveSave({ ...item, voiceover_gcs_path: "voiceover-uploads/u1/voice.m4a" });
+    });
+    await waitFor(() =>
+      expect(screen.getAllByRole("button", { name: /generate video/i })[0]).toBeEnabled(),
+    );
+  });
+
+  it("does not leave an optimistic voiceover after attachment fails", async () => {
+    const item = makeItem({
+      status: "awaiting_clips",
+      edit_format: "narrated_ready",
+      clip_gcs_paths: ["users/u1/plan/test-item-id/clip.mp4"],
+      voiceover_gcs_path: null,
+      guided_edit_available: false,
+      guided_edit_conversation_available: false,
+      guided_edit_auto_design: false,
+    });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+    mockUploadVoiceover.mockResolvedValue({
+      gcs_path: "voiceover-uploads/u1/voice.m4a",
+      kind: "audio",
+    });
+    mockSetItemVoiceover.mockRejectedValue(new Error("attachment failed"));
+
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<PlanItemPage />);
+    });
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: jest.fn(() => "blob:voiceover"),
+    });
+    const voiceoverInput = view!.container.querySelector(
+      'input[type="file"][accept*=".mp4"]',
+    ) as HTMLInputElement;
+
+    await act(async () => {
+      fireEvent.change(voiceoverInput, {
+        target: { files: [new File(["audio"], "voice.m4a", { type: "audio/mp4" })] },
+      });
+    });
+
+    await waitFor(() => expect(screen.getByText("attachment failed")).toBeInTheDocument());
+    expect(screen.getAllByRole("button", { name: /generate video/i })[0]).toBeDisabled();
   });
 
   it("talking to camera (subtitled): single clip slot, own-audio helper, no recorder", async () => {

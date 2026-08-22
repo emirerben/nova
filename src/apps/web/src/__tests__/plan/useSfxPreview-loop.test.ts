@@ -118,4 +118,69 @@ describe("useSfxPreview — loop re-arm", () => {
 
     expect(play).toHaveBeenCalledTimes(3);
   });
+
+  it("uses the composed output clock once for virtual previews, not source-deck time", () => {
+    const video = makeFakeVideo();
+    video.currentTime = 0;
+    const videoRef = { current: video as unknown as HTMLVideoElement };
+    const listeners = new Set<() => void>();
+    let outputTime = 0;
+    const clock = {
+      getSnapshot: () => outputTime,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      publish: (next: number) => {
+        outputTime = next;
+        listeners.forEach((listener) => listener());
+      },
+    };
+    const play = window.HTMLMediaElement.prototype.play as jest.MockedFunction<() => Promise<void>>;
+
+    renderHook(() => useSfxPreview(videoRef, [PLACEMENT], AUDIO_URLS, { clock, playing: true }));
+
+    act(() => clock.publish(2));
+    expect(play).toHaveBeenCalledTimes(1);
+
+    // Additional frame samples and a deck-local media time change must not
+    // restart the already-playing output-clock placement.
+    act(() => {
+      video.currentTime = 0.1;
+      clock.publish(2.1);
+      clock.publish(2.2);
+    });
+    expect(play).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-synchronizes an active virtual-preview SFX after a short scrub", () => {
+    const video = makeFakeVideo();
+    const videoRef = { current: video as unknown as HTMLVideoElement };
+    const listeners = new Set<() => void>();
+    let outputTime = 0;
+    const clock = {
+      getSnapshot: () => outputTime,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      publish: (next: number) => {
+        outputTime = next;
+        listeners.forEach((listener) => listener());
+      },
+    };
+    const play = window.HTMLMediaElement.prototype.play as jest.MockedFunction<
+      () => Promise<void>
+    >;
+
+    renderHook(() => useSfxPreview(videoRef, [PLACEMENT], AUDIO_URLS, { clock, playing: true }));
+
+    act(() => clock.publish(2));
+    expect(play).toHaveBeenCalledTimes(1);
+
+    // A 200ms scrub used to sit below the old 500ms jump threshold, leaving
+    // the sound at its pre-seek offset. Re-arming starts it at the new offset.
+    act(() => clock.publish(2.2));
+    expect(play).toHaveBeenCalledTimes(2);
+  });
 });

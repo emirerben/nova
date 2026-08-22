@@ -117,4 +117,35 @@ describe("InspectorPanel music bed", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     expect(onRemoveBackgroundMusic).toHaveBeenCalled();
   });
+
+  it("disables sound controls and explains the lane constraint instead of silently ignoring edits", () => {
+    const onPatchSfx = jest.fn();
+    const onDeleteSfx = jest.fn();
+    renderMusicInspector({
+      selection: { kind: "sfx", id: "sfx-1" },
+      sfx: {
+        id: "sfx-1",
+        src_gcs_path: "users/u/plan/i/sfx/pop.mp3",
+        at_s: 1,
+        gain: 1,
+        label: "Pop",
+      },
+      onPatchSfx,
+      onDeleteSfx,
+      sfxEditable: false,
+      sfxDisabledReason: "Sound effects are unavailable for this story.",
+    });
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Sound effects are unavailable for this story.",
+    );
+    expect(screen.getByLabelText("Start")).toBeDisabled();
+    // Radix Slider (shadcn) marks disabled via data-disabled on the span thumb.
+    expect(screen.getByLabelText("Volume")).toHaveAttribute("data-disabled");
+    expect(screen.getByRole("button", { name: "Delete sound" })).toBeDisabled();
+
+    // A disabled fieldset is the browser-level guard: disabled controls do
+    // not accept real pointer/keyboard interaction, so no callback can be
+    // reached through the editor UI.
+  });
 });

@@ -318,6 +318,102 @@ def test_generate_auto_designs_instead_of_409_when_flag_on_and_media_present(
     assert body["edit_proposal"]["approval_mode"] == "auto"
 
 
+def test_generate_audio_led_bypasses_guided_gate_and_hides_capabilities(
+    monkeypatch, client: TestClient
+) -> None:
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "guided_edit_enforcement_enabled", True)
+    monkeypatch.setattr(app_settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(app_settings, "guided_auto_design_enabled", True)
+    monkeypatch.setattr(app_settings, "guided_edit_conversation_enabled", True)
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[f"users/{user.id}/plan/0/a.mp4"])
+    item.edit_format = "narrated_ready"
+    item.audio_mode = "voiceover"
+    item.voiceover_gcs_path = "voiceover-uploads/u/voice.m4a"
+    item.edit_proposal = EditProposal(
+        proposal_version=1,
+        generation_attempt_id="draft-exists",
+        status="draft",
+        brief=ProposalBrief(),
+    ).model_dump(mode="json")
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with (
+        _patch_dispatch_ok() as dispatch,
+        patch("app.tasks.edit_proposal_build.draft_edit_proposal.apply_async") as draft_task,
+    ):
+        response = client.post(f"/plan-items/{item.id}/generate")
+
+    assert response.status_code == 200
+    dispatch.assert_called_once_with(str(item.id), 0)
+    draft_task.assert_not_called()
+    body = response.json()
+    assert body["guided_edit_available"] is False
+    assert body["guided_edit_conversation_available"] is False
+    assert body["guided_edit_auto_design"] is False
+    assert body["edit_proposal"]["status"] == "draft"
+
+
+def test_generate_audio_led_does_not_use_asset_only_guided_media(
+    monkeypatch, client: TestClient
+) -> None:
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "guided_edit_enforcement_enabled", True)
+    monkeypatch.setattr(app_settings, "guided_edit_capability_enabled", True)
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[])
+    item.edit_format = "narrated_ready"
+    item.audio_mode = "voiceover"
+    item.voiceover_gcs_path = "voiceover-uploads/u/voice.m4a"
+    media = MediaRef(
+        lane="asset",
+        media_id=str(uuid.uuid4()),
+        gcs_path=f"users/{user.id}/plan/{item.id}/pool/seed.mp4",
+        generation="1",
+        kind="video",
+    )
+    snapshot = EditProposalSnapshot(
+        title="Dormant",
+        duration_s=5,
+        media=[media],
+        story_beats=[
+            StoryBeat(
+                beat_id="b1",
+                topic="scene",
+                thought="scene",
+                media_ids=[media.media_id],
+                duration_s=2,
+            )
+        ],
+    )
+    digest = canonical_media_digest(snapshot.media)
+    item.edit_proposal = EditProposal(
+        proposal_version=1,
+        generation_attempt_id="approved",
+        media_digest=digest,
+        status="approved",
+        last_approved=ApprovedProposalSnapshot(
+            proposal_version=1,
+            media_digest=digest,
+            approved_at=datetime.now(UTC),
+            snapshot=snapshot,
+        ),
+    ).model_dump(mode="json")
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    response = client.post(f"/plan-items/{item.id}/generate")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Upload at least one clip before generating"
+
+
 def test_generate_auto_design_in_flight_is_idempotent_no_duplicate_attempt(
     monkeypatch, client: TestClient
 ) -> None:

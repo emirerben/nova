@@ -126,6 +126,31 @@ def _auth(user_id: uuid.UUID) -> dict[str, str]:
     }
 
 
+def test_overlay_upload_confirm_real_auth_survives_session_rollback(
+    client: TestClient, monkeypatch
+) -> None:
+    """The confirm route must not lazy-load the auth User after rollback.
+
+    This intentionally uses the real auth dependency and a real async session;
+    the route-test mocks use a fabricated user and therefore cannot reproduce
+    SQLAlchemy's expired-attribute/MissingGreenlet failure.
+    """
+    monkeypatch.setattr(settings, "media_overlays_enabled", True, raising=False)
+    user_id, item_id = _seed_item()
+    gcs_path = f"users/{user_id}/plan/{item_id}/overlays/card.png"
+
+    response = client.post(
+        f"/plan-items/{item_id}/overlay-upload-confirm",
+        headers=_auth(user_id),
+        json={"files": [{"gcs_path": gcs_path, "content_type": "image/png"}]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["files"] == [
+        {"gcs_path": gcs_path, "preview_gcs_path": None, "preview_url": None}
+    ]
+
+
 def _jobs_for(item_id: uuid.UUID) -> list[Job]:
     with sync_session() as s:
         rows = s.execute(select(Job).where(Job.content_plan_item_id == item_id)).scalars().all()
@@ -466,6 +491,53 @@ def test_approved_proposal_exact_media_is_snapshotted_into_job(
             "kind": "video",
         }
     ]
+
+
+def test_audio_led_dispatch_preserves_proposal_but_omits_guided_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A locked native contract must not validate, seed, or stamp dormant guided state."""
+
+    monkeypatch.setattr(settings, "guided_edit_enforcement_enabled", True)
+    monkeypatch.setattr(settings, "guided_edit_capability_enabled", True)
+    _user_id, item_id = _seed_item()
+    path = f"users/test/plan/{item_id}/a.mp4"
+    voiceover = "voiceover-uploads/test/voice.m4a"
+    with sync_session() as s:
+        item = s.get(PlanItem, item_id)
+        assert item is not None
+        item.clip_gcs_paths = [path]
+        item.edit_format = "narrated_ready"
+        item.audio_mode = "voiceover"
+        item.voiceover_gcs_path = voiceover
+        s.commit()
+    _approve_clip_proposal(item_id, path=path)
+    with sync_session() as s:
+        item = s.get(PlanItem, item_id)
+        assert item is not None
+        proposal_before = dict(item.edit_proposal)
+
+    def _unexpected_guided_validation(*_args, **_kwargs):
+        raise AssertionError("guided proposal validation must be skipped")
+
+    with (
+        patch(
+            "app.services.edit_proposals.validate_approved_proposal_media_sync",
+            side_effect=_unexpected_guided_validation,
+        ),
+        patch(_ENQUEUE),
+    ):
+        result = dispatch_item_render_for(str(item_id))
+
+    assert result.outcome == "dispatched"
+    job = _jobs_for(item_id)[0]
+    assert job.all_candidates["edit_format"] == "narrated_ready"
+    assert job.all_candidates["voiceover_gcs_path"] == voiceover
+    assert "guided_edit" not in (job.assembly_plan or {})
+    with sync_session() as s:
+        item = s.get(PlanItem, item_id)
+        assert item is not None
+        assert item.edit_proposal == proposal_before
 
 
 def _seed_render_failure(

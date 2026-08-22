@@ -29,6 +29,8 @@ export const MAX_TOTAL_SECONDS = 60;
 export interface DraftSlot {
   key: string;
   slotId: string | null;
+  /** Persisted segment identity this unsaved split child descends from. */
+  parentSegmentId?: string | null;
   clipIndex: number;
   inS: number;
   durationBeats: number | null;
@@ -57,6 +59,7 @@ export function draftFromTimeline(timeline: TimelineResponse): DraftSlot[] {
     .map((s: TimelineSlot) => ({
       key: s.slot_id,
       slotId: s.slot_id,
+      parentSegmentId: s.parent_segment_id ?? null,
       clipIndex: s.clip_index,
       inS: s.in_s,
       durationBeats: s.duration_beats,

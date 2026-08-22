@@ -742,6 +742,14 @@ class Settings(BaseSettings):
             "groups."
         ),
     )
+    guided_story_editor_v2_enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable the story-native guided-story editor revision contract. "
+            "The legacy guided renderer remains byte-compatible while this is off; "
+            "persisted revisions remain readable/renderable after a rollback."
+        ),
+    )
 
     @model_validator(mode="after")
     def reject_guided_edit_before_strict_renderer(self) -> "Settings":
@@ -878,6 +886,10 @@ class Settings(BaseSettings):
     # When False: upload-urls + set-media-overlays routes return 404; the
     # worker apply-pass branch never fires.
     media_overlays_enabled: bool = False
+    # Selects the resumable pool-backed protocol for manual overlay uploads.
+    # Keep the legacy presign/PUT/confirm path available during rollout so a
+    # mixed frontend/backend deploy never strands an in-flight direct PUT.
+    reliable_overlay_uploads_enabled: bool = False
     # Alpha-preserving image overlays for the media-overlay lane. When False,
     # image cards still flatten through JPEG exactly as before.
     media_overlay_alpha_enabled: bool = False

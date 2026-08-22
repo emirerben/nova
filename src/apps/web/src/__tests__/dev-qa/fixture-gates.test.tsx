@@ -24,6 +24,7 @@ describe("dev QA fixture route gates", () => {
   it.each([
     ["clips", "@/app/dev-qa/clips/page"],
     ["overlays", "@/app/dev-qa/overlays/page"],
+    ["guided story editor", "@/app/dev-qa/guided-story-editor/page"],
   ])("%s page 404s when E2E_FIXTURES is unset", async (_name, modulePath) => {
     const { default: Page } = await import(modulePath);
 

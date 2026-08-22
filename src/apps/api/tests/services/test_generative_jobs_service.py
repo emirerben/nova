@@ -146,6 +146,9 @@ def test_edit_format_passthrough_and_coercion() -> None:
         edit_format="cinematic-banger",
     )
     assert job2.all_candidates["edit_format"] == "montage"
+    # Preserve the raw intent separately so a mixed API/worker deployment cannot
+    # mistake an unknown future audio-led format for an intentional montage.
+    assert job2.all_candidates["declared_edit_format"] == "cinematic_banger"
 
 
 def test_smart_captions_context_is_pinned_only_for_subtitled_jobs() -> None:

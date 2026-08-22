@@ -50,6 +50,12 @@ Object.defineProperty(window, "matchMedia", {
   })),
 });
 
+// Toast moved to sonner (DESIGN.md §15) — assert on the toast() call.
+const mockToast = jest.fn();
+jest.mock("sonner", () => ({
+  toast: (...args: unknown[]) => mockToast(...args),
+}));
+
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn() }),
 }));
@@ -270,6 +276,27 @@ describe("EditorShell linked text-card deletion", () => {
     expect(screen.queryByRole("button", { name: /Primary title/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Supporting title/ })).toBeNull();
   });
+
+  it("does not delete capability-locked text through the desktop shortcut", async () => {
+    await renderShell(
+      makeVariant([linkedText("title-1", "Locked title")], [], {
+        editor_capabilities: {
+          ...CAPABILITIES,
+          text_elements: false,
+          lanes: {
+            text: { editable: false, reason: "Story text is locked." },
+          },
+        },
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^Text row 1, Locked title,/ }));
+    fireEvent.keyDown(document, { key: "Delete" });
+
+    expect(screen.getByRole("button", { name: /^Text row 1, Locked title,/ })).toBeInTheDocument();
+    expect(mockToast).toHaveBeenCalledWith("Story text is locked.", expect.objectContaining({ duration: 2600 }));
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
 });
 
 describe("EditorShell Carousel deletion", () => {
@@ -392,6 +419,43 @@ describe("EditorShell generated overlay bundle deletion", () => {
       sound_effects: [],
       camera_effects: [],
     });
+  });
+
+  it("explains why a capability-locked overlay cannot be quick-deleted", async () => {
+    await renderShell(
+      makeVariant([], [], {
+        media_overlays: [{
+          id: "overlay-locked",
+          kind: "image",
+          src_gcs_path: "users/u1/logo.png",
+          position: "center",
+          x_frac: 0.5,
+          y_frac: 0.5,
+          scale: 0.35,
+          start_s: 1,
+          end_s: 3,
+          z: 0,
+          source: "user",
+        }],
+        editor_capabilities: {
+          ...CAPABILITIES,
+          overlays: false,
+          lanes: {
+            overlays: { editable: false, reason: "Overlays are locked for this story." },
+          },
+        },
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^Overlay row 1, Image,/ }));
+    fireEvent.keyDown(document, { key: "Delete" });
+
+    expect(screen.getByRole("button", { name: /^Overlay row 1, Image,/ })).toBeInTheDocument();
+    expect(mockToast).toHaveBeenCalledWith(
+      "Overlays are locked for this story.",
+      expect.objectContaining({ duration: 2600 }),
+    );
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
 });
 

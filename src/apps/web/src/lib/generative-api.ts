@@ -819,6 +819,7 @@ export interface LookAdjustments {
 
 export interface TimelineSlot {
   slot_id: string;
+  parent_segment_id?: string | null;
   clip_index: number;
   source_gcs_path: string;
   /** null for clips the worker never probed (e.g. user-added pool clips). */
@@ -843,6 +844,10 @@ export interface TimelineClip {
   signed_url: string | null;
   duration_s: number | null;
   used: boolean;
+  /** Guided Story V2 exact approved-source metadata. */
+  media_id?: string | null;
+  generation?: string | null;
+  kind?: "image" | "video" | null;
 }
 
 export interface TimelineResponse {
@@ -856,11 +861,23 @@ export interface TimelineResponse {
   clips: TimelineClip[];
   /** Capability-advertised edit-wide looks. Missing/empty keeps the UI hidden. */
   edit_wide_look_presets?: LookPreset[];
+  /** Server allowlist for per-segment Looks; never inferred in the inspector. */
+  look_presets?: LookPreset[];
+  /** Monotonic Guided Story V2 revision token used for Save CAS. */
+  revision_number?: number | null;
+  /** Canonical revision hash exposed for diagnostics/receipts. */
+  revision_hash?: string | null;
+  /** Exact render baseline paired with revision_number for guided direct-write CAS. */
+  base_generation?: string | null;
+  /** Complete approved pool and records removed by the active story revision. */
+  source_pool?: Array<Record<string, unknown>>;
+  tombstones?: Array<Record<string, unknown>>;
 }
 
 /** One slot in the POST body. Exactly one of duration_beats / duration_s set. */
 export interface TimelineEditSlotPayload {
   slot_id: string | null;
+  parent_segment_id?: string | null;
   clip_index: number;
   in_s: number;
   duration_beats: number | null;
@@ -931,11 +948,12 @@ export async function editTimeline(
   variantId: string,
   slots: TimelineEditSlotPayload[],
   base: TimelineBase = "generative",
+  guidedTokens?: { revision_number: number; base_generation: string } | null,
 ): Promise<void> {
   const res = await fetch(timelineUrl(base, ownerId, variantId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ slots }),
+    body: JSON.stringify({ slots, ...(guidedTokens ?? {}) }),
   });
   if (!res.ok) return throwTimelineError(res);
 }

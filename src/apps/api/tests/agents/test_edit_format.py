@@ -11,10 +11,14 @@ import pytest
 
 from app.agents._schemas.content_plan import ContentPlanOutput, PlanItemSpec
 from app.agents._schemas.edit_format import (
+    AUDIO_LED_EDIT_FORMATS,
     DEFAULT_EDIT_FORMAT,
     EDIT_FORMATS,
+    GUIDED_EDIT_FORMATS,
     NARRATED_EDIT_FORMATS,
     coerce_edit_format,
+    guided_edit_applicable,
+    render_program_for_intent,
 )
 
 
@@ -39,6 +43,39 @@ def test_subtitled_is_not_a_narrated_format() -> None:
     # voiceover they never need. See edit_format.py lockstep note.
     assert "subtitled" in EDIT_FORMATS
     assert "subtitled" not in NARRATED_EDIT_FORMATS
+
+
+@pytest.mark.parametrize(
+    ("raw", "has_voiceover", "expected_program"),
+    [
+        (None, False, "guided"),
+        ("", False, "guided"),
+        ("montage", False, "guided"),
+        ("DAY VLOG", False, "guided"),
+        ("single-hero", False, "guided"),
+        ("narrated_ready", False, "native"),
+        ("subtitled", False, "native"),
+        ("talking_head", False, "native"),
+        ("unknown_future_format", False, "native"),
+        (42, False, "native"),
+        ("montage", True, "native"),
+        ("narrated_ready", True, "native"),
+    ],
+)
+def test_render_program_for_intent_is_exhaustive(
+    raw: object,
+    has_voiceover: bool,
+    expected_program: str,
+) -> None:
+    assert render_program_for_intent(raw, has_voiceover=has_voiceover) == expected_program
+    assert guided_edit_applicable(raw, has_voiceover=has_voiceover) is (
+        expected_program == "guided"
+    )
+
+
+def test_guided_and_audio_led_vocabularies_are_disjoint_and_exhaustive() -> None:
+    assert GUIDED_EDIT_FORMATS.isdisjoint(AUDIO_LED_EDIT_FORMATS)
+    assert GUIDED_EDIT_FORMATS | AUDIO_LED_EDIT_FORMATS == set(EDIT_FORMATS)
 
 
 @pytest.mark.parametrize(

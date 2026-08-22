@@ -41,6 +41,7 @@ interface PendingSeek {
 export interface UseVirtualPreviewOptions {
   enabled: boolean;
   slots: DraftSlot[];
+  baselineSlots?: DraftSlot[];
   clips: Pick<TimelineClip, "clip_index" | "signed_url">[];
   grid: number[];
   /** Staged carousel-moment block to splice into the virtual timeline
@@ -165,6 +166,7 @@ export function mapDeckMediaTimeToVirtualTime(
 export function useVirtualPreview({
   enabled,
   slots,
+  baselineSlots = slots,
   clips,
   grid,
   carousel,
@@ -184,8 +186,8 @@ export function useVirtualPreview({
 }: UseVirtualPreviewOptions): VirtualPreviewController {
   const deckMuted = muted || musicTrackActive;
   const timeline = useMemo(
-    () => buildVirtualTimeline(slots, clips, grid, carousel),
-    [carousel, clips, grid, slots],
+    () => buildVirtualTimeline(slots, clips, grid, carousel, baselineSlots),
+    [baselineSlots, carousel, clips, grid, slots],
   );
   const transitionPreview = useMemo(
     () => transitionPreviewAtTime(timeline, currentTime),

@@ -109,6 +109,7 @@ function extendedCtx(over: Partial<Parameters<typeof applyCopilotOps>[1]> = {}) 
     captionMeta: { enabled: true, style: "sentence", font: null, y_frac: 0.7 },
     musicState: {
       swappable: true,
+      removable: true,
       currentTrackId: "track-1",
       currentTrackTitle: "Current",
       candidates: [{ id: "track-1", title: "Current" }, { id: "track-2", title: "Next" }],
@@ -315,6 +316,49 @@ describe("applyCopilotOps", () => {
     expect(split.nextSlots?.find((s) => s.key === "b-split")?.inS).toBe(3);
   });
 
+  it("distinguishes a source slip from trimming a clip start", () => {
+    const slipped = applyCopilotOps(
+      [{ op: "set_clip_in", slot_index: 1, in_s: 2 }],
+      ctx(),
+    );
+    expect(slipped.nextSlots?.[1]).toMatchObject({ inS: 2, durationS: 4 });
+
+    const trimmed = applyCopilotOps(
+      [{ op: "trim_clip_start", slot_index: 1, start_s: 1 }],
+      ctx(),
+    );
+    expect(trimmed.rejected).toEqual([]);
+    expect(trimmed.nextSlots?.[1]).toMatchObject({ inS: 2, durationS: 3 });
+  });
+
+  it("trims the assembled output start with right-biased segment selection", () => {
+    const atBoundary = applyCopilotOps(
+      [{ op: "trim_output_start", start_s: 3 }],
+      ctx(),
+    );
+    expect(atBoundary.rejected).toEqual([]);
+    expect(atBoundary.nextSlots?.[0].removed).toBe(true);
+    expect(atBoundary.nextSlots?.[1]).toMatchObject({ inS: 1, durationS: 4 });
+
+    const crossing = applyCopilotOps(
+      [{ op: "trim_output_start", start_s: 4 }],
+      ctx(),
+    );
+    expect(crossing.nextSlots?.[0].removed).toBe(true);
+    expect(crossing.nextSlots?.[1]).toMatchObject({ inS: 2, durationS: 3 });
+  });
+
+  it("reports a zero output trim as no_effect without staging timeline state", () => {
+    const result = applyCopilotOps(
+      [{ op: "trim_output_start", start_s: 0 }],
+      ctx(),
+    );
+
+    expect(result.nextSlots).toBeNull();
+    expect(result.applied).toEqual([]);
+    expect(result.rejected).toMatchObject([{ reason: "no_effect" }]);
+  });
+
   it("applies and removes Stadium Diffusion through the slot draft", () => {
     const base = ctx();
     const applied = applyCopilotOps(
@@ -433,6 +477,61 @@ describe("applyCopilotOps", () => {
     expect(res.rejected).toMatchObject([{ reason: "capability_disabled" }]);
   });
 
+  it("uses operation-level clip and music capabilities as authoritative", () => {
+    const transitionContext = ctx();
+    transitionContext.snapshot.allowed_op_families.push("transition");
+    transitionContext.capabilities = {
+      ...transitionContext.capabilities,
+      clips: { transitions: { editable: false, reason: "transitions_disabled" } },
+    };
+    const transition = applyCopilotOps(
+      [{ op: "set_transition", boundary_index: 1, transition: "flash", duration_s: 0.3 }],
+      transitionContext,
+    );
+    expect(transition.nextSlots).toBeNull();
+    expect(transition.rejected).toMatchObject([
+      { reason: "capability_disabled", detail: "transitions_disabled" },
+    ]);
+
+    const musicContext = extendedCtx({
+      capabilities: {
+        text_elements: true,
+        timeline: true,
+        sfx: true,
+        overlays: true,
+        music_operations: { level: { editable: false, reason: "level_disabled" } },
+      },
+    });
+    const level = applyCopilotOps([{ op: "set_mix", music_level: 0.2 }], musicContext);
+    expect(level.nextMixLevel).toBeUndefined();
+    expect(level.rejected).toMatchObject([
+      { reason: "capability_disabled", detail: "level_disabled" },
+    ]);
+  });
+
+  it("keeps Nova clip trim available when all legacy booleans are false", () => {
+    const capabilities = {
+      text_elements: false,
+      timeline: false,
+      split_clips: false,
+      mix: false,
+      sfx: false,
+      overlays: false,
+      visual_blocks: false,
+      motion_scenes: false,
+      camera_effects: false,
+      clips: { trim: { editable: true, reason: null } },
+      nova: { trim_clip_start: { editable: true, reason: null } },
+    };
+    const result = applyCopilotOps(
+      [{ op: "trim_clip_start", slot_index: 1, start_s: 1 }],
+      ctx({ capabilities }),
+    );
+
+    expect(result.rejected).toEqual([]);
+    expect(result.nextSlots?.[1]).toMatchObject({ inS: 2, durationS: 3 });
+  });
+
   it("applies sfx ops by stable snapshotted id and catches rounded fingerprint changes", () => {
     const add = applyCopilotOps([{ op: "add_sfx", effect_id: "effect-1", at_s: 3, gain: 0.5 }], extendedCtx());
     expect(add.nextSfx?.at(-1)).toMatchObject({
@@ -482,6 +581,24 @@ describe("applyCopilotOps", () => {
 
     const stale = applyCopilotOps([{ op: "remove_overlay", overlay_index: 0 }], extendedCtx({ overlays: [] }));
     expect(stale.rejected).toMatchObject([{ reason: "target_missing" }]);
+  });
+
+  it("does not stage normalized same-value SFX and overlay patches", () => {
+    const sound = applyCopilotOps(
+      [{ op: "patch_sfx", sfx_index: 0, at_s: 1.2344, gain: 1 }],
+      extendedCtx(),
+    );
+    expect(sound.nextSfx).toBeUndefined();
+    expect(sound.applied).toEqual([]);
+    expect(sound.rejected).toMatchObject([{ reason: "no_effect" }]);
+
+    const card = applyCopilotOps(
+      [{ op: "patch_overlay", overlay_index: 0, patch: { x_frac: 0.25, y_frac: 0.5 } }],
+      extendedCtx(),
+    );
+    expect(card.nextOverlays).toBeUndefined();
+    expect(card.applied).toEqual([]);
+    expect(card.rejected).toMatchObject([{ reason: "no_effect" }]);
   });
 
   it("cascades explicitly grouped generated effects when Copilot removes an overlay", () => {
@@ -885,6 +1002,16 @@ describe("applyCopilotOps", () => {
 
     const same = applyCopilotOps([{ op: "swap_music", track_id: "track-1" }], extendedCtx());
     expect(same.rejected).toMatchObject([{ reason: "no_effect" }]);
+
+    const removed = applyCopilotOps([{ op: "remove_music" }], extendedCtx());
+    expect(removed.musicRemoved).toBe(true);
+    expect(removed.applied).toEqual([
+      { label: "Music", from: "Current", to: "removed" },
+    ]);
+
+    const muted = applyCopilotOps([{ op: "set_mix", music_level: 0 }], extendedCtx());
+    expect(muted.nextMixLevel).toBe(0);
+    expect(muted.musicRemoved).toBeUndefined();
 
     const mix = applyCopilotOps([{ op: "set_mix", music_level: 0.4 }], extendedCtx());
     expect(mix.nextMixLevel).toBe(0.4);
@@ -1841,6 +1968,49 @@ describe("Director editor operations", () => {
     });
   });
 
+  it("does not stage normalized same-value director operations", () => {
+    const camera = applyCopilotOps(
+      [{ op: "patch_camera_effect", camera_effect_index: 0, intensity: 0.04 }],
+      directorCtx(),
+    );
+    expect(camera.nextCameraEffects).toBeUndefined();
+    expect(camera.rejected).toMatchObject([{ reason: "no_effect" }]);
+
+    const transitionContext = directorCtx();
+    transitionContext.slots[1] = {
+      ...transitionContext.slots[1],
+      transitionAfter: "flash",
+      transitionDurationS: 0.3,
+    };
+    transitionContext.snapshot = buildCopilotSnapshot(
+      transitionContext.bars,
+      transitionContext.slots,
+      clips,
+      transitionContext.capabilities,
+      [],
+      {
+        cameraEffectsEnabled: true,
+        transitionsEnabled: true,
+        visualBlocksEnabled: true,
+        cameraEffects: transitionContext.cameraEffects,
+        visualBlocks: transitionContext.visualBlocks,
+      },
+    );
+    const transition = applyCopilotOps(
+      [{ op: "set_transition", boundary_index: 1, transition: "flash", duration_s: 0.3 }],
+      transitionContext,
+    );
+    expect(transition.nextSlots).toBeNull();
+    expect(transition.rejected).toMatchObject([{ reason: "no_effect" }]);
+
+    const visual = applyCopilotOps(
+      [{ op: "set_visual_fade", visual_block_index: 0, transition_in: "cut", transition_out: "cut" }],
+      directorCtx(),
+    );
+    expect(visual.nextVisualBlocks).toBeUndefined();
+    expect(visual.rejected).toMatchObject([{ reason: "no_effect" }]);
+  });
+
   it("indexes transitions across active clips when a removed slot sits between them", () => {
     const ctx = directorCtx();
     ctx.slots = ctx.slots.map((item, index) =>
@@ -2218,6 +2388,18 @@ describe("Creator Block operations", () => {
       op: "remove_motion_block",
       motion_id: "motion-1",
     }], motionCtx()).nextMotionScenes).toEqual([]);
+  });
+
+  it("does not stage a normalized same-value Creator Block patch", () => {
+    const result = applyCopilotOps([{
+      op: "patch_motion_block",
+      motion_id: "motion-1",
+      patch: { params: { text: "OLD" }, intensity: 0.72 },
+    }], motionCtx());
+
+    expect(result.nextMotionScenes).toBeUndefined();
+    expect(result.applied).toEqual([]);
+    expect(result.rejected).toMatchObject([{ reason: "no_effect" }]);
   });
 
   it("preserves preset v1 for content-only patches and upgrades only motion controls", () => {

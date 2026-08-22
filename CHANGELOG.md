@@ -2,17 +2,43 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.46.0.2] — 2026-08-22
+## [0.48.0.0] — 2026-08-22
 
-### Fixes
-- **Render-worker autostop never fired after v0.46.0.1.** The broker
-  `polling_interval=10` also became the BRPOP timeout on `inspect()` reply
-  queues, so `render_worker_idle()`'s three inspect calls took ~30s (hitting the
-  lifecycle task's soft limit) and intermittently dropped replies → `'unknown'`
-  every 2 min, worker never stopped. `inspect()` now runs on a dedicated
-  connection with the 1s default (`queue_state._inspector`); the throttle stays
-  on the long-lived worker consumers. Reproduced + verified against live Redis.
-## [0.47.1.0] — 2026-08-22
+### Kria Design System — shadcn/ui migration train (Lanes 0, A–K)
+Single squash of the integration branch `feat/ds-preview-2026-08-22` (supersedes PRs #875–#883). Stock shadcn `new-york` look (Geist, zinc tokens) across the user flow + editor; 25 primitives in `components/ui/*`; raw-control ESLint guard (warn) in place; `raw-controls-guard.test.ts` ratchet retired. Reconciled onto v0.47.0.0 (guided story editor v2): `setToast` → sonner `notify`, Volume slider honours `disabled`, StepRail dots 44px.
+
+- Lane G — item setup page as one Card (Tabs · Dropzone · Tell Kria · CardFooter Generate)
+- Lane H — release desk as one Card
+- Lane I — editor chrome (toolbar, ToolRail, ToolDock, TransportBar, InspectorPanel) on stock primitives
+- Lane J — Back returns one step into /plan/new (`?item=&step=`), Change button removed; kind step always exits to /plan (no back loop)
+- Lane K — Nova copilot drawer, Plan-with-Kria thread, Ask Kria on shadcn (ChatBubble tokens, ScrollArea, Card proposal, Badge receipts)
+
+### Lane 0 — foundation (primitives, tokens, wrappers, guards)
+
+### Design system
+- **shadcn/ui foundation (Kria Design System migration, Lane 0).** Installs
+  the shadcn/ui component library (`new-york` style) with Kria's editorial
+  theme: `Button`/`Badge`/`Input`/`Textarea`/`Select`/`Dialog`/`AlertDialog`/
+  `Sheet`/`DropdownMenu`/`Popover`/`Tooltip`/`Tabs`/`Toggle(Group)`/`Slider`/
+  `Skeleton`/`ScrollArea`/`Progress`/`Sonner` and friends, all under
+  `src/apps/web/src/components/ui/`. Ink pills, lime accents, zinc
+  `destructive` (never red — D10), `z-[130]` menus/popovers above `z-[100]`
+  dialogs/sheets. `InkButton`/`LightCard`/`ConfirmDialog` become thin
+  wrappers over the new primitives with identical props/import paths — every
+  existing call site keeps working unchanged.
+- **Raw-control ratchet.** A WARN-level `no-restricted-syntax` ESLint rule
+  plus `src/__tests__/ui/raw-controls-guard.test.ts` (a numeric baseline
+  ratchet, seeded from the current tree) flag hand-rolled
+  `<button>`/`<select>`/`<input>`/`<textarea>` outside `components/ui/**`
+  across `app/plan/**`, `app/generative/**`, and `components/**`. Each
+  downstream migration lane can only lower its files' counts; the last lane
+  flips the rule to `error` and deletes the guard test.
+- See DESIGN.md §15 "Component library (shadcn/ui)" for the full variant
+  table, token→hex map, and DO/DON'T list.
+- **Skin: stock shadcn new-york (Geist, zinc, rounded-md) replaces the
+  hand-edited Kria variants.**
+
+### Lane A — header + account menu
 
 ### Design system
 - **Borderless header + shadcn account menu (Kria Design System migration,
@@ -25,7 +51,7 @@ All notable changes to this project will be documented in this file.
   routes (`/template-jobs`) get `className="dark"` on the menu content so it
   keeps its zinc/amber palette. Sign-in uses `<Button variant="outline"
   size="sm">`. See DESIGN.md §3 "Header" bullet.
-## [0.47.2.0] — 2026-08-22
+### Lane B — /plan home, tiles, Integrations
 
 ### Design system
 - **Poster tiles + Integrations row, feedback pills removed (Kria Design
@@ -49,7 +75,7 @@ All notable changes to this project will be documented in this file.
   - `WorkspaceHome`'s CTA, retry, and load-more controls now use `Button`;
     the loading grid uses `Skeleton` (keeping the shimmer gradient class).
   - See DESIGN.md §12 "Basic home" for the updated tile/Integrations spec.
-## [0.47.3.0] — 2026-08-22
+### Lane C — /plan/new tap-to-advance
 
 ### Design system
 - **`/plan/new` tap-to-advance chooser, hidden scrollbars (Lane C).** The
@@ -62,7 +88,7 @@ All notable changes to this project will be documented in this file.
   Both card scrollers (`/plan/new` and `SetupPicker`'s type/style rails) get
   `scrollbar-none` — no visible scrollbar, swipe/scroll unchanged. See
   DESIGN.md §12 "New-video chooser".
-## [0.47.4.0] — 2026-08-22
+### Lane D — item setup + Tell Kria + thread panel
 
 ### Design system
 - **Item setup declutter + "Tell Kria" + PlanThreadPanel (Kria Design System
@@ -86,7 +112,7 @@ All notable changes to this project will be documented in this file.
   an optional `defaultConversationOpen` prop so the panel seeds straight
   onto the conversation surface.
 - Depends on Lane 0 (`0.47.0.0`, shadcn/ui foundation).
-## [0.47.5.0] — 2026-08-22
+### Lane E1 — EditorShell
 
 ### Design system
 - **Editor on shadcn (Kria Design System migration, Lane E1).**
@@ -108,7 +134,7 @@ All notable changes to this project will be documented in this file.
   raw-control guard by design — continuous scrubbing doesn't fit `Slider`'s
   discrete-thumb model). Raw-control count for `EditorShell.tsx` in
   `raw-controls-guard.test.ts` drops from 35 to 0.
-## [0.47.6.0] — 2026-08-22
+### Lane E2 — ToolDrawer / InspectorPanel
 
 ### Design system
 - **Editor ToolDrawer + Inspector on shadcn controls (Kria Design System
@@ -141,7 +167,7 @@ All notable changes to this project will be documented in this file.
   splits into `LANE_E1`/`LANE_E2`/`LANE_E3` sub-blocks (three file-disjoint
   PRs) so E1/E3 land without touching this lane's hunk.
 - Depends on #875 (Lane 0, shadcn/ui foundation) — merge order matters.
-## [0.47.7.0] — 2026-08-22
+### Lane E3 — Copilot / Captions / Styles drawers
 
 ### Design system
 - **Editor drawers on shadcn primitives (Kria Design System migration, Lane
@@ -169,7 +195,7 @@ All notable changes to this project will be documented in this file.
   with Radix `Slider`'s custom pointer handling) plus its image-tile asset
   picker.
 
-## [0.47.8.0] — 2026-08-22
+### Lane F — generative / transcript / StepRail
 
 ### Design system
 - **Generative + transcript + StepRail sweep onto shadcn/ui (Lane F of the
@@ -192,29 +218,49 @@ All notable changes to this project will be documented in this file.
 
 ## [0.47.0.0] — 2026-08-22
 
-### Design system
-- **shadcn/ui foundation (Kria Design System migration, Lane 0).** Installs
-  the shadcn/ui component library (`new-york` style) with Kria's editorial
-  theme: `Button`/`Badge`/`Input`/`Textarea`/`Select`/`Dialog`/`AlertDialog`/
-  `Sheet`/`DropdownMenu`/`Popover`/`Tooltip`/`Tabs`/`Toggle(Group)`/`Slider`/
-  `Skeleton`/`ScrollArea`/`Progress`/`Sonner` and friends, all under
-  `src/apps/web/src/components/ui/`. Ink pills, lime accents, zinc
-  `destructive` (never red — D10), `z-[130]` menus/popovers above `z-[100]`
-  dialogs/sheets. `InkButton`/`LightCard`/`ConfirmDialog` become thin
-  wrappers over the new primitives with identical props/import paths — every
-  existing call site keeps working unchanged.
-- **Raw-control ratchet.** A WARN-level `no-restricted-syntax` ESLint rule
-  plus `src/__tests__/ui/raw-controls-guard.test.ts` (a numeric baseline
-  ratchet, seeded from the current tree) flag hand-rolled
-  `<button>`/`<select>`/`<input>`/`<textarea>` outside `components/ui/**`
-  across `app/plan/**`, `app/generative/**`, and `components/**`. Each
-  downstream migration lane can only lower its files' counts; the last lane
-  flips the rule to `error` and deletes the guard test.
-- See DESIGN.md §15 "Component library (shadcn/ui)" for the full variant
-  table, token→hex map, and DO/DON'T list.
-- **Skin: stock shadcn new-york (Geist, zinc, rounded-md) replaces the
-  hand-edited Kria variants.**
+### Added
+- **Approved guided stories can now be edited after generation.** Creators can trim, split, add,
+  remove, and reorder approved media; set transitions and Looks; change or remove music; edit
+  supported timed layers and orientation; and ask Nova to trim the output or remove its music.
+- **Guided edits now carry an exact revision receipt.** Every Save records the approved source
+  generations, effective timing, Looks, music state, lane hashes, and output evidence without
+  changing the original approved proposal.
 
+### Changed
+- **Editor controls now reflect the exact operation that is available.** Locked actions are visibly
+  disabled with a reason instead of appearing interactive and silently doing nothing. Preview,
+  scrubbing, undo, Save, and the renderer share the same story-native timeline projection.
+- **Nova reports unchanged drafts truthfully.** Trim and music requests distinguish real edits,
+  safe no-ops, stale revisions, unavailable capabilities, and model or network failures.
+
+### Fixed
+- Guided trim, Look, orientation, and music edits no longer fall through strict legacy guards or
+  montage-only handlers. Music removal produces a silent AAC soundtrack, while muting keeps the
+  selected track attached at zero gain.
+- Guided Saves and worker retries now validate exact approved media generations, compare revision
+  and render-generation tokens atomically, and prevent stale renders from publishing over newer
+  edits.
+
+## [0.46.0.3] — 2026-08-22
+
+### Fixed
+- **Uploaded voiceover now wins over guided-story auto-design.** Audio-led plan items no longer
+  enter the audio-destructive guided renderer, which previously replaced the voiceover with music
+  and burned generic visual-description text. Narrated content uses the native transcript-caption
+  assembler; approved guided proposals remain safely dormant and reusable when a guided-compatible
+  intent is selected again. Mixed-version workers fail closed on asset-only dual-state Jobs instead
+  of rendering an incomplete edit.
+
+## [0.46.0.2] — 2026-08-22
+
+### Fixes
+- **Render-worker autostop never fired after v0.46.0.1.** The broker
+  `polling_interval=10` also became the BRPOP timeout on `inspect()` reply
+  queues, so `render_worker_idle()`'s three inspect calls took ~30s (hitting the
+  lifecycle task's soft limit) and intermittently dropped replies → `'unknown'`
+  every 2 min, worker never stopped. `inspect()` now runs on a dedicated
+  connection with the 1s default (`queue_state._inspector`); the throttle stays
+  on the long-lived worker consumers. Reproduced + verified against live Redis.
 ## [0.46.0.2] — 2026-08-22
 
 ### Fixes
@@ -294,7 +340,6 @@ All notable changes to this project will be documented in this file.
   the ideas-ledger "quieter path" are unmounted from /plan — #870's backend
   (migration 0078, owned-media job lifecycle, audio modes, manual-draft
   foundation) is retained, dark behind its flags.
-
 ## [0.44.1.0] — 2026-08-21
 
 ### Added

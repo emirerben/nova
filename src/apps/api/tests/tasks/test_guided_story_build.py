@@ -60,6 +60,125 @@ def test_guided_snapshot_routes_before_legacy_ingest_and_agents(monkeypatch) -> 
     assert calls[1][1][1] == snapshot
 
 
+def test_audio_led_dual_contract_skips_guided_and_reaches_native_ingest(monkeypatch) -> None:
+    clip_path = "users/u/clip.mp4"
+    snapshot = {
+        "proposal_version": 4,
+        "media_digest": "a" * 64,
+        "approved_proposal": {"title": "Corfu"},
+        "media_identities": [{"lane": "clip", "gcs_path": clip_path, "media_id": "clip-1"}],
+    }
+    job = SimpleNamespace(
+        id="00000000-0000-0000-0000-000000000002",
+        status="queued",
+        mode="content_plan",
+        assembly_plan={"guided_edit": snapshot},
+        all_candidates={
+            "clip_paths": [clip_path],
+            "edit_format": "narrated_ready",
+            "voiceover_gcs_path": "voiceover-uploads/u/voice.m4a",
+        },
+    )
+    monkeypatch.setattr(gb, "_sync_session", _session)
+    monkeypatch.setattr(gb, "_lock_owned_entry_job", lambda _db, _job_id: (job, None))
+    monkeypatch.setattr(gb, "mark_started", lambda _job_id: None)
+    monkeypatch.setattr(gb, "record_phase", lambda *args, **kwargs: None)
+    monkeypatch.setattr(gb, "_persist_durable_sources", lambda _job_id, paths: paths)
+    monkeypatch.setattr(
+        gb,
+        "_run_guided_story_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("guided runner must not run")
+        ),
+    )
+    monkeypatch.setattr(
+        gb,
+        "_ingest_clips",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("native ingest reached")),
+    )
+
+    with pytest.raises(AssertionError, match="native ingest reached"):
+        gb._run_generative_job_impl(str(job.id))
+
+
+def test_audio_led_asset_only_dual_contract_fails_closed(monkeypatch) -> None:
+    seed_path = "users/u/pool/seed.mp4"
+    snapshot = {
+        "proposal_version": 4,
+        "media_digest": "a" * 64,
+        "approved_proposal": {"title": "Corfu"},
+        "media_identities": [{"lane": "asset", "gcs_path": seed_path, "media_id": "asset-1"}],
+    }
+    job = SimpleNamespace(
+        id="00000000-0000-0000-0000-000000000003",
+        status="queued",
+        mode="content_plan",
+        assembly_plan={"guided_edit": snapshot},
+        all_candidates={
+            "clip_paths": [seed_path],
+            "edit_format": "narrated_ready",
+            "voiceover_gcs_path": "voiceover-uploads/u/voice.m4a",
+        },
+    )
+    monkeypatch.setattr(gb, "_sync_session", _session)
+    monkeypatch.setattr(gb, "_lock_owned_entry_job", lambda _db, _job_id: (job, None))
+    monkeypatch.setattr(gb, "mark_started", lambda _job_id: None)
+    monkeypatch.setattr(gb, "record_phase", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        gb,
+        "_run_guided_story_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("guided runner must not run")
+        ),
+    )
+
+    with pytest.raises(gb.AudioLedGuidedConflict) as exc_info:
+        gb._run_generative_job_impl(str(job.id))
+    assert exc_info.value.code == "guided_story_incompatible_audio_led_asset_only"
+
+
+def test_unknown_future_intent_does_not_reactivate_guided_snapshot(monkeypatch) -> None:
+    """A normalized montage must retain an unknown raw intent for mixed deploys."""
+    clip_path = "users/u/clip.mp4"
+    snapshot = {
+        "proposal_version": 4,
+        "media_digest": "a" * 64,
+        "approved_proposal": {"title": "Corfu"},
+        "media_identities": [{"lane": "clip", "gcs_path": clip_path, "media_id": "clip-1"}],
+    }
+    job = SimpleNamespace(
+        id="00000000-0000-0000-0000-000000000004",
+        status="queued",
+        mode="content_plan",
+        assembly_plan={"guided_edit": snapshot},
+        all_candidates={
+            "clip_paths": [clip_path],
+            "edit_format": "montage",
+            "declared_edit_format": "future_audio_led",
+        },
+    )
+    monkeypatch.setattr(gb, "_sync_session", _session)
+    monkeypatch.setattr(gb, "_lock_owned_entry_job", lambda _db, _job_id: (job, None))
+    monkeypatch.setattr(gb, "mark_started", lambda _job_id: None)
+    monkeypatch.setattr(gb, "record_phase", lambda *args, **kwargs: None)
+    monkeypatch.setattr(gb, "_persist_durable_sources", lambda _job_id, paths: paths)
+    monkeypatch.setattr(
+        gb,
+        "_run_guided_story_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("guided runner must not run")
+        ),
+    )
+    monkeypatch.setattr(
+        gb,
+        "_ingest_clips",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("native ingest reached")),
+    )
+
+    with pytest.raises(AssertionError, match="native ingest reached"):
+        gb._run_generative_job_impl(str(job.id))
+
+
 def test_redelivery_reuses_pinned_execution_plan_without_rematching(monkeypatch) -> None:
     from app.pipeline import guided_story
 
@@ -184,6 +303,64 @@ def test_guided_text_reburn_never_falls_through_to_legacy_montage(monkeypatch) -
             False,
             render_gen_id="edit-1",
         )
+
+
+def test_guided_revision_regen_dispatches_persisted_revision_without_montage(
+    monkeypatch,
+) -> None:
+    job_id = "12345678-1234-5678-1234-567812345678"
+    revision = {"revision_number": 7, "state_hash": "revision-hash"}
+    existing = {
+        "variant_id": "guided_story",
+        "resolved_archetype": "guided_story",
+        "guided_edit_revision": revision,
+    }
+    job = SimpleNamespace(
+        status="variants_ready",
+        all_candidates={"clip_paths": ["users/u/approved.mp4"]},
+        assembly_plan={"variants": [existing]},
+    )
+
+    class _Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, model, _pk, **_kwargs):
+            return job if model is gb.Job else None
+
+    calls: list[tuple] = []
+    monkeypatch.setattr(gb, "_sync_session", lambda: _Session())
+    monkeypatch.setattr(
+        gb,
+        "_rerender_guided_story_revision",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        gb,
+        "_ingest_clips",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("guided revision fell through to montage ingest")
+        ),
+    )
+
+    gb._run_regenerate_variant(
+        job_id,
+        "guided_story",
+        None,
+        None,
+        False,
+        render_gen_id="render-7",
+    )
+
+    assert calls == [
+        (
+            (job_id, existing),
+            {"revision": revision, "render_gen_id": "render-7"},
+        )
+    ]
 
 
 def test_guided_text_reburn_pins_base_and_refreshes_output_receipt(monkeypatch) -> None:

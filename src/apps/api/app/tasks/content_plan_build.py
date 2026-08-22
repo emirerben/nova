@@ -640,6 +640,7 @@ def _dispatch_item_render(
     would otherwise 409 it here exactly like the Generate route). Every other
     caller must leave this False.
     """
+    from app.agents._schemas.edit_format import guided_edit_applicable  # noqa: PLC0415
     from app.config import settings  # noqa: PLC0415
     from app.schemas.montage_preset import coerce_montage_preset  # noqa: PLC0415
     from app.services.generative_jobs import (  # noqa: PLC0415
@@ -653,8 +654,16 @@ def _dispatch_item_render(
     )
     from app.tasks.generative_build import orchestrate_generative_job  # noqa: PLC0415
 
+    audio_mode = getattr(item, "audio_mode", "kria")
+    if audio_mode not in {"kria", "original", "voiceover"}:
+        audio_mode = "kria"
+    guided_applicable = guided_edit_applicable(
+        getattr(item, "edit_format", None),
+        has_voiceover=(audio_mode == "voiceover" and bool(item.voiceover_gcs_path)),
+    )
+
     approved_proposal: dict | None = None
-    if bypass_guided_edit_gate:
+    if bypass_guided_edit_gate and guided_applicable:
         # The caller's zero-registered-pool-assets invariant was checked in a
         # SEPARATE transaction — re-assert it under THIS lock (the item row is
         # already FOR-UPDATE-locked by dispatch_item_render_for) before
@@ -672,7 +681,9 @@ def _dispatch_item_render(
         ).scalar_one()
         if pool_count > 0:
             return DispatchResult("guided_edit_bypass_unsafe")
-    elif settings.guided_edit_capability_enabled or settings.guided_edit_enforcement_enabled:
+    elif guided_applicable and (
+        settings.guided_edit_capability_enabled or settings.guided_edit_enforcement_enabled
+    ):
         from app.services.edit_proposals import (  # noqa: PLC0415
             mark_edit_proposal_stale,
             validate_approved_proposal_media_sync,
@@ -731,9 +742,6 @@ def _dispatch_item_render(
         db=session,
     )
     try:
-        audio_mode = getattr(item, "audio_mode", "kria")
-        if audio_mode not in {"kria", "original", "voiceover"}:
-            audio_mode = "kria"
         job = build_generative_job(
             user_id=plan.user_id,
             clip_paths=clip_paths,
@@ -799,7 +807,7 @@ def _dispatch_item_render(
     except ValueError as exc:
         log.warning("plan_item_render.invalid_clips", plan_item_id=str(item.id), error=str(exc))
         return DispatchResult("invalid_clips")
-    if approved_proposal is not None:
+    if approved_proposal is not None and guided_applicable:
         snapshot = dict(job.assembly_plan or {})
         snapshot["guided_edit"] = {
             "proposal_version": approved_proposal["proposal_version"],
