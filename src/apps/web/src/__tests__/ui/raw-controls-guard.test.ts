@@ -221,8 +221,12 @@ const LANE_B_BASELINE: Record<string, number> = {};
 const LANE_C_BASELINE: Record<string, number> = {};
 
 // ── Lane D ──────────────────────────────────────────────────────────────
-// (none yet)
-const LANE_D_BASELINE: Record<string, number> = {};
+// Item setup declutter: receipt → Badge, Change → Button, Direction textarea
+// (+ DirectionVoiceNote) removed in favor of the Tell Kria Textarea, several
+// step-eyebrow <p>s replaced by sr-only headings + InfoDot.
+const LANE_D_BASELINE: Record<string, number> = {
+  "app/plan/items/[id]/page.tsx": 15,
+};
 
 // ── Lane E ──────────────────────────────────────────────────────────────
 // (none yet)

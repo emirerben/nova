@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.47.4.0] — 2026-08-22
+
+### Design system
+- **Item setup declutter + "Tell Kria" + PlanThreadPanel (Kria Design System
+  migration, Lane D).** `/plan/items/[id]` setup zone now reads top-to-bottom
+  as receipt → title → uploader → Tell Kria → Generate, with no step
+  numerals and no inline chat. Receipt is a `Badge variant="lime"` +
+  `Button variant="link" size="sm"` "Change"/"Done" (was a raw `<p>`/
+  `<button>`). The old "Direction for Kria" textarea and its voice-note
+  `<details>` disclosure (`DirectionVoiceNote`) are gone, replaced by one
+  optional `Textarea` "Tell Kria" (same `notes` → `updatePlanItem` →
+  `refetch` contract). Per-type helper paragraphs (voiceover card, talking-
+  to-camera clip helper) collapse into a single `InfoDot` each; their
+  eyebrows become sr-only headings.
+- **`PlanThreadPanel`** (new: `app/plan/items/[id]/components/PlanThreadPanel.tsx`)
+  is a shadcn `Sheet` — bottom sheet on phones, right side panel ≥sm — that
+  now owns the guided-edit planning conversation (`EditProposalCard`)
+  entirely. The setup page shows only a compact status row (`Badge` +
+  one-sentence status + `Button variant="outline" size="sm"` "Plan with
+  Kria"/"Review Kria's plan"/"Change plan") that opens the panel; the card
+  no longer mounts inline or morphs the setup zone. `EditProposalCard` gains
+  an optional `defaultConversationOpen` prop so the panel seeds straight
+  onto the conversation surface.
+- Depends on Lane 0 (`0.47.0.0`, shadcn/ui foundation).
+
 ## [0.47.0.0] — 2026-08-22
 
 ### Design system

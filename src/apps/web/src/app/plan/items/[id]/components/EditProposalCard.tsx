@@ -155,6 +155,7 @@ export default function EditProposalCard({
   onChanged,
   onRefresh,
   hasPoolMedia = false,
+  defaultConversationOpen = false,
 }: {
   item: PlanItem;
   onChanged: (item: PlanItem) => void;
@@ -164,11 +165,16 @@ export default function EditProposalCard({
    *  not just clip_assignments/clip_gcs_paths — a pool-only item (nothing
    *  attached to a shot yet) must not get locked out of chat. */
   hasPoolMedia?: boolean;
+  /** PlanThreadPanel mounts this fresh every open (unmounted while closed),
+   *  so it seeds straight onto the conversation surface — skipping the
+   *  "Plan edit" button morph, which only matters when the card lives
+   *  inline on the setup page. */
+  defaultConversationOpen?: boolean;
 }) {
   const proposal = item.edit_proposal ?? null;
   const conversationEnabled = item.guided_edit_conversation_available === true;
   const [conversationOpen, setConversationOpen] = useState(
-    conversationEnabled && proposal?.status === "briefing",
+    defaultConversationOpen || (conversationEnabled && proposal?.status === "briefing"),
   );
   const [legacyBriefOpen, setLegacyBriefOpen] = useState(false);
   const [legacyBrief, setLegacyBrief] = useState(DEFAULT_BRIEF);
