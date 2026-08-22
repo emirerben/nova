@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.46.0.0] — 2026-08-21
+
+### Features
+- **Per-type item setup.** The clip-adding page now shows only what each edit type
+  needs: montage = clips + optional direction (music is automatic — no audio UI);
+  voiceover = clips + a prominent recorder card + direction; talking-to-camera = a
+  single clip slot ("its own audio is the soundtrack"). A `MONTAGE · CLASSIC`-style
+  setup receipt with a Change toggle replaces the nested "Advanced video style"
+  disclosure, and untitled items show the receipt instead of an h1 reading "Montage".
+- **Montage style step restored.** /plan/new gains Step 2 "Pick a style."
+  (Classic / Masonry collage / Polaroid wall) for montage, so templates are never
+  skipped; the choice persists as `montage_preset` before the item page opens.
+
+### Removed
+- The ungated "Audio choice" fieldset (it could silently re-type an item — e.g.
+  montage → voiceover), the self-referential "From your idea" badge, the day badge,
+  the generic photo-collage copy, and the "Plan this for me" panels (filming-guide
+  summaries still render for legacy guided items).
+
 ## [0.45.0.0] — 2026-08-21
 
 ### Features
