@@ -1,5 +1,9 @@
 import { beatMarks, type DraftSlot } from "@/app/generative/timeline-math";
 import { isBoundedCreatorImageAsset, type CameraEffect, type EditorCapabilities, type MediaOverlay, type OverlaySuggestion, type PendingSfxSuggestion, type PoolAsset, type SoundEffectPlacement, type VariantSpeechMap, type VisualBlock } from "@/lib/plan-api";
+import {
+  canEditClip,
+  canEditMusic,
+} from "@/app/plan/items/[id]/_editor/editor-operation-capabilities";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
 import type { MusicTrackSummary } from "@/lib/music-api";
 import type { EditorTransition } from "@/lib/generative-api";
@@ -467,6 +471,7 @@ export interface CopilotSnapshot {
   };
   music?: {
     swappable: boolean;
+    removable: boolean;
     current_track_id: string | null;
     current_track_title: string | null;
     candidates: CopilotMusicCandidateSnapshot[];
@@ -510,6 +515,7 @@ export interface AllowedOpFamilyOptions {
   overlaysEnabled?: boolean;
   captionsPresent?: boolean;
   musicSwappable?: boolean;
+  musicRemovable?: boolean;
   mixAllowed?: boolean;
   titleEditable?: boolean;
   openTools?: Array<"text" | "visuals" | "sounds" | "overlays" | "styles">;
@@ -564,6 +570,7 @@ export interface BuildCopilotSnapshotOptions extends AllowedOpFamilyOptions {
   captionTotalCues?: number;
   musicState?: {
     swappable: boolean;
+    removable?: boolean;
     currentTrackId: string | null;
     currentTrackTitle: string | null;
     candidates: MusicTrackSummary[] | CopilotMusicCandidateSnapshot[];
@@ -589,7 +596,14 @@ function effectiveSizePx(bar: TextElementBar): number {
 }
 
 function allCoreCapabilitiesFalse(capabilities: EditorCapabilities | null | undefined): boolean {
+  const guidedOperationEnabled = [
+    ...Object.values(capabilities?.clips ?? {}),
+    ...Object.values(capabilities?.music_operations ?? {}),
+    ...Object.values(capabilities?.lanes ?? {}),
+    ...Object.values(capabilities?.nova ?? {}),
+  ].some((value) => typeof value === "boolean" ? value : value?.editable === true);
   return !!capabilities &&
+    !guidedOperationEnabled &&
     capabilities.text_elements === false &&
     capabilities.timeline === false &&
     capabilities.split_clips === false &&
@@ -615,11 +629,18 @@ export function allowedOpFamiliesFromCapabilities(
   }
   const families: CopilotOpFamily[] = [];
   if (capabilities?.text_elements !== false) families.push("text");
-  if (capabilities?.timeline !== false) families.push("clip");
+  const clipFamilyEditable = (["add", "remove", "reorder", "split", "trim", "looks"] as const)
+    .some((operation) => canEditClip(capabilities, operation, capabilities?.timeline !== false));
+  if (clipFamilyEditable) families.push("clip");
   if (capabilities?.sfx !== false && options.sfxEnabled) families.push("sfx");
   if (capabilities?.overlays !== false && options.overlaysEnabled) families.push("overlay");
   if (options.captionsPresent) families.push("caption");
-  if (options.musicSwappable || options.mixAllowed) families.push("music");
+  if (
+    canEditMusic(capabilities, "swap", !!options.musicSwappable) ||
+    canEditMusic(capabilities, "remove", !!options.musicRemovable) ||
+    canEditMusic(capabilities, "level", !!options.mixAllowed) ||
+    canEditMusic(capabilities, "window", false)
+  ) families.push("music");
   if (options.renderLayoutSwitchable) families.push("render");
   // Carousel-as-a-moment is its own family (Lane D) — independent of
   // renderLayoutSwitchable, since a variant can have one available without
@@ -629,7 +650,7 @@ export function allowedOpFamiliesFromCapabilities(
   if (capabilities?.camera_effects !== false && options.cameraEffectsEnabled) {
     families.push("effect");
   }
-  if (capabilities?.timeline !== false && options.transitionsEnabled) {
+  if (canEditClip(capabilities, "transitions", capabilities?.timeline !== false && !!options.transitionsEnabled)) {
     families.push("transition");
   }
   if (capabilities?.visual_blocks !== false && options.visualBlocksEnabled) {
@@ -824,6 +845,7 @@ export function buildCopilotSnapshot(
     ...options,
     captionsPresent: options.captionsPresent ?? captionCues.length > 0,
     musicSwappable: options.musicState?.swappable ?? options.musicSwappable,
+    musicRemovable: options.musicState?.removable ?? options.musicRemovable,
     mixAllowed: options.mixLevel !== undefined || options.mixAllowed,
     openTools: options.openTools,
   };
@@ -1042,6 +1064,7 @@ export function buildCopilotSnapshot(
   if (allowed.has("music") && options.musicState) {
     snapshot.music = {
       swappable: options.musicState.swappable,
+      removable: options.musicState.removable ?? false,
       current_track_id: options.musicState.currentTrackId,
       current_track_title: truncate(options.musicState.currentTrackTitle, 40),
       candidates: options.musicState.candidates.slice(0, 20).map((track) => ({

@@ -95,6 +95,7 @@ import VisualBlocksLayer from "./VisualBlocksLayer";
 import MotionCanvasLayer from "./MotionCanvasLayer";
 import type { MotionPresetInstance } from "@nova/motion-runtime";
 import {
+  createEditorPlaybackClock,
   useEditorPlaybackTime,
   type EditorPlaybackClock,
 } from "./editor-playback-clock";
@@ -351,6 +352,18 @@ export default function EditorCanvas({
   // The canvas shell stays on committed time. Only PlaybackFrame and the
   // dedicated authored layers below subscribe to decoded-frame cadence.
   const currentTime = committedCurrentTime;
+  const hasVirtualPreview = virtualPreview != null;
+  const fallbackPlaybackClockRef = useRef<EditorPlaybackClock | null>(null);
+  if (fallbackPlaybackClockRef.current === null) {
+    fallbackPlaybackClockRef.current = createEditorPlaybackClock(currentTime);
+  }
+  // Keep the fallback clock identity stable while still publishing transport
+  // changes when the decoded-frame clock feature is disabled.
+  useEffect(() => {
+    if (!playbackClock && hasVirtualPreview) {
+      fallbackPlaybackClockRef.current?.publish(currentTime);
+    }
+  }, [currentTime, hasVirtualPreview, playbackClock]);
   const viewportRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const overlayRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -609,6 +622,14 @@ export default function EditorCanvas({
     return { opacity, zIndex: EDITOR_STAGE_Z.video };
   };
   const identity = renderedIdentity;
+  const sfxOutputClock = useMemo(
+    () =>
+      playbackClock ??
+      (hasVirtualPreview
+        ? fallbackPlaybackClockRef.current
+        : null),
+    [hasVirtualPreview, playbackClock],
+  );
 
   useSfxPreview(
     videoRef,
@@ -616,14 +637,18 @@ export default function EditorCanvas({
     sfxAudioUrls,
   );
   useSfxPreview(
-    virtualVideoARef ?? emptyVideoRef,
-    virtualPreview?.activeDeck === "a" ? sfxPlacements : [],
+    emptyVideoRef,
+    virtualPreview ? sfxPlacements : [],
     sfxAudioUrls,
-  );
-  useSfxPreview(
-    virtualVideoBRef ?? emptyVideoRef,
-    virtualPreview?.activeDeck === "b" ? sfxPlacements : [],
-    sfxAudioUrls,
+    virtualPreview
+      ? {
+          // SFX placements are projected into output time by EditorShell.
+          // Keep one scheduler on the composed clock so deck A/B swaps cannot
+          // fire the same placement twice or use a source-local timestamp.
+          clock: sfxOutputClock,
+          playing,
+        }
+      : undefined,
   );
 
   // ── Pointer interactions ────────────────────────────────────────────────────

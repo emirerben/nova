@@ -12,6 +12,7 @@ from PIL import Image, ImageDraw
 
 from app.pipeline.canvas import Canvas
 from app.pipeline.guided_story import (
+    _render_moments,
     compile_execution_plan,
     render_execution_plan,
 )
@@ -53,6 +54,78 @@ def test_concat_fallback_keeps_explicit_landscape_canvas(tmp_path: Path) -> None
     assert mock_run.call_count == 2
     fallback = mock_run.call_args_list[-1][0][0]
     assert fallback[fallback.index("-s") + 1] == "1920x1080"
+
+
+def test_real_ffmpeg_guided_v2_renders_image_and_video_looks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exercise the story-native moment renderers with persisted look state."""
+    from app.pipeline import guided_story
+
+    image = tmp_path / "image.jpg"
+    video = tmp_path / "video.mp4"
+    _image(image, (190, 105, 55), "IMAGE LOOK")
+    _video(video, size="360x640")
+
+    canvas = Canvas(320, 180)
+    monkeypatch.setattr(guided_story, "LANDSCAPE", canvas)
+    plan = {
+        "output_orientation": "landscape",
+        "story_timeline": [
+            {
+                "moment_id": "segment-image",
+                "beat_id": "beat-image",
+                "media_id": "image",
+                "generation": "image-generation",
+                "kind": "image",
+                "duration_s": 1.0,
+                "layout": "fullscreen",
+                "image_motion": None,
+                "look_preset": "olive_film",
+                "look_adjustments": {
+                    "intensity": 0.7,
+                    "warmth": 0.3,
+                    "contrast": -0.2,
+                    "grain": 0.1,
+                    "vignette": 0.15,
+                },
+            },
+            {
+                "moment_id": "segment-video",
+                "beat_id": "beat-video",
+                "media_id": "video",
+                "generation": "video-generation",
+                "kind": "video",
+                "source_start_s": 0.0,
+                "source_end_s": 1.0,
+                "duration_s": 1.0,
+                "layout": "fullscreen",
+                "image_motion": None,
+                "look_preset": "smoky_split_tone",
+                "look_adjustments": {
+                    "intensity": 0.6,
+                    "warmth": -0.2,
+                    "contrast": 0.25,
+                    "grain": 0.2,
+                    "vignette": 0.3,
+                },
+            },
+        ],
+    }
+
+    outputs, receipts = _render_moments(
+        plan,
+        {"image": str(image), "video": str(video)},
+        str(tmp_path),
+    )
+
+    assert len(outputs) == 2
+    assert [receipt["media_id"] for receipt in receipts] == ["image", "video"]
+    assert all(receipt["codec"] == "h264" for receipt in receipts)
+    for output in outputs:
+        probe = probe_video(output)
+        assert (probe.width, probe.height, probe.codec) == (320, 180, "h264")
+        assert probe.duration_s == pytest.approx(1.0, abs=0.15)
 
 
 def _image(path: Path, color: tuple[int, int, int], label: str) -> None:
@@ -335,6 +408,25 @@ def test_real_ffmpeg_mixed_story_has_text_audio_and_exact_receipt(
     assert plan["output_orientation"] == orientation
     assert plan["transition_policy"]["type"] == "crossfade"
     assert all(element["stroke_width"] == 0 for element in plan["text_elements"])
+    if not with_music and orientation == "portrait":
+        image_moment = next(row for row in plan["story_timeline"] if row["kind"] == "image")
+        image_moment["look_preset"] = "olive_film"
+        image_moment["look_adjustments"] = {
+            "intensity": 0.7,
+            "warmth": 0.3,
+            "contrast": -0.2,
+            "grain": 0.1,
+            "vignette": 0.15,
+        }
+        video_moment = next(row for row in plan["story_timeline"] if row["kind"] == "video")
+        video_moment["look_preset"] = "smoky_split_tone"
+        video_moment["look_adjustments"] = {
+            "intensity": 0.6,
+            "warmth": -0.2,
+            "contrast": 0.25,
+            "grain": 0.2,
+            "vignette": 0.3,
+        }
     for element in plan["text_elements"]:
         element["size_px"] = 28 if element["id"] == "guided-title" else 20
     result = render_execution_plan(

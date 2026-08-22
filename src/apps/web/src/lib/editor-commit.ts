@@ -22,6 +22,7 @@ import {
   type MediaOverlay,
   type CameraEffect,
   type CaptionCue,
+  type EditorCapabilities,
   type SoundEffectPlacement,
   type TextElement,
   type VisualBlock,
@@ -33,6 +34,7 @@ import type {
   LookPreset,
 } from "@/lib/generative-api";
 import type { MotionPresetInstance } from "@nova/motion-runtime";
+import { canEditMusic } from "@/app/plan/items/[id]/_editor/editor-operation-capabilities";
 
 const PLAN_BASE = "/api/plan";
 
@@ -42,6 +44,7 @@ const PLAN_BASE = "/api/plan";
  * task wires clip edits into the shell. */
 export interface EditorTimelineSlot {
   slot_id: string | null;
+  parent_segment_id?: string | null;
   clip_index: number;
   in_s: number;
   duration_s: number | null;
@@ -110,6 +113,12 @@ export interface EditorCommitLyricsRequest {
 }
 
 export interface EditorCommitRequest {
+  /** Guided Story V2 monotonic revision token. Required by the server for
+   * guided writes; omitted for legacy/montage variants. */
+  guided_revision_number?: number;
+  /** Idempotent retry of an already-persisted Guided Story revision after its
+   * render enqueue failed. Carries no edit sections and never increments. */
+  retry_guided_revision?: boolean;
   /** Full replacement text-element list (same shape putTextElements sends). */
   text_elements?: TextElement[];
   /** Full replacement narrated caption cue list. */
@@ -176,6 +185,8 @@ export interface EditorCommitResponse {
   ok: boolean;
   /** The new monotonic render generation stamped by this commit. */
   generation: string;
+  /** New/current Guided Story V2 revision; absent for legacy variants. */
+  revision_number?: number | null;
   /** Per-section persist echo — which sections this commit actually wrote. */
   sections: {
     text_elements?: boolean;
@@ -199,6 +210,7 @@ export interface EditorCommitResponse {
 
 export interface EditorCommitDraftSlot {
   slotId: string | null;
+  parentSegmentId?: string | null;
   clipIndex: number;
   inS: number;
   durationS: number | null;
@@ -214,9 +226,7 @@ export interface EditorCommitVariantBaseline {
   render_generation_id?: string | null;
   render_finished_at?: string | null;
   music_track_id?: string | null;
-  editor_capabilities?: {
-    mix?: boolean;
-  } | null;
+  editor_capabilities?: Pick<EditorCapabilities, "mix" | "music_operations"> | null;
   mix?: number | null;
   voiceover_bed_level?: number | null;
 }
@@ -271,6 +281,7 @@ export function buildEditorCommitRequest({
   lyrics,
   orientationDirty = false,
   orientation,
+  guidedRevisionNumber,
   variant,
 }: {
   elements: TextElement[];
@@ -316,9 +327,14 @@ export function buildEditorCommitRequest({
   lyrics?: EditorCommitLyricsRequest;
   orientationDirty?: boolean;
   orientation?: "portrait" | "landscape";
+  guidedRevisionNumber?: number | null;
   variant: EditorCommitVariantBaseline;
 }): EditorCommitRequest {
-  const mixEditable = variant.editor_capabilities?.mix !== false;
+  const mixEditable = canEditMusic(
+    variant.editor_capabilities,
+    "level",
+    variant.editor_capabilities?.mix !== false,
+  );
   const normalizedMix =
     mixLevel == null ? null : Math.max(0, Math.min(1, Number(mixLevel)));
   // An accepted suggestion the user later undid (its card is no longer in the
@@ -355,6 +371,9 @@ export function buildEditorCommitRequest({
         }
       : undefined;
   return {
+    ...(guidedRevisionNumber != null
+      ? { guided_revision_number: guidedRevisionNumber }
+      : {}),
     text_elements: textDirty ? elements : undefined,
     caption_cues: captionDirty ? (captionCues ?? []) : undefined,
     caption_meta: captionMetaRequest,
@@ -363,6 +382,7 @@ export function buildEditorCommitRequest({
       ((!musicDirty && !musicWindow) || musicWindow?.alignment === "preserve_cuts")
       ? slots.map((s) => ({
           slot_id: s.slotId,
+          parent_segment_id: s.parentSegmentId ?? null,
           clip_index: s.clipIndex,
           in_s: s.inS,
           duration_s: s.durationS,

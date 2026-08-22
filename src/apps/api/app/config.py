@@ -742,6 +742,14 @@ class Settings(BaseSettings):
             "groups."
         ),
     )
+    guided_story_editor_v2_enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable the story-native guided-story editor revision contract. "
+            "The legacy guided renderer remains byte-compatible while this is off; "
+            "persisted revisions remain readable/renderable after a rollback."
+        ),
+    )
 
     @model_validator(mode="after")
     def reject_guided_edit_before_strict_renderer(self) -> "Settings":

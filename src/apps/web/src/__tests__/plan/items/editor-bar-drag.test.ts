@@ -3,6 +3,7 @@ import {
   applyClipEdgeDrag,
   applyClipSourceWindowDrag,
   applyClipTimingInput,
+  applyManualClipTimingPatch,
   applySfxBarDrag,
   applySfxMove,
   applyTextBarDrag,
@@ -179,6 +180,17 @@ describe("editor bar drag math", () => {
         sourceDurationS: 9,
       }),
     ).toEqual({ inS: 5, durationS: 0.2, durationBeats: null });
+  });
+
+  it("keeps Out fixed when the inspector changes In", () => {
+    expect(
+      applyManualClipTimingPatch({
+        inS: 0.5,
+        durationS: 5,
+        patch: { inS: 1 },
+        sourceDurationS: 8,
+      }),
+    ).toEqual({ inS: 1, durationS: 4.5, durationBeats: null });
   });
 
   it("slides a source window while preserving duration and clamping to source bounds", () => {

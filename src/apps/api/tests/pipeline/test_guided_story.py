@@ -15,10 +15,12 @@ from app.pipeline.guided_story import (
     _compile_execution_plan_version,
     _download_selected,
     _mix_pinned_music,
+    _render_moments,
     _render_video_moment,
     _upload_verified_outputs,
     _verify_receipt,
     compile_execution_plan,
+    compile_guided_runtime_plan,
     validate_execution_plan,
     validate_proposal_timing,
     validate_ready_result,
@@ -30,6 +32,7 @@ from app.schemas.edit_proposal import (
     StoryBeat,
     canonical_media_digest,
 )
+from app.schemas.guided_edit_revision import guided_editor_revision_from_approval
 
 
 def _guided_snapshot(*, direction: str = "guided_story", catalog_extra: bool = False) -> dict:
@@ -487,6 +490,307 @@ def test_compiler_fails_instead_of_dropping_media_when_duration_is_too_short() -
     with pytest.raises(GuidedStoryError, match="too short") as exc:
         _compile_execution_plan_version(raw, track=None, compiler_version=3)
     assert exc.value.code == "guided_story_duration_impossible"
+
+
+def test_runtime_compiles_approved_unused_image_and_video_sources() -> None:
+    guided = _guided_snapshot(catalog_extra=True)
+    snapshot = EditProposalSnapshot.model_validate(guided["approved_proposal"])
+    unused_video = MediaRef(
+        lane="clip",
+        media_id="unused-video",
+        gcs_path="users/u/unused.mp4",
+        generation="15",
+        kind="video",
+        duration_s=6.0,
+    )
+    snapshot = snapshot.model_copy(update={"media": [*snapshot.media, unused_video]})
+    guided["approved_proposal"] = snapshot.model_dump(mode="json")
+    guided["media_digest"] = canonical_media_digest(snapshot.media)
+    guided["media_identities"] = [
+        {
+            "lane": ref.lane,
+            "media_id": ref.media_id,
+            "gcs_path": ref.gcs_path,
+            "generation": ref.generation,
+            "kind": ref.kind,
+        }
+        for ref in snapshot.media
+    ]
+    canonical = compile_execution_plan(guided, track=None)
+    revision = guided_editor_revision_from_approval(
+        proposal_version=guided["proposal_version"],
+        media_digest=guided["media_digest"],
+        snapshot=guided["approved_proposal"],
+        execution_plan=canonical,
+    )
+    revision["segments"].extend(
+        [
+            {
+                "segment_id": "added-image",
+                "media_id": "unused-photo",
+                "source_start_s": 0.0,
+                "source_end_s": 3.0,
+                "duration_s": 3.0,
+            },
+            {
+                "segment_id": "added-video",
+                "media_id": "unused-video",
+                "source_start_s": 0.0,
+                "source_end_s": 3.0,
+                "duration_s": 3.0,
+            },
+        ]
+    )
+    revision["state_hash"] = ""
+
+    runtime = compile_guided_runtime_plan(canonical, guided, revision)
+    by_id = {moment["moment_id"]: moment for moment in runtime["story_timeline"]}
+
+    assert by_id["added-image"]["layout"] == "fullscreen"
+    assert by_id["added-image"]["image_motion"] == "subtle_zoom_in"
+    assert by_id["added-video"]["layout"] == "fullscreen"
+    assert by_id["added-video"]["image_motion"] is None
+
+
+def test_runtime_revision_preserves_looks_transition_order_and_music_window() -> None:
+    guided = _guided_snapshot(catalog_extra=True)
+    canonical = compile_execution_plan(guided, track=None)
+    revision = guided_editor_revision_from_approval(
+        proposal_version=guided["proposal_version"],
+        media_digest=guided["media_digest"],
+        snapshot=guided["approved_proposal"],
+        execution_plan=canonical,
+    )
+
+    revision["segments"][0].update(
+        {
+            "look_preset": "olive_film",
+            "look_adjustments": {
+                "intensity": 0.7,
+                "warmth": 0.3,
+                "contrast": -0.2,
+                "grain": 0.1,
+                "vignette": 0.15,
+            },
+            "transition_after": "crossfade",
+            "transition_duration_s": 0.2,
+        }
+    )
+    revision["segments"][1].update(
+        {
+            # Move the second segment to the overlap boundary.  The compiler
+            # must preserve this order and frame-quantized overlap.
+            "output_start_s": 3.8,
+            "look_preset": "smoky_split_tone",
+            "look_adjustments": {
+                "intensity": 0.6,
+                "warmth": -0.2,
+                "contrast": 0.25,
+                "grain": 0.2,
+                "vignette": 0.3,
+            },
+            "transition_after": "cut",
+            "transition_duration_s": 0.0,
+        }
+    )
+    revision["audio"] = {
+        "mode": "track",
+        "track_id": "replacement-track",
+        "title": "Replacement track",
+        "audio_gcs_path": "music/replacement.m4a",
+        "generation": "track-generation-9",
+        "start_s": 1.25,
+        "end_s": 99.0,
+        "level": 0.35,
+    }
+    revision["state_hash"] = ""
+
+    runtime = compile_guided_runtime_plan(canonical, guided, revision)
+    moments = runtime["story_timeline"]
+
+    assert [moment["moment_id"] for moment in moments] == [
+        segment["segment_id"] for segment in revision["segments"]
+    ]
+    assert moments[0]["look_preset"] == "olive_film"
+    assert moments[0]["look_adjustments"]["warmth"] == pytest.approx(0.3)
+    assert moments[1]["look_preset"] == "smoky_split_tone"
+    assert moments[1]["transition_after"] == "cut"
+    assert moments[0]["transition_after"] == "crossfade"
+    assert moments[0]["output_end_s"] - moments[1]["output_start_s"] == pytest.approx(0.2)
+    assert runtime["music"]["track_id"] == "replacement-track"
+    assert runtime["music"]["audio_gcs_path"] == "music/replacement.m4a"
+    assert runtime["music"]["generation"] == "track-generation-9"
+    assert runtime["music"]["start_s"] == pytest.approx(1.266667)
+    assert runtime["music"]["end_s"] == pytest.approx(
+        runtime["music"]["start_s"] + runtime["resolved_duration_s"], abs=1e-3
+    )
+    assert runtime["music"]["level"] == pytest.approx(0.35)
+    assert [row["generation"] for row in runtime["editor_source_pool"]] == [
+        row["generation"] for row in guided["approved_proposal"]["media"]
+    ]
+    assert runtime["editor_revision_number"] == 1
+    assert len(runtime["editor_revision_hash"]) == 64
+
+
+def test_runtime_revision_removes_music_and_receipt_records_v2_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.pipeline import guided_story
+
+    guided = _guided_snapshot(catalog_extra=True)
+    canonical = compile_execution_plan(guided, track=None)
+    revision = guided_editor_revision_from_approval(
+        proposal_version=guided["proposal_version"],
+        media_digest=guided["media_digest"],
+        snapshot=guided["approved_proposal"],
+        execution_plan=canonical,
+    )
+    revision["audio"] = {"mode": "none", "removed": True}
+    revision["state_hash"] = ""
+    runtime = compile_guided_runtime_plan(canonical, guided, revision)
+
+    final = tmp_path / "guided-final.mp4"
+    final.write_bytes(b"deterministic-v2-output")
+    monkeypatch.setattr(
+        guided_story,
+        "probe_video",
+        lambda _path: SimpleNamespace(
+            duration_s=runtime["resolved_duration_s"], width=1080, height=1920, codec="h264"
+        ),
+    )
+    monkeypatch.setattr(
+        guided_story,
+        "_story_canvas",
+        lambda _orientation: SimpleNamespace(width=1080, height=1920),
+    )
+    monkeypatch.setattr(guided_story, "_audio_codec", lambda _path: "aac")
+    monkeypatch.setattr(guided_story, "_sha256", lambda _path: "b" * 64)
+
+    moment_receipts = [
+        {
+            "moment_id": moment["moment_id"],
+            "beat_id": moment["beat_id"],
+            "media_id": moment["media_id"],
+            "generation": moment["generation"],
+            "kind": moment["kind"],
+            "layout": moment["layout"],
+            "image_motion": moment.get("image_motion"),
+        }
+        for moment in runtime["story_timeline"]
+    ]
+    media_receipts = [
+        {
+            "media_id": media_id,
+            "gcs_path": next(
+                moment["gcs_path"]
+                for moment in runtime["story_timeline"]
+                if moment["media_id"] == media_id
+            ),
+            "generation": next(
+                moment["generation"]
+                for moment in runtime["story_timeline"]
+                if moment["media_id"] == media_id
+            ),
+            "kind": next(
+                moment["kind"]
+                for moment in runtime["story_timeline"]
+                if moment["media_id"] == media_id
+            ),
+        }
+        for media_id in runtime["selected_media_ids"]
+    ]
+    text_receipts = [
+        {"element_id": element["id"], "visible": True} for element in runtime["text_elements"]
+    ]
+
+    receipt = _verify_receipt(
+        runtime,
+        media_receipts,
+        moment_receipts,
+        text_receipts,
+        str(final),
+        music_applied=False,
+    )
+
+    assert receipt["schema_version"] == 2
+    assert receipt["revision_number"] == runtime["editor_revision_number"]
+    assert receipt["revision_hash"] == runtime["editor_revision_hash"]
+    assert receipt["source_pool"] == runtime["editor_source_pool"]
+    assert receipt["segment_order"] == [moment["moment_id"] for moment in moment_receipts]
+    assert receipt["music_removed"] is True
+    assert receipt["music"] is None
+
+
+def test_render_moments_forwards_segment_looks_to_image_and_video_renderers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guided = _guided_snapshot()
+    canonical = compile_execution_plan(guided, track=None)
+    revision = guided_editor_revision_from_approval(
+        proposal_version=guided["proposal_version"],
+        media_digest=guided["media_digest"],
+        snapshot=guided["approved_proposal"],
+        execution_plan=canonical,
+    )
+    revision["segments"][0]["look_preset"] = "olive_film"
+    revision["segments"][0]["look_adjustments"] = {
+        "intensity": 0.8,
+        "warmth": 0.2,
+        "contrast": 0.1,
+        "grain": 0.1,
+        "vignette": 0.2,
+    }
+    revision["segments"][2]["look_preset"] = "smoky_split_tone"
+    revision["segments"][2]["look_adjustments"] = {
+        "intensity": 0.5,
+        "warmth": -0.1,
+        "contrast": 0.2,
+        "grain": 0.2,
+        "vignette": 0.3,
+    }
+    revision["state_hash"] = ""
+    runtime = compile_guided_runtime_plan(canonical, guided, revision)
+    image_moment = next(moment for moment in runtime["story_timeline"] if moment["kind"] == "image")
+    video_moment = next(moment for moment in runtime["story_timeline"] if moment["kind"] == "video")
+    runtime["story_timeline"] = [image_moment, video_moment]
+
+    calls: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        "app.pipeline.guided_story._render_image_moment",
+        lambda *_args, **kwargs: calls.append(("image", kwargs)),
+    )
+    monkeypatch.setattr(
+        "app.pipeline.guided_story._render_video_moment",
+        lambda *_args, **kwargs: calls.append(("video", kwargs)),
+    )
+    probe_index = 0
+
+    def probe_rendered(_path):
+        nonlocal probe_index
+        duration = runtime["story_timeline"][probe_index]["duration_s"]
+        probe_index += 1
+        return SimpleNamespace(duration_s=duration, width=1080, height=1920, codec="h264")
+
+    monkeypatch.setattr("app.pipeline.guided_story.probe_video", probe_rendered)
+    monkeypatch.setattr("app.pipeline.guided_story._sha256", lambda _path: "c" * 64)
+
+    outputs, _receipts = _render_moments(
+        runtime,
+        {
+            moment["media_id"]: f"{moment['media_id']}.source"
+            for moment in runtime["story_timeline"]
+        },
+        str(tmp_path),
+    )
+
+    assert [Path(path).name for path in outputs] == ["moment_00.mp4", "moment_01.mp4"]
+    assert calls[0][0] == "image"
+    assert calls[0][1]["duration_s"] == image_moment["duration_s"]
+    assert calls[0][1]["layout"] == image_moment["layout"]
+    assert calls[0][1]["look_preset"] == "olive_film"
+    assert calls[1][0] == "video"
+    assert calls[1][1]["look_preset"] == "smoky_split_tone"
+    assert calls[1][1]["look_adjustments"] == video_moment["look_adjustments"]
 
 
 def test_compiler_gives_short_video_its_available_time_and_redistributes_beat() -> None:
@@ -990,6 +1294,81 @@ def test_deleted_pinned_music_generation_has_stable_failure_code(monkeypatch) ->
         _mix_pinned_music("story.mp4", "base.mp4", "/tmp", music, track)
 
     assert exc.value.code == "guided_story_music_missing"
+
+
+def test_legacy_pinned_music_without_end_uses_story_duration(monkeypatch) -> None:
+    from app.tasks import template_orchestrate
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        template_orchestrate,
+        "_mix_template_audio",
+        lambda *_args, **kwargs: captured.update(kwargs),
+    )
+    music = {
+        "track_id": "track-1",
+        "title": "Corfu Drift",
+        "audio_gcs_path": "music/corfu.m4a",
+        "generation": "123",
+        "start_s": 2.0,
+    }
+    track = SimpleNamespace(
+        id="track-1",
+        audio_gcs_path="music/corfu.m4a",
+        generation="123",
+    )
+
+    _mix_pinned_music(
+        "story.mp4",
+        "base.mp4",
+        "/tmp",
+        music,
+        track,
+        output_duration_s=4.5,
+    )
+
+    assert captured["validated_window_duration_s"] == 4.5
+    assert captured["audio_window_duration_s"] == 4.5
+
+
+def test_pinned_music_swap_forwards_exact_window_and_level(monkeypatch) -> None:
+    from app.tasks import template_orchestrate
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        template_orchestrate,
+        "_mix_template_audio",
+        lambda *_args, **kwargs: captured.update(kwargs),
+    )
+    music = {
+        "track_id": "replacement-track",
+        "title": "Replacement track",
+        "audio_gcs_path": "music/replacement.m4a",
+        "generation": "track-generation-9",
+        "start_s": 1.25,
+        "end_s": 4.75,
+        "level": 0.35,
+    }
+    track = SimpleNamespace(
+        id="replacement-track",
+        audio_gcs_path="music/replacement.m4a",
+        generation="track-generation-9",
+    )
+
+    _mix_pinned_music(
+        "assembled.mp4",
+        "clean-base.mp4",
+        "/tmp",
+        music,
+        track,
+        output_duration_s=3.5,
+    )
+
+    assert captured["audio_start_offset_s"] == pytest.approx(1.25)
+    assert captured["validated_window_duration_s"] == pytest.approx(3.5)
+    assert captured["audio_window_duration_s"] == pytest.approx(3.5)
+    assert captured["audio_generation"] == "track-generation-9"
+    assert captured["audio_gain"] == pytest.approx(0.35)
 
 
 def _verified_receipt(plan: dict) -> dict:

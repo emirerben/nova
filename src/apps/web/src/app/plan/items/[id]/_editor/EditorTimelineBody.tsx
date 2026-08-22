@@ -183,6 +183,8 @@ export interface EditorTimelineBodyProps {
   /** Click on the collapsed strip: open the Captions tool at that cue. */
   onOpenCaptionCue?: (id: string) => void;
   readOnly?: boolean;
+  textReadOnly?: boolean;
+  textDisabledReason?: string | null;
   onRecordTimelineEdit?: () => void;
   onPreviewTextTiming?: (
     id: string,
@@ -193,12 +195,16 @@ export interface EditorTimelineBodyProps {
 
   visualBlocks: EditorVisualBlockBar[];
   showVisualBlocks?: boolean;
+  visualBlocksReadOnly?: boolean;
+  visualBlocksDisabledReason?: string | null;
   onPreviewVisualTiming?: (
     id: string,
     patch: Pick<EditorVisualBlockBar, "start_s" | "end_s">,
   ) => void;
   motionBlocks?: EditorMotionBar[];
   showMotionBlocks?: boolean;
+  motionBlocksReadOnly?: boolean;
+  motionBlocksDisabledReason?: string | null;
   onPreviewMotionTiming?: (
     id: string,
     patch: Pick<EditorMotionBar, "start_s" | "end_s">,
@@ -213,7 +219,9 @@ export interface EditorTimelineBodyProps {
 
   slots: DraftSlot[];
   clipReadOnly?: boolean;
+  clipAddReadOnly?: boolean;
   clipDisabledReason?: string | null;
+  clipAddDisabledReason?: string | null;
   clipSourceDurations?: Record<string, number | null>;
   onPreviewClipTiming?: (
     key: string,
@@ -227,6 +235,7 @@ export interface EditorTimelineBodyProps {
     TimelineClip,
     "clip_index" | "signed_url" | "duration_s"
   >[];
+  allowRepeatedSources?: boolean;
   /** Append an uploaded source that the rendered cut did not select. */
   onAddClip?: (clipIndex: number) => void;
 
@@ -247,6 +256,8 @@ export interface EditorTimelineBodyProps {
   onPreviewCarouselDuration?: (durationS: number) => number | void;
 
   sfx: EditorSfxBar[];
+  sfxReadOnly?: boolean;
+  sfxDisabledReason?: string | null;
   onPreviewSfxTiming?: (
     id: string,
     patch: Pick<EditorSfxBar, "at_s" | "end_s">,
@@ -262,6 +273,8 @@ export interface EditorTimelineBodyProps {
   onToggleSoundMute: () => void;
 
   overlays: EditorOverlayBar[];
+  overlaysReadOnly?: boolean;
+  overlaysDisabledReason?: string | null;
   onPreviewOverlayTiming?: (
     id: string,
     patch: Pick<EditorOverlayBar, "start_s" | "end_s">,
@@ -368,19 +381,27 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     captionsEnabled = true,
     onOpenCaptionCue,
     readOnly = false,
+    textReadOnly = readOnly,
+    textDisabledReason,
     onRecordTimelineEdit,
     onPreviewTextTiming,
     visualBlocks: baseVisualBlocks,
     showVisualBlocks = true,
+    visualBlocksReadOnly = readOnly,
+    visualBlocksDisabledReason,
     onPreviewVisualTiming,
     motionBlocks: baseMotionBlocks = [],
     showMotionBlocks = false,
+    motionBlocksReadOnly = readOnly,
+    motionBlocksDisabledReason,
     onPreviewMotionTiming,
     cameraEffects: baseCameraEffects = [],
     onPreviewCameraTiming,
     slots,
     clipReadOnly = false,
+    clipAddReadOnly = clipReadOnly,
     clipDisabledReason,
+    clipAddDisabledReason,
     clipSourceDurations,
     onPreviewClipTiming,
     onPreviewSeek,
@@ -388,6 +409,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     clipPreviewMode = "rendered",
     clipsLoading,
     filmstripClips,
+    allowRepeatedSources = false,
     onAddClip,
     carouselBlock = null,
     carouselReadOnly = false,
@@ -396,6 +418,8 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     onSetCarouselPosition,
     onPreviewCarouselDuration,
     sfx: baseSfx,
+    sfxReadOnly = readOnly,
+    sfxDisabledReason,
     onPreviewSfxTiming,
     hasMusic,
     musicLabel,
@@ -407,6 +431,8 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     soundMuted,
     onToggleSoundMute,
     overlays: baseOverlays,
+    overlaysReadOnly = readOnly,
+    overlaysDisabledReason,
     onPreviewOverlayTiming,
     onOpenSounds,
     onScrub,
@@ -580,9 +606,9 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   const activeClipIndices = new Set(
     slots.filter((slot) => !slot.removed).map((slot) => slot.clipIndex),
   );
-  const unusedFilmstripClips = filmstripClips.filter(
-    (clip) => !activeClipIndices.has(clip.clip_index),
-  );
+  const unusedFilmstripClips = allowRepeatedSources
+    ? filmstripClips
+    : filmstripClips.filter((clip) => !activeClipIndices.has(clip.clip_index));
   const videoLaneHeight = unusedFilmstripClips.length > 0 ? 76 : 48;
   const activeFilmstripCount = filmstripLayout.windows.reduce(
     (count, win, i) => {
@@ -874,7 +900,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     e: React.PointerEvent<HTMLElement>,
     bar: TextElementBar,
   ) {
-    if (readOnly) return;
+    if (readOnly || textReadOnly) return;
     if (bar.role === "lyric_line") return;
     if (bar.id.startsWith("subtitled-caption-")) return;
     e.preventDefault();
@@ -926,7 +952,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   }
 
   function startSfxDrag(e: React.PointerEvent<HTMLElement>, bar: EditorSfxBar) {
-    if (readOnly) return;
+    if (readOnly || sfxReadOnly) return;
     const rect = e.currentTarget.getBoundingClientRect();
     e.preventDefault();
     e.stopPropagation();
@@ -965,7 +991,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   }
 
   function startOverlayDrag(e: React.PointerEvent<HTMLElement>, bar: EditorOverlayBar) {
-    if (readOnly) return;
+    if (readOnly || overlaysReadOnly) return;
     e.preventDefault();
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -988,7 +1014,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     e: React.PointerEvent<HTMLElement>,
     block: EditorVisualBlockBar,
   ) {
-    if (readOnly) return;
+    if (readOnly || visualBlocksReadOnly) return;
     e.preventDefault();
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -1011,7 +1037,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     e: React.PointerEvent<HTMLElement>,
     block: EditorMotionBar,
   ) {
-    if (readOnly || block.readOnly) return;
+    if (readOnly || motionBlocksReadOnly || block.readOnly) return;
     e.preventDefault();
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -1272,12 +1298,15 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                             dataKind="text"
                             dataId={b.id}
                             dataRowIndex={rowIndex}
-                            onPointerDown={locked ? undefined : (e) => startTextDrag(e, b)}
+                            onPointerDown={
+                              locked || textReadOnly ? undefined : (e) => startTextDrag(e, b)
+                            }
                             onPointerMove={(e) => updateDrag(e.clientX)}
                             onPointerUp={(e) => finishDrag(e, "text", b.id)}
                             onPointerCancel={cancelDrag}
                             suppressClickRef={suppressClickRef}
-                            showTrimHandles={!locked}
+                            showTrimHandles={!locked && !textReadOnly}
+                            title={textReadOnly ? (textDisabledReason ?? undefined) : undefined}
                             flashing={flashing}
                             className="bg-[#0c0c0e] text-white"
                           >
@@ -1445,8 +1474,10 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                           dataKind="visual"
                           dataId={block.id}
                           dataRowIndex={rowIndex}
-                          onPointerDown={(event) =>
-                            startVisualDrag(event, block)
+                          onPointerDown={
+                            visualBlocksReadOnly
+                              ? undefined
+                              : (event) => startVisualDrag(event, block)
                           }
                           onPointerMove={(event) =>
                             updateDrag(event.clientX)
@@ -1456,7 +1487,12 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                           }
                           onPointerCancel={cancelDrag}
                           suppressClickRef={suppressClickRef}
-                          showTrimHandles
+                          showTrimHandles={!visualBlocksReadOnly}
+                          title={
+                            visualBlocksReadOnly
+                              ? (visualBlocksDisabledReason ?? undefined)
+                              : undefined
+                          }
                           className="border border-lime-200 bg-lime-50 text-lime-800"
                         >
                           <span className="pointer-events-none truncate px-2 text-[10px] font-semibold">
@@ -1496,12 +1532,21 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                           dataKind="motion"
                           dataId={block.id}
                           dataRowIndex={rowIndex}
-                          onPointerDown={block.readOnly ? undefined : (event) => startMotionDrag(event, block)}
+                          onPointerDown={
+                            block.readOnly || motionBlocksReadOnly
+                              ? undefined
+                              : (event) => startMotionDrag(event, block)
+                          }
                           onPointerMove={(event) => updateDrag(event.clientX)}
                           onPointerUp={(event) => finishDrag(event, "motion", block.id)}
                           onPointerCancel={cancelDrag}
                           suppressClickRef={suppressClickRef}
-                          showTrimHandles={!block.readOnly}
+                          showTrimHandles={!block.readOnly && !motionBlocksReadOnly}
+                          title={
+                            motionBlocksReadOnly
+                              ? (motionBlocksDisabledReason ?? undefined)
+                              : undefined
+                          }
                           className="border border-lime-300 bg-lime-50 text-[#3f3f46]"
                         >
                           <span className="pointer-events-none truncate px-2 text-[10px] font-semibold">{block.label}</span>
@@ -1663,17 +1708,17 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                     aria-label="Unused uploaded clips"
                   >
                     <span className="sticky left-0 z-10 shrink-0 bg-white/90 px-1 text-[9px] font-semibold uppercase tracking-wider text-zinc-500">
-                      Unused
+                      {allowRepeatedSources ? "Sources" : "Unused"}
                     </span>
                     {unusedFilmstripClips.map((source) => (
                       <button
                         key={source.clip_index}
                         type="button"
                         aria-label={`Add source clip ${source.clip_index + 1} to timeline`}
-                        disabled={clipReadOnly || !onAddClip}
+                        disabled={(clipAddReadOnly ?? clipReadOnly) || !onAddClip}
                         title={
-                          clipReadOnly
-                            ? (clipDisabledReason ?? "Clip timing is locked")
+                          (clipAddReadOnly ?? clipReadOnly)
+                            ? (clipAddDisabledReason ?? clipDisabledReason ?? "Clip timing is locked")
                             : `Add Clip ${source.clip_index + 1} to the end`
                         }
                         onClick={(event) => {
@@ -1789,6 +1834,8 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                   {sfx.length === 0 && (
                     <button
                       type="button"
+                      disabled={sfxReadOnly}
+                      title={sfxReadOnly ? (sfxDisabledReason ?? undefined) : undefined}
                       onClick={(e) => {
                         e.stopPropagation();
                         onOpenSounds?.();
@@ -1821,12 +1868,13 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                           dataKind="sfx"
                           dataId={s.id}
                           dataRowIndex={rowIndex}
-                          onPointerDown={(e) => startSfxDrag(e, s)}
+                          onPointerDown={sfxReadOnly ? undefined : (e) => startSfxDrag(e, s)}
                           onPointerMove={(e) => updateDrag(e.clientX)}
                           onPointerUp={(e) => finishDrag(e, "sfx", s.id)}
                           onPointerCancel={cancelDrag}
                           suppressClickRef={suppressClickRef}
-                          showTrimHandles
+                          showTrimHandles={!sfxReadOnly}
+                          title={sfxReadOnly ? (sfxDisabledReason ?? undefined) : undefined}
                           className="bg-zinc-300 text-[#0c0c0e]"
                         >
                           <span className="pointer-events-none truncate px-1.5 text-[9px]">
@@ -1923,12 +1971,17 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                             dataKind="overlay"
                             dataId={o.id}
                             dataRowIndex={rowIndex}
-                            onPointerDown={(e) => startOverlayDrag(e, o)}
+                            onPointerDown={
+                              overlaysReadOnly ? undefined : (e) => startOverlayDrag(e, o)
+                            }
                             onPointerMove={(e) => updateDrag(e.clientX)}
                             onPointerUp={(e) => finishDrag(e, "overlay", o.id)}
                             onPointerCancel={cancelDrag}
                             suppressClickRef={suppressClickRef}
-                            showTrimHandles
+                            showTrimHandles={!overlaysReadOnly}
+                            title={
+                              overlaysReadOnly ? (overlaysDisabledReason ?? undefined) : undefined
+                            }
                             flashing={flashing}
                             className={
                               o.suggested

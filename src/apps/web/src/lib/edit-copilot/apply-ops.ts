@@ -72,6 +72,11 @@ import {
   type MotionAssetRef,
   type MotionPresetInstance,
 } from "@nova/motion-runtime";
+import {
+  canEditClip,
+  canEditMusic,
+  operationDisabledReason,
+} from "@/app/plan/items/[id]/_editor/editor-operation-capabilities";
 
 export type RejectedOpReason =
   | "invalid_op"
@@ -134,6 +139,8 @@ export interface ApplyCopilotOpsResult {
   nextCarouselMoment?: CarouselMoment | null;
   acceptedSuggestionRefs?: AcceptedSuggestionRef[];
   nextMusicTrackId?: string;
+  /** Explicit soundtrack removal. Distinct from set_mix(0), which retains the track. */
+  musicRemoved?: true;
   nextMixLevel?: number;
   renderRequest?:
     | { kind: "set_intro_layout"; layout: "linear" | "cluster" }
@@ -187,6 +194,7 @@ export interface ApplyCopilotOpsContext {
   poolAssets?: PoolAsset[];
   pendingSuggestions?: OverlaySuggestion[];
   musicTrackId?: string | null;
+  musicRemoved?: boolean;
   mixLevel?: number | null;
   title?: string;
   captionMeta?: CopilotCaptionMetaSnapshot | null;
@@ -324,6 +332,71 @@ function sameValue(a: unknown, b: unknown): boolean {
   return a === b;
 }
 
+function canonicalizeForComparison(value: unknown): unknown {
+  if (typeof value === "number") return roundCopilotNumber(value);
+  if (Array.isArray(value)) return value.map(canonicalizeForComparison);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, nested]) => nested !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, canonicalizeForComparison(nested)]),
+    );
+  }
+  return value;
+}
+
+function sameNormalizedValue(a: unknown, b: unknown): boolean {
+  return JSON.stringify(canonicalizeForComparison(a)) === JSON.stringify(canonicalizeForComparison(b));
+}
+
+function granularOperationRestriction(
+  op: CopilotOp,
+  capabilities: EditorCapabilities | null | undefined,
+): string | null {
+  if (!capabilities?.clips && !capabilities?.music_operations && !capabilities?.nova) return null;
+  const clipOperation =
+    op.op === "reorder_clip" ? "reorder" as const
+      : op.op === "remove_clip" ? "remove" as const
+        : op.op === "split_clip" ? "split" as const
+          : op.op === "set_look_preset" ? "looks" as const
+            : op.op === "set_transition" ? "transitions" as const
+              : ["set_clip_duration", "set_clip_in", "trim_clip_start", "trim_output_start"].includes(op.op)
+                ? "trim" as const
+                : null;
+  if (clipOperation && !canEditClip(capabilities, clipOperation, true)) {
+    return operationDisabledReason(capabilities.clips?.[clipOperation]) ??
+      `clip ${clipOperation} is disabled for this variant`;
+  }
+  if (op.op === "trim_clip_start") {
+    const value = capabilities.nova?.trim_clip_start;
+    if (value !== undefined && (typeof value === "boolean" ? !value : !value.editable)) {
+      return operationDisabledReason(value) ?? "clip start trimming is disabled for this variant";
+    }
+  }
+  if (op.op === "trim_output_start") {
+    const value = capabilities.nova?.trim_output_start;
+    if (value !== undefined && (typeof value === "boolean" ? !value : !value.editable)) {
+      return operationDisabledReason(value) ?? "output start trimming is disabled for this variant";
+    }
+  }
+  const musicOperation = op.op === "swap_music" ? "swap" as const
+    : op.op === "remove_music" ? "remove" as const
+      : op.op === "set_mix" ? "level" as const
+        : null;
+  if (musicOperation && !canEditMusic(capabilities, musicOperation, true)) {
+    return operationDisabledReason(capabilities.music_operations?.[musicOperation]) ??
+      `music ${musicOperation} is disabled for this variant`;
+  }
+  if (op.op === "remove_music") {
+    const value = capabilities.nova?.remove_music;
+    if (value !== undefined && (typeof value === "boolean" ? !value : !value.editable)) {
+      return operationDisabledReason(value) ?? "music removal is disabled for this variant";
+    }
+  }
+  return null;
+}
+
 function textFingerprintMatches(
   bar: TextElementBar,
   snap: CopilotTextSnapshotBar,
@@ -439,6 +512,8 @@ function labelForOp(op: CopilotOp): string {
   if (op.op === "remove_text") return `Remove text ${op.bar_index + 1}`;
   if (op.op === "set_clip_duration") return `Clip ${op.slot_index + 1} duration`;
   if (op.op === "set_clip_in") return `Clip ${op.slot_index + 1} in`;
+  if (op.op === "trim_clip_start") return `Trim clip ${op.slot_index + 1} start`;
+  if (op.op === "trim_output_start") return "Trim video start";
   if (op.op === "reorder_clip") return `Move clip ${op.from_index + 1}`;
   if (op.op === "remove_clip") return `Remove clip ${op.slot_index + 1}`;
   if (op.op === "split_clip") return `Split clip ${op.slot_index + 1}`;
@@ -458,6 +533,7 @@ function labelForOp(op: CopilotOp): string {
   if (op.op === "set_caption_meta") return "Captions";
   if (op.op === "set_caption_emphasis") return `Caption ${op.cue_index + 1} emphasis`;
   if (op.op === "swap_music") return "Swapped song";
+  if (op.op === "remove_music") return "Remove music";
   if (op.op === "set_mix") return "Music volume";
   if (op.op === "set_intro_layout") return "Intro layout";
   if (op.op === "apply_custom_effect") return "Custom effect";
@@ -750,6 +826,7 @@ export function applyCopilotOps(
   let nextCarouselMoment: CarouselMoment | null | undefined;
   let acceptedSuggestionRefs: AcceptedSuggestionRef[] | undefined;
   let nextMusicTrackId: string | undefined;
+  let musicRemoved: true | undefined;
   let nextMixLevel: number | undefined;
   let renderRequest: ApplyCopilotOpsResult["renderRequest"];
   let nextTitle: string | undefined;
@@ -830,6 +907,7 @@ export function applyCopilotOps(
       nextCarouselMoment !== undefined ||
       (acceptedSuggestionRefs?.length ?? 0) > 0 ||
       nextMusicTrackId !== undefined ||
+      musicRemoved !== undefined ||
       nextMixLevel !== undefined ||
       nextTitle !== undefined ||
       captionMetaPatch !== undefined ||
@@ -855,6 +933,11 @@ export function applyCopilotOps(
       rejected.push(reject(op.op, labelForOp(op), "capability_disabled", `${family} edits are disabled for this variant`));
       continue;
     }
+    const operationRestriction = granularOperationRestriction(op, ctx.capabilities);
+    if (operationRestriction) {
+      rejected.push(reject(op.op, labelForOp(op), "capability_disabled", operationRestriction));
+      continue;
+    }
     if (op.op === "split_clip" && ctx.capabilities?.split_clips === false) {
       rejected.push(reject(op.op, labelForOp(op), "capability_disabled", "clip splitting is disabled for this variant"));
       continue;
@@ -869,6 +952,10 @@ export function applyCopilotOps(
       }
       if (!textFingerprintMatches(bar, snap, ["text"])) {
         rejected.push(reject(op.op, labelForOp(op), "user_changed", "text was changed after Nova read it"));
+        continue;
+      }
+      if (bar.text === op.text) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "text already matches"));
         continue;
       }
       textActions.push(
@@ -920,6 +1007,10 @@ export function applyCopilotOps(
         rejected.push(reject(op.op, labelForOp(op), "user_changed", "style was changed after Nova read it"));
         continue;
       }
+      if (patchKeys.every((key) => sameValue(textValue(bar, snap, key), patch[key]))) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "text style already matches"));
+        continue;
+      }
       textActions.push({ type: "PATCH_BAR", id: bar.id, patch: effectivePatch });
       for (const key of patchKeys) {
         applied.push({
@@ -956,6 +1047,10 @@ export function applyCopilotOps(
       const retimed = textMotionV2Enabled
         ? motionPatchForManualEnd({ ...bar, ...next }, next.end_s, videoDurationS)
         : { end_s: next.end_s };
+      if (sameValue(next.start_s, bar.start_s) && sameValue(next.end_s, bar.end_s)) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "text timing already matches"));
+        continue;
+      }
       textActions.push({
         type: "PATCH_BAR",
         id: bar.id,
@@ -1024,6 +1119,10 @@ export function applyCopilotOps(
         sourceDurationS: snap.source_duration_s,
       });
       const before = slotDuration(slots, grid, index);
+      if (sameValue(patch.durationS ?? before, before)) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "clip duration is already set"));
+        continue;
+      }
       workingSlots = slots.map((s) => (s.key === slot.key ? { ...s, ...patch } : s));
       nextSlots = workingSlots;
       timelineMutated = true;
@@ -1047,10 +1146,92 @@ export function applyCopilotOps(
         durationS: duration,
         sourceDurationS: snap.source_duration_s,
       });
+      if (sameValue(patch.inS, slot.inS)) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "clip in-point is already set"));
+        continue;
+      }
       workingSlots = slots.map((s) => (s.key === slot.key ? { ...s, ...patch } : s));
       nextSlots = workingSlots;
       timelineMutated = true;
       applied.push({ label: `Clip ${op.slot_index + 1} in`, from: fmtSeconds(slot.inS), to: fmtSeconds(patch.inS) });
+    } else if (op.op === "trim_clip_start") {
+      const snap = slotSnapAt(ctx.snapshot, op.slot_index);
+      const slots = currentSlots();
+      const index = snap ? currentSlotIndex(slots, snap.key) : -1;
+      const slot = index >= 0 ? slots[index] : null;
+      if (!snap || !slot) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "clip slot no longer exists"));
+        continue;
+      }
+      if (!slotFingerprintMatches(slots, grid, slot, index, snap, ["in_s", "duration_s"])) {
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "clip timing changed after Nova read it"));
+        continue;
+      }
+      const beforeDuration = slotDuration(slots, grid, index);
+      const removedS = Math.min(round(op.start_s), round(beforeDuration - 0.1));
+      if (removedS <= 0) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "clip is already at its minimum duration"));
+        continue;
+      }
+      const patch = applyClipTimingInput({
+        inS: slot.inS + removedS,
+        durationS: beforeDuration - removedS,
+        sourceDurationS: snap.source_duration_s,
+      });
+      workingSlots = slots.map((candidate) => candidate.key === slot.key ? { ...candidate, ...patch } : candidate);
+      nextSlots = workingSlots;
+      timelineMutated = true;
+      applied.push({
+        label: `Clip ${op.slot_index + 1} start`,
+        from: fmtSeconds(slot.inS),
+        to: fmtSeconds(patch.inS),
+      });
+    } else if (op.op === "trim_output_start") {
+      const slots = currentSlots();
+      if (!slotOrderMatches(slots, ctx.snapshot)) {
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "clip timeline changed after Nova read it"));
+        continue;
+      }
+      const layout = sequentialSlotLayout(slots, grid);
+      if (op.start_s >= layout.totalDurationS - 0.1) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "the trim would remove the whole video"));
+        continue;
+      }
+      const active = slots
+        .map((slotItem, indexItem) => ({ slot: slotItem, index: indexItem, win: layout.windows[indexItem] }))
+        .filter((item) => !item.slot.removed && item.win?.startS != null && item.win.durationS > 0);
+      let crossing = active[0];
+      for (const item of active) {
+        if ((item.win.startS ?? 0) <= op.start_s + 1e-6) crossing = item;
+        else break;
+      }
+      if (!crossing) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "the video has no editable clips"));
+        continue;
+      }
+      const crossingOffset = Math.max(0, op.start_s - (crossing.win.startS ?? 0));
+      const crossingDuration = crossing.win.durationS;
+      const trimS = Math.min(round(crossingOffset), round(crossingDuration - 0.1));
+      const precedingKeys = new Set(active.filter((item) => item.index < crossing.index).map((item) => item.slot.key));
+      workingSlots = slots.map((candidate) => {
+        if (precedingKeys.has(candidate.key)) return { ...candidate, removed: true };
+        if (candidate.key !== crossing.slot.key || trimS <= 0) return candidate;
+        return {
+          ...candidate,
+          ...applyClipTimingInput({
+            inS: candidate.inS + trimS,
+            durationS: crossingDuration - trimS,
+            sourceDurationS: slotSnapAt(ctx.snapshot, crossing.index)?.source_duration_s ?? null,
+          }),
+        };
+      });
+      if (sameNormalizedValue(workingSlots, slots)) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "the video already starts there"));
+        continue;
+      }
+      nextSlots = workingSlots;
+      timelineMutated = true;
+      applied.push({ label: "Video start", from: "0.0s", to: fmtSeconds(op.start_s) });
     } else if (op.op === "reorder_clip") {
       const slots = currentSlots();
       const fromSnap = slotSnapAt(ctx.snapshot, op.from_index);
@@ -1065,6 +1246,10 @@ export function applyCopilotOps(
       }
       const from = currentSlotIndex(slots, fromSnap.key);
       const to = currentSlotIndex(slots, toSnap.key);
+      if (from === to) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "clip is already in that position"));
+        continue;
+      }
       const reordered = [...slots];
       const [moved] = reordered.splice(from, 1);
       reordered.splice(to, 0, moved);
@@ -1196,6 +1381,11 @@ export function applyCopilotOps(
         ...(snappedAtS !== undefined ? { at_s: snappedAtS } : {}),
         ...(op.gain !== undefined ? { gain: op.gain } : {}),
       };
+      const patchedPlacement = { ...placement, ...patch };
+      if (sameNormalizedValue(patchedPlacement, placement)) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "sound placement already matches"));
+        continue;
+      }
       workingSfx = placements.map((sfx) => (sfx.id === placement.id ? { ...sfx, ...patch } : sfx));
       nextSfx = workingSfx;
       for (const field of fields) {
@@ -1239,6 +1429,11 @@ export function applyCopilotOps(
         ...(overlaySpan.startS !== undefined ? { start_s: overlaySpan.startS } : {}),
         ...(overlaySpan.endS !== undefined ? { end_s: overlaySpan.endS } : {}),
       };
+      const patchedCard = { ...card, ...overlayPatch };
+      if (sameNormalizedValue(patchedCard, card)) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "overlay already matches"));
+        continue;
+      }
       workingOverlays = overlays.map((overlay) => (overlay.id === card.id ? { ...overlay, ...overlayPatch } : overlay));
       nextOverlays = workingOverlays;
       applied.push({
@@ -1484,6 +1679,22 @@ export function applyCopilotOps(
       }
       nextMusicTrackId = op.track_id;
       applied.push({ label: "Swapped song", from: music.current_track_title ?? "current", to: music.candidates.find((t) => t.id === op.track_id)?.title ?? op.track_id });
+    } else if (op.op === "remove_music") {
+      const music = ctx.snapshot.music;
+      if (!music?.removable) {
+        rejected.push(reject(op.op, labelForOp(op), "capability_disabled", "music removal is disabled for this variant"));
+        continue;
+      }
+      if (ctx.musicRemoved || !music.current_track_id || !ctx.musicTrackId) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "the draft already has no music"));
+        continue;
+      }
+      if (ctx.musicTrackId !== music.current_track_id) {
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "song changed after Nova read it"));
+        continue;
+      }
+      musicRemoved = true;
+      applied.push({ label: "Music", from: music.current_track_title ?? "current", to: "removed" });
     } else if (op.op === "set_mix") {
       if (!ctx.snapshot.mix) {
         rejected.push(reject(op.op, labelForOp(op), "capability_disabled", "music mix is disabled for this variant"));
@@ -1654,6 +1865,10 @@ export function applyCopilotOps(
         ...(op.intensity !== undefined ? { intensity: op.intensity } : {}),
         source: "user",
       });
+      if (sameNormalizedValue(patched, effect)) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "camera effect already matches"));
+        continue;
+      }
       workingCameraEffects = workingCameraEffects.map((candidate) =>
         candidate.id === effect.id ? patched : candidate,
       );
@@ -1709,6 +1924,13 @@ export function applyCopilotOps(
         continue;
       }
       const duration = op.transition === "cut" ? null : (op.duration_s ?? 0.3);
+      if (
+        currentTransition === op.transition &&
+        sameValue(currentDuration, duration)
+      ) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "transition already matches"));
+        continue;
+      }
       workingSlots = slots.map((slot, index) =>
         index === leftIndex
           ? { ...slot, transitionAfter: op.transition, transitionDurationS: duration }
@@ -1745,6 +1967,10 @@ export function applyCopilotOps(
         ...(op.transition_in ? { transition_in: op.transition_in } : {}),
         ...(op.transition_out ? { transition_out: op.transition_out } : {}),
       } as VisualBlock;
+      if (sameNormalizedValue(patched, block)) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "visual fade already matches"));
+        continue;
+      }
       workingVisualBlocks = workingVisualBlocks.map((candidate) =>
         candidate.id === block.id ? patched : candidate,
       );
@@ -1951,6 +2177,31 @@ export function applyCopilotOps(
         continue;
       }
       if (rawParams) delete rawParams.asset_ids;
+      const comparisonBase = scene.preset_id === "route_trace"
+        ? scene
+        : upgradeCreatorBlockInstanceToV2(scene);
+      const currentParams = ("params" in scene ? scene.params : {}) as Record<string, unknown>;
+      const paramsChanged = rawParams
+        ? Object.entries(rawParams).some(
+            ([key, value]) => !sameNormalizedValue(currentParams[key], value),
+          )
+        : false;
+      const assetsChanged = assets !== undefined && !sameNormalizedValue(currentParams.assets, assets);
+      const comparisonMotion = "motion" in comparisonBase ? comparisonBase.motion : null;
+      const semanticPatchChanges =
+        paramsChanged ||
+        assetsChanged ||
+        (op.patch.palette !== undefined && !sameNormalizedValue(op.patch.palette, scene.palette)) ||
+        (op.patch.intensity !== undefined && !sameValue(op.patch.intensity, scene.intensity)) ||
+        (op.patch.start_s !== undefined && !sameValue(Math.round(op.patch.start_s * 30), scene.start_frame)) ||
+        (op.patch.end_s !== undefined && !sameValue(Math.round(op.patch.end_s * 30), scene.end_frame_exclusive)) ||
+        (op.patch.speed !== undefined && !sameValue(op.patch.speed, comparisonMotion?.speed)) ||
+        (op.patch.easing !== undefined && op.patch.easing !== comparisonMotion?.easing) ||
+        (op.patch.hold_frames !== undefined && !sameValue(op.patch.hold_frames, comparisonMotion?.hold_frames));
+      if (!semanticPatchChanges) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "Creator Block already matches"));
+        continue;
+      }
       const entry = scene.preset_id === "route_trace" ? null : creatorBlockEntry(scene.preset_id);
       const advancedParamKeys = new Set(
         entry?.parameters
@@ -2033,6 +2284,10 @@ export function applyCopilotOps(
         rejected.push(reject(op.op, labelForOp(op), "invalid_op", validationResult.errors.join("; ")));
         continue;
       }
+      if (sameNormalizedValue(patched, scene)) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "Creator Block already matches"));
+        continue;
+      }
       workingMotionScenes = candidate;
       nextMotionScenes = candidate;
       applied.push({ label: snap.label, from: `${fmtSeconds(scene.start_frame / 30)}–${fmtSeconds(scene.end_frame_exclusive / 30)}`, to: `${fmtSeconds(patched.start_frame / 30)}–${fmtSeconds(patched.end_frame_exclusive / 30)}` });
@@ -2094,6 +2349,7 @@ export function applyCopilotOps(
         acceptedSuggestionRefs = [...(acceptedSuggestionRefs ?? []), ...rerun.acceptedSuggestionRefs];
       }
       if (rerun.nextMusicTrackId !== undefined) nextMusicTrackId = rerun.nextMusicTrackId;
+      if (rerun.musicRemoved) musicRemoved = true;
       if (rerun.nextMixLevel !== undefined) nextMixLevel = rerun.nextMixLevel;
       if (rerun.renderRequest) renderRequest = rerun.renderRequest;
       if (rerun.nextTitle !== undefined) nextTitle = rerun.nextTitle;
@@ -2123,6 +2379,7 @@ export function applyCopilotOps(
     nextCarouselMoment,
     acceptedSuggestionRefs,
     nextMusicTrackId,
+    musicRemoved,
     nextMixLevel,
     renderRequest,
     nextTitle,

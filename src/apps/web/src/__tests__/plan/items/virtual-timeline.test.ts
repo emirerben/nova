@@ -229,6 +229,24 @@ describe("virtual timeline", () => {
     });
   });
 
+  it("projects authored lane timing through a trimmed draft against its baseline", () => {
+    const baseline = [
+      slot({ key: "a", clipIndex: 0, durationS: 4 }),
+      slot({ key: "b", clipIndex: 1, durationS: 5 }),
+    ];
+    const draft = [
+      slot({ key: "a", clipIndex: 0, durationS: 2 }),
+      slot({ key: "b", clipIndex: 1, durationS: 5 }),
+    ];
+    const timeline = buildVirtualTimeline(draft, clips, [], null, baseline);
+
+    expect(projectBaseRange(timeline, { startS: 4.5, endS: 5.5 })).toEqual({
+      startS: 2.5,
+      endS: 3.5,
+    });
+    expect(unprojectOutputTime(timeline, 2.5)).toBe(4.5);
+  });
+
   it("clamps before the start and at the final frame", () => {
     const timeline = buildVirtualTimeline(
       [slot({ key: "a", clipIndex: 0, inS: 3, durationS: 2 })],

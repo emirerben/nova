@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.47.0.0] — 2026-08-22
+
+### Added
+- **Approved guided stories can now be edited after generation.** Creators can trim, split, add,
+  remove, and reorder approved media; set transitions and Looks; change or remove music; edit
+  supported timed layers and orientation; and ask Nova to trim the output or remove its music.
+- **Guided edits now carry an exact revision receipt.** Every Save records the approved source
+  generations, effective timing, Looks, music state, lane hashes, and output evidence without
+  changing the original approved proposal.
+
+### Changed
+- **Editor controls now reflect the exact operation that is available.** Locked actions are visibly
+  disabled with a reason instead of appearing interactive and silently doing nothing. Preview,
+  scrubbing, undo, Save, and the renderer share the same story-native timeline projection.
+- **Nova reports unchanged drafts truthfully.** Trim and music requests distinguish real edits,
+  safe no-ops, stale revisions, unavailable capabilities, and model or network failures.
+
+### Fixed
+- Guided trim, Look, orientation, and music edits no longer fall through strict legacy guards or
+  montage-only handlers. Music removal produces a silent AAC soundtrack, while muting keeps the
+  selected track attached at zero gain.
+- Guided Saves and worker retries now validate exact approved media generations, compare revision
+  and render-generation tokens atomically, and prevent stale renders from publishing over newer
+  edits.
+
 ## [0.46.0.3] — 2026-08-22
 
 ### Fixed

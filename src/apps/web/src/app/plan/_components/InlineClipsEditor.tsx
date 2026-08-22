@@ -515,6 +515,7 @@ export function InlineClipsEditor({
   externalState,
   externalDispatch,
   externalClips,
+  externalGuidedTokens,
   onReload,
   focusedKey,
 }: {
@@ -528,6 +529,8 @@ export function InlineClipsEditor({
   externalDispatch?: import("react").Dispatch<import("../../generative/timeline-reducer").EditorAction>;
   /** Controlled mode: external clips list. */
   externalClips?: TimelineClip[];
+  /** Guided Story V2 CAS pair from the same GET /timeline response. */
+  externalGuidedTokens?: { revision_number: number; base_generation: string } | null;
   /** Controlled mode: called after Apply/Reset so the parent can re-sync. */
   onReload?: () => void;
   /**
@@ -544,6 +547,10 @@ export function InlineClipsEditor({
     "loading" | "error" | "ready"
   >(isControlled ? "ready" : "loading");
   const [uncontrolledClips, setUncontrolledClips] = useState<TimelineClip[]>([]);
+  const [uncontrolledGuidedTokens, setUncontrolledGuidedTokens] = useState<{
+    revision_number: number;
+    base_generation: string;
+  } | null>(null);
   const [uncontrolledState, uncontrolledDispatch] = useReducer(
     timelineReducer,
     EMPTY_EDITOR_STATE,
@@ -613,6 +620,14 @@ export function InlineClipsEditor({
     try {
       const data = await getTimeline(ownerId, variantId, base);
       setUncontrolledClips(data.clips);
+      setUncontrolledGuidedTokens(
+        data.revision_number != null && data.base_generation != null
+          ? {
+              revision_number: data.revision_number,
+              base_generation: data.base_generation,
+            }
+          : null,
+      );
       uncontrolledDispatch({ type: "RESET_DRAFT", timeline: data });
       setUncontrolledLoadState("ready");
     } catch {
@@ -850,6 +865,7 @@ export function InlineClipsEditor({
     try {
       const payload = state.slots.map((s) => ({
         slot_id: s.slotId,
+        parent_segment_id: s.parentSegmentId ?? null,
         clip_index: s.clipIndex,
         in_s: s.inS,
         duration_beats: s.durationBeats,
@@ -857,7 +873,13 @@ export function InlineClipsEditor({
         removed: s.removed,
         look_preset: s.lookPreset ?? "none",
       }));
-      await editTimeline(ownerId, variantId, payload, base);
+      await editTimeline(
+        ownerId,
+        variantId,
+        payload,
+        base,
+        isControlled ? (externalGuidedTokens ?? null) : uncontrolledGuidedTokens,
+      );
       onRenderEnqueued();
       // In controlled mode, signal parent to re-fetch so header bars also update.
       onReload?.();

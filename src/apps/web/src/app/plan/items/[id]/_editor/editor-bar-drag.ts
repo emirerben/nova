@@ -324,6 +324,31 @@ export function applyClipTimingInput({
   };
 }
 
+/** Manual inspector semantics: changing In is a left trim (Out fixed), while
+ * changing Duration alone keeps In fixed. Copilot's `set_clip_in` remains the
+ * distinct source-window slip operation and does not call this helper. */
+export function applyManualClipTimingPatch({
+  inS,
+  durationS,
+  patch,
+  sourceDurationS,
+}: {
+  inS: number;
+  durationS: number;
+  patch: { inS?: number; outS?: number; durationS?: number };
+  sourceDurationS: number | null;
+}): Pick<DraftSlot, "inS" | "durationS" | "durationBeats"> {
+  const preservesCurrentOut = patch.inS !== undefined && patch.outS === undefined;
+  return applyClipTimingInput({
+    inS: patch.inS ?? inS,
+    outS: patch.outS ?? (preservesCurrentOut ? inS + durationS : undefined),
+    durationS:
+      patch.durationS ??
+      (patch.outS == null && !preservesCurrentOut ? durationS : undefined),
+    sourceDurationS,
+  });
+}
+
 export function applySfxMove({
   atS,
   endS,

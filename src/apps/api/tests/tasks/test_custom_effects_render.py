@@ -310,6 +310,7 @@ def _arm_camera_reburn(
     monkeypatch.setattr(
         "app.storage.upload_public_read", lambda _local, _gcs: "https://signed/camera"
     )
+    monkeypatch.setattr("app.storage.delete_object_best_effort", lambda *_a, **_k: True)
     monkeypatch.setattr(
         "app.pipeline.probe.probe_video",
         lambda _path: types.SimpleNamespace(duration_s=5.0, has_audio=True),

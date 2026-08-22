@@ -51,6 +51,7 @@ import {
   CAMERA_EFFECT_MIN_DURATION_S,
 } from "@/lib/camera-effects";
 import type { MusicTrackSummary } from "@/lib/music-api";
+import type { EditorTransition } from "@/lib/generative-api";
 import type { EditorCommitBackgroundMusic } from "@/lib/editor-commit";
 import TextMotionControls from "@/components/text-motion/TextMotionControls";
 import {
@@ -165,6 +166,8 @@ export default function InspectorPanel({
   motionDurationS = 0,
   motionAssets = [],
   evolvingTypeEnabled = false,
+  motionEditable = true,
+  motionDisabledReason = null,
   cameraEffect = null,
   carousel = null,
   tab,
@@ -181,8 +184,20 @@ export default function InspectorPanel({
   onSetTextBoxPosition,
   boxPositionXFrac,
   onPatchTextTiming,
+  textEditable = true,
+  textDisabledReason = null,
   onPatchClipTiming,
   onPatchClipLook,
+  onPatchClipTransition,
+  onMoveClip,
+  clipReorderEditable = true,
+  clipTimingEditable = true,
+  clipLooksEditable = true,
+  clipTransitionsEditable = true,
+  clipTimingDisabledReason = null,
+  clipReorderDisabledReason = null,
+  clipLooksDisabledReason = null,
+  clipTransitionsDisabledReason = null,
   availableLookPresets = [],
   onPatchClipLookAdjustments,
   onRecordClipLookAdjustments,
@@ -190,10 +205,14 @@ export default function InspectorPanel({
   onRecordClipTiming,
   onPatchSfx,
   onDeleteSfx,
+  sfxEditable = true,
+  sfxDisabledReason = null,
   onPatchOverlay,
   onPreviewOverlay,
   onRecordOverlay,
   onDeleteOverlay,
+  overlayEditable = true,
+  overlayDisabledReason = null,
   onPatchMotion = () => {},
   onPatchMotionControl = () => {},
   onBeginMotionControl = () => {},
@@ -205,11 +224,15 @@ export default function InspectorPanel({
   onDeleteCameraEffect = () => {},
   mixLevel,
   mixEditable,
+  mixDisabledReason = null,
   mixLabel,
   musicTracks = [],
   musicLoading = false,
   currentMusicTrackId = null,
   musicEditable = false,
+  musicRemoveEditable = musicEditable,
+  musicSwapDisabledReason = null,
+  musicRemoveDisabledReason = null,
   backgroundMusic = null,
   backgroundMusicTrackDurationS = null,
   onPatchMix,
@@ -238,6 +261,8 @@ export default function InspectorPanel({
   motionDurationS?: number;
   motionAssets?: PoolAsset[];
   evolvingTypeEnabled?: boolean;
+  motionEditable?: boolean;
+  motionDisabledReason?: string | null;
   cameraEffect?: CameraEffect | null;
   carousel?: CarouselPanelControl | null;
   tab: InspectorTab;
@@ -261,8 +286,20 @@ export default function InspectorPanel({
   onSetTextBoxPosition?: (position: TextBoxHorizontalPosition) => void;
   boxPositionXFrac?: number;
   onPatchTextTiming: (patch: { start_s?: number; end_s?: number }) => void;
+  textEditable?: boolean;
+  textDisabledReason?: string | null;
   onPatchClipTiming: (patch: { inS?: number; outS?: number; durationS?: number }) => void;
   onPatchClipLook?: (preset: LookPreset) => void;
+  onPatchClipTransition?: (transition: EditorTransition, durationS?: number) => void;
+  onMoveClip?: (direction: -1 | 1) => void;
+  clipReorderEditable?: boolean;
+  clipTimingEditable?: boolean;
+  clipLooksEditable?: boolean;
+  clipTransitionsEditable?: boolean;
+  clipTimingDisabledReason?: string | null;
+  clipReorderDisabledReason?: string | null;
+  clipLooksDisabledReason?: string | null;
+  clipTransitionsDisabledReason?: string | null;
   availableLookPresets?: LookPreset[];
   onPatchClipLookAdjustments?: (patch: Partial<LookAdjustments>) => void;
   onRecordClipLookAdjustments?: () => void;
@@ -270,10 +307,14 @@ export default function InspectorPanel({
   onRecordClipTiming: () => void;
   onPatchSfx: (id: string, patch: Partial<SoundEffectPlacement>) => void;
   onDeleteSfx: (id: string) => void;
+  sfxEditable?: boolean;
+  sfxDisabledReason?: string | null;
   onPatchOverlay: (id: string, patch: Partial<MediaOverlay>) => void;
   onPreviewOverlay: (id: string, patch: Partial<MediaOverlay>) => void;
   onRecordOverlay: () => void;
   onDeleteOverlay: (id: string) => void;
+  overlayEditable?: boolean;
+  overlayDisabledReason?: string | null;
   onPatchMotion?: (id: string, patch: MotionPresetPatch) => void;
   onPatchMotionControl?: (id: string, patch: CreatorBlockMotionControlPatch) => void;
   onBeginMotionControl?: () => void;
@@ -285,11 +326,15 @@ export default function InspectorPanel({
   onDeleteCameraEffect?: (id: string) => void;
   mixLevel?: number | null;
   mixEditable?: boolean;
+  mixDisabledReason?: string | null;
   mixLabel?: string;
   musicTracks?: MusicTrackSummary[];
   musicLoading?: boolean;
   currentMusicTrackId?: string | null;
   musicEditable?: boolean;
+  musicRemoveEditable?: boolean;
+  musicSwapDisabledReason?: string | null;
+  musicRemoveDisabledReason?: string | null;
   backgroundMusic?: EditorCommitBackgroundMusic | null;
   backgroundMusicTrackDurationS?: number | null;
   onPatchMix?: (level: number) => void;
@@ -370,33 +415,56 @@ export default function InspectorPanel({
           </p>
         </div>
       ) : selection.kind === "text" && bar ? (
-        <TextInspector
-          key={bar.id}
-          bar={bar}
-          contentRef={contentRef}
-          onEditText={onEditText}
-          onPatch={onPatch}
-          onPreviewTextMotion={onPreviewTextMotion}
-          onBeginTextMotion={onBeginTextMotion}
-          onCommitTextMotion={onCommitTextMotion}
-          onSetTextBoxPosition={onSetTextBoxPosition}
-          boxPositionXFrac={boxPositionXFrac}
-          onPatchTiming={onPatchTextTiming}
-          videoDurationS={motionDurationS}
-          smartPlaceAvailable={smartPlaceAvailable}
-          onSmartPlace={onSmartPlace}
-          onMergeCaptionCue={onMergeCaptionCue}
-          onOpenCaptionsPanel={onOpenCaptionsPanel}
-          captionsPanelOpen={captionsPanelOpen}
-          canMergeCaptionPrev={canMergeCaptionPrev}
-          canMergeCaptionNext={canMergeCaptionNext}
-          onClose={onClose}
-        />
+        <div className="flex min-h-0 flex-1 flex-col">
+          {!textEditable && textDisabledReason && (
+            <p className="mx-5 mt-4 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px] text-[#71717a]">
+              {textDisabledReason}
+            </p>
+          )}
+          <fieldset
+            disabled={!textEditable}
+            className="contents disabled:opacity-60"
+            title={!textEditable ? (textDisabledReason ?? undefined) : undefined}
+          >
+            <TextInspector
+              key={bar.id}
+              bar={bar}
+              contentRef={contentRef}
+              onEditText={onEditText}
+              onPatch={onPatch}
+              onPreviewTextMotion={onPreviewTextMotion}
+              onBeginTextMotion={onBeginTextMotion}
+              onCommitTextMotion={onCommitTextMotion}
+              onSetTextBoxPosition={onSetTextBoxPosition}
+              boxPositionXFrac={boxPositionXFrac}
+              onPatchTiming={onPatchTextTiming}
+              videoDurationS={motionDurationS}
+              smartPlaceAvailable={smartPlaceAvailable}
+              onSmartPlace={onSmartPlace}
+              onMergeCaptionCue={onMergeCaptionCue}
+              onOpenCaptionsPanel={onOpenCaptionsPanel}
+              captionsPanelOpen={captionsPanelOpen}
+              canMergeCaptionPrev={canMergeCaptionPrev}
+              canMergeCaptionNext={canMergeCaptionNext}
+              onClose={onClose}
+            />
+          </fieldset>
+        </div>
       ) : selection.kind === "clip" && clipTiming ? (
         <ClipInspector
           timing={clipTiming}
           onPatchTiming={onPatchClipTiming}
           onPatchLook={onPatchClipLook}
+          onPatchTransition={onPatchClipTransition}
+          onMoveClip={onMoveClip}
+          reorderEditable={clipReorderEditable}
+          timingEditable={clipTimingEditable}
+          looksEditable={clipLooksEditable}
+          transitionsEditable={clipTransitionsEditable}
+          timingDisabledReason={clipTimingDisabledReason}
+          reorderDisabledReason={clipReorderDisabledReason}
+          looksDisabledReason={clipLooksDisabledReason}
+          transitionsDisabledReason={clipTransitionsDisabledReason}
           availableLookPresets={availableLookPresets}
           onPatchLookAdjustments={onPatchClipLookAdjustments}
           onRecordLookAdjustments={onRecordClipLookAdjustments}
@@ -409,6 +477,8 @@ export default function InspectorPanel({
           placement={sfx}
           onPatch={onPatchSfx}
           onDelete={onDeleteSfx}
+          editable={sfxEditable}
+          disabledReason={sfxDisabledReason}
           onClose={onClose}
         />
       ) : selection.kind === "overlay" && overlay ? (
@@ -418,6 +488,8 @@ export default function InspectorPanel({
           onPreview={onPreviewOverlay}
           onRecord={onRecordOverlay}
           onDelete={onDeleteOverlay}
+          editable={overlayEditable}
+          disabledReason={overlayDisabledReason}
           onClose={onClose}
         />
       ) : selection.kind === "motion" && motionScene ? (
@@ -426,6 +498,8 @@ export default function InspectorPanel({
           durationS={motionDurationS}
           assets={motionAssets}
           evolvingTypeEnabled={evolvingTypeEnabled}
+          editable={motionEditable}
+          disabledReason={motionDisabledReason}
           showClose={presentation === "panel"}
           onPatch={onPatchMotion}
           onPatchMotionControl={onPatchMotionControl}
@@ -466,11 +540,15 @@ export default function InspectorPanel({
         <MixInspector
           level={mixLevel}
           editable={mixEditable ?? false}
+          disabledReason={mixDisabledReason}
           label={mixLabel ?? "Music"}
           musicTracks={musicTracks}
           musicLoading={musicLoading}
           currentMusicTrackId={currentMusicTrackId}
           musicEditable={musicEditable}
+          musicRemoveEditable={musicRemoveEditable}
+          musicSwapDisabledReason={musicSwapDisabledReason}
+          musicRemoveDisabledReason={musicRemoveDisabledReason}
           backgroundMusic={backgroundMusic}
           backgroundMusicTrackDurationS={backgroundMusicTrackDurationS}
           onPickMusic={onPickMusic}
@@ -501,11 +579,15 @@ export default function InspectorPanel({
 function MixInspector({
   level,
   editable,
+  disabledReason,
   label,
   musicTracks,
   musicLoading,
   currentMusicTrackId,
   musicEditable,
+  musicRemoveEditable = musicEditable,
+  musicSwapDisabledReason,
+  musicRemoveDisabledReason,
   backgroundMusic,
   backgroundMusicTrackDurationS,
   onPatch,
@@ -518,11 +600,15 @@ function MixInspector({
 }: {
   level?: number | null;
   editable: boolean;
+  disabledReason?: string | null;
   label: string;
   musicTracks: MusicTrackSummary[];
   musicLoading: boolean;
   currentMusicTrackId: string | null;
   musicEditable: boolean;
+  musicRemoveEditable?: boolean;
+  musicSwapDisabledReason?: string | null;
+  musicRemoveDisabledReason?: string | null;
   backgroundMusic?: EditorCommitBackgroundMusic | null;
   backgroundMusicTrackDurationS?: number | null;
   onPatch?: (level: number) => void;
@@ -563,6 +649,22 @@ function MixInspector({
       </div>
       <div className="mt-4">
         <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Song</p>
+        {currentMusicTrackId && (
+          <button
+            type="button"
+            disabled={!musicRemoveEditable}
+            title={!musicRemoveEditable ? musicRemoveDisabledReason ?? undefined : undefined}
+            onClick={() => onRemoveMusic?.()}
+            className="mb-2 flex min-h-10 w-full items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#71717a] hover:border-zinc-400 hover:text-[#0c0c0e] disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+          >
+            Remove music
+          </button>
+        )}
+        {!musicRemoveEditable && currentMusicTrackId && musicRemoveDisabledReason && (
+          <p className="mb-2 text-[11px] leading-4 text-[#71717a]" role="status">
+            {musicRemoveDisabledReason}
+          </p>
+        )}
         {musicEditable ? (
           musicLoading ? (
             <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px] text-[#71717a]">
@@ -570,15 +672,6 @@ function MixInspector({
             </div>
           ) : (
             <div className="max-h-44 space-y-2 overflow-y-auto pr-1">
-              {currentMusicTrackId && (
-                <button
-                  type="button"
-                  onClick={() => onRemoveMusic?.()}
-                  className="flex min-h-10 w-full items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#71717a] hover:border-zinc-400 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
-                >
-                  Remove music
-                </button>
-              )}
               {musicTracks.map((track) => {
                 const selected = track.id === currentMusicTrackId;
                 return (
@@ -620,7 +713,7 @@ function MixInspector({
           )
         ) : (
           <p className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-[13px] leading-relaxed text-[#52525b]">
-            Music cannot be edited for this version.
+            {musicSwapDisabledReason ?? "Music cannot be changed for this version."}
           </p>
         )}
       </div>
@@ -714,7 +807,7 @@ function MixInspector({
         </div>
       ) : (
         <p className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-[13px] leading-relaxed text-[#52525b]">
-          Bed level is fixed for this edit.
+          {disabledReason ?? "Bed level is fixed for this edit."}
         </p>
       )}
     </div>
@@ -767,11 +860,15 @@ function SfxInspector({
   onPatch,
   onDelete,
   onClose,
+  editable,
+  disabledReason,
 }: {
   placement: SoundEffectPlacement;
   onPatch: (id: string, patch: Partial<SoundEffectPlacement>) => void;
   onDelete: (id: string) => void;
   onClose: () => void;
+  editable: boolean;
+  disabledReason: string | null;
 }) {
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-4">
@@ -779,6 +876,12 @@ function SfxInspector({
         <h2 className="font-display text-[18px] text-[#0c0c0e]">Sound</h2>
         <CloseX onClose={onClose} />
       </div>
+      {!editable && disabledReason && (
+        <p className="mt-2 text-[11px] leading-4 text-[#71717a]" role="status">
+          {disabledReason}
+        </p>
+      )}
+      <fieldset disabled={!editable} className="m-0 min-w-0 border-0 p-0">
       <p className="mt-1 truncate text-[12px] text-[#71717a]">{placement.label ?? "Sound effect"}</p>
       <FieldNumber
         label="Start"
@@ -803,6 +906,7 @@ function SfxInspector({
         {(placement.gain ?? 1).toFixed(2)}x
       </div>
       <DangerButton onClick={() => onDelete(placement.id)}>Delete sound</DangerButton>
+      </fieldset>
     </div>
   );
 }
@@ -814,6 +918,8 @@ function OverlayInspector({
   onRecord,
   onDelete,
   onClose,
+  editable,
+  disabledReason,
 }: {
   overlay: MediaOverlay;
   onPatch: (id: string, patch: Partial<MediaOverlay>) => void;
@@ -821,6 +927,8 @@ function OverlayInspector({
   onRecord: () => void;
   onDelete: (id: string) => void;
   onClose: () => void;
+  editable: boolean;
+  disabledReason: string | null;
 }) {
   const scalePct = Math.round(clampMediaOverlayScale(overlay.scale ?? 0.35) * 100);
   const xPct = Math.round((overlay.x_frac ?? 0.5) * 100);
@@ -832,6 +940,12 @@ function OverlayInspector({
         <h2 className="font-display text-[18px] text-[#0c0c0e]">Overlay</h2>
         <CloseX onClose={onClose} />
       </div>
+      {!editable && disabledReason && (
+        <p className="mt-2 text-[11px] leading-4 text-[#71717a]" role="status">
+          {disabledReason}
+        </p>
+      )}
+      <fieldset disabled={!editable} className="m-0 min-w-0 border-0 p-0">
       <p className="mt-1 text-[12px] capitalize text-[#71717a]">{overlay.kind}</p>
 
       <TimingSection label="Timing">
@@ -933,6 +1047,7 @@ function OverlayInspector({
         />
       )}
       <DangerButton onClick={() => onDelete(overlay.id)}>Delete overlay</DangerButton>
+      </fieldset>
     </div>
   );
 }
@@ -2051,6 +2166,16 @@ function ClipInspector({
   timing,
   onPatchTiming,
   onPatchLook,
+  onPatchTransition,
+  onMoveClip,
+  reorderEditable,
+  timingEditable,
+  looksEditable,
+  transitionsEditable,
+  timingDisabledReason,
+  reorderDisabledReason,
+  looksDisabledReason,
+  transitionsDisabledReason,
   availableLookPresets,
   onPatchLookAdjustments,
   onRecordLookAdjustments,
@@ -2061,6 +2186,16 @@ function ClipInspector({
   timing: InspectorClipTiming;
   onPatchTiming: (patch: { inS?: number; outS?: number; durationS?: number }) => void;
   onPatchLook?: (preset: LookPreset) => void;
+  onPatchTransition?: (transition: EditorTransition, durationS?: number) => void;
+  onMoveClip?: (direction: -1 | 1) => void;
+  reorderEditable: boolean;
+  timingEditable: boolean;
+  looksEditable: boolean;
+  transitionsEditable: boolean;
+  timingDisabledReason?: string | null;
+  reorderDisabledReason?: string | null;
+  looksDisabledReason?: string | null;
+  transitionsDisabledReason?: string | null;
   availableLookPresets: LookPreset[];
   onPatchLookAdjustments?: (patch: Partial<LookAdjustments>) => void;
   onRecordLookAdjustments?: () => void;
@@ -2092,12 +2227,7 @@ function ClipInspector({
     timing.slot.lookAdjustments,
   );
   const lookOptions = useMemo(() => {
-    const values: LookPreset[] = [
-      "none",
-      "olive_film",
-      "smoky_split_tone",
-      "stadium_diffusion",
-    ];
+    const values: LookPreset[] = ["none"];
     for (const preset of [...availableLookPresets, selectedLook]) {
       if (!values.includes(preset)) values.push(preset);
     }
@@ -2120,6 +2250,7 @@ function ClipInspector({
     e: React.PointerEvent<HTMLElement>,
     handle: BarDragHandle,
   ) {
+    if (!timingEditable) return;
     e.preventDefault();
     e.stopPropagation();
     const bar = e.currentTarget.closest<HTMLElement>("[data-source-range-bar]");
@@ -2171,6 +2302,15 @@ function ClipInspector({
         </h2>
         <CloseX onClose={onClose} />
       </div>
+      <div className="mt-3 flex gap-2">
+        <button type="button" disabled={!reorderEditable || !onMoveClip} onClick={() => onMoveClip?.(-1)} className="min-h-9 flex-1 rounded-lg border border-zinc-200 text-[11px] font-semibold disabled:cursor-not-allowed disabled:opacity-45">Move earlier</button>
+        <button type="button" disabled={!reorderEditable || !onMoveClip} onClick={() => onMoveClip?.(1)} className="min-h-9 flex-1 rounded-lg border border-zinc-200 text-[11px] font-semibold disabled:cursor-not-allowed disabled:opacity-45">Move later</button>
+      </div>
+      {!reorderEditable && reorderDisabledReason && (
+        <p className="mt-2 text-[11px] leading-4 text-[#71717a]" role="status">
+          {reorderDisabledReason}
+        </p>
+      )}
       <p className="mt-1 text-[12px] font-medium text-[#3f3f46]">
         {durationS.toFixed(1)}s of {sourceDurationS.toFixed(1)}s used · changes
         render on Save
@@ -2204,6 +2344,7 @@ function ClipInspector({
                   name={lookGroupName}
                   value={preset}
                   checked={selected}
+                  disabled={!looksEditable}
                   onChange={() => onPatchLook?.(preset)}
                 />
                 {label}
@@ -2211,6 +2352,11 @@ function ClipInspector({
             );
           })}
         </div>
+        {!looksEditable && looksDisabledReason && (
+          <p className="mt-2 text-[11px] leading-4 text-[#71717a]" role="status">
+            {looksDisabledReason}
+          </p>
+        )}
 
         {isCustomizableLook(selectedLook) && lookControls && (
           <div className="mt-4 rounded-xl border border-zinc-200 bg-zinc-50/70 p-3">
@@ -2220,7 +2366,9 @@ function ClipInspector({
               </span>
               <button
                 type="button"
-                className="text-[11px] font-semibold text-[#52525b] underline decoration-zinc-300 underline-offset-2 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                disabled={!looksEditable}
+                title={!looksEditable ? (looksDisabledReason ?? undefined) : undefined}
+                className="text-[11px] font-semibold text-[#52525b] underline decoration-zinc-300 underline-offset-2 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
                 onClick={() => {
                   const defaults = defaultLookAdjustments(selectedLook);
                   if (defaults) {
@@ -2268,6 +2416,7 @@ function ClipInspector({
                         onRecordLookAdjustments?.();
                       }
                     }}
+                    disabled={!looksEditable}
                     onChange={(event) =>
                       onPatchLookAdjustments?.({
                         [key]: Number(event.target.value) / 100,
@@ -2279,6 +2428,44 @@ function ClipInspector({
               ))}
             </div>
           </div>
+        )}
+      </fieldset>
+
+      <fieldset className="mt-5">
+        <legend className="text-[12px] font-semibold text-[#3f3f46]">Transition out</legend>
+        <div className="mt-2 flex gap-2">
+          {(["cut", "crossfade", "dip_to_black", "flash"] as const).map((transition) => (
+            <button
+              key={transition}
+              type="button"
+              disabled={!transitionsEditable}
+              aria-pressed={(timing.slot.transitionAfter ?? "cut") === transition}
+              onClick={() => onPatchTransition?.(transition, transition === "cut" ? undefined : timing.slot.transitionDurationS ?? 0.3)}
+              className="min-h-10 flex-1 rounded-lg border border-zinc-200 px-3 text-[12px] font-semibold capitalize disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              {transition}
+            </button>
+          ))}
+        </div>
+        {!transitionsEditable && transitionsDisabledReason && (
+          <p className="mt-2 text-[11px] leading-4 text-[#71717a]" role="status">
+            {transitionsDisabledReason}
+          </p>
+        )}
+        {(timing.slot.transitionAfter ?? "cut") !== "cut" && (
+          <label className="mt-3 block text-[11px] text-[#52525b]">
+            Duration
+            <input
+              type="number"
+              min={0.1}
+              max={0.3}
+              step={0.1}
+              disabled={!transitionsEditable}
+              value={timing.slot.transitionDurationS ?? 0.3}
+              onChange={(event) => onPatchTransition?.(timing.slot.transitionAfter ?? "crossfade", Number(event.target.value))}
+              className="mt-1 h-10 w-full rounded-lg border border-zinc-200 px-3 text-[12px] disabled:opacity-45"
+            />
+          </label>
         )}
       </fieldset>
 
@@ -2322,7 +2509,8 @@ function ClipInspector({
             >
               <button
                 type="button"
-                aria-label="Slide source window"
+              aria-label="Slide source window"
+              disabled={!timingEditable}
                 onPointerDown={(e) => startRangeDrag(e, "body")}
                 onPointerMove={updateRangeDrag}
                 onPointerUp={finishRangeDrag}
@@ -2331,6 +2519,7 @@ function ClipInspector({
               />
               <RangeHandle
                 side="left"
+                disabled={!timingEditable}
                 onPointerDown={(e) => startRangeDrag(e, "left")}
                 onPointerMove={updateRangeDrag}
                 onPointerUp={finishRangeDrag}
@@ -2338,6 +2527,7 @@ function ClipInspector({
               />
               <RangeHandle
                 side="right"
+                disabled={!timingEditable}
                 onPointerDown={(e) => startRangeDrag(e, "right")}
                 onPointerMove={updateRangeDrag}
                 onPointerUp={finishRangeDrag}
@@ -2366,6 +2556,7 @@ function ClipInspector({
           value={inS}
           min={0}
           max={timing.sourceDurationS ?? undefined}
+          disabled={!timingEditable}
           onChange={(value) => onPatchTiming({ inS: value })}
         />
         <TimingNumberInput
@@ -2373,27 +2564,36 @@ function ClipInspector({
           value={outS}
           min={0}
           max={timing.sourceDurationS ?? undefined}
+          disabled={!timingEditable}
           onChange={(value) => onPatchTiming({ outS: value })}
         />
         <TimingNumberInput
           label="Dur"
           value={durationS}
           min={CLIP_MIN_DURATION_S}
+          disabled={!timingEditable}
           onChange={(value) => onPatchTiming({ durationS: value })}
         />
       </TimingSection>
+      {!timingEditable && timingDisabledReason && (
+        <p className="mt-2 text-[11px] leading-4 text-[#71717a]" role="status">
+          {timingDisabledReason}
+        </p>
+      )}
     </div>
   );
 }
 
 function RangeHandle({
   side,
+  disabled = false,
   onPointerDown,
   onPointerMove,
   onPointerUp,
   onPointerCancel,
 }: {
   side: "left" | "right";
+  disabled?: boolean;
   onPointerDown: (e: React.PointerEvent<HTMLElement>) => void;
   onPointerMove: (e: React.PointerEvent<HTMLElement>) => void;
   onPointerUp: (e: React.PointerEvent<HTMLElement>) => void;
@@ -2402,12 +2602,13 @@ function RangeHandle({
   return (
     <button
       type="button"
+      disabled={disabled}
       aria-label={side === "left" ? "Trim source in" : "Trim source out"}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerCancel}
-      className={`absolute top-1/2 flex h-8 w-3 -translate-y-1/2 cursor-ew-resize items-center justify-center rounded bg-white text-[#0c0c0e] shadow-sm ${
+      className={`absolute top-1/2 flex h-8 w-3 -translate-y-1/2 cursor-ew-resize items-center justify-center rounded bg-white text-[#0c0c0e] shadow-sm disabled:cursor-not-allowed disabled:opacity-45 ${
         side === "left" ? "-left-1.5" : "-right-1.5"
       }`}
     >
@@ -2444,12 +2645,14 @@ function TimingNumberInput({
   value,
   min,
   max,
+  disabled = false,
   onChange,
 }: {
   label: string;
   value: number;
   min?: number;
   max?: number;
+  disabled?: boolean;
   onChange: (value: number) => void;
 }) {
   return (
@@ -2460,6 +2663,7 @@ function TimingNumberInput({
         aria-label={`${label} seconds`}
         min={min}
         max={max}
+        disabled={disabled}
         step={0.1}
         value={Number.isFinite(value) ? value.toFixed(1) : "0.0"}
         onChange={(e) => {

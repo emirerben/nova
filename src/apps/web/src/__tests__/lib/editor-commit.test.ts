@@ -96,6 +96,7 @@ describe("buildEditorCommitRequest", () => {
       timeline_slots: [
         {
           slot_id: "slot-a",
+          parent_segment_id: null,
           clip_index: 1,
           in_s: 0.5,
           duration_s: 1.2,
@@ -114,6 +115,7 @@ describe("buildEditorCommitRequest", () => {
         },
         {
           slot_id: null,
+          parent_segment_id: null,
           clip_index: 2,
           in_s: 0,
           duration_s: null,
@@ -129,6 +131,7 @@ describe("buildEditorCommitRequest", () => {
       remove_music: undefined,
       music_window: undefined,
       background_music: undefined,
+      carousel_moment: undefined,
       sound_effects: [
         {
           id: "sfx-1",
@@ -257,6 +260,88 @@ describe("buildEditorCommitRequest", () => {
     };
 
     expect(response.sections.orientation).toBe(true);
+  });
+
+  it("includes the Guided Story revision CAS token only when supplied", () => {
+    const guided = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      timelineDirty: false,
+      slots: [],
+      titleDirty: false,
+      title: "",
+      guidedRevisionNumber: 7,
+      variant: { render_generation_id: "guided-gen" },
+    });
+    const legacy = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      timelineDirty: false,
+      slots: [],
+      titleDirty: false,
+      title: "",
+      variant: { render_generation_id: "legacy-gen" },
+    });
+
+    expect(guided.guided_revision_number).toBe(7);
+    expect("guided_revision_number" in legacy).toBe(false);
+  });
+
+  it("submits Guided Story music level through the granular capability", () => {
+    const body = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      timelineDirty: false,
+      slots: [],
+      mixDirty: true,
+      mixLevel: 0.35,
+      titleDirty: false,
+      title: "",
+      variant: {
+        render_generation_id: "guided-gen",
+        editor_capabilities: {
+          mix: false,
+          music_operations: { level: { editable: true, reason: null } },
+        },
+      },
+    });
+
+    expect(body.mix).toEqual({ music_level: 0.35 });
+  });
+
+  it("preserves the stable parent segment id for a newly-created split child", () => {
+    // The trailing half has no server slot id yet, but it must retain the
+    // source segment identity so the guided compiler can project lanes and
+    // receipts against the original approved media.
+    const splitChild = {
+      slotId: null,
+      parentSegmentId: "segment-source-a",
+      clipIndex: 0,
+      inS: 1.5,
+      durationS: 2.5,
+      durationBeats: null,
+      removed: false,
+    } as unknown as Parameters<typeof buildEditorCommitRequest>[0]["slots"][number];
+
+    const body = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      timelineDirty: true,
+      slots: [splitChild],
+      titleDirty: false,
+      title: "",
+      variant: { render_generation_id: "guided-generation" },
+    });
+
+    expect(body.timeline_slots).toEqual([
+      expect.objectContaining({
+        slot_id: null,
+        parent_segment_id: "segment-source-a",
+        clip_index: 0,
+        in_s: 1.5,
+        duration_s: 2.5,
+      }),
+    ]);
   });
 
   it("builds combined text_elements and lyrics sections", () => {
@@ -546,6 +631,7 @@ describe("buildEditorCommitRequest", () => {
     expect(body.timeline_slots).toEqual([
       {
         slot_id: "slot-a",
+        parent_segment_id: null,
         clip_index: 0,
         in_s: 1,
         duration_s: 2,

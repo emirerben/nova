@@ -1,0 +1,23 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-08-22-v28",
+  "input": {
+    "utterance": "mute the music",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["music", "mix"],
+      "music": {"current_track_id": "track-old", "current_track_title": "Old Song", "removable": true, "swappable": true},
+      "mix": {"music_level": 0.5}
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"set_mix\",\"music_level\":0}],\"confidence\":0.98,\"reply\":\"Muted the music without removing the track.\",\"suggestions\":[],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [{"op": "set_mix", "music_level": 0}],
+    "confidence": 0.98,
+    "reply": "Muted the music without removing the track.",
+    "suggestions": [],
+    "needs_clarification": false
+  },
+  "meta": {"source": "hand_authored_golden", "case": "mute remains set_mix and is distinct from remove_music"}
+}

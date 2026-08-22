@@ -645,6 +645,70 @@ def test_copilot_clip_duration_seconds_only() -> None:
     assert _parse([{"op": "set_clip_duration", "slot_index": 0, "duration_s": -0.1}]).ops == []
 
 
+def test_copilot_trim_clip_start_is_segment_relative_and_distinct_from_clip_in() -> None:
+    out = _parse(
+        [{"op": "trim_clip_start", "slot_index": 1, "start_s": 1}],
+        snapshot=_full_snapshot(),
+    )
+    assert out.ops == [{"op": "trim_clip_start", "slot_index": 1, "start_s": 1.0}]
+
+    slip = _parse(
+        [{"op": "set_clip_in", "slot_index": 1, "in_s": 1}],
+        snapshot=_full_snapshot(),
+    )
+    assert slip.ops == [{"op": "set_clip_in", "slot_index": 1, "in_s": 1.0}]
+
+
+def test_copilot_trim_output_start_uses_assembled_output_clock() -> None:
+    out = _parse([{"op": "trim_output_start", "start_s": 4}], snapshot=_full_snapshot())
+    assert out.ops == [{"op": "trim_output_start", "start_s": 4.0}]
+
+
+def test_copilot_trim_output_start_drops_normalized_no_effect() -> None:
+    snapshot = _full_snapshot()
+    snapshot["slots"][0]["output_start_s"] = 1.0
+
+    out = _parse(
+        [{"op": "trim_output_start", "start_s": 1}],
+        snapshot=snapshot,
+    )
+
+    assert out.ops == []
+    assert out.needs_clarification is False
+    assert "already starts at 1 second" in out.reply
+    assert "didn't change" in out.reply
+
+
+def test_copilot_trim_output_start_drops_only_no_effect_from_compound_edit() -> None:
+    snapshot = _full_snapshot()
+    snapshot["slots"][0]["output_start_s"] = 1.0
+
+    out = _parse(
+        [
+            {"op": "trim_output_start", "start_s": 1},
+            {"op": "remove_music"},
+        ],
+        snapshot=snapshot,
+    )
+
+    assert out.ops == [{"op": "remove_music"}]
+    assert out.reply == "Done."
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        {"op": "trim_clip_start", "slot_index": 1, "start_s": 4},
+        {"op": "trim_output_start", "start_s": 9.95},
+    ],
+)
+def test_copilot_trim_cannot_remove_the_entire_remaining_output(op: dict) -> None:
+    out = _parse([op], confidence=0.9, snapshot=_full_snapshot())
+    assert out.ops == []
+    assert out.confidence == 0.4
+    assert out.needs_clarification
+
+
 def test_copilot_new_ops_coerce_and_clamp() -> None:
     snap = _full_snapshot()
     out = _parse(
@@ -815,6 +879,9 @@ def test_copilot_swap_music_requires_swappable() -> None:
         ({"op": "set_caption_emphasis", "cue_index": 0, "emphasis": True}, ["text"]),
         ({"op": "swap_music", "track_id": "track-1"}, ["text"]),
         ({"op": "set_mix", "music_level": 0.5}, ["text"]),
+        ({"op": "remove_music"}, ["text"]),
+        ({"op": "trim_clip_start", "slot_index": 0, "start_s": 1}, ["text"]),
+        ({"op": "trim_output_start", "start_s": 1}, ["text"]),
         ({"op": "set_title", "title": "New title"}, ["text"]),
         ({"op": "open_tool", "tool": "sounds"}, ["text"]),
     ],
@@ -834,6 +901,45 @@ def test_copilot_set_mix_requires_mix_section() -> None:
     snap.pop("mix")
     out = _parse([{"op": "set_mix", "music_level": 0.25}], snapshot=snap)
     assert out.ops == []
+
+
+def test_editor_operation_contract_includes_story_native_ops_only_when_available() -> None:
+    from app.agents.edit_copilot import editor_operation_contract
+
+    contract = editor_operation_contract(_full_snapshot())
+    assert '"op":"trim_clip_start"' in contract
+    assert '"op":"trim_output_start"' in contract
+    assert '"op":"remove_music"' in contract
+
+    text_only = editor_operation_contract(_full_snapshot(allowed=["text"]))
+    assert "trim_clip_start" not in text_only
+    assert "trim_output_start" not in text_only
+    assert "remove_music" not in text_only
+
+
+def test_copilot_remove_music_is_distinct_from_mute() -> None:
+    removed = _parse([{"op": "remove_music"}], snapshot=_full_snapshot())
+    assert removed.ops == [{"op": "remove_music"}]
+
+    muted = _parse([{"op": "set_mix", "music_level": 0}], snapshot=_full_snapshot())
+    assert muted.ops == [{"op": "set_mix", "music_level": 0.0}]
+
+
+@pytest.mark.parametrize(
+    "music_patch",
+    [
+        {"removable": False},
+        {"current_track_id": None},
+        {"removed": True},
+    ],
+)
+def test_copilot_remove_music_requires_a_current_removable_track(music_patch: dict) -> None:
+    snap = _full_snapshot()
+    snap["music"].update(music_patch)
+    out = _parse([{"op": "remove_music"}], confidence=0.9, snapshot=snap)
+    assert out.ops == []
+    assert out.confidence == 0.4
+    assert out.needs_clarification
 
 
 def test_copilot_set_intro_layout_parses() -> None:
@@ -1731,12 +1837,13 @@ def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
     # (PR6, effect-language train), then (2026-08-11-v22) for undo_last_edit /
     # repeat_last_edit and the HISTORY STATE snapshot section (PR7), then
     # (2026-08-14-v23) for catalog-backed Creator Block Motion v2 controls and
-    # normalized existing-block motion state — update
+    # normalized existing-block motion state, then (2026-08-22-v28) for
+    # story-native trim and explicit music-removal operations — update
     # this pin whenever EDIT_COPILOT_PROMPT_VERSION moves, per the
     # prompt-change rule.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-14-v23"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-22-v28"
 
 
 def _motion_snapshot() -> dict:

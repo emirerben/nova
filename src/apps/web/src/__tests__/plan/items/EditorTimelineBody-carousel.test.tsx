@@ -97,6 +97,24 @@ describe("EditorTimelineBody — carousel-moment block chip", () => {
     expect(screen.queryByText(/Carousel ·/)).not.toBeInTheDocument();
   });
 
+  it("makes the sounds insertion affordance honestly disabled when the lane is unavailable", () => {
+    render(
+      <EditorTimelineBody
+        {...baseProps({
+          sfxReadOnly: true,
+          sfxDisabledReason: "Sound effects are unavailable for this story.",
+        })}
+      />,
+    );
+
+    const addSounds = screen.getByRole("button", { name: "+ Add sounds" });
+    expect(addSounds).toBeDisabled();
+    expect(addSounds).toHaveAttribute(
+      "title",
+      "Sound effects are unavailable for this story.",
+    );
+  });
+
   it("renders the chip labeled with the effect name at the resolved window", () => {
     render(
       <EditorTimelineBody

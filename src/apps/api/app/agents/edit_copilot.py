@@ -27,7 +27,7 @@ from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-08-14-v23"
+EDIT_COPILOT_PROMPT_VERSION = "2026-08-22-v28"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt prose ("up to 12", twice) and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -56,6 +56,8 @@ _STYLE_OPS = {"patch_text_style"}
 _CLIP_OPS = {
     "set_clip_duration",
     "set_clip_in",
+    "trim_clip_start",
+    "trim_output_start",
     "reorder_clip",
     "remove_clip",
     "split_clip",
@@ -75,7 +77,7 @@ _CAPTION_OPS = {
     "set_caption_meta",
     "set_caption_emphasis",
 }
-_MUSIC_OPS = {"swap_music", "set_mix"}
+_MUSIC_OPS = {"swap_music", "set_mix", "remove_music"}
 # set_intro_layout starts a server re-render (render family, single-op-only).
 # apply_custom_effect (PR6 of the Nova AI effect-language train) joins it as the
 # second render op — same single-op-only + not-locally-undoable contract,
@@ -127,6 +129,8 @@ _OP_REQUIRED: dict[str, frozenset[str]] = {
     "remove_text": frozenset({"bar_index"}),
     "set_clip_duration": frozenset({"slot_index", "duration_s"}),
     "set_clip_in": frozenset({"slot_index", "in_s"}),
+    "trim_clip_start": frozenset({"slot_index", "start_s"}),
+    "trim_output_start": frozenset({"start_s"}),
     "reorder_clip": frozenset({"from_index", "to_index"}),
     "remove_clip": frozenset({"slot_index"}),
     "split_clip": frozenset({"slot_index", "at_s"}),
@@ -145,6 +149,7 @@ _OP_REQUIRED: dict[str, frozenset[str]] = {
     "set_caption_emphasis": frozenset({"cue_index", "emphasis"}),
     "swap_music": frozenset({"track_id"}),
     "set_mix": frozenset({"music_level"}),
+    "remove_music": frozenset(),
     "set_intro_layout": frozenset({"layout"}),
     "apply_custom_effect": frozenset({"effect"}),
     "set_carousel_moment": frozenset({"config"}),
@@ -171,6 +176,8 @@ _OP_FIELDS: dict[str, frozenset[str]] = {
     "remove_text": frozenset({"bar_index"}),
     "set_clip_duration": frozenset({"slot_index", "duration_s"}),
     "set_clip_in": frozenset({"slot_index", "in_s"}),
+    "trim_clip_start": frozenset({"slot_index", "start_s"}),
+    "trim_output_start": frozenset({"start_s"}),
     "reorder_clip": frozenset({"from_index", "to_index"}),
     "remove_clip": frozenset({"slot_index"}),
     "split_clip": frozenset({"slot_index", "at_s"}),
@@ -201,6 +208,7 @@ _OP_FIELDS: dict[str, frozenset[str]] = {
     "set_caption_emphasis": frozenset({"cue_index", "emphasis"}),
     "swap_music": frozenset({"track_id"}),
     "set_mix": frozenset({"music_level"}),
+    "remove_music": frozenset(),
     "set_intro_layout": frozenset({"layout"}),
     "apply_custom_effect": frozenset({"effect"}),
     "set_carousel_moment": frozenset({"config"}),
@@ -256,6 +264,11 @@ _DIRECTOR_OPERATION_EXAMPLES: tuple[tuple[str, str], ...] = (
         '{"op":"set_clip_duration","slot_index":1,"duration_s":3.0}',
     ),
     ("set_clip_in", '{"op":"set_clip_in","slot_index":1,"in_s":0.8}'),
+    (
+        "trim_clip_start",
+        '{"op":"trim_clip_start","slot_index":1,"start_s":1.0}',
+    ),
+    ("trim_output_start", '{"op":"trim_output_start","start_s":1.0}'),
     ("reorder_clip", '{"op":"reorder_clip","from_index":2,"to_index":0}'),
     ("remove_clip", '{"op":"remove_clip","slot_index":1}'),
     ("split_clip", '{"op":"split_clip","slot_index":0,"at_s":4.2}'),
@@ -316,6 +329,7 @@ _DIRECTOR_OPERATION_EXAMPLES: tuple[tuple[str, str], ...] = (
     ),
     ("swap_music", '{"op":"swap_music","track_id":"track_1"}'),
     ("set_mix", '{"op":"set_mix","music_level":0.35}'),
+    ("remove_music", '{"op":"remove_music"}'),
     ("set_title", '{"op":"set_title","title":"new working title"}'),
     (
         "add_camera_effect",
@@ -495,7 +509,7 @@ class EditCopilotInput(BaseModel):
 
 
 class EditCopilotOutput(BaseModel):
-    """Parsed edit intent and v1 editor operations."""
+    """Parsed edit intent and editor operations."""
 
     intent: Literal["edit", "clarify", "describe", "reject", "unknown"]
     ops: list[dict] = Field(default_factory=list)
@@ -1043,7 +1057,9 @@ def _format_snapshot(snapshot: dict) -> str:
         lines.append(
             f"current_track_id={_clean_prompt_data(music.get('current_track_id'), max_chars=80)!r} "
             f"title={_clean_prompt_data(music.get('current_track_title'), max_chars=40)!r} "
-            f"swappable={bool(music.get('swappable'))}"
+            f"swappable={bool(music.get('swappable'))} "
+            f"removable={music.get('removable', True) is not False} "
+            f"removed={bool(music.get('removed'))}"
         )
         lines.append("CANDIDATES (use track_id exactly as shown):")
         if candidates:
@@ -1222,6 +1238,42 @@ class _ParseState:
         self.confidence = min(self.confidence, 0.4)
 
 
+def _drop_normalized_no_effect_ops(
+    ops: list[dict], snapshot: dict
+) -> tuple[list[dict], str | None]:
+    """Remove model-authored operations that already match normalized state.
+
+    The editor repeats this check before staging, but the agent response must
+    also be truthful: a same-value trim cannot claim it changed the draft.
+    """
+
+    slots = [
+        row
+        for row in _snapshot_list(snapshot, ("slots",))
+        if isinstance(row, dict) and not bool(row.get("removed"))
+    ]
+    first_output_start = _first_number(slots[0], ("output_start_s",)) if slots else None
+    filtered: list[dict] = []
+    removed_trim_start: float | None = None
+    for op in ops:
+        if op.get("op") == "trim_output_start" and first_output_start is not None:
+            requested = _first_number(op, ("start_s",))
+            if (
+                requested is not None
+                and first_output_start > 0
+                and math.isclose(requested, first_output_start, abs_tol=0.0005)
+            ):
+                removed_trim_start = requested
+                continue
+        filtered.append(op)
+    message = None
+    if removed_trim_start is not None and not filtered:
+        message = (
+            f"The draft already starts at {removed_trim_start:g} seconds, so I didn't change it."
+        )
+    return filtered, message
+
+
 class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.edit.copilot",
@@ -1300,7 +1352,11 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 else:
                     ordinary_op_count += 1
 
+        ops, no_effect_reply = _drop_normalized_no_effect_ops(ops, input.variant_snapshot)
+
         reply = str(data.get("reply") or "").strip()
+        if no_effect_reply is not None:
+            reply = no_effect_reply
         if not reply:
             reply = "Got it. What else should we change?"
 
@@ -1328,7 +1384,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
     def schema_clarification(self) -> str:
         return (
             "\n\nIMPORTANT: return ONLY valid JSON with keys: intent "
-            "(edit|clarify|describe|reject|unknown), ops (array of v1 op objects), "
+            "(edit|clarify|describe|reject|unknown), ops (array of editor op objects), "
             "confidence (float 0-1), reply (string), suggestions (list of short chips), "
             "needs_clarification (boolean). No markdown or prose outside JSON."
         )
@@ -1755,6 +1811,32 @@ def _coerce_payload(
             state.invalid_value()
             return None
         if not _id_in_section(out.get("track_id"), snapshot, "music", "candidates", "id"):
+            state.invalid_value()
+            return None
+    if name == "trim_clip_start":
+        slots = _snapshot_list(snapshot, _SLOT_INDEX_KEYS)
+        slot = slots[out["slot_index"]] if out["slot_index"] < len(slots) else None
+        start, end = _slot_window(slot) if isinstance(slot, dict) else (None, None)
+        if start is not None and end is not None:
+            remaining = end - start - out["start_s"]
+            if remaining < 0.1:
+                state.invalid_value()
+                return None
+    if name == "trim_output_start":
+        total_s = _first_number(snapshot, ("total_duration_s", "duration_s", "duration"))
+        if total_s is not None and total_s - out["start_s"] < 0.1:
+            state.invalid_value()
+            return None
+    if name == "remove_music":
+        music = snapshot.get("music") if isinstance(snapshot, dict) else None
+        current_track_id = music.get("current_track_id") if isinstance(music, dict) else None
+        if (
+            not isinstance(music, dict)
+            or music.get("removable") is False
+            or music.get("removed") is True
+            or not isinstance(current_track_id, str)
+            or not current_track_id.strip()
+        ):
             state.invalid_value()
             return None
     if name == "set_mix" and not isinstance(snapshot.get("mix"), dict):

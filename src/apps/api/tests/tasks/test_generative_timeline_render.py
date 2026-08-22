@@ -197,6 +197,10 @@ def _patch_render_helpers(monkeypatch, mix_calls: list, assembled_steps: list | 
     monkeypatch.setattr(
         storage, "upload_public_read", lambda local, gcs: f"https://signed/{gcs}", raising=False
     )
+    # Re-render completion now retires the prior immutable generation after the
+    # replacement wins its CAS. Unit tests own fake GCS paths, so cleanup must
+    # stay inside the same storage boundary as the mocked upload.
+    monkeypatch.setattr(storage, "delete_object_best_effort", lambda *_args: True, raising=False)
 
 
 def _patch_music_recipe(monkeypatch, beats):

@@ -931,6 +931,10 @@ def test_analyze_pool_asset_persists_video_poster_preview(monkeypatch) -> None:
         "app.storage.upload_local_file",
         lambda local, obj, content_type: uploads.append((local, obj, content_type)),
     )
+    monkeypatch.setattr(
+        "app.storage.object_metadata",
+        lambda _path: SimpleNamespace(generation="preview-generation-1"),
+    )
 
     ap.analyze_pool_asset(str(asset.id))
 
@@ -1046,6 +1050,10 @@ def test_generate_pool_asset_preview_backfills_ready_asset(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.storage.upload_local_file",
         lambda local, obj, content_type: uploads.append((local, obj, content_type)),
+    )
+    monkeypatch.setattr(
+        "app.storage.object_metadata",
+        lambda _path: SimpleNamespace(generation="preview-generation-1"),
     )
 
     ap.generate_pool_asset_preview(str(asset.id))

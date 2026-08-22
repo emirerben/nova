@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "frame_rate": 30,
+  "max_duration_frames": 1800,
+  "cases": [
+    {
+      "id": "ordered_all_transition_kinds",
+      "segments": [
+        { "segment_id": "a", "media_id": "clip-a", "duration_frames": 60, "transition_after": "crossfade", "transition_duration_frames": 9 },
+        { "segment_id": "b", "media_id": "clip-b", "duration_frames": 60, "transition_after": "dip_to_black", "transition_duration_frames": 9 },
+        { "segment_id": "c", "media_id": "clip-c", "duration_frames": 60, "transition_after": "flash", "transition_duration_frames": 9 }
+      ],
+      "expected": {
+        "order": ["a", "b", "c"],
+        "windows": [
+          { "segment_id": "a", "start_frame": 0, "end_frame": 60, "overlap_before_frames": 0 },
+          { "segment_id": "b", "start_frame": 51, "end_frame": 111, "overlap_before_frames": 9 },
+          { "segment_id": "c", "start_frame": 102, "end_frame": 162, "overlap_before_frames": 9 }
+        ],
+        "total_frames": 162,
+        "scrub": [
+          { "output_frame": 0, "segment_id": "a", "source_frame": 0 },
+          { "output_frame": 50, "segment_id": "a", "source_frame": 50 },
+          { "output_frame": 51, "segment_id": "b", "source_frame": 0 },
+          { "output_frame": 60, "segment_id": "b", "source_frame": 9 },
+          { "output_frame": 102, "segment_id": "c", "source_frame": 0 },
+          { "output_frame": 161, "segment_id": "c", "source_frame": 59 },
+          { "output_frame": 162, "segment_id": "c", "source_frame": 60 }
+        ]
+      }
+    },
+    {
+      "id": "transition_caps_and_floor",
+      "segments": [
+        { "segment_id": "cap-a", "media_id": "clip-a", "duration_frames": 20, "transition_after": "crossfade", "transition_duration_frames": 9 },
+        { "segment_id": "cap-b", "media_id": "clip-b", "duration_frames": 30, "transition_after": "cut", "transition_duration_frames": 0 }
+      ],
+      "expected": {
+        "order": ["cap-a", "cap-b"],
+        "windows": [
+          { "segment_id": "cap-a", "start_frame": 0, "end_frame": 20, "overlap_before_frames": 0 },
+          { "segment_id": "cap-b", "start_frame": 14, "end_frame": 44, "overlap_before_frames": 6 }
+        ],
+        "total_frames": 44
+      }
+    },
+    {
+      "id": "transition_below_floor_becomes_cut",
+      "segments": [
+        { "segment_id": "floor-a", "media_id": "clip-a", "duration_frames": 3, "transition_after": "flash", "transition_duration_frames": 2 },
+        { "segment_id": "floor-b", "media_id": "clip-b", "duration_frames": 30, "transition_after": "cut", "transition_duration_frames": 0 }
+      ],
+      "expected": {
+        "order": ["floor-a", "floor-b"],
+        "windows": [
+          { "segment_id": "floor-a", "start_frame": 0, "end_frame": 3, "overlap_before_frames": 0 },
+          { "segment_id": "floor-b", "start_frame": 3, "end_frame": 33, "overlap_before_frames": 0 }
+        ],
+        "total_frames": 33
+      }
+    },
+    {
+      "id": "trim_delete_reorder_and_timed_lanes",
+      "baseline_segments": [
+        { "segment_id": "a", "media_id": "clip-a", "duration_frames": 60 },
+        { "segment_id": "b", "media_id": "clip-b", "duration_frames": 60 },
+        { "segment_id": "c", "media_id": "clip-c", "duration_frames": 60 }
+      ],
+      "segments": [
+        { "segment_id": "c", "media_id": "clip-c", "duration_frames": 60, "source_start_frames": 0 },
+        { "segment_id": "b", "media_id": "clip-b", "duration_frames": 45, "source_start_frames": 15, "source_end_frames": 60 }
+      ],
+      "expected": {
+        "order": ["c", "b"],
+        "windows": [
+          { "segment_id": "c", "start_frame": 0, "end_frame": 60, "overlap_before_frames": 0 },
+          { "segment_id": "b", "start_frame": 60, "end_frame": 105, "overlap_before_frames": 0 }
+        ],
+        "total_frames": 105,
+        "lanes": {
+          "text": [
+            { "id": "text-boundary", "output_start_frame": 60, "output_end_frame": 60, "tombstone": false },
+            { "id": "text-crossing", "output_start_frame": 90, "output_end_frame": 105, "tombstone": false },
+            { "id": "text-deleted", "output_start_frame": null, "output_end_frame": null, "tombstone": true }
+          ],
+          "sound_effects": [
+            { "id": "sfx-c", "output_start_frame": 15, "output_end_frame": 30, "tombstone": false }
+          ],
+          "media_overlays": [
+            { "id": "overlay-b", "output_start_frame": 60, "output_end_frame": 75, "tombstone": false }
+          ],
+          "visual_blocks": [
+            { "id": "visual-c", "output_start_frame": 30, "output_end_frame": 50, "tombstone": false }
+          ],
+          "motion_scenes": [
+            { "id": "motion-b", "output_start_frame": 75, "output_end_frame": 105, "tombstone": false }
+          ],
+          "music": { "start_frame": 0, "clock": "output" }
+        },
+        "scrub": [
+          { "output_frame": 0, "segment_id": "c", "source_frame": 0 },
+          { "output_frame": 59, "segment_id": "c", "source_frame": 59 },
+          { "output_frame": 60, "segment_id": "b", "source_frame": 15 },
+          { "output_frame": 104, "segment_id": "b", "source_frame": 59 },
+          { "output_frame": 105, "segment_id": "b", "source_frame": 60 }
+        ]
+      },
+      "lane_inputs": {
+        "text": [
+          { "id": "text-boundary", "segment_id": "b", "start_offset_frames": 0, "end_offset_frames": 0 },
+          { "id": "text-crossing", "segment_id": "b", "start_offset_frames": 30, "end_offset_frames": 60 },
+          { "id": "text-deleted", "segment_id": "a", "start_offset_frames": 10, "end_offset_frames": 20 }
+        ],
+        "sound_effects": [
+          { "id": "sfx-c", "segment_id": "c", "start_offset_frames": 15, "end_offset_frames": 30 }
+        ],
+        "media_overlays": [
+          { "id": "overlay-b", "segment_id": "b", "start_offset_frames": 0, "end_offset_frames": 15 }
+        ],
+        "visual_blocks": [
+          { "id": "visual-c", "segment_id": "c", "start_offset_frames": 30, "end_offset_frames": 50 }
+        ],
+        "motion_scenes": [
+          { "id": "motion-b", "segment_id": "b", "start_offset_frames": 15, "end_offset_frames": 45 }
+        ]
+      }
+    }
+  ]
+}

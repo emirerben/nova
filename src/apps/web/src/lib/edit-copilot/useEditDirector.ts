@@ -138,7 +138,34 @@ const MAX_APPLIED_RECEIPTS = 8;
 function friendlyDirectorError(caught: unknown): string {
   if (caught instanceof DOMException && caught.name === "AbortError") return "";
   if (isFeatureUnavailable(caught)) return DIRECTOR_UNAVAILABLE_MESSAGE;
-  return "Nova couldn't review this draft just now. Your edit is unchanged.";
+  const status = directorErrorStatus(caught);
+  const code = caught && typeof caught === "object" && "code" in caught
+    ? String((caught as { code?: unknown }).code ?? "")
+    : "";
+  const stage = caught && typeof caught === "object" && "stage" in caught
+    ? String((caught as { stage?: unknown }).stage ?? "")
+    : "";
+  if (status === null) {
+    return "Nova couldn't reach the review service. Check your connection; your draft is unchanged.";
+  }
+  if (
+    status === 502 ||
+    code.includes("director_failed") ||
+    code.includes("model") ||
+    stage.includes("model")
+  ) {
+    return "Nova's review model couldn't complete this pass. Your draft is unchanged.";
+  }
+  if (status >= 500) {
+    return "Nova's review service had a server error. Your draft is unchanged.";
+  }
+  return "Nova couldn't review this draft. Your draft is unchanged.";
+}
+
+function directorErrorStatus(caught: unknown): number | null {
+  if (!caught || typeof caught !== "object" || !("status" in caught)) return null;
+  const status = (caught as { status?: unknown }).status;
+  return typeof status === "number" ? status : null;
 }
 
 function friendlyOmniError(status: OmniAssetResponse["status"]): string {
@@ -333,8 +360,25 @@ export function useEditDirector(
         })
         .catch((caught) => {
           if (requestId !== requestIdRef.current || controller.signal.aborted) return;
+          if (directorErrorStatus(caught) === 409) {
+            // The server evaluated a newer editor revision. Rebuild the
+            // snapshot and retry without painting a failure over the draft.
+            forceRefreshRef.current = true;
+            sourceRevisionRef.current = "";
+            setError(null);
+            setRefreshKey((value) => value + 1);
+            return;
+          }
           forceRefreshRef.current = false;
           if (isFeatureUnavailable(caught)) setUnavailable(true);
+          const requestRef = caught && typeof caught === "object" && "requestId" in caught
+            ? String((caught as { requestId?: unknown }).requestId ?? "")
+            : "";
+          console.error("Nova Director review failed", {
+            request_id: requestRef || `client-${requestId}`,
+            snapshot_revision: revision,
+            status: directorErrorStatus(caught),
+          });
           setError(friendlyDirectorError(caught));
         })
         .finally(() => {

@@ -10,7 +10,7 @@
       },
       {
         "role": "assistant",
-        "content": "Here are the main issues:\n\n1. Duration: The draft is too long.\n2. Music: The background track is missing.\n3. Visual Alignment: The product overlay should end at the next speech pause."
+        "content": "Here are the main issues:\n\n1. Duration: The draft is too long.\n2. Music: The background track is missing.\n3. Visual Alignment: The product overlay should end at the next speech pause after the product demo."
       }
     ],
     "variant_snapshot": {
@@ -23,7 +23,7 @@
         {"text": "episode one", "start_s": 28.0, "end_s": 31.0, "font_family": "Playfair Display", "size_px": 72}
       ],
       "slots": [],
-      "speech_map": {
+      "speech": {
         "words": [
           {"text": "product", "start_s": 3.2, "end_s": 3.7},
           {"text": "demo", "start_s": 6.2, "end_s": 6.7}
