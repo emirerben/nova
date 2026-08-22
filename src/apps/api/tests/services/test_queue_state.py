@@ -337,3 +337,28 @@ def test_render_worker_queues_constant_matches_fly_toml_worker_queues() -> None:
     a literal between TOML and Python). A drift here silently breaks BOTH
     the wake-hook signal filter and this idle-check."""
     assert RENDER_WORKER_QUEUES == frozenset({"celery", "plan-jobs", "overlay-jobs"})
+
+
+def test_inspect_uses_dedicated_fast_polling_connection() -> None:
+    """Regression: worker.py sets broker polling_interval=10 (Upstash cost);
+    inspect() replies are drained with BRPOP whose timeout IS polling_interval,
+    so sharing the app connection made each inspect block ~10s (3 calls > the
+    lifecycle task's 30s soft limit) and drop replies. inspect() must run on
+    its own connection with the 1s default."""
+    from app.services import queue_state
+
+    celery_app = MagicMock()
+    conn = MagicMock()
+    conn.__enter__ = MagicMock(return_value=conn)
+    conn.__exit__ = MagicMock(return_value=False)
+    celery_app.connection_for_write.return_value = conn
+
+    queue_state.render_worker_idle(celery_app)
+
+    celery_app.connection_for_write.assert_called_once_with(
+        transport_options={"polling_interval": 1}
+    )
+    celery_app.control.inspect.assert_called_once_with(
+        timeout=queue_state._INSPECT_TIMEOUT_S, connection=conn
+    )
+    conn.__exit__.assert_called_once()

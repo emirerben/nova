@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.46.0.2] — 2026-08-22
+
+### Fixes
+- **Render-worker autostop never fired after v0.46.0.1.** The broker
+  `polling_interval=10` also became the BRPOP timeout on `inspect()` reply
+  queues, so `render_worker_idle()`'s three inspect calls took ~30s (hitting the
+  lifecycle task's soft limit) and intermittently dropped replies → `'unknown'`
+  every 2 min, worker never stopped. `inspect()` now runs on a dedicated
+  connection with the 1s default (`queue_state._inspector`); the throttle stays
+  on the long-lived worker consumers. Reproduced + verified against live Redis.
+
 ## [0.46.0.1] — 2026-08-22
 
 ### Infra / cost
