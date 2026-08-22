@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.48.2.0] — 2026-08-23
+
+### Changed
+- **`EditProposalCard`'s 6 native `<select>`s now use the shadcn `Select` primitive** (Direction, Pace,
+  Target length — on both the legacy-brief and draft-review surfaces — plus the per-beat Layout picker).
+  Closes the last raw-`<select>` gap the Lane K shadcn migration left behind; the file no longer needs
+  an ESLint exclusion once the `no-restricted-syntax` raw-control rule flips to `error`. Visible labels
+  and values are unchanged; the two `edit-proposal-card.test.tsx` tests that drove the old selects via
+  `fireEvent.change` now drive them with `@testing-library/user-event` (open trigger, click option).
+
 ## [0.48.1.0] — 2026-08-23
 
 ### Design system
