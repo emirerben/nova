@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.48.0.2] — 2026-08-23
+
+### Fixed
+- **Mobile editor bottom tool bar no longer clips at 375–430px.** `ToolDock`
+  switched from a `flex-1` row (label text forced past its 1/7th share,
+  clipping Overlays and pushing Styles off-screen) to a horizontally
+  scrollable, fixed-width `snap-x` row (`overflow-x-auto scrollbar-none`);
+  every tool keeps its accessible name and 44px+ touch target and stays
+  reachable by scroll regardless of viewport width. The active tool
+  auto-scrolls into view (`motion-safe:scroll-smooth`).
+- **Nova's "thinking" state in the copilot drawer is now a chat bubble.**
+  `CopilotDrawer`'s in-progress indicator was rendering bare at the
+  bottom-left of the thread; it now wraps in the shared assistant
+  `ChatBubble`, matching every other assistant turn, while keeping
+  `role="status"`, the Stop button, and the existing escalating copy.
+
 ## [0.48.0.1] — 2026-08-22
 
 ### Fixed

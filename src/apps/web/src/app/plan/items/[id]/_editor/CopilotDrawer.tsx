@@ -575,24 +575,26 @@ function Thinking({
   const showStop = elapsed >= 5000;
   const late = elapsed >= 8000;
   return (
-    <div role="status" className="mr-auto max-w-[85%] space-y-2 text-sm text-muted-foreground">
-      <div className="flex items-center gap-2">
-        <span className="h-2 w-2 rounded-full bg-primary motion-safe:animate-ping" />
+    <ChatBubble role="assistant">
+      <div role="status" className="space-y-2">
+        <div className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full bg-primary motion-safe:animate-ping" />
+          {showPlanning && (
+            <span>{late ? "Still working — keep editing." : "Planning edits..."}</span>
+          )}
+          {showStop && (
+            <Button type="button" variant="ghost" size="sm" onClick={onStop} className="ml-2">
+              Stop
+            </Button>
+          )}
+        </div>
         {showPlanning && (
-          <span>{late ? "Still working — keep editing." : "Planning edits..."}</span>
-        )}
-        {showStop && (
-          <Button type="button" variant="ghost" size="sm" onClick={onStop} className="ml-2">
-            Stop
-          </Button>
+          <div className="space-y-1">
+            <Skeleton className="h-3 w-4/5" />
+            <Skeleton className="h-3 w-1/2" />
+          </div>
         )}
       </div>
-      {showPlanning && (
-        <div className="space-y-1">
-          <Skeleton className="h-3 w-4/5" />
-          <Skeleton className="h-3 w-1/2" />
-        </div>
-      )}
-    </div>
+    </ChatBubble>
   );
 }
