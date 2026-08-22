@@ -17,7 +17,7 @@ const badgeVariants = cva(
         lime: "border-transparent bg-transparent px-0 py-0 text-lime-700",
         "lime-soft":
           "border border-lime-200 bg-lime-50 px-2.5 py-1 text-lime-800",
-        zinc: "border border-transparent bg-zinc-100 px-2.5 py-1 text-[#3f3f46]",
+        zinc: "border border-zinc-200 bg-white px-2.5 py-1 text-[#71717a]",
       },
     },
     defaultVariants: {
