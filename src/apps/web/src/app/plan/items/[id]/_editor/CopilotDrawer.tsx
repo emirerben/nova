@@ -13,6 +13,8 @@ import type { NovaStep } from "@/lib/job-phases";
 import { InfoDot } from "@/components/ui/InfoDot";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ArrowUp } from "lucide-react";
 import { ChatBubble } from "@/components/chat/ChatBubble";
@@ -203,10 +205,10 @@ export default function CopilotDrawer({
 
   const rootClass =
     layoutMode === "full"
-      ? "flex h-full w-[360px] flex-col border-r border-zinc-200 bg-white"
+      ? "flex h-full w-[360px] flex-col border-r border-border bg-background"
       : layoutMode === "overlay"
-        ? "flex h-[220px] w-full flex-col rounded-xl border border-zinc-200 bg-white shadow-[0_18px_48px_rgba(12,12,14,0.18)]"
-        : "fixed inset-x-0 bottom-0 z-[95] flex max-h-[74dvh] min-h-[360px] flex-col rounded-t-2xl border-t border-zinc-200 bg-white shadow-[0_-18px_48px_rgba(12,12,14,0.2)]";
+        ? "flex h-[220px] w-full flex-col rounded-xl border border-border bg-background shadow-[0_18px_48px_rgba(12,12,14,0.18)]"
+        : "fixed inset-x-0 bottom-0 z-[95] flex max-h-[74dvh] min-h-[360px] flex-col rounded-t-2xl border-t border-border bg-background shadow-[0_-18px_48px_rgba(12,12,14,0.2)]";
 
   return (
     <section
@@ -217,24 +219,31 @@ export default function CopilotDrawer({
     >
       {layoutMode === "light" && (
         <div aria-hidden className="flex justify-center py-2 touch-none">
-          <span className="h-1 w-10 rounded-full bg-zinc-300" />
+          <span className="h-1 w-10 rounded-full bg-muted-foreground/30" />
         </div>
       )}
-      <div className="flex flex-none items-center justify-between px-5 pb-3 pt-4">
+      <div className="flex h-12 flex-none items-center justify-between px-4">
         <span className="flex items-center gap-1">
-          <h2 className="font-display text-[18px] font-medium text-[#0c0c0e]">Nova</h2>
+          <h2 className="text-base font-semibold text-foreground">Nova</h2>
           <InfoDot label="Nova">
             Nova can rewrite your hook, restyle text, and tighten or reorder cuts. Draft
             edits preview instantly.
           </InfoDot>
         </span>
-        <Button type="button" variant="ghost" size="icon" aria-label="Close Nova" onClick={onClose}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          aria-label="Close Nova"
+          onClick={onClose}
+        >
           <CloseIcon className="h-4 w-4" />
         </Button>
       </div>
 
       <ScrollArea ref={threadRef} className="min-h-0 flex-1">
-      <div className="space-y-3 px-5 pb-3">
+      <div className="space-y-3 px-4 py-3">
         {director && (
           <DirectorSuggestions
             suggestions={director.suggestions}
@@ -287,7 +296,7 @@ export default function CopilotDrawer({
               {isRenderTurnMsg && isActiveRenderTurn && (
                 <div className="mr-auto max-w-[85%]">
                   {renderTurnSteps && renderTurnSteps.length > 0 ? (
-                    <div className="rounded-lg bg-zinc-50 px-2.5 py-2">
+                    <div className="rounded-lg bg-muted p-3">
                       <NovaActivityFeed
                         steps={renderTurnSteps}
                         tone="light"
@@ -297,15 +306,15 @@ export default function CopilotDrawer({
                       />
                     </div>
                   ) : (
-                    <div className="space-y-2 rounded-lg border border-zinc-200 bg-white px-3 py-2.5">
-                      <p className="text-[12px] leading-4 text-[#71717a]">
+                    <div className="space-y-2 rounded-lg border border-border bg-background p-3">
+                      <p className="text-sm text-muted-foreground">
                         This re-renders the video and can&apos;t be undone from
                         chat. Your current version stays in history if you
                         want it back.
                       </p>
                       <div className="space-y-1" aria-hidden="true">
-                        <div className="h-2 w-4/5 rounded-full bg-[linear-gradient(90deg,#f4f4f5_25%,#fff_50%,#f4f4f5_75%)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
-                        <div className="h-2 w-1/2 rounded-full bg-[linear-gradient(90deg,#f4f4f5_25%,#fff_50%,#f4f4f5_75%)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
+                        <Skeleton className="h-3 w-4/5" />
+                        <Skeleton className="h-3 w-1/2" />
                       </div>
                     </div>
                   )}
@@ -373,28 +382,22 @@ export default function CopilotDrawer({
                 </div>
               )}
 
-              {/* Flag off: today's lime ChangeChip pills, byte-identical. */}
+              {/* Flag off: today's ChangeChip pills, byte-identical count/order. */}
               {!isRenderTurnMsg && !stepsFeedEnabled && !isUser && chips.length > 0 && (
                 <div className="flex flex-wrap items-center gap-1.5">
                   {shownApplied.map((summary) => {
                     const parsed = parseApplied(summary);
                     return (
-                      <span
-                        key={summary}
-                        className="inline-flex min-h-8 items-center rounded-full border border-lime-200 bg-lime-50 px-3 text-[12px] text-lime-800"
-                      >
-                        {parsed.label} <b className="ml-1 font-semibold">{parsed.value}</b>
-                      </span>
+                      <Badge key={summary} variant="secondary">
+                        {parsed.label} <span className="ml-1 font-medium">{parsed.value}</span>
+                      </Badge>
                     );
                   })}
                   {!collapsed &&
                     (message.rejected ?? []).map((summary) => (
-                      <span
-                        key={summary}
-                        className="inline-flex min-h-8 items-center rounded-full border border-dashed border-zinc-300 bg-white px-3 text-[12px] text-[#71717a]"
-                      >
+                      <Badge key={summary} variant="outline">
                         Couldn&apos;t apply: {summary}
-                      </span>
+                      </Badge>
                     ))}
                   {remainingSlots > 0 && (
                     <Button
@@ -402,7 +405,6 @@ export default function CopilotDrawer({
                       variant="outline"
                       size="sm"
                       onClick={() => setExpanded((cur) => ({ ...cur, [message.id]: true }))}
-                      className="hover:border-lime-400 hover:text-lime-700"
                     >
                       +{remainingSlots} more
                     </Button>
@@ -420,8 +422,8 @@ export default function CopilotDrawer({
 
         {sending && <Thinking elapsed={elapsed} onStop={onStop} />}
         {queued && (
-          <div className="ml-auto max-w-[85%] rounded-lg rounded-br-sm border border-dashed border-border bg-background px-3.5 py-2.5 text-[13px] text-foreground">
-            <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+          <div className="ml-auto max-w-[85%] rounded-lg rounded-br-sm border border-dashed border-border bg-background px-3 py-2 text-sm text-foreground">
+            <p className="mb-1 text-xs text-muted-foreground">
               Queued after current edit
             </p>
             <Button
@@ -451,7 +453,7 @@ export default function CopilotDrawer({
           <div
             role="status"
             aria-live="polite"
-            className="rounded-lg border border-border bg-background px-3 py-2 text-[12.5px] text-foreground"
+            className="rounded-lg border border-border bg-background p-3 text-sm text-foreground"
           >
             {error}
           </div>
@@ -465,36 +467,33 @@ export default function CopilotDrawer({
           : ""}
       </div>
 
-      <div className="flex flex-none flex-wrap gap-1.5 border-t border-zinc-200 px-4 pb-2 pt-3">
+      <div className="flex flex-none flex-wrap gap-2 border-t border-border px-4 py-3">
         {showContextualChips ? (
           <>
             <Button
               type="button"
               variant="outline"
-              size="pill"
+              size="sm"
               disabled={unavailable || !!queued}
               onClick={onUndo}
-              className="hover:border-lime-400 hover:text-lime-700"
             >
               Undo that
             </Button>
             <Button
               type="button"
               variant="outline"
-              size="pill"
+              size="sm"
               disabled={unavailable || !!queued}
               onClick={() => onSend("Do that again")}
-              className="hover:border-lime-400 hover:text-lime-700"
             >
               Do that again
             </Button>
             <Button
               type="button"
               variant="outline"
-              size="pill"
+              size="sm"
               disabled={unavailable || !!queued}
               onClick={() => onSend("What else changed?")}
-              className="hover:border-lime-400 hover:text-lime-700"
             >
               What else changed?
             </Button>
@@ -505,10 +504,9 @@ export default function CopilotDrawer({
               key={suggestion}
               type="button"
               variant="outline"
-              size="pill"
+              size="sm"
               disabled={unavailable || !!queued}
               onClick={() => onSend(suggestion)}
-              className="hover:border-lime-400 hover:text-lime-700"
             >
               {suggestion}
             </Button>
@@ -517,7 +515,7 @@ export default function CopilotDrawer({
       </div>
 
       <form
-        className="flex flex-none items-end gap-2 px-4 pb-3"
+        className="flex flex-none items-end gap-2 px-4 pb-4"
         onSubmit={(e) => {
           e.preventDefault();
           submit();
@@ -547,7 +545,7 @@ export default function CopilotDrawer({
             aria-label="Tell Nova what to change"
           />
           {draft.length >= MAX_CHARS * 0.8 && (
-            <p className="mt-1 text-right text-[11px] text-muted-foreground">
+            <p className="mt-1.5 text-right text-xs text-muted-foreground">
               {draft.length}/{MAX_CHARS}
             </p>
           )}
@@ -577,9 +575,9 @@ function Thinking({
   const showStop = elapsed >= 5000;
   const late = elapsed >= 8000;
   return (
-    <div role="status" className="mr-auto max-w-[85%] space-y-2 text-[13px] text-muted-foreground">
+    <div role="status" className="mr-auto max-w-[85%] space-y-2 text-sm text-muted-foreground">
       <div className="flex items-center gap-2">
-        <span className="h-2 w-2 rounded-full bg-lime-600 motion-safe:animate-ping" />
+        <span className="h-2 w-2 rounded-full bg-primary motion-safe:animate-ping" />
         {showPlanning && (
           <span>{late ? "Still working — keep editing." : "Planning edits..."}</span>
         )}
@@ -591,8 +589,8 @@ function Thinking({
       </div>
       {showPlanning && (
         <div className="space-y-1">
-          <div className="h-2.5 w-4/5 rounded-full bg-[linear-gradient(90deg,#f4f4f5_25%,#fff_50%,#f4f4f5_75%)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
-          <div className="h-2.5 w-1/2 rounded-full bg-[linear-gradient(90deg,#f4f4f5_25%,#fff_50%,#f4f4f5_75%)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
+          <Skeleton className="h-3 w-4/5" />
+          <Skeleton className="h-3 w-1/2" />
         </div>
       )}
     </div>
