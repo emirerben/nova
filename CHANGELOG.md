@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.48.0.1] — 2026-08-22
+
+### Fixed
+- **Uploaded voiceovers now attach reliably before generation.** Releasing the database transaction
+  for storage metadata validation no longer leaves the later ownership check with an expired sign-in
+  record, which previously crashed the attach request. The selected narration now persists on the
+  plan item and reaches the existing voiceover-and-subtitle renderer.
+
 ## [0.48.0.0] — 2026-08-22
 
 ### Kria Design System — shadcn/ui migration train (Lanes 0, A–K)

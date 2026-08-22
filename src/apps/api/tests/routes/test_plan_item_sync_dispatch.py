@@ -158,6 +158,36 @@ def _jobs_for(item_id: uuid.UUID) -> list[Job]:
         return list(rows)
 
 
+def test_voiceover_attach_survives_metadata_validation_rollback(client: TestClient) -> None:
+    """The real auth User must remain usable after storage validation releases the DB tx."""
+
+    user_id, item_id = _seed_item()
+    voiceover_path = f"voiceover-uploads/direct/{user_id}/{uuid.uuid4().hex}/voice.mp3"
+
+    with patch(
+        "app.routes.plan_items.storage.object_metadata",
+        return_value=ObjectMetadata(
+            path=voiceover_path,
+            generation="1",
+            etag=None,
+            size=345_645,
+            content_type="audio/mpeg",
+        ),
+    ):
+        response = client.patch(
+            f"/plan-items/{item_id}/voiceover",
+            json={"voiceover_gcs_path": voiceover_path},
+            headers=_auth(user_id),
+        )
+
+    assert response.status_code == 200, response.text
+    with sync_session() as session:
+        persisted = session.get(PlanItem, item_id)
+        assert persisted is not None
+        assert persisted.voiceover_gcs_path == voiceover_path
+        assert persisted.audio_mode == "voiceover"
+
+
 def _approve_clip_proposal(item_id: uuid.UUID, *, path: str, generation: str = "42") -> None:
     media_id = str(uuid.uuid4())
     media = MediaRef(
