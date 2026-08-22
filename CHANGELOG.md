@@ -3,6 +3,27 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.47.8.0] — 2026-08-22
+
+### Design system
+- **Generative + transcript + StepRail sweep onto shadcn/ui (Lane F of the
+  Kria Design System migration).** `app/generative/{VariantCard,
+  VoiceRecorder}.tsx`, the full `plan/items/[id]/transcript/*` record
+  takeover (`BriefStep`/`QuestionsStep`/`ReviewStep`/`ScriptStep`/
+  `TeleprompterRecorder`/`page`), `plan/_components/ui/StepRail.tsx`, and
+  `plan/_components/PlanVariantEditor.tsx` now render every button/input/
+  textarea/select through the shadcn primitives (`Button`/`Input`/
+  `Textarea`/`Select`) instead of hand-rolled `className` chrome.
+  `components/progress/PhaseChipRow.tsx`'s horizontal chip scroller switched
+  to the shared `scrollbar-none` utility. `StepRail`'s dots (phone strip +
+  desktop rail) are now ghost icon `Button`s while keeping the pinned 44px
+  boxes, `md:hidden`/`w-56 hidden md:flex` breakpoint gating, and focus-ring
+  classes (`mobile-shell.test.tsx`). `components/TikTokPublishDialog.tsx` was
+  evaluated for a `Dialog` shell conversion and deferred — see DESIGN.md §15
+  "Backlog (deferred from Lane F)" for why and what a follow-up PR needs to
+  do. Raw-control ratchet (`raw-controls-guard.test.ts`) LANE_F block zeroes
+  out every file this lane touched.
+
 ## [0.47.0.0] — 2026-08-22
 
 ### Design system

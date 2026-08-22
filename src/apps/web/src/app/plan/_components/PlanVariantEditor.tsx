@@ -11,6 +11,8 @@ import {
 } from "@/lib/generative-api";
 import type { MusicTrackSummary } from "@/lib/music-api";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import SongPicker from "./SongPicker";
 import StyleChip from "./StyleChip";
 
@@ -123,53 +125,46 @@ export default function PlanVariantEditor({
               void run(() => onRetext(next));
             }}
           >
-            <input
+            <Input
               autoFocus
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               placeholder="New intro text…"
-              className="rounded border border-zinc-200 bg-white px-3 py-2 text-sm text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:border-lime-600 focus:outline-none"
             />
             <div className="flex gap-2">
-              <button
-                type="submit"
-                disabled={rendering || !draft.trim()}
-                className="rounded-full bg-[#0c0c0e] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
-              >
+              <Button type="submit" variant="ink" size="sm" disabled={rendering || !draft.trim()}>
                 Save
-              </button>
-              <button
-                type="button"
-                onClick={() => setEditing(false)}
-                className="rounded-full border border-zinc-200 px-4 py-2 text-sm text-[#3f3f46] hover:border-zinc-400"
-              >
+              </Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => setEditing(false)}>
                 Cancel
-              </button>
+              </Button>
             </div>
           </form>
         ) : (
           <div className="flex flex-wrap gap-2">
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               disabled={rendering || sequenceSynced}
               title={sequenceSynced ? SEQUENCE_TEXT_LOCKED_HINT : undefined}
               onClick={() => {
                 setDraft(variant.intro_text ?? "");
                 setEditing(true);
               }}
-              className="rounded-full border border-zinc-200 px-4 py-2 text-sm text-[#3f3f46] transition-colors hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Edit text
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               disabled={rendering || sequenceSynced}
               title={sequenceSynced ? SEQUENCE_TEXT_LOCKED_HINT : undefined}
               onClick={() => run(onRemoveText)}
-              className="rounded-full border border-zinc-200 px-4 py-2 text-sm text-[#3f3f46] transition-colors hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Remove text
-            </button>
+            </Button>
           </div>
         )}
       </section>}
@@ -180,31 +175,35 @@ export default function PlanVariantEditor({
           <h3 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Text size</h3>
           <div className="flex items-center gap-3">
             <div className="flex items-center overflow-hidden rounded-full border border-zinc-200">
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="sm"
                 disabled={rendering || curPx <= INTRO_SIZE_MIN}
                 onClick={() =>
                   run(() => onResize(Math.max(INTRO_SIZE_MIN, curPx - INTRO_SIZE_STEP)))
                 }
                 aria-label="Smaller intro text"
-                className="px-4 py-2 text-sm text-[#3f3f46] transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
+                className="h-auto rounded-none px-4 py-2 text-sm text-[#3f3f46]"
               >
                 A&minus;
-              </button>
+              </Button>
               <span className="border-x border-zinc-200 px-3 py-2 text-sm tabular-nums text-[#71717a]">
                 {variant.intro_size_source === "user" ? `${curPx}` : `${curPx} · auto`}
               </span>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="sm"
                 disabled={rendering || curPx >= INTRO_SIZE_MAX}
                 onClick={() =>
                   run(() => onResize(Math.min(INTRO_SIZE_MAX, curPx + INTRO_SIZE_STEP)))
                 }
                 aria-label="Bigger intro text"
-                className="px-4 py-2 text-base text-[#3f3f46] transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
+                className="h-auto rounded-none px-4 py-2 text-base text-[#3f3f46]"
               >
                 A+
-              </button>
+              </Button>
             </div>
             <span className="text-xs text-[#a1a1aa]">
               {variant.intro_size_source === "user"
@@ -226,26 +225,23 @@ export default function PlanVariantEditor({
             sequenceSynced || variant.intro_layout === "cluster" ? "cluster" : "linear";
           const words = (variant.intro_text ?? "").trim().split(/\s+/).filter(Boolean).length;
           const clusterBlocked = !sequenceSynced && (words < 3 || words > 6);
-          const pill = (selected: boolean) =>
-            `rounded-full border px-4 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-              selected
-                ? "border-[#0c0c0e] bg-[#0c0c0e] text-white"
-                : "border-zinc-200 text-[#3f3f46] hover:border-zinc-400"
-            }`;
           return (
             <section>
               <h3 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Layout</h3>
               <div role="radiogroup" aria-label="Intro text layout" className="flex gap-2">
-                <button
+                <Button
                   type="button"
+                  variant={layout === "linear" ? "ink" : "outline"}
+                  size="sm"
                   disabled={rendering || layout === "linear"}
                   onClick={() => run(() => onChangeLayout("linear"))}
-                  className={pill(layout === "linear")}
                 >
                   Classic
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  variant={layout === "cluster" ? "ink" : "outline"}
+                  size="sm"
                   disabled={rendering || layout === "cluster" || clusterBlocked}
                   title={
                     sequenceSynced
@@ -255,10 +251,9 @@ export default function PlanVariantEditor({
                         : "Editorial word-cluster — mixed sizes, magazine-style"
                   }
                   onClick={() => run(() => onChangeLayout("cluster"))}
-                  className={pill(layout === "cluster")}
                 >
                   Editorial
-                </button>
+                </Button>
               </div>
               {clusterBlocked && layout === "linear" && (
                 <p className="mt-1.5 text-xs text-[#a1a1aa]">
@@ -311,15 +306,10 @@ export default function PlanVariantEditor({
       {!hide.has("clips") && onEditClips && showClipEditor && (
         <section>
           <h3 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Clips</h3>
-          <button
-            type="button"
-            disabled={rendering}
-            onClick={onEditClips}
-            className="rounded-full border border-zinc-200 px-4 py-2 text-sm text-[#3f3f46] transition-colors hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-40"
-          >
+          <Button type="button" variant="outline" size="sm" disabled={rendering} onClick={onEditClips}>
             Edit clips
             {clipSlotCount != null ? ` · ${clipSlotCount}` : ""}
-          </button>
+          </Button>
           {hasClipEdits && !rendering && (
             <span className="ml-3 rounded-full border border-lime-200 bg-lime-50 px-2 py-0.5 text-xs text-lime-800">
               Edited cut
@@ -332,17 +322,12 @@ export default function PlanVariantEditor({
       {!hide.has("overlays") && mediaOverlaysEnabled && onEditOverlays && (
         <section>
           <h3 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Overlay cards</h3>
-          <button
-            type="button"
-            disabled={rendering}
-            onClick={onEditOverlays}
-            className="rounded-full border border-zinc-200 px-4 py-2 text-sm text-[#3f3f46] transition-colors hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-40"
-          >
+          <Button type="button" variant="outline" size="sm" disabled={rendering} onClick={onEditOverlays}>
             Edit overlays
             {(variant.media_overlays?.length ?? 0) > 0
               ? ` · ${variant.media_overlays!.length}`
               : ""}
-          </button>
+          </Button>
         </section>
       )}
 

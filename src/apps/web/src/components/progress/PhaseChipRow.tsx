@@ -71,7 +71,7 @@ export function PhaseChipRow({ phases, phaseLabels, currentPhase, tone = "dark" 
       {/* Scrollable chips */}
       <div
         ref={containerRef}
-        className="flex gap-2 overflow-x-auto px-6 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex gap-2 overflow-x-auto scrollbar-none px-6 py-1"
         role="list"
         aria-label="Processing phases"
       >
