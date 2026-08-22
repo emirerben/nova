@@ -432,7 +432,16 @@ def sweep_stale_jobs(self) -> int:
 # encodes. Matches the GCS lifecycle rule in infra/gcs-lifecycle.json —
 # anything outside these prefixes either persists (templates/, music/
 # library tracks) or is handled by the lifecycle rule's 24h delete.
-_JOB_TEMP_PREFIXES = ("dev-user/", "music-jobs/")
+# "00000000-0000-0000-0000-000000000001/" is SYNTHETIC_USER_ID (app/auth.py):
+# presigned_put_url writes `{user_id}/{job_id}/…`, so anonymous-flow uploads
+# land there, not under `dev-user/`. Lifecycle deletes it at 30d (not 24h —
+# those jobs stay reachable by UUID, see ensure_job_owner).
+_JOB_TEMP_PREFIXES = (
+    "dev-user/",
+    "music-jobs/",
+    "00000000-0000-0000-0000-000000000001/",
+    "jobs/",
+)
 
 
 @celery_app.task(

@@ -35,6 +35,20 @@
           "age": 1,
           "matchesPrefix": ["transcript-cache/"]
         }
+      },
+      {
+        "action": { "type": "Delete" },
+        "condition": {
+          "age": 30,
+          "matchesPrefix": ["00000000-0000-0000-0000-000000000001/"]
+        }
+      },
+      {
+        "action": { "type": "Delete" },
+        "condition": {
+          "age": 30,
+          "matchesPrefix": ["jobs/"]
+        }
       }
     ]
   }

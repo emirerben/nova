@@ -12,6 +12,18 @@ All notable changes to this project will be documented in this file.
   (`PLAYBACK_URL_TTL_MIN`, mirroring `_variants_for_response` on the item page),
   falling back to the stored URL if signing fails. Latent on the old `/library`
   page; became the home surface in #869.
+### Infra / cost
+- **Idle Redis polling throttled.** `broker_transport_options.polling_interval=10`
+  (kombu default 1s): three always-on consumers were issuing ~7.8M idle `BRPOP`
+  commands/month to Upstash. Push-delivery latency is unchanged (BRPOP wakes on
+  push). Pinned by `test_idle_broker_polling_is_throttled`.
+- **Beat merged into `light` (`-B`).** Drops the separate `beat` process group and
+  its 256MB machine; `light` must stay at one machine.
+- **GCS lifecycle drift fixed.** The 24h rule targeted `dev-user/`, but uploads
+  land under `{user_uuid}/{job_id}/` — 43 GiB of Apr/May anonymous uploads
+  (`00000000-…0001/`) and 12 GiB of legacy `jobs/` intermediates sat forever.
+  Both now delete at 30d; `_JOB_TEMP_PREFIXES` matches. Bucket soft delete (7d)
+  turned off (bills deleted 24h-lifecycle objects for 7 extra days).
 
 ## [0.46.0.0] — 2026-08-21
 

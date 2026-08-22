@@ -135,7 +135,7 @@ python scripts/admin.py --prod POST templates/abc/publish                     # 
 - Read agents/DECISIONS.md for why key choices were made
 
 ## Storage retention
-- Per-job GCS objects (`dev-user/*`, `music-jobs/*`, `music-lyrics-previews/*`) are deleted by a bucket lifecycle rule 24h after upload. Config lives at `infra/gcs-lifecycle.json`; apply once with `gsutil lifecycle set infra/gcs-lifecycle.json gs://$STORAGE_BUCKET` (not part of CI deploy).
+- Per-job GCS objects (`dev-user/*`, `music-jobs/*`, `music-lyrics-previews/*`) are deleted by a bucket lifecycle rule 24h after upload; `jobs/*` and the anonymous `00000000-…0001/*` upload prefix at 30d. Soft delete is OFF on the bucket. Config lives at `infra/gcs-lifecycle.json`; apply once with `gsutil lifecycle set infra/gcs-lifecycle.json gs://$STORAGE_BUCKET` (not part of CI deploy).
 - Curated assets (`music/*`, `templates/*`) are NOT matched by the rule and persist forever.
 - Signed-URL TTL in `storage.py` is 1 day to match the object lifetime.
 - **`generative-jobs/*` exception:** blobs persist forever but `upload_public_read` signs `output_url` for only 1 day → expired URLs show blank video after 24h. Fix is read-time re-signing via `_variants_for_response` in `routes/generative_jobs.py` (`PLAYBACK_URL_TTL_MIN`). Pinned by `test_variants_for_response_resigns_ready_variant`. See agents/DECISIONS.md "Storage retention incidents" for the full narrative.
