@@ -27,7 +27,7 @@ Object.defineProperty(window, "matchMedia", {
 });
 window.HTMLMediaElement.prototype.load = jest.fn();
 
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
 process.env.NEXT_PUBLIC_SUBTITLED_ENABLED = "true";
@@ -360,7 +360,7 @@ describe("PlanItemPage — masonry collage item UX", () => {
       });
 
       expect(
-        screen.getByText((_, el) => el?.textContent === "1 · Your clips"),
+        screen.getByText((_, el) => el?.textContent === "Your clips"),
       ).toBeInTheDocument();
       expect(screen.queryByTestId("shot-slot-uploader")).not.toBeInTheDocument();
       expect(
@@ -942,9 +942,12 @@ describe("PlanItemPage — conformance verdict tile (D10 redesign)", () => {
     // (no label, no evidence line, no full-tile chrome) — calmer and less opinionated.
     expect(screen.getByTestId("kria-helper")).toBeInTheDocument();
     expect(screen.getByText(/This reads as a guitar session/)).toBeInTheDocument();
-    // Recourse buttons — condensed labels in the one-liner.
-    expect(screen.getByText(/Tell Kria/)).toBeInTheDocument();
-    expect(screen.getByText(/Hide/)).toBeInTheDocument();
+    // Recourse buttons — condensed labels in the one-liner. Scoped to the
+    // KriaHelper tile since the setup zone's "Tell Kria" textarea label now
+    // also matches /Tell Kria/.
+    const kriaHelper = within(screen.getByTestId("kria-helper"));
+    expect(kriaHelper.getByText(/Tell Kria/)).toBeInTheDocument();
+    expect(kriaHelper.getByText(/Hide/)).toBeInTheDocument();
     // Mismatch bullets and suggestions are data, not display.
     expect(screen.queryByText(/Expected kitchen footage/)).toBeNull();
     expect(screen.queryByText(/steady overhead of the cutting board/)).toBeNull();
@@ -1432,7 +1435,7 @@ describe("PlanItemPage — per-type uploaders with an accepted plan", () => {
 
     expect(screen.getByText("Plan summary")).toBeInTheDocument();
     expect(
-        screen.getByText((_, el) => el?.textContent === "1 · Your clips"),
+        screen.getByText((_, el) => el?.textContent === "Your clips"),
       ).toBeInTheDocument();
     expect(screen.queryByText(/shot left/i)).toBeNull();
   });
@@ -1508,7 +1511,7 @@ describe("PlanItemPage — per-type uploaders with an accepted plan", () => {
 
     expect(screen.getByText("Plan summary")).toBeInTheDocument();
     expect(
-        screen.getByText((_, el) => el?.textContent === "1 · Your clip"),
+        screen.getByText((_, el) => el?.textContent === "Your clip"),
       ).toBeInTheDocument();
     expect(screen.queryByText(/shot left/i)).toBeNull();
   });
@@ -1554,12 +1557,15 @@ describe("PlanItemPage — per-type setup truth table (V2 redesign)", () => {
     expect(
       screen.getByRole("heading", { name: "Your voice tells the story." }),
     ).toBeInTheDocument();
+    // sr-only heading + InfoDot — no step numeral, no visible helper paragraph.
     expect(
-      screen.getByText((_, el) => el?.textContent === "2 · Your voiceover"),
+      screen.getByRole("heading", { level: 2, name: "Your voiceover" }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText((_, el) => el?.textContent === "3 · Direction for Kria Optional"),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "About Your voiceover" })).toBeInTheDocument();
+    // Direction/voice-note section is gone — replaced by the single "Tell Kria" field.
+    expect(screen.getByRole("textbox", { name: "Tell Kria" })).toBeInTheDocument();
+    expect(screen.queryByText(/Direction for Kria/)).toBeNull();
+    expect(screen.queryByText(/Add a voice note to Kria/)).toBeNull();
     expect(screen.queryByRole("button", { name: /Original audio/i })).toBeNull();
   });
 
@@ -1569,12 +1575,10 @@ describe("PlanItemPage — per-type setup truth table (V2 redesign)", () => {
     });
     expect(screen.getByText("TALKING TO CAMERA")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Add your clip." })).toBeInTheDocument();
-    expect(
-      screen.getByText(/Its own audio is the soundtrack/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/Captions and dead-air cleanup happen automatically/),
-    ).toBeInTheDocument();
+    // Helper paragraphs consolidated into one InfoDot (DESIGN.md §12).
+    expect(screen.getByRole("button", { name: "About Your clip" })).toBeInTheDocument();
+    expect(screen.queryByText(/Its own audio is the soundtrack/)).toBeNull();
+    expect(screen.queryByText(/Captions and dead-air cleanup happen automatically/)).toBeNull();
     expect(screen.queryByText(/Your voiceover/)).toBeNull();
     expect(screen.queryByRole("button", { name: /Original audio/i })).toBeNull();
   });

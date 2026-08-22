@@ -36,8 +36,6 @@ import {
   type PlanItemVariant,
   type MontagePreset,
   requestUploadUrls,
-  requestDirectionAudioUploadUrl,
-  transcribeDirectionAudio,
   retextPlanItem,
   setPlanItemIntroSize,
   swapPlanItemSong,
@@ -63,7 +61,6 @@ import {
   patchPlanItemSceneTiming,
   type SceneTimingPatch,
 } from "@/lib/plan-api";
-import { fmtTime, useAudioRecorder, type AudioTake } from "@/hooks/useAudioRecorder";
 import { buildPromotedAssignments } from "@/lib/plan-clip-promotion";
 import {
   FINISHING_UPLOAD_HINT,
@@ -101,6 +98,10 @@ import { usePolledJobStatus } from "@/hooks/usePolledJobStatus";
 import { LightShell } from "@/components/ui/LightShell";
 import { InkButton } from "@/components/ui/InkButton";
 import { InfoDot } from "@/components/ui/InfoDot";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import AssetPool from "../../_components/AssetPool";
 import SuggestionRail from "../../_components/SuggestionRail";
 import HeroOverlayEditor from "../../_components/HeroOverlayEditor";
@@ -143,6 +144,7 @@ import {
 } from "@/lib/edit-format";
 import TextElementOverlayLayer from "./components/TextElementOverlayLayer";
 import EditProposalCard from "./components/EditProposalCard";
+import PlanThreadPanel from "./components/PlanThreadPanel";
 import { TikTokPublishDialog } from "@/components/TikTokPublishDialog";
 import { TikTokReleaseRail } from "@/components/TikTokReleaseRail";
 import {
@@ -585,6 +587,9 @@ export default function PlanItemPage() {
   const [audioPreference, setAudioPreference] = useState<"kria" | "original" | "voiceover">("kria");
   // Setup receipt "Change" toggle — mounts the type/style poster picker.
   const [setupPickerOpen, setSetupPickerOpen] = useState(false);
+  // Guided-edit conversation with Kria now lives in a Sheet (PlanThreadPanel)
+  // instead of morphing the setup zone inline (DESIGN.md §12).
+  const [threadOpen, setThreadOpen] = useState(false);
   // Conformance polling: keep fetching for up to 3 extra cycles after clips are attached
   // so the verdict panel appears shortly after the async agent finishes (~6s window).
   const conformancePolls = useRef(0);
@@ -1550,6 +1555,48 @@ export default function PlanItemPage() {
               ? "Kria couldn't finish planning this edit — it'll retry when you hit Generate."
               : "Kria couldn't finish planning this edit — open the planner to try again."
             : "Plan this edit before generating.";
+  // Compact status row under Tell Kria (PlanThreadPanel trigger) — replaces
+  // the inline EditProposalCard morph (DESIGN.md §12). Badge label/variant +
+  // one sentence + button label, all keyed off item.edit_proposal?.status.
+  const guidedEditStatusRow = (() => {
+    const status = item.edit_proposal?.status;
+    if (status === "draft") {
+      return {
+        badgeLabel: "Draft ready",
+        badgeVariant: "lime-soft" as const,
+        sentence: "Your draft is ready to review.",
+        buttonLabel: "Review Kria's plan",
+      };
+    }
+    if (status === "approved") {
+      return {
+        badgeLabel: "Approved",
+        badgeVariant: "lime-soft" as const,
+        sentence: "This edit plan is locked in.",
+        buttonLabel: "Change plan",
+      };
+    }
+    if (status === "failed" || status === "stale") {
+      return {
+        badgeLabel: "Needs a look",
+        badgeVariant: "zinc" as const,
+        sentence:
+          status === "stale"
+            ? "Your media changed — the plan needs another look."
+            : "Kria couldn't finish the plan — take a look.",
+        buttonLabel: "Plan with Kria",
+      };
+    }
+    return {
+      badgeLabel: "Planning…",
+      badgeVariant: "zinc" as const,
+      sentence:
+        status === "analyzing" || status === "drafting"
+          ? "Kria is thinking through your footage…"
+          : "Kria hasn't planned this edit yet.",
+      buttonLabel: "Plan with Kria",
+    };
+  })();
   // "Your narrated render became a montage" explanation (no_speech etc.) —
   // persisted by the orchestrator, surfaced here so the swap is never silent.
   const fallbackBanner = narrationFallbackBanner(
@@ -1614,17 +1661,16 @@ export default function PlanItemPage() {
                     poster picker — replaces the old buried "Advanced video style"
                     disclosure (design: Paper "V2 — Item setup per type"). */}
                 <div className="mt-5 flex items-baseline justify-between gap-3">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-lime-700">
-                    {setupReceiptLabel}
-                  </p>
+                  <Badge variant="lime">{setupReceiptLabel}</Badge>
                   {showSetupControls && (
-                    <button
+                    <Button
                       type="button"
+                      variant="link"
+                      size="sm"
                       onClick={() => setSetupPickerOpen((v) => !v)}
-                      className="min-h-11 text-[13px] text-[#71717a] transition-colors hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:min-h-0"
                     >
                       {setupPickerOpen ? "Done" : "Change"}
-                    </button>
+                    </Button>
                   )}
                 </div>
                 <h1 className="font-display mt-1 text-3xl text-[#0c0c0e]">
@@ -1638,18 +1684,16 @@ export default function PlanItemPage() {
 
             {showSetupControls && (
               <div className="flex flex-col">
-            {/* Direction is optional and subordinate to footage. The voice-note
-                path transcribes into this same field; it never sets voiceover. */}
-            <section
-              className={isNarrated ? "order-3 mb-5" : "order-2 mb-5"}
-              aria-labelledby="direction-heading"
-            >
-              <p id="direction-heading" className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
-                {isNarrated ? "3" : "2"} · Direction for Kria{" "}
-                <span className="font-normal normal-case tracking-normal text-[#a1a1aa]">Optional</span>
-              </p>
-              <textarea
-                key={item.notes ?? "empty-direction"}
+            {/* Tell Kria is optional and subordinate to footage — one field,
+                one label, no separate "voice" concept (DESIGN.md §12). */}
+            <section className={isNarrated ? "order-3 mb-5" : "order-2 mb-5"}>
+              <Label htmlFor="tell-kria" className="mb-2 block">
+                Tell Kria <span className="font-normal text-[#a1a1aa]">Optional</span>
+              </Label>
+              <Textarea
+                id="tell-kria"
+                aria-label="Tell Kria"
+                key={item.notes ?? "empty"}
                 defaultValue={item.notes ?? ""}
                 onBlur={async (e) => {
                   const val = e.currentTarget.value.trim() || null;
@@ -1659,16 +1703,7 @@ export default function PlanItemPage() {
                   }
                 }}
                 placeholder="For example: start fast and keep the candid moments"
-                aria-label="Direction for Kria"
                 rows={2}
-                className="w-full resize-none rounded-lg border border-zinc-200 bg-transparent px-3 py-2 text-sm text-[#3f3f46] placeholder-zinc-400 focus:border-lime-500/60 focus:outline-none"
-              />
-              <DirectionVoiceNote
-                itemId={item.id}
-                onTranscribed={() => {
-                  forceFreshFetchRef.current = true;
-                  refetch();
-                }}
               />
             </section>
 
@@ -1754,12 +1789,12 @@ export default function PlanItemPage() {
                 item) was removed in the per-type setup redesign. */}
             {isNarrated && (
               <div className="order-2 mb-6 rounded-xl border border-zinc-200 bg-white p-4">
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
-                  2 · Your voiceover
-                </p>
-                <p className="mb-3 text-sm text-[#71717a]">
-                  This recording becomes the soundtrack. It is separate from a voice note to Kria.
-                </p>
+                <div className="mb-3 flex items-center gap-1.5">
+                  <h2 className="sr-only">Your voiceover</h2>
+                  <InfoDot label="Your voiceover">
+                    This recording becomes the soundtrack. It is separate from a note to Kria.
+                  </InfoDot>
+                </div>
                 <VoiceRecorder onVoiceover={handleVoiceover} upload={uploadOwnedVoiceover} />
                 {voiceoverSaving && (
                   <p className="mt-1 text-xs text-zinc-400">Saving…</p>
@@ -1790,12 +1825,8 @@ export default function PlanItemPage() {
                 talking-to-camera) moved to the post-gen editor — see
                 BackgroundSoundControl / CaptionStyleToggle in PlanVariantEditor.tsx.
                 Talk-to-camera auto-generates WITH subtitles by default; both are
-                tunable after generation, not before. */}
-            {isNarrated && (
-              <p className="order-2 mb-4 text-xs text-[#a1a1aa]">
-                Background sound and captions can be tuned after you generate.
-              </p>
-            )}
+                tunable after generation, not before. Helper paragraph removed
+                per DESIGN.md §12 — no inline helper text outside InfoDot. */}
 
             {/* Uploader — branches:
                 0. subtitled: one talk-to-camera clip → pool upload (no shot plan)
@@ -1806,18 +1837,16 @@ export default function PlanItemPage() {
                 5. isFilmThis, no guide → pool upload (Plan-this-for-me offered above)
                 6. existing_footage → PoolUploadCard (use footage you already have) */}
             <section className="order-1 mb-6" aria-labelledby="main-footage-heading">
-              <p id="main-footage-heading" className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
-                1 · {isSubtitled ? "Your clip" : "Your clips"}
-              </p>
+              <h2 id="main-footage-heading" className="sr-only">
+                {isSubtitled ? "Your clip" : "Your clips"}
+              </h2>
             {isSubtitled ? (
               <div>
-                <p className="mb-2 text-sm text-[#71717a]">
-                  One clip of you talking. Its own audio is the soundtrack — Kria
-                  captions every sentence, and you can edit them after.
-                </p>
-                <p className="mb-4 text-xs text-[#a1a1aa]">
-                  Captions and dead-air cleanup happen automatically.
-                </p>
+                <div className="mb-4 flex items-center gap-1.5">
+                  <InfoDot label="Your clip">
+                    Its own audio is the soundtrack — Kria captions every sentence, and you can edit them after. Captions and dead-air cleanup happen automatically.
+                  </InfoDot>
+                </div>
                 <PoolUploadCard
                   clips={item.clip_assignments ?? []}
                   pending={pendingClipUploads}
@@ -1954,8 +1983,26 @@ export default function PlanItemPage() {
             )}
 
             {guidedEditActive && (
-              <div className="order-4">
-              <EditProposalCard
+              <div className="order-4 mb-4 flex items-center gap-3 rounded-2xl border border-zinc-200 bg-white p-4">
+                <Badge variant={guidedEditStatusRow.badgeVariant}>
+                  {guidedEditStatusRow.badgeLabel}
+                </Badge>
+                <p className="flex-1 text-sm text-[#3f3f46]">{guidedEditStatusRow.sentence}</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setThreadOpen(true)}
+                >
+                  {guidedEditStatusRow.buttonLabel}
+                </Button>
+              </div>
+            )}
+
+            {guidedEditActive && (
+              <PlanThreadPanel
+                open={threadOpen}
+                onOpenChange={setThreadOpen}
                 item={item}
                 // P1-2: mirrors the backend's own media gate for a conversation
                 // turn (routes/plan_items.py) — clip_assignments OR any pool
@@ -1978,7 +2025,6 @@ export default function PlanItemPage() {
                   refetch();
                 }}
               />
-              </div>
             )}
 
             {/* Suggestion rail — AI overlay auto-placement review for the
@@ -2212,138 +2258,6 @@ export default function PlanItemPage() {
         )}
       </div>
     </LightShell>
-  );
-}
-
-function DirectionVoiceNote({
-  itemId,
-  onTranscribed,
-}: {
-  itemId: string;
-  onTranscribed: (notes: string) => void;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [receipt, setReceipt] = useState<string | null>(null);
-
-  const uploadAndTranscribe = useCallback(
-    async (take: AudioTake) => {
-      setBusy(true);
-      setError(null);
-      setReceipt(null);
-      try {
-        const contentType = take.blob.type || "audio/webm";
-        const file = new File([take.blob], take.filename, { type: contentType });
-        const signed = await requestDirectionAudioUploadUrl(itemId, {
-          filename: file.name,
-          content_type: contentType,
-          file_size_bytes: file.size,
-        });
-        await uploadToGcs(signed.upload_url, file);
-        const result = await transcribeDirectionAudio(itemId, signed.gcs_path);
-        setReceipt("Added to your direction");
-        onTranscribed(result.notes);
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : "Couldn't transcribe that note");
-      } finally {
-        setBusy(false);
-      }
-    },
-    [itemId, onTranscribed],
-  );
-
-  const rec = useAudioRecorder({
-    onTake: (take) => void uploadAndTranscribe(take),
-    onClear: () => {
-      setError(null);
-      setReceipt(null);
-    },
-  });
-
-  return (
-    <details className="mt-3 rounded-lg border border-zinc-200 bg-white px-3 py-2">
-      <summary className="min-h-11 cursor-pointer py-2 text-sm text-[#3f3f46]">
-        Add a voice note to Kria
-      </summary>
-      <p className="mb-3 text-xs text-[#71717a]">
-        We&apos;ll transcribe this into direction. It will not play in the final video.
-      </p>
-      {rec.micBlocked && (
-        <p className="mb-2 text-sm text-[#71717a]">Mic blocked — upload an audio file instead.</p>
-      )}
-      {error && (
-        <p className="mb-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-[#71717a]">
-          {error}
-        </p>
-      )}
-      {receipt && <p className="mb-2 text-sm text-lime-700">{receipt}</p>}
-      {rec.phase === "idle" && (
-        <div className="flex flex-wrap gap-2">
-          {rec.recordSupported && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void rec.start()}
-              className="min-h-11 rounded-full border border-zinc-200 px-4 py-2 text-sm text-[#3f3f46] hover:border-zinc-400 disabled:opacity-50"
-            >
-              Record direction
-            </button>
-          )}
-          <label className="inline-flex min-h-11 cursor-pointer items-center rounded-full border border-zinc-200 px-4 py-2 text-sm text-[#3f3f46] hover:border-zinc-400 focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[#0c0c0e]">
-            Upload audio
-            <input
-              type="file"
-              accept="audio/*,.m4a,.mp3,.wav,.webm,.ogg,.aac"
-              className="sr-only"
-              disabled={busy}
-              onChange={(event) => {
-                const file = event.currentTarget.files?.[0];
-                if (file) rec.useFile(file);
-              }}
-            />
-          </label>
-        </div>
-      )}
-      {rec.phase === "recording" && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between text-sm text-[#3f3f46]">
-            <span>Recording direction…</span>
-            <span className="tabular-nums text-[#71717a]">{fmtTime(rec.elapsed)}</span>
-          </div>
-          <canvas
-            ref={rec.canvasRef}
-            aria-hidden
-            width={640}
-            height={64}
-            className="h-16 w-full rounded border border-zinc-200 bg-zinc-100"
-          />
-          <button
-            type="button"
-            onClick={rec.stop}
-            className="min-h-11 rounded-full border border-zinc-200 px-4 py-2 text-sm text-[#3f3f46]"
-          >
-            Stop and transcribe
-          </button>
-        </div>
-      )}
-      {rec.phase === "review" && (
-        <div className="space-y-2">
-          {rec.audioUrl && (
-            <audio src={rec.audioUrl} controls className="w-full">
-              <track kind="captions" />
-            </audio>
-          )}
-          <div className="flex items-center gap-3 text-sm text-[#71717a]">
-            <span>{busy ? "Adding direction…" : receipt ?? "Direction take ready"}</span>
-            {!busy && (
-              <button type="button" onClick={rec.reset} className="min-h-11 underline underline-offset-2">
-                Remove take
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-    </details>
   );
 }
 
