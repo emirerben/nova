@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.46.0.1] — 2026-08-22
+
+### Fixes
+- **/plan "Past edits" grid played only the newest video.** `GET /me/jobs` returned
+  the `output_url` persisted at render time — a 1-day-TTL signed GCS URL — so every
+  tile older than ~24h hit an expired signature and rendered blank. The library row
+  now re-signs playback from the stored `video_path` / `output_path` on every read
+  (`PLAYBACK_URL_TTL_MIN`, mirroring `_variants_for_response` on the item page),
+  falling back to the stored URL if signing fails. Latent on the old `/library`
+  page; became the home surface in #869.
+
 ## [0.46.0.0] — 2026-08-21
 
 ### Features

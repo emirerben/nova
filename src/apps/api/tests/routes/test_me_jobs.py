@@ -131,6 +131,10 @@ def test_list_returns_users_jobs_with_derived_status_and_preview(monkeypatch) ->
         "app.routes.me.signed_download_url",
         lambda path, filename, expiration_minutes: f"https://download.example/{filename}",
     )
+    monkeypatch.setattr(
+        "app.routes.me.signed_get_url",
+        lambda path, ttl: f"https://resigned.example/{path}",
+    )
     db = _db([_scalars([ready_variant_job, single_output_job]), _rows([]), _scalars([])])
     _override(user, db)
 
@@ -138,9 +142,12 @@ def test_list_returns_users_jobs_with_derived_status_and_preview(monkeypatch) ->
     assert resp.status_code == 200
     body = resp.json()
     assert [j["status"] for j in body["jobs"]] == ["ready", "ready"]
-    assert body["jobs"][0]["output_url"] == "gs://x/a.mp4"  # first READY variant
+    # Re-signed fresh from `video_path`/`output_path`, not the stale stored URL.
+    assert (
+        body["jobs"][0]["output_url"] == "https://resigned.example/generative-jobs/j/song-text.mp4"
+    )
     assert body["jobs"][0]["download_url"].endswith(".mp4")
-    assert body["jobs"][1]["output_url"] == "gs://x/tpl.mp4"  # template single output
+    assert body["jobs"][1]["output_url"] == "https://resigned.example/template-jobs/j/output.mp4"
     assert body["jobs"][1]["download_url"].endswith(".mp4")
     assert body["jobs"][1]["mode"] == "template"  # falls back to job_type
     assert body["next_cursor"] is None
@@ -231,6 +238,10 @@ def test_list_keeps_playback_when_download_signing_fails(monkeypatch) -> None:
         "app.routes.me.signed_download_url",
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("signer down")),
     )
+    monkeypatch.setattr(
+        "app.routes.me.signed_get_url",
+        lambda path, ttl: "https://play.example/video.mp4",
+    )
     db = _db([_scalars([job]), _rows([]), _scalars([])])
     _override(user, db)
 
@@ -239,6 +250,113 @@ def test_list_keeps_playback_when_download_signing_fails(monkeypatch) -> None:
     item = resp.json()["jobs"][0]
     assert item["output_url"] == "https://play.example/video.mp4"
     assert item["download_url"] is None
+
+
+def test_list_resigns_playback_url_from_video_path(monkeypatch) -> None:
+    """The persisted per-variant `output_url` is a 1-day-TTL signature minted at
+    render time; the library must re-sign fresh from `video_path` on every read
+    (mirrors `_variants_for_response` in routes/generative_jobs.py) so playback
+    never 400s past 24h."""
+    user = _user()
+    stale_variant = {
+        "variant_id": "song_text",
+        "render_status": "ready",
+        "output_url": "https://stale.example/out.mp4?Expires=old",
+        "video_path": "generative-jobs/x/out.mp4",
+    }
+    job = _job(
+        user_id=user.id,
+        status="variants_ready",
+        assembly_plan={"variants": [dict(stale_variant)]},
+    )
+    resign = MagicMock(return_value="https://fresh.example/resigned.mp4")
+    monkeypatch.setattr("app.routes.me.signed_get_url", resign)
+    db = _db([_scalars([job]), _rows([]), _scalars([])])
+    _override(user, db)
+
+    resp = client.get("/me/jobs")
+
+    assert resp.status_code == 200
+    item = resp.json()["jobs"][0]
+    assert item["output_url"] == "https://fresh.example/resigned.mp4"
+    resign.assert_called_once_with("generative-jobs/x/out.mp4", 360)
+    # The raw variant dict on the job must never be mutated with the fresh URL.
+    assert job.assembly_plan["variants"][0]["output_url"] == stale_variant["output_url"]
+
+
+def test_list_resigns_template_job_playback_url_from_output_path(monkeypatch) -> None:
+    """Same re-sign contract for the single-output (template/music) job shape."""
+    user = _user()
+    stale_output_url = "https://stale.example/tpl.mp4?Expires=old"
+    job = _job(
+        user_id=user.id,
+        status="template_ready",
+        mode=None,
+        job_type="template",
+        assembly_plan={
+            "output_url": stale_output_url,
+            "output_path": "dev-user/x/out.mp4",
+        },
+    )
+    resign = MagicMock(return_value="https://fresh.example/resigned-tpl.mp4")
+    monkeypatch.setattr("app.routes.me.signed_get_url", resign)
+    db = _db([_scalars([job]), _rows([]), _scalars([])])
+    _override(user, db)
+
+    resp = client.get("/me/jobs")
+
+    assert resp.status_code == 200
+    item = resp.json()["jobs"][0]
+    assert item["output_url"] == "https://fresh.example/resigned-tpl.mp4"
+    resign.assert_called_once_with("dev-user/x/out.mp4", 360)
+    assert job.assembly_plan["output_url"] == stale_output_url
+
+
+def test_list_keeps_stored_playback_url_when_resign_fails(monkeypatch) -> None:
+    user = _user()
+    job = _job(
+        user_id=user.id,
+        status="variants_ready",
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "song_text",
+                    "render_status": "ready",
+                    "output_url": "https://stored.example/video.mp4",
+                    "video_path": "generative-jobs/x/out.mp4",
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        "app.routes.me.signed_get_url",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("signer down")),
+    )
+    db = _db([_scalars([job]), _rows([]), _scalars([])])
+    _override(user, db)
+
+    resp = client.get("/me/jobs")
+
+    assert resp.status_code == 200
+    item = resp.json()["jobs"][0]
+    assert item["output_url"] == "https://stored.example/video.mp4"
+
+
+def test_list_does_not_resign_without_output_path() -> None:
+    user = _user()
+    job = _job(
+        user_id=user.id,
+        status="done",
+        assembly_plan={"output_url": "https://stored.example/no-path.mp4"},
+    )
+    db = _db([_scalars([job]), _rows([]), _scalars([])])
+    _override(user, db)
+
+    resp = client.get("/me/jobs")
+
+    assert resp.status_code == 200
+    item = resp.json()["jobs"][0]
+    assert item["output_url"] == "https://stored.example/no-path.mp4"
 
 
 def test_list_forged_user_id_query_param_is_ignored() -> None:

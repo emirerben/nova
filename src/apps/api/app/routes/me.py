@@ -66,6 +66,14 @@ _MAX_LIMIT = 60
 OPEN_IN_EDITOR_NOT_READY_DETAIL = "Video is not ready to open in the editor."
 OPEN_IN_EDITOR_LINK_CONFLICT_DETAIL = "Video is linked to a different plan item."
 
+# The persisted `output_url` (both per-variant and single-output job shapes) is a
+# 1-day-TTL signed URL minted at render time; the underlying blob persists forever
+# (see agents/DECISIONS.md "Storage retention"). Re-sign from the stored relative
+# path on every read so the library grid never serves an expired signature past
+# 24h — mirrors `PLAYBACK_URL_TTL_MIN` / `_variants_for_response` in
+# routes/generative_jobs.py.
+PLAYBACK_URL_TTL_MIN = 360
+
 
 async def _provision_editor_plan(db: AsyncSession, user: User) -> tuple[ContentPlan, bool]:
     """Provision the minimal plan graph needed by the footage-first editor.
@@ -268,6 +276,16 @@ def _to_library_job(
     tiktok_publication: TikTokPublication | None = None,
 ) -> LibraryJob:
     output_url, output_variant_id, output_path = _preview(job)
+    if output_url and output_path:
+        try:
+            output_url = signed_get_url(output_path, PLAYBACK_URL_TTL_MIN)
+        except Exception:  # noqa: BLE001 — a library row must survive signing failure
+            log.warning(
+                "library_playback_resign_failed",
+                job_id=str(job.id),
+                output_path=output_path,
+                exc_info=True,
+            )
     failure_reason, error_class = _job_failure_metadata(job)
     download_url: str | None = None
     if output_path:
