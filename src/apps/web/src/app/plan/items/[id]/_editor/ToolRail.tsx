@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Button } from "@/components/ui/button";
 
 /**
  * ToolRail — the left icon-over-label rail (plan §2).
@@ -93,7 +94,7 @@ export default function ToolRail({
   return (
     <div
       data-region="tool-rail"
-      className="flex w-[92px] flex-col items-center gap-2 border-r border-zinc-200 bg-white pt-3"
+      className="flex w-16 flex-col items-center gap-1 border-r border-border bg-background pt-3"
     >
       {tools.map((tool) => {
         const active = activeTool === tool.id;
@@ -102,9 +103,10 @@ export default function ToolRail({
         const reasonId = `tool-rail-reason-${tool.id}`;
         const showNovaPing = tool.id === "nova" && !active && !novaSeen && enabled;
         return (
-          <button
+          <Button
             key={tool.id}
             type="button"
+            variant="ghost"
             aria-disabled={enabled ? undefined : true}
             aria-describedby={enabled ? undefined : reasonId}
             aria-pressed={active}
@@ -114,12 +116,12 @@ export default function ToolRail({
               if (!enabled) return; // focusable-disabled: reachable, inert
               onToggleTool(tool.id);
             }}
-            className={`relative flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-xl border focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+            className={`relative flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
               active
-                ? "border-[#0c0c0e]"
+                ? "bg-muted text-foreground hover:bg-muted"
                 : enabled
-                  ? "border-transparent hover:bg-zinc-50"
-                  : "cursor-not-allowed border-transparent opacity-40"
+                  ? "text-muted-foreground hover:bg-muted"
+                  : "cursor-not-allowed text-muted-foreground/40 hover:bg-transparent"
             }`}
           >
             {showNovaPing && (
@@ -130,17 +132,13 @@ export default function ToolRail({
             )}
             <span
               aria-hidden
-              className={`text-[17px] leading-none ${
-                active ? "font-bold text-[#0c0c0e]" : "text-[#3f3f46]"
+              className={`flex h-5 w-5 items-center justify-center text-[17px] leading-none ${
+                active ? "font-bold" : ""
               }`}
             >
               {tool.icon}
             </span>
-            <span
-              className={`text-[11px] ${
-                active ? "font-semibold text-[#0c0c0e]" : "text-[#71717a]"
-              }`}
-            >
+            <span className={`text-[11px] ${active ? "font-semibold" : ""}`}>
               {tool.label}
             </span>
             {!enabled && (
@@ -148,7 +146,7 @@ export default function ToolRail({
                 {disabledReason}
               </span>
             )}
-          </button>
+          </Button>
         );
       })}
     </div>

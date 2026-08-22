@@ -3,9 +3,10 @@
 /**
  * InspectorPanel — the docked right contextual panel (plan §4, Variant A).
  *
- * The ~320px column is PERMANENTLY RESERVED: the canvas never reflows on
- * select/deselect. With nothing selected it shows the quiet serif empty state
- * ("Select anything to edit it") — no icon, per DESIGN.md §9.
+ * The ~320px (w-80) column is PERMANENTLY RESERVED: the canvas never reflows
+ * on select/deselect. With nothing selected it shows a quiet empty state — a
+ * lucide `MousePointerClick` glyph over "Select anything to edit it" (Lane I,
+ * DESIGN.md §15 stock-shadcn chrome pass).
  *
  * Text inspector rows are driven by the PARITY_VERIFIED_FIELDS registry
  * (D9/D17): a control renders editable only for verified fields; fields
@@ -19,6 +20,7 @@
  */
 
 import { createContext, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
+import { MousePointerClick } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -29,7 +31,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { TEXT_ELEMENT_ANIMATIONS, THEME_TRANSITIONS } from "@/lib/overlay-constants";
 import {
@@ -327,41 +328,62 @@ export default function InspectorPanel({
   onClose: () => void;
   onPickPreset: (preset: TextPreset) => void;
 }) {
+  const hasSelection = selection !== null;
   return (
     <InspectorPresentationContext.Provider value={presentation}>
     <div
       data-region="inspector"
       className={
         presentation === "sheet"
-          ? "flex w-full flex-col bg-white"
-          : "flex w-[320px] flex-col border-l border-zinc-200 bg-white"
+          ? "flex w-full flex-col bg-background"
+          : "flex w-80 flex-col border-l border-border bg-background"
       }
     >
-      {/* Sheet mode only: the Basic/Presets switch normally lives in the
-          desktop InspectorRail, unreachable from the sheet. Pattern copied
-          from ToolDrawer's preset-category tablist. */}
-      {presentation === "sheet" && onTab && (
-        <div className="flex flex-none px-5 pb-3 pt-1">
-          <Tabs
-            value={tab}
-            onValueChange={(value) => onTab(value as InspectorTab)}
-            className="w-full"
+      {/* Basic/Presets switch (plan §4, decision D6 — moved in-panel off the
+          old floating InspectorRail column, Lane I). "Basic" stays disabled
+          until a selection exists; "Presets" is always browsable. Styled as
+          a TabsList but kept as plain buttons (not Radix TabsTrigger, which
+          activates on mousedown — incompatible with the suite's
+          fireEvent.click-driven interaction tests). */}
+      {onTab && (
+        <div
+          className={
+            presentation === "sheet"
+              ? "flex flex-none px-5 pb-3 pt-1"
+              : "flex flex-none border-b border-border px-4 py-3"
+          }
+        >
+          <div
+            role="group"
+            aria-label="Inspector sections"
+            className="flex w-full items-center gap-1 rounded-md bg-muted p-1 text-muted-foreground"
           >
-            <TabsList
-              aria-label="Inspector sections"
-              className="flex w-full gap-1 rounded-full border border-zinc-200 p-1"
-            >
-              {(["basic", "presets"] as const).map((nextTab) => (
-                <TabsTrigger
+            {(["basic", "presets"] as const).map((nextTab) => {
+              const label = nextTab === "basic" ? "Basic" : "Presets";
+              const disabled = nextTab === "basic" && !hasSelection;
+              const active = tab === nextTab;
+              return (
+                <Button
                   key={nextTab}
-                  value={nextTab}
-                  className="min-h-11 flex-1 rounded-full border-b-0 px-4 pb-0 text-[12px] text-[#3f3f46] data-[state=active]:bg-[#0c0c0e] data-[state=active]:font-semibold data-[state=active]:text-white"
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={disabled}
+                  aria-pressed={active}
+                  aria-label={`${label} inspector tab`}
+                  title={disabled ? "Select something to edit its properties" : label}
+                  onClick={() => onTab(nextTab)}
+                  className={
+                    active
+                      ? "flex-1 bg-background text-foreground shadow hover:bg-background"
+                      : "flex-1 hover:bg-background/60"
+                  }
                 >
-                  {nextTab === "basic" ? "Basic" : "Presets"}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
+                  {label}
+                </Button>
+              );
+            })}
+          </div>
         </div>
       )}
       {tab === "presets" ? (
@@ -371,10 +393,9 @@ export default function InspectorPanel({
           onPickPreset={onPickPreset}
         />
       ) : selection === null ? (
-        <div className="flex flex-1 items-start justify-center px-6 pt-16">
-          <p className="font-display text-[16px] leading-relaxed text-[#71717a]">
-            Select anything to edit it
-          </p>
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 pt-16">
+          <MousePointerClick className="h-6 w-6 text-muted-foreground" aria-hidden="true" />
+          <p className="text-sm text-muted-foreground">Select anything to edit it</p>
         </div>
       ) : selection.kind === "text" && bar ? (
         <TextInspector

@@ -10,6 +10,7 @@
  */
 
 import type { ReactNode } from "react";
+import { Button } from "@/components/ui/button";
 import type { PocketTool } from "./mobile-editor-state";
 import {
   CaptionsIcon,
@@ -62,16 +63,17 @@ export function ToolDock({
     <nav
       aria-label="Editor tools"
       data-testid="pocket-dock"
-      className="flex flex-row border-t border-zinc-200 bg-[#ffffff] pb-[max(8px,env(safe-area-inset-bottom))] pt-1.5"
+      className="flex flex-row border-t border-border bg-background pb-[max(8px,env(safe-area-inset-bottom))] pt-1.5"
     >
       {tools.map((tool) => {
         const active = activeTool === tool.id;
         const disabledReason = disabledTools[tool.id];
         const enabled = !disabledReason;
         return (
-          <button
+          <Button
             key={tool.id}
             type="button"
+            variant="ghost"
             data-testid={`pocket-dock-${tool.id}`}
             aria-label={`${tool.label} tool`}
             aria-pressed={active}
@@ -84,16 +86,16 @@ export function ToolDock({
               }
               onToggleTool(tool.id);
             }}
-            className={`flex min-h-[56px] flex-1 flex-col items-center justify-center gap-0.5 active:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
-              active ? "text-[#0c0c0e]" : "text-zinc-600"
+            className={`flex h-auto min-h-[56px] flex-1 flex-col items-center justify-center gap-0.5 rounded-none active:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+              active ? "bg-transparent text-foreground hover:bg-transparent" : "bg-transparent text-muted-foreground hover:bg-transparent"
             }`}
           >
             <span className={enabled ? undefined : "opacity-50"}>
-              {tool.icon("h-6 w-6")}
+              {tool.icon("h-5 w-5")}
             </span>
             <span
               className={`text-[11px] font-medium ${
-                enabled ? "" : "text-[#71717a]"
+                enabled ? "" : "text-muted-foreground"
               }`}
             >
               {tool.label}
@@ -101,10 +103,10 @@ export function ToolDock({
             <span
               aria-hidden="true"
               className={`h-0.5 w-4 rounded-full ${
-                active && enabled ? "bg-[#0c0c0e]" : "bg-transparent"
+                active && enabled ? "bg-foreground" : "bg-transparent"
               }`}
             />
-          </button>
+          </Button>
         );
       })}
     </nav>
