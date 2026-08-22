@@ -2566,6 +2566,34 @@ def test_mark_failed_phase_on_fatal_error(monkeypatch):
     assert "mark_finished" not in fn_names
 
 
+def test_audio_led_guided_conflict_is_terminal_with_stable_reason(monkeypatch):
+    """Mixed-version asset-only jobs fail visibly and never retry guided rendering."""
+    import contextlib
+
+    import app.services.pipeline_trace as pt
+
+    calls = _patch_phase_fns(monkeypatch)
+    _patch_run_generative_job_failure(monkeypatch, gb.AudioLedGuidedConflict())
+    monkeypatch.setattr(gb, "_owned_job_task_fence", _accepted_owned_job_fence)
+    monkeypatch.setattr(pt, "pipeline_trace_for", lambda job_id: contextlib.nullcontext())
+    captured: dict = {}
+    monkeypatch.setattr(
+        gb,
+        "_fail_job",
+        lambda jid, detail, failure_reason=None: captured.update(
+            job_id=jid, detail=detail, reason=failure_reason
+        ),
+        raising=False,
+    )
+
+    gb.orchestrate_generative_job.run("33333333-3333-3333-3333-333333333333")
+
+    assert captured["reason"] == "guided_story_incompatible_audio_led_asset_only"
+    assert "Generate again" in captured["detail"]
+    assert "mark_failed_phase" in [c[0] for c in calls]
+    assert "mark_finished" not in [c[0] for c in calls]
+
+
 def test_pending_variants_upserted_before_render(monkeypatch, tmp_path):
     """Upfront pending-variant upsert: all specs must be upserted with
     render_status='pending' BEFORE any 'rendering' or 'ready' upsert."""

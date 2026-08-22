@@ -242,6 +242,20 @@ class AudioLedGuidedConflict(RuntimeError):
         )
 
 
+def _narrated_voiceover_prework_enabled(
+    *,
+    narrated_archetype_enabled: bool,
+    has_voiceover: bool,
+    edit_format: object,
+    job_mode: str | None,
+) -> bool:
+    """Return whether narration is deterministic enough to skip AI prework."""
+
+    if not narrated_archetype_enabled or not has_voiceover:
+        return False
+    return coerce_edit_format(edit_format) in NARRATED_EDIT_FORMATS or job_mode == "content_plan"
+
+
 def _guided_snapshot_has_genuine_clip_input(
     guided_snapshot: object,
     clip_paths: list[str],
@@ -1111,6 +1125,10 @@ def _run_generative_job_impl(
         # falls back to montage rather than failing the job. Resolved against the
         # footage after ingest (see _resolve_archetype).
         edit_format_value = all_candidates.get("edit_format")
+        # Newer API workers preserve an unknown/future token separately so this
+        # compatibility fence cannot mistake it for the normalized montage default.
+        # Legacy jobs without the field retain their existing normalized behavior.
+        render_intent_value = all_candidates.get("declared_edit_format", edit_format_value)
         edit_format = coerce_edit_format(edit_format_value)
         # Optional user-supplied voiceover (audio-only). When present it becomes the
         # narration bed and the job renders voiceover variants instead of song/original
@@ -1175,7 +1193,7 @@ def _run_generative_job_impl(
     record_phase(job_id, "queued", next_phase="analyze_clips")
 
     guided_applicable = guided_edit_applicable(
-        edit_format_value,
+        render_intent_value,
         has_voiceover=bool(voiceover_gcs_path),
     )
     if guided_snapshot is not None and not guided_applicable:
@@ -1247,10 +1265,11 @@ def _run_generative_job_impl(
         # clip analysis so it's faster, cheaper, and survives Gemini outages. This
         # condition mirrors the narrated branch of _resolve_archetype exactly, so we
         # only skip when narrated WILL be selected (a montage fallback still needs metas).
-        _narrated_voiceover = (
-            settings.narrated_archetype_enabled
-            and bool(voiceover_gcs_path)
-            and (edit_format in NARRATED_EDIT_FORMATS or job.mode == "content_plan")
+        _narrated_voiceover = _narrated_voiceover_prework_enabled(
+            narrated_archetype_enabled=settings.narrated_archetype_enabled,
+            has_voiceover=bool(voiceover_gcs_path),
+            edit_format=edit_format,
+            job_mode=job.mode,
         )
         _skip_clip_analysis = _narrated_voiceover
         with render_stage_timer(

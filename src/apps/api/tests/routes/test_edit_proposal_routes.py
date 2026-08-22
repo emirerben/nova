@@ -858,6 +858,64 @@ async def test_draft_requires_media_before_dispatch(monkeypatch) -> None:
     db.commit.assert_not_awaited()
 
 
+@pytest.mark.parametrize("operation", ["conversation", "draft", "update", "approve"])
+@pytest.mark.asyncio
+async def test_audio_led_proposal_routes_reject_before_side_effects(monkeypatch, operation) -> None:
+    """Dormant guided proposals cannot be edited while native audio is selected."""
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        edit_format="narrated_ready",
+        audio_mode="voiceover",
+        voiceover_gcs_path="voiceover-uploads/u/voice.m4a",
+        clip_assignments=[],
+        edit_proposal=None,
+    )
+    user = SimpleNamespace(id=uuid.uuid4())
+    monkeypatch.setattr(plan_items.settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(plan_items.settings, "guided_edit_conversation_enabled", True)
+    monkeypatch.setattr(plan_items, "_load_owned_item", AsyncMock(return_value=item))
+    monkeypatch.setattr(
+        plan_items,
+        "_load_owned_item_context",
+        AsyncMock(return_value=(item, SimpleNamespace(ownership_epoch=4), SimpleNamespace())),
+    )
+    db = AsyncMock()
+
+    with pytest.raises(HTTPException) as exc:
+        if operation == "conversation":
+            await plan_items.edit_proposal_conversation_turn(
+                _request(),
+                str(item.id),
+                plan_items.EditGuideTurnBody(expected_proposal_version=0, message="Keep it short"),
+                user,
+                db,
+            )
+        elif operation == "draft":
+            await plan_items.draft_item_edit_proposal(
+                _request(), str(item.id), plan_items.DraftEditProposalBody(), user, db
+            )
+        elif operation == "update":
+            await plan_items.update_item_edit_proposal(
+                str(item.id),
+                plan_items.UpdateEditProposalBody(
+                    expected_proposal_version=1, snapshot=_snapshot()
+                ),
+                user,
+                db,
+            )
+        else:
+            await plan_items.approve_item_edit_proposal(
+                str(item.id),
+                plan_items.ApproveEditProposalBody(expected_proposal_version=1),
+                user,
+                db,
+            )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "Guided editing is unavailable for this audio-led edit."
+    db.commit.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_draft_double_click_reuses_active_attempt(monkeypatch) -> None:
     item = SimpleNamespace(

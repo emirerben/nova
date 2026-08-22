@@ -656,6 +656,30 @@ def test_content_plan_voiceover_uses_captioned_narrated_archetype(monkeypatch):
     assert any(e[1] == "archetype_selected" and e[2].get("archetype") == "narrated" for e in events)
 
 
+@pytest.mark.parametrize(
+    ("edit_format", "job_mode", "has_voiceover", "expected"),
+    [
+        ("montage", "content_plan", True, True),
+        ("narrated_ready", "generative", True, True),
+        ("montage", "generative", True, False),
+        ("montage", "content_plan", False, False),
+    ],
+)
+def test_content_plan_voiceover_skips_narrated_prework(
+    monkeypatch, edit_format, job_mode, has_voiceover, expected
+):
+    monkeypatch.setattr(gb.settings, "narrated_archetype_enabled", True, raising=False)
+    assert (
+        gb._narrated_voiceover_prework_enabled(
+            narrated_archetype_enabled=gb.settings.narrated_archetype_enabled,
+            has_voiceover=has_voiceover,
+            edit_format=edit_format,
+            job_mode=job_mode,
+        )
+        is expected
+    )
+
+
 def test_specs_for_voiceover_only_when_no_track():
     specs = gb._specs_for_archetype(
         "voiceover", None, voiceover_gcs_path="voiceover-uploads/a/voice.webm"

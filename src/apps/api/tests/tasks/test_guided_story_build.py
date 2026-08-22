@@ -137,6 +137,48 @@ def test_audio_led_asset_only_dual_contract_fails_closed(monkeypatch) -> None:
     assert exc_info.value.code == "guided_story_incompatible_audio_led_asset_only"
 
 
+def test_unknown_future_intent_does_not_reactivate_guided_snapshot(monkeypatch) -> None:
+    """A normalized montage must retain an unknown raw intent for mixed deploys."""
+    clip_path = "users/u/clip.mp4"
+    snapshot = {
+        "proposal_version": 4,
+        "media_digest": "a" * 64,
+        "approved_proposal": {"title": "Corfu"},
+        "media_identities": [{"lane": "clip", "gcs_path": clip_path, "media_id": "clip-1"}],
+    }
+    job = SimpleNamespace(
+        id="00000000-0000-0000-0000-000000000004",
+        status="queued",
+        mode="content_plan",
+        assembly_plan={"guided_edit": snapshot},
+        all_candidates={
+            "clip_paths": [clip_path],
+            "edit_format": "montage",
+            "declared_edit_format": "future_audio_led",
+        },
+    )
+    monkeypatch.setattr(gb, "_sync_session", _session)
+    monkeypatch.setattr(gb, "_lock_owned_entry_job", lambda _db, _job_id: (job, None))
+    monkeypatch.setattr(gb, "mark_started", lambda _job_id: None)
+    monkeypatch.setattr(gb, "record_phase", lambda *args, **kwargs: None)
+    monkeypatch.setattr(gb, "_persist_durable_sources", lambda _job_id, paths: paths)
+    monkeypatch.setattr(
+        gb,
+        "_run_guided_story_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("guided runner must not run")
+        ),
+    )
+    monkeypatch.setattr(
+        gb,
+        "_ingest_clips",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("native ingest reached")),
+    )
+
+    with pytest.raises(AssertionError, match="native ingest reached"):
+        gb._run_generative_job_impl(str(job.id))
+
+
 def test_redelivery_reuses_pinned_execution_plan_without_rematching(monkeypatch) -> None:
     from app.pipeline import guided_story
 
