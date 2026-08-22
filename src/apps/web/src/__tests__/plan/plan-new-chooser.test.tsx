@@ -1,12 +1,14 @@
 // @ts-nocheck
 /**
  * /plan/new chooser — step 1 of the New-video flow.
- * Guards: item created only on Continue; type persists via the shared
+ * Guards: item created only on a final card tap (kind cards advance/create,
+ * style cards create — no Continue button); type persists via the shared
  * persistedEditFormatFor rule (narrated_planned → narrated_ready); failure
  * paths never dead-end; double-tap creates exactly one item.
  */
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 
 import NewVideoPage from "@/app/plan/new/page";
@@ -49,9 +51,11 @@ describe("/plan/new chooser", () => {
 
   async function ready() {
     render(<NewVideoPage />);
-    // Continue enables once the plan loads.
+    // Cards become tappable once the plan loads (aria-disabled clears).
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled(),
+      expect(screen.getByRole("radio", { name: /Montage/ })).not.toHaveAttribute(
+        "aria-disabled",
+      ),
     );
   }
 
@@ -63,9 +67,15 @@ describe("/plan/new chooser", () => {
     expect(screen.getByText("What kind of video?")).toBeInTheDocument();
   });
 
+  it("has no Continue button", async () => {
+    await ready();
+    expect(screen.queryByRole("button", { name: /Continue/i })).not.toBeInTheDocument();
+  });
+
   async function throughStyleStep() {
-    // Montage inserts Step 2 "Pick a style." before the item is created.
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    // Montage inserts Step 2 "Pick a style." — tapping the (already
+    // selected) Montage card advances instead of creating anything.
+    fireEvent.click(screen.getByRole("radio", { name: /Montage/ }));
     expect(await screen.findByText("Pick a style.")).toBeInTheDocument();
     expect(mockAddIdea).not.toHaveBeenCalled();
   }
@@ -77,7 +87,7 @@ describe("/plan/new chooser", () => {
       "aria-checked",
       "true",
     );
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("radio", { name: /Classic/ }));
     await waitFor(() =>
       expect(push).toHaveBeenCalledWith("/plan/items/item-1?setup=done"),
     );
@@ -93,7 +103,6 @@ describe("/plan/new chooser", () => {
     await ready();
     await throughStyleStep();
     fireEvent.click(screen.getByRole("radio", { name: /Masonry/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await waitFor(() => expect(push).toHaveBeenCalled());
     expect(mockUpdatePlanItem).toHaveBeenCalledWith("item-1", {
       edit_format: "montage",
@@ -113,7 +122,6 @@ describe("/plan/new chooser", () => {
   it("Voiceover skips the style step and persists as narrated_ready", async () => {
     await ready();
     fireEvent.click(screen.getByRole("radio", { name: /Voiceover/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     expect(screen.queryByText("Pick a style.")).not.toBeInTheDocument();
     await waitFor(() =>
       expect(push).toHaveBeenCalledWith("/plan/items/item-1?setup=done"),
@@ -124,16 +132,26 @@ describe("/plan/new chooser", () => {
     });
   });
 
+  it("Enter on a focused card advances", async () => {
+    const user = userEvent.setup();
+    await ready();
+    const montage = screen.getByRole("radio", { name: /Montage/ });
+    montage.focus();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByText("Pick a style.")).toBeInTheDocument();
+    expect(mockAddIdea).not.toHaveBeenCalled();
+  });
+
   it("addIdea failure stays on the chooser with a retryable error — nothing created", async () => {
     mockAddIdea.mockRejectedValueOnce(new Error("nope"));
     await ready();
     await throughStyleStep();
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("radio", { name: /Classic/ }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/try again/i);
     expect(push).not.toHaveBeenCalled();
     expect(mockUpdatePlanItem).not.toHaveBeenCalled();
-    // Retry works.
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    // Retry works — tap the card again.
+    fireEvent.click(screen.getByRole("radio", { name: /Classic/ }));
     await waitFor(() =>
       expect(push).toHaveBeenCalledWith("/plan/items/item-1?setup=done"),
     );
@@ -143,7 +161,7 @@ describe("/plan/new chooser", () => {
     mockUpdatePlanItem.mockRejectedValueOnce(new Error("patch failed"));
     await ready();
     await throughStyleStep();
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("radio", { name: /Classic/ }));
     await waitFor(() => expect(push).toHaveBeenCalledWith("/plan/items/item-1"));
   });
 
@@ -156,9 +174,9 @@ describe("/plan/new chooser", () => {
     );
     await ready();
     await throughStyleStep();
-    const btn = screen.getByRole("button", { name: "Continue" });
-    fireEvent.click(btn);
-    fireEvent.click(btn);
+    const classic = screen.getByRole("radio", { name: /Classic/ });
+    fireEvent.click(classic);
+    fireEvent.click(classic);
     resolveAdd();
     await waitFor(() => expect(push).toHaveBeenCalled());
     expect(mockAddIdea).toHaveBeenCalledTimes(1);

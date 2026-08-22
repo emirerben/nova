@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.47.3.0] — 2026-08-22
+
+### Design system
+- **`/plan/new` tap-to-advance chooser, hidden scrollbars (Lane C).** The
+  kind/style picker no longer needs a Continue tap: picking a kind card
+  either advances to the style step (montage) or mints the plan item
+  immediately (every other kind), and picking a style card mints it
+  immediately — `createItem(kind, style)` now takes explicit args instead of
+  reading (stale) `selected`/`selectedStyle` state. The sticky Continue
+  footer is gone. Back/`×` are now `Button variant="ghost" size="icon"`.
+  Both card scrollers (`/plan/new` and `SetupPicker`'s type/style rails) get
+  `scrollbar-none` — no visible scrollbar, swipe/scroll unchanged. See
+  DESIGN.md §12 "New-video chooser".
+
 ## [0.47.0.0] — 2026-08-22
 
 ### Design system

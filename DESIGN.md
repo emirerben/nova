@@ -284,10 +284,10 @@ pending change.
 - **Initial load:** SHIMMER tier — 4 ghost 9:16 tiles.
 
 ### New-video chooser (`/plan/new`)
-- Full-screen steps on white: 44px `×`/`‹` back + "Step N of M" muted label (montage = 3 steps: kind → style → footage; other types = 2). Fraunces `text-[30px]` titles ("What kind of video?" / "Pick a style.").
-- Poster radio-cards reuse SetupPicker's `MediaRadioCard` + `TYPE_MEDIA`/`TYPE_COPY`/`STYLE_TILES` (montage / voiceover / talking-to-camera; talking_head stays legacy-only). Selection = lime ring + "Selected" chip, same as the item page. Style step (montage only): Classic / Masonry collage / Polaroid wall, Classic preselected.
-- Pinned bottom bar (white, `border-t border-zinc-200`, safe-area padding): full-width ink pill "Continue" + centered muted next-step hint ("Next: pick a style" / "Next: add your footage").
-- The FINAL Continue mints the item (`addIdea` + `updatePlanItem` incl. `montage_preset`) → `/plan/items/{id}?setup=done`. Abandon creates nothing. Errors are quiet zinc `role="alert"` lines; never red.
+- Full-screen steps on white: `Button variant="ghost" size="icon"` (44px) `×`/`‹` back + "Step N of M" muted label (montage = 3 steps: kind → style → footage; other types = 2). Fraunces `text-[30px]` titles ("What kind of video?" / "Pick a style.") + one 14px ink-3 line ("Tap one — Kria edits each kind differently." / "How your clips are arranged.").
+- Poster radio-cards reuse SetupPicker's `MediaRadioCard` + `TYPE_MEDIA`/`TYPE_COPY`/`STYLE_TILES` (montage / voiceover / talking-to-camera; talking_head stays legacy-only). Selection = lime ring + "Selected" chip, same as the item page. Style step (montage only): Classic / Masonry collage / Polaroid wall, Classic preselected. Both card scrollers carry `scrollbar-none` — no visible scrollbar, swipe/scroll still works.
+- **Tap-to-advance, no Continue button, no footer:** picking a kind card either advances to the style step (montage) or mints the item immediately (every other kind); picking a style card mints the item immediately. `saving`/`aria-disabled` on the cards (`creating || planState !== "ready"`) blocks re-entry during the mint.
+- A tap that mints the item runs `addIdea` + `updatePlanItem` (incl. `montage_preset`) → `/plan/items/{id}?setup=done`. Abandon before that final tap creates nothing. Errors are quiet zinc `role="alert"` lines; never red — the same card stays tappable to retry.
 
 ### Per-type item setup (`/plan/items/[id]`, pre-generation — V2 redesign)
 Design source: Paper "Kria Plan Redesign", page "V2 — Item setup per type". Each edit
