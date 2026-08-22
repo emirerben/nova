@@ -62,6 +62,13 @@ jest.mock("@/lib/editor-commit", () => ({
   commitEditorSession: (...args: unknown[]) => mockCommitEditorSession(...args),
 }));
 
+// Toast moved to sonner (DESIGN.md §15) — EditorShell no longer renders its
+// own role="status" DOM node, so assert on the `toast()` call instead.
+const mockToast = jest.fn();
+jest.mock("sonner", () => ({
+  toast: (...args: unknown[]) => mockToast(...args),
+}));
+
 jest.mock("@/app/plan/_components/useClipTimeline", () => ({
   useClipTimeline: () => ({
     state: {
@@ -317,8 +324,9 @@ describe("EditorShell — Lyrics toggle ON (elements model)", () => {
       "title",
       "This song doesn't have synced lyrics",
     );
-    expect(screen.getByRole("status")).toHaveTextContent(
+    expect(mockToast).toHaveBeenCalledWith(
       "This song doesn't have synced lyrics",
+      expect.objectContaining({ duration: 2600 }),
     );
   });
 });

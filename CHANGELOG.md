@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.47.5.0] — 2026-08-22
+
+### Design system
+- **Editor on shadcn (Kria Design System migration, Lane E1).**
+  `EditorShell.tsx`'s hand-rolled toast, `window.confirm`, and ~34 raw
+  `<button>`/`<input>`/`<select>`/`<textarea>` controls now route through the
+  shadcn primitives from Lane 0: transient feedback goes through sonner's
+  `toast()` (single stable-identity `notify` callback replaces the old
+  `toast` state + auto-clear effect + two DOM render sites), the
+  song/clip-timing collision confirm uses `<ConfirmDialog>` instead of
+  `window.confirm`, and every icon/text button is now `<Button>` (ghost/
+  outline/ink/link variants, `icon`/`icon-sm`/`sm` sizes) with `<Input>`/
+  `<Select>`/`<Textarea>` for the title field, canvas-zoom picker, and
+  `LightEditSheet`'s text field. `MusicAlignmentDialog` stays hand-rolled —
+  Radix's `AlertDialog` doesn't `stopImmediatePropagation` its Escape
+  handling, which broke `MusicAlignmentDialog.test.tsx`'s
+  outer-editor-shortcut isolation guard; its buttons/dialog chrome still
+  moved to the primitives. `SongWindowSelector` and the "Scrub video"
+  transport slider keep native `<input type="range">` (excluded from the
+  raw-control guard by design — continuous scrubbing doesn't fit `Slider`'s
+  discrete-thumb model). Raw-control count for `EditorShell.tsx` in
+  `raw-controls-guard.test.ts` drops from 35 to 0.
+
 ## [0.47.0.0] — 2026-08-22
 
 ### Design system
