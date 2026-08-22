@@ -225,8 +225,17 @@ const LANE_C_BASELINE: Record<string, number> = {};
 const LANE_D_BASELINE: Record<string, number> = {};
 
 // ── Lane E ──────────────────────────────────────────────────────────────
-// (none yet)
-const LANE_E_BASELINE: Record<string, number> = {};
+// E3 (`CopilotDrawer`, `CaptionsDrawer`, `MotionInspector`, `Sheet.tsx`):
+// counts recaptured after the primitive swap (Button/Input/Label/Select).
+// `StylesDrawer.tsx`'s one raw control (a role="radio" video-preview card)
+// and the remaining raw controls in these files are intentionally left
+// native — see the E3 PR description for why each doesn't map cleanly onto
+// a shadcn primitive.
+const LANE_E_BASELINE: Record<string, number> = {
+  "app/plan/items/[id]/_editor/CopilotDrawer.tsx": 8,
+  "app/plan/items/[id]/_editor/CaptionsDrawer.tsx": 13,
+  "app/plan/items/[id]/_editor/MotionInspector.tsx": 5,
+};
 
 // ── Lane F ──────────────────────────────────────────────────────────────
 // (none yet)
