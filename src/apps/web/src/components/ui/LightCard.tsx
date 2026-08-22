@@ -1,5 +1,8 @@
 // White bordered card for the light editorial system.
+// Thin wrapper over the shadcn `Card` primitive (DESIGN.md §15) so every
+// existing `<LightCard>` call site keeps working unchanged.
 import type { ReactNode } from "react";
+import { Card } from "./card";
 
 interface LightCardProps {
   children: ReactNode;
@@ -7,9 +10,5 @@ interface LightCardProps {
 }
 
 export function LightCard({ children, className = "" }: LightCardProps) {
-  return (
-    <div className={`rounded-2xl border border-zinc-200 bg-white shadow-sm ${className}`}>
-      {children}
-    </div>
-  );
+  return <Card className={className}>{children}</Card>;
 }
