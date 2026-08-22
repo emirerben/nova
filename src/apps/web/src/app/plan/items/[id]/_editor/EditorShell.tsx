@@ -6462,7 +6462,13 @@ export default function EditorShell({
 
   return (
     <div
-      className="fixed inset-0 z-50 grid overflow-hidden bg-[#ffffff]"
+      // The site body is dark-themed (`bg-black text-white`, DESIGN.md §3)
+      // for the marketing/landing routes; this fixed overlay is a LIGHT
+      // surface (DESIGN.md editor rule — never `.dark`) and must reset the
+      // inherited white text color here at the root, or every unstyled
+      // icon/label/placeholder in the chrome below renders invisible
+      // (white-on-white) instead of just picking up bg-background.
+      className="fixed inset-0 z-50 grid overflow-hidden bg-background text-foreground"
       style={{
         gridTemplateRows:
           layoutMode === "light"
