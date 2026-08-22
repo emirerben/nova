@@ -228,8 +228,12 @@ const LANE_B_BASELINE: Record<string, number> = {
 };
 
 // ── Lane C ──────────────────────────────────────────────────────────────
-// (none yet)
-const LANE_C_BASELINE: Record<string, number> = {};
+// Tap-to-advance /plan/new: the sticky-footer "Continue" button and the
+// style-step "Back" button are now shadcn `<Button>`s (SetupPicker.tsx's
+// scrollbar-none-only edits don't change its raw-control count).
+const LANE_C_BASELINE: Record<string, number> = {
+  "app/plan/new/page.tsx": 0,
+};
 
 // ── Lane D ──────────────────────────────────────────────────────────────
 // (none yet)
