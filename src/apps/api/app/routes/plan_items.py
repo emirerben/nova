@@ -29,7 +29,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import flag_modified
 
 from app import storage
-from app.agents._schemas.edit_format import coerce_edit_format
+from app.agents._schemas.edit_format import coerce_edit_format, guided_edit_applicable
 from app.agents.music_matcher import _sanitize_text
 from app.auth import SYNTHETIC_USER_ID, CurrentUser
 from app.config import settings
@@ -288,6 +288,23 @@ def _item_uses_collage_preset(item: PlanItem) -> bool:
     ) == "montage" and is_collage_montage_preset(getattr(item, "montage_preset", None))
 
 
+def _item_has_voiceover_contract(item: PlanItem) -> bool:
+    """Return whether this item has selected, server-owned voiceover audio."""
+
+    return getattr(item, "audio_mode", "kria") == "voiceover" and bool(
+        getattr(item, "voiceover_gcs_path", None)
+    )
+
+
+def _guided_edit_is_applicable(item: PlanItem) -> bool:
+    """Keep guided capability and render eligibility on one server policy."""
+
+    return guided_edit_applicable(
+        getattr(item, "edit_format", None),
+        has_voiceover=_item_has_voiceover_contract(item),
+    )
+
+
 def _allowed_item_upload_content_types(item: PlanItem) -> set[str]:
     if getattr(getattr(item, "current_job", None), "mode", None) == "manual_draft":
         # Manual initialization and virtual preview are intentionally video-only
@@ -522,6 +539,7 @@ def plan_item_response(
         if isinstance(a, dict) and a.get("gcs_path")
     ]
 
+    guided_applicable = _guided_edit_is_applicable(item)
     return PlanItemResponse(
         id=str(item.id),
         day_index=item.day_index,
@@ -537,9 +555,11 @@ def plan_item_response(
         clip_gcs_paths=list(item.clip_gcs_paths or []),
         clip_assignments=reconciled_assignments,
         edit_proposal=_edit_proposal_response(item) if include_edit_proposal else None,
-        guided_edit_available=settings.guided_edit_capability_enabled,
-        guided_edit_conversation_available=settings.guided_edit_conversation_enabled,
-        guided_edit_auto_design=settings.guided_auto_design_enabled,
+        guided_edit_available=settings.guided_edit_capability_enabled and guided_applicable,
+        guided_edit_conversation_available=(
+            settings.guided_edit_conversation_enabled and guided_applicable
+        ),
+        guided_edit_auto_design=settings.guided_auto_design_enabled and guided_applicable,
         status=derive_item_status(item),
         current_job_id=str(item.current_job_id) if item.current_job_id else None,
         finished_at=item.current_job.finished_at if item.current_job is not None else None,
@@ -1953,6 +1973,14 @@ def _require_guided_edit_conversation() -> None:
         )
 
 
+def _require_guided_edit_applicable(item: PlanItem) -> None:
+    if not _guided_edit_is_applicable(item):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Guided editing is unavailable for this audio-led edit.",
+        )
+
+
 def _edit_conversation_rate_key(request: Request) -> str:
     """Key paid edit-guide calls by the authenticated proxy identity."""
 
@@ -2287,6 +2315,8 @@ async def _maybe_auto_design_generate(
 
     if not settings.guided_auto_design_enabled:
         return None
+    if not _guided_edit_is_applicable(item):
+        return None
     if not (item.clip_gcs_paths or []):
         ready_assets = int(
             (
@@ -2484,6 +2514,7 @@ async def edit_proposal_conversation_turn(
     _require_guided_edit_conversation()
     owner_id = user.id
     item = await _load_owned_item(item_id, owner_id, db, for_update=True)
+    _require_guided_edit_applicable(item)
     current = parse_edit_proposal(item.edit_proposal)
     from app.services.edit_proposals import (  # noqa: PLC0415
         ProposalConflictError,
@@ -2687,6 +2718,7 @@ async def draft_item_edit_proposal(
     _ = request
     _require_guided_edit()
     item, plan, _persona = await _load_owned_item_context(item_id, user.id, db, for_update=True)
+    _require_guided_edit_applicable(item)
     current = parse_edit_proposal(item.edit_proposal)
     if current and current.conversation_attempt is not None:
         from app.services.edit_proposals import (  # noqa: PLC0415
@@ -2782,6 +2814,7 @@ async def update_item_edit_proposal(
 
     _require_guided_edit()
     item = await _load_owned_item(item_id, user.id, db, for_update=True)
+    _require_guided_edit_applicable(item)
     from app.schemas.edit_proposal import canonical_media_digest  # noqa: PLC0415
     from app.services.edit_proposals import (  # noqa: PLC0415
         ProposalConflictError,
@@ -2837,6 +2870,7 @@ async def approve_item_edit_proposal(
 
     _require_guided_edit()
     item = await _load_owned_item(item_id, user.id, db, for_update=True)
+    _require_guided_edit_applicable(item)
     from app.services.edit_proposals import (  # noqa: PLC0415
         ProposalConflictError,
         approve_proposal,
@@ -2918,7 +2952,8 @@ async def generate_item(
             ),
         )
 
-    if settings.guided_edit_enforcement_enabled:
+    guided_applicable = _guided_edit_is_applicable(item)
+    if settings.guided_edit_enforcement_enabled and guided_applicable:
         from app.services.edit_proposals import proposal_generate_error  # noqa: PLC0415
 
         if proposal_error := proposal_generate_error(item):
@@ -2928,7 +2963,9 @@ async def generate_item(
             _raise_proposal_generate_conflict(proposal_error)
 
     approved_guided_media = False
-    if settings.guided_edit_capability_enabled or settings.guided_edit_enforcement_enabled:
+    if guided_applicable and (
+        settings.guided_edit_capability_enabled or settings.guided_edit_enforcement_enabled
+    ):
         proposal = parse_edit_proposal(item.edit_proposal)
         approved_guided_media = bool(
             proposal

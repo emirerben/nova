@@ -66,3 +66,17 @@ COMMIT;
 The old UI will reopen these items in its editable direction form using the preserved `brief`. A
 later forward deploy can still read the preserved conversation fields unless the creator replans
 the item while running the old application.
+
+## Audio-led intent compatibility
+
+An approved guided proposal is retained when the creator selects an uploaded voiceover or an
+audio-led format (`narrated*`, `subtitled`, or `talking_head`), but it is dormant for that render.
+The API hides guided capability flags, Generate skips guided enforcement/auto-design, and the
+lock-owning dispatcher requires real clip inputs instead of treating the proposal's asset-only
+media as legacy clips. The native renderer receives the selected voiceover and format.
+
+During a rolling deploy, workers also contain Jobs that already contain both a guided snapshot and
+an audio-led contract: genuine clip Jobs skip the snapshot and use the native resolver, while an
+asset-only synthetic-seed Job fails closed with a stable reason so it can be regenerated safely.
+Do not delete or mark the proposal stale during rollback; switching back to a guided-compatible
+format makes the same approved envelope eligible again.

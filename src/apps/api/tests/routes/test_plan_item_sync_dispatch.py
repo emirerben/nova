@@ -493,6 +493,53 @@ def test_approved_proposal_exact_media_is_snapshotted_into_job(
     ]
 
 
+def test_audio_led_dispatch_preserves_proposal_but_omits_guided_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A locked native contract must not validate, seed, or stamp dormant guided state."""
+
+    monkeypatch.setattr(settings, "guided_edit_enforcement_enabled", True)
+    monkeypatch.setattr(settings, "guided_edit_capability_enabled", True)
+    _user_id, item_id = _seed_item()
+    path = f"users/test/plan/{item_id}/a.mp4"
+    voiceover = "voiceover-uploads/test/voice.m4a"
+    with sync_session() as s:
+        item = s.get(PlanItem, item_id)
+        assert item is not None
+        item.clip_gcs_paths = [path]
+        item.edit_format = "narrated_ready"
+        item.audio_mode = "voiceover"
+        item.voiceover_gcs_path = voiceover
+        s.commit()
+    _approve_clip_proposal(item_id, path=path)
+    with sync_session() as s:
+        item = s.get(PlanItem, item_id)
+        assert item is not None
+        proposal_before = dict(item.edit_proposal)
+
+    def _unexpected_guided_validation(*_args, **_kwargs):
+        raise AssertionError("guided proposal validation must be skipped")
+
+    with (
+        patch(
+            "app.services.edit_proposals.validate_approved_proposal_media_sync",
+            side_effect=_unexpected_guided_validation,
+        ),
+        patch(_ENQUEUE),
+    ):
+        result = dispatch_item_render_for(str(item_id))
+
+    assert result.outcome == "dispatched"
+    job = _jobs_for(item_id)[0]
+    assert job.all_candidates["edit_format"] == "narrated_ready"
+    assert job.all_candidates["voiceover_gcs_path"] == voiceover
+    assert "guided_edit" not in (job.assembly_plan or {})
+    with sync_session() as s:
+        item = s.get(PlanItem, item_id)
+        assert item is not None
+        assert item.edit_proposal == proposal_before
+
+
 def _seed_render_failure(
     item_id: uuid.UUID, *, code: str, proposal_version: int = 3, attempts: int = 1
 ) -> None:

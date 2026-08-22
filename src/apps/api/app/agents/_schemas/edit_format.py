@@ -50,6 +50,20 @@ NARRATED_EDIT_FORMATS: frozenset[str] = frozenset(
     {"narrated", "narrated_planned", "narrated_ready"}
 )
 
+# Strict guided rendering is intentionally audio-destructive: it removes source
+# audio and substitutes a matched library track. Keep this allowlist positive so
+# an unknown/future format can never accidentally enter that renderer.
+GUIDED_EDIT_FORMATS: frozenset[str] = frozenset({"montage", "day_vlog", "single_hero"})
+
+# These formats preserve a speech/audio spine and therefore cannot coexist with
+# a guided story snapshot. This is a compatibility policy, not an archetype
+# selector; the native resolver still decides the concrete assembler later.
+AUDIO_LED_EDIT_FORMATS: frozenset[str] = frozenset(
+    set(NARRATED_EDIT_FORMATS) | {"subtitled", "talking_head"}
+)
+
+RenderProgram = Literal["guided", "native"]
+
 
 def coerce_edit_format(value: object) -> EditFormat:
     """Normalize an arbitrary value to a known EditFormat, defaulting to montage.
@@ -64,3 +78,40 @@ def coerce_edit_format(value: object) -> EditFormat:
         if normalized in EDIT_FORMATS:
             return normalized  # type: ignore[return-value]
     return DEFAULT_EDIT_FORMAT
+
+
+def render_program_for_intent(value: object, *, has_voiceover: bool) -> RenderProgram:
+    """Choose the only render-program family allowed for an item snapshot.
+
+    ``coerce_edit_format`` intentionally maps unknown values to montage for the
+    normal edit engine. That fallback is not safe for guided compatibility: a new
+    or malformed token must not silently opt into the audio-destructive guided
+    renderer. Empty values retain the historical montage default; non-empty
+    unknown values fall back to the native program.
+    """
+
+    if has_voiceover:
+        return "native"
+    if value is None:
+        raw = DEFAULT_EDIT_FORMAT
+    elif isinstance(value, str):
+        raw = value.strip().lower().replace("-", "_").replace(" ", "_")
+    else:
+        return "native"
+    if not raw:
+        raw = DEFAULT_EDIT_FORMAT
+    if raw not in EDIT_FORMATS:
+        return "native"
+    if raw in AUDIO_LED_EDIT_FORMATS:
+        return "native"
+    if raw in GUIDED_EDIT_FORMATS:
+        return "guided"
+    # Exhaustiveness guard: adding a format requires an explicit compatibility
+    # decision above rather than inheriting guided behavior by accident.
+    return "native"
+
+
+def guided_edit_applicable(value: object, *, has_voiceover: bool) -> bool:
+    """Return whether strict guided editing may be used for this intent."""
+
+    return render_program_for_intent(value, has_voiceover=has_voiceover) == "guided"

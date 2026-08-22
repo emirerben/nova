@@ -48,7 +48,11 @@ from typing import Any, NamedTuple
 import structlog
 from sqlalchemy.exc import OperationalError
 
-from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS, coerce_edit_format
+from app.agents._schemas.edit_format import (
+    NARRATED_EDIT_FORMATS,
+    coerce_edit_format,
+    guided_edit_applicable,
+)
 from app.config import settings
 from app.database import sync_session as _sync_session
 from app.models import Job, MusicTrack
@@ -224,6 +228,57 @@ _GUIDED_RENDER_HEARTBEAT_S = 10
 
 class _GuidedStoryAttemptBusy(RuntimeError):
     """A second worker observed a live strict-render lease and must no-op."""
+
+
+class AudioLedGuidedConflict(RuntimeError):
+    """An old dual-contract Job cannot safely use a synthetic guided seed."""
+
+    code = "guided_story_incompatible_audio_led_asset_only"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "This queued edit contains an outdated guided snapshot without real clip input. "
+            "Generate again to render the selected audio-led edit safely."
+        )
+
+
+def _narrated_voiceover_prework_enabled(
+    *,
+    narrated_archetype_enabled: bool,
+    has_voiceover: bool,
+    edit_format: object,
+    job_mode: str | None,
+) -> bool:
+    """Return whether narration is deterministic enough to skip AI prework."""
+
+    if not narrated_archetype_enabled or not has_voiceover:
+        return False
+    return coerce_edit_format(edit_format) in NARRATED_EDIT_FORMATS or job_mode == "content_plan"
+
+
+def _guided_snapshot_has_genuine_clip_input(
+    guided_snapshot: object,
+    clip_paths: list[str],
+) -> bool:
+    """Check immutable guided media lanes before native recovery.
+
+    Asset-only guided Jobs carry one synthetic seed in ``all_candidates`` while
+    their complete source set remains in the guided snapshot. A path-count check
+    cannot distinguish that case from a legitimate one-clip render.
+    """
+
+    if not isinstance(guided_snapshot, dict):
+        return False
+    clip_path_set = {str(path) for path in clip_paths if path}
+    identities = guided_snapshot.get("media_identities")
+    if not isinstance(identities, list):
+        return False
+    return any(
+        isinstance(ref, dict)
+        and ref.get("lane") == "clip"
+        and str(ref.get("gcs_path") or "") in clip_path_set
+        for ref in identities
+    )
 
 
 def _lock_owned_entry_job(db, job_id: str) -> tuple[Job, int | None] | None:  # noqa: ANN001
@@ -789,6 +844,15 @@ def orchestrate_generative_job(self, job_id: str) -> None:
         except _GuidedStoryAttemptBusy:
             log.info("guided_story_duplicate_delivery_busy", job_id=job_id)
             return
+        except AudioLedGuidedConflict as exc:
+            log.warning(
+                "guided_story_incompatible_audio_led_job",
+                job_id=job_id,
+                failure_reason=exc.code,
+            )
+            mark_failed_phase(job_id)
+            _fail_job(job_id, str(exc), failure_reason=exc.code)
+            return
         except SoftTimeLimitExceeded:
             # The 30-min soft limit fired (heavy 4K/HDR footage). Fail VISIBLY with a
             # user-actionable message instead of letting the hard time_limit SIGKILL
@@ -1060,7 +1124,12 @@ def _run_generative_job_impl(
         # Plan-declared edit format (Lane A). Coerced defensively — a drifted token
         # falls back to montage rather than failing the job. Resolved against the
         # footage after ingest (see _resolve_archetype).
-        edit_format = coerce_edit_format(all_candidates.get("edit_format"))
+        edit_format_value = all_candidates.get("edit_format")
+        # Newer API workers preserve an unknown/future token separately so this
+        # compatibility fence cannot mistake it for the normalized montage default.
+        # Legacy jobs without the field retain their existing normalized behavior.
+        render_intent_value = all_candidates.get("declared_edit_format", edit_format_value)
+        edit_format = coerce_edit_format(edit_format_value)
         # Optional user-supplied voiceover (audio-only). When present it becomes the
         # narration bed and the job renders voiceover variants instead of song/original
         # — resolved in _resolve_archetype below, ahead of the footage-speech logic.
@@ -1123,6 +1192,41 @@ def _run_generative_job_impl(
     mark_started(job_id)
     record_phase(job_id, "queued", next_phase="analyze_clips")
 
+    guided_applicable = guided_edit_applicable(
+        render_intent_value,
+        has_voiceover=bool(voiceover_gcs_path),
+    )
+    if guided_snapshot is not None and not guided_applicable:
+        if not _guided_snapshot_has_genuine_clip_input(guided_snapshot, clip_paths_gcs):
+            record_pipeline_event(
+                "assembly",
+                "guided_story_skipped_incompatible_intent",
+                {
+                    "declared_edit_format": edit_format,
+                    "has_voiceover": bool(voiceover_gcs_path),
+                    "guided_snapshot_present": True,
+                    "reason": "asset_only_synthetic_seed",
+                },
+            )
+            raise AudioLedGuidedConflict()
+        record_pipeline_event(
+            "assembly",
+            "guided_story_skipped_incompatible_intent",
+            {
+                "declared_edit_format": edit_format,
+                "has_voiceover": bool(voiceover_gcs_path),
+                "guided_snapshot_present": True,
+                "reason": "native_audio_led_contract",
+            },
+        )
+        log.warning(
+            "guided_story_skipped_incompatible_intent",
+            job_id=job_id,
+            declared_edit_format=edit_format,
+            has_voiceover=bool(voiceover_gcs_path),
+        )
+        guided_snapshot = None
+
     if guided_snapshot is not None:
         if speech_cut_operation_id:
             raise RuntimeError("Speech-cut rerenders are not available on guided stories")
@@ -1161,11 +1265,13 @@ def _run_generative_job_impl(
         # clip analysis so it's faster, cheaper, and survives Gemini outages. This
         # condition mirrors the narrated branch of _resolve_archetype exactly, so we
         # only skip when narrated WILL be selected (a montage fallback still needs metas).
-        _skip_clip_analysis = (
-            settings.narrated_archetype_enabled
-            and edit_format in NARRATED_EDIT_FORMATS
-            and bool(voiceover_gcs_path)
+        _narrated_voiceover = _narrated_voiceover_prework_enabled(
+            narrated_archetype_enabled=settings.narrated_archetype_enabled,
+            has_voiceover=bool(voiceover_gcs_path),
+            edit_format=edit_format,
+            job_mode=job.mode,
         )
+        _skip_clip_analysis = _narrated_voiceover
         with render_stage_timer(
             "asset_loading_and_preprocess",
             trace_id=render_trace_id,
@@ -1239,6 +1345,8 @@ def _run_generative_job_impl(
         from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
 
         def _text_then_style():
+            if _narrated_voiceover:
+                return None, {}, "default"
             text, form = _run_text_agents(
                 clip_metas,
                 hero,
@@ -1296,7 +1404,10 @@ def _run_generative_job_impl(
                 job_id=job_id,
             )
             fut_text = pool.submit(_text_then_style)
-            fut_match = pool.submit(_match_best_track, clip_metas, job_id=job_id)
+            if _narrated_voiceover:
+                fut_match = pool.submit(lambda: None)
+            else:
+                fut_match = pool.submit(_match_best_track, clip_metas, job_id=job_id)
             tonemap_t0 = time.monotonic()
             n_tonemapped = fut_tonemap.result()
             record_render_stage(
@@ -1405,6 +1516,7 @@ def _run_generative_job_impl(
             filming_guide=filming_guide_candidates,
             footage_type_bias=_footage_type_bias,
             clip_durations_s=clip_durations_s,
+            prefer_narrated_voiceover=(job.mode == "content_plan"),
         )
         if (
             archetype == "talking_head"
@@ -9010,6 +9122,7 @@ def _resolve_archetype(
     filming_guide: list[dict] | None = None,
     footage_type_bias: list[str] | None = None,
     clip_durations_s: dict[str, float] | None = None,
+    prefer_narrated_voiceover: bool = False,
 ) -> tuple[str, str | None, str | None]:
     """Resolve the declared edit_format against footage → (archetype, spine, fallback_reason).
 
@@ -9059,7 +9172,7 @@ def _resolve_archetype(
     # renderer auto-segments the narration across the clips. Either way the voiceover
     # spines the edit and the words become captions — so an empty guide must NOT drop
     # a narrated item to the voiceover-montage path (which loses captions).
-    if edit_format in NARRATED_EDIT_FORMATS and voiceover_gcs_path:
+    if (edit_format in NARRATED_EDIT_FORMATS or prefer_narrated_voiceover) and voiceover_gcs_path:
         if settings.narrated_archetype_enabled:
             record_pipeline_event("assembly", "archetype_selected", {"archetype": "narrated"})
             log.info("generative_archetype_selected", job_id=job_id, archetype="narrated")

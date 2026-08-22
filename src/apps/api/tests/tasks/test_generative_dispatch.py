@@ -640,6 +640,46 @@ def test_resolve_voiceover_wins_over_footage(monkeypatch):
     )
 
 
+def test_content_plan_voiceover_uses_captioned_narrated_archetype(monkeypatch):
+    """Plan-item voiceover is a transcript-caption contract, even if format drifted."""
+    monkeypatch.setattr(gb.settings, "narrated_archetype_enabled", True, raising=False)
+    events = _trace_capture(monkeypatch)
+    archetype, spine, _reason = gb._resolve_archetype(
+        "montage",
+        [_Meta("c1")],
+        {"c1": "/a.mp4"},
+        job_id="j",
+        voiceover_gcs_path="voiceover-uploads/abc/voice.webm",
+        prefer_narrated_voiceover=True,
+    )
+    assert (archetype, spine) == ("narrated", None)
+    assert any(e[1] == "archetype_selected" and e[2].get("archetype") == "narrated" for e in events)
+
+
+@pytest.mark.parametrize(
+    ("edit_format", "job_mode", "has_voiceover", "expected"),
+    [
+        ("montage", "content_plan", True, True),
+        ("narrated_ready", "generative", True, True),
+        ("montage", "generative", True, False),
+        ("montage", "content_plan", False, False),
+    ],
+)
+def test_content_plan_voiceover_skips_narrated_prework(
+    monkeypatch, edit_format, job_mode, has_voiceover, expected
+):
+    monkeypatch.setattr(gb.settings, "narrated_archetype_enabled", True, raising=False)
+    assert (
+        gb._narrated_voiceover_prework_enabled(
+            narrated_archetype_enabled=gb.settings.narrated_archetype_enabled,
+            has_voiceover=has_voiceover,
+            edit_format=edit_format,
+            job_mode=job_mode,
+        )
+        is expected
+    )
+
+
 def test_specs_for_voiceover_only_when_no_track():
     specs = gb._specs_for_archetype(
         "voiceover", None, voiceover_gcs_path="voiceover-uploads/a/voice.webm"
