@@ -27,6 +27,7 @@
 
 import { BRAND_NAME } from "@/lib/brand";
 import { cn } from "@/lib/cn";
+import { Button } from "@/components/ui/button";
 
 export type StepRailState = "done" | "active" | "upcoming" | "skipped";
 
@@ -108,14 +109,16 @@ export function StepRail<K extends string | number>({
             if (step.clickable) {
               return (
                 <li key={step.key}>
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
+                    size="icon"
                     onClick={() => onGoBack(step.key)}
-                    className={cn(box, "transition-opacity hover:opacity-70", FOCUS_RING)}
+                    className={cn("rounded-full p-0 hover:bg-transparent hover:opacity-70", FOCUS_RING)}
                   >
                     {dot}
                     <span className="sr-only">{`Back to ${step.label}`}</span>
-                  </button>
+                  </Button>
                 </li>
               );
             }
@@ -161,13 +164,14 @@ export function StepRail<K extends string | number>({
         <ol aria-label="Progress" className="mt-10 flex flex-col gap-6">
           {steps.map((step) => (
             <li key={step.key}>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
                 disabled={!step.clickable}
                 onClick={() => step.clickable && onGoBack(step.key)}
                 aria-current={step.state === "active" ? "step" : undefined}
                 className={cn(
-                  "flex items-center gap-3 rounded text-left text-sm",
+                  "h-auto w-full justify-start rounded p-0 text-left text-sm font-normal hover:bg-transparent disabled:opacity-100",
                   step.clickable
                     ? cn("cursor-pointer transition-opacity hover:opacity-70", FOCUS_RING)
                     : "cursor-default",
@@ -188,7 +192,7 @@ export function StepRail<K extends string | number>({
                     </span>
                   )}
                 </span>
-              </button>
+              </Button>
             </li>
           ))}
         </ol>

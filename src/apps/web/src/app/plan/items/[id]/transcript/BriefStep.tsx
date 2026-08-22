@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { InkButton } from "@/components/ui/InkButton";
+import { Textarea } from "@/components/ui/textarea";
 import {
   getTranscriptAnalyze,
   startTranscriptAnalyze,
@@ -161,7 +162,7 @@ export default function BriefStep({
         over it.
       </p>
 
-      <textarea
+      <Textarea
         value={brief}
         onChange={(e) => setBrief(e.target.value)}
         rows={4}
@@ -174,7 +175,7 @@ export default function BriefStep({
             void handleContinue();
           }
         }}
-        className="mt-8 w-full resize-none rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-[15px] text-[#0c0c0e] placeholder-zinc-400 focus:border-lime-500/60 focus:outline-none"
+        className="mt-8 resize-none rounded-2xl px-4 py-3 text-[15px]"
       />
 
       {softNote && <p className="mt-3 text-sm text-[#71717a]">{softNote}</p>}

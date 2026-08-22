@@ -266,8 +266,19 @@ const LANE_E_BASELINE: Record<string, number> = {
 };
 
 // ── Lane F ──────────────────────────────────────────────────────────────
-// (none yet)
-const LANE_F_BASELINE: Record<string, number> = {};
+// /generative + transcript + StepRail sweep — every raw control converted to
+// the shadcn primitives, so each of these files ratchets to zero.
+const LANE_F_BASELINE: Record<string, number> = {
+  "app/generative/VariantCard.tsx": 0,
+  "app/generative/VoiceRecorder.tsx": 0,
+  "app/plan/_components/PlanVariantEditor.tsx": 0,
+  "app/plan/_components/ui/StepRail.tsx": 0,
+  "app/plan/items/[id]/transcript/BriefStep.tsx": 0,
+  "app/plan/items/[id]/transcript/QuestionsStep.tsx": 0,
+  "app/plan/items/[id]/transcript/ReviewStep.tsx": 0,
+  "app/plan/items/[id]/transcript/ScriptStep.tsx": 0,
+  "app/plan/items/[id]/transcript/TeleprompterRecorder.tsx": 0,
+};
 
 const RAW_CONTROL_BASELINE: Record<string, number> = {
   ...LANE_0_BASELINE,

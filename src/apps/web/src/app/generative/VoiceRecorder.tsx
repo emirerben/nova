@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import { uploadVoiceover } from "@/lib/generative-api";
 import { fmtTime, useAudioRecorder, type AudioTake } from "@/hooks/useAudioRecorder";
+import { Button } from "@/components/ui/button";
 
 /**
  * Add a voiceover to a generative edit: record in-browser (mic + live waveform)
@@ -93,16 +94,17 @@ export function VoiceRecorder({
       {rec.phase === "idle" && (
         <div className="flex flex-wrap items-center gap-3">
           {rec.recordSupported && (
-            <button
+            <Button
               type="button"
+              variant="outline"
               onClick={startRecording}
               aria-label="Record voiceover"
               aria-pressed={false}
-              className="inline-flex min-h-[44px] items-center gap-2 rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm text-[#3f3f46] hover:border-zinc-400"
+              className="min-h-[44px] gap-2 px-4 py-2 text-sm font-normal"
             >
               <span aria-hidden className="h-2.5 w-2.5 rounded-full bg-red-500" />
               Record
-            </button>
+            </Button>
           )}
           <label className="inline-flex min-h-[44px] cursor-pointer items-center rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm text-[#3f3f46] hover:border-zinc-400">
             Upload audio
@@ -138,16 +140,17 @@ export function VoiceRecorder({
             height={64}
             className="h-16 w-full rounded border border-zinc-200 bg-zinc-100"
           />
-          <button
+          <Button
             type="button"
+            variant="outline"
             onClick={rec.stop}
             aria-label="Stop recording"
             aria-pressed
-            className="inline-flex min-h-[44px] items-center gap-2 rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm text-[#3f3f46] hover:border-zinc-400"
+            className="min-h-[44px] gap-2 px-4 py-2 text-sm font-normal"
           >
             <span aria-hidden className="h-2.5 w-2.5 rounded-sm bg-[#3f3f46]" />
             Stop
-          </button>
+          </Button>
         </div>
       )}
 
@@ -163,14 +166,15 @@ export function VoiceRecorder({
             {!uploading && uploadedName && (
               <span className="text-sm text-[#71717a]">{uploadedName}</span>
             )}
-            <button
+            <Button
               type="button"
+              variant="outline"
               onClick={rec.reset}
               aria-label="Remove voiceover"
-              className="inline-flex min-h-[44px] items-center rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm text-[#3f3f46] hover:border-zinc-400"
+              className="min-h-[44px] px-4 py-2 text-sm font-normal"
             >
               {rec.recordSupported ? "Retake / remove" : "Remove"}
-            </button>
+            </Button>
           </div>
         </div>
       )}

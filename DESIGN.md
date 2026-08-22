@@ -531,6 +531,21 @@ open/position. Tests that open one of those primitives must use
 `fireEvent.click` — Radix listens on `pointerdown`, which `fireEvent.click`
 does not synthesize.
 
+### Backlog (deferred from Lane F)
+
+- **`src/apps/web/src/components/TikTokPublishDialog.tsx`** — NOT converted to
+  the shadcn `Dialog` shell. At 1166 lines it is a hand-rolled `createPortal` +
+  `useFocusTrap` sheet with multi-step state (`details`/`confirm`), per-mode
+  idempotency keys in `sessionStorage`, and a 373-line test suite
+  (`src/__tests__/tiktok/TikTokPublishDialog.test.tsx`) that pins exact focus
+  behavior (e.g. `document.activeElement` lands on the step `<h2>` on open,
+  not a button) incompatible with `Dialog`'s default auto-focus. Swapping the
+  outer shell would mean re-deriving that focus contract under Radix, which
+  did not fit Lane F's budget. Left on the raw-control ratchet at its Lane 0
+  baseline (10). A future lane should re-scope this as its own PR: port the
+  focus-trap/step semantics onto `Dialog` deliberately, updating the pinned
+  test assertions alongside it.
+
 ---
 
 *Rendered-video (FFmpeg burn-in) overlay design is a separate medium — see `docs/pipelines/template.md` and `docs/pipelines/layer2-text-overlay.md` for font and sizing rules.*
