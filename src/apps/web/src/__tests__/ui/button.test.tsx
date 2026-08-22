@@ -13,37 +13,39 @@ describe("Button", () => {
   it("pins the ink/default size tokens (InkButton wrapper contract)", () => {
     render(<Button variant="ink">Save</Button>);
     const className = screen.getByRole("button", { name: "Save" }).className;
-    expect(className).toContain("px-9");
-    expect(className).toContain("py-[15px]");
-    expect(className).toContain("text-[15px]");
-    expect(className).toContain("bg-[#0c0c0e]");
+    expect(className).toContain("h-9");
+    expect(className).toContain("px-4");
+    expect(className).toContain("py-2");
+    expect(className).toContain("bg-primary");
   });
 
   it("pins the sm size tokens", () => {
     render(<Button size="sm">Save</Button>);
     const className = screen.getByRole("button", { name: "Save" }).className;
-    expect(className).toContain("h-9");
-    expect(className).toContain("px-5");
-    expect(className).toContain("text-[13px]");
+    expect(className).toContain("h-8");
+    expect(className).toContain("px-3");
+    expect(className).toContain("text-xs");
   });
 
   it("default variant renders the same look as the explicit ink variant", () => {
     render(<Button>Save</Button>);
     const className = screen.getByRole("button", { name: "Save" }).className;
-    expect(className).toContain("bg-[#0c0c0e]");
-    expect(className).toContain("text-white");
+    expect(className).toContain("bg-primary");
+    expect(className).toContain("text-primary-foreground");
   });
 
-  it("destructive contains no red — D10 'no red walls'", () => {
+  it("destructive uses the stock destructive token", () => {
     render(<Button variant="destructive">Delete</Button>);
     const className = screen.getByRole("button", { name: "Delete" }).className;
-    expect(className.toLowerCase()).not.toContain("red");
-    expect(className).toContain("bg-[#3f3f46]");
+    expect(className).toContain("bg-destructive");
+    expect(className).toContain("text-destructive-foreground");
   });
 
-  it("renders pills, not the shadcn default rounded-md", () => {
+  it("renders rounded-md, the stock shadcn default — not a pill", () => {
     render(<Button>Save</Button>);
-    expect(screen.getByRole("button").className).toContain("rounded-full");
+    const className = screen.getByRole("button").className;
+    expect(className).toContain("rounded-md");
+    expect(className).not.toContain("rounded-full");
   });
 
   it("supports asChild for link-styled CTAs", () => {
@@ -54,6 +56,6 @@ describe("Button", () => {
     );
     const link = screen.getByRole("link", { name: "Open" });
     expect(link.tagName).toBe("A");
-    expect(link.className).toContain("rounded-full");
+    expect(link.className).toContain("rounded-md");
   });
 });

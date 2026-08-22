@@ -14,6 +14,6 @@ describe("Input", () => {
     render(<Input aria-label="Handle" />);
     const className = screen.getByLabelText("Handle").className;
     expect(className).toContain("text-base");
-    expect(className).toContain("h-11");
+    expect(className).toContain("h-10");
   });
 });

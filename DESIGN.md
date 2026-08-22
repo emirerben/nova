@@ -386,9 +386,15 @@ Quick right/wrong pairs for common review questions.
 
 ## §15 Component library (shadcn/ui)
 
-Shipped v0.47.0.0 (Lane 0 of the Kria Design System migration). Every user-facing
-surface — including the full-screen editor — now has a single component
-standard instead of ad-hoc `className` chrome. `/admin` is deferred (keeps its
+Shipped v0.47.0.0 (Lane 0). **Re-skinned to stock shadcn/ui `new-york`
+(2026-08-22, owner decision):** the component-chrome primitives now render
+exactly as `ui.shadcn.com` ships them — Geist type (§5's Fraunces exception
+no longer applies to primitives), zinc neutral tokens, `rounded-md` controls,
+`ring`-based focus. This **supersedes**, for component chrome only, §2's
+lime-accent rules, §5's Fraunces-headings rule, and §9/D10's "no red walls"
+rule (`--destructive` is stock red again). Those sections still describe the
+landing page and the editorial/interview surfaces around the primitives —
+only the primitives themselves went stock. `/admin` is deferred (keeps its
 dark variant; adopts the primitives later).
 
 ### Where primitives live
@@ -400,68 +406,54 @@ dark variant; adopts the primitives later).
   `dropdown-menu.tsx`, `popover.tsx`, `tooltip.tsx`, `tabs.tsx`, `toggle.tsx`,
   `toggle-group.tsx`, `slider.tsx`, `separator.tsx`, `skeleton.tsx`,
   `scroll-area.tsx`, `progress.tsx`, `sonner.tsx`. Style `new-york`, installed
-  via `npx shadcn@2 add …` then hand-edited for the Kria variants below.
-  `components.json` aliases `utils` → `@/lib/cn` (no `utils.ts` file — `cn` is
-  hand-authored, shadcn's own).
+  via `npx shadcn@2 add …`. `components.json` aliases `utils` → `@/lib/cn`
+  (no `utils.ts` file — `cn` is hand-authored, shadcn's own).
 - **`src/apps/web/src/components/ui/*.tsx` (PascalCase filenames) = pre-existing
-  Kria wrappers** — `InkButton`, `LightCard`, `ConfirmDialog` are now thin
-  wrappers over `Button`/`Card`/`AlertDialog` with **identical props and
-  import paths**; every existing call site kept working with zero edits.
+  wrappers** — `InkButton`, `LightCard`, `ConfirmDialog` are thin wrappers
+  over `Button`/`Card`/`AlertDialog` with **identical props and import
+  paths**; every existing call site keeps working with zero edits.
   `InfoDot`, `StyleChip`, `Eyebrow`, `LightShell`, `useFocusTrap` are
   untouched by this migration (§2). New code should reach for the shadcn
-  primitives directly (`<Button variant="ink">`, not `<InkButton>`).
+  primitives directly (`<Button variant="default">`, not `<InkButton>`).
 - `<Toaster />` (from `ui/sonner.tsx`) is mounted once in `src/app/layout.tsx`
   inside `<Providers>`. Call `toast("message")` from `sonner` anywhere — never
   build a bespoke toast/`useState` toast again.
 
-### Variant table
+### Variant aliases
 
-| Primitive | Variants | Notes |
+Eight downstream lanes already consume the pre-skin variant/size names —
+these are kept as aliases, byte-identical to the stock base variant they now
+point at, so nothing breaks:
+
+| Alias | Component | Points at (stock base) |
 |---|---|---|
-| `Button` | `default`/`ink` (solid `#0c0c0e`), `outline`, `secondary`, `ghost`, `link`, `lime` (soft pill), `destructive` (zinc, **not red**) | Sizes: `default` (`px-9 py-[15px] text-[15px]`), `sm` (`h-9 px-5 text-[13px]`), `lg`, `icon` (44px), `icon-sm` (32px, ≥1024 inspector only), `pill`. `asChild` supported. |
-| `Badge` | `ink` (solid pill), `lime` (bare eyebrow text, no fill), `lime-soft` (lime-50/200/800 pill), `zinc` (neutral default) | `rounded-full text-[11px] uppercase tracking-[0.18em]`. |
-| `Input` / `Textarea` | — | `h-11 sm:h-10` (Textarea: `min-h-11 sm:min-h-10`), `text-base sm:text-sm` — never below the 16px iOS zoom-on-focus floor (§8). Lime focus border, no ring. |
-| `Select` | — | Trigger matches `Input` sizing; content `z-[130]`. |
-| `Dialog` / `AlertDialog` | — | `rounded-2xl border-zinc-200 bg-white shadow-sm`, overlay `bg-black/30`, `z-[100]`, scale-up-from-center via the existing `--modal-*` tokens (§6 t-modal), `motion-reduce:animate-none`. `AlertDialog` = the only sanctioned destructive-confirm surface — action button is ink/zinc, never red. |
-| `Sheet` | `side="top"\|"bottom"\|"left"\|"right"` | Same `z-[100]`/token motion as Dialog; bottom sheets get `rounded-t-2xl`. **This is a different component from the pre-existing editor gesture `Sheet.tsx`** (`app/plan/items/[id]/_editor/Sheet.tsx`, half-detent, non-modal) — do not confuse the two; the editor keeps its own. |
-| `DropdownMenu` / `Popover` / `Tooltip` | — | `z-[130]` (above dialogs/sheets at `z-[100]`, below `InfoDot` — §2). |
-| `Tabs` | — | Underline style (`border-b-2` on the active trigger), not a pill segmented control. |
-| `Slider` | — | Zinc-200 track, lime-600 range, 20px white thumb with an invisible 44px hit area. |
-| `Toast` (`sonner`) | — | Single bottom-center, `duration=2600`, no close button, ink pill (`bg-[#0c0c0e] text-white`). |
+| `variant="ink"` | `Button` | `default` (`bg-primary`) |
+| `variant="lime"` | `Button` | `secondary` |
+| `size="pill"` | `Button` | same footprint as `size="sm"` |
+| `size="icon-sm"` | `Button` | `h-8 w-8` (unchanged — no stock equivalent) |
+| `variant="ink"` | `Badge` | `default` (`bg-primary`) |
+| `variant="lime"` / `"lime-soft"` | `Badge` | `secondary` |
+| `variant="zinc"` | `Badge` | `outline` |
 
-### Token → hex map
+New code should reach for the stock variant name directly (`default`,
+`secondary`, `outline`, …) rather than an alias.
 
-CSS custom properties in `src/apps/web/src/app/globals.css` (`@layer base`,
-after the pre-existing `:root` landing-token block). Consumed as
-`hsl(var(--token))` via `tailwind.config.ts`.
+### Token map
 
-| Token | Light | Dark (`/template-jobs` + `/admin` only) |
-|---|---|---|
-| `--background` | `#ffffff` | zinc-950 `#09090b` |
-| `--foreground` / `--primary` | `#0c0c0e` (ink) | white `#fafafa` |
-| `--card` / `--popover` | `#ffffff` | zinc-900 `#18181b` |
-| `--secondary` / `--muted` | zinc-100 `#f4f4f5` | zinc-800 `#27272a` |
-| `--muted-foreground` | `#71717a` (ink-3) | zinc-400 |
-| `--accent` / `--accent-foreground` | lime-50 `#f7fee7` / lime-800 `#3f6212` | unchanged (inherits light — lime accent stays lime in dark) |
-| `--destructive` | zinc `#3f3f46` (ink-2) — **never red, D10** | zinc-800 — never red |
-| `--border` / `--input` | zinc-200 `#e4e4e7` | zinc-800 |
-| `--ring` | lime-500 `#84cc16` | amber-400 `#fbbf24` |
-| `--radius` | `0.5rem` (keeps `rounded-lg` byte-identical to pre-migration) | same |
-
-`--radius` deliberately stayed at Tailwind's own default (`0.5rem`) rather than
-the 12px the Paper Tokens board sketches for menus/inputs — changing it would
-have silently reflowed every existing `rounded-lg`/`rounded-md` surface.
-Primitives that need a bigger radius (`Card`, `Dialog`, `Sheet`, `Button`)
-hard-code `rounded-2xl`/`rounded-full` directly instead of leaning on
-`--radius`.
+Stock shadcn zinc theme, straight from `hsl(var(--token))` CSS custom
+properties in `src/apps/web/src/app/globals.css` (`@layer base`, after the
+pre-existing `:root` landing-token block) — see that file for the exact HSL
+triplets. `--destructive` is stock red in both themes (no longer zinc — D10
+superseded, see the note above). `--ring` is zinc in both themes (no longer
+lime/amber). `--radius` is `0.5rem`. Dark exists only for `/template-jobs` +
+`/admin`; every user-facing surface, including the editor, stays light.
 
 ### DO
 
-- Use `<Button>` for every control that performs an action — one solid
-  `ink`/`default` CTA per surface, everything else `outline`/`ghost`/`link`.
-- `size="icon"` (44px) for icon-only controls on touch surfaces.
-- `<Badge variant="lime">` for eyebrow-style labels, `variant="lime-soft"` for
-  positive status pills.
+- Use `<Button>` for every control that performs an action — `default` for
+  the one primary CTA per surface, everything else `outline`/`secondary`/
+  `ghost`/`link`.
+- `size="icon"` for icon-only controls on touch surfaces.
 - `<AlertDialog>` for every destructive confirmation — never `window.confirm`.
 - `toast("…")` from `sonner` for transient feedback — never a bespoke
   `useState` toast.
@@ -476,8 +468,6 @@ hard-code `rounded-2xl`/`rounded-full` directly instead of leaning on
 
 - Raw `<button>`/`<select>`/`<input>`/`<textarea>` with a hand-rolled
   `className` outside `components/ui/**` — see the raw-control ratchet below.
-- Red anywhere in a destructive/error affordance — D10 "no red walls" is
-  structural now (`--destructive` is zinc in both themes).
 - `.dark` on any user-facing surface, **including the editor** — the editor
   root stays `bg-[#ffffff]` (`EditorShell.tsx`); `.dark` is `/template-jobs` +
   `/admin` only.
@@ -487,8 +477,8 @@ hard-code `rounded-2xl`/`rounded-full` directly instead of leaning on
   sanctioned home for optional helper copy.
 - Reach for the shadcn `Sheet` (`components/ui/sheet.tsx`) when you mean the
   editor's gesture `Sheet.tsx` (half-detent, non-modal) — they are different
-  components with the same name; see the Variant table above.
-- `cmdk` — deliberately not installed; no command-palette pattern in Kria yet.
+  components with the same name.
+- `cmdk` — deliberately not installed; no command-palette pattern yet.
 
 ### Raw-control ratchet (enforcement mechanism)
 

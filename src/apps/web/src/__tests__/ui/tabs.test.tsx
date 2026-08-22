@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 describe("Tabs", () => {
-  it("renders an underline style (no pill bg) and switches panels on click", async () => {
+  it("renders the stock segmented-pill style and switches panels on click", async () => {
     const user = userEvent.setup();
     render(
       <Tabs defaultValue="visuals">
@@ -18,8 +18,9 @@ describe("Tabs", () => {
     );
 
     const list = screen.getByRole("tablist");
-    expect(list.className).toContain("border-b");
-    expect(list.className).not.toContain("rounded-lg bg-muted");
+    expect(list.className).toContain("rounded-lg");
+    expect(list.className).toContain("bg-muted");
+    expect(list.className).not.toContain("border-b");
     expect(list.className).toContain("extra-class");
 
     expect(screen.getByText("Visuals panel")).toBeInTheDocument();

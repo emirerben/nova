@@ -5,9 +5,10 @@ import * as SliderPrimitive from "@radix-ui/react-slider"
 
 import { cn } from "@/lib/cn"
 
-// Kria editorial slider (DESIGN.md §15): zinc-200 track, lime-600 range,
-// 20px white thumb with an invisible ::before expanding the hit area to the
-// 44px touch floor (§8) without growing the visual thumb.
+// Stock shadcn/ui `new-york` slider (DESIGN.md §15, owner decision
+// 2026-08-22): primary/20 track, primary range, 20px thumb with an
+// invisible ::before expanding the hit area to the 44px touch floor (§8)
+// without growing the visual thumb.
 interface SliderProps
   extends React.ComponentPropsWithoutRef<typeof SliderPrimitive.Root> {
   /**
@@ -32,16 +33,16 @@ const Slider = React.forwardRef<
     )}
     {...props}
   >
-    <SliderPrimitive.Track className="relative h-1.5 w-full grow overflow-hidden rounded-full bg-zinc-200">
-      <SliderPrimitive.Range className="absolute h-full bg-lime-600" />
+    <SliderPrimitive.Track className="relative h-1.5 w-full grow overflow-hidden rounded-full bg-primary/20">
+      <SliderPrimitive.Range className="absolute h-full bg-primary" />
     </SliderPrimitive.Track>
     <SliderPrimitive.Thumb
       aria-label={ariaLabel}
       aria-labelledby={ariaLabelledBy}
       className={cn(
-        "relative block h-5 w-5 rounded-full border border-zinc-200 bg-white shadow transition-colors",
+        "relative block h-5 w-5 rounded-full border border-primary/50 bg-background shadow transition-colors",
         "before:absolute before:inset-[-12px] before:content-['']",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-500 disabled:pointer-events-none disabled:opacity-50"
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
       )}
     />
   </SliderPrimitive.Root>
