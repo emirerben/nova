@@ -290,7 +290,9 @@ describe("iOS zoom-on-focus floor (DESIGN.md §8)", () => {
         }
         if (!entry.name.endsWith(".tsx")) continue;
         const src = fs.readFileSync(full, "utf8");
-        for (const m of Array.from(src.matchAll(/<(input|textarea|select)[\s>]/g))) {
+        // Also match the shadcn/Kria <Input>/<Textarea> primitives (Lane 0) —
+        // they carry the same iOS zoom-on-focus risk as raw <input>/<textarea>.
+        for (const m of Array.from(src.matchAll(/<(input|textarea|select|Input|Textarea)[\s>]/g))) {
           const from = m.index!;
           for (const token of sizeTokens(openingTag(src, from))) {
             const arb = token.match(/^text-\[(\d+)px\]$/);
