@@ -46,3 +46,9 @@ def test_broker_recovery_backstops_remain_enabled() -> None:
     assert celery_app.conf.task_acks_late is True
     assert celery_app.conf.task_reject_on_worker_lost is True
     assert celery_app.conf.broker_transport_options["visibility_timeout"] == 1900
+
+
+def test_idle_broker_polling_is_throttled() -> None:
+    # Upstash bills per command; kombu's default re-arms BRPOP every 1s per
+    # idle consumer. 10s keeps push-delivery instant and cuts idle polling 10x.
+    assert celery_app.conf.broker_transport_options["polling_interval"] == 10

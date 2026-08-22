@@ -98,7 +98,13 @@ celery_app.conf.update(
     # for up to an hour before recovery. Set to 1900s (just past time_limit)
     # so re-delivery happens promptly without risking duplicate execution
     # while a real task is still running.
-    broker_transport_options={"visibility_timeout": 1900},
+    # polling_interval: how often an IDLE consumer re-arms its blocking BRPOP
+    # (kombu default 1s). Upstash bills per command, and three always-on
+    # consumers (worker/light/autoplace) at 1 BRPOP/s each is ~7.8M commands
+    # a month of pure idle polling. Latency-neutral: BRPOP wakes the instant a
+    # task is pushed; this only bounds the re-arm cadence while nothing is
+    # queued. Pinned by tests/test_deploy_shutdown_policy.py.
+    broker_transport_options={"visibility_timeout": 1900, "polling_interval": 10},
     # Prefork child recycling (2026-07-21 OOM, job e8173a25): a burst of
     # analyze_pool_asset tasks leaves CLIP/torch/Whisper residency in the single
     # long-lived child (concurrency=1), and the NEXT render's ffmpeg peak then
@@ -128,9 +134,9 @@ celery_app.conf.update(
     # kwarg if one was passed at dispatch time, else the default `celery`
     # queue) — this dict is additive, not a full routing table.
     task_routes={name: {"queue": "maintenance"} for name in MAINTENANCE_TASK_NAMES},
-    # Beat schedule — picked up only when a `celery beat` process is
-    # running (see fly.toml [processes].beat). The worker process ignores
-    # this dict, so it's safe to define unconditionally.
+    # Beat schedule — picked up only by the Beat scheduler, which runs
+    # embedded (`-B`) in the `light` process (see fly.toml). Other worker
+    # processes ignore this dict, so it's safe to define unconditionally.
     beat_schedule={
         "sweep-stale-jobs-every-5-min": {
             "task": "tasks.sweep_stale_jobs",
