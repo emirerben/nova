@@ -2109,13 +2109,14 @@ export default function PlanItemPage() {
               )}
 
               {/* Mobile-only sticky Generate bar — the CardFooter button hides on
-                  mobile (Lane G) so Generate never appears twice. */}
+                  mobile (Lane G) so Generate never appears twice. The hint
+                  itself is NOT repeated here — the CardFooter's copy sits
+                  directly above this bar on every breakpoint. */}
               {!isGenerating && (
-                <div className="sticky bottom-0 z-20 -mx-4 mt-4 space-y-2 bg-background/95 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur sm:hidden">
+                <div className="sticky bottom-0 z-20 -mx-4 mt-4 bg-background/95 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur sm:hidden">
                   <InkButton onClick={handleGenerate} disabled={generateGated}>
                     {generateLabel}
                   </InkButton>
-                  <p className="text-center text-sm text-muted-foreground">{generateHint}</p>
                 </div>
               )}
 
