@@ -806,6 +806,10 @@ def test_bed_level_terminal_patch_never_carries_media_overlays(monkeypatch):
     _patch_job_session(monkeypatch, job)
     seen: dict = {}
     _patch_bed_io(monkeypatch, seen)
+    # This test owns the terminal merge contract, not the separately-covered
+    # media-layer rebuild. Treat the current overlay snapshot as successfully
+    # reapplied so fake GCS paths never cross the unit-test boundary.
+    monkeypatch.setattr(gb, "_reapply_user_media_layers", lambda **_kw: True)
 
     updates: list[dict] = []
     real_update = gb._update_variant_entry

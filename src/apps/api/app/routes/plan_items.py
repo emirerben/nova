@@ -4463,6 +4463,8 @@ async def set_item_orientation(
         job,
         variant_id,
         orientation=body.orientation,
+        revision_number=body.revision_number,
+        base_generation=body.base_generation,
     )
     log.info(
         "plan_item_set_orientation",
@@ -4523,6 +4525,44 @@ async def editor_commit_item(
     # media/SFX/music/title validation so every unsupported section gets the
     # same stable 422 without performing unrelated lookups or mutations.
     require_guided_story_editor_commit(locked_job, variant_id, body)
+    locked_variant = next(
+        (
+            candidate
+            for candidate in (locked_job.assembly_plan or {}).get("variants") or []
+            if candidate.get("variant_id") == variant_id
+        ),
+        None,
+    )
+    if (
+        isinstance(locked_variant, dict)
+        and locked_variant.get("resolved_archetype") == "guided_story"
+        and settings.guided_story_editor_v2_enabled
+    ):
+        from app.pipeline.guided_story import (  # noqa: PLC0415
+            GuidedStoryError,
+            validate_guided_snapshot,
+        )
+
+        try:
+            _version, _digest, guided_snapshot = validate_guided_snapshot(
+                (locked_job.assembly_plan or {}).get("guided_edit")
+            )
+            media_current = await _proposal_media_is_current(
+                item,
+                guided_snapshot,
+                db,
+                user_id=user.id,
+            )
+        except GuidedStoryError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": exc.code},
+            ) from exc
+        if not media_current:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "guided_story_source_stale"},
+            )
     if body.media_overlays is not None:
         await _require_verified_pool_paths(
             item_id=item_id,
@@ -4552,11 +4592,24 @@ async def editor_commit_item(
         commit_body = body.model_copy(update={"sound_effects": resolved_sfx})
 
     selected_music_track = None
+    selected_music_track_generation: str | None = None
     selected_background_music_track = None
     if commit_body.music_track_id is not None:
         selected_music_track = (
             await db.execute(select(MusicTrack).where(MusicTrack.id == commit_body.music_track_id))
         ).scalar_one_or_none()
+        if selected_music_track is not None and selected_music_track.audio_gcs_path:
+            try:
+                selected_music_track_generation = (
+                    await run_in_threadpool(
+                        storage.object_metadata, selected_music_track.audio_gcs_path
+                    )
+                ).generation
+            except Exception as exc:  # noqa: BLE001 - unavailable exact object is a 422
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"code": "music_track_unavailable"},
+                ) from exc
     elif commit_body.lyrics is not None or commit_body.music_window is not None:
         locked_variant = next(
             (
@@ -4617,6 +4670,7 @@ async def editor_commit_item(
         commit_body,
         user_id=str(user.id),
         music_track=selected_music_track,
+        music_track_generation=selected_music_track_generation,
         background_music_track=selected_background_music_track,
         visual_assets=visual_assets,
     )
@@ -4660,6 +4714,7 @@ async def editor_commit_item(
     return EditorCommitResponse(
         ok=render_started,
         generation=prep["generation"],
+        revision_number=prep.get("revision_number"),
         sections=EditorCommitSections(
             text_elements=prep["sections"]["text_elements"],
             caption_cues=prep["sections"]["caption_cues"],
@@ -6742,10 +6797,7 @@ async def reanalyze_pool_asset(
     if asset is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
     if asset.status == "ready":
-        if (
-            asset.media_status == "failed"
-            and asset.error_code == "preview_generation_failed"
-        ):
+        if asset.media_status == "failed" and asset.error_code == "preview_generation_failed":
             # Preview retries are independent from AI analysis. Reset only the
             # sentinel and let the lightweight backfill task regenerate it.
             asset.preview_gcs_path = None

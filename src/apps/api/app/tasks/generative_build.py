@@ -2977,6 +2977,7 @@ def regenerate_generative_variant(
     orientation_override: str | None = None,
     force_full_render: bool = False,
     carousel_moment_override: Any = CAROUSEL_MOMENT_UNSET,
+    guided_revision: dict[str, Any] | None = None,
 ) -> None:
     """Re-render ONE variant of a generative job (swap-song / retext / restyle / resize / mix).
 
@@ -3047,6 +3048,7 @@ def regenerate_generative_variant(
                 orientation_override=orientation_override,
                 force_full_render=force_full_render,
                 carousel_moment_override=carousel_moment_override,
+                guided_revision=guided_revision,
             )
         except OperationalError:
             raise
@@ -7520,6 +7522,7 @@ _GUIDED_REGEN_CONTROL_NAMES = frozenset(
         "orientation_override",
         "force_full_render",
         "carousel_moment_override",
+        "guided_revision",
     }
 )
 _GUIDED_REGEN_FALSE_CONTROLS = frozenset({"remove_text", "force_full_render"})
@@ -7669,6 +7672,153 @@ def _rerender_guided_story_orientation(
         return
 
 
+def _rerender_guided_story_revision(
+    job_id: str,
+    existing: dict[str, Any],
+    *,
+    revision: dict[str, Any],
+    render_gen_id: str | None,
+) -> None:
+    """Render a v2 story revision through the strict guided renderer only."""
+
+    from app.pipeline.guided_story import (
+        GuidedStoryError,
+        compile_guided_runtime_plan,
+        render_execution_plan,
+        validate_execution_plan,
+        validate_guided_snapshot,
+        validate_guided_source_pool_generations,
+        validate_ready_result,
+    )
+
+    with _sync_session() as db:
+        from sqlalchemy import select  # noqa: PLC0415
+
+        from app.models import PlanItem, PlanItemAsset  # noqa: PLC0415
+        from app.services.edit_proposals import (  # noqa: PLC0415
+            asset_ref_matches,
+            clip_ref_matches,
+        )
+
+        job = db.get(Job, uuid.UUID(job_id))
+        if job is None:
+            return
+        assembly = dict(job.assembly_plan or {})
+        guided_snapshot = assembly.get("guided_edit")
+        pinned_plan = assembly.get("guided_story_execution_plan")
+        _version, _digest, snapshot = validate_guided_snapshot(guided_snapshot)
+        item = db.get(PlanItem, job.content_plan_item_id)
+        if item is None:
+            raise GuidedStoryError(
+                "guided_story_source_stale", "The approved story item no longer exists."
+            )
+        clips = {
+            str(value.get("media_id")): value
+            for value in item.clip_assignments or []
+            if isinstance(value, dict) and value.get("media_id")
+        }
+        asset_refs = [ref for ref in snapshot.media if ref.lane == "asset"]
+        try:
+            asset_ids = [uuid.UUID(ref.media_id) for ref in asset_refs]
+        except ValueError as exc:
+            raise GuidedStoryError(
+                "guided_story_source_stale", "An approved asset identity is invalid."
+            ) from exc
+        assets = (
+            db.execute(
+                select(PlanItemAsset).where(
+                    PlanItemAsset.id.in_(asset_ids),
+                    PlanItemAsset.plan_item_id == item.id,
+                    PlanItemAsset.user_id == job.user_id,
+                    PlanItemAsset.status == "ready",
+                )
+            )
+            .scalars()
+            .all()
+            if asset_ids
+            else []
+        )
+        asset_by_id = {str(asset.id): asset for asset in assets}
+        if any(
+            not (
+                clip_ref_matches(ref, clips.get(ref.media_id))
+                if ref.lane == "clip"
+                else asset_ref_matches(ref, asset_by_id.get(ref.media_id))
+            )
+            for ref in snapshot.media
+        ):
+            raise GuidedStoryError(
+                "guided_story_source_stale",
+                "An approved source is no longer owned and ready for this story.",
+            )
+    canonical = validate_execution_plan(pinned_plan, guided_snapshot)
+    validate_guided_source_pool_generations(guided_snapshot)
+    runtime_plan = compile_guided_runtime_plan(canonical, guided_snapshot, revision)
+    music = runtime_plan.get("music")
+    if music is not None:
+        try:
+            track_id = uuid.UUID(str(music["track_id"]))
+        except (TypeError, ValueError) as exc:
+            raise GuidedStoryError(
+                "guided_story_music_missing", "The selected music identity is invalid."
+            ) from exc
+        with _sync_session() as db:
+            live_track = db.get(MusicTrack, track_id)
+            if (
+                live_track is None
+                or live_track.analysis_status != "ready"
+                or live_track.published_at is None
+                or live_track.archived_at is not None
+                or live_track.audio_gcs_path != music["audio_gcs_path"]
+            ):
+                raise GuidedStoryError(
+                    "guided_story_music_missing",
+                    "The exact selected music track is no longer available.",
+                )
+    track = (
+        SimpleNamespace(
+            id=str(music["track_id"]),
+            title=str(music["title"]),
+            audio_gcs_path=str(music["audio_gcs_path"]),
+            generation=str(music["generation"]),
+        )
+        if music is not None
+        else None
+    )
+    attempt_id = render_gen_id or uuid.uuid4().hex
+    with tempfile.TemporaryDirectory(
+        prefix="nova_guided_story_revision_", ignore_cleanup_errors=True
+    ) as tmpdir:
+        result = render_execution_plan(
+            runtime_plan,
+            job_id=job_id,
+            tmpdir=tmpdir,
+            track=track,
+            attempt_id=attempt_id,
+        )
+    result.update(
+        {
+            "render_finished_at": datetime.utcnow().isoformat() + "Z",
+            "render_generation_id": attempt_id,
+            "base_video_stale": False,
+            "guided_edit_revision": revision,
+        }
+    )
+    validate_ready_result(runtime_plan, result, job_id=job_id, verify_storage=False)
+    if not _update_variant_entry(
+        job_id,
+        "guided_story",
+        result,
+        expected_render_gen_id=render_gen_id,
+        outcome="guided_story_revision_complete",
+    ):
+        _discard_generation_storage(result, job_id=job_id, generation=None)
+        return
+    # V2 composes every persisted visual/audio lane inside render_execution_plan
+    # in the receipt-verified order. Running the legacy outer-lane hooks here
+    # would apply overlays and SFX a second time.
+
+
 def _run_regenerate_variant(
     job_id: str,
     variant_id: str,
@@ -7698,6 +7848,7 @@ def _run_regenerate_variant(
     orientation_override: str | None = None,
     force_full_render: bool = False,
     carousel_moment_override: Any = CAROUSEL_MOMENT_UNSET,
+    guided_revision: dict[str, Any] | None = None,
 ) -> None:
     from app.services.pipeline_trace import (  # noqa: PLC0415
         record_pipeline_event,
@@ -7838,6 +7989,16 @@ def _run_regenerate_variant(
         existing = next((v for v in variants if v.get("variant_id") == variant_id), None)
         if existing is None:
             log.error("generative_regenerate_variant_unknown", job_id=job_id, variant_id=variant_id)
+            return
+        if existing.get("resolved_archetype") == "guided_story" and (
+            guided_revision is not None or isinstance(existing.get("guided_edit_revision"), dict)
+        ):
+            _rerender_guided_story_revision(
+                job_id,
+                existing,
+                revision=guided_revision or existing["guided_edit_revision"],
+                render_gen_id=render_gen_id,
+            )
             return
         _reject_unsupported_guided_regen(existing, guided_controls)
         if (

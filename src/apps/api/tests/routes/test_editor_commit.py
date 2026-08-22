@@ -362,6 +362,319 @@ def test_legacy_timeline_response_defaults_and_repairs_look_controls(monkeypatch
     assert response["slots"][1]["look_adjustments"] is None
 
 
+def test_guided_v2_conventional_save_projects_timeline_audio_and_orientation(monkeypatch) -> None:
+    """The FE Save shape is projected server-side; it need not send raw revision JSON."""
+    _arm(monkeypatch)
+    from app.config import settings
+    from app.schemas.guided_edit_revision import normalize_guided_editor_revision
+
+    monkeypatch.setattr(settings, "guided_story_editor_v2_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "edit_transitions_enabled", True, raising=False)
+    monkeypatch.setattr(gj, "_LANDSCAPE_OUTPUT_ENABLED", True)
+    job = _job()
+    variant = job.assembly_plan["variants"][0]
+    variant["resolved_archetype"] = "guided_story"
+    prefix = f"generative-jobs/{job.id}/sources/"
+    current = normalize_guided_editor_revision(
+        {
+            "approval_proposal_version": 1,
+            "approval_media_digest": "a" * 64,
+            "revision_number": 1,
+            "base_generation": gj.variant_render_baseline(variant),
+            "sources": [
+                {
+                    "media_id": "m0",
+                    "gcs_path": f"{prefix}clip_0.mp4",
+                    "generation": "1",
+                    "kind": "video",
+                    "duration_s": 10.0,
+                },
+                {
+                    "media_id": "m1",
+                    "gcs_path": f"{prefix}clip_1.mp4",
+                    "generation": "1",
+                    "kind": "video",
+                    "duration_s": 10.0,
+                },
+            ],
+            "segments": [
+                {"segment_id": "s1", "media_id": "m0", "duration_s": 1.1},
+                {"segment_id": "s2", "media_id": "m1", "duration_s": 1.9},
+            ],
+            "audio": {
+                "mode": "track",
+                "track_id": "t1",
+                "title": "Track One",
+                "audio_gcs_path": "music/t1.m4a",
+                "generation": "music-track:t1",
+            },
+        }
+    )
+    monkeypatch.setattr(gj, "_guided_v2_revision", lambda *_args: current)
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            timeline_slots=[
+                gj.TimelineSlotEdit(
+                    slot_id="s1",
+                    clip_index=0,
+                    in_s=0.0,
+                    duration_s=0.5,
+                    transition_after="dip_to_black",
+                    transition_duration_s=0.2,
+                ),
+                gj.TimelineSlotEdit(slot_id="s2", clip_index=1, in_s=1.0, duration_s=1.0),
+            ],
+            orientation="landscape",
+            mix={"music_level": 0.4},
+            music_window={"start_s": 99.0, "alignment": "preserve_cuts"},
+            guided_revision_number=1,
+        ),
+        music_track=_music_track(),
+    )
+
+    revision = job.assembly_plan["variants"][0]["guided_edit_revision"]
+    assert prep["guided_revision_render"] is True
+    assert revision["orientation"] == "landscape"
+    assert revision["audio"]["level"] == 0.4
+    assert revision["audio"]["start_s"] == pytest.approx(10.633333)
+    assert revision["audio"]["end_s"] == pytest.approx(12.0)
+    assert revision["segments"][0]["transition_after"] == "dip_to_black"
+    assert revision["revision_number"] == 2
+
+
+def test_guided_timeline_response_preserves_source_pool_and_tombstones() -> None:
+    response = gj.TimelineResponse(
+        editable=True,
+        beat_grid=[],
+        total_duration_s=1.0,
+        has_user_edits=True,
+        slots=[],
+        clips=[],
+        source_pool=[{"media_id": "m1", "generation": "7"}],
+        tombstones=[
+            {
+                "lane": "text_elements",
+                "record_id": "title-1",
+                "record": {"id": "title-1", "text": "Title"},
+            }
+        ],
+    ).model_dump(mode="json")
+
+    assert response["source_pool"][0]["generation"] == "7"
+    assert response["tombstones"][0]["record_id"] == "title-1"
+
+
+def test_guided_v2_rejects_background_music_section(monkeypatch) -> None:
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "guided_story_editor_v2_enabled", True, raising=False)
+    job = _job(resolved_archetype="guided_story")
+
+    with pytest.raises(HTTPException) as exc_info:
+        gj.require_guided_story_editor_commit(
+            job,
+            "song_text",
+            _commit_req(background_music={"remove": True}),
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == "guided_story_editor_v2_section_unsupported"
+
+
+def test_guided_v2_gate_off_rejects_writes_to_a_persisted_revision(monkeypatch) -> None:
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "guided_story_editor_v2_enabled", False, raising=False)
+    job = _job(
+        resolved_archetype="guided_story",
+        guided_edit_revision={"revision_number": 2},
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        gj.require_guided_story_editor_commit(
+            job,
+            "song_text",
+            _commit_req(text_elements=[dict(_VALID_ELEMENT)]),
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == "guided_story_editor_v2_disabled"
+
+
+def test_guided_music_window_capability_uses_revision_duration() -> None:
+    variant = {
+        "variant_id": "guided_story",
+        "resolved_archetype": "guided_story",
+    }
+    capability = gj._music_window_capability(
+        variant,
+        _music_track(duration_s=12.0),
+        guided_revision={
+            "segments": [
+                {"output_end_s": 2.0},
+                {"output_end_s": 4.5},
+            ]
+        },
+    )
+
+    assert capability is not None
+    assert capability["editable"] is True
+    assert capability["preserve_available"] is True
+    assert capability["video_duration_s"] == 4.5
+
+
+@pytest.mark.asyncio
+async def test_guided_direct_timeline_preflights_sources_before_mutation(monkeypatch) -> None:
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "guided_story_editor_v2_enabled", True, raising=False)
+    job = _job(resolved_archetype="guided_story")
+    before = copy.deepcopy(job.assembly_plan)
+    monkeypatch.setattr(
+        gj,
+        "_guided_v2_revision_for_write",
+        lambda *_args: {"revision_number": 2, "state_hash": "next"},
+    )
+    preflight = AsyncMock(
+        side_effect=HTTPException(status_code=422, detail="guided_story_source_stale")
+    )
+    monkeypatch.setattr(gj, "_require_current_guided_story_sources", preflight)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await gj.dispatch_edit_timeline(
+            job,
+            "song_text",
+            gj.TimelineEditRequest(
+                slots=_slot_edits(),
+                revision_number=1,
+                base_generation="2026-07-01T00:00:00Z",
+            ),
+            db=AsyncMock(),
+        )
+
+    assert exc_info.value.detail == "guided_story_source_stale"
+    preflight.assert_awaited_once()
+    assert job.assembly_plan == before
+
+
+def test_guided_v2_initial_revision_projects_the_real_immutable_snapshot_shape() -> None:
+    from app.pipeline.guided_story import compile_execution_plan
+    from app.schemas.edit_proposal import (
+        EditProposalSnapshot,
+        MediaRef,
+        StoryBeat,
+        canonical_media_digest,
+    )
+
+    media = [
+        MediaRef(
+            lane="clip",
+            media_id="selected",
+            gcs_path="users/u/selected.mp4",
+            generation="11",
+            kind="video",
+            duration_s=12,
+        ),
+        MediaRef(
+            lane="asset",
+            media_id="unused",
+            gcs_path="users/u/unused.jpg",
+            generation="12",
+            kind="image",
+        ),
+    ]
+    snapshot = EditProposalSnapshot(
+        duration_s=10,
+        title="One story",
+        media=media,
+        story_beats=[
+            StoryBeat(
+                beat_id="one",
+                topic="One",
+                thought="One thought",
+                media_ids=["selected"],
+                duration_s=10,
+            )
+        ],
+    )
+    guided = {
+        "proposal_version": 3,
+        "media_digest": canonical_media_digest(media),
+        "approved_proposal": snapshot.model_dump(mode="json"),
+        "media_identities": [
+            {
+                "lane": ref.lane,
+                "media_id": ref.media_id,
+                "gcs_path": ref.gcs_path,
+                "generation": ref.generation,
+                "kind": ref.kind,
+            }
+            for ref in media
+        ],
+    }
+    plan = compile_execution_plan(guided, track=None)
+    variant = {
+        "variant_id": "guided_story",
+        "resolved_archetype": "guided_story",
+        "render_finished_at": "2026-08-22T00:00:00Z",
+    }
+    job = types.SimpleNamespace(
+        id=uuid.uuid4(),
+        assembly_plan={
+            "guided_edit": guided,
+            "guided_story_execution_plan": plan,
+            "variants": [variant],
+        },
+    )
+
+    revision = gj._guided_v2_revision(job, variant)
+
+    assert revision is not None
+    assert [source["media_id"] for source in revision["sources"]] == ["selected", "unused"]
+    assert [segment["media_id"] for segment in revision["segments"]] == ["selected"]
+
+
+def test_guided_v2_capabilities_keep_legacy_lane_booleans_and_honest_reasons(
+    monkeypatch,
+) -> None:
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "guided_story_editor_v2_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "sound_effects_enabled", False, raising=False)
+    monkeypatch.setattr(settings, "media_overlays_enabled", False, raising=False)
+    monkeypatch.setattr(settings, "visual_blocks_enabled", False, raising=False)
+    monkeypatch.setattr(settings, "motion_scenes_enabled", False, raising=False)
+    monkeypatch.setattr(gj, "_guided_v2_revision", lambda *_args: {"revision_number": 1})
+    job = _job()
+    job.assembly_plan["variants"][0]["resolved_archetype"] = "guided_story"
+
+    caps = _caps(job, "song_text")
+
+    for lane, reason in {
+        "sfx": "sound_effects_disabled",
+        "overlays": "media_overlays_disabled",
+        "visual_blocks": "visual_blocks_disabled",
+        "motion_scenes": "motion_scenes_disabled",
+    }.items():
+        assert caps[lane] is False
+        assert caps[f"{lane}_reason"] == reason
+        assert caps["lanes"][lane] == {"editable": False, "reason": reason}
+
+    # Nova operations are independent from the legacy timeline/music booleans:
+    # the Director must be able to distinguish trim-from-source, trim-output,
+    # and explicit music removal even when the old fields remain false.
+    assert caps["nova"]["trim_clip_start"] == {"editable": True, "reason": None}
+    assert caps["nova"]["trim_output_start"] == {"editable": True, "reason": None}
+    assert caps["nova"]["remove_music"] == {"editable": True, "reason": None}
+
+
 def _commit_req(**kw) -> gj.EditorCommitRequest:
     kw.setdefault("base_generation", "2026-07-01T00:00:00Z")
     return gj.EditorCommitRequest(**kw)
@@ -3597,6 +3910,50 @@ def test_guided_story_advertises_text_and_orientation_rebuild(monkeypatch):
         assert caps[name] is False
 
 
+def test_guided_v2_orientation_capability_is_disabled_with_visual_blocks(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "guided_story_editor_v2_enabled", True, raising=False)
+    monkeypatch.setattr(gj, "_LANDSCAPE_OUTPUT_ENABLED", True)
+    monkeypatch.setattr(gj, "_guided_v2_revision", lambda *_args: {"revision_number": 1})
+    job = _job(
+        variant_id="guided_story",
+        resolved_archetype="guided_story",
+        visual_blocks=[_text_card_block()],
+    )
+
+    caps = _caps(job, "guided_story")
+
+    assert caps["orientation"] == {
+        "editable": False,
+        "reason": "orientation_unsupported",
+    }
+
+
+def test_guided_v2_rejects_combined_landscape_and_visual_block_commit(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "guided_story_editor_v2_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True, raising=False)
+    monkeypatch.setattr(gj, "_LANDSCAPE_OUTPUT_ENABLED", True)
+    job = _job(resolved_archetype="guided_story")
+
+    with pytest.raises(HTTPException) as exc_info:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(
+                orientation="landscape",
+                visual_blocks=[_text_card_block()],
+            ),
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail["code"] == "orientation_unsupported"
+
+
 def test_guided_story_rejects_legacy_edit_before_mutation(monkeypatch):
     _arm(monkeypatch)
     job = _job(
@@ -4875,3 +5232,353 @@ def test_editor_motion_capability_supports_lyrics_captions_and_landscape_with_cl
     capabilities = gj._editor_capabilities(no_base, no_base.assembly_plan["variants"][0])
     assert capabilities["motion_scenes"] is False
     assert capabilities["motion_scenes_reason"] == "motion_clean_base_unavailable"
+
+
+def test_guided_lane_projection_uses_stable_segment_ids_for_repeated_media_and_projects_sfx_at_s():
+    """Repeated use of one source must not make lane records follow media IDs."""
+
+    old_segments = [
+        {
+            "segment_id": "segment-first",
+            "media_id": "media-repeated",
+            "source_start_s": 0.0,
+            "source_end_s": 2.0,
+            "duration_s": 2.0,
+            "output_start_s": 0.0,
+            "output_end_s": 2.0,
+        },
+        {
+            "segment_id": "segment-second",
+            "media_id": "media-repeated",
+            "source_start_s": 5.0,
+            "source_end_s": 7.0,
+            "duration_s": 2.0,
+            "output_start_s": 2.0,
+            "output_end_s": 4.0,
+        },
+    ]
+    # Reorder the two occurrences and trim the second occurrence. The SFX is
+    # authored in the old output clock, so it must follow segment-second by its
+    # stable ID rather than accidentally attach to the first repeated source.
+    new_segments = [
+        {
+            "segment_id": "segment-second",
+            "media_id": "media-repeated",
+            "source_start_s": 5.0,
+            "source_end_s": 6.5,
+            "duration_s": 1.5,
+            "output_start_s": 0.0,
+            "output_end_s": 1.5,
+        },
+        {
+            "segment_id": "segment-first",
+            "media_id": "media-repeated",
+            "source_start_s": 0.0,
+            "source_end_s": 2.0,
+            "duration_s": 2.0,
+            "output_start_s": 1.5,
+            "output_end_s": 3.5,
+        },
+    ]
+    raw = {
+        "sound_effects": [
+            {"id": "sfx-1", "at_s": 2.5, "end_s": 3.0, "segment_id": "segment-second"}
+        ],
+        "text_elements": [],
+        "media_overlays": [],
+        "visual_blocks": [],
+        "motion_scenes": [],
+    }
+
+    gj._project_guided_revision_lanes(
+        raw,
+        old_segments=old_segments,
+        new_segments=new_segments,
+    )
+
+    projected = raw["sound_effects"][0]
+    assert projected["segment_id"] == "segment-second"
+    assert projected["at_s"] == pytest.approx(0.5)
+    assert projected["end_s"] == pytest.approx(1.0)
+
+
+def test_guided_lane_projection_creates_tombstone_when_anchored_interval_is_deleted():
+    old_segments = [
+        {
+            "segment_id": "keep",
+            "media_id": "m1",
+            "source_start_s": 0.0,
+            "source_end_s": 1.0,
+            "duration_s": 1.0,
+            "output_start_s": 0.0,
+            "output_end_s": 1.0,
+        },
+        {
+            "segment_id": "deleted",
+            "media_id": "m2",
+            "source_start_s": 0.0,
+            "source_end_s": 2.0,
+            "duration_s": 2.0,
+            "output_start_s": 1.0,
+            "output_end_s": 3.0,
+        },
+    ]
+    raw = {
+        "sound_effects": [
+            {"id": "sfx-deleted", "at_s": 1.25, "end_s": 1.75, "segment_id": "deleted"}
+        ],
+        "text_elements": [],
+        "media_overlays": [],
+        "visual_blocks": [],
+        "motion_scenes": [],
+    }
+
+    gj._project_guided_revision_lanes(
+        raw,
+        old_segments=old_segments,
+        new_segments=[old_segments[0]],
+    )
+
+    assert raw["sound_effects"] == []
+    assert raw["tombstones"] == [
+        {
+            "lane": "sound_effects",
+            "record_id": "sfx-deleted",
+            "segment_id": "deleted",
+            "reason": "anchored_interval_removed",
+            "record": {
+                "id": "sfx-deleted",
+                "at_s": 1.25,
+                "end_s": 1.75,
+                "segment_id": "deleted",
+            },
+        }
+    ]
+
+
+def test_guided_timeline_projection_uses_left_segment_transition_and_parent_id(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "edit_transitions_enabled", True, raising=False)
+    job = _job()
+    variant = job.assembly_plan["variants"][0]
+    current = {
+        "approval_proposal_version": 1,
+        "approval_media_digest": "a" * 64,
+        "revision_number": 4,
+        "sources": [
+            {
+                "media_id": "m0",
+                "lane": "clip",
+                "gcs_path": "slot-uploads/m0.mp4",
+                "generation": "g0",
+                "kind": "video",
+                "duration_s": 5.0,
+            },
+            {
+                "media_id": "m1",
+                "lane": "clip",
+                "gcs_path": "slot-uploads/m1.mp4",
+                "generation": "g1",
+                "kind": "video",
+                "duration_s": 5.0,
+            },
+        ],
+        "segments": [
+            {"segment_id": "approved-first", "media_id": "m0"},
+            {"segment_id": "approved-second", "media_id": "m1"},
+        ],
+        "audio": {"mode": "none"},
+    }
+    monkeypatch.setattr(gj, "_guided_v2_revision", lambda *_args: current)
+
+    result = gj._guided_v2_revision_for_write(
+        job,
+        variant,
+        gj.TimelineEditRequest(
+            revision_number=4,
+            base_generation=gj.variant_render_baseline(variant),
+            slots=[
+                gj.TimelineSlotEdit(
+                    slot_id="new-first",
+                    parent_segment_id="approved-first",
+                    clip_index=0,
+                    in_s=0.0,
+                    duration_s=2.0,
+                    transition_after="crossfade",
+                    transition_duration_s=0.2,
+                ),
+                gj.TimelineSlotEdit(
+                    slot_id="new-second",
+                    parent_segment_id="approved-second",
+                    clip_index=1,
+                    in_s=1.0,
+                    duration_s=2.0,
+                ),
+            ],
+        ),
+    )
+
+    assert result["segments"][0]["parent_segment_id"] == "approved-first"
+    assert result["segments"][0]["transition_after"] == "crossfade"
+    assert result["segments"][0]["transition_duration_s"] == pytest.approx(0.2)
+    # The overlap belongs to the transition AFTER new-first, not new-second.
+    assert result["segments"][1]["output_start_s"] == pytest.approx(1.8)
+
+
+def test_guided_timeline_rejects_transition_when_feature_is_disabled(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "edit_transitions_enabled", False, raising=False)
+    job = _job()
+    variant = job.assembly_plan["variants"][0]
+    current = {
+        "approval_proposal_version": 1,
+        "approval_media_digest": "a" * 64,
+        "revision_number": 4,
+        "sources": [
+            {
+                "media_id": "m0",
+                "lane": "clip",
+                "gcs_path": "slot-uploads/m0.mp4",
+                "generation": "g0",
+                "kind": "video",
+                "duration_s": 5.0,
+            }
+        ],
+        "segments": [],
+        "audio": {"mode": "none"},
+    }
+    monkeypatch.setattr(gj, "_guided_v2_revision", lambda *_args: current)
+
+    with pytest.raises(HTTPException) as exc_info:
+        gj._guided_v2_revision_for_write(
+            job,
+            variant,
+            gj.TimelineEditRequest(
+                revision_number=4,
+                base_generation=gj.variant_render_baseline(variant),
+                slots=[
+                    gj.TimelineSlotEdit(
+                        slot_id="s0",
+                        clip_index=0,
+                        in_s=0.0,
+                        duration_s=1.0,
+                        transition_after="crossfade",
+                        transition_duration_s=0.2,
+                    )
+                ],
+            ),
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == {"code": "transitions_disabled"}
+
+
+def test_guided_timeline_rejects_unknown_split_parent(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "edit_transitions_enabled", True, raising=False)
+    job = _job()
+    variant = job.assembly_plan["variants"][0]
+    current = {
+        "approval_proposal_version": 1,
+        "approval_media_digest": "a" * 64,
+        "revision_number": 4,
+        "sources": [
+            {
+                "media_id": "m0",
+                "lane": "clip",
+                "gcs_path": "slot-uploads/m0.mp4",
+                "generation": "g0",
+                "kind": "video",
+                "duration_s": 5.0,
+            }
+        ],
+        "segments": [{"segment_id": "approved", "media_id": "m0"}],
+        "audio": {"mode": "none"},
+    }
+    monkeypatch.setattr(gj, "_guided_v2_revision", lambda *_args: current)
+
+    with pytest.raises(HTTPException) as exc_info:
+        gj._guided_v2_revision_for_write(
+            job,
+            variant,
+            gj.TimelineEditRequest(
+                revision_number=4,
+                base_generation=gj.variant_render_baseline(variant),
+                slots=[
+                    gj.TimelineSlotEdit(
+                        slot_id="split-child",
+                        parent_segment_id="unknown",
+                        clip_index=0,
+                        in_s=0.0,
+                        duration_s=1.0,
+                    )
+                ],
+            ),
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == {"code": "TIMELINE_INVALID_PARENT"}
+
+
+def test_guided_timeline_write_requires_render_generation_cas(monkeypatch):
+    job = _job()
+    variant = job.assembly_plan["variants"][0]
+    current = {
+        "approval_proposal_version": 1,
+        "approval_media_digest": "a" * 64,
+        "revision_number": 2,
+        "sources": [
+            {
+                "media_id": "m0",
+                "lane": "clip",
+                "gcs_path": "slot-uploads/m0.mp4",
+                "generation": "g0",
+                "kind": "video",
+                "duration_s": 5.0,
+            }
+        ],
+        "segments": [],
+        "audio": {"mode": "none"},
+    }
+    monkeypatch.setattr(gj, "_guided_v2_revision", lambda *_args: current)
+
+    with pytest.raises(HTTPException) as exc_info:
+        gj._guided_v2_revision_for_write(
+            job,
+            variant,
+            gj.TimelineEditRequest(
+                revision_number=2,
+                base_generation="stale-generation",
+                slots=[gj.TimelineSlotEdit(slot_id="s0", clip_index=0, in_s=0.0, duration_s=1.0)],
+            ),
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == "baseline_conflict"
+
+
+def test_guided_raw_revision_is_not_a_public_write_surface(monkeypatch):
+    job = _job(resolved_archetype="guided_story")
+    current = {
+        "approval_proposal_version": 1,
+        "approval_media_digest": "a" * 64,
+        "revision_number": 2,
+    }
+    monkeypatch.setattr(gj.settings, "guided_story_editor_v2_enabled", True, raising=False)
+    monkeypatch.setattr(gj, "_guided_v2_revision", lambda *_args: current)
+
+    with pytest.raises(HTTPException) as exc_info:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(
+                guided_revision_number=2,
+                guided_revision={"audio": {"mode": "track", "audio_gcs_path": "evil/path"}},
+            ),
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == "GUIDED_REVISION_WIRE_UNSUPPORTED"

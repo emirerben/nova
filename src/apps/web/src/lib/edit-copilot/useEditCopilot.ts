@@ -235,14 +235,23 @@ export function outcomeAuthoritativeReply({
   applied: string[];
   rejected: string[];
 }): string {
-  if (intent !== "edit" || needsClarification) {
+  if (intent !== "edit") {
     if (rejected.length === 0) return modelReply;
     return `${modelReply}\n\nCouldn't apply: ${rejected.join("; ")}`;
   }
-  if (applied.length === 0) {
-    return rejected.length > 0
+  if (needsClarification || applied.length === 0) {
+    const truth = rejected.length > 0
       ? `I didn't change the draft. ${rejected.join("; ")}`
       : "I didn't change the draft.";
+    const explanation = modelReply.trim();
+    const claimsSuccess =
+      /\b(done|stored|changed|updated|applied|edited|trimmed|removed|swapped|punchier)\b/i.test(
+        explanation,
+      ) &&
+      !/\b(already|unchanged|cannot|can't|couldn't|unable|not|no longer)\b/i.test(explanation);
+    return rejected.length === 0 && explanation && explanation !== truth && !claimsSuccess
+      ? `${truth}\n\n${explanation}`
+      : truth;
   }
   const appliedReceipt = `Applied: ${applied.join("; ")}.`;
   return rejected.length > 0

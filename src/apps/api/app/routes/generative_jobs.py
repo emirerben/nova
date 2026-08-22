@@ -51,6 +51,7 @@ from app.limiter import limiter
 from app.models import AgentRun, ContentPlan, Job, MusicTrack, PlanItem, User
 from app.pipeline.look_presets import (
     EDIT_WIDE_LOOK_PRESETS,
+    LOOK_PRESETS,
     LookAdjustments,
     LookPreset,
     normalize_look_adjustments,
@@ -59,6 +60,11 @@ from app.pipeline.look_presets import (
 from app.routes.admin_music import _validate_clip_path_prefixes, _validate_voiceover_path
 from app.routes.music_jobs import classify_slot_kind
 from app.routes.waitlist import get_real_ip
+from app.schemas.guided_edit_revision import (
+    guided_editor_revision_from_approval,
+    guided_editor_state_hash,
+    normalize_guided_editor_revision,
+)
 from app.schemas.montage_preset import MASONRY_MONTAGE_PRESET, is_collage_montage_preset
 from app.services.content_plan_persona import (
     PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
@@ -778,6 +784,7 @@ class TimelineSlotEdit(BaseModel):
     """
 
     slot_id: str | None = None
+    parent_segment_id: str | None = None
     clip_index: int
     in_s: float
     duration_beats: int | None = None
@@ -801,7 +808,14 @@ class TimelineSlotEdit(BaseModel):
 
 
 class TimelineEditRequest(BaseModel):
-    slots: list[TimelineSlotEdit]
+    slots: list[TimelineSlotEdit] = Field(default_factory=list)
+    # Guided-story editor v2 CAS. Legacy timeline clients omit this field.
+    revision_number: int | None = Field(default=None, ge=1)
+    base_generation: str | None = None
+    # Full story-native revision payload used by Save/Apply. Timeline-only
+    # clients can continue sending `slots`; the server projects those into the
+    # revision without touching the immutable approval.
+    guided_revision: dict[str, Any] | None = None
 
     @field_validator("slots")
     @classmethod
@@ -841,6 +855,9 @@ class TimelineClipOut(BaseModel):
     signed_url: str | None = None
     duration_s: float | None = None
     used: bool = False
+    media_id: str | None = None
+    generation: str | None = None
+    kind: Literal["image", "video"] | None = None
 
 
 class TimelineResponse(BaseModel):
@@ -852,6 +869,12 @@ class TimelineResponse(BaseModel):
     slots: list[TimelineSlotOut]
     clips: list[TimelineClipOut]
     edit_wide_look_presets: list[LookPreset] = Field(default_factory=list)
+    look_presets: list[LookPreset] = Field(default_factory=list)
+    revision_number: int | None = None
+    revision_hash: str | None = None
+    base_generation: str | None = None
+    source_pool: list[dict[str, Any]] = Field(default_factory=list)
+    tombstones: list[dict[str, Any]] = Field(default_factory=list)
 
 
 # ── Transactional editor commit (E2) ──────────────────────────────────────────
@@ -970,6 +993,11 @@ class EditorCommitRequest(BaseModel):
     # overlay.id inference) so a replayed/double Save is a no-op and validators
     # can never confuse a user upload with an accepted suggestion.
     accepted_suggestion_ids: list[str] | None = None
+    # Story-native v2 revision. When present this is the complete normalized
+    # guided editor state; legacy sections remain mutually exclusive.
+    guided_revision: dict[str, Any] | None = None
+    guided_revision_number: int | None = Field(default=None, ge=1)
+    retry_guided_revision: bool = False
 
     @field_validator("timeline_slots")
     @classmethod
@@ -1004,6 +1032,7 @@ class EditorCommitResponse(BaseModel):
     ok: bool
     generation: str
     sections: EditorCommitSections
+    revision_number: int | None = None
 
 
 def _is_generated_effect_source(value: object) -> bool:
@@ -1094,6 +1123,8 @@ def cascade_removed_overlay_effect_groups(
 
 class OrientationRequest(BaseModel):
     orientation: str
+    revision_number: int | None = Field(default=None, ge=1)
+    base_generation: str | None = None
 
 
 class StyleSetIntroPreview(BaseModel):
@@ -3880,6 +3911,8 @@ async def dispatch_set_orientation(
     variant_id: str,
     *,
     orientation: str,
+    revision_number: int | None = None,
+    base_generation: str | None = None,
 ) -> None:
     if not _LANDSCAPE_OUTPUT_ENABLED:
         raise HTTPException(
@@ -3891,8 +3924,39 @@ async def dispatch_set_orientation(
     locked_job = result.scalar_one_or_none()
     if locked_job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-    variant = require_editable_variant(locked_job, variant_id)
+    candidate = _find_variant(locked_job, variant_id)
+    if candidate is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    is_guided_v2 = candidate.get("resolved_archetype") == "guided_story" and getattr(
+        settings, "guided_story_editor_v2_enabled", False
+    )
+    variant = require_editable_variant(
+        locked_job,
+        variant_id,
+        allow_guided_text=is_guided_v2,
+    )
     validated = validate_orientation_section(variant, orientation)
+
+    if is_guided_v2:
+        current_revision = _guided_v2_revision(locked_job, variant)
+        if current_revision is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="guided_story_revision_unavailable",
+            )
+        if revision_number is None or base_generation is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="GUIDED_REVISION_TOKEN_REQUIRED",
+            )
+        if revision_number != int(current_revision["revision_number"]):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="GUIDED_REVISION_STALE",
+            )
+        if base_generation != variant_render_baseline(variant):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="baseline_conflict")
+        await _require_current_guided_story_sources(db, locked_job)
 
     render_gen_id = uuid.uuid4().hex
     from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
@@ -3900,6 +3964,14 @@ async def dispatch_set_orientation(
     variants = list((locked_job.assembly_plan or {}).get("variants") or [])
     for v in variants:
         if v.get("variant_id") == variant_id:
+            if is_guided_v2:
+                current_revision = _guided_v2_revision(locked_job, v)
+                assert current_revision is not None
+                current_revision["revision_number"] = int(current_revision["revision_number"]) + 1
+                current_revision["orientation"] = validated
+                current_revision["base_generation"] = variant_render_baseline(v)
+                current_revision = normalize_guided_editor_revision(current_revision)
+                v["guided_edit_revision"] = current_revision
             v["orientation"] = validated
             v["render_generation_id"] = render_gen_id
             stamp_variant_attempt(v)
@@ -3912,14 +3984,14 @@ async def dispatch_set_orientation(
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
-    regenerate_generative_variant.apply_async(
-        args=[str(locked_job.id), variant_id],
-        kwargs={
-            "render_gen_id": render_gen_id,
-            "orientation_override": validated,
-            "force_full_render": True,
-        },
-    )
+    kwargs = {"render_gen_id": render_gen_id, "force_full_render": True}
+    if is_guided_v2:
+        kwargs["guided_revision"] = next(
+            v.get("guided_edit_revision") for v in variants if v.get("variant_id") == variant_id
+        )
+    else:
+        kwargs["orientation_override"] = validated
+    regenerate_generative_variant.apply_async(args=[str(locked_job.id), variant_id], kwargs=kwargs)
 
 
 async def dispatch_set_lyrics(
@@ -4686,11 +4758,34 @@ def _has_linear_timeline(variant: dict) -> bool:
     return _has_linear_slots(user_slots or ai_slots)
 
 
-def _music_window_capability(variant: dict, track: MusicTrack | None) -> dict | None:
+def _music_window_capability(
+    variant: dict,
+    track: MusicTrack | None,
+    *,
+    guided_revision: dict[str, Any] | None = None,
+) -> dict | None:
     """Authoritative editor contract. None means hidden for unsupported variants."""
-    if str(variant.get("variant_id") or "") not in _MUSIC_WINDOW_VARIANTS:
+    guided_revision = guided_revision or (
+        variant.get("guided_edit_revision")
+        if variant.get("resolved_archetype") == "guided_story"
+        else None
+    )
+    if str(variant.get("variant_id") or "") not in _MUSIC_WINDOW_VARIANTS and not isinstance(
+        guided_revision, dict
+    ):
         return None
-    video_duration_s = visual_block_variant_duration(variant)
+    video_duration_s = (
+        max(
+            (
+                float(segment.get("output_end_s") or 0.0)
+                for segment in guided_revision.get("segments") or []
+                if isinstance(segment, dict)
+            ),
+            default=0.0,
+        )
+        if isinstance(guided_revision, dict)
+        else visual_block_variant_duration(variant)
+    )
     track_duration_s = _track_duration(track)
     beats = _track_beats(track)
     reason: str | None = None
@@ -4708,7 +4803,7 @@ def _music_window_capability(variant: dict, track: MusicTrack | None) -> dict | 
         reason = "song_shorter_than_video"
     elif not beats:
         reason = "timing_metadata_unavailable"
-    preserve_available = _has_linear_timeline(variant)
+    preserve_available = isinstance(guided_revision, dict) or _has_linear_timeline(variant)
     return {
         "editable": reason is None,
         "preserve_available": preserve_available,
@@ -5097,6 +5192,121 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         # story base without reconstructing the timeline.
         reason = "guided_story_edit_unsupported"
         text_editable = _TEXT_ELEMENTS_ENABLED and _text_elements_allowed(variant)
+        if getattr(settings, "guided_story_editor_v2_enabled", False):
+            revision = _guided_v2_revision(job, variant)
+            revision_reason = None if revision is not None else "guided_story_revision_unavailable"
+
+            def operation(editable: bool = True, why: str | None = None) -> dict[str, Any]:
+                return {
+                    "editable": bool(editable and revision is not None),
+                    "reason": why or revision_reason,
+                }
+
+            clips = {
+                name: operation()
+                for name in ("add", "remove", "reorder", "split", "trim", "transitions", "looks")
+            }
+            clips["transitions"] = operation(
+                settings.edit_transitions_enabled,
+                None if settings.edit_transitions_enabled else "transitions_disabled",
+            )
+            clips["edit_wide_looks"] = operation(
+                settings.edit_wide_looks_enabled,
+                None if settings.edit_wide_looks_enabled else "disabled",
+            )
+            music_operations = {
+                "swap": operation(),
+                "remove": operation(),
+                "level": operation(),
+                "window": operation(),
+            }
+            return {
+                "text_elements": text_editable,
+                "timeline": bool(revision is not None),
+                "split_clips": bool(revision is not None),
+                "clips": clips,
+                "music_operations": music_operations,
+                "automatic_cut": False,
+                "automatic_cut_reason": "guided_story_edit_unsupported",
+                "mix": False,
+                "sfx": bool(settings.sound_effects_enabled),
+                "sfx_reason": None if settings.sound_effects_enabled else "sound_effects_disabled",
+                "overlays": bool(settings.media_overlays_enabled),
+                "overlays_reason": None
+                if settings.media_overlays_enabled
+                else "media_overlays_disabled",
+                "visual_blocks": bool(settings.visual_blocks_enabled),
+                "visual_blocks_reason": None
+                if settings.visual_blocks_enabled
+                else "visual_blocks_disabled",
+                "motion_scenes": bool(settings.motion_scenes_enabled),
+                "motion_scenes_reason": None
+                if settings.motion_scenes_enabled
+                else "motion_scenes_disabled",
+                "lanes": {
+                    "sfx": operation(
+                        settings.sound_effects_enabled,
+                        None if settings.sound_effects_enabled else "sound_effects_disabled",
+                    ),
+                    "overlays": operation(
+                        settings.media_overlays_enabled,
+                        None if settings.media_overlays_enabled else "media_overlays_disabled",
+                    ),
+                    "visual_blocks": operation(
+                        settings.visual_blocks_enabled,
+                        None if settings.visual_blocks_enabled else "visual_blocks_disabled",
+                    ),
+                    "motion_scenes": operation(
+                        settings.motion_scenes_enabled,
+                        None if settings.motion_scenes_enabled else "motion_scenes_disabled",
+                    ),
+                    "text": operation(
+                        text_editable, None if text_editable else "text_elements_disabled"
+                    ),
+                    "orientation": operation(
+                        _LANDSCAPE_OUTPUT_ENABLED
+                        and _orientation_unsupported_reason(variant) is None,
+                        (
+                            "disabled"
+                            if not _LANDSCAPE_OUTPUT_ENABLED
+                            else _orientation_unsupported_reason(variant)
+                        ),
+                    ),
+                },
+                "motion_runtime_hash": None,
+                "evolving_type": False,
+                "camera_effects": False,
+                "background_music": False,
+                "suggestions": False,
+                "swap_song": bool(revision is not None),
+                "intro_controls": False,
+                "reason": revision_reason,
+                "orientation": operation(
+                    _LANDSCAPE_OUTPUT_ENABLED and _orientation_unsupported_reason(variant) is None,
+                    (
+                        "disabled"
+                        if not _LANDSCAPE_OUTPUT_ENABLED
+                        else _orientation_unsupported_reason(variant)
+                    ),
+                ),
+                "text": operation(
+                    text_editable, None if text_editable else "text_elements_disabled"
+                ),
+                "nova": {
+                    "trim_clip_start": operation(),
+                    "trim_output_start": operation(),
+                    "remove_music": operation(),
+                },
+                "lyrics": {
+                    "editable": False,
+                    "enabled": False,
+                    "can_toggle_on": False,
+                    "reason": "disabled",
+                    "lyrics_model": "elements",
+                },
+                "carousel": False,
+                "carousel_reason": "guided_story_edit_unsupported",
+            }
         return {
             "overlay_upload_mode": (
                 "pool" if settings.reliable_overlay_uploads_enabled else "legacy"
@@ -5219,9 +5429,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         and bool(variant.get("speech_cut_candidates"))
     )
     return {
-        "overlay_upload_mode": (
-            "pool" if settings.reliable_overlay_uploads_enabled else "legacy"
-        ),
+        "overlay_upload_mode": ("pool" if settings.reliable_overlay_uploads_enabled else "legacy"),
         # Lyrics variants are beat-synced — same rule as dispatch_set_text_elements.
         "text_elements": (
             _TEXT_ELEMENTS_ENABLED
@@ -5320,6 +5528,11 @@ def dispatch_get_timeline(job: Job, variant_id: str) -> dict:
     variant = _find_variant(job, variant_id)
     if variant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    if variant.get("resolved_archetype") == "guided_story" and (
+        getattr(settings, "guided_story_editor_v2_enabled", False)
+        or isinstance(variant.get("guided_edit_revision"), dict)
+    ):
+        return _guided_v2_timeline_projection(job, variant)
     reason = _timeline_ineligibility(job, variant)
     ai_slots, user_slots, beat_grid = _timeline_parts(variant)
     clip_paths = list((job.all_candidates or {}).get("clip_paths") or [])
@@ -5634,6 +5847,155 @@ def _active_timeline_duration_s(slots: list[dict]) -> float:
             if overlap_s >= 0.1:
                 total -= overlap_s
     return round(max(0.0, total), 3)
+
+
+def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
+    """Read the active revision or derive a non-persisted initial projection."""
+
+    assembly = job.assembly_plan or {}
+    guided_snapshot = assembly.get("guided_edit")
+    execution_plan = assembly.get("guided_story_execution_plan")
+    if not isinstance(guided_snapshot, dict) or not isinstance(execution_plan, dict):
+        return None
+    persisted = variant.get("guided_edit_revision")
+    if isinstance(persisted, dict):
+        try:
+            return normalize_guided_editor_revision(
+                persisted,
+                expected_approval_version=int(guided_snapshot.get("proposal_version") or 0),
+                expected_media_digest=str(guided_snapshot.get("media_digest") or ""),
+            )
+        except ValueError:
+            # A corrupt/stale revision must not make the read endpoint 500. The
+            # immutable approval remains the safe projection until the client
+            # refreshes and saves a new revision.
+            log.warning("guided_editor_revision_invalid", job_id=str(job.id), exc_info=True)
+    from app.pipeline.guided_story import (  # noqa: PLC0415
+        GuidedStoryError,
+        validate_guided_snapshot,
+    )
+
+    try:
+        _version, _digest, snapshot = validate_guided_snapshot(guided_snapshot)
+    except GuidedStoryError:
+        log.warning("guided_editor_approval_projection_failed", job_id=str(job.id), exc_info=True)
+        return None
+    try:
+        return guided_editor_revision_from_approval(
+            proposal_version=int(guided_snapshot.get("proposal_version") or 0),
+            media_digest=str(guided_snapshot.get("media_digest") or ""),
+            snapshot=snapshot.model_dump(mode="json"),
+            execution_plan=execution_plan,
+            base_generation=variant_render_baseline(variant),
+        )
+    except (TypeError, ValueError):
+        log.warning("guided_editor_revision_projection_failed", job_id=str(job.id), exc_info=True)
+        return None
+
+
+def _guided_v2_timeline_projection(job: Job, variant: dict) -> dict:
+    revision = _guided_v2_revision(job, variant)
+    if revision is None:
+        return {
+            "editable": False,
+            "reason": "guided_story_revision_unavailable",
+            "beat_grid": [],
+            "total_duration_s": 0.0,
+            "has_user_edits": False,
+            "slots": [],
+            "clips": [],
+            "edit_wide_look_presets": [],
+        }
+    sources = list(revision.get("sources") or [])
+    source_index = {str(source.get("media_id")): index for index, source in enumerate(sources)}
+    used_media = {str(segment.get("media_id")) for segment in revision.get("segments") or []}
+    clips: list[dict] = []
+    for index, source in enumerate(sources):
+        path = str(source.get("gcs_path") or "")
+        try:
+            url = signed_get_url(path, PLAYBACK_URL_TTL_MIN)
+        except Exception:  # noqa: BLE001
+            url = None
+        clips.append(
+            {
+                "clip_index": index,
+                "signed_url": url,
+                "duration_s": source.get("duration_s"),
+                "used": str(source.get("media_id")) in used_media,
+                "media_id": source.get("media_id"),
+                "generation": source.get("generation"),
+                "kind": source.get("kind"),
+            }
+        )
+    slots: list[dict] = []
+    for order, segment in enumerate(revision.get("segments") or []):
+        media_id = str(segment.get("media_id"))
+        source = sources[source_index[media_id]] if media_id in source_index else {}
+        slots.append(
+            {
+                "slot_id": segment.get("segment_id"),
+                "segment_id": segment.get("segment_id"),
+                "parent_segment_id": segment.get("parent_segment_id"),
+                "clip_index": source_index.get(media_id),
+                "source_gcs_path": source.get("gcs_path"),
+                "source_duration_s": source.get("duration_s"),
+                "in_s": segment.get("source_start_s"),
+                "duration_s": segment.get("duration_s"),
+                "duration_beats": None,
+                "output_start_s": segment.get("output_start_s"),
+                "output_end_s": segment.get("output_end_s"),
+                "order": order,
+                "removed": False,
+                "transition_after": segment.get("transition_after", "cut"),
+                "transition_duration_s": segment.get("transition_duration_s"),
+                "look_preset": normalize_look_preset(segment.get("look_preset")),
+                "look_adjustments": segment.get("look_adjustments"),
+            }
+        )
+    total = max((float(row.get("output_end_s") or 0.0) for row in slots), default=0.0)
+    writable = bool(getattr(settings, "guided_story_editor_v2_enabled", False))
+    return {
+        "editable": writable,
+        "reason": None if writable else "disabled",
+        "beat_grid": [],
+        "total_duration_s": round(total, 3),
+        "has_user_edits": bool(variant.get("guided_edit_revision")),
+        "slots": slots,
+        "clips": clips,
+        "edit_wide_look_presets": list(EDIT_WIDE_LOOK_PRESETS)
+        if settings.edit_wide_looks_enabled
+        else [],
+        "look_presets": sorted(LOOK_PRESETS),
+        "revision_number": revision.get("revision_number"),
+        "revision_hash": revision.get("state_hash") or guided_editor_state_hash(revision),
+        "base_generation": variant_render_baseline(variant),
+        "source_pool": sources,
+        "tombstones": list(revision.get("tombstones") or []),
+    }
+
+
+async def _require_current_guided_story_sources(db: AsyncSession, job: Job) -> None:
+    """Fail a story-native write before mutation when approval media drifted."""
+
+    if db is None or job.content_plan_item_id is None:
+        raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "guided_story_source_stale")
+    item = await db.get(PlanItem, job.content_plan_item_id)
+    if item is None or item.user_id != job.user_id:
+        raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "guided_story_source_stale")
+    from app.pipeline.guided_story import (  # noqa: PLC0415
+        GuidedStoryError,
+        validate_guided_snapshot,
+    )
+    from app.routes.plan_items import _proposal_media_is_current  # noqa: PLC0415
+
+    try:
+        _version, _digest, snapshot = validate_guided_snapshot(
+            (job.assembly_plan or {}).get("guided_edit")
+        )
+    except GuidedStoryError as exc:
+        raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, exc.code) from exc
+    if not await _proposal_media_is_current(item, snapshot, db, user_id=job.user_id):
+        raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "guided_story_source_stale")
 
 
 def _timeline_override_for_reassembly(slots: list[dict]) -> list[dict]:
@@ -6058,9 +6420,50 @@ async def dispatch_edit_timeline(
     """
     from app.config import settings  # noqa: PLC0415
 
-    if not settings.GENERATIVE_TIMELINE_EDITOR_ENABLED:
+    candidate_variant = _find_variant(job, variant_id)
+    if candidate_variant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    guided_v2 = candidate_variant.get("resolved_archetype") == "guided_story" and getattr(
+        settings, "guided_story_editor_v2_enabled", False
+    )
+    if not guided_v2 and not settings.GENERATIVE_TIMELINE_EDITOR_ENABLED:
         raise _timeline_error(status.HTTP_403_FORBIDDEN, "disabled")
-    variant = require_editable_variant(job, variant_id)  # 404 unknown / 409 rendering
+    if guided_v2:
+        variant = require_editable_variant(job, variant_id, allow_guided_text=True)
+    else:
+        variant = require_editable_variant(job, variant_id)
+    if variant.get("resolved_archetype") == "guided_story" and getattr(
+        settings, "guided_story_editor_v2_enabled", False
+    ):
+        revision = _guided_v2_revision_for_write(job, variant, payload)
+        await _require_current_guided_story_sources(db, job)
+        render_gen_id = uuid.uuid4().hex
+        plan = dict(job.assembly_plan or {})
+        variants = list(plan.get("variants") or [])
+        for index, current in enumerate(variants):
+            if current.get("variant_id") != variant_id:
+                continue
+            updated = dict(current)
+            updated["guided_edit_revision"] = revision
+            updated["render_generation_id"] = render_gen_id
+            updated["base_video_stale"] = True
+            stamp_variant_attempt(updated)
+            variants[index] = updated
+            break
+        plan["variants"] = variants
+        job.assembly_plan = plan
+        mark_reattempt(job)
+        await db.commit()
+        from app.tasks.generative_build import regenerate_generative_variant
+
+        regenerate_generative_variant.delay(
+            str(job.id),
+            variant_id,
+            guided_revision=revision,
+            render_gen_id=render_gen_id,
+            force_full_render=True,
+        )
+        return
     # A timeline re-render re-cuts from the shared per-job sources; let any in-flight
     # sibling render finish first so two renders never race the same job row.
     if any(v.get("render_status") == "rendering" for v in _variants_of(job)):
@@ -6085,6 +6488,451 @@ async def dispatch_edit_timeline(
         timeline_override=_timeline_override_for_reassembly(resolved),
         render_gen_id=render_gen_id,
     )
+
+
+def _guided_v2_revision_for_write(
+    job: Job, variant: dict, payload: TimelineEditRequest
+) -> dict[str, Any]:
+    """Validate a complete guided revision or project legacy slots into one."""
+
+    current = _guided_v2_revision(job, variant)
+    if current is None:
+        raise _timeline_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "guided_story_revision_unavailable"
+        )
+    if payload.revision_number is None:
+        raise _timeline_error(status.HTTP_409_CONFLICT, "GUIDED_REVISION_TOKEN_REQUIRED")
+    if payload.revision_number is not None and payload.revision_number != int(
+        current["revision_number"]
+    ):
+        raise _timeline_error(status.HTTP_409_CONFLICT, "GUIDED_REVISION_STALE")
+    if payload.guided_revision is not None:
+        raise _timeline_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_REVISION_WIRE_UNSUPPORTED"
+        )
+    if payload.base_generation is None:
+        raise _timeline_error(status.HTTP_409_CONFLICT, "GUIDED_REVISION_TOKEN_REQUIRED")
+    if payload.base_generation != variant_render_baseline(variant):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="baseline_conflict")
+
+    sources = list(current.get("sources") or [])
+    if not payload.slots:
+        raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_EMPTY")
+    active = [slot for slot in payload.slots if not slot.removed]
+    if not active:
+        raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_EMPTY")
+    if len(active) > 60:
+        raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_TOO_LONG")
+    segments: list[dict[str, Any]] = []
+    cursor = 0.0
+    source_by_index = {index: source for index, source in enumerate(sources)}
+    slot_durations = [float(slot.duration_s or 0.0) for slot in active]
+    effective_transitions: list[tuple[str, float]] = []
+    for index, slot in enumerate(active):
+        if not settings.edit_transitions_enabled and slot.transition_after != "cut":
+            raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "transitions_disabled")
+        transition = slot.transition_after if settings.edit_transitions_enabled else "cut"
+        requested = float(slot.transition_duration_s or 0.0) if transition != "cut" else 0.0
+        if index == len(active) - 1:
+            effective_transitions.append(("cut", 0.0))
+            continue
+        overlap = min(requested, 0.3, slot_durations[index] * 0.3, slot_durations[index + 1] * 0.3)
+        effective_transitions.append(
+            (transition, round(overlap, 3)) if overlap >= 0.1 else ("cut", 0.0)
+        )
+    current_segment_by_id = {
+        str(segment.get("segment_id")): segment
+        for segment in current.get("segments") or []
+        if isinstance(segment, dict) and segment.get("segment_id")
+    }
+    active_slot_by_id = {str(slot.slot_id): slot for slot in active if slot.slot_id}
+    for order, slot in enumerate(active):
+        source = source_by_index.get(slot.clip_index)
+        if source is None:
+            raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_UNKNOWN_CLIP")
+        if slot.parent_segment_id:
+            if source.get("kind") == "image":
+                raise _timeline_error(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_IMAGE_SPLIT_UNSUPPORTED"
+                )
+            parent_id = str(slot.parent_segment_id)
+            persisted_parent = current_segment_by_id.get(parent_id)
+            draft_parent = active_slot_by_id.get(parent_id)
+            parent_matches = (
+                persisted_parent is not None
+                and str(persisted_parent.get("media_id")) == str(source.get("media_id"))
+            ) or (
+                draft_parent is not None
+                and draft_parent is not slot
+                and draft_parent.clip_index == slot.clip_index
+            )
+            if not parent_matches:
+                raise _timeline_error(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_INVALID_PARENT"
+                )
+        duration = float(slot.duration_s or 0.0)
+        if duration < 0.1:
+            raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_INVALID_DURATION")
+        source_duration = source.get("duration_s")
+        if source.get("kind") == "video" and source_duration is not None:
+            if slot.in_s < 0 or slot.in_s + duration > float(source_duration) + 0.05:
+                raise _timeline_error(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_SOURCE_BOUNDS"
+                )
+        if order:
+            cursor = max(0.0, cursor - effective_transitions[order - 1][1])
+        transition, transition_duration = effective_transitions[order]
+        segments.append(
+            {
+                "segment_id": slot.slot_id or uuid.uuid4().hex,
+                "parent_segment_id": slot.parent_segment_id,
+                "media_id": source["media_id"],
+                "source_start_s": float(slot.in_s),
+                "source_end_s": float(slot.in_s) + duration,
+                "duration_s": round(duration, 3),
+                "transition_after": transition,
+                "transition_duration_s": transition_duration,
+                "look_preset": slot.look_preset or "none",
+                "look_adjustments": slot.look_adjustments.model_dump()
+                if slot.look_adjustments
+                else None,
+                "output_start_s": round(cursor, 3),
+            }
+        )
+        cursor += duration
+    if cursor > 60.0 + 1e-6:
+        raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_TOO_LONG")
+    raw = {
+        **current,
+        "revision_number": int(current["revision_number"]) + 1,
+        "base_generation": variant_render_baseline(variant),
+        "segments": segments,
+    }
+    raw["state_hash"] = ""
+    try:
+        return normalize_guided_editor_revision(
+            raw,
+            expected_approval_version=int(current["approval_proposal_version"]),
+            expected_media_digest=str(current["approval_media_digest"]),
+        )
+    except ValueError as exc:
+        raise _timeline_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_REVISION_INVALID"
+        ) from exc
+
+
+def _project_guided_revision_lanes(
+    raw: dict[str, Any],
+    *,
+    old_segments: list[dict[str, Any]],
+    new_segments: list[dict[str, Any]],
+) -> None:
+    """Project baseline-clock lane records through one structural edit.
+
+    The browser keeps authored lane times in the baseline coordinate system.
+    This mapper resolves each endpoint through media/source time, which makes
+    trims, split, repeated sources, deletion, and reorder deterministic. Exact
+    overlap boundaries are right-biased by iterating later segments first.
+    """
+
+    fps = 30.0
+
+    def window(segment: dict[str, Any]) -> tuple[float, float, float, float]:
+        output_start = float(segment.get("output_start_s") or 0.0)
+        duration = float(segment.get("duration_s") or 0.0)
+        output_end = float(segment.get("output_end_s") or output_start + duration)
+        source_start = float(segment.get("source_start_s") or 0.0)
+        source_end = float(segment.get("source_end_s") or source_start + duration)
+        return output_start, output_end, source_start, source_end
+
+    def old_anchor(time_s: float) -> tuple[dict[str, Any], float] | None:
+        for segment in reversed(old_segments):
+            output_start, output_end, source_start, source_end = window(segment)
+            if output_start <= time_s < output_end:
+                source_time = min(source_end, source_start + max(0.0, time_s - output_start))
+                return segment, source_time
+        if old_segments and abs(time_s - window(old_segments[-1])[1]) <= 1e-6:
+            segment = old_segments[-1]
+            return segment, window(segment)[3]
+        return None
+
+    def project(time_s: float) -> tuple[float, str] | None:
+        anchored = old_anchor(time_s)
+        if anchored is None:
+            return None
+        old_segment, source_time = anchored
+        old_segment_id = str(old_segment.get("segment_id") or "")
+        if old_segment_id:
+            candidates = [
+                segment
+                for segment in new_segments
+                if str(segment.get("segment_id") or "") == old_segment_id
+                or str(segment.get("parent_segment_id") or "") == old_segment_id
+            ]
+        else:
+            candidates = [
+                segment
+                for segment in new_segments
+                if str(segment.get("media_id")) == str(old_segment.get("media_id"))
+            ]
+        if not candidates:
+            return None
+        containing = [
+            segment
+            for segment in candidates
+            if window(segment)[2] - 1e-6 <= source_time <= window(segment)[3] + 1e-6
+        ]
+        segment = (
+            containing[-1]
+            if containing
+            else min(
+                candidates,
+                key=lambda candidate: min(
+                    abs(source_time - window(candidate)[2]),
+                    abs(source_time - window(candidate)[3]),
+                ),
+            )
+        )
+        output_start, output_end, source_start, source_end = window(segment)
+        clamped_source = min(source_end, max(source_start, source_time))
+        projected = min(output_end, max(output_start, output_start + clamped_source - source_start))
+        return round(round(projected * fps) / fps, 6), str(segment["segment_id"])
+
+    tombstones = list(raw.get("tombstones") or [])
+    lane_time_fields = {
+        "text_elements": ("start_s", "end_s"),
+        "sound_effects": ("at_s", "end_s"),
+        "media_overlays": ("start_s", "end_s"),
+        "visual_blocks": ("start_s", "end_s"),
+    }
+    for lane, (start_field, end_field) in lane_time_fields.items():
+        projected_values: list[dict[str, Any]] = []
+        for value in raw.get(lane) or []:
+            if not isinstance(value, dict) or start_field not in value:
+                projected_values.append(value)
+                continue
+            start = project(float(value[start_field]))
+            end = project(float(value.get(end_field, value[start_field])))
+            if start is None and end is None:
+                tombstones.append(
+                    {
+                        "lane": lane,
+                        "record_id": str(value.get("id") or ""),
+                        "segment_id": value.get("segment_id"),
+                        "reason": "anchored_interval_removed",
+                        "record": value,
+                    }
+                )
+                continue
+            start = start or end
+            end = end or start
+            assert start is not None and end is not None
+            updated = dict(value)
+            updated[start_field] = start[0]
+            updated[end_field] = max(start[0], end[0])
+            updated["segment_id"] = start[1]
+            projected_values.append(updated)
+        raw[lane] = projected_values
+
+    projected_motion: list[dict[str, Any]] = []
+    for value in raw.get("motion_scenes") or []:
+        if not isinstance(value, dict) or "start_frame" not in value:
+            projected_motion.append(value)
+            continue
+        start = project(float(value["start_frame"]) / fps)
+        end = project(float(value.get("end_frame_exclusive", value["start_frame"])) / fps)
+        if start is None and end is None:
+            tombstones.append(
+                {
+                    "lane": "motion_scenes",
+                    "record_id": str(value.get("id") or ""),
+                    "segment_id": value.get("segment_id"),
+                    "reason": "anchored_interval_removed",
+                    "record": value,
+                }
+            )
+            continue
+        start = start or end
+        end = end or start
+        assert start is not None and end is not None
+        updated = dict(value)
+        updated["start_frame"] = round(start[0] * fps)
+        updated["end_frame_exclusive"] = max(updated["start_frame"] + 1, round(end[0] * fps))
+        updated["segment_id"] = start[1]
+        projected_motion.append(updated)
+    raw["motion_scenes"] = projected_motion
+    raw["tombstones"] = tombstones[-200:]
+
+
+def _guided_v2_revision_from_commit(
+    job: Job,
+    variant: dict,
+    payload: EditorCommitRequest,
+    *,
+    updated: dict,
+    music_track: MusicTrack | None,
+    music_track_generation: str | None,
+    text_elements: list[dict] | None,
+    sound_effects: list[dict] | None,
+    media_overlays: list[dict] | None,
+    visual_blocks: list[dict] | None,
+    motion_scenes: list[dict] | None,
+) -> dict[str, Any]:
+    """Project the batched editor Save onto the story-native revision.
+
+    The conventional editor request remains the public wire format.  This
+    projection is deliberately server-side so lane timing and music stay on
+    the output clock when clips are re-cut; the browser never gets to author
+    approval identities or revision numbers.
+    """
+    current = _guided_v2_revision(job, variant)
+    if current is None:
+        raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_REVISION_INVALID")
+    if payload.base_generation != variant_render_baseline(variant):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="baseline_conflict")
+    if payload.guided_revision_number is not None and payload.guided_revision_number != int(
+        current["revision_number"]
+    ):
+        raise _timeline_error(status.HTTP_409_CONFLICT, "GUIDED_REVISION_STALE")
+    if payload.guided_revision_number is None:
+        raise _timeline_error(status.HTTP_409_CONFLICT, "GUIDED_REVISION_TOKEN_REQUIRED")
+    raw = dict(payload.guided_revision or current)
+    # Source identity is approval-owned. A client may choose among the pool,
+    # but cannot replace paths or generations in a revision payload.
+    raw["sources"] = list(current.get("sources") or [])
+    raw["revision_number"] = int(current["revision_number"]) + 1
+    raw["base_generation"] = variant_render_baseline(variant)
+    raw["state_hash"] = ""
+    # Audio identity is server-owned. Timeline/full-revision payloads may not
+    # smuggle an arbitrary GCS object past the conventional music validators.
+    raw["audio"] = dict(current.get("audio") or {"mode": "none"})
+    if payload.orientation is not None:
+        raw["orientation"] = payload.orientation
+    if text_elements is not None:
+        current_text_ids = {
+            str(row.get("id")) for row in current.get("text_elements") or [] if row.get("id")
+        }
+        approved_text_ids = current_text_ids | {
+            str(row.get("record_id"))
+            for row in current.get("tombstones") or []
+            if row.get("lane") == "text_elements" and row.get("record_id")
+        }
+        submitted_text_ids = {str(row.get("id")) for row in text_elements if row.get("id")}
+        if not current_text_ids.issubset(submitted_text_ids) or not submitted_text_ids.issubset(
+            approved_text_ids
+        ):
+            raise _timeline_error(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_TEXT_IDENTITY_MISMATCH"
+            )
+        raw["text_elements"] = text_elements
+    if sound_effects is not None:
+        raw["sound_effects"] = sound_effects
+    if media_overlays is not None:
+        raw["media_overlays"] = media_overlays
+    if visual_blocks is not None:
+        raw["visual_blocks"] = visual_blocks
+    if motion_scenes is not None:
+        raw["motion_scenes"] = motion_scenes
+    active_lane_ids = {
+        lane: {
+            str(value.get("id"))
+            for value in raw.get(lane) or []
+            if isinstance(value, dict) and value.get("id")
+        }
+        for lane in (
+            "text_elements",
+            "sound_effects",
+            "media_overlays",
+            "visual_blocks",
+            "motion_scenes",
+        )
+    }
+    # Restoring a visible tombstone is an ordinary lane edit. Once its exact
+    # record identity is active again, remove the historical deletion marker
+    # from the next canonical revision and receipt.
+    raw["tombstones"] = [
+        value
+        for value in raw.get("tombstones") or []
+        if not (
+            isinstance(value, dict)
+            and str(value.get("record_id") or "")
+            in active_lane_ids.get(str(value.get("lane") or ""), set())
+        )
+    ]
+    if payload.mix is not None and payload.mix.music_level is not None:
+        raw.setdefault("audio", {})["level"] = float(payload.mix.music_level)
+    if payload.remove_music:
+        raw["audio"] = {
+            "mode": "none",
+            "removed": True,
+            "start_s": 0.0,
+            "level": 0.0,
+        }
+    elif payload.music_track_id is not None:
+        if music_track is None or not music_track.audio_gcs_path or not music_track_generation:
+            raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "music_track_unavailable")
+        raw["audio"] = {
+            "mode": "track",
+            "removed": False,
+            "track_id": str(music_track.id),
+            "title": str(music_track.title),
+            "audio_gcs_path": str(music_track.audio_gcs_path),
+            "generation": music_track_generation,
+            "start_s": float(updated.get("music_start_s") or 0.0),
+            "level": float((raw.get("audio") or {}).get("level", 1.0)),
+        }
+    if payload.timeline_slots is not None:
+        projected = _guided_v2_revision_for_write(
+            job,
+            variant,
+            TimelineEditRequest(
+                slots=payload.timeline_slots,
+                revision_number=int(current["revision_number"]),
+                base_generation=variant_render_baseline(variant),
+            ),
+        )
+        raw["segments"] = projected["segments"]
+        _project_guided_revision_lanes(
+            raw,
+            old_segments=list(current["segments"]),
+            new_segments=list(raw["segments"]),
+        )
+    if payload.music_window is not None:
+        effective_track_id = payload.music_track_id or variant.get("music_track_id")
+        if (
+            music_track is None
+            or str(music_track.id) != str(effective_track_id or "")
+            or music_track.analysis_status != "ready"
+            or not music_track.audio_gcs_path
+        ):
+            raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "music_track_unavailable")
+        track_duration_s = _track_duration(music_track)
+        story_duration_s = max(
+            (float(segment.get("output_end_s") or 0.0) for segment in raw.get("segments") or []),
+            default=0.0,
+        )
+        if track_duration_s <= 0:
+            raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "track_duration_unknown")
+        if story_duration_s <= 0:
+            raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "video_duration_unknown")
+        if track_duration_s + _MUSIC_WINDOW_EPSILON_S < story_duration_s:
+            raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "song_shorter_than_video")
+        clamped_start_s = min(
+            float(payload.music_window.start_s),
+            max(0.0, track_duration_s - story_duration_s),
+        )
+        raw.setdefault("audio", {})["start_s"] = clamped_start_s
+        raw["audio"]["end_s"] = clamped_start_s + story_duration_s
+    try:
+        return normalize_guided_editor_revision(
+            raw,
+            expected_approval_version=int(current["approval_proposal_version"]),
+            expected_media_digest=str(current["approval_media_digest"]),
+        )
+    except ValueError as exc:
+        raise _timeline_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_REVISION_INVALID"
+        ) from exc
 
 
 async def dispatch_reset_timeline(job: Job, variant_id: str, *, db: AsyncSession) -> None:
@@ -6145,6 +6993,30 @@ def require_guided_story_editor_commit(
     variant = _find_variant(job, variant_id)
     if not isinstance(variant, dict) or variant.get("resolved_archetype") != "guided_story":
         return
+    if getattr(settings, "guided_story_editor_v2_enabled", False):
+        # V2 accepts the conventional Save sections and atomically projects
+        # them into the revision. Captions/lyrics/speech cuts/intro/carousel
+        # remain deliberately outside the story-native contract.
+        excluded = (
+            payload.caption_cues is not None
+            or payload.caption_meta is not None
+            or payload.background_music is not None
+            or payload.lyrics is not None
+            or payload.camera_effects is not None
+            or payload.title is not None
+            or "carousel_moment" in payload.model_fields_set
+        )
+        if excluded:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="guided_story_editor_v2_section_unsupported",
+            )
+        return
+    if isinstance(variant.get("guided_edit_revision"), dict):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="guided_story_editor_v2_disabled",
+        )
     guided_text_or_orientation_only = (
         (payload.text_elements is not None or payload.orientation is not None)
         and payload.caption_cues is None
@@ -6180,6 +7052,7 @@ def prepare_editor_commit(
     *,
     user_id: str | None = None,
     music_track: MusicTrack | None = None,
+    music_track_generation: str | None = None,
     background_music_track: MusicTrack | None = None,
     visual_assets: dict[str, dict] | None = None,
 ) -> dict:
@@ -6206,6 +7079,79 @@ def prepare_editor_commit(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
     require_guided_story_editor_commit(job, variant_id, payload)
 
+    guided_v2 = variant.get("resolved_archetype") == "guided_story" and getattr(
+        settings, "guided_story_editor_v2_enabled", False
+    )
+
+    if guided_v2 and payload.retry_guided_revision:
+        current = _guided_v2_revision(job, variant)
+        if current is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="guided_story_revision_unavailable",
+            )
+        if payload.guided_revision_number is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="GUIDED_REVISION_TOKEN_REQUIRED"
+            )
+        if payload.guided_revision_number != int(current["revision_number"]):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="GUIDED_REVISION_STALE"
+            )
+        if payload.base_generation != variant_render_baseline(variant):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="baseline_conflict")
+        return {
+            "generation": variant_render_baseline(variant),
+            "guided_revision": current,
+            "guided_revision_render": True,
+            "has_render_section": True,
+            "timeline_override": None,
+            "mix_override": None,
+            "sfx_override": None,
+            "audio_sfx_override": [],
+            "media_overlays_override": None,
+            "visual_blocks_override": None,
+            "motion_scenes_override": None,
+            "camera_effects_override": None,
+            "pending_overlay_camera_rebuild": False,
+            "orientation_override": None,
+            "new_track_id": None,
+            "remove_music": False,
+            "music_window_alignment": None,
+            "caption_cues_override": None,
+            "text_requires_full_render": False,
+            "resolved_archetype": "guided_story",
+            "has_caption_base": False,
+            "render_status_at_commit": variant.get("render_status"),
+            "revision_number": int(current["revision_number"]),
+            "sections": {
+                "text_elements": False,
+                "caption_cues": False,
+                "caption_meta": False,
+                "timeline": True,
+                "mix": False,
+                "music": True,
+                "background_music": False,
+                "lyrics": False,
+                "orientation": False,
+                "sound_effects": bool(current.get("sound_effects")),
+                "media_overlays": bool(current.get("media_overlays")),
+                "visual_blocks": bool(current.get("visual_blocks")),
+                "motion_scenes": bool(current.get("motion_scenes")),
+                "camera_effects": False,
+                "carousel_moment": False,
+            },
+        }
+
+    if guided_v2 and payload.guided_revision is not None:
+        # The public Save contract is the conventional sectioned request. Raw
+        # revision JSON would bypass music/source ownership and lane feature
+        # gates, so it is intentionally never a writable wire surface.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="GUIDED_REVISION_WIRE_UNSUPPORTED",
+        )
+
     if (
         payload.text_elements is None
         and payload.caption_cues is None
@@ -6222,6 +7168,7 @@ def prepare_editor_commit(
         and payload.visual_blocks is None
         and payload.motion_scenes is None
         and payload.camera_effects is None
+        and payload.guided_revision is None
         and payload.title is None
         and not payload.remove_music
         # Tri-state (see EditorCommitRequest.carousel_moment): only
@@ -6286,7 +7233,8 @@ def prepare_editor_commit(
             require_base=payload.timeline_slots is None and not text_requires_full_render,
             strict_drop=True,
         )
-        _require_guided_story_text_ids(variant, validated_elements)
+        if not guided_v2:
+            _require_guided_story_text_ids(variant, validated_elements)
 
     validated_caption_cues: list[dict] | None = None
     if payload.caption_cues is not None:
@@ -6345,7 +7293,7 @@ def prepare_editor_commit(
             caption_meta_patch["caption_shadow_enabled"] = bool(meta.shadow_enabled)
 
     resolved_slots: list[dict] | None = None
-    if payload.timeline_slots is not None:
+    if payload.timeline_slots is not None and not guided_v2:
         resolved_slots = resolve_timeline_slots_for_edit(job, variant, payload.timeline_slots)
 
     if payload.remove_music:
@@ -6400,7 +7348,7 @@ def prepare_editor_commit(
     music_window_video_duration_s: float | None = None
     music_window_grid: list[float] | None = None
     frozen_music_slots: list[dict] | None = None
-    if payload.music_window is not None:
+    if payload.music_window is not None and not guided_v2:
         if str(variant.get("variant_id") or "") not in _MUSIC_WINDOW_VARIANTS:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -6499,7 +7447,11 @@ def prepare_editor_commit(
             )
         # Same rule as dispatch_set_mix: only voiceover variants carry a voice
         # bed to rebalance.
-        if variant.get("mix") is None and not str(variant_id).startswith("voiceover"):
+        if (
+            not guided_v2
+            and variant.get("mix") is None
+            and not str(variant_id).startswith("voiceover")
+        ):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="This edit has no voiceover to mix.",
@@ -6622,6 +7574,13 @@ def prepare_editor_commit(
                         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                         detail="Visual block assets must be ready assets owned by this plan item.",
                     )
+
+    if validated_orientation is not None and validated_visual_blocks is not None:
+        prospective_variant = dict(variant)
+        prospective_variant["visual_blocks"] = validated_visual_blocks or None
+        validated_orientation = validate_orientation_section(
+            prospective_variant, validated_orientation
+        )
 
     validated_camera_effects: list[dict] | None = None
 
@@ -7002,6 +7961,22 @@ def prepare_editor_commit(
                 updated["overlay_suggestions"] = kept or None
                 if not kept and updated.get("overlay_suggest_status") == "ready":
                     updated["overlay_suggest_status"] = "zero"
+        guided_revision: dict[str, Any] | None = None
+        if guided_v2:
+            guided_revision = _guided_v2_revision_from_commit(
+                job,
+                variant,
+                payload,
+                updated=updated,
+                music_track=music_track,
+                music_track_generation=music_track_generation,
+                text_elements=validated_elements,
+                sound_effects=validated_sfx,
+                media_overlays=validated_overlays,
+                visual_blocks=validated_visual_blocks,
+                motion_scenes=validated_motion_scenes,
+            )
+            updated["guided_edit_revision"] = guided_revision
         if new_gen is not None:
             updated["render_generation_id"] = new_gen
             # Stamp the COPY, not `v`: `variants[i] = updated` below would
@@ -7021,6 +7996,13 @@ def prepare_editor_commit(
 
     return {
         "generation": new_gen or payload.base_generation,
+        "guided_revision": guided_revision if guided_v2 else None,
+        "guided_revision_render": bool(guided_v2 and guided_revision),
+        "revision_number": (
+            int(guided_revision["revision_number"])
+            if guided_v2 and guided_revision is not None
+            else None
+        ),
         "has_render_section": has_render_section,
         "timeline_override": (
             frozen_music_slots
@@ -7089,6 +8071,18 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
     any older in-flight task's terminal write.
     """
     if not prep["has_render_section"]:
+        return
+    if prep.get("guided_revision_render"):
+        from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
+
+        regenerate_generative_variant.apply_async(
+            args=[job_id, variant_id],
+            kwargs={
+                "guided_revision": prep["guided_revision"],
+                "render_gen_id": prep["generation"],
+                "force_full_render": True,
+            },
+        )
         return
     if prep["sections"].get("caption_cues") is True or prep["sections"].get("caption_meta") is True:
         from app.tasks.generative_build import reburn_narrated_captions  # noqa: PLC0415
@@ -7420,7 +8414,7 @@ async def list_generative_style_sets() -> StyleSetListResponse:
     )
 
 
-async def _attach_music_previews(variants: list[dict], db: AsyncSession) -> None:
+async def _attach_music_previews(variants: list[dict], db: AsyncSession, *, job: Job) -> None:
     """Attach a fresh-signed music preview URL + start offset to each variant.
 
     Batched lookup by the variants' own music_track_ids, deliberately WITHOUT a
@@ -7446,10 +8440,15 @@ async def _attach_music_previews(variants: list[dict], db: AsyncSession) -> None
         return
     for variant in variants:
         track = tracks.get(variant.get("music_track_id") or "")
-        capability = (
-            None
+        guided_revision = (
+            _guided_v2_revision(job, variant)
             if variant.get("resolved_archetype") == "guided_story"
-            else _music_window_capability(variant, track)
+            else None
+        )
+        capability = _music_window_capability(
+            variant,
+            track,
+            guided_revision=guided_revision,
         )
         if capability is not None:
             editor_capabilities = dict(variant.get("editor_capabilities") or {})
@@ -7459,8 +8458,13 @@ async def _attach_music_previews(variants: list[dict], db: AsyncSession) -> None
             video_duration_s = visual_block_variant_duration(variant)
             variant["music_preview_url"] = _preview_audio_url(track.audio_gcs_path)
             try:
+                guided_audio = (
+                    (guided_revision or {}).get("audio") if guided_revision is not None else None
+                )
                 start_s = float(
-                    variant.get("music_start_s")
+                    guided_audio.get("start_s")
+                    if isinstance(guided_audio, dict) and guided_audio.get("start_s") is not None
+                    else variant.get("music_start_s")
                     if variant.get("music_start_s") is not None
                     else _recommended_music_start(track, video_duration_s)
                 )
@@ -7583,7 +8587,7 @@ async def get_generative_job_status(
         baselines = scale_render_variants(baselines, pending_count)
 
     variants = _variants_for_response(job)
-    await _attach_music_previews(variants, db)
+    await _attach_music_previews(variants, db, job=job)
 
     # Null-safe, never-raising read of the style-downgrade stash: a corrupt or
     # non-dict value from a hand-edited row degrades to null rather than a 500.
@@ -7715,6 +8719,8 @@ async def set_variant_orientation(
         job,
         variant_id,
         orientation=req.orientation,
+        revision_number=req.revision_number,
+        base_generation=req.base_generation,
     )
     log.info(
         "generative_set_orientation",

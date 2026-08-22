@@ -5935,7 +5935,9 @@ def _mix_template_audio(
     require_audio: bool = False,
     audio_generation: str | None = None,
     validated_window_duration_s: float | None = None,
+    audio_window_duration_s: float | None = None,
     force_video_duration: bool = False,
+    audio_gain: float = 1.0,
 ) -> None:
     """Replace assembled video's audio with template music track.
 
@@ -6036,6 +6038,13 @@ def _mix_template_audio(
         trimming_video=video_dur > audio_dur,
     )
 
+    safe_gain = max(0.0, min(1.0, float(audio_gain)))
+    gain_filter = f"volume={safe_gain:.4f}," if abs(safe_gain - 1.0) > 1e-6 else ""
+    window_filter = (
+        f"atrim=duration={max(0.0, float(audio_window_duration_s)):.6f},asetpts=PTS-STARTPTS,apad,"
+        if audio_window_duration_s is not None
+        else ""
+    )
     cmd = [
         "ffmpeg",
         "-i",
@@ -6054,7 +6063,7 @@ def _mix_template_audio(
         "-c:a",
         "aac",
         "-af",
-        f"afade=t=out:st={fade_start}:d=0.5,loudnorm=I={settings.output_target_lufs}:TP=-1.5:LRA=11",  # noqa: E501
+        f"{window_filter}{gain_filter}afade=t=out:st={fade_start}:d=0.5,loudnorm=I={settings.output_target_lufs}:TP=-1.5:LRA=11",  # noqa: E501
         *(["-t", f"{use_duration:.3f}"] if use_duration > 0 else []),
         "-y",
         output_path,

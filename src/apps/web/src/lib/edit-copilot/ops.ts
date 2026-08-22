@@ -136,6 +136,8 @@ export type CopilotOp =
   | { op: "remove_text"; bar_index: number }
   | { op: "set_clip_duration"; slot_index: number; duration_s: number }
   | { op: "set_clip_in"; slot_index: number; in_s: number }
+  | { op: "trim_clip_start"; slot_index: number; start_s: number }
+  | { op: "trim_output_start"; start_s: number }
   | { op: "reorder_clip"; from_index: number; to_index: number }
   | { op: "remove_clip"; slot_index: number }
   | { op: "split_clip"; slot_index: number; at_s: number }
@@ -174,6 +176,7 @@ export type CopilotOp =
   | { op: "set_caption_meta"; patch: CaptionMetaPatch }
   | { op: "set_caption_emphasis"; cue_index: number; emphasis: boolean }
   | { op: "swap_music"; track_id: string }
+  | { op: "remove_music" }
   | { op: "set_mix"; music_level: number }
   | { op: "set_intro_layout"; layout: "linear" | "cluster" }
   | {
@@ -640,6 +643,8 @@ export function copilotOpFamily(op: Pick<CopilotOp, "op"> | { op: string }): Cop
   if (
     op.op === "set_clip_duration" ||
     op.op === "set_clip_in" ||
+    op.op === "trim_clip_start" ||
+    op.op === "trim_output_start" ||
     op.op === "reorder_clip" ||
     op.op === "remove_clip" ||
     op.op === "split_clip" ||
@@ -667,7 +672,7 @@ export function copilotOpFamily(op: Pick<CopilotOp, "op"> | { op: string }): Cop
   ) {
     return "caption";
   }
-  if (op.op === "swap_music" || op.op === "set_mix") return "music";
+  if (op.op === "swap_music" || op.op === "remove_music" || op.op === "set_mix") return "music";
   if (op.op === "set_intro_layout") return "render";
   if (op.op === "apply_custom_effect") return "custom_effect";
   // Carousel-as-a-moment is its own family (Lane D, carousel-blocks train):
@@ -939,6 +944,30 @@ export function validateCopilotOp(
       }
       return { ok: true, op: { op: opName, slot_index: raw.slot_index, in_s: raw.in_s } };
     }
+    case "trim_clip_start": {
+      if (!integerIndex(raw.slot_index) || !finiteNumber(raw.start_s)) {
+        return reject("missing_required", "trim_clip_start requires slot_index and start_s", opName);
+      }
+      if (!hasIndex(snapshot, "slot", raw.slot_index)) {
+        return reject("invalid_index", "slot_index must point into snapshot slots", opName);
+      }
+      if (raw.start_s < 0) {
+        return reject("invalid_value", "start_s must be non-negative", opName);
+      }
+      return { ok: true, op: { op: opName, slot_index: raw.slot_index, start_s: raw.start_s } };
+    }
+    case "trim_output_start": {
+      if (!finiteNumber(raw.start_s)) {
+        return reject("missing_required", "trim_output_start requires start_s", opName);
+      }
+      if (raw.start_s < 0) {
+        return reject("invalid_value", "start_s must be non-negative", opName);
+      }
+      if (finiteNumber(snapshot?.total_duration_s) && raw.start_s >= snapshot.total_duration_s) {
+        return reject("invalid_time", "start_s must be before the end of the video", opName);
+      }
+      return { ok: true, op: { op: opName, start_s: raw.start_s } };
+    }
     case "reorder_clip": {
       if (!integerIndex(raw.from_index) || !integerIndex(raw.to_index)) {
         return reject("missing_required", "reorder_clip requires from_index and to_index", opName);
@@ -1199,6 +1228,8 @@ export function validateCopilotOp(
       }
       return { ok: true, op: { op: opName, track_id: raw.track_id } };
     }
+    case "remove_music":
+      return { ok: true, op: { op: opName } };
     case "set_mix": {
       if (!finiteNumber(raw.music_level)) return reject("missing_required", "set_mix requires music_level", opName);
       return { ok: true, op: { op: opName, music_level: clamp(raw.music_level, 0, 1) } };

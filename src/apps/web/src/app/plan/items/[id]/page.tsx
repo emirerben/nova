@@ -4091,6 +4091,14 @@ function FocusedVariantControls({
                     externalState={clipTimeline.state}
                     externalDispatch={clipTimeline.dispatch}
                     externalClips={clipTimeline.clips}
+                    externalGuidedTokens={
+                      clipTimeline.revisionNumber != null && clipTimeline.baseGeneration != null
+                        ? {
+                            revision_number: clipTimeline.revisionNumber,
+                            base_generation: clipTimeline.baseGeneration,
+                          }
+                        : null
+                    }
                     onReload={clipTimeline.reload}
                   />
                 ) : null

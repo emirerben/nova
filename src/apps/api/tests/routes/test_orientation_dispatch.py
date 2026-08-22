@@ -114,6 +114,86 @@ async def test_dispatch_set_orientation_persists_and_enqueues(monkeypatch) -> No
     ]
 
 
+@pytest.mark.asyncio
+async def test_guided_orientation_route_requires_both_cas_tokens(monkeypatch) -> None:
+    monkeypatch.setattr(gj, "_LANDSCAPE_OUTPUT_ENABLED", True, raising=False)
+    monkeypatch.setattr(gj.settings, "guided_story_editor_v2_enabled", True, raising=False)
+    variant = _variant(resolved_archetype="guided_story")
+    job = _job(variant)
+    monkeypatch.setattr(
+        gj,
+        "_guided_v2_revision",
+        lambda *_args: {
+            "approval_proposal_version": 1,
+            "approval_media_digest": "a" * 64,
+            "revision_number": 3,
+            "base_generation": "old-gen",
+            "sources": [
+                {
+                    "media_id": "m1",
+                    "lane": "clip",
+                    "gcs_path": "users/u/m1.mp4",
+                    "generation": "1",
+                    "kind": "video",
+                    "duration_s": 5.0,
+                }
+            ],
+            "segments": [
+                {
+                    "segment_id": "s1",
+                    "media_id": "m1",
+                    "duration_s": 2.0,
+                    "output_start_s": 0.0,
+                    "output_end_s": 2.0,
+                }
+            ],
+        },
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await gj.dispatch_set_orientation(_db(job), job, "song_text", orientation="landscape")
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == "GUIDED_REVISION_TOKEN_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_guided_orientation_preflights_sources_before_mutation(monkeypatch) -> None:
+    monkeypatch.setattr(gj, "_LANDSCAPE_OUTPUT_ENABLED", True, raising=False)
+    monkeypatch.setattr(gj.settings, "guided_story_editor_v2_enabled", True, raising=False)
+    variant = _variant(resolved_archetype="guided_story")
+    job = _job(variant)
+    current = {
+        "approval_proposal_version": 1,
+        "approval_media_digest": "a" * 64,
+        "revision_number": 3,
+        "base_generation": "old-gen",
+        "sources": [],
+        "segments": [],
+    }
+    monkeypatch.setattr(gj, "_guided_v2_revision", lambda *_args: current)
+    preflight = AsyncMock(
+        side_effect=HTTPException(status_code=422, detail="guided_story_source_stale")
+    )
+    monkeypatch.setattr(gj, "_require_current_guided_story_sources", preflight)
+    db = _db(job)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await gj.dispatch_set_orientation(
+            db,
+            job,
+            "song_text",
+            orientation="landscape",
+            revision_number=3,
+            base_generation="old-gen",
+        )
+
+    assert exc_info.value.detail == "guided_story_source_stale"
+    preflight.assert_awaited_once()
+    assert variant["render_generation_id"] == "old-gen"
+    db.commit.assert_not_awaited()
+
+
 def test_prepare_editor_commit_orientation_stages_render_section(monkeypatch) -> None:
     monkeypatch.setattr(gj, "_LANDSCAPE_OUTPUT_ENABLED", True, raising=False)
     job = _job(_variant())

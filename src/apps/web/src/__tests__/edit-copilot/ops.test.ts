@@ -230,6 +230,11 @@ describe("edit-copilot extended op validation", () => {
       ),
     ).toMatchObject({ ok: false, rejection: { reason: "invalid_index" } });
     expect(validateCopilotOp({ op: "swap_music", track_id: "track-1" }, validationSnapshot)).toMatchObject({ ok: true });
+    expect(validateCopilotOp({ op: "remove_music" }, validationSnapshot)).toEqual({ ok: true, op: { op: "remove_music" } });
+    expect(validateCopilotOp({ op: "trim_clip_start", slot_index: 0, start_s: 1 }, validationSnapshot))
+      .toEqual({ ok: true, op: { op: "trim_clip_start", slot_index: 0, start_s: 1 } });
+    expect(validateCopilotOp({ op: "trim_output_start", start_s: 1 }, validationSnapshot))
+      .toEqual({ ok: true, op: { op: "trim_output_start", start_s: 1 } });
     expect(validateCopilotOp({ op: "set_mix", music_level: 2 }, validationSnapshot))
       .toMatchObject({ ok: true, op: { music_level: 1 } });
     expect(validateCopilotOp({ op: "set_title", title: "  Launch\nDay  " }, validationSnapshot))

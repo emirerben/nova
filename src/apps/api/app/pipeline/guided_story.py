@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import math
 import os
+import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -73,6 +74,12 @@ class GuidedStoryMoment(BaseModel):
     output_end_s: float = Field(gt=0)
     duration_s: float = Field(gt=0)
     image_motion: Literal["subtle_zoom_in"] | None = None
+    look_preset: str = "none"
+    look_adjustments: dict[str, float] | None = None
+    # None preserves legacy approved plans' global transition policy. Editor
+    # revisions always materialize an explicit per-boundary value.
+    transition_after: Literal["cut", "crossfade", "dip_to_black", "flash"] | None = None
+    transition_duration_s: float | None = Field(default=None, ge=0, le=0.3)
     required: bool = True
 
 
@@ -108,6 +115,8 @@ class GuidedStoryMusic(BaseModel):
     audio_gcs_path: str = Field(min_length=1)
     generation: str = Field(min_length=1)
     start_s: float = Field(ge=0)
+    end_s: float | None = Field(default=None, gt=0)
+    level: float = Field(default=1.0, ge=0, le=1.0)
 
 
 class GuidedStoryExecutionPlan(BaseModel):
@@ -128,13 +137,33 @@ class GuidedStoryExecutionPlan(BaseModel):
     selected_media_ids: list[str] = Field(min_length=1)
     story_timeline: list[GuidedStoryMoment] = Field(min_length=1)
     beat_windows: list[GuidedStoryBeatWindow] = Field(min_length=1)
-    text_elements: list[TextElement] = Field(min_length=1)
+    text_elements: list[TextElement]
     transition_policy: GuidedStoryTransitionPolicy
     typography: GuidedStoryTypography
     music: GuidedStoryMusic | None = None
+    # Optional post-approval runtime projection.  Canonical approved plans
+    # leave these unset; v2 revisions carry them without changing approval.
+    editor_revision_number: int | None = Field(default=None, ge=1)
+    editor_revision_hash: str | None = None
+    editor_sound_effects: list[dict[str, Any]] = Field(default_factory=list)
+    editor_media_overlays: list[dict[str, Any]] = Field(default_factory=list)
+    editor_visual_blocks: list[dict[str, Any]] = Field(default_factory=list)
+    editor_motion_scenes: list[dict[str, Any]] = Field(default_factory=list)
+    editor_custom_effects: list[dict[str, Any]] = Field(default_factory=list)
+    editor_audio_level: float = Field(default=1.0, ge=0, le=1)
+    editor_music_removed: bool = False
+    editor_lane_hashes: dict[str, str] = Field(default_factory=dict)
+    editor_tombstones: list[dict[str, Any]] = Field(default_factory=list)
+    editor_source_pool: list[dict[str, Any]] = Field(default_factory=list)
+    editor_base_generation: str | None = None
+    editor_renderer_version: str | None = None
+    editor_effect_schema_version: str | None = None
+    editor_approved_text_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_internal_receipt_contract(self) -> GuidedStoryExecutionPlan:
+        if self.editor_revision_number is None and not self.text_elements:
+            raise ValueError("approved guided stories require at least one text element")
         if len(self.selected_media_ids) != len(set(self.selected_media_ids)):
             raise ValueError("selected media IDs must be unique")
         timeline_media: list[str] = []
@@ -179,7 +208,9 @@ class GuidedStoryStorageReceipt(BaseModel):
 class GuidedStoryRenderReceipt(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[1]
+    # v1 remains valid for immutable approved renders. Revisions add lane
+    # hashes and provenance under v2 without changing the approval payload.
+    schema_version: Literal[1, 2]
     verified: Literal[True]
     proposal_version: int = Field(ge=1)
     media_digest: str = Field(min_length=64, max_length=64)
@@ -202,12 +233,23 @@ class GuidedStoryRenderReceipt(BaseModel):
     output_orientation_reason: str = "Legacy guided stories used the portrait canvas."
     music_applied: bool
     music: GuidedStoryMusic | None
+    music_window_applied: dict[str, float] | None = None
     output: GuidedStoryOutputReceipt
     base_storage: GuidedStoryStorageReceipt | None = None
     output_storage: GuidedStoryStorageReceipt | None = None
     media_stages: list[dict[str, Any]]
     moment_stages: list[dict[str, Any]]
     text_stages: list[dict[str, Any]]
+    revision_number: int | None = None
+    revision_hash: str | None = None
+    lane_hashes: dict[str, str] = Field(default_factory=dict)
+    tombstones: list[dict[str, Any]] = Field(default_factory=list)
+    source_pool: list[dict[str, Any]] = Field(default_factory=list)
+    segment_order: list[str] = Field(default_factory=list)
+    music_removed: bool = False
+    base_render_generation: str | None = None
+    renderer_version: str | None = None
+    effect_schema_version: str | None = None
 
     @model_validator(mode="after")
     def validate_strict_equality(self) -> GuidedStoryRenderReceipt:
@@ -225,6 +267,17 @@ class GuidedStoryRenderReceipt(BaseModel):
             raise ValueError("receipt media kinds do not add up to its media count")
         if self.music_applied != (self.music is not None):
             raise ValueError("receipt music identity does not match application state")
+        if self.music is not None and self.music_window_applied is not None:
+            expected_window = max(
+                0.0,
+                float(self.music.end_s or self.expected_duration_s)
+                - float(self.music.start_s or 0.0),
+            )
+            if (
+                abs(float(self.music_window_applied.get("duration_s", -1.0)) - expected_window)
+                > 1e-6
+            ):
+                raise ValueError("receipt music window does not match applied music")
         return self
 
 
@@ -838,6 +891,14 @@ def _compile_execution_plan_version(
             "guided_story_duration_impossible", "The approved story timing could not be resolved."
         )
 
+    normalized_track = track
+    if track is not None and track.get("end_s") is None:
+        music_start_s = float(track.get("start_s") or 0.0)
+        normalized_track = {
+            **track,
+            "end_s": round(music_start_s + cursor, 3),
+        }
+
     try:
         compiled = GuidedStoryExecutionPlan(
             compiler_version=compiler_version,
@@ -868,7 +929,7 @@ def _compile_execution_plan_version(
                 if compiler_version >= 3
                 else {"style_id": "guided_story_v1", "font": "Inter-Bold"}
             ),
-            music=track,
+            music=normalized_track,
         )
     except Exception as exc:  # noqa: BLE001
         raise GuidedStoryError(
@@ -978,6 +1039,215 @@ def execution_plan_with_editor_state(
             "guided_story_snapshot_invalid",
             "The approved story could not be safely resized.",
         ) from exc
+
+
+def compile_guided_runtime_plan(
+    canonical_plan: object,
+    guided_snapshot: object,
+    revision: object,
+) -> dict[str, Any]:
+    """Compile a validated v2 revision without mutating the approval plan.
+
+    The canonical plan remains the provenance fence.  This projection only
+    changes the effective moments/timing/audio and carries the revision hash
+    into the receipt; every selected source still comes from the approved
+    snapshot's exact-generation pool.
+    """
+
+    from app.schemas.guided_edit_revision import normalize_guided_editor_revision
+
+    try:
+        canonical = GuidedStoryExecutionPlan.model_validate(canonical_plan)
+        proposal_version, media_digest, snapshot = validate_guided_snapshot(guided_snapshot)
+        normalized_revision = normalize_guided_editor_revision(
+            revision,
+            expected_approval_version=proposal_version,
+            expected_media_digest=media_digest,
+        )
+        approved_sources = {
+            (
+                ref.media_id,
+                ref.lane,
+                ref.gcs_path,
+                ref.generation,
+                ref.kind,
+                ref.duration_s,
+            )
+            for ref in snapshot.media
+        }
+        revision_sources = {
+            (
+                row["media_id"],
+                row["lane"],
+                row["gcs_path"],
+                row["generation"],
+                row["kind"],
+                row.get("duration_s"),
+            )
+            for row in normalized_revision["sources"]
+        }
+        if revision_sources != approved_sources:
+            raise GuidedStoryError(
+                "guided_story_revision_invalid",
+                "The revision source pool no longer matches the approved snapshot.",
+            )
+        approved_text_ids = [element.id for element in canonical.text_elements]
+        revision_text_ids = [
+            str(row.get("id")) for row in normalized_revision.get("text_elements") or []
+        ]
+        tombstoned_text_ids = [
+            str(row.get("record_id"))
+            for row in normalized_revision.get("tombstones") or []
+            if row.get("lane") == "text_elements" and row.get("record_id")
+        ]
+        if set(revision_text_ids) | set(tombstoned_text_ids) != set(approved_text_ids):
+            raise GuidedStoryError(
+                "guided_story_revision_invalid",
+                "Active and tombstoned text identities must match the approved story text.",
+            )
+        # Music swaps are post-approval editor revisions. The route pins the
+        # selected ready track's exact object generation; the worker then
+        # downloads that generation. The immutable proposal is provenance, not
+        # an allowlist that would make every legitimate swap fail at render.
+        source_by_id = {ref.media_id: ref for ref in snapshot.media}
+        base_by_media: dict[str, dict[str, Any]] = {}
+        for moment in canonical.story_timeline:
+            base_by_media.setdefault(moment.media_id, moment.model_dump(mode="json"))
+        moments: list[dict[str, Any]] = []
+        beat_windows: list[dict[str, Any]] = []
+        for index, segment in enumerate(normalized_revision["segments"]):
+            source = source_by_id.get(segment["media_id"])
+            if source is None:
+                raise ValueError("revision source is not in the approved snapshot")
+            base = dict(base_by_media.get(segment["media_id"]) or {})
+            if not base:
+                # Unused media in the immutable approval is part of the V2
+                # source pool but has no canonical story moment to inherit.
+                base = {
+                    "topic": "Edited story moment",
+                    "layout": "fullscreen",
+                    "image_motion": "subtle_zoom_in" if source.kind == "image" else None,
+                    "required": True,
+                }
+            start = float(segment["output_start_s"])
+            end = float(segment["output_end_s"])
+            # A source may be reused by multiple split segments.  Runtime
+            # beat IDs therefore belong to the revision segment, not the
+            # original approved beat, so the strict plan validator remains
+            # deterministic for repeated media.
+            beat_id = f"guided-edit-beat-{index}"
+            moment_id = str(segment["segment_id"])
+            moments.append(
+                {
+                    **base,
+                    "moment_id": moment_id,
+                    "beat_id": beat_id,
+                    "topic": str(base.get("topic") or "Edited story moment"),
+                    "media_id": source.media_id,
+                    "lane": source.lane,
+                    "kind": source.kind,
+                    "gcs_path": source.gcs_path,
+                    "generation": source.generation,
+                    "source_start_s": float(segment["source_start_s"]),
+                    "source_end_s": float(
+                        segment.get("source_end_s")
+                        or float(segment["source_start_s"]) + float(segment["duration_s"])
+                    ),
+                    "output_start_s": start,
+                    "output_end_s": end,
+                    "duration_s": float(segment["duration_s"]),
+                    "look_preset": segment.get("look_preset", "none"),
+                    "look_adjustments": segment.get("look_adjustments"),
+                    "transition_after": segment.get("transition_after", "cut"),
+                    "transition_duration_s": float(segment.get("transition_duration_s") or 0.0),
+                }
+            )
+            beat_windows.append(
+                {
+                    "beat_id": beat_id,
+                    "approved_duration_s": float(segment["duration_s"]),
+                    "resolved_duration_s": float(segment["duration_s"]),
+                    "start_s": start,
+                    "end_s": end,
+                }
+            )
+        selected_ids = list(dict.fromkeys(moment["media_id"] for moment in moments))
+        audio = normalized_revision.get("audio") or {"mode": "none"}
+        music = None
+        if audio.get("mode") == "track":
+            music = {
+                "track_id": audio["track_id"],
+                "title": audio["title"],
+                "audio_gcs_path": audio["audio_gcs_path"],
+                "generation": audio["generation"],
+                "start_s": float(audio.get("start_s") or 0.0),
+                "end_s": float(
+                    audio.get("end_s") or normalized_revision["segments"][-1]["output_end_s"]
+                ),
+                "level": float(audio.get("level", 1.0)),
+            }
+        runtime_payload = canonical.model_dump(mode="json", exclude_none=False)
+        runtime_payload.update(
+            {
+                "proposal_version": proposal_version,
+                "media_digest": media_digest,
+                "approved_duration_s": float(canonical.approved_duration_s),
+                "resolved_duration_s": round(max(moment["output_end_s"] for moment in moments), 3),
+                "output_orientation": normalized_revision.get("orientation", "portrait"),
+                "output_orientation_reason": (
+                    "The creator selected this output format in the editor."
+                ),
+                "selected_media_ids": selected_ids,
+                "story_timeline": moments,
+                "beat_windows": beat_windows,
+                "text_elements": list(normalized_revision.get("text_elements") or []),
+                "music": music,
+                "editor_revision_number": normalized_revision["revision_number"],
+                "editor_revision_hash": normalized_revision["state_hash"],
+                "editor_sound_effects": list(normalized_revision.get("sound_effects") or []),
+                "editor_media_overlays": list(normalized_revision.get("media_overlays") or []),
+                "editor_visual_blocks": list(normalized_revision.get("visual_blocks") or []),
+                "editor_motion_scenes": list(normalized_revision.get("motion_scenes") or []),
+                "editor_custom_effects": list(normalized_revision.get("custom_effects") or []),
+                "editor_audio_level": float(audio.get("level", 1.0)),
+                "editor_music_removed": bool(audio.get("removed", False)),
+                "editor_lane_hashes": dict(normalized_revision.get("lane_hashes") or {}),
+                "editor_tombstones": list(normalized_revision.get("tombstones") or []),
+                "editor_source_pool": list(normalized_revision.get("sources") or []),
+                "editor_base_generation": str(normalized_revision.get("base_generation") or ""),
+                "editor_renderer_version": str(normalized_revision.get("renderer_version") or ""),
+                "editor_effect_schema_version": str(
+                    normalized_revision.get("effect_schema_version") or ""
+                ),
+                "editor_approved_text_ids": approved_text_ids,
+            }
+        )
+        runtime = GuidedStoryExecutionPlan.model_validate(runtime_payload)
+        return runtime.model_dump(mode="json", exclude_none=False)
+    except GuidedStoryError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise GuidedStoryError(
+            "guided_story_revision_invalid", "The guided editor revision could not be compiled."
+        ) from exc
+
+
+def validate_guided_source_pool_generations(guided_snapshot: object) -> None:
+    """Fail unless every approved source, including unused media, still exists.
+
+    Rendering only downloads selected segments. Editor V2 deliberately exposes
+    the complete approval pool, so Save and worker redelivery must also fence
+    unused references against object replacement/deletion.
+    """
+
+    from app.services.edit_proposals import media_generations_match_sync
+
+    _proposal_version, _media_digest, snapshot = validate_guided_snapshot(guided_snapshot)
+    if not media_generations_match_sync(snapshot.media):
+        raise GuidedStoryError(
+            "guided_story_media_missing",
+            "One or more approved media files changed or are no longer available.",
+        )
 
 
 def _sha256(path: str) -> str:
@@ -1192,6 +1462,8 @@ def _render_image_moment(
     duration_s: float,
     layout: str,
     canvas: Canvas,
+    look_preset: str = "none",
+    look_adjustments: dict[str, float] | None = None,
 ) -> None:
     from app.pipeline.reframe import _encoding_args  # noqa: PLC0415
 
@@ -1199,6 +1471,19 @@ def _render_image_moment(
     total_frames = max(1, int(round(duration_s * fps)))
     zoom = f"1.0+(0.06*on/{max(1, total_frames - 1)})"
     zoom_xy = "x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+    # Use the same allowlisted grade compiler as video moments so every
+    # bounded adjustment (warmth/contrast/grain/vignette/intensity) has image
+    # and video parity. The builder emits a valid single-input graph here.
+    from app.pipeline.look_presets import look_preset_filter  # noqa: PLC0415
+
+    look_filter = look_preset_filter(
+        look_preset,
+        width=width,
+        height=height,
+        label_prefix="guided_image",
+        adjustments=look_adjustments,
+    )
+    look_suffix = f",{look_filter}" if look_filter else ""
     if layout == "supporting_card":
         card_width = int(width * 0.82)
         card_height = int(height * 0.72)
@@ -1214,14 +1499,14 @@ def _render_image_moment(
             f"zoompan=z='{zoom}':{zoom_xy}:d={total_frames}:fps={fps}:"
             f"s={card_width}x{card_height}[card];"
             f"[blur][card]overlay=(W-w)/2:(H-h)/2:shortest=1,"
-            f"setsar=1,fps={fps},format=yuv420p[v]"
+            f"setsar=1,fps={fps}{look_suffix},format=yuv420p[v]"
         )
     else:
         vf = (
             f"[0:v]scale={width * 2}:{height * 2}:force_original_aspect_ratio=increase,"
             f"crop={width * 2}:{height * 2},"
             f"zoompan=z='{zoom}':{zoom_xy}:d={total_frames}:fps={fps}:s={width}x{height},"
-            f"setsar=1,format=yuv420p[v]"
+            f"setsar=1{look_suffix},format=yuv420p[v]"
         )
     cmd = [
         "ffmpeg",
@@ -1262,6 +1547,8 @@ def _render_video_moment(
     end_s: float,
     layout: str,
     canvas: Canvas = PORTRAIT,
+    look_preset: str = "none",
+    look_adjustments: dict[str, float] | None = None,
 ) -> None:
     from app.pipeline.reframe import reframe_and_export  # noqa: PLC0415
 
@@ -1282,6 +1569,8 @@ def _render_video_moment(
             color_trc=probe.color_trc,
             has_audio=False,
             canvas=canvas,
+            look_preset=look_preset,
+            look_adjustments=look_adjustments,
         )
     except Exception as exc:  # noqa: BLE001
         raise GuidedStoryError(
@@ -1304,6 +1593,8 @@ def _render_moments(
                 duration_s=float(moment["duration_s"]),
                 layout=moment["layout"],
                 canvas=canvas,
+                look_preset=moment.get("look_preset", "none"),
+                look_adjustments=moment.get("look_adjustments"),
             )
         else:
             _render_video_moment(
@@ -1313,6 +1604,8 @@ def _render_moments(
                 end_s=float(moment["source_end_s"]),
                 layout=moment["layout"],
                 canvas=canvas,
+                look_preset=moment.get("look_preset", "none"),
+                look_adjustments=moment.get("look_adjustments"),
             )
         probe = probe_video(output)
         if (
@@ -1386,7 +1679,7 @@ def _verify_receipt(
         and os.path.getsize(final_path) > 0
     )
     receipt_data = {
-        "schema_version": 1,
+        "schema_version": 2 if plan.get("editor_revision_number") is not None else 1,
         "verified": verified,
         "proposal_version": plan["proposal_version"],
         "media_digest": plan["media_digest"],
@@ -1407,6 +1700,19 @@ def _verify_receipt(
         "output_orientation_reason": plan["output_orientation_reason"],
         "music_applied": music_applied,
         "music": plan.get("music") if music_applied else None,
+        "music_window_applied": (
+            {
+                "start_s": float(plan["music"].get("start_s") or 0.0),
+                "end_s": float(plan["music"].get("end_s") or plan["resolved_duration_s"]),
+                "duration_s": max(
+                    0.0,
+                    float(plan["music"].get("end_s") or plan["resolved_duration_s"])
+                    - float(plan["music"].get("start_s") or 0.0),
+                ),
+            }
+            if music_applied and plan.get("music")
+            else None
+        ),
         "output": {
             "width": probe.width,
             "height": probe.height,
@@ -1418,6 +1724,20 @@ def _verify_receipt(
         "moment_stages": moment_receipts,
         "text_stages": text_receipts,
     }
+    if plan.get("editor_revision_number") is not None:
+        receipt_data["approved_text_ids"] = list(
+            plan.get("editor_approved_text_ids") or expected_text
+        )
+        receipt_data["revision_number"] = plan["editor_revision_number"]
+        receipt_data["revision_hash"] = plan.get("editor_revision_hash")
+        receipt_data["lane_hashes"] = dict(plan.get("editor_lane_hashes") or {})
+        receipt_data["tombstones"] = list(plan.get("editor_tombstones") or [])
+        receipt_data["source_pool"] = list(plan.get("editor_source_pool") or [])
+        receipt_data["segment_order"] = [row["moment_id"] for row in plan["story_timeline"]]
+        receipt_data["music_removed"] = bool(plan.get("editor_music_removed", False))
+        receipt_data["base_render_generation"] = plan.get("editor_base_generation")
+        receipt_data["renderer_version"] = plan.get("editor_renderer_version")
+        receipt_data["effect_schema_version"] = plan.get("editor_effect_schema_version")
     if not verified:
         if set(expected_text) != set(actual_text):
             raise GuidedStoryError(
@@ -1582,6 +1902,21 @@ def validate_ready_result(
     prefix = f"generative-jobs/{job_id}/"
     base_path = str(result.get("base_video_path") or "")
     video_path = str(result.get("video_path") or "")
+    revision_contract_ok = True
+    if typed_plan.editor_revision_number is not None:
+        revision_contract_ok = bool(
+            receipt.schema_version == 2
+            and receipt.revision_number == typed_plan.editor_revision_number
+            and receipt.revision_hash == typed_plan.editor_revision_hash
+            and receipt.lane_hashes == typed_plan.editor_lane_hashes
+            and receipt.tombstones == typed_plan.editor_tombstones
+            and receipt.source_pool == typed_plan.editor_source_pool
+            and receipt.segment_order == [moment.moment_id for moment in typed_plan.story_timeline]
+            and receipt.music_removed == typed_plan.editor_music_removed
+            and receipt.base_render_generation == typed_plan.editor_base_generation
+            and receipt.renderer_version == typed_plan.editor_renderer_version
+            and receipt.effect_schema_version == typed_plan.editor_effect_schema_version
+        )
     structurally_valid = bool(
         result.get("variant_id") == VARIANT_ID
         and result.get("resolved_archetype") == VARIANT_ID
@@ -1591,7 +1926,7 @@ def validate_ready_result(
         and result.get("media_digest") == typed_plan.media_digest
         and result.get("story_timeline") == exact_story
         and current_text == receipt.expected_text_ids
-        and approved_text == expected_text
+        and approved_text == (typed_plan.editor_approved_text_ids or expected_text)
         and receipt.proposal_version == typed_plan.proposal_version
         and receipt.media_digest == typed_plan.media_digest
         and receipt.expected_beat_ids == expected_beats
@@ -1615,6 +1950,7 @@ def validate_ready_result(
         and receipt.output_storage is not None
         and receipt.base_storage.path == base_path
         and receipt.output_storage.path == video_path
+        and revision_contract_ok
     )
     if not structurally_valid:
         raise GuidedStoryError(
@@ -1698,6 +2034,8 @@ def _mix_pinned_music(
     tmpdir: str,
     music: dict[str, Any],
     track: Any,
+    *,
+    output_duration_s: float | None = None,
 ) -> None:
     """Mix only the immutable track object captured in the execution plan."""
 
@@ -1712,6 +2050,16 @@ def _mix_pinned_music(
         )
     from app.tasks.template_orchestrate import _mix_template_audio  # noqa: PLC0415
 
+    window_duration_s = max(
+        0.0,
+        float(music.get("end_s") or 0.0) - float(music.get("start_s") or 0.0),
+    )
+    if window_duration_s <= 0 and output_duration_s is not None:
+        window_duration_s = max(0.0, float(output_duration_s))
+    if window_duration_s <= 0:
+        raise GuidedStoryError(
+            "guided_story_music_missing", "The approved story music window is invalid."
+        )
     try:
         _mix_template_audio(
             assembled,
@@ -1719,15 +2067,130 @@ def _mix_pinned_music(
             clean_base,
             tmpdir,
             audio_start_offset_s=float(music.get("start_s") or 0.0),
+            validated_window_duration_s=window_duration_s,
+            audio_window_duration_s=window_duration_s,
             require_audio=True,
             audio_generation=str(music["generation"]),
             force_video_duration=True,
+            audio_gain=float(music.get("level", 1.0)),
         )
     except Exception as exc:  # noqa: BLE001
         raise GuidedStoryError(
             "guided_story_music_missing",
             "The exact approved music file is no longer available.",
         ) from exc
+
+
+def _compose_guided_pretext_lanes(
+    base_local: str,
+    plan: dict[str, Any],
+    *,
+    job_id: str,
+    attempt_id: str | None,
+    tmpdir: str,
+) -> str:
+    """Compose visual/motion/media lanes below guided text, in strict order.
+
+    Existing lane compositors are GCS-oriented. This adapter gives the strict
+    renderer a durable temporary hand-off between them, then downloads the
+    composed clean base for the Skia text pass. It never invokes montage.
+    """
+    from app import storage  # noqa: PLC0415
+
+    lanes = (
+        ("visual_blocks", plan.get("editor_visual_blocks") or []),
+        ("motion_scenes", plan.get("editor_motion_scenes") or []),
+        ("media_overlays", plan.get("editor_media_overlays") or []),
+    )
+    if not any(values for _, values in lanes):
+        return base_local
+    key_root = f"generative-jobs/{job_id}/guided-lanes/{attempt_id or 'preview'}"
+    current_key = f"{key_root}/base.mp4"
+    created = [current_key]
+    try:
+        storage.upload_local_file(base_local, current_key, "video/mp4")
+        if plan.get("editor_visual_blocks"):
+            from app.agents._schemas.visual_block import coerce_visual_blocks  # noqa: PLC0415
+            from app.pipeline.visual_blocks import apply_visual_blocks  # noqa: PLC0415
+
+            blocks = coerce_visual_blocks(plan["editor_visual_blocks"])
+            next_key = f"{key_root}/visual.mp4"
+            apply_visual_blocks(
+                base_gcs_path=current_key,
+                blocks=blocks,
+                output_gcs_path=next_key,
+                job_id=job_id,
+            )
+            current_key = next_key
+            created.append(next_key)
+        if plan.get("editor_motion_scenes"):
+            from app.pipeline.motion_scene import apply_motion_scenes  # noqa: PLC0415
+
+            next_key = f"{key_root}/motion.mp4"
+            apply_motion_scenes(
+                base_gcs_path=current_key,
+                instances=list(plan["editor_motion_scenes"]),
+                output_gcs_path=next_key,
+                job_id=job_id,
+            )
+            current_key = next_key
+            created.append(next_key)
+        if plan.get("editor_media_overlays"):
+            from app.agents._schemas.media_overlay import coerce_media_overlays  # noqa: PLC0415
+            from app.pipeline.media_overlay import apply_media_overlays  # noqa: PLC0415
+
+            cards = coerce_media_overlays(plan["editor_media_overlays"])
+            next_key = f"{key_root}/media.mp4"
+            apply_media_overlays(
+                current_key,
+                cards,
+                next_key,
+                job_id=job_id,
+                canvas=_story_canvas(plan.get("output_orientation")),
+            )
+            current_key = next_key
+            created.append(next_key)
+        composed_local = os.path.join(tmpdir, "guided_story_lanes_base.mp4")
+        storage.download_to_file(current_key, composed_local)
+        return composed_local
+    finally:
+        for key in created:
+            storage.delete_object_best_effort(key)
+
+
+def _compose_guided_sfx(
+    text_path: str,
+    plan: dict[str, Any],
+    *,
+    job_id: str,
+    attempt_id: str | None,
+    tmpdir: str,
+) -> str:
+    """Apply SFX after text, preserving the strict z/audio order."""
+    effects = plan.get("editor_sound_effects") or []
+    if not effects:
+        return text_path
+    from app import storage  # noqa: PLC0415
+    from app.agents._schemas.sound_effect import coerce_sound_effects  # noqa: PLC0415
+    from app.pipeline.sound_effects import apply_sound_effects  # noqa: PLC0415
+
+    root = f"generative-jobs/{job_id}/guided-lanes/{attempt_id or 'preview'}"
+    base_key = f"{root}/text.mp4"
+    output_key = f"{root}/sfx.mp4"
+    try:
+        storage.upload_local_file(text_path, base_key, "video/mp4")
+        apply_sound_effects(
+            base_key,
+            coerce_sound_effects(effects),
+            output_key,
+            job_id=job_id,
+        )
+        output_local = os.path.join(tmpdir, "guided_story_final_sfx.mp4")
+        storage.download_to_file(output_key, output_local)
+        return output_local
+    finally:
+        storage.delete_object_best_effort(base_key)
+        storage.delete_object_best_effort(output_key)
 
 
 def render_execution_plan(
@@ -1753,16 +2216,58 @@ def render_execution_plan(
     assembled = os.path.join(tmpdir, "guided_story_assembled.mp4")
     canvas = _story_canvas(plan.get("output_orientation"))
     transition = plan["transition_policy"]
-    if len(moment_paths) > 1 and transition["type"] != "none":
+    per_boundary = [
+        str(row.get("transition_after") or transition["type"])
+        for row in plan["story_timeline"][:-1]
+    ]
+    per_durations = [
+        float(row.get("transition_duration_s") or transition["duration_s"])
+        for row in plan["story_timeline"][:-1]
+    ]
+    has_crossfade = any(value != "cut" for value in per_boundary)
+    if len(moment_paths) > 1 and has_crossfade:
         from app.pipeline.transitions import join_with_transitions  # noqa: PLC0415
 
         try:
-            join_with_transitions(
-                moment_paths,
-                [transition["type"]] * (len(moment_paths) - 1),
-                [float(row["duration_s"]) for row in plan["story_timeline"]],
+            transition_map = {
+                "crossfade": "crossfade",
+                "dip_to_black": "fade_black",
+                "flash": "fade_white",
+            }
+            # Split at hard cuts. Each visual-transition run is xfade-joined;
+            # runs are then concatenated without inventing crossfades at cuts.
+            chunks: list[str] = []
+            start = 0
+            for boundary, value in enumerate(per_boundary + ["cut"]):
+                if value == "cut":
+                    end = boundary
+                    paths = moment_paths[start : end + 1]
+                    if len(paths) == 1:
+                        chunks.append(paths[0])
+                    else:
+                        chunk = os.path.join(tmpdir, f"guided_transition_{start}.mp4")
+                        join_with_transitions(
+                            paths,
+                            [
+                                transition_map.get(per_boundary[i], "crossfade")
+                                for i in range(start, end)
+                            ],
+                            [
+                                float(row["duration_s"])
+                                for row in plan["story_timeline"][start : end + 1]
+                            ],
+                            chunk,
+                            transition_duration_s=float(transition["duration_s"]),
+                            transition_durations_s=per_durations[start:end] or None,
+                            canvas=canvas,
+                        )
+                        chunks.append(chunk)
+                    start = end + 1
+            _concat_demuxer(
+                chunks,
                 assembled,
-                transition_duration_s=float(transition["duration_s"]),
+                tmpdir,
+                expected_duration_s=float(plan["resolved_duration_s"]),
                 canvas=canvas,
             )
         except Exception as exc:  # noqa: BLE001
@@ -1781,7 +2286,14 @@ def render_execution_plan(
     music = plan.get("music")
     if music is not None:
         clean_base = os.path.join(tmpdir, "guided_story_base.mp4")
-        _mix_pinned_music(assembled, clean_base, tmpdir, music, track)
+        _mix_pinned_music(
+            assembled,
+            clean_base,
+            tmpdir,
+            music,
+            track,
+            output_duration_s=float(plan["resolved_duration_s"]),
+        )
         music_applied = True
     else:
         if _audio_codec(assembled) == "aac":
@@ -1791,30 +2303,51 @@ def render_execution_plan(
             _attach_silent_aac(assembled, clean_base)
         music_applied = False
 
-    elements = [TextElement.model_validate(row) for row in plan["text_elements"]]
-    overlays = build_overlays_from_text_elements(
-        elements,
-        video_duration_s=float(plan["resolved_duration_s"]),
-        independent_box_alignment=True,
-    )
-    element_by_text = {
-        (element.text, element.start_s, element.end_s): element.id for element in elements
-    }
-    for overlay in overlays:
-        key = (
-            str(overlay.get("text") or ""),
-            float(overlay.get("start_s") or 0.0),
-            float(overlay.get("end_s") or 0.0),
-        )
-        overlay["element_id"] = element_by_text.get(key)
-    final_path = os.path.join(tmpdir, "guided_story_final.mp4")
-    text_receipts = burn_text_overlays_skia_with_evidence(
+    clean_base = _compose_guided_pretext_lanes(
         clean_base,
-        overlays,
+        plan,
+        job_id=job_id,
+        attempt_id=attempt_id,
+        tmpdir=tmpdir,
+    )
+
+    final_path = os.path.join(tmpdir, "guided_story_final.mp4")
+    elements = [TextElement.model_validate(row) for row in plan["text_elements"]]
+    if elements:
+        overlays = build_overlays_from_text_elements(
+            elements,
+            video_duration_s=float(plan["resolved_duration_s"]),
+            independent_box_alignment=True,
+        )
+        element_by_text = {
+            (element.text, element.start_s, element.end_s): element.id for element in elements
+        }
+        for overlay in overlays:
+            key = (
+                str(overlay.get("text") or ""),
+                float(overlay.get("start_s") or 0.0),
+                float(overlay.get("end_s") or 0.0),
+            )
+            overlay["element_id"] = element_by_text.get(key)
+        text_receipts = burn_text_overlays_skia_with_evidence(
+            clean_base,
+            overlays,
+            final_path,
+            tmpdir,
+            required_element_ids=[row["id"] for row in plan["text_elements"]],
+            canvas=canvas,
+        )
+    else:
+        # A timeline edit may legitimately tombstone every approved text
+        # interval. Preserve the already-composed clean base byte-for-byte.
+        shutil.copyfile(clean_base, final_path)
+        text_receipts = []
+    final_path = _compose_guided_sfx(
         final_path,
-        tmpdir,
-        required_element_ids=[row["id"] for row in plan["text_elements"]],
-        canvas=canvas,
+        plan,
+        job_id=job_id,
+        attempt_id=attempt_id,
+        tmpdir=tmpdir,
     )
     receipt = _verify_receipt(
         plan,
@@ -1850,7 +2383,7 @@ def render_execution_plan(
         "track_title": str(music["title"]) if music else None,
         "music_start_s": float(music.get("start_s") or 0.0) if music else None,
         "style_set_id": plan["typography"]["style_id"],
-        "intro_text": plan["text_elements"][0]["text"],
+        "intro_text": plan["text_elements"][0]["text"] if plan["text_elements"] else "",
         "intro_mode": "linear",
         "intro_layout": "linear",
         "base_video_path": base_key,
@@ -1860,6 +2393,11 @@ def render_execution_plan(
         "orientation_reason": plan["output_orientation_reason"],
         "duration_s": plan["resolved_duration_s"],
         "text_elements": plan["text_elements"],
+        "sound_effects": list(plan.get("editor_sound_effects") or []),
+        "media_overlays": list(plan.get("editor_media_overlays") or []),
+        "visual_blocks": list(plan.get("editor_visual_blocks") or []),
+        "motion_scenes": list(plan.get("editor_motion_scenes") or []),
+        "custom_effects": list(plan.get("editor_custom_effects") or []),
         "text_elements_user_edited": False,
         "story_timeline": plan["story_timeline"],
         "proposal_version": plan["proposal_version"],

@@ -53,6 +53,13 @@ export interface VirtualTimeline {
     baseInsertionS: number;
     downstreamShiftS: number;
   } | null;
+  /** Baseline-output to draft-output mapping for trim/remove/reorder ripples. */
+  segmentProjection?: Array<{
+    baseStartS: number;
+    baseEndS: number;
+    draftStartS: number;
+    draftEndS: number;
+  }>;
 }
 
 export interface VirtualTimeMapping {
@@ -91,13 +98,22 @@ export function virtualDeckLookPresetsAtTime(
   // the preview component owns that window's visuals entirely.
   if (!mapping || mapping.entry.kind !== "clip") return result;
 
-  result[activeDeck] = slots[mapping.entry.slotIndex]?.lookPreset ?? "none";
-  if (transitionPreviewAtTime(timeline, timeS)) {
-    const incoming = timeline.entries[mapping.entryIndex + 1];
+  const transition = transitionPreviewAtTime(timeline, timeS);
+  if (transition) {
+    // mapVirtualTime is intentionally right-biased, so during an overlap it
+    // resolves the incoming entry. The active video deck still owns the
+    // outgoing source until the deck swap completes.
+    const outgoing = timeline.entries[mapping.entryIndex - 1];
+    const incoming = timeline.entries[mapping.entryIndex];
+    if (outgoing?.kind === "clip") {
+      result[activeDeck] = slots[outgoing.slotIndex]?.lookPreset ?? "none";
+    }
     if (incoming && incoming.kind === "clip") {
       result[activeDeck === "a" ? "b" : "a"] =
         slots[incoming.slotIndex]?.lookPreset ?? "none";
     }
+  } else {
+    result[activeDeck] = slots[mapping.entry.slotIndex]?.lookPreset ?? "none";
   }
   return result;
 }
@@ -111,13 +127,19 @@ export function virtualDeckLookAdjustmentsAtTime(
   const result: Record<"a" | "b", LookAdjustments | null> = { a: null, b: null };
   const mapping = mapVirtualTime(timeline, currentTimeS);
   if (!mapping || mapping.entry.kind !== "clip") return result;
-  result[activeDeck] = slots[mapping.entry.slotIndex]?.lookAdjustments ?? null;
-  if (transitionPreviewAtTime(timeline, currentTimeS)) {
-    const incoming = nextVirtualEntry(timeline, mapping.entryIndex);
+  const transition = transitionPreviewAtTime(timeline, currentTimeS);
+  if (transition) {
+    const outgoing = timeline.entries[mapping.entryIndex - 1];
+    const incoming = timeline.entries[mapping.entryIndex];
+    if (outgoing?.kind === "clip") {
+      result[activeDeck] = slots[outgoing.slotIndex]?.lookAdjustments ?? null;
+    }
     if (incoming && incoming.kind === "clip") {
       const incomingDeck = activeDeck === "a" ? "b" : "a";
       result[incomingDeck] = slots[incoming.slotIndex]?.lookAdjustments ?? null;
     }
+  } else {
+    result[activeDeck] = slots[mapping.entry.slotIndex]?.lookAdjustments ?? null;
   }
   return result;
 }
@@ -147,9 +169,11 @@ export function buildVirtualTimeline(
   clips: Pick<TimelineClip, "clip_index" | "signed_url">[],
   grid: number[] = [],
   carousel?: VirtualCarouselSplice | null,
+  baselineSlots: DraftSlot[] = slots,
 ): VirtualTimeline {
   const clipUrlByIndex = new Map(clips.map((clip) => [clip.clip_index, clip.signed_url]));
   const windows = slotWindows(slots, grid);
+  const baselineWindows = slotWindows(baselineSlots, grid);
   const clipEntries: VirtualTimelineEntry[] = [];
 
   slots.forEach((slot, slotIndex) => {
@@ -267,6 +291,21 @@ export function buildVirtualTimeline(
     carouselProjection = { baseInsertionS, downstreamShiftS };
   }
 
+  const draftEntryByKey = new Map(
+    clipEntries.map((entry) => [entry.slotKey, entry] as const),
+  );
+  const segmentProjection = baselineSlots.flatMap((slot, index) => {
+    const base = baselineWindows[index];
+    const draft = draftEntryByKey.get(slot.key);
+    if (!base || base.startS == null || base.durationS <= 0 || !draft) return [];
+    return [{
+      baseStartS: base.startS,
+      baseEndS: base.startS + base.durationS,
+      draftStartS: draft.startS,
+      draftEndS: draft.startS + draft.durationS,
+    }];
+  });
+
   const last = entries.at(-1);
 
   return {
@@ -274,6 +313,7 @@ export function buildVirtualTimeline(
     totalDurationS: last ? roundMillis(last.startS + last.durationS) : 0,
     hasMissingSource: clipEntries.some((entry) => !entry.sourceUrl),
     carouselProjection,
+    segmentProjection,
   };
 }
 
@@ -288,14 +328,27 @@ export function projectBaseTime(
   baseTimeS: number,
   boundary: "before" | "after" = "after",
 ): number {
-  const projection = timeline.carouselProjection;
   const safe = Math.max(0, baseTimeS);
-  if (!projection) return safe;
+  const segments = timeline.segmentProjection ?? [];
+  const segment = segments.find(
+    (candidate) => safe >= candidate.baseStartS - EPSILON && safe <= candidate.baseEndS + EPSILON,
+  );
+  const nextSegment = segments.find((candidate) => safe < candidate.baseStartS - EPSILON);
+  const previousSegment = [...segments].reverse().find((candidate) => safe > candidate.baseEndS + EPSILON);
+  const projectedSegment = segment
+    ? segment.draftStartS + Math.min(segment.draftEndS - segment.draftStartS, Math.max(0, safe - segment.baseStartS))
+    : nextSegment
+      ? nextSegment.draftStartS + Math.max(0, safe - nextSegment.baseStartS)
+      : previousSegment
+        ? previousSegment.draftEndS + Math.max(0, safe - previousSegment.baseEndS)
+        : safe;
+  const projection = timeline.carouselProjection;
+  if (!projection) return roundMillis(projectedSegment);
   const shouldRipple =
     boundary === "after"
-      ? safe >= projection.baseInsertionS - EPSILON
-      : safe > projection.baseInsertionS + EPSILON;
-  return roundMillis(safe + (shouldRipple ? projection.downstreamShiftS : 0));
+      ? projectedSegment >= projection.baseInsertionS - EPSILON
+      : projectedSegment > projection.baseInsertionS + EPSILON;
+  return roundMillis(projectedSegment + (shouldRipple ? projection.downstreamShiftS : 0));
 }
 
 /** Map an authored interval. A range crossing the insertion point stretches
@@ -316,11 +369,18 @@ export function unprojectOutputTime(timeline: VirtualTimeline, outputTimeS: numb
   const carousel = timeline.entries.find((entry) => entry.kind === "carousel");
   const projection = timeline.carouselProjection;
   const safe = Math.max(0, outputTimeS);
-  if (!carousel || !projection) return safe;
+  const segments = timeline.segmentProjection ?? [];
+  const segment = segments.find(
+    (candidate) => safe >= candidate.draftStartS - EPSILON && safe <= candidate.draftEndS + EPSILON,
+  );
+  const inverseSegment = segment
+    ? segment.baseStartS + Math.min(segment.baseEndS - segment.baseStartS, Math.max(0, safe - segment.draftStartS))
+    : safe;
+  if (!carousel || !projection) return roundMillis(inverseSegment);
   const downstreamStartS = projection.baseInsertionS + projection.downstreamShiftS;
-  if (safe < carousel.startS - EPSILON) return safe;
+  if (safe < carousel.startS - EPSILON) return roundMillis(inverseSegment);
   if (safe < downstreamStartS - EPSILON) return projection.baseInsertionS;
-  return roundMillis(Math.max(0, safe - projection.downstreamShiftS));
+  return roundMillis(Math.max(0, inverseSegment - projection.downstreamShiftS));
 }
 
 /** Invert an editor range without allowing a drag wholly inside the inserted
@@ -403,7 +463,10 @@ export function mapVirtualTime(
   const virtualTimeS = Math.max(0, Math.min(timeline.totalDurationS, timeS));
   const endIndex = timeline.entries.length - 1;
 
-  for (let i = 0; i < timeline.entries.length; i += 1) {
+  // Walk from the end so an overlapped transition interval belongs to the
+  // incoming segment. This also makes exact shared boundaries right-biased,
+  // matching the story compiler and inverse scrub contract.
+  for (let i = endIndex; i >= 0; i -= 1) {
     const entry = timeline.entries[i];
     const endS = entry.startS + entry.durationS;
     const contains =
