@@ -225,8 +225,39 @@ const LANE_C_BASELINE: Record<string, number> = {};
 const LANE_D_BASELINE: Record<string, number> = {};
 
 // ── Lane E ──────────────────────────────────────────────────────────────
-// (none yet)
-const LANE_E_BASELINE: Record<string, number> = {};
+// Lane E ships as three file-disjoint PRs (E1/E2/E3, DESIGN.md §15 "Lane E").
+// Each sub-lane gets its own block below so the three PRs never touch the
+// same hunk of this file.
+
+// ── Lane E1 ──────────────────────────────────────────────────────────────
+// (none yet — EditorShell.tsx)
+const LANE_E1_BASELINE: Record<string, number> = {};
+
+// ── Lane E2 ──────────────────────────────────────────────────────────────
+// ToolDrawer.tsx / InspectorPanel.tsx / inspector-fields.tsx migrated to
+// Select/Input/Textarea/Tabs/Slider/Popover/Button. Remaining raw controls
+// are deliberate: type="range"/"color"/"file"/"radio" (excluded from the
+// count above), plus a handful of pointer-drag scrubbers (VideoOverlaySource
+// Window / ClipInspector source-range handles, the Creator Blocks catalog
+// grid) that stay hand-rolled — Radix's Button/Slider primitives don't fit a
+// custom drag gesture or a multi-child card layout without real risk of
+// regressing the interaction.
+const LANE_E2_BASELINE: Record<string, number> = {
+  "app/plan/items/[id]/_editor/ToolDrawer.tsx": 3,
+  "app/plan/items/[id]/_editor/InspectorPanel.tsx": 3,
+  "app/plan/items/[id]/_editor/inspector-fields.tsx": 0,
+};
+
+// ── Lane E3 ──────────────────────────────────────────────────────────────
+// (none yet — CopilotDrawer.tsx, CaptionsDrawer.tsx, StylesDrawer.tsx,
+// MotionInspector.tsx, Sheet.tsx, editor-icons.tsx)
+const LANE_E3_BASELINE: Record<string, number> = {};
+
+const LANE_E_BASELINE: Record<string, number> = {
+  ...LANE_E1_BASELINE,
+  ...LANE_E2_BASELINE,
+  ...LANE_E3_BASELINE,
+};
 
 // ── Lane F ──────────────────────────────────────────────────────────────
 // (none yet)

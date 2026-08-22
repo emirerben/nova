@@ -84,6 +84,15 @@ describe("deleteKeyAllowed — focus guard", () => {
     expect(deleteKeyAllowed({ tagName: "input" })).toBe(false); // case-insensitive
     expect(deleteKeyAllowed({ tagName: "DIV", isContentEditable: true })).toBe(false);
   });
+
+  it("blocks delete while a shadcn Select trigger (role=combobox) has focus", () => {
+    // Radix SelectTrigger renders a <button role="combobox">, not a native
+    // <select> — the BUTTON tag alone would otherwise fall through to "allow".
+    const trigger = document.createElement("button");
+    trigger.setAttribute("role", "combobox");
+    expect(deleteKeyAllowed(trigger)).toBe(false);
+    expect(deleteKeyAllowed({ tagName: "BUTTON", getAttribute: () => "combobox" })).toBe(false);
+  });
 });
 
 describe("spaceShortcutAllowed — composer focus guard", () => {

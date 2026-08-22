@@ -114,14 +114,24 @@ export function escapeAction(state: {
  * Delete-key focus guard (plan §5): Delete/Backspace removes the selected
  * element ONLY when keyboard focus is not inside a text-entry surface —
  * otherwise the user is editing text and the keystroke belongs to the field.
+ *
+ * `role="combobox"` is included alongside the native text-entry tags: a
+ * shadcn/ui `<Select>` trigger (Lane E2, DESIGN.md §15) renders as a
+ * `<button role="combobox">`, not a native `<select>` — without this guard
+ * Delete while a Select is focused would fall through to "remove the
+ * selected block" instead of doing nothing.
  */
 export function deleteKeyAllowed(
-  target: { tagName?: string; isContentEditable?: boolean } | null,
+  target:
+    | { tagName?: string; isContentEditable?: boolean; getAttribute?: (name: string) => string | null }
+    | null,
 ): boolean {
   if (!target) return true;
   if (target.isContentEditable) return false;
   const tag = (target.tagName ?? "").toUpperCase();
-  return tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT";
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return false;
+  if (target.getAttribute?.("role") === "combobox") return false;
+  return true;
 }
 
 // ── Store ─────────────────────────────────────────────────────────────────────

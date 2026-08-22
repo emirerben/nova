@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.47.6.0] — 2026-08-22
+
+### Design system
+- **Editor ToolDrawer + Inspector on shadcn controls (Kria Design System
+  migration, Lane E2).** `_editor/ToolDrawer.tsx`, `_editor/InspectorPanel.tsx`,
+  and `_editor/inspector-fields.tsx` move onto the shadcn primitives: every
+  native `<select>` (Replace/Motion/Background type & asset/Entrance/Exit/
+  Base audio/Sound effects/Font size/Animation/Theme transition/Text case/
+  Shadow effect) becomes `<Select>` with an `aria-label` on the trigger; text
+  and number inputs become `<Input>` (color/range/file inputs stay raw); the
+  Composition, "This caption" context, and text-content textareas become
+  `<Textarea>`; the Preset-categories and sheet-mode Basic/Presets tab strips
+  become `<Tabs>` restyled as pills; the background-music volume, bed-level,
+  SFX-volume, overlay-scale, stroke-width, per-cue caption size, and per-clip
+  Look-adjustment sliders become `<Slider>`; the font picker's backdrop-div
+  dropdown becomes a `<Popover>`; the Lyrics toggle becomes `<Switch>`; the
+  vast majority of buttons become `<Button>` variants. A handful of raw
+  controls stay intentionally native: `SongWindowSelector` and the ClipInspector/
+  overlay source-window scrub bars (custom pointer-drag scrubbers, not a
+  Slider gesture), the Creator Blocks catalog grid (multi-child card layout),
+  and `type="range"/"color"/"file"/"radio"` inputs (excluded from the raw-
+  control guard by design).
+- **Delete-key focus guard now recognizes Select triggers.**
+  `useEditorSelection.deleteKeyAllowed` adds `role="combobox"` alongside the
+  native `INPUT`/`TEXTAREA`/`SELECT` tag check — a Radix `SelectTrigger`
+  renders as a `<button role="combobox">`, not a native `<select>`, so
+  without this the Delete key would fall through and remove the selected
+  timeline block while a Select was focused.
+- Raw-control guard (`raw-controls-guard.test.ts`): `ToolDrawer.tsx` 42 → 3,
+  `InspectorPanel.tsx` 34 → 3, `inspector-fields.tsx` 3 → 0. Lane E's block
+  splits into `LANE_E1`/`LANE_E2`/`LANE_E3` sub-blocks (three file-disjoint
+  PRs) so E1/E3 land without touching this lane's hunk.
+- Depends on #875 (Lane 0, shadcn/ui foundation) — merge order matters.
+
 ## [0.47.0.0] — 2026-08-22
 
 ### Design system
