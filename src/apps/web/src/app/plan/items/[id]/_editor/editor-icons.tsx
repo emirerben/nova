@@ -4,9 +4,17 @@
  * 24×24 stroke glyphs drawn to one spec: viewBox "0 0 24 24", stroke
  * currentColor at 1.6, round caps/joins, aria-hidden (accessible names come
  * from the wrapping control). PlayIcon is the one filled glyph.
+ *
+ * DESIGN.md §15 (Kria Design System migration, Lane E3): the *generic*
+ * glyphs — close, back/chevron, plus — are re-exported under their original
+ * names but now wrap `lucide-react` icons instead of hand-drawn paths, so
+ * every caller (`ToolDock.tsx`, `EditorShell.tsx`, …) keeps working with
+ * zero edits. Every other export here (tool glyphs, undo/redo, play/pause)
+ * is a bespoke Kria mark with no lucide equivalent and stays hand-drawn.
  */
 
 import type { ReactNode } from "react";
+import { ChevronLeft, Plus, X } from "lucide-react";
 
 export interface IconProps {
   className?: string;
@@ -103,13 +111,9 @@ export function StylesIcon({ className }: IconProps) {
   );
 }
 
-/** ‹ chevron. */
+/** ‹ chevron — lucide `ChevronLeft` (generic glyph, DESIGN.md §15). */
 export function BackIcon({ className }: IconProps) {
-  return (
-    <StrokeIcon className={className}>
-      <path d="M14.5 5.5L8 12l6.5 6.5" />
-    </StrokeIcon>
-  );
+  return <ChevronLeft strokeWidth={1.6} aria-hidden="true" className={className} />;
 }
 
 /** Curved arrow, counter-clockwise. */
@@ -169,21 +173,12 @@ export function PauseIcon({ className }: IconProps) {
   );
 }
 
+/** lucide `Plus` (generic glyph, DESIGN.md §15). */
 export function PlusIcon({ className }: IconProps) {
-  return (
-    <StrokeIcon className={className}>
-      <path d="M12 5v14" />
-      <path d="M5 12h14" />
-    </StrokeIcon>
-  );
+  return <Plus strokeWidth={1.6} aria-hidden="true" className={className} />;
 }
 
-/** ✕. */
+/** ✕ — lucide `X` (generic glyph, DESIGN.md §15). */
 export function CloseIcon({ className }: IconProps) {
-  return (
-    <StrokeIcon className={className}>
-      <path d="M6 6l12 12" />
-      <path d="M18 6L6 18" />
-    </StrokeIcon>
-  );
+  return <X strokeWidth={1.6} aria-hidden="true" className={className} />;
 }

@@ -11,6 +11,15 @@ import {
   type MotionPresetPatch,
 } from "@nova/motion-runtime";
 import { isBoundedCreatorImageAsset, type PoolAsset } from "@/lib/plan-api";
+import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { CloseIcon } from "./editor-icons";
 
 export interface CreatorBlockMotionControlPatch {
   motion?: Partial<CreatorBlockMotionConfigV2>;
@@ -140,14 +149,16 @@ export default function MotionInspector({
           <h2 className="truncate font-display text-[18px] text-[#0c0c0e]">{label}</h2>
         </div>
         {showClose && (
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon-sm"
             aria-label="Close (clears selection)"
             onClick={onClose}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[13px] text-[#71717a] hover:bg-zinc-100 focus-visible:outline-2 focus-visible:outline-[#0c0c0e]"
+            className="shrink-0"
           >
-            ✕
-          </button>
+            <CloseIcon className="h-4 w-4" />
+          </Button>
         )}
       </div>
 
@@ -268,13 +279,16 @@ export default function MotionInspector({
         </div>
       </fieldset>}
 
-      <button
+      {/* destructive = zinc, never red (D10 "no red walls" — DESIGN.md §15) */}
+      <Button
         type="button"
+        variant="destructive"
+        size="sm"
         onClick={() => onRemove(scene.id)}
-        className="mt-6 min-h-11 w-full rounded-lg border border-red-200 px-3 text-[12px] font-semibold text-red-600 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+        className="mt-6 w-full"
       >
         Remove block
-      </button>
+      </Button>
     </div>
   );
 }
@@ -392,8 +406,10 @@ function CreatorBlockFields({
           {selected.map((item, index) => (
             <li key={item.asset_id} className="flex min-h-11 items-center justify-between rounded-lg bg-zinc-50 px-3 text-[11px] text-[#52525b]">
               <span>Image {index + 1}</span>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="sm"
                 aria-label={`Move image ${index + 1} up`}
                 disabled={index === 0}
                 onClick={() => {
@@ -401,10 +417,9 @@ function CreatorBlockFields({
                   [next[index - 1], next[index]] = [next[index], next[index - 1]];
                   patchParams({ assets: next });
                 }}
-                className="min-h-9 px-2 font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:opacity-30"
               >
                 Move up
-              </button>
+              </Button>
             </li>
           ))}
         </ol>
@@ -489,18 +504,21 @@ function CreatorBlockMotionFields({
         <div className="mt-3 space-y-3">
           <label className="block text-[11px] text-[#71717a]">
             Easing
-            <select
-              aria-label="Motion easing"
+            <Select
               value={motion.easing}
-              onChange={(event) => onPatch(scene.id, {
-                motion: { easing: event.target.value as CreatorBlockMotionConfigV2["easing"] },
+              onValueChange={(value) => onPatch(scene.id, {
+                motion: { easing: value as CreatorBlockMotionConfigV2["easing"] },
               })}
-              className="mt-1 min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-2 text-[13px]"
             >
-              {(easing.values ?? []).map((value) => (
-                <option key={value} value={value}>{controlLabel(value)}</option>
-              ))}
-            </select>
+              <SelectTrigger aria-label="Motion easing" className="mt-1">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(easing.values ?? []).map((value) => (
+                  <SelectItem key={value} value={value}>{controlLabel(value)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </label>
           <MotionRange
             label="Hold"
@@ -542,18 +560,21 @@ function CreatorBlockMotionFields({
               return (
                 <label key={parameter.key} className="block text-[11px] text-[#71717a]">
                   {controlLabel(parameter.key)}
-                  <select
-                    aria-label={controlLabel(parameter.key)}
+                  <Select
                     value={value}
-                    onChange={(event) => onPatch(scene.id, {
-                      params: { [parameter.key]: event.target.value },
+                    onValueChange={(next) => onPatch(scene.id, {
+                      params: { [parameter.key]: next },
                     })}
-                    className="mt-1 min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-2 text-[13px]"
                   >
-                    {(parameter.values ?? []).map((option) => (
-                      <option key={option} value={option}>{controlLabel(option)}</option>
-                    ))}
-                  </select>
+                    <SelectTrigger aria-label={controlLabel(parameter.key)} className="mt-1">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(parameter.values ?? []).map((option) => (
+                        <SelectItem key={option} value={option}>{controlLabel(option)}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </label>
               );
             }

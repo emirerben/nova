@@ -141,6 +141,33 @@ All notable changes to this project will be documented in this file.
   splits into `LANE_E1`/`LANE_E2`/`LANE_E3` sub-blocks (three file-disjoint
   PRs) so E1/E3 land without touching this lane's hunk.
 - Depends on #875 (Lane 0, shadcn/ui foundation) — merge order matters.
+## [0.47.7.0] — 2026-08-22
+
+### Design system
+- **Editor drawers on shadcn primitives (Kria Design System migration, Lane
+  E3).** `CopilotDrawer`, `CaptionsDrawer`, `StylesDrawer`, `MotionInspector`,
+  and the pocket-editor `Sheet.tsx` move onto the Lane 0 primitives: Nova
+  copilot's message input and suggestion/undo chips are now `<Input>` and
+  `<Button variant="outline" size="pill">` (labels unchanged); the captions
+  Find field is `<Label>` + `<Input>`; `MotionInspector`'s close/remove/move
+  controls are `<Button>` (the red `border-red-200`/`text-red-600` "Remove
+  block" affordance is now `variant="destructive"` — zinc, not red, D10) and
+  its two enum pickers (easing, advanced motion params) are `<Select>`.
+  `Sheet.tsx` itself is unchanged apart from its close/grabber buttons
+  becoming `<Button variant="ghost" size="icon">` — the half-detent,
+  non-modal gesture sheet stays hand-rolled (Radix `Dialog` can't express a
+  non-modal half-open state), and its 34-assertion test suite is untouched.
+  `editor-icons.tsx`'s generic glyphs (`CloseIcon`, `BackIcon`, `PlusIcon`)
+  now wrap `lucide-react` icons under the same export names, so
+  `ToolDock.tsx`/`EditorShell.tsx` keep working unedited.
+- Left native (documented, not a jsdom-testability escape): `StylesDrawer`'s
+  `role="radio"` video-look preview card (rich media content with no
+  MediaRadioCard primitive yet) and `MotionInspector`'s gesture-driven
+  intensity/speed/hold sliders (`MotionRange`'s begin/preview/commit/cancel
+  pointer protocol is tested via direct `fireEvent.pointerDown/change/
+  pointerUp/pointerCancel` on a native `<input type="range">` — incompatible
+  with Radix `Slider`'s custom pointer handling) plus its image-tile asset
+  picker.
 
 ## [0.47.0.0] — 2026-08-22
 

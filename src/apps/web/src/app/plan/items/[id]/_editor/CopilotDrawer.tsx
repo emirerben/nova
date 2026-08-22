@@ -11,6 +11,9 @@ import type { UseEditDirectorResult } from "@/lib/edit-copilot/useEditDirector";
 import { NovaActivityFeed, NovaStepRow } from "@/components/progress";
 import type { NovaStep } from "@/lib/job-phases";
 import { InfoDot } from "@/components/ui/InfoDot";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { CloseIcon } from "./editor-icons";
 
 const STARTERS = [
   "Make the hook punchier",
@@ -226,14 +229,9 @@ export default function CopilotDrawer({
             edits preview instantly.
           </InfoDot>
         </span>
-        <button
-          type="button"
-          aria-label="Close Nova"
-          onClick={onClose}
-          className="flex h-11 w-11 items-center justify-center rounded-lg text-[13px] text-[#71717a] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
-        >
-          ✕
-        </button>
+        <Button type="button" variant="ghost" size="icon" aria-label="Close Nova" onClick={onClose}>
+          <CloseIcon className="h-4 w-4" />
+        </Button>
       </div>
 
       <div
@@ -481,42 +479,50 @@ export default function CopilotDrawer({
       <div className="flex flex-none flex-wrap gap-1.5 border-t border-zinc-200 px-4 pb-2 pt-3">
         {showContextualChips ? (
           <>
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="pill"
               disabled={unavailable || !!queued}
               onClick={onUndo}
-              className="min-h-11 rounded-full border border-zinc-200 bg-white px-3 text-[12px] text-[#3f3f46] hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
+              className="hover:border-lime-400 hover:text-lime-700"
             >
               Undo that
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="outline"
+              size="pill"
               disabled={unavailable || !!queued}
               onClick={() => onSend("Do that again")}
-              className="min-h-11 rounded-full border border-zinc-200 bg-white px-3 text-[12px] text-[#3f3f46] hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
+              className="hover:border-lime-400 hover:text-lime-700"
             >
               Do that again
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="outline"
+              size="pill"
               disabled={unavailable || !!queued}
               onClick={() => onSend("What else changed?")}
-              className="min-h-11 rounded-full border border-zinc-200 bg-white px-3 text-[12px] text-[#3f3f46] hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
+              className="hover:border-lime-400 hover:text-lime-700"
             >
               What else changed?
-            </button>
+            </Button>
           </>
         ) : (
           activeSuggestions.map((suggestion) => (
-            <button
+            <Button
               key={suggestion}
               type="button"
+              variant="outline"
+              size="pill"
               disabled={unavailable || !!queued}
               onClick={() => onSend(suggestion)}
-              className="min-h-11 rounded-full border border-zinc-200 bg-white px-3 text-[12px] text-[#3f3f46] hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
+              className="hover:border-lime-400 hover:text-lime-700"
             >
               {suggestion}
-            </button>
+            </Button>
           ))
         )}
       </div>
@@ -529,7 +535,7 @@ export default function CopilotDrawer({
         }}
       >
         <div className="min-w-0 flex-1">
-          <input
+          <Input
             ref={inputRef}
             type="text"
             value={draft}
@@ -550,7 +556,6 @@ export default function CopilotDrawer({
                   : "Tell me what to change..."
             }
             aria-label="Tell Nova what to change"
-            className="min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-[16px] text-[#0c0c0e] outline-none placeholder:text-[#a1a1aa] focus:border-lime-500 focus:ring-2 focus:ring-lime-500/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 md:text-[13px]"
           />
           {draft.length >= MAX_CHARS * 0.8 && (
             <p className="mt-1 text-right text-[11px] text-[#71717a]">

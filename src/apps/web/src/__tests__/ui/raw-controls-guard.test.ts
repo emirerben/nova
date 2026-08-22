@@ -253,7 +253,11 @@ const LANE_E2_BASELINE: Record<string, number> = {
 // ── Lane E3 ──────────────────────────────────────────────────────────────
 // (none yet — CopilotDrawer.tsx, CaptionsDrawer.tsx, StylesDrawer.tsx,
 // MotionInspector.tsx, Sheet.tsx, editor-icons.tsx)
-const LANE_E3_BASELINE: Record<string, number> = {};
+const LANE_E3_BASELINE: Record<string, number> = {
+  "app/plan/items/[id]/_editor/CopilotDrawer.tsx": 8,
+  "app/plan/items/[id]/_editor/CaptionsDrawer.tsx": 13,
+  "app/plan/items/[id]/_editor/MotionInspector.tsx": 5,
+};
 
 const LANE_E_BASELINE: Record<string, number> = {
   ...LANE_E1_BASELINE,
