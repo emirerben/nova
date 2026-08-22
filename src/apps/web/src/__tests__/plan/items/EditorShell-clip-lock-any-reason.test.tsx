@@ -137,6 +137,16 @@ jest.mock("@/app/plan/_components/useClipTimeline", () => ({
     totalS: 6,
     loadState: "ready",
     editWideLookPresets: ["none", "golden_hour", "faded_analog"],
+    lookPresets: [
+      "none",
+      "stadium_diffusion",
+      "olive_film",
+      "golden_hour",
+      "faded_analog",
+    ],
+    revisionNumber: null,
+    baseGeneration: null,
+    tombstones: [],
     reload: jest.fn(),
   }),
 }));

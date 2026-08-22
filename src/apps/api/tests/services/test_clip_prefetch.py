@@ -24,9 +24,7 @@ from app.services import clip_prefetch
 # Match the regex in `is_valid_prefetch_path` — must mirror the
 # `{user_uuid}/batch-{batch_id}/clip_NNN.ext` shape produced by
 # routes/presigned.py and routes/uploads.py drive batch import.
-_VALID_PATH = (
-    "00000000-0000-0000-0000-000000000001/batch-abc123def456/clip_001.mp4"
-)
+_VALID_PATH = "00000000-0000-0000-0000-000000000001/batch-abc123def456/clip_001.mp4"
 
 
 @pytest.fixture(autouse=True)
@@ -159,9 +157,13 @@ async def test_invalid_path_is_rejected_silently() -> None:
 async def test_duplicate_schedule_returns_false() -> None:
     # Patch enough that the inner task can't actually do work — we just want
     # to know whether schedule_prefetch returns True/False on the second call.
-    with patch("app.storage.download_to_file", MagicMock()):
+    async def _finish_without_io(_path: str, _hint: str) -> None:
+        return None
+
+    with patch.object(clip_prefetch, "_run_prefetch_locked", _finish_without_io):
         first = await clip_prefetch.schedule_prefetch(_VALID_PATH, "")
         second = await clip_prefetch.schedule_prefetch(_VALID_PATH, "")
+        await _drain_tasks()
     assert first is True
     assert second is False
 

@@ -1574,6 +1574,10 @@ export interface CameraEffect {
   role?: string | null;
 }
 
+export type EditorOperationCapability =
+  | boolean
+  | { editable: boolean; reason?: string | null };
+
 /**
  * Per-variant editor capability map — mirrors `_editor_capabilities` in
  * app/routes/generative_jobs.py. All-false ⇒ the editor shell is read-only;
@@ -1582,6 +1586,38 @@ export interface CameraEffect {
 export interface EditorCapabilities {
   /** Upload protocol selected by the server for this editor session. */
   overlay_upload_mode?: "legacy" | "pool";
+  /** V2 guided-story operation gates. Absent on legacy variants. */
+  clips?: {
+    add?: EditorOperationCapability;
+    remove?: EditorOperationCapability;
+    reorder?: EditorOperationCapability;
+    split?: EditorOperationCapability;
+    trim?: EditorOperationCapability;
+    transitions?: EditorOperationCapability;
+    looks?: EditorOperationCapability;
+    edit_wide_looks?: EditorOperationCapability;
+  };
+  music_operations?: {
+    swap?: EditorOperationCapability;
+    remove?: EditorOperationCapability;
+    level?: EditorOperationCapability;
+    window?: EditorOperationCapability;
+  };
+  /** Story-native timed-lane operation gates. Existing top-level booleans are
+   * retained below for compatibility with older web builds. */
+  lanes?: {
+    text?: EditorOperationCapability;
+    sfx?: EditorOperationCapability;
+    overlays?: EditorOperationCapability;
+    visual_blocks?: EditorOperationCapability;
+    motion_scenes?: EditorOperationCapability;
+    orientation?: EditorOperationCapability;
+  };
+  nova?: {
+    trim_clip_start?: EditorOperationCapability;
+    trim_output_start?: EditorOperationCapability;
+    remove_music?: EditorOperationCapability;
+  };
   text_elements?: boolean;
   timeline?: boolean;
   split_clips?: boolean;

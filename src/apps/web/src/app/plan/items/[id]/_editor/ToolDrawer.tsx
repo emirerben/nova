@@ -86,6 +86,8 @@ export default function ToolDrawer({
   musicLoading = false,
   currentMusicTrackId = null,
   musicEditable = false,
+  musicRemoveEditable = musicEditable,
+  musicRemoveDisabledReason = null,
   onPickMusic,
   onRemoveMusic,
   musicWindow,
@@ -154,6 +156,8 @@ export default function ToolDrawer({
   musicLoading?: boolean;
   currentMusicTrackId?: string | null;
   musicEditable?: boolean;
+  musicRemoveEditable?: boolean;
+  musicRemoveDisabledReason?: string | null;
   onPickMusic?: (trackId: string) => void;
   onRemoveMusic?: () => void;
   musicWindow?: SongWindowControl;
@@ -512,6 +516,8 @@ export default function ToolDrawer({
           musicLoading={musicLoading}
           currentMusicTrackId={currentMusicTrackId}
           musicEditable={musicEditable}
+          musicRemoveEditable={musicRemoveEditable}
+          musicRemoveDisabledReason={musicRemoveDisabledReason}
           onPickMusic={onPickMusic}
           onRemoveMusic={onRemoveMusic}
           musicWindow={musicWindow}
@@ -1672,6 +1678,8 @@ function SoundsDrawer({
   musicLoading,
   currentMusicTrackId,
   musicEditable,
+  musicRemoveEditable = musicEditable,
+  musicRemoveDisabledReason = null,
   onPickMusic,
   onRemoveMusic,
   musicWindow,
@@ -1683,32 +1691,48 @@ function SoundsDrawer({
   musicLoading: boolean;
   currentMusicTrackId: string | null;
   musicEditable: boolean;
+  musicRemoveEditable?: boolean;
+  musicRemoveDisabledReason?: string | null;
   onPickMusic?: (trackId: string) => void;
   onRemoveMusic?: () => void;
   musicWindow?: SongWindowControl;
 }) {
+  const removeMusicControl = currentMusicTrackId ? (
+    <>
+      <button
+        type="button"
+        disabled={!musicRemoveEditable}
+        title={!musicRemoveEditable ? musicRemoveDisabledReason ?? undefined : undefined}
+        onClick={() => onRemoveMusic?.()}
+        className="flex min-h-10 w-full items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#71717a] hover:border-zinc-400 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
+      >
+        Remove music
+      </button>
+      {!musicRemoveEditable && musicRemoveDisabledReason && (
+        <p className="mb-2 text-[11px] leading-4 text-[#71717a]" role="status">
+          {musicRemoveDisabledReason}
+        </p>
+      )}
+    </>
+  ) : null;
+
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
       <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Music</p>
       {!musicEditable ? (
-        <div className="mb-5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px] text-[#71717a]">
-          Music cannot be edited for this version.
-        </div>
+        <>
+          <div className="mb-3 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px] text-[#71717a]">
+            Music swapping is unavailable for this version.
+          </div>
+          {removeMusicControl && <div className="mb-5 space-y-2">{removeMusicControl}</div>}
+        </>
       ) : musicLoading ? (
         <div className="mb-5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px] text-[#71717a]">
           Loading songs...
         </div>
       ) : (
         <div className="mb-5 max-h-48 space-y-2 overflow-y-auto pr-1">
-          {currentMusicTrackId && (
-            <button
-              type="button"
-              onClick={() => onRemoveMusic?.()}
-              className="flex min-h-10 w-full items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#71717a] hover:border-zinc-400 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
-            >
-              Remove music
-            </button>
-          )}
+          {removeMusicControl}
           {musicTracks.map((track) => {
             const selected = track.id === currentMusicTrackId;
             return (

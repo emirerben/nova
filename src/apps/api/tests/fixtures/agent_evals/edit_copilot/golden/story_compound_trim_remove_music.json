@@ -1,0 +1,24 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-08-22-v28",
+  "input": {
+    "utterance": "trim the video from the first second and remove the music",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["timeline", "music"],
+      "slots": [{"output_start_s": 0, "output_end_s": 8, "duration_s": 8}],
+      "total_duration_s": 8,
+      "music": {"current_track_id": "track-old", "current_track_title": "Old Song", "removable": true, "swappable": true}
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"trim_output_start\",\"start_s\":1},{\"op\":\"remove_music\"}],\"confidence\":0.96,\"reply\":\"Trimmed the first second and removed the music.\",\"suggestions\":[],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [{"op": "trim_output_start", "start_s": 1}, {"op": "remove_music"}],
+    "confidence": 0.96,
+    "reply": "Trimmed the first second and removed the music.",
+    "suggestions": [],
+    "needs_clarification": false
+  },
+  "meta": {"source": "hand_authored_golden", "case": "timeline trim and music removal compose without beat/speech timing"}
+}

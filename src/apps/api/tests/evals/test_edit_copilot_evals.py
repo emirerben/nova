@@ -17,6 +17,17 @@ AGENT_NAME = "nova.edit.copilot"
 FIXTURE_PATHS = discover_fixtures(AGENT_DIR)
 
 
+def test_story_native_goldens_pin_the_current_prompt_version() -> None:
+    """New story operations must remain attributable to the prompt that authored them."""
+    from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
+
+    story_fixtures = [path for path in FIXTURE_PATHS if path.stem.startswith("story_")]
+    assert story_fixtures, "story-native replay goldens are missing"
+    assert all(
+        load_fixture(path).prompt_version == EDIT_COPILOT_PROMPT_VERSION for path in story_fixtures
+    )
+
+
 @pytest.mark.skipif(
     not FIXTURE_PATHS,
     reason=(

@@ -340,6 +340,44 @@ force-aligns captions, and keeps music/text prework disabled. Generic non-narrat
 with a voiceover retain the existing generic voiceover behavior; the product must use a narrated
 format when transcript captions are required.
 
+## Guided Story Editor V2
+
+This section applies only when the render-program compatibility policy selects the strict
+guided-story renderer. Audio-led items remain on their native renderer and ignore guided editor
+revisions.
+
+`GUIDED_STORY_EDITOR_V2_ENABLED` is a default-false write gate for story-native editing. Legacy
+stories without a `guided_edit_revision` remain byte-compatible and continue through the strict
+approved-story renderer. Turning the gate off blocks new V2 writes but does not prevent a worker
+from finishing or redelivering a revision that was already persisted.
+
+The approved proposal and `guided_story_execution_plan` remain immutable. A V2 Save atomically
+validates and stores one normalized `guided_edit_revision` on the guided variant, compares both the
+revision number and base render generation, and enqueues exactly one render. The revision pins its
+approval digest, stable segment/media IDs, every approved source generation (including unused
+sources), normalized timeline and music state, lane hashes, renderer/effect schema versions, and a
+canonical state hash. Direct timeline and orientation writes use the same CAS tokens; raw revision
+JSON is not a public write surface.
+
+The story compiler owns trim, split, add/remove/reorder, transitions, Looks, orientation, and music
+swap/remove/window/level. It never adds guided stories to the montage allowlist. Video windows do
+not stretch or loop; images are timed stills; all segments normalize to 30 fps; and transition
+overlap is capped by the smaller of the requested duration, 0.3 seconds, or 30 percent of either
+neighbor. The approved source pool is revalidated against owned, ready media records and exact
+storage generations on Save and render. New uploads require a new approval.
+
+Timed text, SFX, media overlays, visual blocks, and motion blocks are projected from stable segment
+anchors into the revised output clock. Fully removed intervals become persisted, restorable
+tombstones and are reported in the Save receipt. Music stays anchored to output time zero and is
+cropped to the revised duration. Explicit music removal produces silent stereo AAC and records
+`music_removed`; it is distinct from retaining the track at zero gain.
+
+V2 outputs carry receipt schema 2: immutable approval provenance, revision/state hashes, exact
+source order and generations, effective timing/transitions/Looks/music, lane hashes, tombstones,
+duration/canvas/codecs, and output storage generations. Receipt schema 1 remains valid for untouched
+legacy stories. Text remains topmost, and text-only fast reburn is allowed only when a clean base is
+proven to match the active revision hash; otherwise the worker performs a full story render.
+
 Ready status requires a verified `render_receipt`: exact beat/media IDs, per-moment FFmpeg evidence,
 per-text rendered-alpha bounds inside the canvas, duration, the selected 1080×1920 or 1920×1080
 H.264 canvas, AAC audio, and the exact uploaded base/output object generations. Live render attempts
@@ -367,6 +405,18 @@ detail and proposal mutation responses carry the full review payload, keeping li
   `tests/evals/test_edit_guide_evals.py`
 - Strict compiler/fault injection: `tests/pipeline/test_guided_story.py`
 - Real mixed-media FFmpeg render: `tests/pipeline/test_guided_story_ffmpeg.py`
+- V2 revision/timeline compiler: `tests/schemas/test_guided_edit_revision.py`
+- Shared web/runtime projection parity: `tests/fixtures/guided-story-parity/`,
+  `tests/schemas/test_guided_story_parity.py`, and
+  `src/__tests__/guided-story-parity.test.ts`
+- Atomic editor commit and CAS: `tests/routes/test_editor_commit.py`
+- Desktop acceptance fixture: `src/apps/web/e2e/guided-story-editor.spec.ts`
+
+Run the editor parity gate before shipping timeline changes:
+
+```bash
+make verify-editor-timeline
+```
 
 Run the focused eval in replay mode:
 

@@ -230,7 +230,15 @@ def test_all_pool_routes_404_when_flag_off(
 ):
     user = _user()
     _override(user, AsyncMock())
-    with patch(f"{SETTINGS}.overlay_autoplace_enabled", False):
+    # The shared pool now serves auto-placement, visual blocks, guided edits,
+    # and manual overlays. It is unavailable only when every owning feature is
+    # disabled, so pin the complete capability gate here.
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", False),
+        patch(f"{SETTINGS}.visual_blocks_enabled", False),
+        patch(f"{SETTINGS}.guided_edit_capability_enabled", False),
+        patch(f"{SETTINGS}.media_overlays_enabled", False),
+    ):
         resp = getattr(client, method)(
             f"/plan-items/{uuid.uuid4()}{path_suffix}",
             **({"json": body} if body is not None else {}),

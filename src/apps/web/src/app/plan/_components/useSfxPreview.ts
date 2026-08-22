@@ -10,6 +10,8 @@ interface SfxAudioEntry {
   auxAudios: HTMLAudioElement[];
   gainNode: GainNode | null;
   scheduledAt: number | null; // timeout id
+  /** Set while an SFX is active on an external output clock. */
+  externalStarted: boolean;
 }
 
 const MAX_NATIVE_GAIN_AUDIOS = 4;
@@ -36,10 +38,24 @@ export function useSfxPreview(
   videoRef: React.RefObject<HTMLVideoElement | null>,
   placements: SoundEffectPlacement[],
   audioUrls: Record<string, string>,
+  options?: {
+    /** Output clock used by the virtual source-deck preview. */
+    clock?: {
+      getSnapshot: () => number;
+      subscribe: (listener: () => void) => () => void;
+    } | null;
+    /** Transport state for the external output clock. */
+    playing?: boolean;
+  },
 ) {
   const entriesRef = useRef<SfxAudioEntry[]>([]);
   const timeoutsRef = useRef<number[]>([]);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const externalPlayingRef = useRef(options?.playing ?? false);
+  externalPlayingRef.current = options?.playing ?? false;
+  const externalLastTimeRef = useRef<number | null>(null);
+  const externalLastWallTimeRef = useRef<number | null>(null);
+  const externalWasPlayingRef = useRef(options?.playing ?? false);
 
   function clearTimeouts() {
     timeoutsRef.current.forEach((t) => clearTimeout(t));
@@ -95,8 +111,11 @@ export function useSfxPreview(
   }
 
   function syncAll(video: HTMLVideoElement) {
+    syncAt(video.currentTime, video.paused, () => !video.paused);
+  }
+
+  function syncAt(now: number, paused: boolean, isPlaying: () => boolean) {
     clearTimeouts();
-    const now = video.currentTime;
     for (const entry of entriesRef.current) {
       const { placement, audio } = entry;
       const url = audioUrls[placement.src_gcs_path] || audioUrls[placement.id] || (placement as unknown as { _previewUrl?: string })._previewUrl;
@@ -112,7 +131,7 @@ export function useSfxPreview(
         audio.duration || 60,
       );
 
-      if (video.paused) {
+      if (paused) {
         pauseEntry(entry);
         if (activeOffset != null) {
           setEntryCurrentTime(entry, activeOffset);
@@ -129,13 +148,70 @@ export function useSfxPreview(
           pauseEntry(entry);
           const delayMs = -offsetInSfx * 1000;
           const tid = window.setTimeout(() => {
-            if (!video.paused) {
+            if (isPlaying()) {
               setEntryCurrentTime(entry, trimStartS);
               playPreviewAudio(entry);
             }
           }, delayMs);
           timeoutsRef.current.push(tid);
         }
+      }
+    }
+  }
+
+  /**
+   * Sync against the composed output clock rather than a source deck's local
+   * media time. The virtual preview can swap decks while the output playhead
+   * remains continuous, so this scheduler is intentionally independent of
+   * either source video's play/pause events.
+   */
+  function syncExternal(now: number, playing: boolean) {
+    clearTimeouts();
+    const previous = externalLastTimeRef.current;
+    const wallNow = performance.now();
+    const previousWall = externalLastWallTimeRef.current;
+    const expectedDelta =
+      previousWall != null && externalWasPlayingRef.current && playing
+        ? Math.max(0, (wallNow - previousWall) / 1000)
+        : 0;
+    // Compare the output-clock delta with elapsed wall time instead of using a
+    // coarse absolute threshold. This catches short scrubs while leaving
+    // ordinary frame progression (including a temporarily janky UI) alone.
+    const jumped =
+      previous != null && Math.abs(now - previous - expectedDelta) > 0.12;
+    if (jumped) {
+      entriesRef.current.forEach((entry) => {
+        entry.externalStarted = false;
+        pauseEntry(entry);
+      });
+    }
+    externalLastTimeRef.current = now;
+    externalLastWallTimeRef.current = wallNow;
+    externalWasPlayingRef.current = playing;
+
+    for (const entry of entriesRef.current) {
+      const { placement, audio } = entry;
+      const url = audioUrls[placement.src_gcs_path] || audioUrls[placement.id] || (placement as unknown as { _previewUrl?: string })._previewUrl;
+      if (!url) {
+        pauseEntry(entry);
+        entry.externalStarted = false;
+        continue;
+      }
+      const activeOffset = sfxPlaybackOffsetAt(placement, now, audio.duration || 60);
+
+      if (!playing) {
+        pauseEntry(entry);
+        if (activeOffset != null) setEntryCurrentTime(entry, activeOffset);
+        entry.externalStarted = false;
+      } else if (activeOffset != null) {
+        if (!entry.externalStarted) {
+          setEntryCurrentTime(entry, activeOffset);
+          playPreviewAudio(entry);
+          entry.externalStarted = true;
+        }
+      } else {
+        if (entry.externalStarted) pauseEntry(entry);
+        entry.externalStarted = false;
       }
     }
   }
@@ -178,19 +254,28 @@ export function useSfxPreview(
           return aux;
         });
       }
-      const entry = { placement: p, audio, auxAudios, gainNode, scheduledAt: null };
+      const entry = { placement: p, audio, auxAudios, gainNode, scheduledAt: null, externalStarted: false };
       if (url) setEntryUrl(entry, url);
       setPreviewGain(entry);
       return entry;
     });
 
-    const video = videoRef.current;
-    if (video) syncAll(video);
+    if (options?.clock) {
+      syncExternal(options.clock.getSnapshot(), options.playing ?? false);
+    } else {
+      const video = videoRef.current;
+      if (video) syncAll(video);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [placements, audioUrls]);
+  }, [placements, audioUrls, options?.clock]);
 
   // Attach video event listeners
   useEffect(() => {
+    if (options?.clock) {
+      const sync = () => syncExternal(options.clock!.getSnapshot(), externalPlayingRef.current);
+      sync();
+      return options.clock.subscribe(sync);
+    }
     const video = videoRef.current;
     if (!video) return;
 
@@ -235,5 +320,13 @@ export function useSfxPreview(
       entriesRef.current.forEach((entry) => pauseEntry(entry, true));
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [videoRef, placements, audioUrls]);
+  }, [videoRef, placements, audioUrls, options?.clock]);
+
+  // A transport play/pause change does not necessarily publish a new clock
+  // sample, so sync once when that state changes as well.
+  useEffect(() => {
+    if (!options?.clock) return;
+    syncExternal(options.clock.getSnapshot(), options.playing ?? false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [options?.clock, options?.playing]);
 }

@@ -72,6 +72,7 @@ export function splitSlotAt(
     ...slot,
     key: newKey,
     slotId: null, // trailing half is a new (server-unknown) slot
+    parentSegmentId: slot.slotId ?? slot.parentSegmentId ?? slot.key,
     inS: slot.inS + leftDur,
     durationS: rightDur,
     durationBeats: null,

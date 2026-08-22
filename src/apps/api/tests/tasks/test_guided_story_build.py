@@ -305,6 +305,64 @@ def test_guided_text_reburn_never_falls_through_to_legacy_montage(monkeypatch) -
         )
 
 
+def test_guided_revision_regen_dispatches_persisted_revision_without_montage(
+    monkeypatch,
+) -> None:
+    job_id = "12345678-1234-5678-1234-567812345678"
+    revision = {"revision_number": 7, "state_hash": "revision-hash"}
+    existing = {
+        "variant_id": "guided_story",
+        "resolved_archetype": "guided_story",
+        "guided_edit_revision": revision,
+    }
+    job = SimpleNamespace(
+        status="variants_ready",
+        all_candidates={"clip_paths": ["users/u/approved.mp4"]},
+        assembly_plan={"variants": [existing]},
+    )
+
+    class _Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, model, _pk, **_kwargs):
+            return job if model is gb.Job else None
+
+    calls: list[tuple] = []
+    monkeypatch.setattr(gb, "_sync_session", lambda: _Session())
+    monkeypatch.setattr(
+        gb,
+        "_rerender_guided_story_revision",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        gb,
+        "_ingest_clips",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("guided revision fell through to montage ingest")
+        ),
+    )
+
+    gb._run_regenerate_variant(
+        job_id,
+        "guided_story",
+        None,
+        None,
+        False,
+        render_gen_id="render-7",
+    )
+
+    assert calls == [
+        (
+            (job_id, existing),
+            {"revision": revision, "render_gen_id": "render-7"},
+        )
+    ]
+
+
 def test_guided_text_reburn_pins_base_and_refreshes_output_receipt(monkeypatch) -> None:
     from app import storage
     from app.pipeline import guided_story

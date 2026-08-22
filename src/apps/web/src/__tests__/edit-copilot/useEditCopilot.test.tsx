@@ -147,6 +147,34 @@ describe("outcomeAuthoritativeReply", () => {
       "Applied: Caption text replaced: Kriya → Kria · 14 matches in 12 lines.\n\nCouldn't apply: Clip 2: changed since request",
     );
   });
+
+  it("preserves a useful model explanation when an edit has no effect", () => {
+    expect(outcomeAuthoritativeReply({
+      modelReply: "The draft already starts at that point.",
+      intent: "edit",
+      needsClarification: false,
+      applied: [],
+      rejected: [],
+    })).toBe("I didn't change the draft.\n\nThe draft already starts at that point.");
+  });
+
+  it("does not repeat a success claim when clarification leaves the draft unchanged", () => {
+    expect(outcomeAuthoritativeReply({
+      modelReply: "Removed the music.",
+      intent: "edit",
+      needsClarification: true,
+      applied: [],
+      rejected: [],
+    })).toBe("I didn't change the draft.");
+
+    expect(outcomeAuthoritativeReply({
+      modelReply: "The track is already removed.",
+      intent: "edit",
+      needsClarification: true,
+      applied: [],
+      rejected: [],
+    })).toBe("I didn't change the draft.\n\nThe track is already removed.");
+  });
 });
 
 describe("deriveRecentEditHistory", () => {
