@@ -1669,14 +1669,18 @@ async def set_item_voiceover(
     clears a prior recording.
     No re-render is triggered — the user still needs to click Generate.
     """
+    # ``rollback()`` expires request-scoped ORM objects. Capture the primitive
+    # identity before storage validation so later ownership checks cannot
+    # trigger implicit async IO through ``user.id``.
+    owner_id = user.id
     voiceover_path = body.voiceover_gcs_path
     if voiceover_path is None:
-        item = await _load_owned_item(item_id, user.id, db, for_update=True)
+        item = await _load_owned_item(item_id, owner_id, db, for_update=True)
         item.voiceover_gcs_path = None
     else:
         # Establish item ownership before touching storage, but do not hold the
         # plan/persona/item lock chain across the external metadata call.
-        await _load_owned_item(item_id, user.id, db)
+        await _load_owned_item(item_id, owner_id, db)
         try:
             _validate_voiceover_path(voiceover_path)
         except ValueError as exc:
@@ -1685,7 +1689,7 @@ async def set_item_voiceover(
                 detail=str(exc),
             ) from exc
 
-        own_direct_prefix = f"{DIRECT_VOICEOVER_PREFIX}{user.id}/"
+        own_direct_prefix = f"{DIRECT_VOICEOVER_PREFIX}{owner_id}/"
         synthetic_direct_prefix = f"{DIRECT_VOICEOVER_PREFIX}{SYNTHETIC_USER_ID}/"
         strict = settings.generative_direct_voiceover_strict_enabled
         if strict and not voiceover_path.startswith(own_direct_prefix):
@@ -1732,11 +1736,11 @@ async def set_item_voiceover(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Voiceover recording must be audio",
             )
-        item = await _load_owned_item(item_id, user.id, db, for_update=True)
+        item = await _load_owned_item(item_id, owner_id, db, for_update=True)
         item.voiceover_gcs_path = voiceover_path
         item.audio_mode = "voiceover"
     await db.commit()
-    reloaded = await _load_owned_item(item_id, user.id, db)
+    reloaded = await _load_owned_item(item_id, owner_id, db)
     instruction_level = await _get_instruction_level(reloaded, db)
     return plan_item_response(reloaded, instruction_level=instruction_level)
 
