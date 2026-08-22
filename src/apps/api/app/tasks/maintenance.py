@@ -42,6 +42,9 @@ _POOL_HEIF_DECODER_RECOVERY_MAX_ATTEMPTS = 2
 _POOL_RECONCILE_BATCH = 100
 _POOL_RESERVATION_TTL = timedelta(minutes=15)
 _POOL_RESERVATION_CLEANUP_GRACE = timedelta(minutes=15)
+# A dedupe receipt only needs to survive a lost client response/retry. Keeping
+# it forever makes hidden rows an unbounded quota/database growth vector.
+_POOL_DEDUPE_RECEIPT_RETENTION = timedelta(hours=24)
 # Bounded pass: pre-fix `ready` rows (video, or HEIC/HEIF image) that never got
 # a browser-safe preview generated (`preview_gcs_path IS NULL`). Small batch —
 # this is a backfill, not the fast path; new uploads get their preview inline
@@ -159,6 +162,11 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
                         # genuinely corrupt HEIF then stops at attempt 2 rather
                         # than looping forever.
                         _heif_decoder_recovery_predicate(),
+                        and_(
+                            PlanItemAsset.status == "deduped",
+                            PlanItemAsset.created_at
+                            <= current - _POOL_DEDUPE_RECEIPT_RETENTION,
+                        ),
                     )
                 )
                 # Current uploads and stale in-flight work stay ahead of the
@@ -175,6 +183,12 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
             .all()
         )
         for asset in rows:
+            if asset.status == "deduped":
+                # The uploaded duplicate bytes were deleted synchronously at
+                # registration time. The row is only a bounded idempotency
+                # receipt and has no render/pool-path references of its own.
+                db.delete(asset)
+                continue
             touched += 1
             if asset.status in {"preparing", "promoting", "cleanup_pending"}:
                 # Claim cleanup before releasing the row lock. Registration

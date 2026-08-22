@@ -3728,6 +3728,7 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
     _arm(monkeypatch)
     caps = _caps(_job(), "song_text")
     assert caps == {
+        "overlay_upload_mode": "legacy",
         "text_elements": True,
         "timeline": True,
         "split_clips": True,

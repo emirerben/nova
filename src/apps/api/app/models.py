@@ -1024,8 +1024,9 @@ class PlanItemAsset(Base):
 
     status lifecycle: preparing → promoting → queued → analyzing → ready | failed. The
     maintenance-only `cleanup_pending` claim fences expired reservation deletion.
-    (`uploaded` remains a legacy/reconciliation state). `content_hash` powers
-    upload dedupe — identical bytes reuse the existing row instead of re-analyzing.
+    (`uploaded` remains a legacy/reconciliation state). `content_fingerprint`
+    powers new upload dedupe from immutable storage metadata; `content_hash`
+    remains only for legacy provider compatibility.
     """
 
     __tablename__ = "plan_item_assets"
@@ -1059,9 +1060,13 @@ class PlanItemAsset(Base):
     # "image" | "video" — derived from the upload content type in the route layer.
     # Plain Text (no DB CHECK) so the vocabulary can grow without a migration.
     kind: Mapped[str] = mapped_column(Text, nullable=False)
-    # SHA-256 hex of the file bytes, computed client-side and verified cheap-path
-    # server-side on register. Dedupe key within one plan item.
+    # Legacy SHA-256 hex supplied by older clients. New registrations use the
+    # server-authoritative `content_fingerprint` below and do not hash the File
+    # in the browser.
     content_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Versioned fingerprint derived from immutable object metadata (currently
+    # GCS MD5 + size). Client-provided hashes are never used when this exists.
+    content_fingerprint: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_filename: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Stable browser identity for one selected file. New clients reuse it when
     # refreshing a presign, making reservations idempotent across HTTP retries.
@@ -1089,6 +1094,11 @@ class PlanItemAsset(Base):
     # preparing | promoting | cleanup_pending | uploaded (legacy) | queued |
     # analyzing | ready | failed
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="uploaded")
+    # Media readiness is deliberately independent from AI analysis status:
+    # manual overlays only need verified decode/probe (and a required preview),
+    # while suggestions still require status="ready" and an analysis payload.
+    # pending | ready | unreadable | failed
+    media_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
     # Stable, user-safe failure information. Raw provider exceptions stay in
     # structured logs and are never serialized to creators.
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -1105,6 +1115,12 @@ class PlanItemAsset(Base):
     # from the fast paths, only the bounded maintenance backfill); non-empty =
     # object key of a JPEG sibling under the same persistent pool prefix.
     preview_gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preview_gcs_generation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # A retained, hidden receipt for a deduplication race/lost response. It is
+    # excluded from capacity/list queries and points to the canonical asset.
+    deduplicated_to_asset_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_item_assets.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
 
 

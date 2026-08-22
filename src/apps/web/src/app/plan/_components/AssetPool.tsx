@@ -4,11 +4,10 @@
  * AssetPool — the per-item "Visuals pool" (overlay auto-placement PR0, plans/005).
  *
  * Creators drop screenshots / screen recordings here; the pool later feeds the
- * AI overlay auto-placement matcher (PR1a+). Flag-gated end to end:
- *   frontend: NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED === "true"  → section renders
- *   backend:  OVERLAY_AUTOPLACE_ENABLED                          → routes 404 when off
- * A backend 404 with the frontend flag on (dual-flag trap) surfaces a quiet
- * dashed-zinc error line — never silent.
+ * AI overlay auto-placement matcher (PR1a+). The pool is also the durable
+ * staging lane for manual media overlays, so it is enabled by the union of
+ * auto-placement, guided-edit, and manual-overlay flags. A backend 404 still
+ * surfaces a quiet dashed-zinc error line — never silent.
  *
  * Interaction states follow the plan-005 decision-2A table + DESIGN.md §2/§9:
  * shimmer + micro-label while uploading/analyzing, dashed zinc "Couldn't read
@@ -181,7 +180,12 @@ export default function AssetPool({
   // appear without a page refresh. The effect tears down (and the interval
   // stops) as soon as every asset reaches ready/failed.
   const hasNonTerminal =
-    assets.some((a) => NON_TERMINAL_ASSET_STATUSES.has(a.status)) ||
+    assets.some(
+      (a) =>
+        NON_TERMINAL_ASSET_STATUSES.has(a.status) ||
+        a.media_status === "pending" ||
+        a.preview_status === "pending",
+    ) ||
     serverReservations.some((reservation) => reservation.release_at === null);
   useEffect(() => {
     if (!enabled || unavailable || !hasNonTerminal) return;
@@ -561,11 +565,17 @@ function AssetTile({
     }
   }
 
-  if (asset.status === "failed") {
+  const mediaReady = asset.media_status === "ready";
+  if (
+    (!mediaReady && asset.status === "failed") ||
+    asset.media_status === "failed" ||
+    asset.media_status === "unreadable" ||
+    asset.preview_status === "failed"
+  ) {
     return (
       <li className="relative flex aspect-square flex-col items-center justify-center rounded-lg border border-dashed border-zinc-200 bg-white p-2 text-center">
         <p className="text-[12px] text-[#71717a]">
-          {asset.error_detail ?? "Couldn't read this file. Try exporting it again, then retry."}
+          {asset.error_detail ?? "Couldn't read this file or prepare it for the editor. Try again."}
         </p>
         {asset.retryable !== false && (
           <button
@@ -589,7 +599,12 @@ function AssetTile({
     );
   }
 
-  const busy = asset.status === "queued" || asset.status === "analyzing" || asset.status === "uploaded";
+  const busy =
+    asset.status === "queued" ||
+    asset.status === "analyzing" ||
+    asset.status === "uploaded" ||
+    asset.media_status === "pending" ||
+    asset.preview_status === "pending";
   // Detected brand identities (analysis v5) ride the subject line's title
   // attribute — enough to verify detection without new tile chrome.
   const brands = asset.brands ?? [];
@@ -630,7 +645,13 @@ function AssetTile({
             className="truncate"
             title={!busy && brands.length > 0 ? `Brands: ${brands.join(", ")}` : undefined}
           >
-            {busy ? (asset.status === "queued" ? "Queued…" : "Analyzing…") : (asset.subject ?? asset.kind)}
+            {busy
+              ? asset.status === "queued"
+                ? "Queued…"
+                : "Analyzing…"
+              : asset.status === "failed"
+                ? "Manual visual ready"
+                : (asset.subject ?? asset.kind)}
           </span>
           {/* "Use in edit" — video assets only: promotes the pool object to a real
               clip (B-roll / spine candidate). Images stay overlay-only in v1. */}

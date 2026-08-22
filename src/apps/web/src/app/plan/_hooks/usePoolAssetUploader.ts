@@ -38,6 +38,8 @@ export interface PendingPoolUpload {
   stage: PoolUploadStage;
   message: string | null;
   retryable: boolean;
+  intent?: string;
+  context?: unknown;
 }
 
 interface SignedTarget {
@@ -58,6 +60,9 @@ interface InternalUpload extends PendingPoolUpload {
   correlationId: string;
   removed: boolean;
   reservationMayExist: boolean;
+  intent: string;
+  intentContext?: unknown;
+  abortController: AbortController;
 }
 
 function stableId(prefix: string): string {
@@ -72,7 +77,8 @@ interface UsePoolAssetUploaderOptions {
   itemId: string;
   assetCount: number;
   maxAssets: number;
-  onRegistered: (asset: PoolAsset) => void;
+  onRegistered: (asset: PoolAsset, file: File, intent: string, context?: unknown) => void;
+  onFailed?: (file: File, intent: string, context?: unknown) => void;
   onUnavailable: () => void;
   onDeduped?: () => void;
   serverReservations?: PoolReservationCapacity[];
@@ -87,6 +93,8 @@ function publicUpload(upload: InternalUpload): PendingPoolUpload {
     stage: upload.stage,
     message: upload.message,
     retryable: upload.retryable,
+    intent: upload.intent,
+    context: upload.intentContext,
   };
 }
 
@@ -117,6 +125,7 @@ export function usePoolAssetUploader({
   assetCount,
   maxAssets,
   onRegistered,
+  onFailed,
   onUnavailable,
   onDeduped,
   serverReservations = [],
@@ -126,7 +135,9 @@ export function usePoolAssetUploader({
   const internal = useRef(new Map<string, InternalUpload>());
   const registrationTail = useRef<Promise<void>>(Promise.resolve());
   const activeTransfers = useRef(0);
-  const transferWaiters = useRef<Array<() => void>>([]);
+  const transferWaiters = useRef<
+    Array<{ resolve: () => void; reject: (reason?: unknown) => void }>
+  >([]);
   const [uploads, setUploads] = useState<PendingPoolUpload[]>([]);
   const [reservedSlots, setReservedSlots] = useState(0);
   const [batchMessage, setBatchMessage] = useState<string | null>(null);
@@ -177,28 +188,57 @@ export function usePoolAssetUploader({
     return () => window.clearTimeout(timer);
   }, [reservedSlotCount, serverReservations]);
 
+  useEffect(
+    () => () => {
+      // Navigation/unmount must stop active PUTs. The server reservation is
+      // intentionally left to its bounded TTL so a late request cannot strand
+      // an immortal object or make a future retry race this component.
+      internal.current.forEach((upload) => upload.abortController.abort());
+      internal.current.clear();
+      const cancelled = new DOMException("Upload cancelled", "AbortError");
+      transferWaiters.current.splice(0).forEach((waiter) => waiter.reject(cancelled));
+    },
+    [],
+  );
+
   const isActive = useCallback(
     (upload: InternalUpload) =>
       !upload.removed && internal.current.get(upload.localId) === upload,
     [],
   );
 
-  const acquireTransferSlot = useCallback(async () => {
+  const acquireTransferSlot = useCallback(async (signal: AbortSignal) => {
+    if (signal.aborted) throw new DOMException("Upload cancelled", "AbortError");
     if (activeTransfers.current < TRANSFER_CONCURRENCY) {
       activeTransfers.current += 1;
       return;
     }
-    await new Promise<void>((resolve) => {
-      transferWaiters.current.push(() => {
-        activeTransfers.current += 1;
-        resolve();
-      });
+    await new Promise<void>((resolve, reject) => {
+      let waiter: { resolve: () => void; reject: (reason?: unknown) => void };
+      const onAbort = () => {
+        const index = transferWaiters.current.indexOf(waiter);
+        if (index >= 0) transferWaiters.current.splice(index, 1);
+        waiter.reject(new DOMException("Upload cancelled", "AbortError"));
+      };
+      waiter = {
+        resolve: () => {
+          signal.removeEventListener("abort", onAbort);
+          activeTransfers.current += 1;
+          resolve();
+        },
+        reject: (reason?: unknown) => {
+          signal.removeEventListener("abort", onAbort);
+          reject(reason);
+        },
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      transferWaiters.current.push(waiter);
     });
   }, []);
 
   const releaseTransferSlot = useCallback(() => {
     activeTransfers.current = Math.max(0, activeTransfers.current - 1);
-    transferWaiters.current.shift()?.();
+    transferWaiters.current.shift()?.resolve();
   }, []);
 
   const fail = useCallback(
@@ -220,9 +260,10 @@ export function usePoolAssetUploader({
         stage === "preparing" &&
         upload.retryable &&
         (!(err instanceof PlanApiError) || err.status >= 500);
+      onFailed?.(upload.file, upload.intent, upload.intentContext);
       publish();
     },
-    [isActive, onUnavailable, publish],
+    [isActive, onFailed, onUnavailable, publish],
   );
 
   const finish = useCallback(
@@ -235,7 +276,7 @@ export function usePoolAssetUploader({
       setBatchTotals((prev) => ({ ...prev, completed: prev.completed + 1 }));
       publish();
       if (asset.deduped) onDeduped?.();
-      onRegistered(asset);
+      onRegistered(asset, upload.file, upload.intent, upload.intentContext);
     },
     [isActive, onDeduped, onRegistered, onReservationFinalized, publish],
   );
@@ -290,8 +331,10 @@ export function usePoolAssetUploader({
 
   const transfer = useCallback(
     async (upload: InternalUpload): Promise<void> => {
-      await acquireTransferSlot();
+      let acquired = false;
       try {
+        await acquireTransferSlot(upload.abortController.signal);
+        acquired = true;
         if (!isActive(upload)) return;
         if (!upload.signed) throw new Error("Missing upload target");
         upload.stage = "uploading";
@@ -303,13 +346,15 @@ export function usePoolAssetUploader({
           upload.file,
           upload.signed.upload_headers,
           upload.correlationId,
+          upload.abortController.signal,
         );
         if (!isActive(upload)) return;
         void enqueueRegistration(upload);
       } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
         fail(upload, "uploading", err);
       } finally {
-        releaseTransferSlot();
+        if (acquired) releaseTransferSlot();
       }
     },
     [acquireTransferSlot, enqueueRegistration, fail, isActive, publish, releaseTransferSlot],
@@ -353,8 +398,14 @@ export function usePoolAssetUploader({
   );
 
   const addFiles = useCallback(
-    (fileList: FileList | File[] | null) => {
-      if (!fileList) return;
+    (
+      fileList: FileList | File[] | null,
+      options: {
+        intent?: string;
+        context?: (file: File, index: number) => unknown;
+      } = {},
+    ): number => {
+      if (!fileList) return 0;
       const messages: string[] = [];
       const all = Array.from(fileList);
       const supported = all.filter(isSupportedPoolFile);
@@ -383,7 +434,7 @@ export function usePoolAssetUploader({
         );
       }
       setBatchMessage(messages.length > 0 ? messages.join(" ") : null);
-      if (accepted.length === 0) return;
+      if (accepted.length === 0) return 0;
 
       const stamp = Date.now();
       const correlationId = stableId("batch");
@@ -401,11 +452,15 @@ export function usePoolAssetUploader({
         correlationId,
         removed: false,
         reservationMayExist: false,
+        intent: options.intent ?? "pool",
+        intentContext: options.context?.(file, index),
+        abortController: new AbortController(),
       }));
       batch.forEach((upload) => internal.current.set(upload.localId, upload));
       setBatchTotals((prev) => ({ ...prev, total: prev.total + batch.length }));
       publish();
       void signAndTransfer(batch);
+      return batch.length;
     },
     [assetCount, maxAssets, publish, reservedSlotCount, signAndTransfer],
   );
@@ -446,6 +501,10 @@ export function usePoolAssetUploader({
       const upload = internal.current.get(localId);
       if (!upload || upload.removed) return;
       upload.removed = true;
+      upload.abortController.abort();
+      // Keep only a zero-byte placeholder while the reservation hold drains;
+      // removed 512 MB Files must not stay reachable for 30 minutes.
+      upload.file = new File([], upload.filename, { type: "application/octet-stream" });
       // A signed reservation still counts against the backend pool limit. Keep
       // a hidden local capacity hold until its signed lifetime ends so Remove
       // cannot make the UI promise a slot the server will reject. The active

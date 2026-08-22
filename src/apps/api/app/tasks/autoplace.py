@@ -806,6 +806,71 @@ def analysis_is_stale(analysis: dict | None, *, kind: str | None = None) -> bool
     return True
 
 
+def _verify_pool_media(local_path: str, kind: str) -> None:
+    """Decode/probe the bytes without invoking an AI provider.
+
+    Manual overlay cards depend on storage/media readiness, not on Gemini. Keep
+    this gate deliberately synchronous and cheap so a provider outage cannot
+    strand an otherwise valid upload in ``media_status=pending``.
+    """
+    if kind == "video":
+        try:
+            from app.pipeline.probe import probe_video  # noqa: PLC0415
+
+            probe = probe_video(local_path)
+            if not probe.duration_s or not probe.width or not probe.height:
+                raise AssetUnreadableError("video metadata is incomplete")
+        except AssetUnreadableError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise AssetUnreadableError("video could not be decoded") from exc
+        return
+
+    try:
+        import pillow_heif  # type: ignore[import]  # noqa: PLC0415
+        from PIL import Image  # noqa: PLC0415
+
+        pillow_heif.register_heif_opener()
+        with Image.open(local_path) as image:
+            if not image.width or not image.height:
+                raise AssetUnreadableError("image metadata is incomplete")
+            if image.width * image.height > _MAX_POOL_IMAGE_PIXELS:
+                raise AssetUnreadableError("image pixel limit exceeded")
+            image.verify()
+    except AssetUnreadableError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise AssetUnreadableError("image could not be decoded") from exc
+
+
+def _persist_pool_media_readiness(
+    asset_id: str,
+    *,
+    attempt_token: str | None,
+    media_status: str,
+    preview_path: str | None,
+    preview_generation: str | None,
+    error_code: str | None = None,
+) -> None:
+    """Publish storage/media readiness before the optional AI analysis."""
+    try:
+        aid = uuid.UUID(str(asset_id))
+    except (TypeError, ValueError):
+        return
+    with _sync_session() as db:
+        asset = db.get(PlanItemAsset, aid, with_for_update=True)
+        if asset is None or (attempt_token and asset.analysis_attempt_token != attempt_token):
+            return
+        asset.media_status = media_status
+        asset.preview_gcs_path = preview_path
+        asset.preview_gcs_generation = preview_generation
+        if error_code:
+            asset.error_code = error_code
+            asset.error_detail = "Kria couldn't prepare a browser preview for this visual."
+            asset.error_retryable = True
+        db.commit()
+
+
 def _analyze_image(
     local_path: str, job_scope: str
 ) -> tuple[dict | None, float | None, tuple[int, int] | None, bool]:
@@ -1058,7 +1123,11 @@ def analyze_pool_asset(
     attempt_token = _pool_attempt_token(attempt_token)
 
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
-    from app.storage import download_generation_to_file, download_to_file  # noqa: PLC0415
+    from app.storage import (  # noqa: PLC0415
+        download_generation_to_file,
+        download_to_file,
+        object_metadata,
+    )
 
     try:
         aid = uuid.UUID(str(asset_id))
@@ -1117,6 +1186,7 @@ def analyze_pool_asset(
             if dispatched_at is not None:
                 queue_wait_s = max(0.0, (now - dispatched_at).total_seconds())
             asset.status = "analyzing"
+            asset.media_status = "pending"
             asset.analysis_started_at = now
             asset.error_code = None
             asset.error_detail = None
@@ -1137,6 +1207,10 @@ def analyze_pool_asset(
         # None = preview step never reached (analysis failed first); "" = preview
         # attempted and failed (do-not-retry sentinel); non-empty = preview key.
         preview_path: str | None = None
+        preview_generation: str | None = None
+        media_verified = False
+        preview_required = False
+        media_probe_failed = False
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 local = os.path.join(tmpdir, temp_filename)
@@ -1149,18 +1223,26 @@ def analyze_pool_asset(
                 else:
                     # Compatibility for legacy assets registered before 0074.
                     download_to_file(gcs_path, local)
-                if kind == "video":
-                    analysis, aspect, duration, dims = _analyze_video(local)
-                else:
-                    analysis, aspect, dims, has_alpha = _analyze_image(local, scope)
-                # Preview generation is strictly best-effort: it must never turn a
-                # successful analysis into a failure. Any exception here is
-                # swallowed and persisted as the "" do-not-retry sentinel.
+                # Verify/decode and build the browser preview before invoking
+                # Gemini. Manual overlays can now proceed even when analysis is
+                # delayed or unavailable.
                 try:
-                    from app.services import pool_asset_preview  # noqa: PLC0415
-                    from app.storage import upload_local_file  # noqa: PLC0415
+                    _verify_pool_media(local, kind)
+                    media_verified = True
+                except AssetUnreadableError:
+                    # The analysis helper below repeats the authoritative
+                    # decode/probe. Keep going so a compatible legacy worker or
+                    # a provider-specific probe can still complete the upload;
+                    # real unreadable bytes still fail closed at persistence.
+                    media_probe_failed = True
+                from app.services import pool_asset_preview  # noqa: PLC0415
+                from app.storage import upload_local_file  # noqa: PLC0415
 
-                    if pool_asset_preview.needs_preview(kind, upload_content_type, gcs_path):
+                preview_required = pool_asset_preview.needs_preview(
+                    kind, upload_content_type, gcs_path
+                )
+                try:
+                    if preview_required:
                         preview_local = os.path.join(tmpdir, "preview.jpg")
                         generated = (
                             pool_asset_preview.write_video_poster(local, preview_local)
@@ -1175,6 +1257,10 @@ def analyze_pool_asset(
                                 content_type="image/jpeg",
                             )
                             preview_path = preview_object
+                            try:
+                                preview_generation = object_metadata(preview_object).generation
+                            except Exception:  # noqa: BLE001 — URL signing remains best-effort
+                                preview_generation = None
                         else:
                             preview_path = ""
                 except Exception as exc:  # noqa: BLE001
@@ -1184,6 +1270,48 @@ def analyze_pool_asset(
                         error_type=type(exc).__name__,
                     )
                     preview_path = ""
+                if media_verified:
+                    _persist_pool_media_readiness(
+                        asset_id,
+                        attempt_token=attempt_token,
+                        media_status=(
+                            "ready"
+                            if not preview_required or bool(preview_path)
+                            else "failed"
+                        ),
+                        preview_path=preview_path,
+                        preview_generation=preview_generation,
+                        error_code=(
+                            None
+                            if not preview_required or bool(preview_path)
+                            else "preview_generation_failed"
+                        ),
+                    )
+                if kind == "video":
+                    analysis, aspect, duration, dims = _analyze_video(local)
+                else:
+                    analysis, aspect, dims, has_alpha = _analyze_image(local, scope)
+                if media_probe_failed:
+                    # The successful authoritative analysis is itself proof
+                    # that the bytes are readable. Publish readiness now (the
+                    # normal path published it before the AI call).
+                    media_verified = True
+                    _persist_pool_media_readiness(
+                        asset_id,
+                        attempt_token=attempt_token,
+                        media_status=(
+                            "ready"
+                            if not preview_required or bool(preview_path)
+                            else "failed"
+                        ),
+                        preview_path=preview_path,
+                        preview_generation=preview_generation,
+                        error_code=(
+                            None
+                            if not preview_required or bool(preview_path)
+                            else "preview_generation_failed"
+                        ),
+                    )
         except SoftTimeLimitExceeded as exc:
             timeout_exc = exc
             failure_code = "analysis_timed_out"
@@ -1236,14 +1364,27 @@ def analyze_pool_asset(
                     # keep the previous analysis + ready status, just trace.
                     pass
                 else:
-                    # Partial probe metadata never turns a provider failure into
-                    # success. Only the intentional missing-key stub is ready.
+                    # A provider failure still leaves a manually usable asset
+                    # when the storage bytes and browser preview were verified
+                    # above. AI status remains failed for suggestion consumers,
+                    # but media readiness is not rolled back.
                     asset.status = "failed"
-                    asset.error_code = failure_code or "analysis_failed"
-                    asset.error_detail = failure_detail or (
-                        "Kria couldn't analyze this file. Try again."
-                    )
-                    asset.error_retryable = failure_code != "analysis_unreadable"
+                    if not media_verified:
+                        asset.media_status = (
+                            "unreadable" if failure_code == "analysis_unreadable" else "failed"
+                        )
+                        asset.error_code = failure_code or "analysis_failed"
+                        asset.error_detail = failure_detail or (
+                            "Kria couldn't analyze this file. Try again."
+                        )
+                        asset.error_retryable = failure_code != "analysis_unreadable"
+                    elif asset.media_status != "failed":
+                        asset.media_status = "ready"
+                        asset.error_code = failure_code or "analysis_failed"
+                        asset.error_detail = failure_detail or (
+                            "Kria couldn't analyze this file. Try again."
+                        )
+                        asset.error_retryable = failure_code != "analysis_unreadable"
             else:
                 if refresh and analysis is None:
                     # Refresh produced no better data (keyless / Gemini down):
@@ -1263,10 +1404,18 @@ def analyze_pool_asset(
                 if duration:
                     asset.duration_s = duration
                 asset.status = "ready"
-                asset.error_code = None
-                asset.error_detail = None
-                asset.error_retryable = False
+                if preview_required and not preview_path:
+                    asset.media_status = "failed"
+                    asset.error_code = "preview_generation_failed"
+                    asset.error_detail = "Kria couldn't prepare a browser preview for this visual."
+                    asset.error_retryable = True
+                else:
+                    asset.media_status = "ready"
+                    asset.error_code = None
+                    asset.error_detail = None
+                    asset.error_retryable = False
                 asset.preview_gcs_path = preview_path
+                asset.preview_gcs_generation = preview_generation
             if not refresh:
                 asset.analysis_started_at = None
             persisted_status = asset.status
@@ -1306,6 +1455,7 @@ def generate_pool_asset_preview(asset_id: str) -> None:
     from app.storage import (  # noqa: PLC0415
         download_generation_to_file,
         download_to_file,
+        object_metadata,
         upload_local_file,
     )
 
@@ -1319,7 +1469,14 @@ def generate_pool_asset_preview(asset_id: str) -> None:
         asset = db.get(PlanItemAsset, aid)
         if asset is None:
             return
-        if asset.status != "ready" or getattr(asset, "preview_gcs_path", None) is not None:
+        if (
+            asset.status != "ready"
+            or getattr(asset, "preview_gcs_path", None) not in (None, "")
+            or (
+                getattr(asset, "preview_gcs_path", None) == ""
+                and getattr(asset, "media_status", None) != "failed"
+            )
+        ):
             return
         gcs_path, kind = asset.gcs_path, asset.kind
         gcs_generation = getattr(asset, "gcs_generation", None)
@@ -1329,6 +1486,7 @@ def generate_pool_asset_preview(asset_id: str) -> None:
         return
 
     preview_path = ""
+    preview_generation: str | None = None
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             local = os.path.join(tmpdir, "asset")
@@ -1346,6 +1504,10 @@ def generate_pool_asset_preview(asset_id: str) -> None:
                 preview_object = pool_asset_preview.preview_object_path(gcs_path)
                 upload_local_file(preview_local, preview_object, content_type="image/jpeg")
                 preview_path = preview_object
+                try:
+                    preview_generation = object_metadata(preview_object).generation
+                except Exception:  # noqa: BLE001
+                    preview_generation = None
     except Exception as exc:  # noqa: BLE001
         log.warning(
             "autoplace.preview_backfill_failed",
@@ -1358,11 +1520,29 @@ def generate_pool_asset_preview(asset_id: str) -> None:
         asset = db.get(PlanItemAsset, aid, with_for_update=True)
         if asset is None:
             return
-        if asset.status != "ready" or getattr(asset, "preview_gcs_path", None) is not None:
+        if (
+            asset.status != "ready"
+            or getattr(asset, "preview_gcs_path", None) not in (None, "")
+            or (
+                getattr(asset, "preview_gcs_path", None) == ""
+                and getattr(asset, "media_status", None) != "failed"
+            )
+        ):
             return
         if asset.gcs_path != gcs_path:
             return
         asset.preview_gcs_path = preview_path
+        asset.preview_gcs_generation = preview_generation
+        if preview_path:
+            asset.media_status = "ready"
+            asset.error_code = None
+            asset.error_detail = None
+            asset.error_retryable = False
+        else:
+            asset.media_status = "failed"
+            asset.error_code = "preview_generation_failed"
+            asset.error_detail = "Kria couldn't prepare a browser preview for this visual."
+            asset.error_retryable = True
         db.commit()
     log.info("autoplace.preview_backfilled", asset_id=asset_id, produced=bool(preview_path))
 
