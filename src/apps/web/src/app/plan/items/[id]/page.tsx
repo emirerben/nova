@@ -580,6 +580,13 @@ export default function PlanItemPage() {
   // when VoiceRecorder fires onVoiceover; reset from item on refetch.
   const [voiceoverGcsPath, setVoiceoverGcsPath] = useState<string | null>(null);
   const [voiceoverSaving, setVoiceoverSaving] = useState(false);
+  // VoiceRecorder invokes its callback after the blob upload, but the plan-item
+  // attachment is a second async request owned by this page. Keep that request
+  // visible to Generate so a click cannot enqueue a job from the pre-voiceover
+  // item snapshot (the local path is intentionally optimistic).
+  const voiceoverSavePromiseRef = useRef<Promise<boolean> | null>(null);
+  const voiceoverSaveQueueRef = useRef<Promise<boolean>>(Promise.resolve(true));
+  const voiceoverSaveGenerationRef = useRef(0);
   // Read-only shadow of item.audio_mode — still drives post-generation variant
   // focus (original_text). The choose-audio UI was removed in the per-type
   // setup redesign; type changes go through the setup receipt only.
@@ -1343,17 +1350,46 @@ export default function PlanItemPage() {
   }
 
   async function handleVoiceover(gcsPath: string | null): Promise<boolean> {
+    const generation = ++voiceoverSaveGenerationRef.current;
     setVoiceoverGcsPath(gcsPath);
     setVoiceoverSaving(true);
+    // Serialize replacement/removal saves. VoiceRecorder lets a user remove a
+    // take while its upload is still settling; concurrent PATCHes could commit
+    // out of order and resurrect the old take after the user cleared it.
+    const savePromise = persistVoiceover(gcsPath, generation);
+    voiceoverSaveQueueRef.current = savePromise;
+    voiceoverSavePromiseRef.current = savePromise;
     try {
-      await setItemVoiceover(itemId, gcsPath);
-      refetch();
+      return await savePromise;
+    } finally {
+      if (voiceoverSavePromiseRef.current === savePromise) {
+        voiceoverSavePromiseRef.current = null;
+      }
+    }
+  }
+
+  async function persistVoiceover(gcsPath: string | null, generation: number): Promise<boolean> {
+    await voiceoverSaveQueueRef.current.catch(() => false);
+    try {
+      const saved = await setItemVoiceover(itemId, gcsPath);
+      if (generation === voiceoverSaveGenerationRef.current) {
+        // Keep the client shadow aligned with the server response. This avoids
+        // a stale poll clearing a successfully persisted attachment while the
+        // next Generate click is being prepared.
+        setVoiceoverGcsPath(saved.voiceover_gcs_path ?? gcsPath);
+        refetch();
+      }
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save voiceover");
+      if (generation === voiceoverSaveGenerationRef.current) {
+        setVoiceoverGcsPath(null);
+        setError(err instanceof Error ? err.message : "Failed to save voiceover");
+      }
       return false;
     } finally {
-      setVoiceoverSaving(false);
+      if (generation === voiceoverSaveGenerationRef.current) {
+        setVoiceoverSaving(false);
+      }
     }
   }
 
@@ -1371,6 +1407,13 @@ export default function PlanItemPage() {
     jobIdBeforeGenerateRef.current = item?.current_job_id ?? null;
     awaitingJobSince.current = Date.now();
     try {
+      // The local voiceover path is optimistic while PATCH /voiceover is in
+      // flight. Await that persistence boundary even if a stale caller invokes
+      // Generate before the button re-renders disabled.
+      const pendingVoiceoverSave = voiceoverSavePromiseRef.current;
+      if (pendingVoiceoverSave && !(await pendingVoiceoverSave)) {
+        throw new Error("Voiceover couldn't be saved — try again before generating.");
+      }
       if (item && needsFormatPersist(item.edit_format)) {
         await updatePlanItem(item.id, { edit_format: resolvedFormat });
       }
@@ -1527,7 +1570,7 @@ export default function PlanItemPage() {
     // gate on them explicitly — the old page-global `uploading` no longer
     // spans the whole transfer. Error cards deliberately do NOT gate:
     // "Finishing upload…" would be a lie for an upload that already failed.
-    uploaderBusy: uploaderBusy || uploading || hasActivePoolUploads,
+    uploaderBusy: uploaderBusy || uploading || hasActivePoolUploads || voiceoverSaving,
     clipCount,
     hasApprovedGuidedMedia,
     hasReadyPoolMedia,
