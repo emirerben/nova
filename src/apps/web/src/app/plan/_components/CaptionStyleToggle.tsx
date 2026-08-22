@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
 import type { VoiceoverCaptionStyle } from "@/lib/plan-api";
 
 /**
@@ -26,20 +27,17 @@ export default function CaptionStyleToggle({
         {options.map((opt) => {
           const active = value === opt.value;
           return (
-            <button
+            <Button
               key={opt.value}
               type="button"
+              variant={active ? "secondary" : "outline"}
               aria-pressed={active}
               disabled={saving}
               onClick={() => onChange(opt.value)}
-              className={`rounded-xl border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                active
-                  ? "border-lime-600 bg-lime-50 text-lime-900"
-                  : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
-              }`}
+              className="h-auto justify-start px-3 py-2 text-left"
             >
               <span className="block text-sm font-semibold">{opt.label}</span>
-            </button>
+            </Button>
           );
         })}
       </div>

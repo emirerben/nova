@@ -36,6 +36,8 @@ import {
 } from "@/lib/carousel-timing";
 import { MAX_CARDS, naturalFocusTimelineLengthS } from "./carousel-preview-impl/geometry";
 import { InfoDot } from "@/components/ui/InfoDot";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 export interface CarouselClipThumb {
   clipIndex: number;
@@ -114,10 +116,10 @@ function isPickableMode(mode: CarouselMoment["mode"]): mode is "focus" | "rollin
 const LEGACY_MODE_HINT = "This moment uses a legacy static style — pick a mode to update it.";
 
 const segmentedBtnClass = (active: boolean) =>
-  `min-h-11 flex-1 rounded-lg px-2 text-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+  `h-auto min-h-11 flex-1 rounded-lg px-2 text-[12px] font-normal transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
     active
-      ? "bg-[#0c0c0e] font-semibold text-white"
-      : "border border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
+      ? "bg-[#0c0c0e] font-semibold text-white hover:bg-[#0c0c0e]"
+      : "border border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400 hover:bg-white"
   }`;
 
 export default function CarouselPanel({
@@ -254,9 +256,10 @@ export default function CarouselPanel({
         </p>
         <div role="group" aria-label="Carousel mode" className="flex gap-1">
           {(["focus", "rolling"] as const).map((m) => (
-            <button
+            <Button
               key={m}
               type="button"
+              variant="ghost"
               aria-pressed={mode === m}
               onClick={() =>
                 patch({
@@ -284,7 +287,7 @@ export default function CarouselPanel({
               className={segmentedBtnClass(mode === m)}
             >
               {m === "focus" ? "Focus" : "Rolling"}
-            </button>
+            </Button>
           ))}
         </div>
         {mode === null && <p className="mt-1.5 text-[11px] text-[#3f3f46]">{LEGACY_MODE_HINT}</p>}
@@ -301,32 +304,32 @@ export default function CarouselPanel({
                   <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-[#3f3f46]">
                     {index + 1}. {clipThumb?.label ?? `Clip ${item.clip_index + 1}`}
                   </span>
-                  <button type="button" aria-label={`Move ${clipThumb?.label ?? "video"} earlier`} disabled={index === 0} onClick={() => {
+                  <Button type="button" variant="outline" size="icon" aria-label={`Move ${clipThumb?.label ?? "video"} earlier`} disabled={index === 0} onClick={() => {
                     const next = sequence.slice();
                     [next[index - 1], next[index]] = [next[index], next[index - 1]];
                     patchSequence(next);
-                  }} className="h-8 w-8 rounded border border-zinc-200 disabled:opacity-30">↑</button>
-                  <button type="button" aria-label={`Move ${clipThumb?.label ?? "video"} later`} disabled={index === sequence.length - 1} onClick={() => {
+                  }} className="h-8 w-8 rounded border-zinc-200 disabled:opacity-30">↑</Button>
+                  <Button type="button" variant="outline" size="icon" aria-label={`Move ${clipThumb?.label ?? "video"} later`} disabled={index === sequence.length - 1} onClick={() => {
                     const next = sequence.slice();
                     [next[index], next[index + 1]] = [next[index + 1], next[index]];
                     patchSequence(next);
-                  }} className="h-8 w-8 rounded border border-zinc-200 disabled:opacity-30">↓</button>
+                  }} className="h-8 w-8 rounded border-zinc-200 disabled:opacity-30">↓</Button>
                   <label className="flex items-center gap-1 text-[11px] text-[#71717a]">
                     Hold
-                    <input type="number" min={CAROUSEL_HOLD_MIN_S} max={CAROUSEL_HOLD_MAX_S} step={0.1} value={item.hold_s} aria-label={`${clipThumb?.label ?? "Video"} hold seconds`} onChange={(event) => {
+                    <Input type="number" min={CAROUSEL_HOLD_MIN_S} max={CAROUSEL_HOLD_MAX_S} step={0.1} value={item.hold_s} aria-label={`${clipThumb?.label ?? "Video"} hold seconds`} onChange={(event) => {
                       const holdS = Number(event.target.value);
                       if (!Number.isFinite(holdS) || holdS < CAROUSEL_HOLD_MIN_S || holdS > CAROUSEL_HOLD_MAX_S) return;
                       patchSequence(sequence.map((entry, entryIndex) => entryIndex === index ? { ...entry, hold_s: holdS } : entry));
-                    }} className="w-14 rounded border border-zinc-200 px-1 py-1 text-right tabular-nums" />
+                    }} className="w-14 min-w-0 rounded border-zinc-200 px-1 text-right tabular-nums" />
                   </label>
-                  <button type="button" aria-label={`Remove ${clipThumb?.label ?? "video"} from sequence`} disabled={sequence.length <= 1} onClick={() => patchSequence(sequence.filter((_, entryIndex) => entryIndex !== index))} className="h-8 w-8 rounded border border-zinc-200 text-zinc-500 disabled:opacity-30">×</button>
+                  <Button type="button" variant="outline" size="icon" aria-label={`Remove ${clipThumb?.label ?? "video"} from sequence`} disabled={sequence.length <= 1} onClick={() => patchSequence(sequence.filter((_, entryIndex) => entryIndex !== index))} className="h-8 w-8 rounded border-zinc-200 text-zinc-500 disabled:opacity-30">×</Button>
                 </div>
               );
             })}
           </div>
           <div className="mt-2 flex flex-wrap gap-1">
             {clips.filter((clip) => !sequence.some((item) => item.clip_index === clip.clipIndex)).map((clip) => (
-              <button key={clip.clipIndex} type="button" onClick={() => patchSequence([...sequence, { clip_index: clip.clipIndex, hold_s: 2 }])} className="min-h-9 rounded-full border border-zinc-200 px-3 text-[11px] text-[#3f3f46] hover:border-zinc-400">+ {clip.label}</button>
+              <Button key={clip.clipIndex} type="button" variant="outline" onClick={() => patchSequence([...sequence, { clip_index: clip.clipIndex, hold_s: 2 }])} className="h-auto min-h-9 rounded-full border-zinc-200 px-3 text-[11px] font-normal text-[#3f3f46] hover:border-zinc-400">+ {clip.label}</Button>
             ))}
           </div>
         </section>
@@ -336,16 +339,17 @@ export default function CarouselPanel({
         <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Position</p>
         <div role="group" aria-label="Carousel position" className="flex gap-1">
           {POSITIONS.map((p) => (
-            <button
+            <Button
               key={p.id}
               type="button"
+              variant="ghost"
               disabled={stillsGated}
               aria-pressed={position === p.id}
               onClick={() => patch({ position: p.id })}
               className={segmentedBtnClass(position === p.id)}
             >
               {p.label}
-            </button>
+            </Button>
           ))}
         </div>
       </section>
@@ -390,7 +394,7 @@ export default function CarouselPanel({
           <section key={edge}>
             <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">{edge === "in" ? "Entry" : "Exit"} transition</p>
             <div role="group" aria-label={`${edge === "in" ? "Entry" : "Exit"} transition`} className="flex gap-1">
-              {(["crossfade", "none"] as const).map((choice) => <button key={choice} type="button" disabled={stillsGated} aria-pressed={kind === choice} onClick={() => patch(edge === "in" ? { transition_in: choice } : { transition_out: choice })} className={segmentedBtnClass(kind === choice)}>{choice === "crossfade" ? "Crossfade" : "Hard cut"}</button>)}
+              {(["crossfade", "none"] as const).map((choice) => <Button key={choice} type="button" variant="ghost" disabled={stillsGated} aria-pressed={kind === choice} onClick={() => patch(edge === "in" ? { transition_in: choice } : { transition_out: choice })} className={segmentedBtnClass(kind === choice)}>{choice === "crossfade" ? "Crossfade" : "Hard cut"}</Button>)}
             </div>
             {kind === "crossfade" && <TimingSlider label="Duration" value={seconds} min={CAROUSEL_BOUNDARY_MIN_S} max={CAROUSEL_BOUNDARY_MAX_S} disabled={stillsGated} onChange={(value) => patch(edge === "in" ? { transition_in_duration_s: value } : { transition_out_duration_s: value })} />}
           </section>
@@ -398,13 +402,14 @@ export default function CarouselPanel({
       })}
 
       {isUpdate && (
-        <button
+        <Button
           type="button"
+          variant="outline"
           onClick={onRemove}
-          className="min-h-11 w-full rounded-lg border border-zinc-200 bg-white text-[13px] font-semibold text-[#3f3f46] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+          className="h-auto min-h-11 w-full rounded-lg border-zinc-200 bg-white text-[13px] font-semibold text-[#3f3f46] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
         >
           Remove carousel
-        </button>
+        </Button>
       )}
     </div>
   );
@@ -427,15 +432,16 @@ function EffectChip({
   onSelect: () => void;
 }) {
   return (
-    <button
+    <Button
       type="button"
+      variant="outline"
       role="radio"
       aria-checked={selected}
       aria-label={`${label} effect`}
       disabled={disabled}
       onClick={onSelect}
       className={[
-        "flex min-h-[44px] flex-col gap-1.5 rounded-lg border bg-white p-2 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50",
+        "h-auto min-h-[44px] flex-col items-stretch gap-1.5 rounded-lg bg-white p-2 text-left font-normal transition-colors hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50",
         selected ? "border-lime-600 ring-1 ring-lime-600" : "border-zinc-200 hover:border-zinc-400",
       ].join(" ")}
     >
@@ -443,7 +449,7 @@ function EffectChip({
         <EffectMock kind={id} />
       </span>
       <span className="text-[11px] font-medium text-[#3f3f46]">{label}</span>
-    </button>
+    </Button>
   );
 }
 

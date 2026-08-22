@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import type { NovaStep } from "@/lib/job-phases";
 import { NovaPendingRow, NovaStepRow } from "./NovaStepRow";
 
@@ -144,15 +145,16 @@ export function NovaActivityFeed({
               : `${doneCount} completed`}
           </span>
           <span aria-hidden="true">·</span>
-          <button
+          <Button
             type="button"
+            variant="link"
             onClick={() => setShowFullList((visible) => !visible)}
             aria-expanded={showFullList}
             aria-controls={listId}
-            className={`min-h-11 underline underline-offset-2 ${linkColor}`}
+            className={`h-auto min-h-11 p-0 underline underline-offset-2 hover:no-underline ${linkColor}`}
           >
             {showFullList ? "Hide analysis steps" : "Show analysis steps"}
-          </button>
+          </Button>
         </p>
         <div id={listId} hidden={!showFullList}>
           {showFullList && stepList}
@@ -191,15 +193,16 @@ export function NovaActivityFeed({
             {totalCount} step{totalCount === 1 ? "" : "s"}
           </span>
           <span aria-hidden="true">·</span>
-          <button
+          <Button
             type="button"
+            variant="link"
             onClick={() => setShowFullList(true)}
             aria-expanded="false"
             aria-controls={listId}
-            className={`underline underline-offset-2 ${linkColor}`}
+            className={`h-auto p-0 underline underline-offset-2 ${linkColor}`}
           >
             See what Nova did
-          </button>
+          </Button>
         </p>
         <span id={listId} hidden />
       </div>
@@ -216,17 +219,18 @@ export function NovaActivityFeed({
         </p>
       )}
       {showFullList && isTerminal && isSuccess && (
-        <button
+        <Button
           type="button"
+          variant="link"
           onClick={() => setShowFullList(false)}
           aria-expanded="true"
           aria-controls={listId}
-          className={`mt-1 text-xs underline underline-offset-2 ${
+          className={`h-auto p-0 mt-1 text-xs underline underline-offset-2 ${
             tone === "light" ? "text-[#71717a] hover:text-[#0c0c0e]" : "text-zinc-500 hover:text-zinc-200"
           }`}
         >
           Hide steps
-        </button>
+        </Button>
       )}
     </div>
   );

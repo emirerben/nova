@@ -30,6 +30,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import type { PersonaContent, PersonaResponse } from "@/lib/plan-api";
 import { patchPersonaFootageType } from "@/lib/plan-api";
@@ -204,34 +205,36 @@ function WhatYouMakeStep({
         {FOOTAGE_OPTIONS.map((opt) => {
           const isSelected = selected.includes(opt.value);
           return (
-            <button
+            <Button
               key={opt.value}
               type="button"
+              variant="ghost"
               onClick={() => toggle(opt.value)}
               className={cn(
-                "flex flex-col gap-1 rounded-2xl border p-6 text-left transition-all",
+                "h-auto flex-col items-start gap-1 whitespace-normal rounded-2xl border p-6 text-left font-normal transition-all",
                 isSelected
-                  ? "border-transparent bg-lime-50 outline outline-2 outline-lime-500"
-                  : "border-zinc-200 bg-white hover:border-zinc-300",
+                  ? "border-transparent bg-lime-50 outline outline-2 outline-lime-500 hover:bg-lime-50"
+                  : "border-zinc-200 bg-white hover:border-zinc-300 hover:bg-white",
               )}
             >
               <span className="font-display text-lg font-medium text-[#0c0c0e]">
                 {opt.label}
               </span>
               <span className="text-xs text-[#71717a]">{opt.description}</span>
-            </button>
+            </Button>
           );
         })}
       </div>
 
-      <button
+      <Button
         type="button"
+        variant="default"
         onClick={handleContinue}
         disabled={selected.length === 0 || saving}
-        className="mt-10 inline-flex min-h-[48px] items-center rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
+        className="mt-10 min-h-[48px] rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white hover:bg-[#0c0c0e] hover:opacity-80 disabled:opacity-40"
       >
         {saving ? "Saving…" : "Continue →"}
-      </button>
+      </Button>
     </div>
   );
 }

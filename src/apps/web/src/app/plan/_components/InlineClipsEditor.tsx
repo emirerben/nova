@@ -25,6 +25,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { Button } from "@/components/ui/button";
 import {
   editTimeline,
   getTimeline,
@@ -327,10 +328,11 @@ function PreviewPlayer({
         );
       })}
       {/* Play / pause overlay */}
-      <button
+      <Button
         type="button"
+        variant="ghost"
         aria-label={isPlaying ? "Pause" : "Play preview"}
-        className="absolute inset-0 flex items-center justify-center transition-colors hover:bg-black/20"
+        className="absolute inset-0 h-auto w-auto justify-center rounded-none p-0 hover:bg-black/20"
         onClick={handlePlayPause}
       >
         {!isPlaying && (
@@ -338,7 +340,7 @@ function PreviewPlayer({
             ▶
           </span>
         )}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -409,10 +411,11 @@ function SourcePanel({
           </div>
         )}
         {/* In-point handle */}
-        <button
+        <Button
           type="button"
+          variant="ghost"
           aria-label="Drag in-point"
-          className={`absolute top-1 flex h-12 w-11 cursor-ew-resize items-center justify-end rounded-l-lg pr-1 [touch-action:none] ${
+          className={`absolute top-1 flex h-12 w-11 cursor-ew-resize items-center justify-end rounded-l-lg rounded-r-none pr-1 [touch-action:none] ${
             isLeftActive ? "z-20" : "z-10"
           }`}
           style={{ left: `${inFrac * 100}%`, transform: "translateX(-100%)" }}
@@ -427,12 +430,13 @@ function SourcePanel({
               isLeftPressed ? "scale-110 bg-lime-600" : "bg-white"
             }`}
           />
-        </button>
+        </Button>
         {/* Out-point handle */}
-        <button
+        <Button
           type="button"
+          variant="ghost"
           aria-label="Drag out-point"
-          className={`absolute top-1 flex h-12 w-11 cursor-ew-resize items-center justify-start rounded-r-lg pl-1 [touch-action:none] ${
+          className={`absolute top-1 flex h-12 w-11 cursor-ew-resize items-center justify-start rounded-r-lg rounded-l-none pl-1 [touch-action:none] ${
             isRightActive ? "z-20" : "z-10"
           }`}
           style={{ left: `${outFrac * 100}%` }}
@@ -447,7 +451,7 @@ function SourcePanel({
             }`}
           />
           <span className="ml-1 text-[11px] font-semibold text-lime-700">Out</span>
-        </button>
+        </Button>
       </div>
       <div className="mt-2 flex justify-between text-[11px] tabular-nums text-[#71717a]">
         <span>In: {formatSeconds(slot.inS)}</span>
@@ -456,46 +460,50 @@ function SourcePanel({
       </div>
       <div className="mt-2 grid grid-cols-2 gap-2">
         <div className="grid grid-cols-[44px_1fr_44px] items-center gap-1">
-          <button
+          <Button
             type="button"
+            variant="outline"
             aria-label="Nudge in-point earlier"
-            className="min-h-11 rounded border border-zinc-200 bg-[#ffffff] text-sm font-semibold text-[#0c0c0e] disabled:opacity-40"
+            className="min-h-11 w-full font-semibold"
             disabled={!canNudgeInEarlier}
             onClick={() => onNudgeIn(-0.1)}
           >
             -
-          </button>
+          </Button>
           <span className="text-center text-[11px] font-medium text-[#71717a]">In</span>
-          <button
+          <Button
             type="button"
+            variant="outline"
             aria-label="Nudge in-point later"
-            className="min-h-11 rounded border border-zinc-200 bg-[#ffffff] text-sm font-semibold text-[#0c0c0e] disabled:opacity-40"
+            className="min-h-11 w-full font-semibold"
             disabled={!canNudgeInLater}
             onClick={() => onNudgeIn(0.1)}
           >
             +
-          </button>
+          </Button>
         </div>
         <div className="grid grid-cols-[44px_1fr_44px] items-center gap-1">
-          <button
+          <Button
             type="button"
+            variant="outline"
             aria-label="Nudge out-point earlier"
-            className="min-h-11 rounded border border-zinc-200 bg-[#ffffff] text-sm font-semibold text-[#0c0c0e] disabled:opacity-40"
+            className="min-h-11 w-full font-semibold"
             disabled={!canNudgeOutEarlier}
             onClick={() => onNudgeOut(-0.1)}
           >
             -
-          </button>
+          </Button>
           <span className="text-center text-[11px] font-medium text-[#71717a]">Out</span>
-          <button
+          <Button
             type="button"
+            variant="outline"
             aria-label="Nudge out-point later"
-            className="min-h-11 rounded border border-zinc-200 bg-[#ffffff] text-sm font-semibold text-[#0c0c0e] disabled:opacity-40"
+            className="min-h-11 w-full font-semibold"
             disabled={!canNudgeOutLater}
             onClick={() => onNudgeOut(0.1)}
           >
             +
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -921,9 +929,14 @@ export function InlineClipsEditor({
     return (
       <div className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-center text-xs text-[#3f3f46]">
         <p>Failed to load clips</p>
-        <button className="mt-1 text-xs font-medium text-lime-700 underline" onClick={load}>
+        <Button
+          type="button"
+          variant="link"
+          className="h-auto p-0 text-xs font-medium text-lime-700"
+          onClick={load}
+        >
           Retry
-        </button>
+        </Button>
       </div>
     );
   }
@@ -1042,11 +1055,12 @@ export function InlineClipsEditor({
                     </div>
                   )}
                   {/* Left handle — trim in-point */}
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
                     aria-label={`Trim clip ${slot.clipIndex} in-point`}
                     data-inline-trim-handle={`left-${slot.key}`}
-                    className={`absolute top-0 flex h-11 cursor-ew-resize items-center justify-end rounded-l-lg pr-1 [touch-action:none] ${
+                    className={`absolute top-0 flex h-11 cursor-ew-resize items-center justify-end rounded-l-lg rounded-r-none pr-1 [touch-action:none] ${
                       leftActive ? "z-30" : "z-10"
                     }`}
                     style={{
@@ -1077,15 +1091,16 @@ export function InlineClipsEditor({
                         leftPressed ? "scale-110 bg-lime-600" : "bg-white"
                       }`}
                     />
-                  </button>
+                  </Button>
 
                   {/* Bar body */}
-                  <button
+                  <Button
                     type="button"
-                    className={`absolute inset-y-0 left-0 right-0 flex min-w-0 items-center justify-center gap-1 truncate rounded border text-[11px] font-medium transition-colors [touch-action:pan-y] ${
+                    variant="outline"
+                    className={`absolute inset-y-0 left-0 right-0 flex h-auto min-w-0 items-center justify-center gap-1 truncate rounded border text-[11px] font-medium transition-colors [touch-action:pan-y] ${
                       sel
-                        ? "border-lime-600 bg-lime-600 text-white"
-                        : "border-zinc-200 bg-white text-[#3f3f46] hover:border-lime-200"
+                        ? "border-lime-600 bg-lime-600 text-white hover:bg-lime-600 hover:text-white"
+                        : "border-zinc-200 bg-white text-[#3f3f46] hover:border-lime-200 hover:bg-white hover:text-[#3f3f46]"
                     }`}
                     onClick={() =>
                       setSelectedKey(sel ? null : slot.key)
@@ -1095,14 +1110,15 @@ export function InlineClipsEditor({
                     <span className="opacity-70 shrink-0">
                       {formatSeconds(win.durationS)}
                     </span>
-                  </button>
+                  </Button>
 
                   {/* Right handle — extend / shrink */}
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
                     aria-label={`Trim clip ${slot.clipIndex} out-point`}
                     data-inline-trim-handle={`right-${slot.key}`}
-                    className={`absolute top-0 flex h-11 cursor-ew-resize items-center justify-start rounded-r-lg pl-1 [touch-action:none] ${
+                    className={`absolute top-0 flex h-11 cursor-ew-resize items-center justify-start rounded-r-lg rounded-l-none pl-1 [touch-action:none] ${
                       rightActive ? "z-30" : "z-10"
                     }`}
                     style={{
@@ -1133,7 +1149,7 @@ export function InlineClipsEditor({
                     <span className="ml-1 hidden text-[11px] font-semibold text-lime-700 min-[420px]:inline">
                       Out
                     </span>
-                  </button>
+                  </Button>
                 </div>
               );
             })}
@@ -1228,49 +1244,56 @@ export function InlineClipsEditor({
                 sel ? "border-lime-200 bg-lime-50" : "border-zinc-200 bg-white hover:border-lime-200"
               }`}
             >
-              <button
+              <Button
                 type="button"
-                className="min-h-8 flex-1 truncate text-left text-[#3f3f46]"
+                variant="ghost"
+                className="h-auto min-h-8 flex-1 justify-start truncate p-0 text-left text-[#3f3f46] hover:bg-transparent"
                 onClick={() => setSelectedKey(sel ? null : slot.key)}
               >
                 Clip {slot.clipIndex}
-              </button>
+              </Button>
               <span className="shrink-0 tabular-nums text-[#71717a]">
                 {formatSeconds(windows[allIdx]?.durationS ?? 0)}
               </span>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon-sm"
                 aria-label="Move up"
                 disabled={allIdx === 0}
-                className="min-h-8 min-w-8 shrink-0 rounded text-[#71717a] hover:bg-zinc-100 hover:text-[#0c0c0e] disabled:opacity-30"
+                className="min-h-8 min-w-8 shrink-0 rounded text-[#71717a] hover:text-[#0c0c0e] disabled:opacity-30"
                 onClick={() =>
                   dispatch({ type: "REORDER", from: allIdx, to: allIdx - 1 })
                 }
               >
                 ↑
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon-sm"
                 aria-label="Move down"
                 disabled={allIdx === state.slots.length - 1}
-                className="min-h-8 min-w-8 shrink-0 rounded text-[#71717a] hover:bg-zinc-100 hover:text-[#0c0c0e] disabled:opacity-30"
+                className="min-h-8 min-w-8 shrink-0 rounded text-[#71717a] hover:text-[#0c0c0e] disabled:opacity-30"
                 onClick={() =>
                   dispatch({ type: "REORDER", from: allIdx, to: allIdx + 1 })
                 }
               >
                 ↓
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon-sm"
                 aria-label="Remove"
-                className="min-h-8 min-w-8 shrink-0 rounded text-[#71717a] hover:bg-zinc-100 hover:text-[#0c0c0e]"
+                className="min-h-8 min-w-8 shrink-0 rounded text-[#71717a] hover:text-[#0c0c0e]"
                 onClick={() => {
                   dispatch({ type: "REMOVE", key: slot.key });
                   if (selectedKey === slot.key) setSelectedKey(null);
                 }}
               >
                 ×
-              </button>
+              </Button>
             </div>
           );
         })}
@@ -1278,30 +1301,33 @@ export function InlineClipsEditor({
 
       {/* ── Controls ─────────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-2 border-t border-zinc-200 pt-2">
-        <button
+        <Button
           type="button"
+          variant="outline"
           disabled={state.past.length === 0}
-          className="min-h-9 rounded border border-zinc-200 bg-white px-2 text-xs text-[#3f3f46] hover:bg-zinc-100 disabled:opacity-30"
+          className="min-h-9 px-2 text-xs text-[#3f3f46] disabled:opacity-30"
           onClick={() => dispatch({ type: "UNDO" })}
         >
           ↩ Undo
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="outline"
           disabled={state.future.length === 0}
-          className="min-h-9 rounded border border-zinc-200 bg-white px-2 text-xs text-[#3f3f46] hover:bg-zinc-100 disabled:opacity-30"
+          className="min-h-9 px-2 text-xs text-[#3f3f46] disabled:opacity-30"
           onClick={() => dispatch({ type: "REDO" })}
         >
           ↪ Redo
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="outline"
           disabled={submitting}
-          className="min-h-9 rounded border border-zinc-200 bg-white px-2 text-xs text-[#3f3f46] hover:bg-zinc-100 disabled:opacity-50"
+          className="min-h-9 px-2 text-xs text-[#3f3f46]"
           onClick={handleReset}
         >
           Reset
-        </button>
+        </Button>
         <div className="flex-1" />
         <span className="text-[11px] tabular-nums text-[#71717a]">
           {totalS > 0 && formatSeconds(totalS)}
@@ -1315,14 +1341,15 @@ export function InlineClipsEditor({
             {submitError}
           </div>
         )}
-        <button
+        <Button
           type="button"
+          variant="default"
           disabled={submitting || edits === 0}
-          className="min-h-9 rounded-lg bg-lime-600 px-3 text-xs font-medium text-white transition-colors hover:bg-lime-700 disabled:opacity-50"
+          className="min-h-9 rounded-lg bg-lime-600 px-3 text-xs font-medium text-white hover:bg-lime-700"
           onClick={handleApply}
         >
           {submitting ? "Saving…" : "Apply & Re-render"}
-        </button>
+        </Button>
       </div>
     </div>
   );

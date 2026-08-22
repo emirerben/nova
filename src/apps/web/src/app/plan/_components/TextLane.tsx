@@ -15,6 +15,9 @@
 
 import { type Dispatch, useEffect, useReducer, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { computeBarPosition } from "@/lib/timeline/bar-position";
 import { classifyZone, clampSeconds } from "@/lib/timeline/drag-zone";
 import {
@@ -401,14 +404,15 @@ export default function TextLane({
 
           {/* Empty state */}
           {bars.length === 0 && (
-            <button
+            <Button
               type="button"
+              variant="ghost"
               onClick={handleAdd}
               disabled={readOnly}
-              className="absolute inset-0 flex min-h-11 items-center justify-center text-[10px] text-zinc-400 transition-colors hover:text-amber-500 disabled:pointer-events-none disabled:cursor-default sm:min-h-0"
+              className="absolute inset-0 h-auto w-auto min-h-11 items-center justify-center rounded-none text-[10px] text-zinc-400 hover:bg-transparent hover:text-amber-500 disabled:pointer-events-none disabled:cursor-default sm:min-h-0"
             >
               No text yet — ＋ Add text
-            </button>
+            </Button>
           )}
 
           {/* Text bars */}
@@ -483,15 +487,16 @@ export default function TextLane({
 
           {/* Add button — floats at top-right of the lane */}
           {!readOnly && bars.length > 0 && (
-            <button
+            <Button
               type="button"
+              variant="ghost"
               onClick={(e) => { e.stopPropagation(); handleAdd(); }}
               title="Add text block"
               aria-label="Add text block"
-              className={`absolute right-0.5 top-0.5 z-20 flex h-11 w-8 items-center justify-center rounded text-xs leading-none transition-colors sm:h-5 sm:w-5 ${bars[0]?.role === "narrated_caption" ? "text-teal-400/50 hover:bg-teal-500/10 hover:text-teal-300" : "text-amber-400/50 hover:bg-amber-500/10 hover:text-amber-300"}`}
+              className={`absolute right-0.5 top-0.5 z-20 h-11 w-8 items-center justify-center rounded text-xs leading-none sm:h-5 sm:w-5 ${bars[0]?.role === "narrated_caption" ? "text-teal-400/50 hover:bg-teal-500/10 hover:text-teal-300" : "text-amber-400/50 hover:bg-amber-500/10 hover:text-amber-300"}`}
             >
               +
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -531,24 +536,26 @@ export default function TextLane({
       {/* ── Undo / redo row (visible when bars exist and not read-only) ── */}
       {!readOnly && bars.length > 0 && (
         <div className="pl-14 pr-1 pb-1 flex justify-end gap-0">
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={() => dispatch({ type: "UNDO" })}
             disabled={!canUndo}
             title="Undo"
-            className="min-h-11 min-w-11 px-2 py-0.5 text-sm text-zinc-400 transition-colors hover:text-zinc-700 disabled:opacity-25 sm:min-h-0 sm:min-w-0"
+            className="h-auto w-auto min-h-11 min-w-11 px-2 py-0.5 text-sm text-zinc-400 hover:bg-transparent hover:text-zinc-700 disabled:opacity-25 sm:min-h-0 sm:min-w-0"
           >
             ↩
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="ghost"
             onClick={() => dispatch({ type: "REDO" })}
             disabled={!canRedo}
             title="Redo"
-            className="min-h-11 min-w-11 px-2 py-0.5 text-sm text-zinc-400 transition-colors hover:text-zinc-700 disabled:opacity-25 sm:min-h-0 sm:min-w-0"
+            className="h-auto w-auto min-h-11 min-w-11 px-2 py-0.5 text-sm text-zinc-400 hover:bg-transparent hover:text-zinc-700 disabled:opacity-25 sm:min-h-0 sm:min-w-0"
           >
             ↪
-          </button>
+          </Button>
         </div>
       )}
 
@@ -700,7 +707,7 @@ function TextPropertyPanel({
         <label className="block text-[10px] text-zinc-500 uppercase tracking-wide mb-1">
           Text
         </label>
-        <textarea
+        <Textarea
           value={bar.text}
           onChange={(e) => {
             const motionPatch = motionPatchForText(bar, e.target.value, durationSeconds);
@@ -712,7 +719,7 @@ function TextPropertyPanel({
           }}
           maxLength={500}
           rows={3}
-          className="w-full text-xs bg-zinc-50 border border-zinc-200 rounded-lg px-2 py-1.5 text-zinc-900 placeholder-zinc-400 focus:border-amber-400 focus:outline-none resize-none leading-relaxed"
+          className="min-h-0 text-xs bg-zinc-50 rounded-lg px-2 py-1.5 text-zinc-900 placeholder-zinc-400 focus-visible:ring-amber-400 resize-none leading-relaxed"
           placeholder="Enter text…"
         />
         <div
@@ -730,46 +737,49 @@ function TextPropertyPanel({
           Size
         </label>
         <div className="flex items-center gap-2 mb-1.5">
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={() =>
               patch({ size_px: Math.max(8, (sizePx ?? 72) - 1), size_class: undefined })
             }
-            className="flex h-11 w-11 items-center justify-center rounded bg-zinc-100 text-zinc-700 leading-none select-none hover:bg-zinc-200 sm:h-6 sm:w-6"
+            className="h-11 w-11 items-center justify-center rounded bg-zinc-100 text-zinc-700 leading-none select-none hover:bg-zinc-200 sm:h-6 sm:w-6"
             aria-label="Decrease font size"
           >
             −
-          </button>
+          </Button>
           <span className="w-12 text-center text-xs text-zinc-700 tabular-nums">
             {sizePx !== null ? `${sizePx}px` : "—"}
           </span>
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={() =>
               patch({ size_px: Math.min(300, (sizePx ?? 72) + 1), size_class: undefined })
             }
-            className="flex h-11 w-11 items-center justify-center rounded bg-zinc-100 text-zinc-700 leading-none select-none hover:bg-zinc-200 sm:h-6 sm:w-6"
+            className="h-11 w-11 items-center justify-center rounded bg-zinc-100 text-zinc-700 leading-none select-none hover:bg-zinc-200 sm:h-6 sm:w-6"
             aria-label="Increase font size"
           >
             ＋
-          </button>
+          </Button>
         </div>
         {/* Preset chips */}
         <div className="flex gap-1">
           {PANEL_SIZE_PRESETS.map((p) => (
-            <button
+            <Button
               key={p.value}
               type="button"
+              variant="ghost"
               onClick={() => patch({ size_class: p.value, size_px: undefined })}
               aria-pressed={bar.size_class === p.value}
-              className={`min-h-11 flex-1 rounded py-1 text-[10px] transition-colors sm:min-h-0 ${
+              className={`h-auto min-h-11 flex-1 rounded py-1 text-[10px] sm:min-h-0 ${
                 bar.size_class === p.value
-                  ? "bg-lime-400 text-black font-semibold"
+                  ? "bg-lime-400 text-black font-semibold hover:bg-lime-400"
                   : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
               }`}
             >
               {p.label}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
@@ -785,7 +795,7 @@ function TextPropertyPanel({
             style={{ backgroundColor: bar.color ?? "#ffffff" }}
             aria-hidden="true"
           />
-          <input
+          <Input
             type="text"
             value={colorDraft}
             onChange={(e) => setColorDraft(e.target.value)}
@@ -793,7 +803,7 @@ function TextPropertyPanel({
             onKeyDown={(e) => { if (e.key === "Enter") commitColor(colorDraft); }}
             maxLength={7}
             placeholder="#ffffff"
-            className="flex-1 text-xs bg-zinc-50 border border-zinc-200 rounded px-2 py-1 text-zinc-900 placeholder-zinc-400 focus:border-amber-400 focus:outline-none font-mono"
+            className="h-auto flex-1 text-xs bg-zinc-50 rounded px-2 py-1 text-zinc-900 placeholder-zinc-400 focus-visible:ring-amber-400 font-mono"
             aria-label="Text color (6-digit hex)"
           />
         </div>
@@ -817,7 +827,7 @@ function TextPropertyPanel({
             }}
             aria-hidden="true"
           />
-          <input
+          <Input
             type="text"
             value={hlDraft}
             onChange={(e) => setHlDraft(e.target.value)}
@@ -825,18 +835,19 @@ function TextPropertyPanel({
             onKeyDown={(e) => { if (e.key === "Enter") commitHighlight(hlDraft); }}
             maxLength={7}
             placeholder="#ffee00 or empty"
-            className="flex-1 text-xs bg-zinc-50 border border-zinc-200 rounded px-2 py-1 text-zinc-900 placeholder-zinc-400 focus:border-amber-400 focus:outline-none font-mono"
+            className="h-auto flex-1 text-xs bg-zinc-50 rounded px-2 py-1 text-zinc-900 placeholder-zinc-400 focus-visible:ring-amber-400 font-mono"
             aria-label="Highlight color (6-digit hex, optional)"
           />
           {bar.highlight_color && (
-            <button
+            <Button
               type="button"
+              variant="ghost"
               onClick={() => { setHlDraft(""); patch({ highlight_color: undefined }); }}
-              className="min-h-11 min-w-11 px-1 text-xs leading-none text-zinc-400 hover:text-red-500 sm:min-h-0 sm:min-w-0"
+              className="h-auto w-auto min-h-11 min-w-11 px-1 text-xs leading-none text-zinc-400 hover:bg-transparent hover:text-red-500 sm:min-h-0 sm:min-w-0"
               aria-label="Clear highlight color"
             >
               ✕
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -854,9 +865,10 @@ function TextPropertyPanel({
         </label>
         <div className="flex gap-1" role="group" aria-label="Text alignment">
           {(["left", "center", "right"] as const).map((a) => (
-            <button
+            <Button
               key={a}
               type="button"
+              variant="ghost"
               onClick={() => {
                 if (a === alignment) return;
                 patch({
@@ -873,14 +885,14 @@ function TextPropertyPanel({
               }}
               aria-pressed={alignment === a}
               aria-label={`Align text ${a}`}
-              className={`min-h-11 flex-1 rounded py-1 text-[10px] transition-colors sm:min-h-0 ${
+              className={`h-auto min-h-11 flex-1 rounded py-1 text-[10px] sm:min-h-0 ${
                 alignment === a
-                  ? "bg-lime-400 text-black font-semibold"
+                  ? "bg-lime-400 text-black font-semibold hover:bg-lime-400"
                   : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
               }`}
             >
               {a[0].toUpperCase() + a.slice(1)}
-            </button>
+            </Button>
           ))}
         </div>
       </div>}
@@ -892,9 +904,10 @@ function TextPropertyPanel({
         </label>
         <div className="flex gap-1" role="group" aria-label="Box position">
           {(["left", "center", "right"] as const).map((position) => (
-            <button
+            <Button
               key={position}
               type="button"
+              variant="ghost"
               onClick={() => {
                 if (boxPosition === position) return;
                 patch(
@@ -908,14 +921,14 @@ function TextPropertyPanel({
               }}
               aria-pressed={boxPosition === position}
               aria-label={`Place box ${position}`}
-              className={`min-h-11 flex-1 rounded py-1 text-[10px] transition-colors sm:min-h-0 ${
+              className={`h-auto min-h-11 flex-1 rounded py-1 text-[10px] sm:min-h-0 ${
                 boxPosition === position
-                  ? "bg-lime-400 text-black font-semibold"
+                  ? "bg-lime-400 text-black font-semibold hover:bg-lime-400"
                   : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
               }`}
             >
               {position[0].toUpperCase() + position.slice(1)}
-            </button>
+            </Button>
           ))}
         </div>
       </div>}
@@ -926,33 +939,35 @@ function TextPropertyPanel({
           Stroke
         </label>
         <div className="flex items-center gap-2">
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={() =>
               patch({
                 stroke_width: Math.max(0, parseFloat((strokeW - 0.5).toFixed(1))),
               })
             }
-            className="flex h-11 w-11 items-center justify-center rounded bg-zinc-100 text-zinc-700 leading-none select-none hover:bg-zinc-200 sm:h-6 sm:w-6"
+            className="h-11 w-11 items-center justify-center rounded bg-zinc-100 text-zinc-700 leading-none select-none hover:bg-zinc-200 sm:h-6 sm:w-6"
             aria-label="Decrease stroke width"
           >
             −
-          </button>
+          </Button>
           <span className="w-10 text-center text-xs text-zinc-700 tabular-nums">
             {strokeW.toFixed(1)}
           </span>
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={() =>
               patch({
                 stroke_width: Math.min(20, parseFloat((strokeW + 0.5).toFixed(1))),
               })
             }
-            className="flex h-11 w-11 items-center justify-center rounded bg-zinc-100 text-zinc-700 leading-none select-none hover:bg-zinc-200 sm:h-6 sm:w-6"
+            className="h-11 w-11 items-center justify-center rounded bg-zinc-100 text-zinc-700 leading-none select-none hover:bg-zinc-200 sm:h-6 sm:w-6"
             aria-label="Increase stroke width"
           >
             ＋
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -963,9 +978,10 @@ function TextPropertyPanel({
         </label>
         <div className="flex flex-wrap gap-1">
           {PANEL_EFFECTS.map((opt) => (
-            <button
+            <Button
               key={opt.value}
               type="button"
+              variant="ghost"
               onClick={() =>
                 patch(
                   TEXT_MOTION_V2_UI_ENABLED
@@ -974,14 +990,14 @@ function TextPropertyPanel({
                 )
               }
               aria-pressed={bar.effect === opt.value}
-              className={`min-h-11 rounded px-2 py-1 text-[10px] transition-colors sm:min-h-0 ${
+              className={`h-auto min-h-11 rounded px-2 py-1 text-[10px] sm:min-h-0 ${
                 bar.effect === opt.value
-                  ? "bg-lime-400 text-black font-semibold"
+                  ? "bg-lime-400 text-black font-semibold hover:bg-lime-400"
                   : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
               }`}
             >
               {opt.label}
-            </button>
+            </Button>
           ))}
         </div>
       </div>}
@@ -1030,9 +1046,10 @@ function TextPropertyPanel({
           {PANEL_THEME_TRANSITIONS.map((opt) => {
             const active = (bar.theme_transition?.type ?? "none") === opt.value;
             return (
-              <button
+              <Button
                 key={opt.value}
                 type="button"
+                variant="ghost"
                 onClick={() =>
                   patch({
                     theme_transition:
@@ -1040,21 +1057,21 @@ function TextPropertyPanel({
                   })
                 }
                 aria-pressed={active}
-                className={`min-h-11 rounded px-2 py-1 text-[10px] transition-colors sm:min-h-0 ${
+                className={`h-auto min-h-11 rounded px-2 py-1 text-[10px] sm:min-h-0 ${
                   active
-                    ? "bg-lime-400 text-black font-semibold"
+                    ? "bg-lime-400 text-black font-semibold hover:bg-lime-400"
                     : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
                 }`}
               >
                 {opt.label}
-              </button>
+              </Button>
             );
           })}
         </div>
         {bar.theme_transition?.type === "giant-title-wipe" && (
           <label className="mt-2 block text-[10px] text-zinc-500 uppercase tracking-wide">
             Target glyph
-            <input
+            <Input
               type="text"
               value={bar.theme_transition.target_glyph ?? ""}
               onChange={(e) =>
@@ -1067,7 +1084,7 @@ function TextPropertyPanel({
               }
               maxLength={1}
               placeholder="center"
-              className="mt-1 h-8 w-full rounded border border-zinc-200 bg-zinc-50 px-2 text-xs normal-case tracking-normal text-zinc-900 placeholder-zinc-400 focus:border-amber-400 focus:outline-none"
+              className="mt-1 h-8 w-full bg-zinc-50 px-2 text-xs normal-case tracking-normal text-zinc-900 placeholder-zinc-400 focus-visible:ring-amber-400"
               aria-label="Target glyph"
             />
           </label>
@@ -1081,20 +1098,21 @@ function TextPropertyPanel({
         </label>
         <div className="grid grid-cols-2 gap-1">
           {PANEL_FONTS.map((f) => (
-            <button
+            <Button
               key={f.name}
               type="button"
+              variant="ghost"
               onClick={() => patch({ font_family: f.name })}
               aria-pressed={bar.font_family === f.name}
               style={{ fontFamily: f.cssFamily, fontWeight: f.weight }}
-              className={`min-h-11 truncate rounded px-2 py-1.5 text-left text-[11px] transition-colors sm:min-h-0 ${
+              className={`h-auto min-h-11 justify-start truncate rounded px-2 py-1.5 text-left text-[11px] sm:min-h-0 ${
                 bar.font_family === f.name
-                  ? "bg-lime-400 text-black"
+                  ? "bg-lime-400 text-black hover:bg-lime-400"
                   : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
               }`}
             >
               {f.label}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
@@ -1112,18 +1130,19 @@ function TextPropertyPanel({
         {/* Mobile tabs — hidden on desktop, visible on ≤375px */}
         <div className="hidden max-[375px]:flex border-b border-zinc-200 flex-shrink-0">
           {(["text", "style"] as const).map((t) => (
-            <button
+            <Button
               key={t}
               type="button"
+              variant="ghost"
               onClick={() => setTab(t)}
-              className={`min-h-11 flex-1 py-2 text-xs capitalize transition-colors ${
+              className={`h-auto min-h-11 flex-1 rounded-none py-2 text-xs capitalize hover:bg-transparent ${
                 tab === t
                   ? "text-zinc-900 font-semibold border-b-2 border-amber-500"
                   : "text-zinc-500 hover:text-zinc-700"
               }`}
             >
               {t === "text" ? "Text" : "Style"}
-            </button>
+            </Button>
           ))}
         </div>
 
@@ -1144,20 +1163,22 @@ function TextPropertyPanel({
 
         {/* Sticky Apply row — always at bottom even when content is scrolled */}
         <div className="border-t border-zinc-200 px-3 py-2 flex items-center justify-between bg-zinc-50 flex-shrink-0">
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={() => dispatch({ type: "UNDO" })}
-            className="min-h-11 min-w-11 rounded px-2 py-1 text-xs text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 sm:min-h-0 sm:min-w-0"
+            className="h-auto min-h-11 min-w-11 rounded px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 sm:min-h-0 sm:min-w-0"
           >
             ↩ Undo
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="default"
             onClick={() => onApply?.(bars)}
-            className="min-h-11 rounded-full bg-lime-400 px-4 py-1.5 text-xs font-semibold text-black transition-colors hover:bg-lime-300 active:bg-lime-500 sm:min-h-0"
+            className="h-auto min-h-11 rounded-full bg-lime-400 px-4 py-1.5 text-xs font-semibold text-black hover:bg-lime-300 active:bg-lime-500 sm:min-h-0"
           >
             Apply
-          </button>
+          </Button>
         </div>
       </div>
     </div>

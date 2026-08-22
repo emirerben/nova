@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 export interface ClipItem {
   gcsPath: string;
@@ -78,12 +80,14 @@ export function ClipGroupStep({
           {unassignedIndices.map((i) => {
             const isSelected = selected.has(i);
             return (
-              <button
+              <Button
                 key={i}
+                type="button"
+                variant="ghost"
                 onClick={() => toggleSelect(i)}
                 aria-pressed={isSelected}
                 aria-label={`Clip ${i + 1}`}
-                className={`relative aspect-[9/16] rounded-lg overflow-hidden border-2 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 ${
+                className={`relative h-auto w-full aspect-[9/16] rounded-lg overflow-hidden border-2 p-0 hover:bg-transparent focus-visible:ring-lime-600 ${
                   isSelected ? "border-lime-600" : "border-transparent"
                 }`}
               >
@@ -100,7 +104,7 @@ export function ClipGroupStep({
                     </span>
                   </div>
                 )}
-              </button>
+              </Button>
             );
           })}
         </div>
@@ -108,31 +112,34 @@ export function ClipGroupStep({
 
       {/* Group selected button */}
       {selectedUnassigned.length > 0 && !editingGroup && (
-        <button
+        <Button
+          type="button"
+          variant="outline"
           onClick={() => setEditingGroup(true)}
-          className="w-full rounded-xl border border-lime-600 text-lime-700 py-3 font-medium hover:bg-lime-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
+          className="h-auto min-h-[44px] w-full rounded-xl border-lime-600 py-3 font-medium text-lime-700 hover:bg-lime-50 focus-visible:ring-lime-600"
         >
           Group {selectedUnassigned.length} selected
-        </button>
+        </Button>
       )}
 
       {/* Inline topic input */}
       {editingGroup && (
         <div className="flex gap-2">
-          <input
+          <Input
             value={topicDraft}
             onChange={(e) => setTopicDraft(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && confirmGroup()}
             placeholder="What's this group about? (optional)"
             autoFocus
-            className="flex-1 rounded-xl border border-[#e4e4e7] bg-[#ffffff] px-4 py-3 text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:outline-none focus:ring-2 focus:ring-lime-600"
+            className="h-auto flex-1 rounded-xl border-[#e4e4e7] bg-[#ffffff] px-4 py-3 text-[#0c0c0e] placeholder:text-[#a1a1aa] focus-visible:ring-2 focus-visible:ring-lime-600"
           />
-          <button
+          <Button
+            type="button"
             onClick={confirmGroup}
-            className="px-5 rounded-xl bg-lime-700 text-white font-medium hover:bg-lime-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
+            className="h-auto min-h-[44px] rounded-xl bg-lime-700 px-5 font-medium text-white hover:bg-lime-800 focus-visible:ring-lime-600"
           >
             Add
-          </button>
+          </Button>
         </div>
       )}
 
@@ -166,13 +173,15 @@ export function ClipGroupStep({
                   )}
                 </div>
               </div>
-              <button
+              <Button
+                type="button"
+                variant="ghost"
                 onClick={() => setGroups((prev) => prev.filter((g) => g.id !== group.id))}
                 aria-label="Remove group"
-                className="text-[#a1a1aa] hover:text-[#0c0c0e] focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 rounded px-2 min-h-[44px] flex-shrink-0"
+                className="h-auto min-h-[44px] w-auto flex-shrink-0 rounded px-2 text-[#a1a1aa] hover:bg-transparent hover:text-[#0c0c0e] focus-visible:ring-lime-600"
               >
                 ×
-              </button>
+              </Button>
             </div>
           ))}
         </div>
@@ -189,18 +198,21 @@ export function ClipGroupStep({
       )}
 
       <div className="flex gap-3">
-        <button
+        <Button
+          type="button"
+          variant="ghost"
           onClick={onBack}
-          className="px-4 text-sm text-[#71717a] hover:text-[#0c0c0e] focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 rounded min-h-[44px]"
+          className="h-auto min-h-[44px] rounded px-4 text-sm text-[#71717a] hover:bg-transparent hover:text-[#0c0c0e] focus-visible:ring-lime-600"
         >
           ← back
-        </button>
-        <button
+        </Button>
+        <Button
+          type="button"
           onClick={handleSubmit}
-          className="flex-1 rounded-xl bg-lime-700 text-white py-3 font-medium hover:bg-lime-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
+          className="h-auto min-h-[44px] flex-1 rounded-xl bg-lime-700 py-3 font-medium text-white hover:bg-lime-800 focus-visible:ring-lime-600"
         >
           Make my edits →
-        </button>
+        </Button>
       </div>
     </div>
   );

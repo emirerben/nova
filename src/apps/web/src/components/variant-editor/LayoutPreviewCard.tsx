@@ -17,6 +17,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import {
   CLUSTER_CANVAS_W,
   computeClusterBlocks,
@@ -50,8 +51,9 @@ export function LayoutPreviewCard({
   const sample = (text ?? "").trim();
 
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
       role="radio"
       aria-checked={selected}
       aria-label={`${label} layout`}
@@ -59,7 +61,7 @@ export function LayoutPreviewCard({
       title={title}
       onClick={onSelect}
       className={[
-        "flex min-h-[44px] flex-1 basis-0 flex-col gap-1.5 rounded-lg border bg-white p-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+        "h-auto min-h-[44px] flex-1 basis-0 flex-col items-stretch justify-start gap-1.5 whitespace-normal rounded-lg border bg-white p-2 text-left font-normal transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-50",
         selected
           ? "border-lime-600 ring-1 ring-lime-600"
           : "border-zinc-200 hover:border-zinc-400",
@@ -73,7 +75,7 @@ export function LayoutPreviewCard({
         )}
       </span>
       <span className="text-[11px] font-medium text-[#3f3f46]">{label}</span>
-    </button>
+    </Button>
   );
 }
 

@@ -1,5 +1,7 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
+
 /**
  * InspectorRail — the right edge rail (plan §4, decision D6).
  *
@@ -34,18 +36,19 @@ export default function InspectorRail({
       {tabs.map((t) => {
         const active = tab === t.id;
         return (
-          <button
+          <Button
             key={t.id}
             type="button"
+            variant="ghost"
             disabled={!t.enabled}
             aria-pressed={active}
             aria-label={`${t.label} inspector tab`}
             title={t.enabled ? t.label : "Select something to edit its properties"}
             onClick={() => onTab(t.id)}
-            className={`flex h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-xl border focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+            className={`h-14 w-14 flex-col gap-0.5 rounded-xl border hover:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
               active
                 ? "border-[#0c0c0e]"
-                : "border-transparent hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+                : "border-transparent disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
             }`}
           >
             <span
@@ -63,7 +66,7 @@ export default function InspectorRail({
             >
               {t.label}
             </span>
-          </button>
+          </Button>
         );
       })}
     </div>

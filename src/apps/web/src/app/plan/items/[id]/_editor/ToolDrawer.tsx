@@ -581,13 +581,14 @@ function MotionPresetsPanel({
           const disabled = !!reason || !onAdd || scenes.length >= MOTION_MAX_INSTANCES || assetShortage;
           const hint = assetShortage ? `Needs ${entry.min_assets} ready images` : reason;
           return (
-            <button
+            <Button
               key={entry.preset_id}
               type="button"
+              variant="ghost"
               disabled={disabled}
               title={hint ?? undefined}
               onClick={() => onAdd?.(entry.preset_id)}
-              className="group min-h-11 overflow-hidden rounded-xl border border-zinc-200 bg-white text-left transition-colors hover:border-zinc-400 active:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
+              className="group h-auto min-h-11 w-full flex-col items-stretch overflow-hidden rounded-xl border border-zinc-200 bg-white p-0 text-left transition-colors hover:border-zinc-400 hover:bg-white active:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
             >
               <CreatorBlockThumbnail
                 presetId={entry.preset_id}
@@ -603,7 +604,7 @@ function MotionPresetsPanel({
                   </span>
                 )}
               </span>
-            </button>
+            </Button>
           );
         })}
       </div>
@@ -612,33 +613,35 @@ function MotionPresetsPanel({
           <p className="text-[11px] font-semibold text-[#3f3f46]">Existing effect</p>
           <p className="text-[10px] text-[#71717a]">Route trace</p>
         </div>
-        <button
+        <Button
           type="button"
+          variant="default"
           onClick={() => onAdd?.("route_trace")}
           disabled={!!reason || !onAdd || scenes.length >= MOTION_MAX_INSTANCES}
-          className="min-h-11 rounded-lg bg-[#0c0c0e] px-3 text-[11px] font-semibold text-white active:bg-zinc-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:bg-zinc-100 disabled:text-[#a1a1aa]"
+          className="h-auto min-h-11 rounded-lg bg-[#0c0c0e] px-3 text-[11px] font-semibold text-white hover:bg-zinc-800 active:bg-zinc-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:bg-zinc-100 disabled:text-[#a1a1aa]"
         >
           Add
-        </button>
+        </Button>
       </div>
       {scenes.length > 0 && (
         <div className="mt-4 flex gap-1.5 overflow-x-auto pb-1" aria-label="Creator Block selection">
           {scenes.map((scene) => (
-            <button
+            <Button
               key={scene.id}
               type="button"
+              variant="ghost"
               aria-pressed={selectedScene?.id === scene.id}
               onClick={() => onSelect?.(scene.id)}
-              className={`min-h-11 shrink-0 rounded-full border px-3 text-[11px] font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+              className={`h-auto min-h-11 shrink-0 rounded-full border px-3 text-[11px] font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
                 selectedScene?.id === scene.id
-                  ? "border-lime-600 bg-lime-50 text-[#0c0c0e]"
-                  : "border-zinc-200 bg-white text-[#71717a]"
+                  ? "border-lime-600 bg-lime-50 text-[#0c0c0e] hover:bg-lime-50"
+                  : "border-zinc-200 bg-white text-[#71717a] hover:bg-white"
               }`}
             >
               {scene.preset_id === "route_trace"
                 ? "Route trace"
                 : CREATOR_BLOCK_CATALOG.find((entry) => entry.preset_id === scene.preset_id)?.label}
-            </button>
+            </Button>
           ))}
         </div>
       )}
@@ -1754,15 +1757,16 @@ function SoundsDrawer({
 }) {
   const removeMusicControl = currentMusicTrackId ? (
     <>
-      <button
+      <Button
         type="button"
+        variant="outline"
         disabled={!musicRemoveEditable}
         title={!musicRemoveEditable ? musicRemoveDisabledReason ?? undefined : undefined}
         onClick={() => onRemoveMusic?.()}
-        className="flex min-h-10 w-full items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#71717a] hover:border-zinc-400 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
+        className="h-auto min-h-10 w-full justify-center rounded-lg border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#71717a] hover:border-zinc-400 hover:bg-white hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
       >
         Remove music
-      </button>
+      </Button>
       {!musicRemoveEditable && musicRemoveDisabledReason && (
         <p className="mb-2 text-[11px] leading-4 text-[#71717a]" role="status">
           {musicRemoveDisabledReason}

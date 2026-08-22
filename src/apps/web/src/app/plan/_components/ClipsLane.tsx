@@ -19,6 +19,7 @@
  */
 
 import { useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { Playhead } from "@/lib/timeline/Playhead";
 import { classifyZone } from "@/lib/timeline/drag-zone";
 import type { ClipTimelineHandle } from "./useClipTimeline";
@@ -285,26 +286,29 @@ export default function ClipsLane({
               })}
 
               {/* Subtle "open editor" affordance on the right */}
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon-sm"
                 aria-label="Edit clips"
-                className="absolute right-1 inset-y-1 px-1.5 rounded text-[9px] text-sky-600/70 hover:text-sky-700 hover:bg-sky-100 transition-colors"
+                className="absolute right-1 inset-y-1 h-auto w-auto px-1.5 rounded text-[9px] text-sky-600/70 hover:text-sky-700 hover:bg-sky-100"
                 onClick={(e) => { e.stopPropagation(); toggleClipsOpen(); }}
               >
                 {clipsOpen ? "▲" : "▼"}
-              </button>
+              </Button>
             </>
           ) : (
             /* ── Fallback: single launcher button ────────────────────────────── */
-            <button
+            <Button
               type="button"
-              className="absolute inset-1 rounded flex items-center px-2 border border-sky-300 bg-sky-50 hover:bg-sky-100 text-sky-700 transition-colors"
+              variant="outline"
+              className="absolute inset-1 h-auto w-auto flex justify-start rounded px-2 border-sky-300 bg-sky-50 hover:bg-sky-100 text-sky-700"
               onClick={(e) => { e.stopPropagation(); toggleClipsOpen(); }}
             >
               <span className="text-[10px] truncate pointer-events-none">
                 {clipsOpen ? "Clips ▲" : "Edit clips ▼"}
               </span>
-            </button>
+            </Button>
           )}
         </div>
       </div>

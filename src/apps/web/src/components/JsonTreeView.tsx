@@ -10,6 +10,8 @@
 
 import { useState } from "react";
 
+import { Button } from "@/components/ui/button";
+
 interface JsonTreeViewProps {
   value: unknown;
   /** Levels of nesting expanded by default. Defaults to 2. */
@@ -98,10 +100,11 @@ function JsonNode({
 
   return (
     <div style={{ paddingLeft: depth === 0 ? 0 : indentPx }}>
-      <button
+      <Button
         type="button"
+        variant="link"
         onClick={() => setOpen((o) => !o)}
-        className="text-zinc-500 hover:text-zinc-300 select-none"
+        className="h-auto p-0 text-zinc-500 hover:text-zinc-300 hover:no-underline select-none"
       >
         {open ? "▾" : "▸"}{" "}
         {keyLabel !== undefined && (
@@ -110,7 +113,7 @@ function JsonNode({
         <span className="text-zinc-500">
           {isArray ? `Array(${entries.length})` : `Object(${entries.length})`}
         </span>
-      </button>
+      </Button>
       {open && (
         <div>
           {entries.map(([k, v]) => (
@@ -157,13 +160,14 @@ function StringLeaf({ value }: { value: string }): JSX.Element {
       {open ? value : value.slice(0, _STRING_PREVIEW_MAX)}
       {!open && "…"}
       &quot;
-      <button
+      <Button
         type="button"
+        variant="link"
         onClick={() => setOpen((o) => !o)}
-        className="ml-2 text-xs text-blue-400 underline"
+        className="h-auto p-0 ml-2 text-xs text-blue-400 underline"
       >
         {open ? "collapse" : `show ${value.length - _STRING_PREVIEW_MAX} more chars`}
-      </button>
+      </Button>
     </span>
   );
 }

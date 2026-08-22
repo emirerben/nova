@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import {
   activatePlan,
   attachSeedClips,
@@ -210,22 +211,25 @@ export default function SeedUploadCard({
           e.target.value = "";
         }}
       />
-      <button
+      <Button
         type="button"
+        variant="default"
         disabled={uploading}
         onClick={() => fileInputRef.current?.click()}
-        className="inline-flex min-h-11 items-center rounded-full bg-[#0c0c0e] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-80 focus-visible:outline-2 focus-visible:outline-[#0c0c0e] disabled:opacity-40 sm:min-h-0"
+        className="min-h-11 rounded-full bg-[#0c0c0e] px-4 py-2 text-sm font-medium text-white hover:bg-[#0c0c0e] hover:opacity-80 focus-visible:outline-2 focus-visible:outline-[#0c0c0e] disabled:opacity-40 sm:min-h-0"
       >
         Upload clips
-      </button>
+      </Button>
       {uploading && <p className="mt-3 text-sm text-lime-700">Uploading…</p>}
-      <button
+      <Button
+        type="button"
+        variant="default"
         onClick={() => void handleActivate()}
         disabled={uploading || seededCount === 0}
-        className="mt-4 inline-flex items-center justify-center rounded-full bg-[#0c0c0e] px-6 py-3 font-semibold text-white transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
+        className="mt-4 rounded-full bg-[#0c0c0e] px-6 py-3 font-semibold text-white hover:bg-[#0c0c0e] hover:opacity-80 disabled:opacity-40"
       >
         Find my best clips
-      </button>
+      </Button>
       {seededCount === 0 && !uploading && (
         <p className="mt-2 text-sm text-[#71717a]">Upload at least one clip first.</p>
       )}

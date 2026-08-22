@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.48.1.0] — 2026-08-23
+
+### Design system
+- **Raw-control migration finished; ESLint guard flipped from `warn` to `error`.** Migrated the
+  ~309 remaining raw `<button className=…>`/`<select>`/`<input className=…>`/`<textarea className=…>`
+  warnings left after the shadcn migration train (#889, v0.48.0.0) — spanning ~50 files across
+  `src/app/plan/**` and `src/components/**`, including the guided-story-editor-v2 files (#887) that
+  landed after that train — to the `Button`/`Input`/`Textarea`/`Select` primitives (DESIGN.md §15).
+  `TikTokPublishDialog.tsx`'s internal controls were converted too (its outer hand-rolled
+  `createPortal`/`useFocusTrap` shell remains deliberately unconverted — see the updated DESIGN.md
+  backlog note); its pinned 373-line focus-order test suite still passes unchanged. One `<select>`
+  (SfxLane.tsx's glossary picker) was converted to Radix `Select`, with its driving test rewritten
+  from `fireEvent.change` to `userEvent.click` per the Radix-in-jsdom testing convention.
+  `src/app/plan/items/[id]/components/EditProposalCard.tsx` is temporarily excluded from the
+  ESLint override (its own Select-conversion PR is in flight in parallel) — remove the exclusion
+  once that PR lands.
+
 ## [0.48.0.2] — 2026-08-23
 
 ### Fixed

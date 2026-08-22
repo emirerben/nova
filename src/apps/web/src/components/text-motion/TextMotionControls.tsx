@@ -1,6 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   normalizeTextMotion,
   TEXT_MOTION_BLUR_MAX_PX,
@@ -142,16 +150,22 @@ export default function TextMotionControls({
             {capabilities.easing && (
               <label className="block text-[12px] font-semibold text-[#3f3f46]">
                 Easing
-                <select
-                  aria-label="Motion easing"
+                <Select
                   value={value.easing}
-                  onChange={(event) => commitDiscrete({ easing: event.target.value as TextMotionConfigV2["easing"] })}
-                  className="mt-1 min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-2 text-base font-normal sm:h-9 sm:min-h-0 sm:text-[13px]"
+                  onValueChange={(next) => commitDiscrete({ easing: next as TextMotionConfigV2["easing"] })}
                 >
-                  <option value="ease-out-cubic">Ease out</option>
-                  <option value="ease-in-out-cubic">Ease in & out</option>
-                  <option value="linear">Linear</option>
-                </select>
+                  <SelectTrigger
+                    aria-label="Motion easing"
+                    className="mt-1 min-h-11 rounded-lg border-zinc-200 px-2 text-base font-normal sm:h-9 sm:min-h-0 sm:text-[13px]"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ease-out-cubic">Ease out</SelectItem>
+                    <SelectItem value="ease-in-out-cubic">Ease in & out</SelectItem>
+                    <SelectItem value="linear">Linear</SelectItem>
+                  </SelectContent>
+                </Select>
               </label>
             )}
             {capabilities.stagger && (
@@ -163,23 +177,39 @@ export default function TextMotionControls({
             {capabilities.order && (
               <label className="block text-[12px] font-semibold text-[#3f3f46]">
                 Order
-                <select aria-label="Reveal order" value={value.order} onChange={(event) => commitDiscrete({ order: event.target.value as TextMotionConfigV2["order"] })} className="mt-1 min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-2 text-base font-normal sm:h-9 sm:min-h-0 sm:text-[13px]">
-                  <option value="forward">Forward</option>
-                  <option value="reverse">Reverse</option>
-                  <option value="center-out">Center out</option>
-                </select>
+                <Select value={value.order} onValueChange={(next) => commitDiscrete({ order: next as TextMotionConfigV2["order"] })}>
+                  <SelectTrigger
+                    aria-label="Reveal order"
+                    className="mt-1 min-h-11 rounded-lg border-zinc-200 px-2 text-base font-normal sm:h-9 sm:min-h-0 sm:text-[13px]"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="forward">Forward</SelectItem>
+                    <SelectItem value="reverse">Reverse</SelectItem>
+                    <SelectItem value="center-out">Center out</SelectItem>
+                  </SelectContent>
+                </Select>
               </label>
             )}
             {capabilities.direction && (
               <label className="block text-[12px] font-semibold text-[#3f3f46]">
                 Direction
-                <select aria-label="Entrance direction" value={value.direction} onChange={(event) => commitDiscrete({ direction: event.target.value as TextMotionConfigV2["direction"] })} className="mt-1 min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-2 text-base font-normal sm:h-9 sm:min-h-0 sm:text-[13px]">
-                  <option value="none">None</option>
-                  <option value="up">Up</option>
-                  <option value="down">Down</option>
-                  <option value="left">Left</option>
-                  <option value="right">Right</option>
-                </select>
+                <Select value={value.direction} onValueChange={(next) => commitDiscrete({ direction: next as TextMotionConfigV2["direction"] })}>
+                  <SelectTrigger
+                    aria-label="Entrance direction"
+                    className="mt-1 min-h-11 rounded-lg border-zinc-200 px-2 text-base font-normal sm:h-9 sm:min-h-0 sm:text-[13px]"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    <SelectItem value="up">Up</SelectItem>
+                    <SelectItem value="down">Down</SelectItem>
+                    <SelectItem value="left">Left</SelectItem>
+                    <SelectItem value="right">Right</SelectItem>
+                  </SelectContent>
+                </Select>
               </label>
             )}
             {capabilities.travel && (
@@ -195,12 +225,20 @@ export default function TextMotionControls({
               <>
                 <label className="block text-[12px] font-semibold text-[#3f3f46]">
                   Cursor
-                  <select aria-label="Cursor style" value={value.cursor_style} onChange={(event) => commitDiscrete({ cursor_style: event.target.value as TextMotionConfigV2["cursor_style"] })} className="mt-1 min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-2 text-base font-normal sm:h-9 sm:min-h-0 sm:text-[13px]">
-                    <option value="none">None</option>
-                    <option value="bar">Bar</option>
-                    <option value="block">Block</option>
-                    <option value="underscore">Underscore</option>
-                  </select>
+                  <Select value={value.cursor_style} onValueChange={(next) => commitDiscrete({ cursor_style: next as TextMotionConfigV2["cursor_style"] })}>
+                    <SelectTrigger
+                      aria-label="Cursor style"
+                      className="mt-1 min-h-11 rounded-lg border-zinc-200 px-2 text-base font-normal sm:h-9 sm:min-h-0 sm:text-[13px]"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">None</SelectItem>
+                      <SelectItem value="bar">Bar</SelectItem>
+                      <SelectItem value="block">Block</SelectItem>
+                      <SelectItem value="underscore">Underscore</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </label>
                 {value.cursor_style !== "none" && (
                   <RangeCommit label="Blink" value={value.cursor_blink_ms} min={TEXT_MOTION_CURSOR_BLINK_MIN_MS} max={TEXT_MOTION_CURSOR_BLINK_MAX_MS} step={50} suffix="ms" onCommit={(cursor_blink_ms) => onChange({ cursor_blink_ms })} onPreview={(cursor_blink_ms) => onPreview?.({ cursor_blink_ms })} onBegin={onBegin} />
@@ -214,13 +252,14 @@ export default function TextMotionControls({
         </details>
       )}
       {onResetLegacy && (
-        <button
+        <Button
           type="button"
+          variant="link"
           onClick={onResetLegacy}
-          className="inline-flex min-h-11 items-center text-base font-semibold text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] sm:min-h-0 sm:text-[11px]"
+          className="h-auto min-h-11 items-center p-0 text-base font-semibold text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] sm:min-h-0 sm:text-[11px]"
         >
           Use legacy timing
-        </button>
+        </Button>
       )}
     </div>
   );

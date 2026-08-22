@@ -11,6 +11,7 @@
  * (plan Pass 4). The applied preset carries a lime selection ring.
  */
 
+import { Button } from "@/components/ui/button";
 import { resolveCssFont } from "@/lib/overlay-constants";
 import {
   presetSampleWord,
@@ -66,14 +67,15 @@ export default function PresetGrid({
         const favorite = favoriteSet.has(preset.id);
         return (
           <div key={preset.id} className="group relative aspect-square">
-            <button
+            <Button
               type="button"
+              variant="ghost"
               role="radio"
               aria-checked={applied}
               aria-label={`Text preset: ${preset.label}`}
               title={preset.label}
               onClick={() => onPick(preset)}
-              className={`flex h-full min-h-11 w-full min-w-11 items-center justify-center overflow-hidden rounded-xl border border-zinc-200 bg-[#0c0c0e] px-1 hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+              className={`h-full min-h-11 w-full min-w-11 overflow-hidden rounded-xl border border-zinc-200 bg-[#0c0c0e] px-1 hover:border-zinc-400 hover:bg-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
                 applied ? "outline outline-2 outline-offset-1 outline-lime-500" : ""
               }`}
             >
@@ -92,24 +94,26 @@ export default function PresetGrid({
               >
                 {word}
               </span>
-            </button>
+            </Button>
             {onToggleFavorite && (
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon-sm"
                 aria-pressed={favorite}
                 aria-label={`${favorite ? "Remove" : "Add"} ${preset.label} favorite`}
                 onClick={(event) => {
                   event.stopPropagation();
                   onToggleFavorite(preset.id);
                 }}
-                className={`absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full text-[11px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+                className={`absolute right-1 top-1 h-6 w-6 rounded-full text-[11px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
                   favorite
-                    ? "bg-white text-[#0c0c0e]"
-                    : "bg-black/35 text-white/70 group-hover:bg-white group-hover:text-[#0c0c0e]"
+                    ? "bg-white text-[#0c0c0e] hover:bg-white"
+                    : "bg-black/35 text-white/70 hover:bg-black/35 group-hover:bg-white group-hover:text-[#0c0c0e]"
                 }`}
               >
                 ★
-              </button>
+              </Button>
             )}
           </div>
         );

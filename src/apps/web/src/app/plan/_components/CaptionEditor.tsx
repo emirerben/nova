@@ -16,6 +16,10 @@ import {
 import { INTRO_FONTS } from "../../../lib/overlay-constants";
 import { StableVideo } from "@/components/StableVideo";
 import { InfoDot } from "@/components/ui/InfoDot";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import CaptionStyleToggle from "./CaptionStyleToggle";
 
 const CAPTION_LANGUAGE_LABELS: Record<string, string> = { en: "English", tr: "Türkçe" };
@@ -379,27 +383,12 @@ export default function CaptionEditor({
           the transcript-derived cues, so turning it back on needs no re-transcription. */}
       <div className="flex items-center justify-between rounded-xl border border-zinc-200 bg-white px-3 py-2">
         <span className="text-sm font-medium text-[#0c0c0e]">Subtitles</span>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={captionsEnabled}
+        <Switch
           aria-label="Subtitles"
           disabled={busy}
-          onClick={() => chooseCaptionsEnabled(!captionsEnabled)}
-          className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:h-6 sm:w-11 sm:min-h-0 sm:min-w-0"
-        >
-          <span
-            className={`relative h-6 w-11 rounded-full transition-colors ${
-              captionsEnabled ? "bg-lime-600" : "bg-zinc-300"
-            }`}
-          >
-            <span
-              className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
-                captionsEnabled ? "translate-x-[22px]" : "translate-x-0.5"
-              }`}
-            />
-          </span>
-        </button>
+          checked={captionsEnabled}
+          onCheckedChange={(checked) => chooseCaptionsEnabled(checked)}
+        />
       </div>
 
       {captionsEnabled && (
@@ -421,38 +410,41 @@ export default function CaptionEditor({
             Captions in {CAPTION_LANGUAGE_LABELS[captionLanguage] ?? captionLanguage}
           </span>
           {pendingLang === null ? (
-            <button
+            <Button
               type="button"
+              variant="link"
               aria-label="Change caption language"
               disabled={busy}
               onClick={() => setPendingLang(captionLanguage === "tr" ? "en" : "tr")}
-              className="inline-flex min-h-[44px] items-center px-1 text-xs font-medium text-lime-700 underline underline-offset-2 hover:text-lime-800 disabled:cursor-not-allowed disabled:opacity-50"
+              className="h-auto min-h-[44px] px-1 text-xs"
             >
               Change
-            </button>
+            </Button>
           ) : (
             <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[#3f3f46]">
               Re-transcribe in {CAPTION_LANGUAGE_LABELS[pendingLang]}? This replaces your
               captions.
-              <button
+              <Button
                 type="button"
+                size="sm"
                 disabled={busy}
                 onClick={() => {
                   const next = pendingLang;
                   setPendingLang(null);
                   onChangeLanguage(next);
                 }}
-                className="inline-flex min-h-[44px] items-center rounded-lg bg-black px-3 font-medium text-white disabled:opacity-50"
+                className="h-auto min-h-[44px] px-3"
               >
                 Re-transcribe
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant="link"
                 onClick={() => setPendingLang(null)}
-                className="inline-flex min-h-[44px] items-center px-1 text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e]"
+                className="h-auto min-h-[44px] px-1 text-[#71717a] hover:text-[#0c0c0e]"
               >
                 Cancel
-              </button>
+              </Button>
             </span>
           )}
         </div>
@@ -490,7 +482,7 @@ export default function CaptionEditor({
               style={{ bottom: `${captionPreviewBottomCqh}cqh` }}
             >
               {paused && editing === activeIndex ? (
-                <textarea
+                <Textarea
                   autoFocus={editSource === "video"}
                   data-caption-edit="1"
                   rows={2}
@@ -503,7 +495,7 @@ export default function CaptionEditor({
                       stopEditing();
                     }
                   }}
-                  className="resize-none rounded-md border-2 border-lime-400 bg-black/60 px-2 text-center outline-none"
+                  className="h-auto min-h-0 resize-none rounded-md border-2 border-lime-400 bg-black/60 px-2 text-center outline-none focus-visible:outline-none focus-visible:ring-0 sm:min-h-0"
                   style={activeCaptionStyle}
                   aria-label="Edit caption line"
                 />
@@ -545,14 +537,16 @@ export default function CaptionEditor({
 
         {/* minimal transport: play/pause + scrubber */}
         <div className="mt-2 flex items-center gap-2">
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="icon"
             onClick={togglePlay}
-            className="rounded-full border border-zinc-200 px-3 py-1 text-sm hover:border-lime-400"
+            className="rounded-full"
             aria-label={paused ? "Play" : "Pause"}
           >
             {paused ? "►" : "❚❚"}
-          </button>
+          </Button>
           <input
             type="range"
             min={0}
@@ -598,20 +592,21 @@ export default function CaptionEditor({
           {CAPTION_POSITION_OPTIONS.map((opt) => {
             const active = Math.abs(captionYFrac - opt.yFrac) < 0.01;
             return (
-              <button
+              <Button
                 key={opt.label}
                 type="button"
+                variant="outline"
                 aria-pressed={active}
                 disabled={busy}
                 onClick={() => void chooseCaptionPosition(opt.yFrac)}
-                className={`min-h-[44px] rounded-lg border px-3 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                className={`h-auto min-h-[44px] px-3 py-2 ${
                   active
-                    ? "border-lime-600 bg-lime-50 text-lime-900"
-                    : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
+                    ? "border-lime-600 bg-lime-50 text-lime-900 hover:bg-lime-50 hover:text-lime-900"
+                    : "text-[#3f3f46]"
                 }`}
               >
                 {opt.label}
-              </button>
+              </Button>
             );
           })}
         </div>
@@ -629,21 +624,22 @@ export default function CaptionEditor({
           {CAPTION_FONT_OPTIONS.map((opt) => {
             const active = (font ?? null) === opt.name;
             return (
-              <button
+              <Button
                 key={opt.name ?? "__default__"}
                 type="button"
+                variant="outline"
                 aria-pressed={active}
                 disabled={busy}
                 onClick={() => chooseFont(opt.name)}
                 style={{ fontFamily: opt.cssFamily, fontWeight: opt.weight }}
-                className={`inline-flex min-h-[44px] shrink-0 items-center whitespace-nowrap rounded-lg border px-3 py-1.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                className={`h-auto min-h-[44px] shrink-0 whitespace-nowrap px-3 py-1.5 ${
                   active
-                    ? "border-lime-600 bg-lime-50 text-lime-900"
-                    : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
+                    ? "border-lime-600 bg-lime-50 text-lime-900 hover:bg-lime-50 hover:text-lime-900"
+                    : "text-[#3f3f46]"
                 }`}
               >
                 {opt.label}
-              </button>
+              </Button>
             );
           })}
         </div>
@@ -667,7 +663,7 @@ export default function CaptionEditor({
               <span className="w-10 shrink-0 text-[11px] tabular-nums text-zinc-400">
                 {formatTime(c.start_s)}
               </span>
-              <input
+              <Input
                 autoFocus={editSource === "list"}
                 data-caption-edit="1"
                 value={c.text}
@@ -679,24 +675,27 @@ export default function CaptionEditor({
                     stopEditing();
                   }
                 }}
-                className="min-h-11 flex-1 rounded border border-lime-400 px-2 py-1 text-base text-[#18181b] outline-none sm:min-h-0 sm:px-1 sm:py-0.5 sm:text-sm"
+                className="h-auto min-h-11 flex-1 rounded border-lime-400 px-2 py-1 sm:min-h-0 sm:px-1 sm:py-0.5"
                 aria-label={`Edit caption at ${formatTime(c.start_s)}`}
               />
             </li>
           ) : (
             <li key={i}>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
                 onClick={() => jumpToCue(i)}
-                className={`flex min-h-[44px] w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors ${
-                  i === activeIndex ? "bg-lime-50 text-lime-900" : "hover:bg-zinc-50 text-[#3f3f46]"
+                className={`h-auto min-h-[44px] w-full justify-start gap-2 rounded-lg px-2 py-1.5 text-left text-sm font-normal ${
+                  i === activeIndex
+                    ? "bg-lime-50 text-lime-900 hover:bg-lime-50 hover:text-lime-900"
+                    : "text-[#3f3f46]"
                 }`}
               >
                 <span className="w-10 shrink-0 text-[11px] tabular-nums text-zinc-400">
                   {formatTime(c.start_s)}
                 </span>
                 <span className="flex-1">{c.text}</span>
-              </button>
+              </Button>
             </li>
           ),
         )}
@@ -707,14 +706,9 @@ export default function CaptionEditor({
         <p className="text-xs text-zinc-400">
           {saving ? "Saving…" : dirty ? "Unsaved edits" : "Saved"}
         </p>
-        <button
-          type="button"
-          onClick={apply}
-          disabled={busy}
-          className="rounded-lg bg-black px-4 py-2 text-sm text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-        >
+        <Button type="button" onClick={apply} disabled={busy}>
           {applying ? "Applying…" : "Apply to video"}
-        </button>
+        </Button>
       </div>
       {error && <p className="text-xs text-red-600">{error}</p>}
     </div>

@@ -18,6 +18,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { MontagePreset } from "@/lib/plan-api";
 import type { PickerEditFormat } from "@/lib/edit-format";
+import { Button } from "@/components/ui/button";
 
 /** Subset of updatePlanItem's PATCH body this picker can send. */
 export type SetupPatch = {
@@ -216,12 +217,13 @@ function DisclosureSection({
   }, [open]);
   return (
     <div>
-      <button
+      <Button
         type="button"
+        variant="ghost"
         aria-expanded={open}
         aria-controls={panelId}
         onClick={onToggle}
-        className={`flex min-h-[52px] w-full items-center gap-3.5 rounded-2xl border bg-white px-4 py-2.5 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 ${
+        className={`h-auto min-h-[52px] w-full items-center justify-start gap-3.5 rounded-2xl border bg-white px-4 py-2.5 text-left font-normal transition-colors hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 focus-visible:ring-0 focus-visible:ring-offset-0 [&_svg]:size-auto ${
           open ? "border-zinc-300" : "border-zinc-200 hover:border-zinc-300"
         }`}
       >
@@ -238,7 +240,7 @@ function DisclosureSection({
           {valueLabel}
         </span>
         <Chevron open={open} />
-      </button>
+      </Button>
       <div
         id={panelId}
         ref={panelRef}
@@ -277,8 +279,9 @@ export function MediaRadioCard({
 }) {
   const { videoRef, play, stop } = useHoverVideo();
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
       role="radio"
       aria-checked={active}
       // aria-disabled (not disabled) so keyboard focus survives the save —
@@ -292,7 +295,7 @@ export function MediaRadioCard({
       onMouseLeave={stop}
       onFocus={play}
       onBlur={stop}
-      className={`relative aspect-[3/4] w-[216px] shrink-0 snap-start overflow-hidden rounded-[18px] text-left transition-transform motion-reduce:transition-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:w-auto ${
+      className={`relative h-auto aspect-[3/4] w-[216px] shrink-0 snap-start overflow-hidden rounded-[18px] p-0 text-left font-normal transition-transform motion-reduce:transition-none hover:bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 focus-visible:ring-0 focus-visible:ring-offset-0 sm:w-auto ${
         saving ? "cursor-wait " : ""
       }${
         active
@@ -328,7 +331,7 @@ export function MediaRadioCard({
           <span className="pt-0.5 text-[11px] font-medium text-white/75">{meta}</span>
         )}
       </div>
-    </button>
+    </Button>
   );
 }
 

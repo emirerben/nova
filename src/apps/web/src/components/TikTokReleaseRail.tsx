@@ -104,7 +104,7 @@ export function TikTokReleaseRail({
               downloadDisabled={baking || !videoReady}
             />
             {canPublish && !inFlight && (
-              <button
+              <Button
                 type="button"
                 onClick={onPublish}
                 disabled={baking}
@@ -113,8 +113,8 @@ export function TikTokReleaseRail({
                 // when shipping the new cut IS the point and earns primary weight.
                 className={
                   isStale
-                    ? "mt-4 min-h-12 w-full rounded-full bg-[#0c0c0e] px-5 text-sm font-semibold text-white transition-opacity hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:cursor-not-allowed disabled:opacity-40"
-                    : "mt-4 min-h-12 w-full rounded-full border border-zinc-300 bg-white px-5 text-sm font-semibold text-[#0c0c0e] transition-colors hover:border-zinc-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:cursor-not-allowed disabled:opacity-40"
+                    ? "h-auto mt-4 min-h-12 w-full rounded-full bg-[#0c0c0e] px-5 text-sm font-semibold text-white transition-opacity hover:bg-[#0c0c0e] hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:cursor-not-allowed disabled:opacity-40"
+                    : "h-auto mt-4 min-h-12 w-full rounded-full border border-zinc-300 bg-white px-5 text-sm font-semibold text-[#0c0c0e] transition-colors hover:border-zinc-500 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:cursor-not-allowed disabled:opacity-40"
                 }
               >
                 {baking
@@ -122,7 +122,7 @@ export function TikTokReleaseRail({
                   : isStale
                     ? "Publish updated video"
                     : "Publish again"}
-              </button>
+              </Button>
             )}
             {publication.visibility_status === "public" && (
               <div className="mt-8 border-t border-zinc-200 pt-8">
@@ -246,17 +246,18 @@ function MoreVideoActionsMenu({
       </Button>
       {moreOpen && videoReady && !baking && (
         <div className="absolute right-0 top-11 z-20 min-w-40 rounded-md border bg-popover p-1.5 text-popover-foreground shadow-md">
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={() => {
               setMoreOpen(false);
               onDownload();
             }}
             disabled={baking || !videoReady}
-            className="min-h-11 w-full rounded-sm px-3 text-left text-sm font-medium hover:bg-accent hover:text-accent-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50"
+            className="h-auto min-h-11 w-full justify-start rounded-sm px-3 text-left text-sm font-medium hover:bg-accent hover:text-accent-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50"
           >
             {baking ? "Preparing…" : videoReady ? "Download video" : "Video not ready"}
-          </button>
+          </Button>
         </div>
       )}
     </div>
@@ -401,9 +402,9 @@ function ReleasePreparationPane({
           <div className="border-l-2 border-border pl-3 text-sm text-muted-foreground">
             <p>Kria couldn&apos;t confirm whether this video was already sent to TikTok. Publishing stays paused to prevent a duplicate.</p>
             {onReceiptRetry && (
-              <button type="button" onClick={onReceiptRetry} className="mt-2 min-h-11 font-medium text-lime-700 underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600">
+              <Button type="button" variant="link" onClick={onReceiptRetry} className="h-auto p-0 mt-2 min-h-11 font-medium text-lime-700 underline underline-offset-4 hover:no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600">
                 Check again
-              </button>
+              </Button>
             )}
           </div>
         )}
@@ -433,9 +434,9 @@ function ReleasePreparationPane({
                 <div className="border-l-2 border-border pl-3 text-sm text-muted-foreground">
                   <p>TikTok publishing access needs to be reconnected.</p>
                   {onConnect ? (
-                    <button type="button" onClick={onConnect} className="mt-2 min-h-11 font-medium text-lime-700 underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600">
+                    <Button type="button" variant="link" onClick={onConnect} className="h-auto p-0 mt-2 min-h-11 font-medium text-lime-700 underline underline-offset-4 hover:no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600">
                       Reconnect TikTok here
-                    </button>
+                    </Button>
                   ) : (
                     <Link href="/plan#tiktok" className="mt-2 inline-flex min-h-11 items-center font-medium text-lime-700 underline underline-offset-4">
                       Reconnect TikTok
@@ -453,9 +454,9 @@ function ReleasePreparationPane({
             <div className="border-l-2 border-border pl-3 text-sm text-muted-foreground">
               <p>Connect TikTok before publishing.</p>
               {onConnect ? (
-                <button type="button" onClick={onConnect} className="mt-2 min-h-11 font-medium text-lime-700 underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600">
+                <Button type="button" variant="link" onClick={onConnect} className="h-auto p-0 mt-2 min-h-11 font-medium text-lime-700 underline underline-offset-4 hover:no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600">
                   Connect TikTok here
-                </button>
+                </Button>
               ) : (
                 <Link href="/plan#tiktok" className="mt-2 inline-flex min-h-11 items-center font-medium text-lime-700 underline underline-offset-4">
                   Connect TikTok
@@ -601,14 +602,15 @@ function PublicationReceipt({
                 If you&apos;ve edited this video since sending it, the download reflects your
                 latest edits, not necessarily what TikTok already has.
               </p>
-              <button
+              <Button
                 type="button"
+                variant="link"
                 onClick={onDownload}
                 disabled={downloadDisabled}
-                className="mt-2 min-h-11 font-medium text-lime-700 underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:cursor-not-allowed disabled:opacity-40"
+                className="h-auto p-0 mt-2 min-h-11 font-medium text-lime-700 underline underline-offset-4 hover:no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {downloadDisabled ? "Preparing…" : "Download the video"}
-              </button>
+              </Button>
             </div>
           )}
           {publication.tiktok_publish_id && (
@@ -622,9 +624,9 @@ function PublicationReceipt({
         <div className="border-l-2 border-zinc-300 pl-3 text-sm text-[#3f3f46]">
           <p>Kria can&apos;t refresh this receipt right now. Your last confirmed TikTok status is still shown.</p>
           {onReceiptRetry && (
-            <button type="button" onClick={onReceiptRetry} className="mt-2 min-h-11 font-medium text-lime-700 underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600">
+            <Button type="button" variant="link" onClick={onReceiptRetry} className="h-auto p-0 mt-2 min-h-11 font-medium text-lime-700 underline underline-offset-4 hover:no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600">
               Check status again
-            </button>
+            </Button>
           )}
         </div>
       )}
@@ -639,20 +641,21 @@ function PublicationReceipt({
             Open TikTok
           </a>
           {onReceiptRetry && (
-            <button type="button" onClick={onReceiptRetry} className="min-h-11 font-medium text-lime-700 underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600">
+            <Button type="button" variant="link" onClick={onReceiptRetry} className="h-auto p-0 min-h-11 font-medium text-lime-700 underline underline-offset-4 hover:no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600">
               Check status again
-            </button>
+            </Button>
           )}
         </div>
       )}
       {historyCount > 0 && (
-        <button
+        <Button
           type="button"
+          variant="link"
           onClick={onHistory}
-          className="min-h-11 text-left text-sm font-medium text-lime-700 underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600"
+          className="h-auto p-0 min-h-11 text-left text-sm font-medium text-lime-700 underline underline-offset-4 hover:no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600"
         >
           {simulation ? "Preview history" : "TikTok history"} ({historyCount})
-        </button>
+        </Button>
       )}
     </div>
   );
@@ -755,11 +758,11 @@ function TikTokHistory({ publications, onClose }: { publications: TikTokPublicat
 
   return (
     <div className="fixed inset-0 z-[120] bg-black/20" role="dialog" aria-modal="true" aria-labelledby="tiktok-history-title">
-      <button type="button" aria-label="Close TikTok history" onClick={onClose} tabIndex={-1} className="absolute inset-0 hidden cursor-default md:block" />
+      <Button type="button" variant="ghost" aria-label="Close TikTok history" onClick={onClose} tabIndex={-1} className="absolute inset-0 hidden h-auto w-auto cursor-default rounded-none p-0 hover:bg-transparent md:block" />
       <section ref={sheetRef} className="absolute inset-0 ml-auto flex w-full flex-col border-l border-zinc-200 bg-[#ffffff] shadow-[-24px_0_60px_rgba(0,0,0,0.08)] md:w-[480px]">
         <header className="flex min-h-[86px] items-center justify-between border-b border-zinc-200 px-5 md:px-7">
           <h2 id="tiktok-history-title" className="font-display text-2xl text-[#0c0c0e]">TikTok history ({publications.length})</h2>
-          <button ref={closeRef} type="button" onClick={onClose} aria-label="Close" className="flex h-11 w-11 items-center justify-center rounded-full text-xl text-[#3f3f46] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600">×</button>
+          <Button ref={closeRef} type="button" variant="ghost" onClick={onClose} aria-label="Close" className="h-11 w-11 rounded-full text-xl text-[#3f3f46] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600">×</Button>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-12 md:px-7">
           {publications.map((publication) => {

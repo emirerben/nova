@@ -55,6 +55,7 @@ import {
   type PoolAsset,
 } from "@/lib/plan-api";
 import { StableVideo } from "@/components/StableVideo";
+import { Button } from "@/components/ui/button";
 import { mediaClassFor } from "./cardMedia";
 import { demotePatch } from "./OverlayCardPopover";
 import { overlayCardStyle } from "./overlayCardStyle";
@@ -520,13 +521,14 @@ export default function SuggestionRail({
         /* D10 failure tone — dashed zinc, single Retry, never red. */
         <div className="rounded-xl border border-dashed border-zinc-200 bg-white px-4 py-4 text-center">
           <p className="text-sm text-[#71717a]">Couldn&apos;t match your visuals this time.</p>
-          <button
+          <Button
             type="button"
+            variant="outline"
             onClick={handleSuggest}
-            className="mt-2 inline-flex min-h-[44px] items-center rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm text-[#3f3f46] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+            className="mt-2 min-h-[44px] text-sm font-normal hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
           >
             Retry
-          </button>
+          </Button>
         </div>
       ) : phase === "zero" ? (
         /* Zero match — §2 zinc notice + wishlist lines verbatim. */
@@ -666,21 +668,22 @@ export default function SuggestionRail({
           )}
 
           <div className="mt-3 flex gap-2">
-            <button
+            <Button
               type="button"
               disabled={keptCount === 0 || applying}
               onClick={handleApply}
-              className="min-h-[44px] flex-1 rounded-lg bg-lime-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50"
+              className="min-h-[44px] flex-1 bg-lime-600 text-sm font-semibold hover:bg-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
             >
               {applying ? "Applying…" : `Apply ${keptCount} to video`}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="outline"
               onClick={handleDismiss}
-              className="min-h-[44px] rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm text-[#71717a] transition-colors hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+              className="min-h-[44px] text-sm font-normal text-[#71717a] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
             >
               Dismiss
-            </button>
+            </Button>
           </div>
 
           {actionError && (
@@ -731,14 +734,15 @@ function SuggestButton({
   className?: string;
 }) {
   return (
-    <button
+    <Button
       type="button"
+      variant="outline"
       disabled={disabled}
       onClick={onClick}
-      className={`inline-flex min-h-[44px] items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-[12px] text-[#71717a] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-zinc-200 disabled:hover:text-[#71717a] ${className}`}
+      className={`min-h-[44px] gap-1.5 text-[12px] font-normal text-[#71717a] hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:hover:border-input disabled:hover:text-[#71717a] ${className}`}
     >
       {label}
-    </button>
+    </Button>
   );
 }
 
@@ -854,63 +858,68 @@ function SuggestionRow({
           {row.reason}
         </p>
         {isFullscreen && (
-          <button
+          <Button
             type="button"
+            variant="link"
             aria-label={`Show ${label} as small card instead`}
             onClick={(e) => {
               e.stopPropagation();
               onDemote();
             }}
-            className="mt-1 text-[11px] text-[#71717a] underline underline-offset-2 transition-colors hover:text-[#3f3f46] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+            className="mt-1 h-auto p-0 text-[11px] font-normal text-[#71717a] underline underline-offset-2 hover:text-[#3f3f46] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
           >
             Show as small card instead
-          </button>
+          </Button>
         )}
         {row.sfx && (
           <p className="mt-0.5 text-[11px] text-lime-700">
             + {row.sfx.label ?? "pop"} sound{" "}
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="icon"
               aria-label={`Remove sound from ${label}`}
               onClick={(e) => {
                 e.stopPropagation();
                 onStripSfx();
               }}
-              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded border border-zinc-200 px-1 text-[#71717a] transition-colors hover:border-zinc-400 hover:text-[#3f3f46] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:min-h-0 sm:min-w-0"
+              className="inline-flex min-h-11 min-w-11 h-auto w-auto rounded px-1 text-[#71717a] hover:border-zinc-400 hover:text-[#3f3f46] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:min-h-0 sm:min-w-0"
             >
               ×
-            </button>
+            </Button>
           </p>
         )}
       </div>
 
       <div className="flex shrink-0 flex-col gap-1">
-        <button
+        <Button
           type="button"
+          variant="outline"
           aria-label={`Keep ${label}`}
           onClick={(e) => {
             e.stopPropagation();
             onKeep();
           }}
-          className={`flex h-11 w-11 items-center justify-center rounded-lg border text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 ${
+          className={`h-11 w-11 rounded-lg text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 ${
             confirmed
-              ? "border-lime-600 bg-lime-600 text-white"
-              : "border-zinc-200 bg-white text-[#3f3f46] hover:border-lime-400 hover:text-lime-700"
+              ? "border-lime-600 bg-lime-600 text-white hover:bg-lime-600"
+              : "text-[#3f3f46] hover:border-lime-400 hover:text-lime-700"
           }`}
         >
           ✓
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="outline"
           aria-label={`Reject ${label}`}
           onClick={(e) => {
             e.stopPropagation();
             onReject();
           }}
-          className="flex h-11 w-11 items-center justify-center rounded-lg border border-zinc-200 bg-white text-sm text-[#71717a] transition-colors hover:border-zinc-400 hover:text-[#3f3f46] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+          className="h-11 w-11 rounded-lg text-sm text-[#71717a] hover:border-zinc-400 hover:text-[#3f3f46] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
         >
           ×
-        </button>
+        </Button>
       </div>
     </li>
   );

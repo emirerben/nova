@@ -10,6 +10,15 @@
  */
 
 import { useEffect, useReducer, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type { SoundEffectPlacement } from "@/lib/plan-api";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
 import { computeBarPosition } from "@/lib/timeline/bar-position";
@@ -369,24 +378,25 @@ export default function SfxLane({
             className="ml-14 mr-0 mb-2 bg-white border border-zinc-200 rounded-lg px-3 py-2 space-y-2"
           >
             <div className="flex items-center gap-2 flex-wrap">
-              <input
+              <Input
                 value={p.label ?? ""}
                 onChange={(e) => dispatch({ type: "SET_LABEL", id: p.id, label: e.target.value })}
                 disabled={sfxDisabled}
                 placeholder="Label (optional)"
-                className="flex-1 min-w-0 bg-zinc-50 border border-zinc-200 rounded px-2 py-1 text-xs text-zinc-900 placeholder-zinc-400 focus:outline-none focus:border-lime-500"
+                className="h-auto flex-1 min-w-0 bg-zinc-50 rounded px-2 py-1 text-xs text-zinc-900 placeholder-zinc-400 focus-visible:ring-0 focus-visible:border-lime-500"
               />
               <span className="text-xs text-zinc-400 shrink-0 tabular-nums">
                 @{(p.at_s ?? 0).toFixed(1)}s
               </span>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
                 onClick={() => { dispatch({ type: "REMOVE", id: p.id }); setOpenPlacementId(null); }}
                 disabled={sfxDisabled}
-                className="shrink-0 text-xs text-zinc-400 hover:text-red-500 disabled:opacity-40"
+                className="h-auto w-auto shrink-0 p-0 text-xs text-zinc-400 hover:bg-transparent hover:text-red-500 disabled:opacity-40"
               >
                 Remove
-              </button>
+              </Button>
             </div>
             <label className="flex items-center gap-2 text-xs text-zinc-500">
               <span className="w-5 shrink-0">Vol</span>
@@ -409,41 +419,48 @@ export default function SfxLane({
       {/* ── Add SFX controls ── */}
       <div className="pl-14 pr-0 pt-2 space-y-2">
         <div className="flex gap-2">
-          <select
-            value={selectedGlossaryId}
-            onChange={(e) => setSelectedGlossaryId(e.target.value)}
+          <Select
+            value={selectedGlossaryId || undefined}
+            onValueChange={(v) => setSelectedGlossaryId(v)}
             disabled={sfxDisabled || sfxGlossaryLoading}
-            className="flex-1 bg-zinc-50 border border-zinc-200 rounded px-2 py-1 text-xs text-zinc-900 disabled:opacity-50"
           >
-            <option value="">
-              {sfxGlossaryLoading ? "Loading effects…" : "Pick a sound effect (placed at playhead)…"}
-            </option>
-            {sfxGlossaryEffects.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.name}
-                {e.duration_s != null ? ` · ${e.duration_s.toFixed(1)}s` : ""}
-              </option>
-            ))}
-          </select>
-          <button
+            <SelectTrigger className="h-auto flex-1 rounded bg-zinc-50 px-2 py-1 text-xs disabled:opacity-50">
+              <SelectValue
+                placeholder={
+                  sfxGlossaryLoading ? "Loading effects…" : "Pick a sound effect (placed at playhead)…"
+                }
+              />
+            </SelectTrigger>
+            <SelectContent>
+              {sfxGlossaryEffects.map((e) => (
+                <SelectItem key={e.id} value={e.id}>
+                  {e.name}
+                  {e.duration_s != null ? ` · ${e.duration_s.toFixed(1)}s` : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
             type="button"
+            variant="ghost"
             onClick={addFromGlossary}
             disabled={sfxDisabled || !selectedGlossaryId}
-            className="shrink-0 px-3 py-1 bg-lime-800/60 hover:bg-lime-700 text-lime-100 text-xs rounded disabled:opacity-40 transition-colors"
+            className="h-auto shrink-0 rounded bg-lime-800/60 px-3 py-1 text-xs text-lime-100 transition-colors hover:bg-lime-700 disabled:opacity-40"
           >
             + Add
-          </button>
+          </Button>
         </div>
 
         <div className="flex items-center gap-2">
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={() => sfxFileInputRef.current?.click()}
             disabled={sfxDisabled}
-            className="px-3 py-1 bg-zinc-100 hover:bg-zinc-200 text-zinc-600 text-xs rounded disabled:opacity-40 transition-colors"
+            className="h-auto rounded bg-zinc-100 px-3 py-1 text-xs text-zinc-600 transition-colors hover:bg-zinc-200 disabled:opacity-40"
           >
             Upload audio…
-          </button>
+          </Button>
           <input
             ref={sfxFileInputRef}
             type="file"
@@ -453,24 +470,26 @@ export default function SfxLane({
             onChange={(e) => { if (e.target.files) handleSfxFileSelect(e.target.files); e.target.value = ""; }}
           />
           <div className="flex-1" />
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={() => dispatch({ type: "UNDO" })}
             disabled={!canUndo || sfxDisabled}
             title="Undo"
-            className="px-2 py-1 text-sm text-zinc-400 hover:text-zinc-700 disabled:opacity-25 transition-colors"
+            className="h-auto w-auto rounded px-2 py-1 text-sm text-zinc-400 transition-colors hover:bg-transparent hover:text-zinc-700 disabled:opacity-25"
           >
             ↩
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="ghost"
             onClick={() => dispatch({ type: "REDO" })}
             disabled={!canRedo || sfxDisabled}
             title="Redo"
-            className="px-2 py-1 text-sm text-zinc-400 hover:text-zinc-700 disabled:opacity-25 transition-colors"
+            className="h-auto w-auto rounded px-2 py-1 text-sm text-zinc-400 transition-colors hover:bg-transparent hover:text-zinc-700 disabled:opacity-25"
           >
             ↪
-          </button>
+          </Button>
         </div>
 
         {/* No "Apply" button: SFX play live in the preview (useSfxPreview) and
