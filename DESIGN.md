@@ -47,7 +47,7 @@ Token source: `src/apps/web/src/app/globals.css` plus `src/apps/web/src/componen
   Apply it only when the action would otherwise fall below the fold; the existing always-on variant lives in `ChatInterview.tsx`.
 - **Touch pressed state:** on touch surfaces, pressed/drag state replaces hover affordance. Active handles solidify and scale slightly; active chips go `opacity-100`; drags show a floating value readout offset from the thumb.
 - **Landing story rhythm:** `/` starts the timed composition automatically in one viewport, with no mode selector or playback control; `/auto-story` remains a compatibility route. `/?mode=scroll` retains the pinned `760svh` choreography for direct comparison without exposing it in the interface. Source footage and feature chips surround the centered screen, then travel directly into it before the three statements replace one another. The soundtrack starts muted for autoplay compatibility and makes one synchronized audible attempt at the sound-effects beat; browsers may keep it muted when policy forbids unprompted audio.
-- **Shared primitives:** `LightShell`, `LightCard`, `Eyebrow`, `InkButton` in `src/apps/web/src/components/ui/` (canonical location since v0.4.87.0; `plan/_components/ui/` files are re-export stubs for backward compat).
+- **Shared primitives:** `LightShell`, `LightCard`, `Eyebrow`, `InkButton`, `InfoDot`, `ConfirmDialog` in `src/apps/web/src/components/ui/` (canonical location since v0.4.87.0; `plan/_components/ui/` files are re-export stubs for backward compat). Since v0.47.0.0, `LightCard`/`InkButton`/`ConfirmDialog` are thin wrappers over the shadcn/ui primitives (`Card`/`Button`/`AlertDialog`) — see §15 for the full component-library contract; every NEW control should use the shadcn primitives directly rather than the legacy wrapper names.
 - **Editorial interview layout:** Fraunces question, LEFT-aligned answers, one prior-answer pull-quote with accent left-border (lime), NO message bubbles, NO bot avatar.
 - **Editor Nova copilot drawer exception:** the full-screen editor's Nova tool may use texting bubbles because it is a command/receipt surface, not an onboarding interview. Tokens: user bubble `bg-[#0c0c0e] text-white` with 18px radius / 6px bottom-right corner; assistant bubble `bg-zinc-100 text-[#0c0c0e]` with 18px radius / 6px bottom-left corner; change chips `border-lime-200 bg-lime-50 text-lime-800`; rejected chips `border-dashed border-zinc-300 bg-white text-[#71717a]`; suggestion chips `border-zinc-200 bg-white` with lime hover/focus.
 - **D16 lime contrast rule:** lime TEXT under ~18px and text-bearing lime fills → `lime-700`. Display ems, bars, dots, non-text fills → `lime-600`.
@@ -248,7 +248,7 @@ Documented here, **not fixed** (D2 decision). Canonicals are user-ratified. Norm
 | # | Drift | Canonical pick | Note |
 |---|---|---|---|
 | 1 | Landing story radii: 44px screen / 24–13px source media / full feature pills | Role-based: the screen reads as the device; surrounding source media steps down by size; feature controls stay pill-shaped | Not one value — each radius serves a role |
-| 2 | Product radius stragglers: bare `rounded`, lone `rounded-2xl` | `rounded-full` buttons/pills; `rounded-lg` surfaces | Normalize opportunistically |
+| 2 | Product radius stragglers: bare `rounded`, lone `rounded-2xl` | `rounded-full` buttons/pills; `rounded-lg` surfaces | v0.47.0.0: now enforced structurally — the shadcn `Button`/`Badge` primitives hard-code `rounded-full` and `Card`/`Dialog`/`Sheet` hard-code `rounded-2xl`; new call sites can't drift. Pre-existing raw controls still normalize opportunistically as lanes migrate them (see §15 raw-control ratchet). |
 | 3 | `--amber: #d97706` CSS var ≠ shipped amber-400 `#fbbf24` | Tailwind `amber-400` / `amber-300` | CSS var is stale; do not reference it |
 | 4 | Landing raw-hex grays (= zinc-500/400) | `--ink*` CSS vars are the landing-identity tokens | Equivalence noted for greps |
 | 5 | Montserrat 800 imported in `globals.css`, mapped to nothing | Removed in PR1 (light workspace reskin) | Dead import eliminated — closed |
@@ -267,6 +267,11 @@ Rules here supplement §2 (light editorial system). Design source: Paper file
 "Kria Plan Redesign", page "FINAL — Basic home". The ideas ledger was removed
 2026-08-21 (tester feedback: /plan read as a content-ideas list, not an edit
 tool); /plan is now openly the create-a-new-video page.
+
+**Note (v0.47 Kria Design System migration):** the ideas ledger and the
+"Plan this for me" panels referenced below as already-removed were removed in
+PRs #869/#871 — this section documents the post-removal shape, not a
+pending change.
 
 ### Basic home (`/plan`, `WorkspaceHome.tsx`)
 - **Canvas:** `bg-white`; centered column `max-w-[900px] px-6 pt-14`, sections gap-10.
@@ -376,6 +381,143 @@ Quick right/wrong pairs for common review questions.
 | Product interview | Left-aligned Fraunces question + amber left-border pull-quote | Chat bubbles, bot avatar, centered Q&A |
 | Empty product state | Serif invitation line + single next-step CTA in quiet zinc | Gray inbox icon in a circle + "Nothing here yet!" |
 | Error tile | Dashed zinc tile, plain-language reason | Red alert wall, raw exception message |
+
+---
+
+## §15 Component library (shadcn/ui)
+
+Shipped v0.47.0.0 (Lane 0 of the Kria Design System migration). Every user-facing
+surface — including the full-screen editor — now has a single component
+standard instead of ad-hoc `className` chrome. `/admin` is deferred (keeps its
+dark variant; adopts the primitives later).
+
+### Where primitives live
+
+- **`src/apps/web/src/components/ui/*.tsx` (lowercase filenames) = the shadcn
+  primitives** — `button.tsx`, `input.tsx`, `textarea.tsx`, `select.tsx`,
+  `checkbox.tsx`, `switch.tsx`, `radio-group.tsx`, `label.tsx`, `badge.tsx`,
+  `card.tsx`, `dialog.tsx`, `alert-dialog.tsx`, `sheet.tsx`,
+  `dropdown-menu.tsx`, `popover.tsx`, `tooltip.tsx`, `tabs.tsx`, `toggle.tsx`,
+  `toggle-group.tsx`, `slider.tsx`, `separator.tsx`, `skeleton.tsx`,
+  `scroll-area.tsx`, `progress.tsx`, `sonner.tsx`. Style `new-york`, installed
+  via `npx shadcn@2 add …` then hand-edited for the Kria variants below.
+  `components.json` aliases `utils` → `@/lib/cn` (no `utils.ts` file — `cn` is
+  hand-authored, shadcn's own).
+- **`src/apps/web/src/components/ui/*.tsx` (PascalCase filenames) = pre-existing
+  Kria wrappers** — `InkButton`, `LightCard`, `ConfirmDialog` are now thin
+  wrappers over `Button`/`Card`/`AlertDialog` with **identical props and
+  import paths**; every existing call site kept working with zero edits.
+  `InfoDot`, `StyleChip`, `Eyebrow`, `LightShell`, `useFocusTrap` are
+  untouched by this migration (§2). New code should reach for the shadcn
+  primitives directly (`<Button variant="ink">`, not `<InkButton>`).
+- `<Toaster />` (from `ui/sonner.tsx`) is mounted once in `src/app/layout.tsx`
+  inside `<Providers>`. Call `toast("message")` from `sonner` anywhere — never
+  build a bespoke toast/`useState` toast again.
+
+### Variant table
+
+| Primitive | Variants | Notes |
+|---|---|---|
+| `Button` | `default`/`ink` (solid `#0c0c0e`), `outline`, `secondary`, `ghost`, `link`, `lime` (soft pill), `destructive` (zinc, **not red**) | Sizes: `default` (`px-9 py-[15px] text-[15px]`), `sm` (`h-9 px-5 text-[13px]`), `lg`, `icon` (44px), `icon-sm` (32px, ≥1024 inspector only), `pill`. `asChild` supported. |
+| `Badge` | `ink` (solid pill), `lime` (bare eyebrow text, no fill), `lime-soft` (lime-50/200/800 pill), `zinc` (neutral default) | `rounded-full text-[11px] uppercase tracking-[0.18em]`. |
+| `Input` / `Textarea` | — | `h-11 sm:h-10` (Textarea: `min-h-11 sm:min-h-10`), `text-base sm:text-sm` — never below the 16px iOS zoom-on-focus floor (§8). Lime focus border, no ring. |
+| `Select` | — | Trigger matches `Input` sizing; content `z-[130]`. |
+| `Dialog` / `AlertDialog` | — | `rounded-2xl border-zinc-200 bg-white shadow-sm`, overlay `bg-black/30`, `z-[100]`, scale-up-from-center via the existing `--modal-*` tokens (§6 t-modal), `motion-reduce:animate-none`. `AlertDialog` = the only sanctioned destructive-confirm surface — action button is ink/zinc, never red. |
+| `Sheet` | `side="top"\|"bottom"\|"left"\|"right"` | Same `z-[100]`/token motion as Dialog; bottom sheets get `rounded-t-2xl`. **This is a different component from the pre-existing editor gesture `Sheet.tsx`** (`app/plan/items/[id]/_editor/Sheet.tsx`, half-detent, non-modal) — do not confuse the two; the editor keeps its own. |
+| `DropdownMenu` / `Popover` / `Tooltip` | — | `z-[130]` (above dialogs/sheets at `z-[100]`, below `InfoDot` — §2). |
+| `Tabs` | — | Underline style (`border-b-2` on the active trigger), not a pill segmented control. |
+| `Slider` | — | Zinc-200 track, lime-600 range, 20px white thumb with an invisible 44px hit area. |
+| `Toast` (`sonner`) | — | Single bottom-center, `duration=2600`, no close button, ink pill (`bg-[#0c0c0e] text-white`). |
+
+### Token → hex map
+
+CSS custom properties in `src/apps/web/src/app/globals.css` (`@layer base`,
+after the pre-existing `:root` landing-token block). Consumed as
+`hsl(var(--token))` via `tailwind.config.ts`.
+
+| Token | Light | Dark (`/template-jobs` + `/admin` only) |
+|---|---|---|
+| `--background` | `#ffffff` | zinc-950 `#09090b` |
+| `--foreground` / `--primary` | `#0c0c0e` (ink) | white `#fafafa` |
+| `--card` / `--popover` | `#ffffff` | zinc-900 `#18181b` |
+| `--secondary` / `--muted` | zinc-100 `#f4f4f5` | zinc-800 `#27272a` |
+| `--muted-foreground` | `#71717a` (ink-3) | zinc-400 |
+| `--accent` / `--accent-foreground` | lime-50 `#f7fee7` / lime-800 `#3f6212` | unchanged (inherits light — lime accent stays lime in dark) |
+| `--destructive` | zinc `#3f3f46` (ink-2) — **never red, D10** | zinc-800 — never red |
+| `--border` / `--input` | zinc-200 `#e4e4e7` | zinc-800 |
+| `--ring` | lime-500 `#84cc16` | amber-400 `#fbbf24` |
+| `--radius` | `0.5rem` (keeps `rounded-lg` byte-identical to pre-migration) | same |
+
+`--radius` deliberately stayed at Tailwind's own default (`0.5rem`) rather than
+the 12px the Paper Tokens board sketches for menus/inputs — changing it would
+have silently reflowed every existing `rounded-lg`/`rounded-md` surface.
+Primitives that need a bigger radius (`Card`, `Dialog`, `Sheet`, `Button`)
+hard-code `rounded-2xl`/`rounded-full` directly instead of leaning on
+`--radius`.
+
+### DO
+
+- Use `<Button>` for every control that performs an action — one solid
+  `ink`/`default` CTA per surface, everything else `outline`/`ghost`/`link`.
+- `size="icon"` (44px) for icon-only controls on touch surfaces.
+- `<Badge variant="lime">` for eyebrow-style labels, `variant="lime-soft"` for
+  positive status pills.
+- `<AlertDialog>` for every destructive confirmation — never `window.confirm`.
+- `toast("…")` from `sonner` for transient feedback — never a bespoke
+  `useState` toast.
+- `<Select>` for enumerated choices instead of a raw `<select>`.
+- `<Input>`/`<Textarea>` as-is — the 16px-floor sizing is already built in,
+  don't override `text-*`/`h-*` unless you have a specific reason.
+- `<DropdownMenu>` for overflow (`⋯`) actions.
+- `scrollbar-none` on every horizontal scroller (poster rails, kind/style
+  choosers) — hides the scrollbar, keeps the scroll/swipe.
+
+### DON'T
+
+- Raw `<button>`/`<select>`/`<input>`/`<textarea>` with a hand-rolled
+  `className` outside `components/ui/**` — see the raw-control ratchet below.
+- Red anywhere in a destructive/error affordance — D10 "no red walls" is
+  structural now (`--destructive` is zinc in both themes).
+- `.dark` on any user-facing surface, **including the editor** — the editor
+  root stays `bg-[#ffffff]` (`EditorShell.tsx`); `.dark` is `/template-jobs` +
+  `/admin` only.
+- Un-gated `tailwindcss-animate` enter/exit on anything that isn't wrapped in
+  a `motion-reduce:` guard.
+- Inline helper paragraphs under a label/control — `InfoDot` (§2) is the only
+  sanctioned home for optional helper copy.
+- Reach for the shadcn `Sheet` (`components/ui/sheet.tsx`) when you mean the
+  editor's gesture `Sheet.tsx` (half-detent, non-modal) — they are different
+  components with the same name; see the Variant table above.
+- `cmdk` — deliberately not installed; no command-palette pattern in Kria yet.
+
+### Raw-control ratchet (enforcement mechanism)
+
+Two layers, both `src/apps/web/`:
+
+1. **`.eslintrc.json` override** on `app/plan/**`, `app/generative/**`,
+   `components/**` (excluding `components/ui/**` and `app/admin/**`):
+   `no-restricted-syntax` **warn** for a raw `<button className>`, `<select>`,
+   `<input className>` (type not `file`/`range`/`checkbox`/`radio`/`hidden`/
+   `color`), or `<textarea className>`. Warn, not error, until the last
+   migration lane flips it.
+2. **`src/__tests__/ui/raw-controls-guard.test.ts`** — a numeric ratchet.
+   Counts the same shapes per file against `RAW_CONTROL_BASELINE`, declared
+   in per-lane blocks (`LANE_0_BASELINE`, `LANE_A_BASELINE`, …) so each lane's
+   diff touches only its own block. A file present in the baseline may only
+   go **down**; a file absent must be **zero** (new files are written with
+   primitives from the start). The last lane to merge flips the ESLint rule
+   to `error` and deletes this test.
+
+### Jest / Radix-in-jsdom notes
+
+`jest.setup.ts` polyfills `ResizeObserver`, pointer-capture
+(`hasPointerCapture`/`setPointerCapture`/`releasePointerCapture`),
+`Element.scrollIntoView`, and `window.matchMedia` — Radix's `Select`,
+`DropdownMenu`, `Tooltip`, and `ScrollArea` call all of these during
+open/position. Tests that open one of those primitives must use
+`@testing-library/user-event`'s `userEvent.click`/`userEvent.hover`, not
+`fireEvent.click` — Radix listens on `pointerdown`, which `fireEvent.click`
+does not synthesize.
 
 ---
 
