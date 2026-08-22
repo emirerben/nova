@@ -2,8 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { CheckCircle2 } from "lucide-react";
 import { BeamLoader } from "@/components/progress";
 import { useFocusTrap } from "@/components/ui/useFocusTrap";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
 import type { TikTokConnection, TikTokPublication } from "@/lib/tiktok-api";
 
 export function TikTokReleaseRail({
@@ -128,6 +135,9 @@ export function TikTokReleaseRail({
             )}
           </>
         ) : (
+          // Edit/Download live in THIS Card's footer alongside Publish (Lane
+          // H) — editing a video must still never depend on its publishing
+          // state, so ReleasePreparationPane renders them unconditionally.
           <ReleasePreparationPane
             connection={connection}
             canPublish={canPublish}
@@ -142,17 +152,22 @@ export function TikTokReleaseRail({
             onConnect={onConnect}
             onReceiptRetry={onReceiptRetry}
             simulation={simulation}
+            editHref={editHref}
+            onDownload={onDownload}
           />
         )}
-        {/* Outside the branch on purpose: editing a video must never depend on
-            its publishing state. */}
-        <ReleaseActionsRow
-          editHref={editHref}
-          onDownload={onDownload}
-          baking={baking}
-          videoReady={videoReady}
-          className="mt-4 lg:mt-7"
-        />
+        {/* Receipt/insights states keep their own layout (not restyled into a
+            Card yet); Edit/Download render outside the branch here so they
+            never disappear once a publication row exists. */}
+        {showReceipt && (
+          <ReleaseActionsRow
+            editHref={editHref}
+            onDownload={onDownload}
+            baking={baking}
+            videoReady={videoReady}
+            className="mt-4 lg:mt-7"
+          />
+        )}
       </div>
 
       {historyOpen && (
@@ -179,45 +194,71 @@ function ReleaseActionsRow({
   videoReady: boolean;
   className?: string;
 }) {
+  return (
+    <div className={`grid grid-cols-[minmax(0,1fr)_auto] gap-2 ${className}`}>
+      <EditVideoButton editHref={editHref} className="w-full" />
+      <MoreVideoActionsMenu
+        onDownload={onDownload}
+        baking={baking}
+        videoReady={videoReady}
+        containerClassName="justify-self-end"
+      />
+    </div>
+  );
+}
+
+/** Shared with the CardFooter build in ReleasePreparationPane (Lane H). */
+function EditVideoButton({ editHref, className = "" }: { editHref: string | null; className?: string }) {
+  if (!editHref) return null;
+  return (
+    <Button variant="outline" asChild className={className}>
+      <Link href={editHref}>Edit video</Link>
+    </Button>
+  );
+}
+
+/** Shared with the CardFooter build in ReleasePreparationPane (Lane H). */
+function MoreVideoActionsMenu({
+  onDownload,
+  baking,
+  videoReady,
+  containerClassName = "",
+}: {
+  onDownload: () => void;
+  baking: boolean;
+  videoReady: boolean;
+  containerClassName?: string;
+}) {
   const [moreOpen, setMoreOpen] = useState(false);
 
   return (
-    <div className={`grid grid-cols-[minmax(0,1fr)_auto] gap-2 ${className}`}>
-      {editHref && (
-        <Link
-          href={editHref}
-          className="inline-flex min-h-12 items-center justify-center rounded-full border border-zinc-300 bg-white px-4 text-sm font-semibold text-[#0c0c0e] transition-colors hover:border-zinc-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600"
-        >
-          Edit video
-        </Link>
+    <div className={`relative ${containerClassName}`}>
+      <Button
+        type="button"
+        variant="outline"
+        size="icon"
+        aria-label="More video actions"
+        aria-expanded={moreOpen}
+        onClick={() => setMoreOpen((open) => !open)}
+        disabled={baking || !videoReady}
+      >
+        <span aria-hidden="true" className="text-lg font-semibold tracking-[0.12em]">···</span>
+      </Button>
+      {moreOpen && videoReady && !baking && (
+        <div className="absolute right-0 top-11 z-20 min-w-40 rounded-md border bg-popover p-1.5 text-popover-foreground shadow-md">
+          <button
+            type="button"
+            onClick={() => {
+              setMoreOpen(false);
+              onDownload();
+            }}
+            disabled={baking || !videoReady}
+            className="min-h-11 w-full rounded-sm px-3 text-left text-sm font-medium hover:bg-accent hover:text-accent-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50"
+          >
+            {baking ? "Preparing…" : videoReady ? "Download video" : "Video not ready"}
+          </button>
+        </div>
       )}
-      <div className="relative justify-self-end">
-        <button
-          type="button"
-          aria-label="More video actions"
-          aria-expanded={moreOpen}
-          onClick={() => setMoreOpen((open) => !open)}
-          disabled={baking || !videoReady}
-          className="flex h-12 w-12 items-center justify-center rounded-full border border-zinc-300 bg-white text-lg font-semibold tracking-[0.12em] text-[#0c0c0e] transition-colors hover:border-zinc-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          ···
-        </button>
-        {moreOpen && videoReady && !baking && (
-          <div className="absolute right-0 top-14 z-20 min-w-40 rounded-xl border border-zinc-200 bg-white p-1.5 shadow-[0_16px_40px_rgba(0,0,0,0.12)]">
-            <button
-              type="button"
-              onClick={() => {
-                setMoreOpen(false);
-                onDownload();
-              }}
-              disabled={baking || !videoReady}
-              className="min-h-11 w-full rounded-lg px-3 text-left text-sm font-medium text-[#0c0c0e] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-600 disabled:opacity-50"
-            >
-              {baking ? "Preparing…" : videoReady ? "Download video" : "Video not ready"}
-            </button>
-          </div>
-        )}
-      </div>
     </div>
   );
 }
@@ -264,6 +305,13 @@ function buildFailureNote(publication: TikTokPublication): { heading: string; de
   };
 }
 
+/**
+ * The "not published yet" release desk — a single Card (Lane H). Header
+ * carries the ready/not-ready state, content carries the version/duration/
+ * format facts + TikTok account + caption, footer carries Publish/Edit/⋯ so
+ * editing never depends on publishing state (same invariant as before, now
+ * enforced by always rendering the footer's Edit/⋯ regardless of receiptState).
+ */
 function ReleasePreparationPane({
   connection,
   canPublish,
@@ -278,6 +326,8 @@ function ReleasePreparationPane({
   onConnect,
   onReceiptRetry,
   simulation,
+  editHref,
+  onDownload,
 }: {
   connection: TikTokConnection | null;
   canPublish: boolean;
@@ -292,122 +342,181 @@ function ReleasePreparationPane({
   onConnect?: () => void;
   onReceiptRetry?: () => void;
   simulation: boolean;
+  editHref: string | null;
+  onDownload: () => void;
 }) {
   const hasContentPostingAccess = Boolean(
     connection?.can_publish || connection?.can_upload_draft,
   );
 
   return (
-    <div className="space-y-4 lg:space-y-7">
-      <div className="flex items-center justify-between gap-4">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-lime-700">Release</p>
-        {simulation && <p className="text-[11px] font-medium text-[#71717a]">Local preview</p>}
-      </div>
-      {/* Sits above the lg:-gated header so a failed attempt is legible on mobile. */}
-      {failureNote && (
-        <div className="border-l-2 border-zinc-300 pl-3 text-sm text-[#3f3f46]">
-          <p className="font-medium text-[#0c0c0e]">{failureNote.heading}</p>
-          <p className="mt-1 leading-relaxed">{failureNote.detail}</p>
-        </div>
-      )}
-      <div className="hidden gap-3 lg:flex">
-        {videoReady && <StatusMark />}
-        <div>
-          <h2 className="text-base font-semibold text-[#0c0c0e]">
-            {videoReady ? "Ready to publish" : "Video isn't ready yet"}
-          </h2>
-          <p className="mt-1 text-sm leading-relaxed text-[#3f3f46]">
-            {videoReady
-              ? "Your final 9:16 video is rendered and ready for release."
-              : "Publishing unlocks after the current render finishes successfully."}
-          </p>
-        </div>
-      </div>
-
-      <div className="hidden divide-y divide-zinc-200 border-y border-zinc-200 text-sm lg:block">
-        <MetaRow label="Version" value={variantLabel} />
-        <MetaRow label="Duration" value={formatDuration(durationSeconds)} />
-        <MetaRow label="Format" value={videoReady ? "9:16 · H.264" : "Waiting for render"} />
-      </div>
-
-      {receiptState === "loading" && (
-        <BeamLoader tone="light" mode="line" strength="medium" ariaLabel="Checking TikTok publishing history">
-          <p role="status" className="py-3 text-sm text-[#3f3f46]">Checking TikTok publishing history…</p>
-        </BeamLoader>
-      )}
-
-      {receiptState === "error" && (
-        <div className="border-l-2 border-zinc-300 pl-3 text-sm text-[#3f3f46]">
-          <p>Kria couldn&apos;t confirm whether this video was already sent to TikTok. Publishing stays paused to prevent a duplicate.</p>
-          {onReceiptRetry && (
-            <button type="button" onClick={onReceiptRetry} className="mt-2 min-h-11 font-medium text-lime-700 underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600">
-              Check again
-            </button>
+    <Card>
+      <CardHeader className="space-y-3">
+        {failureNote && (
+          <div className="border-l-2 border-border pl-3 text-sm text-muted-foreground">
+            <p className="font-medium text-foreground">{failureNote.heading}</p>
+            <p className="mt-1 leading-relaxed">{failureNote.detail}</p>
+          </div>
+        )}
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex gap-3">
+            {videoReady && (
+              <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+            )}
+            <div>
+              <CardTitle className="text-base">
+                {videoReady ? "Ready to publish" : "Video isn't ready yet"}
+              </CardTitle>
+              <CardDescription className="mt-1">
+                {videoReady
+                  ? "Your final 9:16 video is rendered and ready for release."
+                  : "Publishing unlocks after the current render finishes successfully."}
+              </CardDescription>
+            </div>
+          </div>
+          {simulation && (
+            <Badge variant="outline" className="shrink-0 font-normal normal-case tracking-normal">
+              Local preview
+            </Badge>
           )}
         </div>
-      )}
+      </CardHeader>
 
-      {receiptState === "ready" && (
-        connection?.connected ? (
-          <div className="space-y-4">
-            <AccountBlock connection={connection} nickname={connection.account?.display_name ?? "TikTok"} />
-            {captionPreview && (
-              <div className="border-y border-zinc-200 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#71717a]">Caption</p>
-                <p className="mt-1 line-clamp-3 text-sm leading-relaxed text-[#3f3f46]">{captionPreview}</p>
-              </div>
-            )}
-            {simulation && (
-              <p className="border-l-2 border-zinc-300 pl-3 text-xs leading-relaxed text-[#71717a]">
-                Connected-state preview. Nothing will be sent to TikTok.
-              </p>
-            )}
-            {!canPublish && !hasContentPostingAccess && (
-              <div className="border-l-2 border-zinc-300 pl-3 text-sm text-[#3f3f46]">
-                <p>TikTok publishing access needs to be reconnected.</p>
-                {onConnect ? (
-                  <button type="button" onClick={onConnect} className="mt-2 min-h-11 font-medium text-lime-700 underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600">
-                    Reconnect TikTok here
-                  </button>
-                ) : (
-                  <Link href="/plan#tiktok" className="mt-2 inline-flex min-h-11 items-center font-medium text-lime-700 underline underline-offset-4">
-                    Reconnect TikTok
-                  </Link>
-                )}
-              </div>
-            )}
-            {!canPublish && hasContentPostingAccess && !videoReady && (
-              <p className="border-l-2 border-zinc-300 pl-3 text-sm text-[#3f3f46]">
-                Publishing unlocks after this video finishes rendering successfully.
-              </p>
-            )}
-          </div>
-        ) : (
-          <div className="border-l-2 border-zinc-300 pl-3 text-sm text-[#3f3f46]">
-            <p>Connect TikTok before publishing.</p>
-            {onConnect ? (
-              <button type="button" onClick={onConnect} className="mt-2 min-h-11 font-medium text-lime-700 underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600">
-                Connect TikTok here
+      <CardContent className="space-y-4">
+        <dl className="text-sm">
+          <ReleaseMetaRow label="Version" value={variantLabel} />
+          <Separator />
+          <ReleaseMetaRow label="Duration" value={formatDuration(durationSeconds)} />
+          <Separator />
+          <ReleaseMetaRow label="Format" value={videoReady ? "9:16 · H.264" : "Waiting for render"} />
+        </dl>
+
+        {receiptState === "loading" && (
+          <BeamLoader tone="light" mode="line" strength="medium" ariaLabel="Checking TikTok publishing history">
+            <p role="status" className="py-3 text-sm text-muted-foreground">Checking TikTok publishing history…</p>
+          </BeamLoader>
+        )}
+
+        {receiptState === "error" && (
+          <div className="border-l-2 border-border pl-3 text-sm text-muted-foreground">
+            <p>Kria couldn&apos;t confirm whether this video was already sent to TikTok. Publishing stays paused to prevent a duplicate.</p>
+            {onReceiptRetry && (
+              <button type="button" onClick={onReceiptRetry} className="mt-2 min-h-11 font-medium text-lime-700 underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600">
+                Check again
               </button>
-            ) : (
-              <Link href="/plan#tiktok" className="mt-2 inline-flex min-h-11 items-center font-medium text-lime-700 underline underline-offset-4">
-                Connect TikTok
-              </Link>
             )}
           </div>
-        )
-      )}
+        )}
 
-      {receiptState === "ready" && canPublish && (
-        <button
-          type="button"
-          onClick={onPublish}
-          disabled={baking}
-          className="min-h-[52px] w-full rounded-full bg-[#0c0c0e] px-5 py-3.5 text-sm font-semibold text-white transition-opacity hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          {baking ? "Preparing your video…" : "Publish to TikTok"}
-        </button>
-      )}
+        {receiptState === "ready" && (
+          connection?.connected ? (
+            <div className="space-y-4">
+              <TikTokAccountRow connection={connection} nickname={connection.account?.display_name ?? "TikTok"} />
+              {captionPreview && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="release-caption">Caption</Label>
+                  <Textarea
+                    id="release-caption"
+                    readOnly
+                    value={captionPreview}
+                    rows={2}
+                    className="resize-none text-sm"
+                  />
+                </div>
+              )}
+              {simulation && (
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Connected-state preview. Nothing will be sent to TikTok.
+                </p>
+              )}
+              {!canPublish && !hasContentPostingAccess && (
+                <div className="border-l-2 border-border pl-3 text-sm text-muted-foreground">
+                  <p>TikTok publishing access needs to be reconnected.</p>
+                  {onConnect ? (
+                    <button type="button" onClick={onConnect} className="mt-2 min-h-11 font-medium text-lime-700 underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600">
+                      Reconnect TikTok here
+                    </button>
+                  ) : (
+                    <Link href="/plan#tiktok" className="mt-2 inline-flex min-h-11 items-center font-medium text-lime-700 underline underline-offset-4">
+                      Reconnect TikTok
+                    </Link>
+                  )}
+                </div>
+              )}
+              {!canPublish && hasContentPostingAccess && !videoReady && (
+                <p className="border-l-2 border-border pl-3 text-sm text-muted-foreground">
+                  Publishing unlocks after this video finishes rendering successfully.
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="border-l-2 border-border pl-3 text-sm text-muted-foreground">
+              <p>Connect TikTok before publishing.</p>
+              {onConnect ? (
+                <button type="button" onClick={onConnect} className="mt-2 min-h-11 font-medium text-lime-700 underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600">
+                  Connect TikTok here
+                </button>
+              ) : (
+                <Link href="/plan#tiktok" className="mt-2 inline-flex min-h-11 items-center font-medium text-lime-700 underline underline-offset-4">
+                  Connect TikTok
+                </Link>
+              )}
+            </div>
+          )
+        )}
+      </CardContent>
+
+      <CardFooter className="flex flex-col gap-2 sm:flex-row">
+        {receiptState === "ready" && canPublish && (
+          <Button className="w-full sm:flex-1" onClick={onPublish} disabled={baking}>
+            {baking ? "Preparing your video…" : "Publish to TikTok"}
+          </Button>
+        )}
+        {/* Outside the publish gate on purpose: editing a video must never
+            depend on its publishing state. */}
+        <EditVideoButton editHref={editHref} className="w-full sm:w-auto" />
+        <MoreVideoActionsMenu
+          onDownload={onDownload}
+          baking={baking}
+          videoReady={videoReady}
+          containerClassName="sm:ml-auto"
+        />
+      </CardFooter>
+    </Card>
+  );
+}
+
+/** Compact `dl` row for the Version/Duration/Format facts (Lane H). */
+function ReleaseMetaRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-4 py-2">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="text-right font-medium text-foreground">{value}</dd>
+    </div>
+  );
+}
+
+/**
+ * Integrations-row pattern (40px avatar/glyph + name + subline) used on
+ * /plan — a local variant so restyling this pane doesn't change the shared
+ * `AccountBlock` used by the receipt/history states below.
+ */
+function TikTokAccountRow({ connection, nickname }: { connection: TikTokConnection | null; nickname: string }) {
+  const avatar = connection?.account?.avatar_url ?? null;
+  return (
+    <div className="flex items-center gap-3">
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-secondary text-sm font-semibold text-secondary-foreground">
+        {avatar ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={avatar} alt="" className="h-full w-full object-cover" />
+        ) : (
+          nickname.trim().charAt(0).toUpperCase() || "T"
+        )}
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate text-sm font-semibold text-foreground">{nickname}</span>
+        <span className="block truncate text-xs text-muted-foreground">Connected TikTok account</span>
+      </span>
     </div>
   );
 }
@@ -706,14 +815,6 @@ function AccountBlock({
         </span>
       </span>
     </div>
-  );
-}
-
-function StatusMark() {
-  return (
-    <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-lime-600 text-lime-700" aria-hidden="true">
-      ✓
-    </span>
   );
 }
 

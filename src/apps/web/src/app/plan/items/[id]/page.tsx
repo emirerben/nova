@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import { useParams, useSearchParams } from "next/navigation";
 import {
   type Dispatch,
@@ -3069,14 +3070,14 @@ function FocusedResults({
 
   return (
     <div className="mt-2 lg:-mt-4">
-      <div className="grid grid-cols-[minmax(132px,0.78fr)_minmax(0,1.22fr)] gap-x-4 gap-y-6 lg:grid-cols-[minmax(210px,0.75fr)_minmax(320px,430px)_minmax(300px,0.95fr)] lg:items-start lg:gap-8 xl:gap-12">
-        <section className="order-1 col-span-2 lg:col-span-1 lg:pt-3" aria-labelledby="release-item-title">
-          <Link
-            href="/plan"
-            className="inline-flex min-h-11 items-center text-sm text-[#3f3f46] transition-colors hover:text-[#0c0c0e]"
-          >
-            ← Back to plan
-          </Link>
+      <div className="grid grid-cols-1 gap-y-6 lg:grid-cols-[minmax(210px,0.75fr)_minmax(320px,430px)_minmax(300px,0.95fr)] lg:items-start lg:gap-8 xl:gap-12">
+        <section className="order-1 lg:pt-3" aria-labelledby="release-item-title">
+          <Button variant="link" size="sm" asChild className="h-auto p-0 text-muted-foreground hover:text-foreground">
+            <Link href="/plan">
+              <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+              Back to plan
+            </Link>
+          </Button>
           {(() => {
             const { untitled, receipt } = setupIdentityFor(item);
             return untitled ? (
@@ -3089,17 +3090,17 @@ function FocusedResults({
           ) : (
             <h1
               id="release-item-title"
-              className="mt-1 line-clamp-2 font-display text-[clamp(32px,9vw,42px)] font-medium leading-[1.02] text-[#0c0c0e] lg:mt-2 lg:line-clamp-none lg:text-[clamp(36px,4vw,58px)] lg:leading-[1.05]"
+              className="mt-3 line-clamp-2 text-3xl font-semibold tracking-tight text-foreground lg:line-clamp-none"
             >
               {item.theme ?? item.idea}
             </h1>
           );
           })()}
           {!setupIdentityFor(item).untitled && item.theme && (
-            <p className="mt-4 hidden text-sm leading-relaxed text-[#3f3f46] lg:block">{item.idea}</p>
+            <p className="mt-4 hidden text-sm text-muted-foreground lg:block">{item.idea}</p>
           )}
           {variant && !isGenerating && (
-            <p className="mt-6 hidden border-l-2 border-lime-600 pl-3 text-sm leading-relaxed text-[#3f3f46] lg:block">
+            <p className="mt-6 hidden border-l-2 border-border pl-3 text-sm text-muted-foreground lg:block">
               {deriveRationale(variant, variants.length)}
             </p>
           )}

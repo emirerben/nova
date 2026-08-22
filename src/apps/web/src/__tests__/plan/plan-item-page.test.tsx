@@ -720,9 +720,12 @@ describe("PlanItemPage — result cleanup", () => {
     expect(video).toHaveAttribute("preload", "metadata");
     expect(screen.queryByLabelText("Visual variants")).toBeNull();
 
+    // Lane H: the release desk stacks to a single column below `lg` (video,
+    // then the Card) instead of a cramped 2-up mobile grid.
     const titleSection = screen.getByRole("heading", { name: "Morning Routine" }).closest("section");
+    expect(titleSection?.parentElement).toHaveClass("grid-cols-1");
     expect(titleSection?.parentElement).toHaveClass(
-      "grid-cols-[minmax(132px,0.78fr)_minmax(0,1.22fr)]",
+      "lg:grid-cols-[minmax(210px,0.75fr)_minmax(320px,430px)_minmax(300px,0.95fr)]",
     );
   });
 
