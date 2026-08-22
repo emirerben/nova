@@ -209,48 +209,56 @@ const LANE_0_BASELINE: Record<string, number> = {
 };
 
 // ── Lane A ──────────────────────────────────────────────────────────────
-// Header.tsx migrated to DropdownMenu + Button (account menu); zero raw
-// controls remain.
-const LANE_A_BASELINE: Record<string, number> = {
-  "components/Header.tsx": 0,
-};
+// (none yet)
+const LANE_A_BASELINE: Record<string, number> = {};
 
 // ── Lane B ──────────────────────────────────────────────────────────────
-// Poster tiles + Integrations row + feedback-pill removal converted every
-// raw control in these three files to shadcn primitives (Button/Badge/
-// DropdownMenu/AlertDialog/Skeleton). `components/library/FeedbackButtons.tsx`
-// is deleted outright, so its Lane 0 baseline entry is now moot (scan() only
-// counts files that still exist).
-const LANE_B_BASELINE: Record<string, number> = {
-  "components/library/LibraryTile.tsx": 0,
-  "components/library/TikTokConnectionCard.tsx": 0,
-  "app/plan/_components/workspace/WorkspaceHome.tsx": 0,
-};
+// (none yet)
+const LANE_B_BASELINE: Record<string, number> = {};
 
 // ── Lane C ──────────────────────────────────────────────────────────────
-// Tap-to-advance /plan/new: the sticky-footer "Continue" button and the
-// style-step "Back" button are now shadcn `<Button>`s (SetupPicker.tsx's
-// scrollbar-none-only edits don't change its raw-control count).
-const LANE_C_BASELINE: Record<string, number> = {
-  "app/plan/new/page.tsx": 0,
-};
+// (none yet)
+const LANE_C_BASELINE: Record<string, number> = {};
 
 // ── Lane D ──────────────────────────────────────────────────────────────
-// Item setup declutter: receipt → Badge, Change → Button, Direction textarea
-// (+ DirectionVoiceNote) removed in favor of the Tell Kria Textarea, several
-// step-eyebrow <p>s replaced by sr-only headings + InfoDot.
-const LANE_D_BASELINE: Record<string, number> = {
-  "app/plan/items/[id]/page.tsx": 15,
-};
+// (none yet)
+const LANE_D_BASELINE: Record<string, number> = {};
 
 // ── Lane E ──────────────────────────────────────────────────────────────
-// E1 (EditorShell.tsx): sonner toast, AlertDialog, Button/Input/Select/
-// Textarea controls. E2/E3 land in later PRs against ToolDrawer/
-// InspectorPanel/inspector-fields/CopilotDrawer/CaptionsDrawer/
-// StylesDrawer/MotionInspector/Sheet.tsx — disjoint files, so they extend
-// this block rather than editing this line.
-const LANE_E_BASELINE: Record<string, number> = {
+// Lane E ships as three file-disjoint PRs (E1/E2/E3, DESIGN.md §15 "Lane E").
+// Each sub-lane gets its own block below so the three PRs never touch the
+// same hunk of this file.
+
+// ── Lane E1 ──────────────────────────────────────────────────────────────
+// E1: EditorShell.tsx — sonner toast, AlertDialog, Button/Input/Select/Textarea.
+const LANE_E1_BASELINE: Record<string, number> = {
   "app/plan/items/[id]/_editor/EditorShell.tsx": 0,
+};
+
+// ── Lane E2 ──────────────────────────────────────────────────────────────
+// ToolDrawer.tsx / InspectorPanel.tsx / inspector-fields.tsx migrated to
+// Select/Input/Textarea/Tabs/Slider/Popover/Button. Remaining raw controls
+// are deliberate: type="range"/"color"/"file"/"radio" (excluded from the
+// count above), plus a handful of pointer-drag scrubbers (VideoOverlaySource
+// Window / ClipInspector source-range handles, the Creator Blocks catalog
+// grid) that stay hand-rolled — Radix's Button/Slider primitives don't fit a
+// custom drag gesture or a multi-child card layout without real risk of
+// regressing the interaction.
+const LANE_E2_BASELINE: Record<string, number> = {
+  "app/plan/items/[id]/_editor/ToolDrawer.tsx": 3,
+  "app/plan/items/[id]/_editor/InspectorPanel.tsx": 3,
+  "app/plan/items/[id]/_editor/inspector-fields.tsx": 0,
+};
+
+// ── Lane E3 ──────────────────────────────────────────────────────────────
+// (none yet — CopilotDrawer.tsx, CaptionsDrawer.tsx, StylesDrawer.tsx,
+// MotionInspector.tsx, Sheet.tsx, editor-icons.tsx)
+const LANE_E3_BASELINE: Record<string, number> = {};
+
+const LANE_E_BASELINE: Record<string, number> = {
+  ...LANE_E1_BASELINE,
+  ...LANE_E2_BASELINE,
+  ...LANE_E3_BASELINE,
 };
 
 // ── Lane F ──────────────────────────────────────────────────────────────
