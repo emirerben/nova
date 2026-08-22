@@ -6,8 +6,10 @@
  *
  * Full-viewport grid: 56px top bar / minmax(480px,1fr) canvas row / 260px
  * timeline region. Middle row: ToolRail · ToolDrawer · canvas · InspectorPanel
- * (~320px, PERMANENTLY reserved — the canvas never reflows on select/deselect,
- * D6) · InspectorRail (~72px).
+ * (~320px/w-80, PERMANENTLY reserved — the canvas never reflows on
+ * select/deselect, D6). The Basic/Presets switch renders inline at the top
+ * of InspectorPanel (Lane I, DESIGN.md §15) — the old floating InspectorRail
+ * column is gone.
  *
  * First paint: drawer closed, no selection, inspector empty state, Select
  * tool active, playhead 0:00, video paused on frame 0.
@@ -138,8 +140,8 @@ import {
   type TextMotionConfigV2,
 } from "@/lib/text-motion-v2";
 import { toast } from "sonner";
-import { InkButton } from "@/components/ui/InkButton";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -149,6 +151,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useFocusTrap } from "@/components/ui/useFocusTrap";
 import UnifiedTimeline from "@/app/plan/_components/UnifiedTimeline";
@@ -211,7 +214,7 @@ import OverlaySuggestions from "./OverlaySuggestions";
 import { usePoolAssetUploader } from "@/app/plan/_hooks/usePoolAssetUploader";
 import { computeReseedSections } from "./editor-reseed";
 import InspectorPanel from "./InspectorPanel";
-import InspectorRail, { type InspectorTab } from "./InspectorRail";
+import type { InspectorTab } from "./InspectorRail";
 import ToolDrawer from "./ToolDrawer";
 import Sheet from "./Sheet";
 import { ToolDock, type DockTool } from "./ToolDock";
@@ -222,6 +225,7 @@ import {
   pocketReducer,
   type PocketTool,
 } from "./mobile-editor-state";
+import { ArrowLeft as ArrowLeftIcon } from "lucide-react";
 import { PauseIcon, PlayIcon, RedoIcon, UndoIcon } from "./editor-icons";
 import type {
   CaptionCueRow,
@@ -664,7 +668,7 @@ function OrientationToggle({
       aria-label="Output format"
       aria-busy={busy}
       title={title}
-      className="flex min-h-11 items-center rounded-lg border border-zinc-200 bg-white p-0.5"
+      className="flex min-h-11 items-center rounded-md border border-border bg-background p-0.5"
     >
       {(["portrait", "landscape"] as const).map((option) => {
         const selected = value === option;
@@ -679,7 +683,9 @@ function OrientationToggle({
             onClick={() => onChange(option)}
             className={[
               "h-10 min-h-0 min-w-[54px] rounded-md px-2 text-[12px] font-semibold normal-case tracking-normal",
-              selected ? "bg-[#0c0c0e] text-white hover:bg-[#0c0c0e]" : "text-[#3f3f46]",
+              selected
+                ? "bg-foreground text-background hover:bg-foreground"
+                : "text-muted-foreground",
             ].join(" ")}
           >
             {option === "portrait" ? "9:16" : "16:9"}
@@ -6493,17 +6499,16 @@ export default function EditorShell({
           orientationToggle={orientationToggle}
         />
       ) : (
-        <header className="flex items-center border-b border-zinc-200 bg-white px-4">
-          <div className="flex flex-1 items-center gap-3">
+        <header className="flex h-14 items-center border-b border-border bg-background px-4">
+          <div className="flex flex-1 items-center gap-2">
             <Button
               type="button"
               variant="ghost"
-              size="icon-sm"
+              size="icon"
               aria-label="Back to the video page"
               onClick={requestLeave}
-              className="text-[15px]"
             >
-              ‹
+              <ArrowLeftIcon className="h-4 w-4" />
             </Button>
             <Input
               type="text"
@@ -6516,43 +6521,36 @@ export default function EditorShell({
                   setTitle(e.target.value);
               }}
               readOnly={!introControlsEditable}
-              placeholder="add title for your video"
+              placeholder="Untitled video"
               aria-label="Video title"
-              className="h-10 w-[240px] border-transparent bg-transparent px-2 py-1 text-[13px] focus-visible:border-lime-500 focus-visible:bg-white focus-visible:ring-2 focus-visible:ring-lime-500/25"
+              className="h-9 w-[260px] border-transparent bg-transparent shadow-none hover:bg-muted focus-visible:border-input focus-visible:bg-background"
             />
           </div>
 
-          {/* Center cluster — visually quiet; ink chip only on the active tool */}
-          <div className="flex items-center gap-1.5">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-pressed={canvasTool === "select"}
-              aria-label="Select"
-              title="Select"
-              onClick={() => setCanvasTool("select")}
-              className={
-                canvasTool === "select" ? "bg-[#0c0c0e] text-white hover:bg-[#0c0c0e]" : ""
-              }
+          {/* Center cluster — visually quiet; the active tool gets the muted chip */}
+          <div className="flex items-center gap-2">
+            <ToggleGroup
+              type="single"
+              value={canvasTool}
+              onValueChange={(value) => {
+                if (!value) return; // one tool always stays selected
+                setCanvasTool(value as "select" | "pan");
+              }}
+              className="gap-0.5 rounded-md border border-border bg-background p-0.5"
             >
-              <SelectCursorIcon />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-pressed={canvasTool === "pan"}
-              aria-label="Pan — drag to move around the canvas when zoomed in"
-              title={panEnabled ? "Pan — drag to move around the canvas when zoomed in" : "Zoom in to pan"}
-              disabled={!panEnabled}
-              onClick={() => setCanvasTool("pan")}
-              className={
-                canvasTool === "pan" ? "bg-[#0c0c0e] text-white hover:bg-[#0c0c0e]" : ""
-              }
-            >
-              <PanHandIcon />
-            </Button>
+              <ToggleGroupItem value="select" size="sm" aria-label="Select" title="Select">
+                <SelectCursorIcon />
+              </ToggleGroupItem>
+              <ToggleGroupItem
+                value="pan"
+                size="sm"
+                aria-label="Pan — drag to move around the canvas when zoomed in"
+                title={panEnabled ? "Pan — drag to move around the canvas when zoomed in" : "Zoom in to pan"}
+                disabled={!panEnabled}
+              >
+                <PanHandIcon />
+              </ToggleGroupItem>
+            </ToggleGroup>
             {/* Undo/redo — unified document command stack (plan §7). */}
             <Button
               type="button"
@@ -6562,9 +6560,8 @@ export default function EditorShell({
               title="Undo (⌘Z)"
               disabled={!history.canUndo}
               onClick={history.undo}
-              className="text-[14px]"
             >
-              ↺
+              <UndoIcon className="h-4 w-4" />
             </Button>
             <Button
               type="button"
@@ -6574,12 +6571,11 @@ export default function EditorShell({
               title="Redo (⇧⌘Z)"
               disabled={!history.canRedo}
               onClick={history.redo}
-              className="text-[14px]"
             >
-              ↻
+              <RedoIcon className="h-4 w-4" />
             </Button>
             <Select value={String(zoomPct)} onValueChange={(v) => setZoomPct(Number(v))}>
-              <SelectTrigger aria-label="Canvas zoom" className="ml-1 h-10 w-auto px-2 text-[12px]">
+              <SelectTrigger aria-label="Canvas zoom" className="h-9 w-[88px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -6595,7 +6591,7 @@ export default function EditorShell({
 
           <div className="flex flex-1 items-center justify-end gap-2">
             {showCopilotSaveNotice && (
-              <div className="flex max-w-[360px] items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-[12px] text-[#3f3f46]">
+              <div className="flex max-w-[360px] items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-[12px] text-muted-foreground">
                 <span className="truncate">
                   The preview is a close match — the saved video is rendered exactly.
                 </span>
@@ -6612,39 +6608,39 @@ export default function EditorShell({
                       /* localStorage unavailable */
                     }
                   }}
-                  className="h-8 w-8 text-[#71717a] hover:text-[#0c0c0e]"
+                  className="h-8 w-8 text-muted-foreground hover:text-foreground"
                 >
                   ✕
                 </Button>
               </div>
             )}
             {saveState === "idle" && saveMessage && (
-              <span className="max-w-[280px] truncate rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-[12px] text-[#3f3f46]">
+              <Badge variant="outline" className="max-w-[280px] truncate font-normal">
                 {saveMessage}
-              </span>
+              </Badge>
             )}
             {(lyricsDirty || orientationDirty) && (
-              <span className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-[12px] font-semibold text-[#3f3f46]">
-                Re-renders on Save
-              </span>
+              <Badge variant="outline">Re-renders on Save</Badge>
             )}
-            <InkButton
-              variant="ghost"
-              size="compact"
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
               className="focus-visible:!outline-lime-500"
               onClick={requestLeave}
             >
               Cancel
-            </InkButton>
-            <InkButton
-              size="compact"
+            </Button>
+            <Button
+              type="button"
+              size="sm"
               className="gap-2 focus-visible:!outline-lime-500"
               disabled={!dirty || saving || readOnly}
               onClick={() => void handleSave()}
             >
               {saving && <SaveSpinner />}
               {saving ? "Saving" : "Save"}
-            </InkButton>
+            </Button>
           </div>
         </header>
       )}
@@ -6794,8 +6790,8 @@ export default function EditorShell({
           className={[
             "relative grid min-h-0 grid-rows-[minmax(0,1fr)] overflow-hidden",
             layoutMode === "full"
-              ? "grid-cols-[auto_auto_1fr_auto_auto]"
-              : "grid-cols-[auto_1fr_auto_auto]",
+              ? "grid-cols-[auto_auto_1fr_auto]"
+              : "grid-cols-[auto_1fr_auto]",
           ].join(" ")}
         >
         <ToolRail
@@ -6955,7 +6951,7 @@ export default function EditorShell({
           </div>
         )}
         {layoutMode === "overlay" && activeTool === "nova" && (
-          <div className="absolute bottom-4 left-[108px] right-[344px] z-40">
+          <div className="absolute bottom-4 left-[108px] right-[272px] z-40">
             <ToolDrawer
               tool="nova"
               sampleWord={sampleWord}
@@ -7131,10 +7127,6 @@ export default function EditorShell({
           canMergeCaptionNext={!readOnly && captionMergeAvailability.canMergeNext}
           onClose={clear}
           onPickPreset={pickPreset}
-        />
-        <InspectorRail
-          tab={inspectorTab}
-          hasSelection={selection !== null}
           onTab={setInspectorTab}
         />
       </div>
@@ -7797,20 +7789,19 @@ function LightTopBar({
 }) {
   const copilotEnabled = process.env.NEXT_PUBLIC_EDIT_COPILOT_ENABLED === "true";
   return (
-    <header className="flex items-center justify-between gap-2 border-b border-zinc-200 bg-white px-3">
+    <header className="flex h-14 items-center justify-between gap-2 border-b border-border bg-background px-3">
       <Button
         type="button"
         variant="ghost"
         size="icon"
         aria-label="Back to the video page"
         onClick={onBack}
-        className="text-[15px]"
       >
-        ‹
+        <ArrowLeftIcon className="h-4 w-4" />
       </Button>
       <div className="min-w-0 flex-1 text-center">
         {showCopilotNotice ? (
-          <div className="mx-auto flex max-w-[320px] items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-2 py-1 text-[11px] text-[#3f3f46]">
+          <div className="mx-auto flex max-w-[320px] items-center justify-center gap-2 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground">
             <span className="truncate">
               Preview is close; Save renders exactly.
             </span>
@@ -7820,7 +7811,7 @@ function LightTopBar({
               size="icon-sm"
               aria-label="Dismiss preview match note"
               onClick={onDismissCopilotNotice}
-              className="text-[#71717a] hover:text-[#0c0c0e]"
+              className="text-muted-foreground hover:text-foreground"
             >
               ✕
             </Button>
@@ -7828,7 +7819,7 @@ function LightTopBar({
         ) : orientationToggle ? (
           <div className="flex justify-center">{orientationToggle}</div>
         ) : (
-          <span className="text-[13px] font-semibold text-[#3f3f46]">Edit video</span>
+          <span className="text-[13px] font-semibold text-foreground">Edit video</span>
         )}
       </div>
       {copilotEnabled && (
@@ -7872,11 +7863,10 @@ function LightTransport({
   const safeDuration = Math.max(0, duration);
   const safeTime = Math.min(safeDuration || currentTime, Math.max(0, currentTime));
   return (
-    <div className="border-t border-zinc-200 bg-white px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3">
+    <div className="border-t border-border bg-background px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3">
       <div className="mx-auto flex max-w-[720px] items-center gap-3">
         <Button
           type="button"
-          variant="ink"
           size="icon"
           aria-label={playing ? "Pause video" : "Play video"}
           aria-pressed={playing}
@@ -7902,10 +7892,10 @@ function LightTransport({
         />
         <span
           aria-label="Playback position"
-          className="w-[92px] flex-none text-right text-[12px] tabular-nums text-[#3f3f46]"
+          className="w-[92px] flex-none text-right text-sm tabular-nums text-muted-foreground"
         >
           {formatTimecode(currentTime)}{" "}
-          <span className="text-[#a1a1aa]">/ {formatTimecode(duration)}</span>
+          <span className="text-muted-foreground/60">/ {formatTimecode(duration)}</span>
         </span>
       </div>
     </div>
