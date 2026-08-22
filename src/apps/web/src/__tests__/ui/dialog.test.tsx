@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/dialog";
 
 describe("Dialog", () => {
-  it("renders a dialog role with the Kria z-[100] + card treatment when open", () => {
+  it("renders a dialog role with Nova's z-[100] + the stock shadcn card treatment when open", () => {
     render(
       <Dialog open>
         <DialogTrigger>Open</DialogTrigger>
@@ -19,7 +19,7 @@ describe("Dialog", () => {
     );
     const dialog = screen.getByRole("dialog", { name: "Discard your edits?" });
     expect(dialog.className).toContain("z-[100]");
-    expect(dialog.className).toContain("rounded-2xl");
+    expect(dialog.className).toContain("sm:rounded-lg");
     expect(dialog.className).toContain("extra-class");
   });
 });

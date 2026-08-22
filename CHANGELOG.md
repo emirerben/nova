@@ -212,6 +212,8 @@ All notable changes to this project will be documented in this file.
   flips the rule to `error` and deletes the guard test.
 - See DESIGN.md §15 "Component library (shadcn/ui)" for the full variant
   table, token→hex map, and DO/DON'T list.
+- **Skin: stock shadcn new-york (Geist, zinc, rounded-md) replaces the
+  hand-edited Kria variants.**
 
 ## [0.46.0.2] — 2026-08-22
 

@@ -54,43 +54,36 @@ describe("theme tokens (globals.css)", () => {
     expect(root).toContain("--radius:");
   });
 
-  it(".dark redefines the semantic set for /template-jobs + /admin (accent stays lime, unchanged)", () => {
+  it(".dark redefines the full semantic set for /template-jobs + /admin (stock shadcn zinc dark theme)", () => {
     const dark = block(".dark");
     for (const token of CORE_VARS) {
-      if (token === "--accent") continue; // intentionally NOT redeclared — inherits :root's lime value
       expect(dark).toContain(`${token}:`);
     }
-    expect(dark).not.toContain("--accent:");
   });
 
-  it(":root --ring is lime (hue ~84), not blue", () => {
+  it(":root --ring is zinc (hue ~240), not lime — stock shadcn new-york", () => {
     const root = block(":root");
     const m = root.match(/--ring:\s*([\d.]+)/);
     expect(m).not.toBeNull();
     const hue = Number(m![1]);
-    expect(hue).toBeGreaterThan(70);
-    expect(hue).toBeLessThan(100);
+    expect(hue).toBeGreaterThan(220);
+    expect(hue).toBeLessThan(260);
   });
 
-  it(".dark --ring is amber (hue ~43)", () => {
+  it(".dark --ring is zinc (hue ~240), not amber — stock shadcn new-york", () => {
     const dark = block(".dark");
     const m = dark.match(/--ring:\s*([\d.]+)/);
     expect(m).not.toBeNull();
     const hue = Number(m![1]);
-    expect(hue).toBeGreaterThan(30);
-    expect(hue).toBeLessThan(60);
+    expect(hue).toBeGreaterThan(220);
+    expect(hue).toBeLessThan(260);
   });
 
-  it("--destructive is never a red hue in either theme — D10 'no red walls'", () => {
+  it("--destructive is defined in both themes (stock shadcn: red hue, not zinc — supersedes the pre-migration D10 'no red walls' rule for component chrome)", () => {
     for (const selector of [":root", ".dark"]) {
       const scope = block(selector);
       const m = scope.match(/--destructive:\s*([\d.]+)/);
       expect(m).not.toBeNull();
-      const hue = Number(m![1]);
-      // Red sits at hue ~0/360 (+/- ~20deg either side incl. orange-red).
-      // Kria destructive is zinc, which is hue 240 (achromatic-leaning blue-gray).
-      const isRedHue = hue <= 20 || hue >= 340;
-      expect(isRedHue).toBe(false);
     }
   });
 

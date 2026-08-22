@@ -3,25 +3,32 @@ import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "@/lib/cn"
 
-// Kria editorial badge (DESIGN.md §15) — pill/eyebrow status chips.
-// `ink` = solid dark pill (rare, emphasis only). `lime` = bare uppercase
-// eyebrow text, no fill (e.g. "From your idea"-style labels). `lime-soft` =
-// the lime-50/200/800 soft pill used for "Ready to post" / positive status.
-// `zinc` = neutral status default ("Rendering…", "Needs footage").
+// Stock shadcn/ui `new-york` badge (DESIGN.md §15, owner decision
+// 2026-08-22 — replaces the hand-edited Kria pill/eyebrow variant). `ink`,
+// `lime`, `lime-soft`, and `zinc` are aliases kept byte-identical to their
+// stock base variant so existing call sites keep working unchanged.
 const badgeVariants = cva(
-  "inline-flex items-center gap-1 rounded-full text-[11px] font-semibold uppercase tracking-[0.18em] transition-colors focus:outline-none",
+  "inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
   {
     variants: {
       variant: {
-        ink: "border border-transparent bg-[#0c0c0e] px-2.5 py-1 text-white",
-        lime: "border-transparent bg-transparent px-0 py-0 text-lime-700",
+        default:
+          "border-transparent bg-primary text-primary-foreground hover:bg-primary/80",
+        secondary:
+          "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
+        destructive:
+          "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/80",
+        outline: "text-foreground",
+        // Aliases (§15 variant table) — same look as their stock base.
+        ink: "border-transparent bg-primary text-primary-foreground hover:bg-primary/80",
+        lime: "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
         "lime-soft":
-          "border border-lime-200 bg-lime-50 px-2.5 py-1 text-lime-800",
-        zinc: "border border-zinc-200 bg-white px-2.5 py-1 text-[#71717a]",
+          "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
+        zinc: "text-foreground",
       },
     },
     defaultVariants: {
-      variant: "zinc",
+      variant: "default",
     },
   }
 )

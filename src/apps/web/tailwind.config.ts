@@ -10,12 +10,13 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        // Fraunces is the editorial display serif — plan headings, key prompts,
-        // and serif accents. Loaded via Google Fonts @import in globals.css.
-        display: ['"Fraunces"', "Georgia", "serif"],
-        // Inter is the body/label sans. Loaded via Google Fonts @import in
-        // globals.css; listed first so it wins over system-ui when available.
-        sans: ['"Inter"', "ui-sans-serif", "system-ui", "-apple-system", "sans-serif"],
+        // Geist is the stock shadcn/ui new-york typeface — body, labels, and
+        // headings alike. Loaded via Google Fonts @import in globals.css.
+        // `display` is kept as an alias so every existing `font-display`
+        // heading renders Geist too, rather than falling back to Fraunces.
+        sans: ["Geist", "ui-sans-serif", "system-ui", "sans-serif"],
+        display: ["Geist", "ui-sans-serif", "system-ui", "sans-serif"],
+        mono: ["Geist Mono", "ui-monospace", "monospace"],
       },
       colors: {
         border: "hsl(var(--border))",

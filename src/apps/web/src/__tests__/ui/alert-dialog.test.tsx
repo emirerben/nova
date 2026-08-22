@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/alert-dialog";
 
 describe("AlertDialog", () => {
-  it("renders an alertdialog role with the ink action + z-[100]", () => {
+  it("renders an alertdialog role with the stock default action + z-[100]", () => {
     render(
       <AlertDialog open>
         <AlertDialogContent aria-label="Discard your edits?">
@@ -21,10 +21,13 @@ describe("AlertDialog", () => {
     );
     const dialog = screen.getByRole("alertdialog", { name: "Discard your edits?" });
     expect(dialog.className).toContain("z-[100]");
-    expect(dialog.className).toContain("rounded-2xl");
+    expect(dialog.className).toContain("sm:rounded-lg");
 
     const action = screen.getByRole("button", { name: "Discard" });
-    expect(action.className.toLowerCase()).not.toContain("red");
-    expect(action.className).toContain("bg-[#0c0c0e]");
+    expect(action.className).toContain("bg-primary");
+
+    const cancel = screen.getByRole("button", { name: "Keep editing" });
+    expect(cancel.className).toContain("border");
+    expect(cancel.className).toContain("bg-background");
   });
 });
