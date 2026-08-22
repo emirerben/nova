@@ -73,6 +73,92 @@
   --beam-ease: linear;
 }
 
+/* ── shadcn/ui semantic layer (Kria Design System, DESIGN.md §15) ──────────
+   HSL triplets (no `hsl()` wrapper — consumed as `hsl(var(--token) / <alpha>)`
+   by tailwind.config.ts) sourced from the Kria editorial palette above.
+   Light is the ONLY theme user-facing surfaces (incl. the editor) may use;
+   `.dark` exists solely for /template-jobs + /admin, which keep the
+   pre-existing dark editor look. `destructive` is zinc, never red — see
+   DESIGN.md D10 "no red walls". */
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 7.7% 5.1%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 7.7% 5.1%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 7.7% 5.1%;
+
+    --primary: 240 7.7% 5.1%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 7.7% 5.1%;
+
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+
+    /* accent = lime-50 bg / lime-800 fg (eyebrows, soft pills, focus fills) */
+    --accent: 80 89.1% 95.1%;
+    --accent-foreground: 86.3 69% 22.7%;
+
+    /* destructive = zinc (#3f3f46), deliberately not red — D10 */
+    --destructive: 240 5.3% 26.1%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 83.7 80.5% 44.3%;
+
+    --radius: 0.5rem;
+
+    /* Raw lime scale, referenced by hand-authored Kria variants (button.tsx,
+       badge.tsx) that use bg-lime-50/text-lime-800/etc. directly — Tailwind's
+       own default `lime` palette already matches these hexes 1:1; kept here
+       as the documented source of truth. */
+    --lime-50: #f7fee7;
+    --lime-200: #d9f99d;
+    --lime-600: #65a30d;
+    --lime-700: #4d7c0f;
+    --lime-800: #3f6212;
+  }
+
+  /* /template-jobs + /admin ONLY — never on a user-facing or editor surface
+     (DESIGN.md §15 DON'T). Accent intentionally NOT redeclared here: it
+     inherits the lime :root value unchanged ("lime accent unchanged"). */
+  .dark {
+    --background: 240 10% 3.9%;   /* zinc-950 canvas */
+    --foreground: 0 0% 98%;       /* white text */
+
+    --card: 240 5.9% 10%;         /* zinc-900 surfaces */
+    --card-foreground: 0 0% 98%;
+    --popover: 240 5.9% 10%;
+    --popover-foreground: 0 0% 98%;
+
+    --primary: 0 0% 98%;          /* white primary */
+    --primary-foreground: 240 5.9% 10%;
+
+    --secondary: 240 3.7% 15.9%;  /* zinc-800 */
+    --secondary-foreground: 0 0% 98%;
+
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+
+    /* zinc, not red — D10 applies in dark too */
+    --destructive: 240 3.7% 15.9%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 43 96% 56%;           /* amber-400 */
+  }
+
+  * {
+    @apply border-border;
+  }
+}
+
 @property --beam-angle {
   syntax: "<angle>";
   inherits: false;

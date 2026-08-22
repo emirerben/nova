@@ -24,3 +24,47 @@ if (typeof globalThis.crypto?.randomUUID !== "function") {
     writable: true,
   });
 }
+
+/**
+ * Radix UI polyfills (Kria shadcn/ui foundation, DESIGN.md §15).
+ *
+ * jsdom implements none of ResizeObserver, pointer capture, or
+ * `Element.scrollIntoView` — Radix's Select/DropdownMenu/Tooltip/ScrollArea
+ * primitives call all three during open/close and positioning. Without these
+ * stubs every test that opens one of those primitives throws
+ * "X is not a function" before it can assert anything.
+ */
+if (typeof globalThis.ResizeObserver === "undefined") {
+  class ResizeObserverStub {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  globalThis.ResizeObserver = ResizeObserverStub;
+}
+
+if (typeof Element.prototype.hasPointerCapture !== "function") {
+  Element.prototype.hasPointerCapture = () => false;
+}
+if (typeof Element.prototype.setPointerCapture !== "function") {
+  Element.prototype.setPointerCapture = () => {};
+}
+if (typeof Element.prototype.releasePointerCapture !== "function") {
+  Element.prototype.releasePointerCapture = () => {};
+}
+if (typeof Element.prototype.scrollIntoView !== "function") {
+  Element.prototype.scrollIntoView = () => {};
+}
+
+if (typeof window.matchMedia !== "function") {
+  window.matchMedia = (query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  });
+}
