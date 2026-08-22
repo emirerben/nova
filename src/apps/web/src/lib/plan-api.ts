@@ -860,12 +860,14 @@ export async function uploadToGcs(
   file: File,
   uploadHeaders: Record<string, string> = {},
   correlationId?: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   try {
     const res = await fetch(uploadUrl, {
       method: "PUT",
       headers: { "Content-Type": uploadContentTypeForFile(file), ...uploadHeaders },
       body: file,
+      signal,
     });
     if (!res.ok) throw new Error(`Upload failed (${res.status})`);
   } catch (err) {
@@ -877,7 +879,7 @@ export async function uploadToGcs(
     // upload cost twice.
     if (err instanceof TypeError) {
       if (canRelayFallback(file)) {
-        await relaySignedUpload(uploadUrl, file, uploadHeaders, correlationId);
+        await relaySignedUpload(uploadUrl, file, uploadHeaders, correlationId, signal);
         return;
       }
       throw new Error(UPLOAD_INTERRUPTED_MESSAGE);
@@ -1578,6 +1580,8 @@ export interface CameraEffect {
  * per-section false gates that tool with its honest `*_reason`.
  */
 export interface EditorCapabilities {
+  /** Upload protocol selected by the server for this editor session. */
+  overlay_upload_mode?: "legacy" | "pool";
   text_elements?: boolean;
   timeline?: boolean;
   split_clips?: boolean;
@@ -2271,6 +2275,34 @@ export async function confirmOverlayUploads(
   return res.files;
 }
 
+/** Legacy manual-overlay protocol kept for mixed-version rollout compatibility. */
+export async function uploadMediaOverlayFiles(
+  itemId: string,
+  files: { file: File; filename: string; content_type: string; file_size_bytes: number }[],
+  signal?: AbortSignal,
+): Promise<OverlayUploadConfirmResult[]> {
+  const urls = await requestOverlayUploadUrls(
+    itemId,
+    files.map(({ filename, content_type, file_size_bytes }) => ({
+      filename,
+      content_type,
+      file_size_bytes,
+    })),
+  );
+  await Promise.all(
+    urls.map((target, index) =>
+      uploadToGcs(target.upload_url, files[index].file, {}, undefined, signal),
+    ),
+  );
+  return confirmOverlayUploads(
+    itemId,
+    urls.map((target, index) => ({
+      gcs_path: target.gcs_path,
+      content_type: files[index].content_type,
+    })),
+  );
+}
+
 /**
  * Full-replace the media-overlay card list on a variant.
  * Send an empty array to clear all cards and restore the clean variant.
@@ -2864,6 +2896,8 @@ export interface PoolAsset {
   id: string;
   kind: "image" | "video";
   status: "uploaded" | "queued" | "analyzing" | "ready" | "failed";
+  media_status?: "pending" | "ready" | "unreadable" | "failed";
+  preview_status?: "not_needed" | "pending" | "ready" | "failed";
   error_code?: string | null;
   error_detail?: string | null;
   retryable?: boolean;
@@ -2954,6 +2988,9 @@ export async function requestPoolAssetUploadUrls(
  * which is a safe degradation (an extra analysis, never a data-loss).
  */
 export async function sha256HexOfFile(file: File): Promise<string | null> {
+  // The API now dedupes from immutable GCS metadata. Keep this helper for
+  // legacy clients, but do not make a 512 MB upload wait on a full-memory hash.
+  if (file.size > 25 * 1024 * 1024) return null;
   try {
     if (typeof crypto === "undefined" || !crypto.subtle) return null;
     const buf = await file.arrayBuffer();
@@ -2976,7 +3013,8 @@ export function registerPoolAsset(
     gcs_path: string;
     reservation_id?: string | null;
     content_type: string;
-    content_hash: string | null;
+    /** Legacy compatibility only; the server dedupes from GCS metadata. */
+    content_hash?: string | null;
     source_filename: string | null;
     user_context?: string | null;
   },

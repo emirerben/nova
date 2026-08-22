@@ -126,6 +126,31 @@ def _auth(user_id: uuid.UUID) -> dict[str, str]:
     }
 
 
+def test_overlay_upload_confirm_real_auth_survives_session_rollback(
+    client: TestClient, monkeypatch
+) -> None:
+    """The confirm route must not lazy-load the auth User after rollback.
+
+    This intentionally uses the real auth dependency and a real async session;
+    the route-test mocks use a fabricated user and therefore cannot reproduce
+    SQLAlchemy's expired-attribute/MissingGreenlet failure.
+    """
+    monkeypatch.setattr(settings, "media_overlays_enabled", True, raising=False)
+    user_id, item_id = _seed_item()
+    gcs_path = f"users/{user_id}/plan/{item_id}/overlays/card.png"
+
+    response = client.post(
+        f"/plan-items/{item_id}/overlay-upload-confirm",
+        headers=_auth(user_id),
+        json={"files": [{"gcs_path": gcs_path, "content_type": "image/png"}]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["files"] == [
+        {"gcs_path": gcs_path, "preview_gcs_path": None, "preview_url": None}
+    ]
+
+
 def _jobs_for(item_id: uuid.UUID) -> list[Job]:
     with sync_session() as s:
         rows = s.execute(select(Job).where(Job.content_plan_item_id == item_id)).scalars().all()

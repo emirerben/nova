@@ -32,13 +32,11 @@ import {
   isBoundedCreatorImageAsset,
   LyricSeedsError,
   NotAuthenticatedError,
-  confirmOverlayUploads,
   listPoolAssets,
+  uploadMediaOverlayFiles,
   reanalyzePoolAsset,
   retimeVisualBlock,
-  requestOverlayUploadUrls,
   updatePoolAssetContext,
-  uploadToGcs,
   type CameraEffect,
   type CarouselMoment,
   type EditCopilotTurnResponse,
@@ -1050,13 +1048,81 @@ export default function EditorShell({
   const [poolError, setPoolError] = useState<string | null>(null);
   const poolListEpoch = useRef(0);
   const poolPollInFlight = useRef(false);
+  const editorHistoryRef = useRef<ReturnType<typeof useEditorHistory> | null>(null);
   const poolUploader = usePoolAssetUploader({
     itemId,
     assetCount: poolAssets.length,
     maxAssets: maxPoolAssets,
-    onRegistered: (asset) => {
+    onRegistered: (asset, file, intent, context) => {
+      if (intent === "overlay") {
+        const overlay = context as {
+          id: string;
+          position: "top" | "center" | "bottom";
+          x_frac: number;
+          y_frac: number;
+          start_s: number;
+          end_s: number;
+          z: number;
+        };
+        // Registration proves the immutable object exists. The worker may
+        // still be decoding/provisioning a browser preview, so keep the
+        // overlay out of the draft until the server reports media readiness.
+        const finalize = async () => {
+          let current = asset;
+          for (let attempt = 0; attempt < 60; attempt += 1) {
+            if (
+              (current.media_status
+                ? current.media_status === "ready"
+                : current.status === "ready") &&
+              (!current.preview_status ||
+                current.preview_status === "ready" ||
+                current.preview_status === "not_needed")
+            ) {
+              const previewUrl = URL.createObjectURL(file);
+              const card: MediaOverlay = {
+                id: overlay.id,
+                kind: current.kind,
+                src_gcs_path: current.gcs_path,
+                preview_gcs_path: null,
+                preview_url: current.preview_url ?? null,
+                position: overlay.position,
+                x_frac: overlay.x_frac,
+                y_frac: overlay.y_frac,
+                scale: 0.35,
+                start_s: overlay.start_s,
+                end_s: overlay.end_s,
+                z: overlay.z,
+              };
+              editorHistoryRef.current?.record();
+              setLocalOverlays((cur) => [...cur, card]);
+              setLocalOverlayPreviewUrls((cur) => ({ ...cur, [card.id]: previewUrl }));
+              setOverlaysDirty(true);
+              select("overlay", card.id);
+              setInspectorTab("basic");
+              return;
+            }
+            if (
+              current.media_status === "unreadable" ||
+              current.media_status === "failed" ||
+              current.preview_status === "failed"
+            ) {
+              throw new Error("Kria couldn't read that visual. Try another file.");
+            }
+            await new Promise((resolve) => window.setTimeout(resolve, 1000));
+            const refreshed = await listPoolAssets(itemId);
+            current = refreshed.assets.find((row) => row.id === asset.id) ?? current;
+          }
+          throw new Error("That visual is taking longer than expected. Try again shortly.");
+        };
+        void finalize()
+          .catch((err) => setToast(err instanceof Error ? err.message : "Couldn't add that overlay."))
+          .finally(() => setOverlayUploading(false));
+      }
       poolListEpoch.current += 1;
       setPoolAssets((prev) => [...prev.filter((row) => row.id !== asset.id), asset]);
+    },
+    onFailed: (_file, intent) => {
+      if (intent === "overlay") setOverlayUploading(false);
     },
     onUnavailable: () => setPoolUnavailable(true),
     serverReservations: serverPoolReservations,
@@ -1422,6 +1488,7 @@ export default function EditorShell({
   );
 
   const history = useEditorHistory({ getCurrent, apply: applyDocument });
+  editorHistoryRef.current = history;
 
   const applyEditWideLook = useCallback(
     (preset: LookPreset) => {
@@ -2581,7 +2648,12 @@ export default function EditorShell({
 
   const hasBusyPoolAssets =
     poolAssets.some(
-      (a) => a.status === "queued" || a.status === "analyzing" || a.status === "uploaded",
+      (a) =>
+        a.status === "queued" ||
+        a.status === "analyzing" ||
+        a.status === "uploaded" ||
+        a.media_status === "pending" ||
+        a.preview_status === "pending",
     ) || serverPoolReservations.some((reservation) => reservation.release_at === null);
   useEffect(() => {
     if (!overlayPoolShouldLoad || !hasBusyPoolAssets || poolUnavailable) return;
@@ -3733,70 +3805,71 @@ export default function EditorShell({
     ) => {
       if (readOnly || capabilities?.overlays === false || files.length === 0) return;
       setOverlayUploading(true);
-      try {
-        const uploadUrls = await requestOverlayUploadUrls(
-          itemId,
-          files.map((f) => ({
-            filename: f.filename,
-            content_type: f.content_type,
-            file_size_bytes: f.file_size_bytes,
-          })),
-        );
-        await Promise.all(uploadUrls.map((u, i) => uploadToGcs(u.upload_url, files[i].file)));
-        const confirmed = await confirmOverlayUploads(
-          itemId,
-          uploadUrls.map((u, i) => ({
-            gcs_path: u.gcs_path,
-            content_type: files[i].content_type,
-          })),
-        );
-        const confirmedByPath = new Map(confirmed.map((c) => [c.gcs_path, c]));
-        const previewUrls: Record<string, string> = {};
-        const start = Math.min(
-          Math.max(0, outputToBaseTimeRef.current(currentTime)),
-          Math.max(0, duration - 0.3),
-        );
-        const cards: MediaOverlay[] = uploadUrls.map((u, i) => {
-          const file = files[i];
-          const id = crypto.randomUUID();
-          previewUrls[id] = URL.createObjectURL(file.file);
-          const confirmedUpload = confirmedByPath.get(u.gcs_path);
-          return {
-            id,
-            kind: file.content_type.startsWith("video/") ? "video" : "image",
-            src_gcs_path: u.gcs_path,
-            preview_gcs_path: confirmedUpload?.preview_gcs_path ?? null,
-            preview_url: confirmedUpload?.preview_url ?? null,
-            position: "center",
-            x_frac: 0.5,
-            y_frac: 0.5,
+      const start = Math.min(
+        Math.max(0, outputToBaseTimeRef.current(currentTime)),
+        Math.max(0, duration - 0.3),
+      );
+      const positionCycle: {
+        position: "top" | "center" | "bottom";
+        x_frac: number;
+        y_frac: number;
+      }[] = [
+        { position: "center", x_frac: 0.5, y_frac: 0.5 },
+        { position: "top", x_frac: 0.5, y_frac: 0.18 },
+        { position: "bottom", x_frac: 0.5, y_frac: 0.82 },
+      ];
+      const drafts = files.map((entry, index) => {
+        const slot = positionCycle[(localOverlays.length + index) % positionCycle.length];
+        return {
+          id: crypto.randomUUID(),
+          kind: entry.content_type.startsWith("video/") ? "video" : "image",
+          position: slot.position,
+          x_frac: slot.x_frac,
+          y_frac: slot.y_frac,
+          start_s: start,
+          end_s: Math.min(duration || start + 5, start + 5),
+          z: localOverlays.length + index,
+        } as const;
+      });
+      if ((capabilities?.overlay_upload_mode ?? "legacy") === "legacy") {
+        try {
+          const confirmed = await uploadMediaOverlayFiles(itemId, files);
+          const cards: MediaOverlay[] = confirmed.map((result, index) => ({
+            ...drafts[index],
+            src_gcs_path: result.gcs_path,
+            preview_gcs_path: result.preview_gcs_path ?? null,
+            preview_url: result.preview_url ?? null,
             scale: 0.35,
-            start_s: start,
-            end_s: Math.min(duration || start + 5, start + 5),
-            z: localOverlays.length + i,
-          };
-        });
-        history.record();
-        setLocalOverlays((cur) => [...cur, ...cards]);
-        setLocalOverlayPreviewUrls((cur) => ({ ...cur, ...previewUrls }));
-        setOverlaysDirty(true);
-        if (cards[0]) {
-          select("overlay", cards[0].id);
-          setInspectorTab("basic");
+          }));
+          history.record();
+          setLocalOverlays((current) => [...current, ...cards]);
+          cards.forEach((card) => select("overlay", card.id));
+          setOverlaysDirty(true);
+        } catch (err) {
+          setToast(err instanceof Error ? err.message : "Couldn't upload that overlay.");
+        } finally {
+          setOverlayUploading(false);
         }
-      } catch (err) {
-        setToast(err instanceof Error ? err.message : "Couldn't upload that overlay.");
-      } finally {
-        setOverlayUploading(false);
+        return;
       }
+      const accepted = poolUploader.addFiles(
+        files.map((entry) => entry.file),
+        {
+          intent: "overlay",
+          context: (_file, index) => drafts[index],
+        },
+      );
+      if (accepted === 0) setOverlayUploading(false);
     },
     [
       capabilities?.overlays,
+      capabilities?.overlay_upload_mode,
       currentTime,
       history,
       itemId,
       localOverlays.length,
       duration,
+      poolUploader,
       readOnly,
       select,
     ],

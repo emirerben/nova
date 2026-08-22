@@ -878,6 +878,10 @@ class Settings(BaseSettings):
     # When False: upload-urls + set-media-overlays routes return 404; the
     # worker apply-pass branch never fires.
     media_overlays_enabled: bool = False
+    # Selects the resumable pool-backed protocol for manual overlay uploads.
+    # Keep the legacy presign/PUT/confirm path available during rollout so a
+    # mixed frontend/backend deploy never strands an in-flight direct PUT.
+    reliable_overlay_uploads_enabled: bool = False
     # Alpha-preserving image overlays for the media-overlay lane. When False,
     # image cards still flatten through JPEG exactly as before.
     media_overlay_alpha_enabled: bool = False

@@ -5098,6 +5098,9 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         reason = "guided_story_edit_unsupported"
         text_editable = _TEXT_ELEMENTS_ENABLED and _text_elements_allowed(variant)
         return {
+            "overlay_upload_mode": (
+                "pool" if settings.reliable_overlay_uploads_enabled else "legacy"
+            ),
             "text_elements": text_editable,
             "timeline": False,
             "split_clips": False,
@@ -5216,6 +5219,9 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         and bool(variant.get("speech_cut_candidates"))
     )
     return {
+        "overlay_upload_mode": (
+            "pool" if settings.reliable_overlay_uploads_enabled else "legacy"
+        ),
         # Lyrics variants are beat-synced — same rule as dispatch_set_text_elements.
         "text_elements": (
             _TEXT_ELEMENTS_ENABLED
