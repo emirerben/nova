@@ -14,6 +14,8 @@
  * of truth for both the canvas and this bar.
  */
 
+import { Button } from "@/components/ui/button";
+import { Slider } from "@/components/ui/slider";
 import { formatTimecode } from "@/lib/timeline/time-format";
 
 /** Zoom factor envelope: 1 = fit-to-width, MAX = deepest zoom (plan §6). */
@@ -44,16 +46,6 @@ export interface TransportBarProps {
   onFit: () => void;
 }
 
-function iconBtn(enabled: boolean) {
-  return [
-    "flex h-11 min-w-11 items-center justify-center rounded-lg px-2 text-[13px]",
-    "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
-    enabled
-      ? "text-[#3f3f46] hover:bg-zinc-100"
-      : "cursor-not-allowed text-[#d4d4d8]",
-  ].join(" ");
-}
-
 export default function TransportBar({
   playing,
   currentTime,
@@ -75,11 +67,13 @@ export default function TransportBar({
   const zoomOut = () => onZoom(Math.max(MIN_ZOOM, Math.round((zoom / 1.5) * 10) / 10));
 
   return (
-    <div className="flex h-12 items-center gap-2 border-b border-zinc-200 bg-white px-3">
+    <div className="flex h-12 items-center gap-2 border-t border-border bg-background px-3">
       {/* ── Left: split / delete ── */}
       <div className="flex flex-1 items-center gap-1">
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon-sm"
           aria-label="Split at playhead"
           title={
             !canSplit
@@ -88,42 +82,42 @@ export default function TransportBar({
           }
           disabled={!canSplit}
           onClick={onSplit}
-          className={iconBtn(canSplit)}
         >
           ⿻
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="ghost"
+          size="icon-sm"
           aria-label="Delete selected"
           title={canDelete ? "Delete selected" : "Select something to delete"}
           disabled={!canDelete}
           onClick={onDelete}
-          className={iconBtn(canDelete)}
         >
           🗑
-        </button>
+        </Button>
       </div>
 
       {/* ── Center: play/pause + timecode ── */}
       <div className="flex items-center gap-2">
-        <button
+        <Button
           type="button"
+          size="icon"
           aria-label={playing ? "Pause" : "Play"}
           aria-pressed={playing}
           onClick={onPlayPause}
-          className="flex h-11 w-11 items-center justify-center rounded-lg bg-[#0c0c0e] text-[12px] text-white hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
         >
           {playing ? "❚❚" : "▶"}
-        </button>
+        </Button>
         <span
-          className="tabular-nums text-[12px] text-[#3f3f46]"
+          className="text-sm tabular-nums text-muted-foreground"
           aria-label="Playback position"
         >
           {formatTimecode(currentTime)}{" "}
-          <span className="text-[#a1a1aa]">/ {formatTimecode(duration)}</span>
+          <span className="text-muted-foreground/60">/ {formatTimecode(duration)}</span>
         </span>
         {clipTimingDirty && (
-          <span className="hidden max-w-[180px] truncate text-[11px] text-[#71717a] sm:inline">
+          <span className="hidden max-w-[180px] truncate text-[11px] text-muted-foreground sm:inline">
             {clipPreviewHint ??
               (clipPreviewMode === "virtual"
                 ? "Music and transitions preview after Save"
@@ -134,45 +128,48 @@ export default function TransportBar({
 
       {/* ── Right: zoom ── */}
       <div className="flex flex-1 items-center justify-end gap-1.5">
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon-sm"
           aria-label="Zoom out"
           title="Zoom out"
           disabled={zoom <= MIN_ZOOM}
           onClick={zoomOut}
-          className={iconBtn(zoom > MIN_ZOOM)}
         >
           −
-        </button>
-        <input
-          type="range"
+        </Button>
+        <Slider
           aria-label="Timeline zoom"
           min={MIN_ZOOM}
           max={MAX_ZOOM}
           step={0.1}
-          value={zoom}
-          onChange={(e) => onZoom(Number(e.target.value))}
-          className="h-11 w-28 cursor-pointer accent-lime-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+          value={[zoom]}
+          onValueChange={([next]) => onZoom(next)}
+          className="w-28"
         />
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon-sm"
           aria-label="Zoom in"
           title="Zoom in"
           disabled={zoom >= MAX_ZOOM}
           onClick={zoomIn}
-          className={iconBtn(zoom < MAX_ZOOM)}
         >
           +
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="ghost"
+          size="icon-sm"
           aria-label="Fit timeline to width"
           title="Fit to width"
           onClick={onFit}
-          className={`${iconBtn(true)} text-[11px]`}
+          className="text-[11px]"
         >
           ⬓
-        </button>
+        </Button>
       </div>
     </div>
   );

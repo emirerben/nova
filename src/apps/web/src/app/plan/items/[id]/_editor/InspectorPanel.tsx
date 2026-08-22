@@ -3,9 +3,10 @@
 /**
  * InspectorPanel — the docked right contextual panel (plan §4, Variant A).
  *
- * The ~320px column is PERMANENTLY RESERVED: the canvas never reflows on
- * select/deselect. With nothing selected it shows the quiet serif empty state
- * ("Select anything to edit it") — no icon, per DESIGN.md §9.
+ * The ~320px (w-80) column is PERMANENTLY RESERVED: the canvas never reflows
+ * on select/deselect. With nothing selected it shows a quiet empty state — a
+ * lucide `MousePointerClick` glyph over "Select anything to edit it" (Lane I,
+ * DESIGN.md §15 stock-shadcn chrome pass).
  *
  * Text inspector rows are driven by the PARITY_VERIFIED_FIELDS registry
  * (D9/D17): a control renders editable only for verified fields; fields
@@ -19,6 +20,18 @@
  */
 
 import { createContext, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
+import { MousePointerClick } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
+import { Textarea } from "@/components/ui/textarea";
 import { TEXT_ELEMENT_ANIMATIONS, THEME_TRANSITIONS } from "@/lib/overlay-constants";
 import {
   LETTER_SPACING_MAX_EM,
@@ -360,43 +373,59 @@ export default function InspectorPanel({
   onClose: () => void;
   onPickPreset: (preset: TextPreset) => void;
 }) {
+  const hasSelection = selection !== null;
   return (
     <InspectorPresentationContext.Provider value={presentation}>
     <div
       data-region="inspector"
       className={
         presentation === "sheet"
-          ? "flex w-full flex-col bg-white"
-          : "flex w-[320px] flex-col border-l border-zinc-200 bg-white"
+          ? "flex w-full flex-col bg-background"
+          : "flex w-80 flex-col border-l border-border bg-background"
       }
     >
-      {/* Sheet mode only: the Basic/Presets switch normally lives in the
-          desktop InspectorRail, unreachable from the sheet. Pattern copied
-          from ToolDrawer's preset-category tablist. */}
-      {presentation === "sheet" && onTab && (
-        <div className="flex flex-none px-5 pb-3 pt-1">
+      {/* Basic/Presets switch (plan §4, decision D6 — moved in-panel off the
+          old floating InspectorRail column, Lane I). "Basic" stays disabled
+          until a selection exists; "Presets" is always browsable. Styled as
+          a TabsList but kept as plain buttons (not Radix TabsTrigger, which
+          activates on mousedown — incompatible with the suite's
+          fireEvent.click-driven interaction tests). */}
+      {onTab && (
+        <div
+          className={
+            presentation === "sheet"
+              ? "flex flex-none px-5 pb-3 pt-1"
+              : "flex flex-none border-b border-border px-4 py-3"
+          }
+        >
           <div
-            role="tablist"
+            role="group"
             aria-label="Inspector sections"
-            className="flex w-full gap-1 rounded-full border border-zinc-200 p-1"
+            className="flex w-full items-center gap-1 rounded-md bg-muted p-1 text-muted-foreground"
           >
             {(["basic", "presets"] as const).map((nextTab) => {
-              const selected = tab === nextTab;
+              const label = nextTab === "basic" ? "Basic" : "Presets";
+              const disabled = nextTab === "basic" && !hasSelection;
+              const active = tab === nextTab;
               return (
-                <button
+                <Button
                   key={nextTab}
                   type="button"
-                  role="tab"
-                  aria-selected={selected}
+                  variant="ghost"
+                  size="sm"
+                  disabled={disabled}
+                  aria-pressed={active}
+                  aria-label={`${label} inspector tab`}
+                  title={disabled ? "Select something to edit its properties" : label}
                   onClick={() => onTab(nextTab)}
-                  className={`inline-flex min-h-11 flex-1 items-center justify-center rounded-full px-4 text-[12px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
-                    selected
-                      ? "bg-[#0c0c0e] font-semibold text-white"
-                      : "text-[#3f3f46] hover:bg-zinc-100"
-                  }`}
+                  className={
+                    active
+                      ? "flex-1 bg-background text-foreground shadow hover:bg-background"
+                      : "flex-1 hover:bg-background/60"
+                  }
                 >
-                  {nextTab === "basic" ? "Basic" : "Presets"}
-                </button>
+                  {label}
+                </Button>
               );
             })}
           </div>
@@ -409,10 +438,9 @@ export default function InspectorPanel({
           onPickPreset={onPickPreset}
         />
       ) : selection === null ? (
-        <div className="flex flex-1 items-start justify-center px-6 pt-16">
-          <p className="font-display text-[16px] leading-relaxed text-[#71717a]">
-            Select anything to edit it
-          </p>
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 pt-16">
+          <MousePointerClick className="h-6 w-6 text-muted-foreground" aria-hidden="true" />
+          <p className="text-sm text-muted-foreground">Select anything to edit it</p>
         </div>
       ) : selection.kind === "text" && bar ? (
         <div className="flex min-h-0 flex-1 flex-col">
@@ -675,16 +703,12 @@ function MixInspector({
               {musicTracks.map((track) => {
                 const selected = track.id === currentMusicTrackId;
                 return (
-                  <button
+                  <Button
                     key={track.id}
                     type="button"
+                    variant={selected ? "ink" : "outline"}
                     onClick={() => onPickMusic?.(track.id)}
-                    className={[
-                      "flex min-h-11 w-full items-center justify-between rounded-lg border px-3 text-left text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
-                      selected
-                        ? "border-[#0c0c0e] bg-[#0c0c0e] text-white"
-                        : "border-zinc-200 bg-white text-[#0c0c0e] hover:border-zinc-400",
-                    ].join(" ")}
+                    className="flex min-h-11 w-full items-center justify-between rounded-lg px-3 text-left text-[13px] font-normal"
                   >
                     <span className="min-w-0">
                       <span className="block truncate font-semibold">{track.title}</span>
@@ -701,7 +725,7 @@ function MixInspector({
                     <span className="ml-2 shrink-0 text-[11px]">
                       {track.user_slot_count ? `${track.user_slot_count} clips` : "Song"}
                     </span>
-                  </button>
+                  </Button>
                 );
               })}
               {musicTracks.length === 0 && (
@@ -726,13 +750,14 @@ function MixInspector({
         <div className="mt-4 border-t border-zinc-200 pt-4">
           <div className="flex items-center justify-between gap-3">
             <p className="text-[12px] font-semibold text-[#3f3f46]">Background bed</p>
-            <button
+            <Button
               type="button"
+              variant="outline"
               onClick={onRemoveBackgroundMusic}
-              className="min-h-9 rounded-lg border border-zinc-200 px-3 text-[12px] font-semibold text-[#3f3f46] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+              className="min-h-9 rounded-lg px-3 text-[12px] font-semibold text-[#3f3f46]"
             >
               Remove
-            </button>
+            </Button>
           </div>
           <label className="mt-3 flex min-h-11 items-center justify-between rounded-lg border border-zinc-200 px-3 text-[13px] text-[#3f3f46]">
             Mute
@@ -745,20 +770,19 @@ function MixInspector({
           </label>
           <div className="mt-4">
             <div className="flex items-center justify-between text-[12px] font-semibold text-[#3f3f46]">
-              <label htmlFor="editor-background-music-volume">Volume</label>
+              <span id="editor-background-music-volume-label">Volume</span>
               <span>{Math.round(((gainDb + 40) / 40) * 100)}%</span>
             </div>
-            <input
-              id="editor-background-music-volume"
-              type="range"
+            <Slider
+              aria-labelledby="editor-background-music-volume-label"
               min={-40}
               max={0}
               step={0.5}
-              value={gainDb}
-              onChange={(event) =>
-                onPatchBackgroundMusic?.({ gain_db: Number(event.target.value) })
+              value={[gainDb]}
+              onValueChange={([value]) =>
+                onPatchBackgroundMusic?.({ gain_db: value })
               }
-              className="mt-2 h-11 w-full cursor-pointer accent-lime-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+              className="mt-2 h-11 cursor-pointer"
             />
           </div>
           <FieldNumber
@@ -787,22 +811,21 @@ function MixInspector({
         <div className="mt-4">
           <div className="flex items-center justify-between text-[12px] font-semibold text-[#3f3f46]">
             <span className="flex items-center gap-1">
-              <label htmlFor="editor-mix-level">Bed level</label>
+              <span id="editor-mix-level-label">Bed level</span>
               <InfoDot label="Bed level" size="compact">
                 Balances the background bed against your voiceover.
               </InfoDot>
             </span>
             <span>{Math.round(safeLevel * 100)}%</span>
           </div>
-          <input
-            id="editor-mix-level"
-            type="range"
+          <Slider
+            aria-labelledby="editor-mix-level-label"
             min={0}
             max={1}
             step={0.01}
-            value={safeLevel}
-            onChange={(e) => onPatch?.(Number(e.target.value))}
-            className="mt-2 h-11 w-full cursor-pointer accent-lime-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+            value={[safeLevel]}
+            onValueChange={([value]) => onPatch?.(value)}
+            className="mt-2 h-11 cursor-pointer"
           />
         </div>
       ) : (
@@ -820,14 +843,16 @@ function CloseX({ onClose }: { onClose: () => void }) {
   const presentation = useContext(InspectorPresentationContext);
   if (presentation === "sheet") return null;
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
+      size="icon"
       aria-label="Close (clears selection)"
       onClick={onClose}
-      className="flex h-7 w-7 items-center justify-center rounded-lg text-[13px] text-[#71717a] hover:bg-zinc-100 focus-visible:outline-2 focus-visible:outline-[#0c0c0e]"
+      className="h-7 w-7 rounded-lg text-[13px] font-normal text-[#71717a]"
     >
       ✕
-    </button>
+    </Button>
   );
 }
 
@@ -890,18 +915,19 @@ function SfxInspector({
         step={0.1}
         onCommit={(value) => onPatch(placement.id, { at_s: value })}
       />
-      <label className="mt-4 block text-[12px] font-semibold text-[#3f3f46]">
+      <div className="mt-4 block text-[12px] font-semibold text-[#3f3f46]">
         Volume
-        <input
-          type="range"
+        <Slider
+          aria-label="Volume"
+          disabled={!editable}
           min={0}
           max={2}
           step={0.05}
-          value={placement.gain ?? 1}
-          onChange={(e) => onPatch(placement.id, { gain: Number(e.target.value) })}
-          className="mt-2 w-full accent-lime-500"
+          value={[placement.gain ?? 1]}
+          onValueChange={([value]) => onPatch(placement.id, { gain: value })}
+          className="mt-2"
         />
-      </label>
+      </div>
       <div className="mt-1 text-right text-[12px] tabular-nums text-[#71717a]">
         {(placement.gain ?? 1).toFixed(2)}x
       </div>
@@ -996,19 +1022,18 @@ function OverlayInspector({
           <span className="text-[12px] tabular-nums text-[#71717a]">{scalePct}%</span>
         </div>
         <div className="flex items-center gap-2">
-          <input
-            type="range"
+          <Slider
             aria-label="Overlay scale"
             min={Math.round(MEDIA_OVERLAY_MIN_SCALE * 100)}
             max={Math.round(MEDIA_OVERLAY_MAX_SCALE * 100)}
             step={1}
-            value={scalePct}
-            onChange={(e) =>
-              onPatch(overlay.id, { scale: clampMediaOverlayScale(Number(e.target.value) / 100) })
+            value={[scalePct]}
+            onValueChange={([value]) =>
+              onPatch(overlay.id, { scale: clampMediaOverlayScale(value / 100) })
             }
-            className="min-w-0 flex-1 accent-[#0c0c0e]"
+            className="min-w-0 flex-1"
           />
-          <input
+          <Input
             type="number"
             aria-label="Overlay scale percent"
             min={Math.round(MEDIA_OVERLAY_MIN_SCALE * 100)}
@@ -1018,25 +1043,28 @@ function OverlayInspector({
             onChange={(e) =>
               onPatch(overlay.id, { scale: clampMediaOverlayScale(Number(e.target.value) / 100) })
             }
-            className="h-8 w-16 rounded-lg border border-zinc-200 px-2 text-[12px] tabular-nums text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
+            className="h-8 w-16 rounded-lg px-2 text-[12px] tabular-nums text-[#0c0c0e]"
           />
         </div>
       </div>
 
-      <label className="mt-3 block border-b border-zinc-100 pb-3 text-[12px] font-semibold text-[#3f3f46]">
+      <div className="mt-3 block border-b border-zinc-100 pb-3 text-[12px] font-semibold text-[#3f3f46]">
         Exit
-        <select
-          aria-label="Overlay exit"
+        <Select
           value={overlay.exit_token ?? "none"}
-          onChange={(e) =>
-            onPatch(overlay.id, { exit_token: e.target.value as MediaOverlay["exit_token"] })
+          onValueChange={(value) =>
+            onPatch(overlay.id, { exit_token: value as MediaOverlay["exit_token"] })
           }
-          className="mt-1 h-9 w-full rounded-lg border border-zinc-200 bg-white px-2 text-[13px] font-normal text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
         >
-          <option value="none">None</option>
-          <option value="dissolve-out">Dissolve out</option>
-        </select>
-      </label>
+          <SelectTrigger aria-label="Overlay exit" className="mt-1 h-9 px-2 text-[13px] font-normal">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">None</SelectItem>
+            <SelectItem value="dissolve-out">Dissolve out</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
 
       {overlay.kind === "video" && overlay.clip_duration_s != null && overlay.clip_duration_s > 0 && (
         <VideoOverlaySourceWindow
@@ -1065,7 +1093,7 @@ function PercentNumberInput({
     <label className="min-w-0 text-[12px] text-[#3f3f46]">
       {label}
       <div className="mt-1 flex h-8 items-center rounded-lg border border-zinc-200 px-2 focus-within:border-lime-500/60">
-        <input
+        <Input
           type="number"
           aria-label={`Overlay ${label} percent`}
           min={0}
@@ -1073,7 +1101,7 @@ function PercentNumberInput({
           step={1}
           value={Number.isFinite(value) ? value : 0}
           onChange={(e) => onChange(Number(e.target.value))}
-          className="min-w-0 flex-1 border-0 bg-transparent p-0 text-[12px] tabular-nums text-[#0c0c0e] outline-none"
+          className="h-auto min-w-0 flex-1 border-0 bg-transparent p-0 text-[12px] tabular-nums text-[#0c0c0e] focus-visible:ring-0"
         />
         <span className="pl-1 text-[11px] text-[#71717a]">%</span>
       </div>
@@ -1357,13 +1385,13 @@ function FieldNumber({
   return (
     <label className="mt-4 block text-[12px] font-semibold text-[#3f3f46]">
       {label}
-      <input
+      <Input
         type="number"
         min={min}
         step={step}
         value={Number.isFinite(value) ? value : 0}
         onChange={(e) => onCommit(Number(e.target.value))}
-        className="mt-2 min-h-10 w-full rounded-lg border border-zinc-200 px-3 text-[13px] text-[#0c0c0e] focus:border-lime-500 focus:outline-none focus:ring-2 focus:ring-lime-500/25"
+        className="mt-2 min-h-10 rounded-lg px-3 text-[13px] text-[#0c0c0e]"
       />
     </label>
   );
@@ -1377,13 +1405,14 @@ function DangerButton({
   onClick: () => void;
 }) {
   return (
-    <button
+    <Button
       type="button"
+      variant="outline"
       onClick={onClick}
-      className="mt-5 min-h-11 w-full rounded-lg border border-red-200 text-[13px] font-semibold text-red-600 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-500"
+      className="mt-5 min-h-11 w-full rounded-lg border-red-200 text-[13px] font-semibold text-red-600 hover:bg-red-50 focus-visible:outline-red-500"
     >
       {children}
-    </button>
+    </Button>
   );
 }
 
@@ -1534,25 +1563,26 @@ function TextInspector({
       </div>
 
       {/* Content */}
-      <textarea
+      <Textarea
         ref={contentRef}
         value={bar.text}
         onChange={(e) => onEditText(e.target.value)}
         rows={3}
         aria-label="Text content"
-        className="mt-3 w-full resize-none rounded-lg border border-zinc-200 px-3 py-2 text-[13px] text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
+        className="mt-3 min-h-0 resize-none rounded-lg px-3 py-2 text-[13px] text-[#0c0c0e]"
       />
       {!isLyric && (
         <>
           {!isCaption && (
-            <button
+            <Button
               type="button"
+              variant="outline"
               disabled={!smartPlaceAvailable}
               onClick={onSmartPlace}
-              className="mt-2 min-h-9 w-full rounded-lg border border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#0c0c0e] hover:border-zinc-400 disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-[#a1a1aa] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+              className="mt-2 min-h-9 w-full rounded-lg px-3 text-[12px] font-semibold text-[#0c0c0e] disabled:bg-zinc-50 disabled:text-[#a1a1aa]"
             >
               Smart place
-            </button>
+            </Button>
           )}
 
           <TimingSection label="Timing">
@@ -1585,20 +1615,22 @@ function TextInspector({
               </InfoDot>
             </span>
             {hasAnyCueOverride && (
-              <button
+              <Button
                 type="button"
+                variant="link"
                 onClick={() =>
                   onPatch({ cue_font_family: null, cue_text_color: null, cue_size_px: null })
                 }
-                className="text-[11px] font-semibold text-[#71717a] underline hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                className="h-auto p-0 text-[11px] font-semibold text-[#71717a] underline hover:text-[#0c0c0e]"
               >
                 Match all captions
-              </button>
+              </Button>
             )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <button
+            <Button
               type="button"
+              variant="outline"
               aria-pressed={isEmphasized}
               onClick={() =>
                 onPatch(
@@ -1607,34 +1639,36 @@ function TextInspector({
                     : { smart_emphasis: true, smart_style: smartStyleForRole(bar.smart_role) },
                 )
               }
-              className={`min-h-8 rounded-full border px-3 text-[12px] font-semibold transition-colors ${
+              className={`min-h-8 rounded-full px-3 text-[12px] font-semibold ${
                 isEmphasized
-                  ? "border-lime-600 bg-lime-50 text-lime-700"
-                  : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
-              } focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500`}
+                  ? "border-lime-600 bg-lime-50 text-lime-700 hover:bg-lime-100"
+                  : "text-[#3f3f46]"
+              }`}
             >
               {isEmphasized ? "★ Emphasized" : "Emphasize"}
-            </button>
+            </Button>
             {onMergeCaptionCue && (canMergeCaptionPrev || canMergeCaptionNext) && (
               <>
-                <button
+                <Button
                   type="button"
+                  variant="outline"
                   disabled={!canMergeCaptionPrev}
                   onClick={() => onMergeCaptionCue("prev")}
                   title="Merge with the previous caption"
-                  className="min-h-8 rounded-full border border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#3f3f46] hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                  className="min-h-8 rounded-full px-3 text-[12px] font-semibold text-[#3f3f46]"
                 >
                   {"←"} Merge
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  variant="outline"
                   disabled={!canMergeCaptionNext}
                   onClick={() => onMergeCaptionCue("next")}
                   title="Merge with the next caption"
-                  className="min-h-8 rounded-full border border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#3f3f46] hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                  className="min-h-8 rounded-full px-3 text-[12px] font-semibold text-[#3f3f46]"
                 >
                   Merge {"→"}
-                </button>
+                </Button>
               </>
             )}
           </div>
@@ -1666,15 +1700,14 @@ function TextInspector({
             <span className="text-[11px] text-[#71717a]">Color</span>
           </div>
           <div className="mt-2 flex items-center gap-2">
-            <input
-              type="range"
+            <Slider
               aria-label="This caption's font size"
               min={36}
               max={160}
               step={1}
-              value={cueEffectiveSizePx}
-              onChange={(e) => onPatch({ cue_size_px: Number(e.target.value) })}
-              className="min-w-0 flex-1 accent-[#0c0c0e]"
+              value={[cueEffectiveSizePx]}
+              onValueChange={([value]) => onPatch({ cue_size_px: value })}
+              className="min-w-0 flex-1"
             />
             <span className="w-10 text-right text-[12px] tabular-nums text-[#71717a]">
               {cueEffectiveSizePx}
@@ -1695,13 +1728,14 @@ function TextInspector({
           screen. */}
       {isCaption && !captionsPanelOpen && onOpenCaptionsPanel && (
         <div className="mt-6 border-t border-zinc-100 pt-3">
-          <button
+          <Button
             type="button"
+            variant="link"
             onClick={onOpenCaptionsPanel}
-            className="text-[12px] font-semibold text-lime-700 underline underline-offset-2 hover:text-lime-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+            className="h-auto p-0 text-[12px] font-semibold text-lime-700 underline underline-offset-2 hover:text-lime-800"
           >
             Change font, size or colour for every caption →
-          </button>
+          </Button>
         </div>
       )}
 
@@ -1715,22 +1749,27 @@ function TextInspector({
             />
           </div>
           <div className="mt-2 flex items-center gap-2">
-            <select
-              aria-label="Font size"
-              value={SIZE_OPTIONS.includes(sizeValue) ? sizeValue : ""}
-              onChange={(e) => {
-                const v = Number(e.target.value);
+            <Select
+              value={SIZE_OPTIONS.includes(sizeValue) ? String(sizeValue) : "custom"}
+              onValueChange={(value) => {
+                const v = Number(value);
                 if (Number.isFinite(v) && v > 0) onPatch({ size_px: v, size_class: undefined });
               }}
-              className="h-9 w-[72px] rounded-lg border border-zinc-200 bg-white px-2 text-[13px] text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
             >
-              {!SIZE_OPTIONS.includes(sizeValue) && <option value="">{sizeValue}</option>}
-              {SIZE_OPTIONS.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger aria-label="Font size" className="h-9 w-[72px] px-2 text-[13px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {!SIZE_OPTIONS.includes(sizeValue) && (
+                  <SelectItem value="custom">{sizeValue}</SelectItem>
+                )}
+                {SIZE_OPTIONS.map((s) => (
+                  <SelectItem key={s} value={String(s)}>
+                    {s}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <input
               type="range"
               aria-label="Font size (fine)"
@@ -1763,7 +1802,7 @@ function TextInspector({
             onChange={(e) => onPatch({ max_width_frac: Number(e.target.value) / 100 })}
             className="min-w-0 flex-1 accent-[#0c0c0e]"
           />
-          <input
+          <Input
             type="number"
             aria-label="Text width percent"
             min={MAX_WIDTH_FRAC_MIN * 100}
@@ -1771,7 +1810,7 @@ function TextInspector({
             step={1}
             value={widthPct}
             onChange={(e) => onPatch({ max_width_frac: Number(e.target.value) / 100 })}
-            className="h-9 w-[64px] rounded-lg border border-zinc-200 px-2 text-right text-[12px] tabular-nums text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
+            className="h-9 w-[64px] rounded-lg px-2 text-right text-[12px] tabular-nums text-[#0c0c0e]"
           />
         </div>
       )}
@@ -1783,9 +1822,10 @@ function TextInspector({
           </span>
           <div className="mt-1 flex gap-1" role="group" aria-label="Text alignment">
             {(["left", "center", "right"] as const).map((nextAlignment) => (
-              <button
+              <Button
                 key={nextAlignment}
                 type="button"
+                variant={alignment === nextAlignment ? "ink" : "outline"}
                 onClick={() => {
                   if (nextAlignment === alignment) return;
                   onPatch({
@@ -1802,14 +1842,12 @@ function TextInspector({
                 }}
                 aria-pressed={alignment === nextAlignment}
                 aria-label={`Align text ${nextAlignment}`}
-                className={`min-h-11 flex-1 rounded-lg px-2 text-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
-                  alignment === nextAlignment
-                    ? "bg-[#0c0c0e] font-semibold text-white"
-                    : "border border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
+                className={`min-h-11 flex-1 rounded-lg px-2 text-[12px] ${
+                  alignment === nextAlignment ? "font-semibold" : "font-normal text-[#3f3f46]"
                 }`}
               >
                 {nextAlignment[0].toUpperCase() + nextAlignment.slice(1)}
-              </button>
+              </Button>
             ))}
           </div>
         </div>
@@ -1822,9 +1860,10 @@ function TextInspector({
           </span>
           <div className="mt-1 flex gap-1" role="group" aria-label="Box position">
             {(["left", "center", "right"] as const).map((nextPosition) => (
-              <button
+              <Button
                 key={nextPosition}
                 type="button"
+                variant={boxPosition === nextPosition ? "ink" : "outline"}
                 onClick={() => {
                   if (boxPosition === nextPosition) return;
                   if (onSetTextBoxPosition) {
@@ -1843,14 +1882,12 @@ function TextInspector({
                 }}
                 aria-pressed={boxPosition === nextPosition}
                 aria-label={`Place box ${nextPosition}`}
-                className={`min-h-11 flex-1 rounded-lg px-2 text-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
-                  boxPosition === nextPosition
-                    ? "bg-[#0c0c0e] font-semibold text-white"
-                    : "border border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
+                className={`min-h-11 flex-1 rounded-lg px-2 text-[12px] ${
+                  boxPosition === nextPosition ? "font-semibold" : "font-normal text-[#3f3f46]"
                 }`}
               >
                 {nextPosition[0].toUpperCase() + nextPosition.slice(1)}
-              </button>
+              </Button>
             ))}
           </div>
         </div>
@@ -1858,39 +1895,44 @@ function TextInspector({
 
       {!isLyric && !isCaption && (
         <>
-          <label className="mt-4 block text-[12px] font-semibold text-[#3f3f46]">
+          <div className="mt-4 block text-[12px] font-semibold text-[#3f3f46]">
             Animation
-            <select
-              aria-label="Animation"
+            <Select
               value={bar.effect ?? "none"}
-              onChange={(e) =>
+              onValueChange={(value) =>
                 onPatch(
                   TEXT_MOTION_V2_UI_ENABLED
-                    ? motionPatchForEffect(bar, e.target.value, videoDurationS)
-                    : { effect: e.target.value },
+                    ? motionPatchForEffect(bar, value, videoDurationS)
+                    : { effect: value },
                 )
               }
-              className="mt-1 h-9 w-full rounded-lg border border-zinc-200 bg-white px-2 text-[13px] font-normal text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
             >
-              {bar.effect === "smooth-type" && !TEXT_MOTION_V2_UI_ENABLED && (
-                <option value="smooth-type" disabled>Smooth type (saved; unavailable)</option>
-              )}
-              {/* Preserve an effect value outside the visible picker list (e.g. "static"). */}
-              {bar.effect &&
-                bar.effect !== "smooth-type" &&
-                !TEXT_ELEMENT_ANIMATIONS.some((a) => a.value === bar.effect) && (
-                <option value={bar.effect}>{bar.effect}</option>
-              )}
-              {TEXT_ELEMENT_ANIMATIONS.filter(
-                (animation) =>
-                  animation.value !== "smooth-type" || TEXT_MOTION_V2_UI_ENABLED,
-              ).map((a) => (
-                <option key={a.value} value={a.value}>
-                  {a.label}
-                </option>
-              ))}
-            </select>
-          </label>
+              <SelectTrigger aria-label="Animation" className="mt-1 h-9 px-2 text-[13px] font-normal">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {bar.effect === "smooth-type" && !TEXT_MOTION_V2_UI_ENABLED && (
+                  <SelectItem value="smooth-type" disabled>
+                    Smooth type (saved; unavailable)
+                  </SelectItem>
+                )}
+                {/* Preserve an effect value outside the visible picker list (e.g. "static"). */}
+                {bar.effect &&
+                  bar.effect !== "smooth-type" &&
+                  !TEXT_ELEMENT_ANIMATIONS.some((a) => a.value === bar.effect) && (
+                  <SelectItem value={bar.effect}>{bar.effect}</SelectItem>
+                )}
+                {TEXT_ELEMENT_ANIMATIONS.filter(
+                  (animation) =>
+                    animation.value !== "smooth-type" || TEXT_MOTION_V2_UI_ENABLED,
+                ).map((a) => (
+                  <SelectItem key={a.value} value={a.value}>
+                    {a.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
           {TEXT_MOTION_V2_UI_ENABLED && bar.motion?.version === 2 &&
             bar.effect && textMotionHasControls(bar.effect) && (
@@ -1913,31 +1955,34 @@ function TextInspector({
               />
             )}
 
-          <label className="mt-3 block text-[12px] font-semibold text-[#3f3f46]">
+          <div className="mt-3 block text-[12px] font-semibold text-[#3f3f46]">
             Theme transition
-            <select
-              aria-label="Theme transition"
+            <Select
               value={bar.theme_transition?.type ?? "none"}
-              onChange={(e) =>
+              onValueChange={(value) =>
                 onPatch({
                   theme_transition:
-                    e.target.value === "none" ? null : { type: "giant-title-wipe" },
+                    value === "none" ? null : { type: "giant-title-wipe" },
                 })
               }
-              className="mt-1 h-9 w-full rounded-lg border border-zinc-200 bg-white px-2 text-[13px] font-normal text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
             >
-              <option value="none">None</option>
-              {THEME_TRANSITIONS.map((transition) => (
-                <option key={transition.value} value={transition.value}>
-                  {transition.label}
-                </option>
+              <SelectTrigger aria-label="Theme transition" className="mt-1 h-9 px-2 text-[13px] font-normal">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">None</SelectItem>
+                {THEME_TRANSITIONS.map((transition) => (
+                  <SelectItem key={transition.value} value={transition.value}>
+                    {transition.label}
+                  </SelectItem>
                 ))}
-            </select>
-          </label>
+              </SelectContent>
+            </Select>
+          </div>
           {bar.theme_transition?.type === "giant-title-wipe" && (
             <label className="mt-3 block text-[12px] font-semibold text-[#3f3f46]">
               Target glyph
-              <input
+              <Input
                 aria-label="Target glyph"
                 type="text"
                 maxLength={1}
@@ -1951,7 +1996,7 @@ function TextInspector({
                   })
                 }
                 placeholder="center"
-                className="mt-1 h-9 w-full rounded-lg border border-zinc-200 bg-white px-2 text-[13px] font-normal text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:border-lime-500/60 focus:outline-none"
+                className="mt-1 h-9 px-2 text-[13px] font-normal"
               />
             </label>
           )}
@@ -1968,20 +2013,23 @@ function TextInspector({
       )}
 
       {canEditTextCase && !isLyric && !isCaption && (
-        <label className="flex h-11 items-center justify-between border-b border-zinc-100">
+        <div className="flex h-11 items-center justify-between border-b border-zinc-100">
           <span className="text-[13px] text-[#3f3f46]">Aa case</span>
-          <select
-            aria-label="Text case"
+          <Select
             value={bar.text_case ?? "none"}
-            onChange={(e) => onPatch({ text_case: e.target.value })}
-            className="h-8 w-[116px] rounded-lg border border-zinc-200 bg-white px-2 text-[12px] text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
+            onValueChange={(value) => onPatch({ text_case: value })}
           >
-            <option value="none">None</option>
-            <option value="upper">Upper</option>
-            <option value="lower">Lower</option>
-            <option value="title">Title</option>
-          </select>
-        </label>
+            <SelectTrigger aria-label="Text case" className="h-8 w-[116px] px-2 text-[12px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">None</SelectItem>
+              <SelectItem value="upper">Upper</SelectItem>
+              <SelectItem value="lower">Lower</SelectItem>
+              <SelectItem value="title">Title</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       )}
 
       {(canEditLetterSpacing || canEditLineSpacing) && !isLyric && !isCaption && (
@@ -1989,7 +2037,7 @@ function TextInspector({
           {canEditLetterSpacing && (
             <label className="min-w-0 flex-1 text-[12px] text-[#3f3f46]">
               Letter
-              <input
+              <Input
                 type="number"
                 aria-label="Letter spacing"
                 min={LETTER_SPACING_MIN_EM}
@@ -1997,14 +2045,14 @@ function TextInspector({
                 step={0.01}
                 value={bar.letter_spacing ?? 0}
                 onChange={(e) => onPatch({ letter_spacing: Number(e.target.value) })}
-                className="mt-1 h-8 w-full rounded-lg border border-zinc-200 px-2 text-[12px] tabular-nums text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
+                className="mt-1 h-8 px-2 text-[12px] tabular-nums text-[#0c0c0e]"
               />
             </label>
           )}
           {canEditLineSpacing && (
             <label className="min-w-0 flex-1 text-[12px] text-[#3f3f46]">
               Line
-              <input
+              <Input
                 type="number"
                 aria-label="Line spacing"
                 min={LINE_SPACING_MIN}
@@ -2012,7 +2060,7 @@ function TextInspector({
                 step={0.05}
                 value={bar.line_spacing ?? LINE_SPACING}
                 onChange={(e) => onPatch({ line_spacing: Number(e.target.value) })}
-                className="mt-1 h-8 w-full rounded-lg border border-zinc-200 px-2 text-[12px] tabular-nums text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
+                className="mt-1 h-8 px-2 text-[12px] tabular-nums text-[#0c0c0e]"
               />
             </label>
           )}
@@ -2062,10 +2110,9 @@ function TextInspector({
       )}
 
       {!isCaption && (
-        <label className="flex h-11 items-center justify-between border-b border-zinc-100">
+        <div className="flex h-11 items-center justify-between border-b border-zinc-100">
           <span className="text-[13px] text-[#3f3f46]">Shadow</span>
-          <select
-            aria-label="Shadow effect"
+          <Select
             value={
               bar.shadow_enabled === false
                 ? "off"
@@ -2073,21 +2120,24 @@ function TextInspector({
                   ? "high_visibility"
                   : "standard"
             }
-            onChange={(e) => {
-              const value = e.target.value;
+            onValueChange={(value) => {
               onPatch({
                 shadow_enabled: value !== "off",
                 shadow_style:
                   value === "high_visibility" ? "high_visibility" : "standard",
               });
             }}
-            className="h-8 rounded-lg border border-zinc-200 bg-white px-2 text-[12px] text-[#3f3f46] focus:border-lime-500/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
           >
-            <option value="standard">Standard</option>
-            <option value="high_visibility">High visibility</option>
-            <option value="off">Off</option>
-          </select>
-        </label>
+            <SelectTrigger aria-label="Shadow effect" className="h-8 px-2 text-[12px] text-[#3f3f46]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="standard">Standard</SelectItem>
+              <SelectItem value="high_visibility">High visibility</SelectItem>
+              <SelectItem value="off">Off</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       )}
 
       {TEXT_BEHIND_SUBJECT_UI_ENABLED && !isLyric && !isCaption && (
@@ -2107,27 +2157,28 @@ function TextInspector({
         <div className="border-b border-zinc-100">
           <div className="flex h-11 items-center justify-between">
             <span className="text-[13px] text-[#3f3f46]">Stroke</span>
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="icon-sm"
               aria-label={strokeOpen ? "Collapse stroke" : "Add stroke"}
               aria-expanded={strokeOpen}
               onClick={() => setStrokeOpen((o) => !o)}
-              className="flex h-6 w-6 items-center justify-center rounded-md border border-zinc-200 text-[13px] leading-none text-[#3f3f46] hover:border-zinc-400"
+              className="h-6 w-6 rounded-md text-[13px] font-normal leading-none text-[#3f3f46]"
             >
               {strokeOpen ? "–" : "+"}
-            </button>
+            </Button>
           </div>
           {strokeOpen && (
             <div className="flex items-center gap-2 pb-3">
-              <input
-                type="range"
+              <Slider
                 aria-label="Stroke width"
                 min={0}
                 max={12}
                 step={1}
-                value={bar.stroke_width ?? 0}
-                onChange={(e) => onPatch({ stroke_width: Number(e.target.value) })}
-                className="min-w-0 flex-1 accent-[#0c0c0e]"
+                value={[bar.stroke_width ?? 0]}
+                onValueChange={([value]) => onPatch({ stroke_width: value })}
+                className="min-w-0 flex-1"
               />
               <span className="w-8 text-right text-[12px] tabular-nums text-[#71717a]">
                 {bar.stroke_width ?? 0}
@@ -2364,11 +2415,12 @@ function ClipInspector({
               <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#71717a]">
                 Customize
               </span>
-              <button
+              <Button
                 type="button"
+                variant="link"
                 disabled={!looksEditable}
                 title={!looksEditable ? (looksDisabledReason ?? undefined) : undefined}
-                className="text-[11px] font-semibold text-[#52525b] underline decoration-zinc-300 underline-offset-2 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
+                className="h-auto p-0 text-[11px] font-semibold text-[#52525b] underline decoration-zinc-300 underline-offset-2 hover:text-[#0c0c0e]"
                 onClick={() => {
                   const defaults = defaultLookAdjustments(selectedLook);
                   if (defaults) {
@@ -2378,7 +2430,7 @@ function ClipInspector({
                 }}
               >
                 Reset
-              </button>
+              </Button>
             </div>
             <div className="mt-3 space-y-3">
               {(
@@ -2390,7 +2442,7 @@ function ClipInspector({
                   ["vignette", "Vignette", 0, 100, Math.round(lookControls.vignette * 100), "%"],
                 ] as const
               ).map(([key, label, min, max, value, suffix]) => (
-                <label key={key} className="block">
+                <div key={key} className="block">
                   <span className="mb-1 flex items-center justify-between text-[11px] text-[#52525b]">
                     <span className="font-medium">{label}</span>
                     <span className="tabular-nums text-[#71717a]">
@@ -2399,13 +2451,12 @@ function ClipInspector({
                       {suffix}
                     </span>
                   </span>
-                  <input
-                    type="range"
+                  <Slider
                     aria-label={`Look ${label.toLowerCase()}`}
                     min={min}
                     max={max}
                     step={1}
-                    value={value}
+                    value={[value]}
                     onPointerDown={() => onRecordLookAdjustments?.()}
                     onKeyDown={(event) => {
                       if (
@@ -2417,14 +2468,14 @@ function ClipInspector({
                       }
                     }}
                     disabled={!looksEditable}
-                    onChange={(event) =>
+                    onValueChange={([nextValue]) =>
                       onPatchLookAdjustments?.({
-                        [key]: Number(event.target.value) / 100,
+                        [key]: nextValue / 100,
                       })
                     }
-                    className="block h-11 w-full cursor-pointer accent-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                    className="block h-11 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
                   />
-                </label>
+                </div>
               ))}
             </div>
           </div>
@@ -2658,7 +2709,7 @@ function TimingNumberInput({
   return (
     <label className="min-w-0 text-[12px] text-[#3f3f46]">
       {label}
-      <input
+      <Input
         type="number"
         aria-label={`${label} seconds`}
         min={min}
@@ -2670,7 +2721,7 @@ function TimingNumberInput({
           const next = Number(e.target.value);
           if (Number.isFinite(next)) onChange(next);
         }}
-        className="mt-1 h-8 w-full rounded-lg border border-zinc-200 px-2 text-[12px] tabular-nums text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
+        className="mt-1 h-8 px-2 text-[12px] tabular-nums text-[#0c0c0e]"
       />
     </label>
   );

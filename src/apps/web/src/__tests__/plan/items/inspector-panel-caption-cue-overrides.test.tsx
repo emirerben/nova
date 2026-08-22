@@ -6,6 +6,7 @@
 import "@testing-library/jest-dom";
 import React from "react";
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import InspectorPanel from "@/app/plan/items/[id]/_editor/InspectorPanel";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
@@ -200,23 +201,27 @@ describe("InspectorPanel caption section split (Lane PR-A)", () => {
     expect(onPatch).toHaveBeenCalledWith({ cue_text_color: "#123ABC" });
   });
 
-  it("changing This caption's size patches cue_size_px, not size_px", () => {
+  it("changing This caption's size patches cue_size_px, not size_px", async () => {
+    const user = userEvent.setup();
     const { onPatch } = renderCaptionInspector(makeCaptionBar({ size_px: 64 }));
-    const slider = screen.getByLabelText("This caption's font size");
-    fireEvent.change(slider, { target: { value: "100" } });
-    expect(onPatch).toHaveBeenCalledWith({ cue_size_px: 100 });
+    // A shadcn Slider (Radix), not a native range input — no `.value` to set
+    // via fireEvent.change; drive it by keyboard instead.
+    const slider = screen.getByRole("slider", { name: "This caption's font size" });
+    slider.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(onPatch).toHaveBeenCalledWith({ cue_size_px: 65 });
   });
 
   it("This caption's size slider shows the effective (global) size when no override is set", () => {
     renderCaptionInspector(makeCaptionBar({ size_px: 80 }));
-    const slider = screen.getByLabelText("This caption's font size") as HTMLInputElement;
-    expect(slider.value).toBe("80");
+    const slider = screen.getByRole("slider", { name: "This caption's font size" });
+    expect(slider).toHaveAttribute("aria-valuenow", "80");
   });
 
   it("This caption's size slider shows the override once one is set", () => {
     renderCaptionInspector(makeCaptionBar({ size_px: 80, cue_size_px: 120 }));
-    const slider = screen.getByLabelText("This caption's font size") as HTMLInputElement;
-    expect(slider.value).toBe("120");
+    const slider = screen.getByRole("slider", { name: "This caption's font size" });
+    expect(slider).toHaveAttribute("aria-valuenow", "120");
   });
 
   it("no longer offers the variant-wide Fill/Highlight/Shadow/Stroke rows on a caption — one home per scope", () => {

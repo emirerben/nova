@@ -3,6 +3,7 @@ import "./globals.css";
 import Header from "@/components/Header";
 import { BRAND_NAME, CANONICAL_WEB_ORIGIN } from "@/lib/brand";
 import Providers from "./providers";
+import { Toaster } from "@/components/ui/sonner";
 
 export const metadata: Metadata = {
   metadataBase: new URL(CANONICAL_WEB_ORIGIN),
@@ -52,6 +53,7 @@ export default function RootLayout({
         <Providers>
           <Header />
           {children}
+          <Toaster />
         </Providers>
       </body>
     </html>

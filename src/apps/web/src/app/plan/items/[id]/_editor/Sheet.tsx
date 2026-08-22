@@ -31,6 +31,8 @@ import {
 import { createPortal } from "react-dom";
 import { useFocusTrap } from "@/components/ui/useFocusTrap";
 import { useKeyboardOffset } from "./useKeyboardOffset";
+import { Button } from "@/components/ui/button";
+import { CloseIcon } from "./editor-icons";
 
 export type SheetDetent = "half" | "full";
 
@@ -264,14 +266,16 @@ export default function Sheet({
         ].join(" ")}
       >
         <div data-sheet-handle className="flex flex-none justify-center pt-1 touch-none">
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon"
             aria-label={isFull ? "Collapse sheet" : "Expand sheet"}
             onClick={() => onDetentChange(isFull ? "half" : "full")}
-            className="flex h-11 w-16 items-center justify-center rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+            className="w-16"
           >
             <span aria-hidden="true" className="h-1 w-10 rounded-full bg-zinc-300" />
-          </button>
+          </Button>
         </div>
 
         <div
@@ -284,14 +288,16 @@ export default function Sheet({
           {isFull && transportSlot != null && (
             <div className="flex min-w-0 flex-none items-center">{transportSlot}</div>
           )}
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon"
             aria-label="Close"
             onClick={onClose}
-            className="flex h-11 w-11 flex-none items-center justify-center rounded-lg text-[13px] text-[#71717a] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+            className="flex-none"
           >
-            ✕
-          </button>
+            <CloseIcon className="h-4 w-4" />
+          </Button>
         </div>
 
         <div

@@ -74,6 +74,13 @@ jest.mock("@/app/plan/_components/useClipTimeline", () => ({
   }),
 }));
 
+// Toast moved to sonner (DESIGN.md §15) — EditorShell no longer renders its
+// own role="status" DOM node, so assert on the `toast()` call instead.
+const mockToast = jest.fn();
+jest.mock("sonner", () => ({
+  toast: (...args: unknown[]) => mockToast(...args),
+}));
+
 import EditorShell from "@/app/plan/items/[id]/_editor/EditorShell";
 import { CAPTIONS_TAB_REASON } from "@/app/plan/items/[id]/_editor/editor-capabilities";
 import {
@@ -302,14 +309,12 @@ describe("EditorShell — add-text path on a text-locked shell (OV-1)", () => {
     // No bar was added anywhere (canvas, timeline, inspector).
     expect(screen.queryByText("Add a title")).toBeNull();
 
-    // The honest, text-specific toast — in a polite live region (D17). The
-    // same copy also lives in the rail's sr-only reason elements, so pick the
-    // status-role container specifically.
-    const toast = screen
-      .getAllByText(CAPTIONS_TAB_REASON)
-      .find((el) => el.getAttribute("role") === "status");
-    expect(toast).toBeDefined();
-    expect(toast).toHaveAttribute("aria-live", "polite");
+    // The honest, text-specific toast (sonner owns the live region now —
+    // DESIGN.md §15 / Toaster is mounted app-wide, not per-shell).
+    expect(mockToast).toHaveBeenCalledWith(
+      CAPTIONS_TAB_REASON,
+      expect.objectContaining({ duration: 2600 }),
+    );
   });
 
   it("control: the same preset pick DOES add a bar on an editable shell", async () => {
@@ -494,8 +499,9 @@ describe("EditorShell — masonry smart placement history", () => {
     fireEvent.change(composition, { target: { value: draft } });
     fireEvent.click(screen.getByRole("button", { name: "Split & place" }));
 
-    expect(screen.getByRole("status")).toHaveTextContent(
+    expect(mockToast).toHaveBeenCalledWith(
       "This edit has room for 40 more text beats.",
+      expect.objectContaining({ duration: 2600 }),
     );
     expect(composition).toHaveValue(draft);
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
@@ -555,8 +561,9 @@ describe("EditorShell — masonry smart placement history", () => {
     fireEvent.click(screen.getByRole("button", { name: "Smart place all" }));
 
     expect(save).toBeDisabled();
-    expect(screen.getByRole("status")).toHaveTextContent(
+    expect(mockToast).toHaveBeenCalledWith(
       "Not enough empty collage pockets for all overlapping text blocks.",
+      expect.objectContaining({ duration: 2600 }),
     );
   });
 });

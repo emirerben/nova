@@ -2,13 +2,227 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.47.8.1] — 2026-08-22
+## [0.48.0.1] — 2026-08-22
 
 ### Fixed
 - **Uploaded voiceovers now attach reliably before generation.** Releasing the database transaction
   for storage metadata validation no longer leaves the later ownership check with an expired sign-in
   record, which previously crashed the attach request. The selected narration now persists on the
   plan item and reaches the existing voiceover-and-subtitle renderer.
+
+## [0.48.0.0] — 2026-08-22
+
+### Kria Design System — shadcn/ui migration train (Lanes 0, A–K)
+Single squash of the integration branch `feat/ds-preview-2026-08-22` (supersedes PRs #875–#883). Stock shadcn `new-york` look (Geist, zinc tokens) across the user flow + editor; 25 primitives in `components/ui/*`; raw-control ESLint guard (warn) in place; `raw-controls-guard.test.ts` ratchet retired. Reconciled onto v0.47.0.0 (guided story editor v2): `setToast` → sonner `notify`, Volume slider honours `disabled`, StepRail dots 44px.
+
+- Lane G — item setup page as one Card (Tabs · Dropzone · Tell Kria · CardFooter Generate)
+- Lane H — release desk as one Card
+- Lane I — editor chrome (toolbar, ToolRail, ToolDock, TransportBar, InspectorPanel) on stock primitives
+- Lane J — Back returns one step into /plan/new (`?item=&step=`), Change button removed; kind step always exits to /plan (no back loop)
+- Lane K — Nova copilot drawer, Plan-with-Kria thread, Ask Kria on shadcn (ChatBubble tokens, ScrollArea, Card proposal, Badge receipts)
+
+### Lane 0 — foundation (primitives, tokens, wrappers, guards)
+
+### Design system
+- **shadcn/ui foundation (Kria Design System migration, Lane 0).** Installs
+  the shadcn/ui component library (`new-york` style) with Kria's editorial
+  theme: `Button`/`Badge`/`Input`/`Textarea`/`Select`/`Dialog`/`AlertDialog`/
+  `Sheet`/`DropdownMenu`/`Popover`/`Tooltip`/`Tabs`/`Toggle(Group)`/`Slider`/
+  `Skeleton`/`ScrollArea`/`Progress`/`Sonner` and friends, all under
+  `src/apps/web/src/components/ui/`. Ink pills, lime accents, zinc
+  `destructive` (never red — D10), `z-[130]` menus/popovers above `z-[100]`
+  dialogs/sheets. `InkButton`/`LightCard`/`ConfirmDialog` become thin
+  wrappers over the new primitives with identical props/import paths — every
+  existing call site keeps working unchanged.
+- **Raw-control ratchet.** A WARN-level `no-restricted-syntax` ESLint rule
+  plus `src/__tests__/ui/raw-controls-guard.test.ts` (a numeric baseline
+  ratchet, seeded from the current tree) flag hand-rolled
+  `<button>`/`<select>`/`<input>`/`<textarea>` outside `components/ui/**`
+  across `app/plan/**`, `app/generative/**`, and `components/**`. Each
+  downstream migration lane can only lower its files' counts; the last lane
+  flips the rule to `error` and deletes the guard test.
+- See DESIGN.md §15 "Component library (shadcn/ui)" for the full variant
+  table, token→hex map, and DO/DON'T list.
+- **Skin: stock shadcn new-york (Geist, zinc, rounded-md) replaces the
+  hand-edited Kria variants.**
+
+### Lane A — header + account menu
+
+### Design system
+- **Borderless header + shadcn account menu (Kria Design System migration,
+  Lane A).** `Header.tsx`: dropped the `border-b` under the light header and
+  the "Plan"/"Create" nav link (+ dead `creationHubEnabled`). The avatar is
+  now a `DropdownMenuTrigger` wrapping `<Button variant="ghost" size="icon">`;
+  the account menu is a shadcn `DropdownMenuContent` (name label · My videos ·
+  separator · Sign out) — "Your persona" and the inline "Start over" reset
+  flow (+ its `resetPersona` call) are removed from the header entirely. Dark
+  routes (`/template-jobs`) get `className="dark"` on the menu content so it
+  keeps its zinc/amber palette. Sign-in uses `<Button variant="outline"
+  size="sm">`. See DESIGN.md §3 "Header" bullet.
+### Lane B — /plan home, tiles, Integrations
+
+### Design system
+- **Poster tiles + Integrations row, feedback pills removed (Kria Design
+  System migration, Lane B).** `/plan` home rebuilt on the shadcn primitives
+  from Lane 0:
+  - `LibraryTile` is now poster + status + one action. A `Badge` shows
+    `lime-soft` "Ready to post" / `zinc` "Rendering…" (6px lime dot) over the
+    media; a failed render swaps to a dashed zinc tile with the structured
+    failure copy. When the job is pinned to a plan item the whole tile is a
+    `<Link>` to `/plan/items/{id}` with a hover/focus "Open" pill; a job with
+    no plan item (legacy standalone generative rows) renders status only.
+    Download, Publish to TikTok, Add to plan, and the three thumb reactions
+    are gone from the tile — Download/Publish live on the item page.
+  - `FeedbackButtons.tsx` deleted outright (backend `sendFeedback`/
+    `clearFeedback` in `me-api.ts` untouched, just unused from the product
+    UI for now).
+  - `TikTokConnectionCard` redrawn as one Integrations row: brand glyph ·
+    name + status `Badge` · one-line meta · a `Button` Connect/Reconnect or
+    a `DropdownMenu` overflow (Sync performance / Disconnect). Disconnect is
+    an `AlertDialog` ("Disconnect TikTok?"), replacing `window.confirm`.
+  - `WorkspaceHome`'s CTA, retry, and load-more controls now use `Button`;
+    the loading grid uses `Skeleton` (keeping the shimmer gradient class).
+  - See DESIGN.md §12 "Basic home" for the updated tile/Integrations spec.
+### Lane C — /plan/new tap-to-advance
+
+### Design system
+- **`/plan/new` tap-to-advance chooser, hidden scrollbars (Lane C).** The
+  kind/style picker no longer needs a Continue tap: picking a kind card
+  either advances to the style step (montage) or mints the plan item
+  immediately (every other kind), and picking a style card mints it
+  immediately — `createItem(kind, style)` now takes explicit args instead of
+  reading (stale) `selected`/`selectedStyle` state. The sticky Continue
+  footer is gone. Back/`×` are now `Button variant="ghost" size="icon"`.
+  Both card scrollers (`/plan/new` and `SetupPicker`'s type/style rails) get
+  `scrollbar-none` — no visible scrollbar, swipe/scroll unchanged. See
+  DESIGN.md §12 "New-video chooser".
+### Lane D — item setup + Tell Kria + thread panel
+
+### Design system
+- **Item setup declutter + "Tell Kria" + PlanThreadPanel (Kria Design System
+  migration, Lane D).** `/plan/items/[id]` setup zone now reads top-to-bottom
+  as receipt → title → uploader → Tell Kria → Generate, with no step
+  numerals and no inline chat. Receipt is a `Badge variant="lime"` +
+  `Button variant="link" size="sm"` "Change"/"Done" (was a raw `<p>`/
+  `<button>`). The old "Direction for Kria" textarea and its voice-note
+  `<details>` disclosure (`DirectionVoiceNote`) are gone, replaced by one
+  optional `Textarea` "Tell Kria" (same `notes` → `updatePlanItem` →
+  `refetch` contract). Per-type helper paragraphs (voiceover card, talking-
+  to-camera clip helper) collapse into a single `InfoDot` each; their
+  eyebrows become sr-only headings.
+- **`PlanThreadPanel`** (new: `app/plan/items/[id]/components/PlanThreadPanel.tsx`)
+  is a shadcn `Sheet` — bottom sheet on phones, right side panel ≥sm — that
+  now owns the guided-edit planning conversation (`EditProposalCard`)
+  entirely. The setup page shows only a compact status row (`Badge` +
+  one-sentence status + `Button variant="outline" size="sm"` "Plan with
+  Kria"/"Review Kria's plan"/"Change plan") that opens the panel; the card
+  no longer mounts inline or morphs the setup zone. `EditProposalCard` gains
+  an optional `defaultConversationOpen` prop so the panel seeds straight
+  onto the conversation surface.
+- Depends on Lane 0 (`0.47.0.0`, shadcn/ui foundation).
+### Lane E1 — EditorShell
+
+### Design system
+- **Editor on shadcn (Kria Design System migration, Lane E1).**
+  `EditorShell.tsx`'s hand-rolled toast, `window.confirm`, and ~34 raw
+  `<button>`/`<input>`/`<select>`/`<textarea>` controls now route through the
+  shadcn primitives from Lane 0: transient feedback goes through sonner's
+  `toast()` (single stable-identity `notify` callback replaces the old
+  `toast` state + auto-clear effect + two DOM render sites), the
+  song/clip-timing collision confirm uses `<ConfirmDialog>` instead of
+  `window.confirm`, and every icon/text button is now `<Button>` (ghost/
+  outline/ink/link variants, `icon`/`icon-sm`/`sm` sizes) with `<Input>`/
+  `<Select>`/`<Textarea>` for the title field, canvas-zoom picker, and
+  `LightEditSheet`'s text field. `MusicAlignmentDialog` stays hand-rolled —
+  Radix's `AlertDialog` doesn't `stopImmediatePropagation` its Escape
+  handling, which broke `MusicAlignmentDialog.test.tsx`'s
+  outer-editor-shortcut isolation guard; its buttons/dialog chrome still
+  moved to the primitives. `SongWindowSelector` and the "Scrub video"
+  transport slider keep native `<input type="range">` (excluded from the
+  raw-control guard by design — continuous scrubbing doesn't fit `Slider`'s
+  discrete-thumb model). Raw-control count for `EditorShell.tsx` in
+  `raw-controls-guard.test.ts` drops from 35 to 0.
+### Lane E2 — ToolDrawer / InspectorPanel
+
+### Design system
+- **Editor ToolDrawer + Inspector on shadcn controls (Kria Design System
+  migration, Lane E2).** `_editor/ToolDrawer.tsx`, `_editor/InspectorPanel.tsx`,
+  and `_editor/inspector-fields.tsx` move onto the shadcn primitives: every
+  native `<select>` (Replace/Motion/Background type & asset/Entrance/Exit/
+  Base audio/Sound effects/Font size/Animation/Theme transition/Text case/
+  Shadow effect) becomes `<Select>` with an `aria-label` on the trigger; text
+  and number inputs become `<Input>` (color/range/file inputs stay raw); the
+  Composition, "This caption" context, and text-content textareas become
+  `<Textarea>`; the Preset-categories and sheet-mode Basic/Presets tab strips
+  become `<Tabs>` restyled as pills; the background-music volume, bed-level,
+  SFX-volume, overlay-scale, stroke-width, per-cue caption size, and per-clip
+  Look-adjustment sliders become `<Slider>`; the font picker's backdrop-div
+  dropdown becomes a `<Popover>`; the Lyrics toggle becomes `<Switch>`; the
+  vast majority of buttons become `<Button>` variants. A handful of raw
+  controls stay intentionally native: `SongWindowSelector` and the ClipInspector/
+  overlay source-window scrub bars (custom pointer-drag scrubbers, not a
+  Slider gesture), the Creator Blocks catalog grid (multi-child card layout),
+  and `type="range"/"color"/"file"/"radio"` inputs (excluded from the raw-
+  control guard by design).
+- **Delete-key focus guard now recognizes Select triggers.**
+  `useEditorSelection.deleteKeyAllowed` adds `role="combobox"` alongside the
+  native `INPUT`/`TEXTAREA`/`SELECT` tag check — a Radix `SelectTrigger`
+  renders as a `<button role="combobox">`, not a native `<select>`, so
+  without this the Delete key would fall through and remove the selected
+  timeline block while a Select was focused.
+- Raw-control guard (`raw-controls-guard.test.ts`): `ToolDrawer.tsx` 42 → 3,
+  `InspectorPanel.tsx` 34 → 3, `inspector-fields.tsx` 3 → 0. Lane E's block
+  splits into `LANE_E1`/`LANE_E2`/`LANE_E3` sub-blocks (three file-disjoint
+  PRs) so E1/E3 land without touching this lane's hunk.
+- Depends on #875 (Lane 0, shadcn/ui foundation) — merge order matters.
+### Lane E3 — Copilot / Captions / Styles drawers
+
+### Design system
+- **Editor drawers on shadcn primitives (Kria Design System migration, Lane
+  E3).** `CopilotDrawer`, `CaptionsDrawer`, `StylesDrawer`, `MotionInspector`,
+  and the pocket-editor `Sheet.tsx` move onto the Lane 0 primitives: Nova
+  copilot's message input and suggestion/undo chips are now `<Input>` and
+  `<Button variant="outline" size="pill">` (labels unchanged); the captions
+  Find field is `<Label>` + `<Input>`; `MotionInspector`'s close/remove/move
+  controls are `<Button>` (the red `border-red-200`/`text-red-600` "Remove
+  block" affordance is now `variant="destructive"` — zinc, not red, D10) and
+  its two enum pickers (easing, advanced motion params) are `<Select>`.
+  `Sheet.tsx` itself is unchanged apart from its close/grabber buttons
+  becoming `<Button variant="ghost" size="icon">` — the half-detent,
+  non-modal gesture sheet stays hand-rolled (Radix `Dialog` can't express a
+  non-modal half-open state), and its 34-assertion test suite is untouched.
+  `editor-icons.tsx`'s generic glyphs (`CloseIcon`, `BackIcon`, `PlusIcon`)
+  now wrap `lucide-react` icons under the same export names, so
+  `ToolDock.tsx`/`EditorShell.tsx` keep working unedited.
+- Left native (documented, not a jsdom-testability escape): `StylesDrawer`'s
+  `role="radio"` video-look preview card (rich media content with no
+  MediaRadioCard primitive yet) and `MotionInspector`'s gesture-driven
+  intensity/speed/hold sliders (`MotionRange`'s begin/preview/commit/cancel
+  pointer protocol is tested via direct `fireEvent.pointerDown/change/
+  pointerUp/pointerCancel` on a native `<input type="range">` — incompatible
+  with Radix `Slider`'s custom pointer handling) plus its image-tile asset
+  picker.
+
+### Lane F — generative / transcript / StepRail
+
+### Design system
+- **Generative + transcript + StepRail sweep onto shadcn/ui (Lane F of the
+  Kria Design System migration).** `app/generative/{VariantCard,
+  VoiceRecorder}.tsx`, the full `plan/items/[id]/transcript/*` record
+  takeover (`BriefStep`/`QuestionsStep`/`ReviewStep`/`ScriptStep`/
+  `TeleprompterRecorder`/`page`), `plan/_components/ui/StepRail.tsx`, and
+  `plan/_components/PlanVariantEditor.tsx` now render every button/input/
+  textarea/select through the shadcn primitives (`Button`/`Input`/
+  `Textarea`/`Select`) instead of hand-rolled `className` chrome.
+  `components/progress/PhaseChipRow.tsx`'s horizontal chip scroller switched
+  to the shared `scrollbar-none` utility. `StepRail`'s dots (phone strip +
+  desktop rail) are now ghost icon `Button`s while keeping the pinned 44px
+  boxes, `md:hidden`/`w-56 hidden md:flex` breakpoint gating, and focus-ring
+  classes (`mobile-shell.test.tsx`). `components/TikTokPublishDialog.tsx` was
+  evaluated for a `Dialog` shell conversion and deferred — see DESIGN.md §15
+  "Backlog (deferred from Lane F)" for why and what a follow-up PR needs to
+  do. Raw-control ratchet (`raw-controls-guard.test.ts`) LANE_F block zeroes
+  out every file this lane touched.
 
 ## [0.47.0.0] — 2026-08-22
 
@@ -55,6 +269,17 @@ All notable changes to this project will be documented in this file.
   every 2 min, worker never stopped. `inspect()` now runs on a dedicated
   connection with the 1s default (`queue_state._inspector`); the throttle stays
   on the long-lived worker consumers. Reproduced + verified against live Redis.
+## [0.46.0.2] — 2026-08-22
+
+### Fixes
+- **Render-worker autostop never fired after v0.46.0.1.** The broker
+  `polling_interval=10` also became the BRPOP timeout on `inspect()` reply
+  queues, so `render_worker_idle()`'s three inspect calls took ~30s (hitting the
+  lifecycle task's soft limit) and intermittently dropped replies → `'unknown'`
+  every 2 min, worker never stopped. `inspect()` now runs on a dedicated
+  connection with the 1s default (`queue_state._inspector`); the throttle stays
+  on the long-lived worker consumers. Reproduced + verified against live Redis.
+
 
 ## [0.46.0.1] — 2026-08-22
 

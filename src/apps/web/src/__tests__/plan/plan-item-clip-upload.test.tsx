@@ -135,10 +135,6 @@ jest.mock("@/app/plan/_components/SignInPrompt", () => ({
   __esModule: true,
   default: () => <div data-testid="sign-in-prompt" />,
 }));
-jest.mock("@/components/library/FeedbackButtons", () => ({
-  __esModule: true,
-  default: () => <div data-testid="feedback-buttons" />,
-}));
 jest.mock("@/app/plan/_components/AssetPool", () => ({
   __esModule: true,
   default: () => <div data-testid="asset-pool" />,
@@ -309,10 +305,12 @@ describe("PoolUploadCard — input markup (mobile Safari fix)", () => {
     // native button + filename + thumbnail).
     expect(input.className).not.toContain("file:mr-3");
 
+    // Lane G: the pill trigger became a full-size Dropzone — its min-h-48
+    // footprint clears the 44px touch-target floor by construction, so there
+    // is no separate min-h-11/sm:min-h-0 pair to pin here anymore.
     const trigger = screen.getByRole("button", { name: "Add clips" });
     expect(trigger).toBeEnabled();
-    expect(trigger).toHaveClass("min-h-11");
-    expect(trigger).toHaveClass("sm:min-h-0");
+    expect(trigger).toHaveClass("min-h-48");
   });
 
   it("resets input.value after selection so re-picking the same file fires change", async () => {
@@ -747,7 +745,9 @@ describe("PoolUploadCard — concurrency + minting", () => {
     });
     await flush();
 
-    expect(screen.getByRole("button", { name: "Add clips" })).toBeEnabled();
+    // A pending card already exists, so the dropzone is now the compact
+    // "Add more clips" state (Lane G).
+    expect(screen.getByRole("button", { name: "Add more clips" })).toBeEnabled();
 
     await act(async () => {
       pickFiles([new File(["b"], "b.mp4", { type: "video/mp4" })]);
@@ -847,7 +847,7 @@ describe("PoolUploadCard — Generate gate composition", () => {
       render(<PlanItemPage />);
     });
 
-    const generate = () => screen.getByRole("button", { name: /generate/i });
+    const generate = () => screen.getAllByRole("button", { name: /generate/i })[0];
     expect(generate()).toBeEnabled();
 
     await act(async () => {

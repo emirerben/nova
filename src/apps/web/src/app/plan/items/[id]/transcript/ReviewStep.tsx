@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { InkButton } from "@/components/ui/InkButton";
+import { Button } from "@/components/ui/button";
 import { fmtTime, type AudioTake } from "@/hooks/useAudioRecorder";
 
 /**
@@ -63,13 +64,14 @@ export default function ReviewStep({
 
       <div className="mt-8 flex flex-wrap items-center gap-4">
         <InkButton onClick={onUse}>Use this take</InkButton>
-        <button
+        <Button
           type="button"
+          variant="link"
           onClick={onRetake}
-          className="text-sm text-[#71717a] underline underline-offset-4 hover:text-[#0c0c0e]"
+          className="h-auto p-0 text-sm font-normal text-[#71717a] underline underline-offset-4 hover:text-[#0c0c0e] hover:no-underline"
         >
           Retake
-        </button>
+        </Button>
       </div>
     </div>
   );

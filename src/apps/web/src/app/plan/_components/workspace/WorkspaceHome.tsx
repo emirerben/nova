@@ -17,6 +17,8 @@ import { listMyJobs, type LibraryJob } from "@/lib/me-api";
 import type { TikTokConnection } from "@/lib/tiktok-api";
 import LibraryTile from "@/components/library/LibraryTile";
 import TikTokConnectionCard from "@/components/library/TikTokConnectionCard";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import SeedUploadCard from "../SeedUploadCard";
 
 interface WorkspaceHomeProps {
@@ -66,14 +68,8 @@ export function WorkspaceHome({ plan, onRefresh, onError }: WorkspaceHomeProps) 
     }
   }
 
-  function onPinned(jobId: string, planItemId: string) {
-    setJobs((prev) =>
-      prev.map((j) => (j.id === jobId ? { ...j, content_plan_item_id: planItemId } : j)),
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-background text-foreground">
       <div className="mx-auto flex max-w-[900px] flex-col gap-10 px-6 pb-24 pt-14">
         {activating && (
           <SeedUploadCard plan={plan} onError={onError} onRefresh={onRefresh} />
@@ -90,12 +86,9 @@ export function WorkspaceHome({ plan, onRefresh, onError }: WorkspaceHomeProps) 
           <p className="mt-1.5 max-w-md text-sm text-[#71717a]">
             Pick what kind, add your footage — Kria edits it into a post.
           </p>
-          <Link
-            href="/plan/new"
-            className="mt-5 inline-flex min-h-12 w-full items-center justify-center rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:w-auto"
-          >
-            New video
-          </Link>
+          <Button asChild variant="ink" size="lg" className="mt-5 w-full sm:w-auto">
+            <Link href="/plan/new">New video</Link>
+          </Button>
           {planGenerating && (
             <p className="mt-3 text-[13px] text-[#71717a]" role="status">
               Kria is still setting up your plan — you can start a video anyway.
@@ -117,13 +110,9 @@ export function WorkspaceHome({ plan, onRefresh, onError }: WorkspaceHomeProps) 
           {loadState === "error" && (
             <div className="py-10">
               <p className="text-[#3f3f46]">We couldn&apos;t load your videos.</p>
-              <button
-                type="button"
-                onClick={() => void load()}
-                className="mt-4 min-h-11 rounded-full border border-zinc-200 px-5 py-2 text-sm text-[#3f3f46] hover:border-zinc-400"
-              >
+              <Button variant="outline" size="sm" className="mt-4" onClick={() => void load()}>
                 Try again
-              </button>
+              </Button>
             </div>
           )}
 
@@ -136,35 +125,41 @@ export function WorkspaceHome({ plan, onRefresh, onError }: WorkspaceHomeProps) 
               <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
                 {jobs.map((job) => (
                   <li key={job.id}>
-                    <LibraryTile
-                      job={job}
-                      plan={plan}
-                      canPublishToTikTok={Boolean(
-                        tiktokConnection?.can_publish || tiktokConnection?.can_upload_draft,
-                      )}
-                      onPinned={(itemId) => onPinned(job.id, itemId)}
-                    />
+                    <LibraryTile job={job} />
                   </li>
                 ))}
               </ul>
               {cursor && (
                 <div className="mt-8 text-center">
-                  <button
-                    type="button"
+                  <Button
+                    variant="outline"
+                    size="sm"
                     onClick={() => void loadMore()}
                     disabled={loadingMore}
-                    className="min-h-11 rounded-full border border-zinc-200 px-6 py-2 text-sm text-[#3f3f46] hover:border-zinc-400 disabled:opacity-60"
                   >
                     {loadingMore ? "Loading…" : "Load more"}
-                  </button>
+                  </Button>
                 </div>
               )}
             </>
           )}
         </section>
 
-        {/* ---- TikTok connection (was /library's card; release rails link here) ---- */}
-        <section id="tiktok" aria-label="TikTok connection">
+        {/* ---- Integrations (was /library's TikTok card; release rails link here) ----
+            TikTokConnectionCard reports availability via onConnection (and
+            renders null itself when unavailable); mount it unconditionally
+            so that callback ever fires, but only show the "Integrations"
+            heading once availability is confirmed — otherwise the page ends
+            in an empty labeled section. */}
+        <section id="tiktok" aria-labelledby="integrations-heading">
+          {tiktokConnection?.available && (
+            <h2
+              id="integrations-heading"
+              className="mb-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#a1a1aa]"
+            >
+              Integrations
+            </h2>
+          )}
           <TikTokConnectionCard onConnection={setTikTokConnection} />
         </section>
       </div>
@@ -179,10 +174,9 @@ function SkeletonGrid() {
       aria-label="Loading your videos"
     >
       {Array.from({ length: 4 }).map((_, i) => (
-        <li
-          key={i}
-          className="aspect-[9/16] rounded-xl border border-zinc-200 bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer"
-        />
+        <li key={i}>
+          <Skeleton className="aspect-[9/16] rounded-xl border border-zinc-200 bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
+        </li>
       ))}
     </ul>
   );

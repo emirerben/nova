@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom";
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import InspectorPanel from "@/app/plan/items/[id]/_editor/InspectorPanel";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
@@ -55,24 +56,44 @@ function renderTextInspector(bar: TextElementBar) {
 }
 
 describe("InspectorPanel text horizontal controls", () => {
-  it("offers standard, high-visibility, and off shadow effects", () => {
+  it("offers standard, high-visibility, and off shadow effects", async () => {
+    const user = userEvent.setup();
     const onPatch = renderTextInspector(makeBar());
     const select = screen.getByRole("combobox", { name: "Shadow effect" });
 
-    expect(select).toHaveValue("standard");
-    fireEvent.change(select, { target: { value: "high_visibility" } });
+    // Radix Select opens on pointerdown, not a native <select> change event —
+    // userEvent drives the full click sequence jsdom needs. It's a fully
+    // controlled component (unlike a native <select>'s DOM value), so each
+    // pick is asserted against a bar that stays at its initial "standard"
+    // shadow — picking "Standard" again from "standard" is a no-op in Radix
+    // (the value doesn't change), so that transition is verified separately
+    // below against a bar whose effective value differs.
+    expect(select).toHaveTextContent("Standard");
+
+    await user.click(select);
+    await user.click(await screen.findByRole("option", { name: "High visibility" }));
     expect(onPatch).toHaveBeenLastCalledWith({
       shadow_enabled: true,
       shadow_style: "high_visibility",
     });
+    await waitFor(() => expect(screen.queryByRole("listbox")).not.toBeInTheDocument());
 
-    fireEvent.change(select, { target: { value: "off" } });
+    await user.click(select);
+    await user.click(await screen.findByRole("option", { name: "Off" }));
     expect(onPatch).toHaveBeenLastCalledWith({
       shadow_enabled: false,
       shadow_style: "standard",
     });
+  });
 
-    fireEvent.change(select, { target: { value: "standard" } });
+  it("restores standard from an off shadow effect", async () => {
+    const user = userEvent.setup();
+    const onPatch = renderTextInspector(makeBar({ shadow_enabled: false }));
+    const select = screen.getByRole("combobox", { name: "Shadow effect" });
+    expect(select).toHaveTextContent("Off");
+
+    await user.click(select);
+    await user.click(await screen.findByRole("option", { name: "Standard" }));
     expect(onPatch).toHaveBeenLastCalledWith({
       shadow_enabled: true,
       shadow_style: "standard",

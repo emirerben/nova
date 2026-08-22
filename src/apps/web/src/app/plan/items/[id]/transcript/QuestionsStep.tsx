@@ -6,6 +6,8 @@ import {
   NotAuthenticatedError,
   type TranscriptTurn,
 } from "@/lib/transcript-api";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 
 type Phase = "loading" | "chat" | "thinking" | "error";
 
@@ -136,14 +138,15 @@ export default function QuestionsStep({
       {suggestions.length > 0 && phase !== "thinking" && (
         <div className="mt-5 flex flex-wrap gap-2">
           {suggestions.map((chip) => (
-            <button
+            <Button
               key={chip}
               type="button"
+              variant="outline"
               onClick={() => void submit(chip)}
-              className="min-h-[40px] rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm text-[#3f3f46] transition-colors hover:border-lime-600/60 hover:bg-zinc-50 hover:text-[#0c0c0e]"
+              className="min-h-[40px] px-4 py-2 text-sm font-normal hover:border-lime-600/60 hover:bg-zinc-50 hover:text-[#0c0c0e]"
             >
               {chip}
-            </button>
+            </Button>
           ))}
         </div>
       )}
@@ -165,19 +168,20 @@ export default function QuestionsStep({
 
       {/* Always-available skip */}
       <div className="mt-6">
-        <button
+        <Button
           type="button"
+          variant="link"
           onClick={() => onDone(answersRef.current)}
-          className="text-xs text-[#71717a] underline underline-offset-4 hover:text-[#0c0c0e]"
+          className="h-auto p-0 text-xs font-normal text-[#71717a] underline underline-offset-4 hover:text-[#0c0c0e] hover:no-underline"
         >
           Skip — just write it
-        </button>
+        </Button>
       </div>
 
       {/* Sticky input */}
       <div className="sticky bottom-0 z-10 mt-8 bg-[#ffffff] pb-[env(safe-area-inset-bottom)]">
         <div className="flex items-center gap-3 rounded-2xl border border-zinc-200 bg-white px-4 py-2">
-          <textarea
+          <Textarea
             ref={inputRef}
             value={answer}
             rows={1}
@@ -191,17 +195,19 @@ export default function QuestionsStep({
                 void submit();
               }
             }}
-            className="flex-1 resize-none bg-transparent text-sm text-[#0c0c0e] placeholder-zinc-400 focus:outline-none disabled:opacity-50 [field-sizing:content]"
+            className="min-h-0 flex-1 resize-none border-0 bg-transparent px-0 py-0 text-sm placeholder-zinc-400 focus-visible:border-transparent focus-visible:ring-0 disabled:opacity-50 [field-sizing:content]"
           />
-          <button
+          <Button
             type="button"
+            variant="ink"
+            size="icon"
             onClick={() => void submit()}
             disabled={!answer.trim() || phase === "thinking"}
             aria-label="Send answer"
-            className="flex min-h-[44px] min-w-[44px] flex-shrink-0 items-center justify-center rounded-full bg-[#0c0c0e] text-sm font-medium text-white transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-25"
+            className="flex-shrink-0 text-sm font-medium disabled:opacity-25"
           >
             →
-          </button>
+          </Button>
         </div>
       </div>
     </div>

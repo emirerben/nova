@@ -214,11 +214,11 @@ describe("ToolDock", () => {
     renderDock({ activeTool: "text" });
     const active = screen.getByTestId("pocket-dock-text");
     expect(active).toHaveAttribute("aria-pressed", "true");
-    expect(active.querySelector('[class*="bg-[#0c0c0e]"]')).not.toBeNull();
+    expect(active.querySelector('[class*="bg-foreground"]')).not.toBeNull();
 
     const inactive = screen.getByTestId("pocket-dock-sounds");
     expect(inactive).toHaveAttribute("aria-pressed", "false");
-    expect(inactive.querySelector('[class*="bg-[#0c0c0e]"]')).toBeNull();
+    expect(inactive.querySelector('[class*="bg-foreground"]')).toBeNull();
   });
 
   it("routes disabled-tool taps to onDisabledTap with the reason, never onToggleTool", () => {
@@ -239,7 +239,7 @@ describe("ToolDock", () => {
     renderDock({ disabledTools: { captions: "Unavailable" } });
     const button = screen.getByTestId("pocket-dock-captions");
     const label = within(button).getByText("Captions");
-    expect(label.className).toContain("text-[#71717a]");
+    expect(label.className).toContain("text-muted-foreground");
     expect(label.className).not.toContain("opacity-50");
     // The icon (not the label) carries the dimming.
     expect(button.querySelector('[class*="opacity-50"]')).not.toBeNull();

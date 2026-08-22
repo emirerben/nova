@@ -50,6 +50,12 @@ Object.defineProperty(window, "matchMedia", {
   })),
 });
 
+// Toast moved to sonner (DESIGN.md §15) — assert on the toast() call.
+const mockToast = jest.fn();
+jest.mock("sonner", () => ({
+  toast: (...args: unknown[]) => mockToast(...args),
+}));
+
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn() }),
 }));
@@ -288,7 +294,7 @@ describe("EditorShell linked text-card deletion", () => {
     fireEvent.keyDown(document, { key: "Delete" });
 
     expect(screen.getByRole("button", { name: /^Text row 1, Locked title,/ })).toBeInTheDocument();
-    expect(screen.getAllByRole("status").some((status) => status.textContent === "Story text is locked.")).toBe(true);
+    expect(mockToast).toHaveBeenCalledWith("Story text is locked.", expect.objectContaining({ duration: 2600 }));
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
 });
@@ -445,11 +451,10 @@ describe("EditorShell generated overlay bundle deletion", () => {
     fireEvent.keyDown(document, { key: "Delete" });
 
     expect(screen.getByRole("button", { name: /^Overlay row 1, Image,/ })).toBeInTheDocument();
-    expect(
-      screen
-        .getAllByRole("status")
-        .some((status) => status.textContent === "Overlays are locked for this story."),
-    ).toBe(true);
+    expect(mockToast).toHaveBeenCalledWith(
+      "Overlays are locked for this story.",
+      expect.objectContaining({ duration: 2600 }),
+    );
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
 });

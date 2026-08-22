@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom";
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import InspectorPanel from "@/app/plan/items/[id]/_editor/InspectorPanel";
 import type { MusicTrackSummary } from "@/lib/music-api";
@@ -78,7 +79,8 @@ describe("InspectorPanel music bed", () => {
     expect(onPickMusic).toHaveBeenCalledWith("track-2");
   });
 
-  it("edits background music trim, mute, volume, and removal", () => {
+  it("edits background music trim, mute, volume, and removal", async () => {
+    const user = userEvent.setup();
     const { onPatchBackgroundMusic, onRemoveBackgroundMusic } = renderMusicInspector({
       currentMusicTrackId: "track-2",
       backgroundMusic: {
@@ -95,8 +97,16 @@ describe("InspectorPanel music bed", () => {
     fireEvent.click(screen.getByLabelText("Mute"));
     expect(onPatchBackgroundMusic).toHaveBeenCalledWith({ muted: true });
 
-    fireEvent.change(screen.getByLabelText("Volume"), { target: { value: "-12" } });
-    expect(onPatchBackgroundMusic).toHaveBeenCalledWith({ gain_db: -12 });
+    // Volume is a shadcn Slider (Radix), not a native range input — it has no
+    // `.value` to set via fireEvent.change; drive it by keyboard instead. It's
+    // fully controlled by `gain_db`, which this mock doesn't feed back in, so
+    // the displayed aria-valuenow doesn't persist across the interaction —
+    // only the onValueChange payload is asserted.
+    const volume = screen.getByRole("slider", { name: "Volume" });
+    expect(volume).toHaveAttribute("aria-valuenow", "-20");
+    volume.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(onPatchBackgroundMusic).toHaveBeenCalledWith({ gain_db: -19.5 });
 
     fireEvent.change(screen.getByLabelText("Trim start"), { target: { value: "4" } });
     expect(onPatchBackgroundMusic).toHaveBeenCalledWith({ start_s: 4, end_s: 10 });
@@ -130,7 +140,8 @@ describe("InspectorPanel music bed", () => {
       "Sound effects are unavailable for this story.",
     );
     expect(screen.getByLabelText("Start")).toBeDisabled();
-    expect(screen.getByLabelText("Volume")).toBeDisabled();
+    // Radix Slider (shadcn) marks disabled via data-disabled on the span thumb.
+    expect(screen.getByLabelText("Volume")).toHaveAttribute("data-disabled");
     expect(screen.getByRole("button", { name: "Delete sound" })).toBeDisabled();
 
     // A disabled fieldset is the browser-level guard: disabled controls do
