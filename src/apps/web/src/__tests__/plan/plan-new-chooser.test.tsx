@@ -286,8 +286,10 @@ describe("/plan/new chooser", () => {
         montage_preset: "classic",
       });
       await readyForItem();
-      const cancel = screen.getByRole("link", { name: "Cancel" });
-      expect(cancel).toHaveAttribute("href", "/plan/items/existing-1");
+      // No loop: the kind step exits to /plan even in item mode (the item
+      // page's Back leads here, so linking back to the item would cycle).
+      const exit = screen.getByRole("link", { name: "Back to your videos" });
+      expect(exit).toHaveAttribute("href", "/plan");
     });
 
     it("‹ on the style step still returns to the kind step (local, no navigation)", async () => {

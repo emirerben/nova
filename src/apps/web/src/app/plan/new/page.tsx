@@ -240,8 +240,11 @@ function NewVideoPageInner() {
   }
 
   const onStyleStep = step === "style";
-  const kindStepHref = itemId ? `/plan/items/${itemId}` : "/plan";
-  const kindStepLabel = itemId ? "Cancel" : "Back to your videos";
+  // The kind step is the top of the creation flow in BOTH modes. In item mode
+  // it must NOT link back to the item page — the item page's own Back leads
+  // here, so that pairing would be a two-page loop with no exit.
+  const kindStepHref = "/plan";
+  const kindStepLabel = "Back to your videos";
 
   return (
     <div className="min-h-screen bg-white">
