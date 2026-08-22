@@ -132,7 +132,7 @@ function MediaThumb({
         role="img"
         aria-label={`${label}: preview unavailable`}
         title={`${label}: preview unavailable`}
-        className="flex h-14 w-10 shrink-0 items-center justify-center rounded-md bg-muted px-1 text-center text-[9px] text-muted-foreground"
+        className="flex h-14 w-10 shrink-0 items-center justify-center rounded-md bg-muted px-1 text-center text-xs text-muted-foreground"
       >
         {failed ? "File" : kind === "image" ? "Photo" : "Video"}
       </div>
@@ -411,7 +411,7 @@ export default function EditProposalCard({
 
     return (
       <div data-testid="edit-guide-conversation">
-        <p className="text-[11px] font-semibold uppercase tracking-[.18em] text-lime-700">
+        <p className="text-xs font-semibold text-muted-foreground">
           {reviewing ? "Shape the draft with Kria" : "Plan with Kria"}
         </p>
 
@@ -437,7 +437,6 @@ export default function EditProposalCard({
                 size="sm"
                 disabled={chipsDisabled}
                 onClick={() => void sendConversation(suggestion, reviewing)}
-                className="hover:border-lime-400 hover:text-lime-700"
               >
                 {suggestion}
               </Button>
@@ -452,7 +451,7 @@ export default function EditProposalCard({
         ) : null}
 
         <form
-          className="mt-4 flex items-end gap-2 rounded-2xl border border-input bg-background px-3 py-2 focus-within:border-lime-500 focus-within:ring-2 focus-within:ring-lime-500/20"
+          className="mt-4 flex items-end gap-2 rounded-2xl border border-input bg-background px-3 py-2 focus-within:ring-1 focus-within:ring-ring"
           onSubmit={(event) => {
             event.preventDefault();
             void sendConversation(message, reviewing);
@@ -560,9 +559,9 @@ export default function EditProposalCard({
             {DIRECTION_OPTIONS.map((option) => (
               <label
                 key={option.value}
-                className={`min-h-16 cursor-pointer rounded-lg border p-3 outline-none transition-colors focus-within:ring-2 focus-within:ring-lime-600 ${
+                className={`min-h-16 cursor-pointer rounded-lg border p-3 outline-none transition-colors focus-within:ring-2 focus-within:ring-ring ${
                   legacyBrief.direction === option.value
-                    ? "border-lime-500 bg-lime-50"
+                    ? "border-primary bg-accent"
                     : "border-border"
                 }`}
               >
@@ -589,7 +588,7 @@ export default function EditProposalCard({
             maxLength={500}
             rows={3}
             placeholder="For example: show what surprised me about the food, town, and beaches."
-            className="mt-2 resize-none focus-visible:ring-lime-500/30"
+            className="mt-2 resize-none"
           />
         </label>
 
@@ -728,13 +727,11 @@ export default function EditProposalCard({
     return (
       <Card aria-labelledby="planning-edit-heading" className="mt-5">
         <CardHeader>
-          <CardTitle id="planning-edit-heading" className="text-lg">
-            Planning your edit
-          </CardTitle>
+          <CardTitle id="planning-edit-heading">Planning your edit</CardTitle>
         </CardHeader>
         <CardContent>
           <div role="status" aria-live="polite" className="flex items-center gap-2 text-sm text-foreground">
-            <span aria-hidden className="h-2 w-2 rounded-full bg-lime-600 motion-safe:animate-pulse" />
+            <span aria-hidden className="h-2 w-2 rounded-full bg-primary motion-safe:animate-pulse" />
             {proposal.status === "analyzing"
               ? "Understanding every photo and video…"
               : "Building the direction and story beats…"}
@@ -753,9 +750,7 @@ export default function EditProposalCard({
       <Card aria-labelledby="approved-plan-heading" className="mt-5">
         <CardHeader>
           <Badge variant="secondary" className="w-fit">Approved edit plan</Badge>
-          <CardTitle id="approved-plan-heading" className="text-xl">
-            {visibleDraft.title}
-          </CardTitle>
+          <CardTitle id="approved-plan-heading">{visibleDraft.title}</CardTitle>
           <CardDescription>
             {visibleDraft.story_beats.length} moments · {selectedSourceCount(visibleDraft)} sources · about {visibleDraft.duration_s}s
           </CardDescription>
@@ -843,7 +838,7 @@ export default function EditProposalCard({
           />
         </label>
       </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-3">
           <label className="text-sm font-medium text-foreground">
             Direction
@@ -895,7 +890,7 @@ export default function EditProposalCard({
           </label>
         </div>
 
-        <ol className="space-y-3">
+        <ol className="space-y-2">
           {visibleDraft.story_beats.map((beat, index) => (
             <li key={beat.beat_id} className="rounded-lg border border-border bg-background p-3">
               <div className="flex items-start justify-between gap-3">
@@ -909,7 +904,7 @@ export default function EditProposalCard({
                         patchBeat(beat.beat_id, { topic: event.currentTarget.value })
                       }
                       maxLength={80}
-                      className="h-auto flex-1 border-transparent bg-transparent px-1 py-1 text-base font-semibold shadow-none hover:border-input focus-visible:border-lime-500 focus-visible:bg-background focus-visible:ring-lime-500/30"
+                      className="h-auto flex-1 border-transparent bg-transparent px-1 py-1 text-base font-semibold shadow-none hover:border-input focus-visible:border-input focus-visible:bg-background focus-visible:ring-1 focus-visible:ring-ring"
                     />
                     <Badge variant="outline" className="shrink-0 tabular-nums">{beat.duration_s}s</Badge>
                   </label>
@@ -968,9 +963,7 @@ export default function EditProposalCard({
               <label className="mt-3 block text-sm text-foreground">
                 Thought
                 {beat.thought_source === "ai_draft" && (
-                  <Badge variant="outline" className="ml-2 text-[10px] uppercase tracking-wide">
-                    AI draft
-                  </Badge>
+                  <Badge variant="outline" className="ml-2">AI draft</Badge>
                 )}
                 <Textarea
                   value={beat.thought}
@@ -990,7 +983,7 @@ export default function EditProposalCard({
         </ol>
       </CardContent>
 
-      <CardFooter className="items-center gap-1">
+      <CardFooter className="items-center gap-2">
         <Button
           type="button"
           className="flex-1"

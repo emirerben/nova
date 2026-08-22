@@ -3,8 +3,8 @@
 /**
  * AskKriaPanel — per-item "Ask Kria" filming advisor (dogfood feedback #2).
  *
- * Editorial interview, not a chat app (DESIGN.md §2/§9): left-aligned Playfair
- * question, lime left-border pull-quote of the user's last message, suggestion
+ * Editorial interview, not a chat app (DESIGN.md §2/§9): left-aligned reply,
+ * accent left-border pull-quote of the user's last message, suggestion
  * chips, NO bubbles, NO avatar. Bounded sub-surface: the agent reply is capped
  * at text-xl (never the page-h1 scale) and the input is part of the panel —
  * never viewport-sticky — so Generate stays the page's primary element.
@@ -125,26 +125,33 @@ export default function AskKriaPanel({ item, mode, onClose, onItemChanged }: Ask
     <div className="mt-3 border-t border-border pt-4" data-testid="ask-kria-panel">
       <div className="flex items-baseline justify-between">
         <span className="text-sm font-semibold text-foreground">Ask Kria</span>
-        <Button type="button" variant="ghost" size="icon" aria-label="Close" onClick={onClose}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          aria-label="Close"
+          onClick={onClose}
+        >
           <X className="h-4 w-4" />
         </Button>
       </div>
 
-      {/* Prior-utterance pull-quote (editorial pattern — one quote, lime border) */}
+      {/* Prior-utterance pull-quote (editorial pattern — one quote, accent border) */}
       {lastUser && (
-        <p className="mt-3 border-l-2 border-lime-600 pl-3 text-sm italic text-muted-foreground line-clamp-3">
+        <p className="mt-3 border-l-2 border-primary pl-3 text-sm italic text-muted-foreground line-clamp-3">
           {lastUser.content}
         </p>
       )}
 
       {/* Agent reply — capped at text-xl: a sub-surface, never the page title. */}
-      <p className="font-display mt-3 max-w-prose text-xl leading-snug text-foreground" aria-live="polite">
+      <p className="mt-3 max-w-prose text-xl leading-snug text-foreground" aria-live="polite">
         {lastAgent?.content}
       </p>
 
       {thinking && (
         <p className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
-          <span className="inline-block h-1.5 w-1.5 rounded-full bg-lime-600 motion-safe:animate-ping" />
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary motion-safe:animate-ping" />
           Thinking it through…
         </p>
       )}
@@ -157,8 +164,8 @@ export default function AskKriaPanel({ item, mode, onClose, onItemChanged }: Ask
 
       {/* Re-read offer (the recourse with teeth) */}
       {suggestedNote && noteTargetPath && (
-        <div className="mt-3 rounded-lg border border-lime-200 bg-lime-50 p-3">
-          <p className="text-sm text-lime-800">
+        <div className="mt-3 rounded-lg border border-border bg-muted p-3">
+          <p className="text-sm text-foreground">
             Re-read the clip with this context? <em>&ldquo;{suggestedNote}&rdquo;</em>
           </p>
           <div className="mt-2 flex gap-1">
@@ -168,7 +175,6 @@ export default function AskKriaPanel({ item, mode, onClose, onItemChanged }: Ask
               size="sm"
               disabled={applyingNote}
               onClick={applySuggestedNote}
-              className="text-lime-700 hover:text-lime-800"
             >
               {applyingNote ? "Saving…" : "Yes — re-read it"}
             </Button>
@@ -188,14 +194,7 @@ export default function AskKriaPanel({ item, mode, onClose, onItemChanged }: Ask
       {!thinking && suggestions.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
           {suggestions.map((s) => (
-            <Button
-              key={s}
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => send(s)}
-              className="hover:border-lime-400 hover:text-lime-700"
-            >
+            <Button key={s} type="button" variant="outline" size="sm" onClick={() => send(s)}>
               {s}
             </Button>
           ))}
