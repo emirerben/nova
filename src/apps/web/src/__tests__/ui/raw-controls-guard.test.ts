@@ -209,8 +209,11 @@ const LANE_0_BASELINE: Record<string, number> = {
 };
 
 // ── Lane A ──────────────────────────────────────────────────────────────
-// (none yet)
-const LANE_A_BASELINE: Record<string, number> = {};
+// Header.tsx migrated to DropdownMenu + Button (account menu); zero raw
+// controls remain.
+const LANE_A_BASELINE: Record<string, number> = {
+  "components/Header.tsx": 0,
+};
 
 // ── Lane B ──────────────────────────────────────────────────────────────
 // (none yet)
