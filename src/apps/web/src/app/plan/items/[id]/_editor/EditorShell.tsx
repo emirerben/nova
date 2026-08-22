@@ -6470,6 +6470,13 @@ export default function EditorShell({
       // (white-on-white) instead of just picking up bg-background.
       className="fixed inset-0 z-50 grid overflow-hidden bg-background text-foreground"
       style={{
+        // Without an explicit column track, the grid's implicit column sizes
+        // to the max-content width of whichever row (e.g. the top bar's
+        // copilot-save notice pill) demands the most space, letting the
+        // whole overlay — and everything docked to its right, like the
+        // mobile Save button — balloon past the viewport instead of
+        // wrapping/truncating in place.
+        gridTemplateColumns: "minmax(0, 1fr)",
         gridTemplateRows:
           layoutMode === "light"
             ? "56px minmax(0, 1fr) auto"
