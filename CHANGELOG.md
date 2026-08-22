@@ -12,6 +12,28 @@ All notable changes to this project will be documented in this file.
   every 2 min, worker never stopped. `inspect()` now runs on a dedicated
   connection with the 1s default (`queue_state._inspector`); the throttle stays
   on the long-lived worker consumers. Reproduced + verified against live Redis.
+## [0.47.0.0] — 2026-08-22
+
+### Design system
+- **shadcn/ui foundation (Kria Design System migration, Lane 0).** Installs
+  the shadcn/ui component library (`new-york` style) with Kria's editorial
+  theme: `Button`/`Badge`/`Input`/`Textarea`/`Select`/`Dialog`/`AlertDialog`/
+  `Sheet`/`DropdownMenu`/`Popover`/`Tooltip`/`Tabs`/`Toggle(Group)`/`Slider`/
+  `Skeleton`/`ScrollArea`/`Progress`/`Sonner` and friends, all under
+  `src/apps/web/src/components/ui/`. Ink pills, lime accents, zinc
+  `destructive` (never red — D10), `z-[130]` menus/popovers above `z-[100]`
+  dialogs/sheets. `InkButton`/`LightCard`/`ConfirmDialog` become thin
+  wrappers over the new primitives with identical props/import paths — every
+  existing call site keeps working unchanged.
+- **Raw-control ratchet.** A WARN-level `no-restricted-syntax` ESLint rule
+  plus `src/__tests__/ui/raw-controls-guard.test.ts` (a numeric baseline
+  ratchet, seeded from the current tree) flag hand-rolled
+  `<button>`/`<select>`/`<input>`/`<textarea>` outside `components/ui/**`
+  across `app/plan/**`, `app/generative/**`, and `components/**`. Each
+  downstream migration lane can only lower its files' counts; the last lane
+  flips the rule to `error` and deletes the guard test.
+- See DESIGN.md §15 "Component library (shadcn/ui)" for the full variant
+  table, token→hex map, and DO/DON'T list.
 
 ## [0.46.0.1] — 2026-08-22
 
