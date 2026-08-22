@@ -120,8 +120,10 @@ describe("WorkspaceHome (basic home)", () => {
     expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
   });
 
-  it("renders the TikTok connection card under the grid (release rails target /plan#tiktok)", async () => {
-    renderHome();
+  it("renders an Integrations section with the TikTok card under the grid (release rails target /plan#tiktok)", async () => {
+    const { container } = renderHome();
+    expect(screen.getByRole("heading", { name: "Integrations" })).toBeInTheDocument();
+    expect(container.querySelector("#tiktok")).toBeInTheDocument();
     expect(screen.getByTestId("tiktok-card")).toBeInTheDocument();
     await waitFor(() => expect(mockListMyJobs).toHaveBeenCalled());
   });

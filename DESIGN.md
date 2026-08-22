@@ -276,12 +276,20 @@ pending change.
 ### Basic home (`/plan`, `WorkspaceHome.tsx`)
 - **Canvas:** `bg-white`; centered column `max-w-[900px] px-6 pt-14`, sections gap-10.
 - **Create block (leads):** Fraunces `text-[32px] font-medium` "Make a new video." + `text-sm text-[#71717a]` sub-line "Pick what kind, add your footage — Kria edits it into a post." + ink pill `min-h-12 rounded-full bg-[#0c0c0e] text-white` "New video" → `/plan/new` (full-width on mobile, hugging on sm+). One primary CTA on the page.
-- **PAST EDITS section:** eyebrow `text-[11px] font-semibold uppercase tracking-[0.18em] text-[#3f3f46]`; grid `grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4` of `LibraryTile` (from `components/library/`, ex-/library); cursor-driven "Load more" zinc pill. Rendering tiles keep LibraryTile's shimmer; failed stay quiet zinc; no red.
+- **PAST EDITS section (v0.47 Kria Design System migration):** eyebrow `text-[11px] font-semibold uppercase tracking-[0.18em] text-[#3f3f46]`; grid `grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4` of `LibraryTile` (from `components/library/`, ex-/library); cursor-driven "Load more" `<Button variant="outline" size="sm">`. A tile is poster + status + one action — nothing more:
+  - **Poster:** 9:16 media, `rounded-xl`, no native `<video controls>` (a still first frame, not a scrubber).
+  - **Status:** absolute bottom-left over the media — `<Badge variant="lime-soft">Ready to post</Badge>` when rendered; `<Badge variant="zinc">` with a 6px lime dot "Rendering…" while in flight; a failed render swaps the whole media box for a dashed zinc tile with the job's structured failure copy (never the raw worker status) and, when the job is pinned to a plan item, "Open to retry.".
+  - **Open:** when `job.content_plan_item_id` is set, the ENTIRE tile is a `<Link href="/plan/items/{id}">`; hover/focus reveals a scrim + one white "Open" pill (`buttonVariants({variant:"outline",size:"pill"})`, no separate focusable element inside the link). A job with no plan item (legacy standalone generative rows, pre-#869/#871) renders status only — no Link, no Open pill.
+  - **Removed for good:** Download, Publish to TikTok, Add to plan, and the three feedback reactions (Like / More like this / Not for me / Add note) — `FeedbackButtons.tsx` is deleted outright. Download/Publish live only on the item page now (`me-api.ts`'s `sendFeedback`/`clearFeedback` stay for a possible future surface; nothing calls them from the product UI).
+  - If a TikTok publication exists for the job, its status block (`TikTokStatus`, inbox/public/metrics copy) still renders below the tile — informational only, not part of the hover reveal.
 - **Empty:** one quiet line `text-[15px] text-[#71717a]` "Your edits will live here." — no card, no icon.
 - **Plan generating:** quiet `text-[13px] text-[#71717a]` line under the CTA ("…you can start a video anyway"); creation never blocks on plan state.
 - **SeedUploadCard** still mounts above everything while `activation_status` ∈ {seeding, activating}.
-- **TikTok connection:** `TikTokConnectionCard` at the bottom under `id="tiktok"`; TikTokReleaseRail connect/reconnect links target `/plan#tiktok`.
-- **Initial load:** SHIMMER tier — 4 ghost 9:16 tiles.
+- **Integrations section (v0.47 Kria Design System migration):** eyebrow `text-[11px] font-semibold uppercase tracking-[0.18em] text-[#a1a1aa]` "Integrations" over a `rounded-2xl border border-zinc-200 bg-white p-4` row (`id="tiktok"` kept — TikTokReleaseRail connect/reconnect links still target `/plan#tiktok`):
+  - 44px `rounded-[12px]` ink square holding the TikTok glyph (24px, `currentColor`, `aria-hidden`) · "TikTok" + a status `Badge` — `lime-soft` "Connected" (with a "Private beta" `Tooltip` while `!audited`), `zinc` "Reconnect required", or `zinc` "Partial access" — · one-line meta (`synced 2h ago`-style, or "Post straight from Kria" when not connected).
+  - Trailing slot: `<Button variant="ink" size="sm">` Connect/Reconnect while disconnected/reconnect-required/partial, otherwise a ghost `size="icon"` overflow (lucide `MoreHorizontal`, `aria-label="More TikTok actions"`) with "Sync performance" (when `can_analyze`) and "Disconnect".
+  - Disconnect is an `AlertDialog` ("Disconnect TikTok?" / "Erases the stored TikTok credentials. Your videos stay." / confirm "Disconnect") — never `window.confirm`.
+- **Initial load:** SHIMMER tier — 4 ghost 9:16 tiles (`<Skeleton>` with the shimmer gradient class, not the default `animate-pulse`).
 
 ### New-video chooser (`/plan/new`)
 - Full-screen steps on white: 44px `×`/`‹` back + "Step N of M" muted label (montage = 3 steps: kind → style → footage; other types = 2). Fraunces `text-[30px]` titles ("What kind of video?" / "Pick a style.").

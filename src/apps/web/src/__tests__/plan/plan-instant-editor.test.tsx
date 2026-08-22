@@ -117,10 +117,6 @@ jest.mock("@/app/plan/_components/SignInPrompt", () => ({
   __esModule: true,
   default: () => <div data-testid="sign-in-prompt" />,
 }));
-jest.mock("@/components/library/FeedbackButtons", () => ({
-  __esModule: true,
-  default: () => <div data-testid="feedback-buttons" />,
-}));
 // IntroTextPreview measures fonts via canvas — stub to a marker so we can assert
 // the live overlay mounted without pulling in canvas/measureText in jsdom.
 jest.mock("@/components/variant-editor/IntroTextPreview", () => ({
