@@ -327,31 +327,9 @@ describe("PlanItemPage — masonry collage item UX", () => {
     return render(<PlanItemPage />);
   }
 
-  it("renders STYLE tiles with real imagery instead of text-only cards", async () => {
-    await act(async () => {
-      renderMasonryItem({ montage_preset: "classic" });
-    });
-
-    // The picker mounts via the setup receipt's "Change" toggle, opening on
-    // the TYPE rail; the STYLE disclosure row then reveals the shelf with
-    // real placeholder footage per tile.
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Change" }));
-    });
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /^Style/ }));
-    });
-    const shelf = screen.getByRole("radiogroup", { name: "Style" });
-    // Tiles are hover-to-play muted loops: poster frame + video source per style.
-    for (const name of ["classic", "masonry", "polaroid"]) {
-      const video = shelf.querySelector(
-        `video[poster="/plan/style-tiles/${name}.jpg"]`,
-      ) as HTMLVideoElement | null;
-      expect(video).not.toBeNull();
-      expect(video?.getAttribute("src")).toBe(`/plan/style-tiles/${name}.mp4`);
-      expect(video?.muted ?? video?.hasAttribute("muted")).toBeTruthy();
-    }
-  });
+  // STYLE-tile imagery is now exclusively picked on /plan/new (Lane J removed
+  // the item page's inline Change toggle + SetupPicker mount) — see
+  // plan-new-chooser.test.tsx for that coverage.
 
   it.each(["masonry", "polaroid_wall"])(
     "uses compact collage uploads for %s even when the item has a filming guide",
@@ -1596,16 +1574,29 @@ describe("PlanItemPage — per-type setup truth table (V2 redesign)", () => {
     expect(screen.queryByRole("button", { name: /Original audio/i })).toBeNull();
   });
 
-  it("setup receipt Change toggle mounts the type picker (no nested details)", async () => {
+  it("Lane J: no Change button, no inline SetupPicker — ever", async () => {
     await act(async () => {
       renderTyped({ edit_format: "montage", idea: "Montage" });
     });
     expect(screen.queryByText("Advanced video style")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Change" })).toBeNull();
     expect(screen.queryByTestId("setup-picker")).toBeNull();
+  });
+
+  it("Lane J: Back returns to the chooser's style step for a montage item", async () => {
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Change" }));
+      renderTyped({ edit_format: "montage", idea: "Montage", montage_preset: "masonry" });
     });
-    expect(screen.getByTestId("setup-picker")).toBeInTheDocument();
+    const back = screen.getByRole("link", { name: /Back/ });
+    expect(back).toHaveAttribute("href", "/plan/new?item=test-item-id&step=style");
+  });
+
+  it("Lane J: Back returns to the chooser's kind step for a non-montage item", async () => {
+    await act(async () => {
+      renderTyped({ edit_format: "narrated_ready", idea: "Voiceover" });
+    });
+    const back = screen.getByRole("link", { name: /Back/ });
+    expect(back).toHaveAttribute("href", "/plan/new?item=test-item-id&step=kind");
   });
 
   it("titled legacy items keep their real title (no type-label takeover)", async () => {

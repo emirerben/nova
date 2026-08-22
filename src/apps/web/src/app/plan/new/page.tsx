@@ -15,10 +15,16 @@
  * that leaves nothing): addIdea → updatePlanItem(edit_format [+
  * montage_preset]) → item page with ?setup=done so the setup receipt leads
  * and the uploader is first.
+ *
+ * Lane J — `?item=<id>` (+ optional `&step=kind|style`) repurposes this same
+ * chooser as the item-setup page's "Back" destination: no item is created,
+ * the existing item's kind/style is pre-selected from the server, and a tap
+ * PATCHes it via updatePlanItem instead of addIdea, then returns to the item
+ * page. The × / back control cancels to the item page instead of /plan.
  */
 
-import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
 import SignInPrompt from "@/app/plan/_components/SignInPrompt";
@@ -27,11 +33,12 @@ import { Button } from "@/components/ui/button";
 import {
   addIdea,
   getContentPlan,
+  getPlanItem,
   updatePlanItem,
   type ContentPlan,
   type MontagePreset,
 } from "@/lib/plan-api";
-import type { PickerEditFormat } from "@/lib/edit-format";
+import { resolvePickerFormat, type PickerEditFormat } from "@/lib/edit-format";
 import {
   MediaRadioCard,
   persistedEditFormatFor,
@@ -58,19 +65,41 @@ function radioGroupKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
 }
 
 export default function NewVideoPage() {
+  return (
+    <Suspense>
+      <NewVideoPageInner />
+    </Suspense>
+  );
+}
+
+function NewVideoPageInner() {
   const { status: authStatus } = useSession();
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Lane J: editing an existing item's kind/style rather than creating a new
+  // one. itemId is read once at mount — the URL doesn't change within this
+  // page's lifetime (a submit navigates away entirely).
+  const [itemId] = useState<string | null>(() => searchParams.get("item"));
+  const [step, setStep] = useState<"kind" | "style">(() =>
+    itemId && searchParams.get("step") === "style" ? "style" : "kind",
+  );
 
   const [plan, setPlan] = useState<ContentPlan | null>(null);
-  const [planState, setPlanState] = useState<"loading" | "ready" | "missing">("loading");
-  const [step, setStep] = useState<"kind" | "style">("kind");
+  const [planState, setPlanState] = useState<"loading" | "ready" | "missing">(
+    itemId ? "ready" : "loading",
+  );
+  const [itemLoadState, setItemLoadState] = useState<"loading" | "ready" | "missing">(
+    itemId ? "loading" : "ready",
+  );
   const [selected, setSelected] = useState<PickerEditFormat>("montage");
   const [selectedStyle, setSelectedStyle] = useState<MontagePreset>("classic");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // New-item mode: fetch the plan so a final tap can addIdea(plan.id, ...).
   useEffect(() => {
-    if (authStatus !== "authenticated") return;
+    if (authStatus !== "authenticated" || itemId) return;
     let cancelled = false;
     getContentPlan()
       .then((p) => {
@@ -88,12 +117,38 @@ export default function NewVideoPage() {
     return () => {
       cancelled = true;
     };
-  }, [authStatus]);
+  }, [authStatus, itemId]);
 
-  // No plan yet (brand-new user) → the /plan router owns onboarding.
+  // Edit-existing-item mode: pre-select the item's current kind/style from
+  // the server instead of defaulting to montage/classic.
+  useEffect(() => {
+    if (authStatus !== "authenticated" || !itemId) return;
+    let cancelled = false;
+    getPlanItem(itemId)
+      .then((it) => {
+        if (cancelled) return;
+        setSelected(resolvePickerFormat(it.edit_format, SUBTITLED_ENABLED));
+        setSelectedStyle((it.montage_preset as MontagePreset | null) ?? "classic");
+        setItemLoadState("ready");
+      })
+      .catch(() => {
+        if (!cancelled) setItemLoadState("missing");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authStatus, itemId]);
+
+  // No plan yet (brand-new user) → the /plan router owns onboarding. Only
+  // applies in new-item mode — edit-existing-item mode never touches the plan.
   useEffect(() => {
     if (planState === "missing") router.replace("/plan");
   }, [planState, router]);
+
+  // Item vanished (deleted / bad id) mid edit-flow → back to the plan list.
+  useEffect(() => {
+    if (itemLoadState === "missing") router.replace("/plan");
+  }, [itemLoadState, router]);
 
   const typeValues: PickerEditFormat[] = [
     "montage",
@@ -109,35 +164,58 @@ export default function NewVideoPage() {
   // Takes explicit args rather than reading `selected`/`selectedStyle` state:
   // the caller just called setSelected/setSelectedStyle, and that state read
   // would still be stale on this render (state updates aren't synchronous).
-  const createItem = useCallback(
+  //
+  // Edit-existing-item mode (itemId set): PATCH the existing item instead of
+  // creating a new one, then return to it — never mints a new plan item.
+  const submitSelection = useCallback(
     async (kind: PickerEditFormat, style: MontagePreset) => {
-      if (creating || !plan) return;
+      if (creating) return;
+
+      if (itemId) {
+        setCreating(true);
+        setError(null);
+        try {
+          await updatePlanItem(itemId, {
+            edit_format: persistedEditFormatFor(kind),
+            ...(kind === "montage"
+              ? { content_mode: "existing_footage" as const, montage_preset: style }
+              : {}),
+          });
+          router.push(`/plan/items/${itemId}?setup=done`);
+        } catch {
+          setError("That didn't go through — try again.");
+          setCreating(false);
+        }
+        return;
+      }
+
+      if (!plan) return;
       setCreating(true);
       setError(null);
-      let itemId: string;
+      let newItemId: string;
       try {
         const item = await addIdea(plan.id, TYPE_COPY[kind].label);
-        itemId = item.id;
+        newItemId = item.id;
       } catch {
         setError("That didn't go through — try again.");
         setCreating(false);
         return;
       }
       try {
-        await updatePlanItem(itemId, {
+        await updatePlanItem(newItemId, {
           edit_format: persistedEditFormatFor(kind),
           ...(kind === "montage"
             ? { content_mode: "existing_footage" as const, montage_preset: style }
             : {}),
         });
-        router.push(`/plan/items/${itemId}?setup=done`);
+        router.push(`/plan/items/${newItemId}?setup=done`);
       } catch {
         // Item exists but the type didn't stick — land on the item page with the
         // TYPE rail open so the user can re-pick there. No dead end.
-        router.push(`/plan/items/${itemId}`);
+        router.push(`/plan/items/${newItemId}`);
       }
     },
-    [creating, plan, router],
+    [creating, plan, router, itemId],
   );
 
   if (authStatus === "loading") {
@@ -154,8 +232,16 @@ export default function NewVideoPage() {
       </LightShell>
     );
   }
+  // Edit-existing-item mode: hold the picker until the item's real kind/style
+  // loads, so cards never flash the montage/classic defaults for an item that
+  // is actually something else.
+  if (itemId && itemLoadState === "loading") {
+    return <LightShell size="narrow">{null}</LightShell>;
+  }
 
   const onStyleStep = step === "style";
+  const kindStepHref = itemId ? `/plan/items/${itemId}` : "/plan";
+  const kindStepLabel = itemId ? "Cancel" : "Back to your videos";
 
   return (
     <div className="min-h-screen bg-white">
@@ -178,7 +264,7 @@ export default function NewVideoPage() {
             </Button>
           ) : (
             <Button variant="ghost" size="icon" asChild className="text-[22px] leading-none text-[#3f3f46]">
-              <Link href="/plan" aria-label="Back to your videos">
+              <Link href={kindStepHref} aria-label={kindStepLabel}>
                 ×
               </Link>
             </Button>
@@ -214,7 +300,7 @@ export default function NewVideoPage() {
                   desc={tile.desc}
                   onSelect={() => {
                     setSelectedStyle(tile.value);
-                    void createItem("montage", tile.value);
+                    void submitSelection("montage", tile.value);
                   }}
                 />
               ))}
@@ -251,7 +337,7 @@ export default function NewVideoPage() {
                     if (value === "montage") {
                       setStep("style");
                     } else {
-                      void createItem(value, selectedStyle);
+                      void submitSelection(value, selectedStyle);
                     }
                   }}
                 />

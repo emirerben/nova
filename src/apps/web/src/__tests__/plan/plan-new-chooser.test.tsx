@@ -12,10 +12,13 @@ import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 
 import NewVideoPage from "@/app/plan/new/page";
-import { addIdea, getContentPlan, updatePlanItem } from "@/lib/plan-api";
+import { addIdea, getContentPlan, getPlanItem, updatePlanItem } from "@/lib/plan-api";
 
 const push = jest.fn();
 const replace = jest.fn();
+// Mutable so individual tests can simulate `?item=<id>&step=...` — reset to
+// empty (new-item mode) in beforeEach.
+let mockSearchParams = new URLSearchParams();
 
 jest.mock("next-auth/react", () => ({
   useSession: () => ({ status: "authenticated" }),
@@ -23,10 +26,12 @@ jest.mock("next-auth/react", () => ({
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push, replace }),
+  useSearchParams: () => mockSearchParams,
 }));
 
 jest.mock("@/lib/plan-api", () => ({
   getContentPlan: jest.fn(),
+  getPlanItem: jest.fn(),
   addIdea: jest.fn(),
   updatePlanItem: jest.fn(),
 }));
@@ -37,6 +42,7 @@ jest.mock("@/app/plan/_components/SignInPrompt", () => ({
 }));
 
 const mockGetContentPlan = getContentPlan as jest.MockedFunction<typeof getContentPlan>;
+const mockGetPlanItem = getPlanItem as jest.MockedFunction<typeof getPlanItem>;
 const mockAddIdea = addIdea as jest.MockedFunction<typeof addIdea>;
 const mockUpdatePlanItem = updatePlanItem as jest.MockedFunction<typeof updatePlanItem>;
 
@@ -44,7 +50,11 @@ describe("/plan/new chooser", () => {
   beforeEach(() => {
     push.mockReset();
     replace.mockReset();
+    mockSearchParams = new URLSearchParams();
     mockGetContentPlan.mockReset().mockResolvedValue({ id: "plan-1", items: [] });
+    mockGetPlanItem
+      .mockReset()
+      .mockResolvedValue({ id: "existing-1", edit_format: "montage", montage_preset: "classic" });
     mockAddIdea.mockReset().mockResolvedValue({ id: "item-1" });
     mockUpdatePlanItem.mockReset().mockResolvedValue({ id: "item-1" });
   });
@@ -186,5 +196,127 @@ describe("/plan/new chooser", () => {
     mockGetContentPlan.mockResolvedValue(null);
     render(<NewVideoPage />);
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/plan"));
+  });
+
+  describe("Lane J — ?item=<id> edits an existing item instead of creating one", () => {
+    async function readyForItem() {
+      render(<NewVideoPage />);
+      await waitFor(() =>
+        expect(screen.getByRole("radio", { name: /Montage/ })).not.toHaveAttribute(
+          "aria-disabled",
+        ),
+      );
+    }
+
+    it("kind step: pre-selects the item's current kind and never calls getContentPlan/addIdea", async () => {
+      mockSearchParams = new URLSearchParams({ item: "existing-1" });
+      mockGetPlanItem.mockResolvedValue({
+        id: "existing-1",
+        edit_format: "narrated_ready",
+        montage_preset: "classic",
+      });
+      await readyForItem();
+      expect(mockGetPlanItem).toHaveBeenCalledWith("existing-1");
+      expect(screen.getByRole("radio", { name: /Voiceover/ })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+      expect(mockGetContentPlan).not.toHaveBeenCalled();
+    });
+
+    it("step=style opens directly on the style step, pre-selecting the item's montage_preset", async () => {
+      mockSearchParams = new URLSearchParams({ item: "existing-1", step: "style" });
+      mockGetPlanItem.mockResolvedValue({
+        id: "existing-1",
+        edit_format: "montage",
+        montage_preset: "masonry",
+      });
+      render(<NewVideoPage />);
+      expect(await screen.findByText("Pick a style.")).toBeInTheDocument();
+      expect(screen.getByRole("radio", { name: /Masonry/ })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+    });
+
+    it("tapping a kind card updates the existing item via updatePlanItem, not addIdea", async () => {
+      mockSearchParams = new URLSearchParams({ item: "existing-1" });
+      mockGetPlanItem.mockResolvedValue({
+        id: "existing-1",
+        edit_format: "montage",
+        montage_preset: "classic",
+      });
+      await readyForItem();
+      fireEvent.click(screen.getByRole("radio", { name: /Voiceover/ }));
+      await waitFor(() =>
+        expect(push).toHaveBeenCalledWith("/plan/items/existing-1?setup=done"),
+      );
+      expect(mockAddIdea).not.toHaveBeenCalled();
+      expect(mockUpdatePlanItem).toHaveBeenCalledWith("existing-1", {
+        edit_format: "narrated_ready",
+      });
+    });
+
+    it("tapping a style card updates the existing item's montage_preset", async () => {
+      mockSearchParams = new URLSearchParams({ item: "existing-1", step: "style" });
+      mockGetPlanItem.mockResolvedValue({
+        id: "existing-1",
+        edit_format: "montage",
+        montage_preset: "classic",
+      });
+      render(<NewVideoPage />);
+      await screen.findByText("Pick a style.");
+      fireEvent.click(screen.getByRole("radio", { name: /Masonry/ }));
+      await waitFor(() =>
+        expect(push).toHaveBeenCalledWith("/plan/items/existing-1?setup=done"),
+      );
+      expect(mockAddIdea).not.toHaveBeenCalled();
+      expect(mockUpdatePlanItem).toHaveBeenCalledWith("existing-1", {
+        edit_format: "montage",
+        content_mode: "existing_footage",
+        montage_preset: "masonry",
+      });
+    });
+
+    it("× on the kind step returns to the item instead of /plan", async () => {
+      mockSearchParams = new URLSearchParams({ item: "existing-1" });
+      mockGetPlanItem.mockResolvedValue({
+        id: "existing-1",
+        edit_format: "montage",
+        montage_preset: "classic",
+      });
+      await readyForItem();
+      const cancel = screen.getByRole("link", { name: "Cancel" });
+      expect(cancel).toHaveAttribute("href", "/plan/items/existing-1");
+    });
+
+    it("‹ on the style step still returns to the kind step (local, no navigation)", async () => {
+      mockSearchParams = new URLSearchParams({ item: "existing-1", step: "style" });
+      mockGetPlanItem.mockResolvedValue({
+        id: "existing-1",
+        edit_format: "montage",
+        montage_preset: "classic",
+      });
+      render(<NewVideoPage />);
+      await screen.findByText("Pick a style.");
+      fireEvent.click(screen.getByRole("button", { name: "Back to video kind" }));
+      expect(await screen.findByText("What kind of video?")).toBeInTheDocument();
+      expect(mockAddIdea).not.toHaveBeenCalled();
+      expect(mockUpdatePlanItem).not.toHaveBeenCalled();
+    });
+
+    it("updatePlanItem failure on the existing item shows the retryable error, no navigation", async () => {
+      mockSearchParams = new URLSearchParams({ item: "existing-1" });
+      mockGetPlanItem.mockResolvedValue({
+        id: "existing-1",
+        edit_format: "montage",
+        montage_preset: "classic",
+      });
+      mockUpdatePlanItem.mockRejectedValueOnce(new Error("patch failed"));
+      await readyForItem();
+      fireEvent.click(screen.getByRole("radio", { name: /Voiceover/ }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(/try again/i);
+      expect(push).not.toHaveBeenCalled();
+    });
   });
 });

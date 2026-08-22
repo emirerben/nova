@@ -73,7 +73,7 @@ import { resolveSfxPreviewUrls, sfxUrlKey } from "@/lib/sfx-preview-urls";
 import { VoiceRecorder } from "../../../generative/VoiceRecorder";
 import ShotSlotUploader, { ClipNoteControl } from "./components/ShotSlotUploader";
 import AskKriaPanel from "./components/AskKriaPanel";
-import SetupPicker, { STYLE_TILES, TYPE_COPY } from "./components/SetupPicker";
+import { STYLE_TILES, TYPE_COPY } from "./components/SetupPicker";
 import {
   getGenerativeStyleSets,
   type GenerativeStyleSet,
@@ -590,8 +590,6 @@ export default function PlanItemPage() {
   // focus (original_text). The choose-audio UI was removed in the per-type
   // setup redesign; type changes go through the setup receipt only.
   const [audioPreference, setAudioPreference] = useState<"kria" | "original" | "voiceover">("kria");
-  // Setup receipt "Change" toggle — mounts the type/style poster picker.
-  const [setupPickerOpen, setSetupPickerOpen] = useState(false);
   // Guided-edit conversation with Kria now lives in a Sheet (PlanThreadPanel)
   // instead of morphing the setup zone inline (DESIGN.md §12).
   const [threadOpen, setThreadOpen] = useState(false);
@@ -974,6 +972,9 @@ export default function PlanItemPage() {
   const resolvedFormat = resolvePickerFormat(item?.edit_format, SUBTITLED_ENABLED);
   const montagePreset = item?.montage_preset ?? "classic";
   const isMontage = resolvedFormat === "montage";
+  // Lane J: "Back" returns one step into /plan/new — montage's immediate
+  // previous step is the style choice, everything else is the kind choice.
+  const backToFlowHref = `/plan/new?item=${itemId}&step=${isMontage ? "style" : "kind"}`;
   const isCollagePreset =
     isMontage && COLLAGE_MONTAGE_PRESETS.has(montagePreset);
   const isNarrated = resolvedFormat === "narrated_planned";
@@ -1942,27 +1943,29 @@ export default function PlanItemPage() {
           <div>
             {!showReleaseDesk && (
               <>
-                <Link
-                  href="/plan"
-                  className="text-sm text-[#71717a] underline-offset-2 transition-colors hover:text-[#0c0c0e]"
+                {/* Lane J: "Back" returns one step into the creation flow
+                    (/plan/new) instead of home to /plan — montage items land
+                    on the style step since that's the immediate previous
+                    choice, everything else lands on the kind step. The old
+                    "your videos" destination stays reachable via the header
+                    logo/avatar menu. */}
+                <Button
+                  type="button"
+                  variant="link"
+                  size="sm"
+                  asChild
+                  className="h-auto p-0 text-sm text-[#71717a] hover:text-[#0c0c0e]"
                 >
-                  ← your videos
-                </Link>
-                {/* Setup receipt: type (+ montage style) with a Change toggle for the
-                    poster picker — replaces the old buried "Advanced video style"
-                    disclosure (design: Paper "V2 — Item setup per type"). */}
+                  <Link href={backToFlowHref}>
+                    <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+                    Back
+                  </Link>
+                </Button>
+                {/* Setup receipt: type (+ montage style). Editing now happens by
+                    going Back into the /plan/new chooser (Lane J) — the inline
+                    "Change" toggle + poster picker are gone. */}
                 <div className="mt-5 flex items-baseline justify-between gap-3">
                   <Badge variant="lime">{setupReceiptLabel}</Badge>
-                  {showSetupControls && (
-                    <Button
-                      type="button"
-                      variant="link"
-                      size="sm"
-                      onClick={() => setSetupPickerOpen((v) => !v)}
-                    >
-                      {setupPickerOpen ? "Done" : "Change"}
-                    </Button>
-                  )}
                 </div>
                 <h1 className="font-display mt-1 text-3xl text-[#0c0c0e]">
                   {isUntitledTypeLabel ? setupTitle : item.theme ?? item.idea}
@@ -1975,38 +1978,6 @@ export default function PlanItemPage() {
 
             {showSetupControls && (
               <>
-              {/* TYPE / STYLE poster picker — mounted only via the setup receipt's
-                  "Change" toggle in the header (design: Paper "V2 — Item setup per
-                  type"; replaces the old nested "Advanced video style" details). */}
-              {setupPickerOpen &&
-                item.status !== "generating" &&
-                item.status !== "ready" &&
-                variants.length === 0 && (
-                <div className="mb-4">
-                <SetupPicker
-                  resolvedFormat={resolvedFormat}
-                  rawEditFormat={rawEditFormat}
-                  montagePreset={montagePreset}
-                  subtitledEnabled={SUBTITLED_ENABLED}
-                  // Intentionally shown only for legacy talking_head items — not a
-                  // generally reachable card in the current picker.
-                  showTalkingHead={isTalkingHead}
-                  hasGuide={(item.filming_guide?.length ?? 0) > 0}
-                  contentMode={contentMode}
-                  startCollapsed={false}
-                  onPatch={async (updates) => {
-                    // Rejections propagate so the picker can drop its optimistic
-                    // state; refetch either way so props reflect the server.
-                    try {
-                      await updatePlanItem(item.id, updates);
-                    } finally {
-                      refetch();
-                    }
-                  }}
-                />
-                </div>
-              )}
-
               {/* One-card setup surface (Lane G): Clips/Visuals tabs, Tell Kria,
                   and the Generate CTA all live in a single shadcn Card instead of
                   the old stack of bordered blocks. */}
