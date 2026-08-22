@@ -59,6 +59,27 @@ log = structlog.get_logger()
 # than skip a sweep. Matches the reaper's historic constant.
 _INSPECT_TIMEOUT_S = 5
 
+# inspect() replies arrive on a per-call reply queue that kombu's Redis
+# transport drains with BRPOP, and the BRPOP timeout is the connection's
+# `polling_interval`. worker.py raises the app-wide polling_interval to 10s
+# (Upstash idle-command cost, v0.46.0.1), which made every inspect call block
+# ~10s instead of `_INSPECT_TIMEOUT_S` and intermittently drop replies — the
+# render-worker lifecycle task then hit its 30s soft limit every run and the
+# worker never autostopped (2026-08-22). So every inspect here goes through a
+# dedicated connection with the kombu default 1s interval; the throttled
+# interval stays on the long-lived worker consumers only. Reproduced and
+# verified against a live Redis in both directions before this landed.
+_INSPECT_POLLING_INTERVAL_S = 1
+
+
+def _inspector(celery_app: Celery):
+    """Return (connection, inspector) — caller must close the connection."""
+    conn = celery_app.connection_for_write(
+        transport_options={"polling_interval": _INSPECT_POLLING_INTERVAL_S}
+    )
+    return conn, celery_app.control.inspect(timeout=_INSPECT_TIMEOUT_S, connection=conn)
+
+
 # Cap how many queued tasks we decode when computing oldest_pending_job_id
 # / queue position. Deeper-than-this queues are pathological and the
 # admin UI just shows "100+".
@@ -139,10 +160,11 @@ def get_live_job_index(celery_app: Celery) -> LiveJobIndex:
     "unknown".
     """
     try:
-        inspector = celery_app.control.inspect(timeout=_INSPECT_TIMEOUT_S)
-        active = inspector.active() or {}
-        reserved = inspector.reserved() or {}
-        ping = inspector.ping() or {}
+        conn, inspector = _inspector(celery_app)
+        with conn:
+            active = inspector.active() or {}
+            reserved = inspector.reserved() or {}
+            ping = inspector.ping() or {}
     except Exception as exc:  # noqa: BLE001
         log.warning("queue_state_inspect_failed", error=str(exc))
         return LiveJobIndex(ok=False)
@@ -210,9 +232,10 @@ def get_queue_snapshot(celery_app: Celery) -> QueueSnapshot:
     try:
         # Pull workers from inspect() so we don't issue two separate
         # broker calls for the same data.
-        inspector = celery_app.control.inspect(timeout=_INSPECT_TIMEOUT_S)
-        ping = inspector.ping() or {}
-        active_queues = inspector.active_queues() or {}
+        conn, inspector = _inspector(celery_app)
+        with conn:
+            ping = inspector.ping() or {}
+            active_queues = inspector.active_queues() or {}
     except Exception as exc:  # noqa: BLE001
         log.warning("queue_snapshot_inspect_failed", error=str(exc))
         return QueueSnapshot(queues=[], active_workers=[], ok=False)
@@ -311,10 +334,11 @@ def render_worker_idle(celery_app: Celery) -> bool | None:
          true then; queue depth is what actually detects pending work.
     """
     try:
-        inspector = celery_app.control.inspect(timeout=_INSPECT_TIMEOUT_S)
-        active = inspector.active() or {}
-        reserved = inspector.reserved() or {}
-        active_queues = inspector.active_queues() or {}
+        conn, inspector = _inspector(celery_app)
+        with conn:
+            active = inspector.active() or {}
+            reserved = inspector.reserved() or {}
+            active_queues = inspector.active_queues() or {}
     except Exception as exc:  # noqa: BLE001
         log.warning("render_worker_idle_inspect_failed", error=str(exc))
         return None
