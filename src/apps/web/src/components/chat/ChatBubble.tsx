@@ -3,11 +3,11 @@
 import type { ReactNode } from "react";
 
 /**
- * Shared chat bubble, visual language copied from CopilotDrawer's inline
- * message bubbles (dark right-aligned user bubble, light left-aligned
- * assistant bubble). NOT imported by CopilotDrawer — that surface stays
- * byte-identical; this is a standalone primitive for other chat-shaped
- * surfaces (see EditProposalCard).
+ * Shared chat bubble (stock shadcn tokens, DESIGN.md §15 — Kria Design
+ * System migration, Lane K): dark right-aligned user bubble, muted
+ * left-aligned assistant bubble. Used by every bubble-thread surface —
+ * CopilotDrawer's inline messages, EditProposalCard's ConversationThread,
+ * and AskKriaPanel.
  */
 export function ChatBubble({
   role,
@@ -23,10 +23,10 @@ export function ChatBubble({
   return (
     <div
       className={[
-        "whitespace-pre-line break-words rounded-[18px] px-3.5 py-2.5 text-sm leading-5",
+        "whitespace-pre-line break-words rounded-lg px-3 py-2 text-sm leading-relaxed max-w-[85%]",
         isUser
-          ? "ml-auto max-w-[85%] rounded-br-md bg-[#0c0c0e] text-white"
-          : "mr-auto max-w-[85%] rounded-bl-md bg-zinc-100 text-[#0c0c0e]",
+          ? "ml-auto rounded-br-sm bg-primary text-primary-foreground"
+          : "mr-auto rounded-bl-sm bg-muted text-foreground",
         pending ? "opacity-60" : "",
       ].join(" ")}
     >

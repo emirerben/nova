@@ -26,6 +26,20 @@ import {
   type PlanItem,
 } from "@/lib/plan-api";
 import { InfoDot } from "@/components/ui/InfoDot";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { ArrowUp, ChevronDown, ChevronUp } from "lucide-react";
 import { ChatBubble } from "@/components/chat/ChatBubble";
 import { ChatThinking } from "@/components/chat/ChatThinking";
 import { useAutoScrollToEnd } from "@/components/chat/useAutoScrollToEnd";
@@ -118,7 +132,7 @@ function MediaThumb({
         role="img"
         aria-label={`${label}: preview unavailable`}
         title={`${label}: preview unavailable`}
-        className="flex h-14 w-10 shrink-0 items-center justify-center rounded-md bg-zinc-100 px-1 text-center text-[9px] text-zinc-500"
+        className="flex h-14 w-10 shrink-0 items-center justify-center rounded-md bg-muted px-1 text-center text-[9px] text-muted-foreground"
       >
         {failed ? "File" : kind === "image" ? "Photo" : "Video"}
       </div>
@@ -410,33 +424,35 @@ export default function EditProposalCard({
         />
 
         {conversationRetryRequired ? (
-          <p role="status" className="mt-3 text-sm text-[#71717a]">
+          <p role="status" className="mt-3 text-sm text-muted-foreground">
             That reply took too long. Send your direction again to continue.
           </p>
         ) : !sending ? (
           <div className="mt-4 flex flex-wrap gap-2">
             {suggestions.map((suggestion) => (
-              <button
+              <Button
                 key={suggestion}
                 type="button"
+                variant="outline"
+                size="sm"
                 disabled={chipsDisabled}
                 onClick={() => void sendConversation(suggestion, reviewing)}
-                className="min-h-11 rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm text-[#3f3f46] outline-none transition-colors hover:border-lime-600 hover:text-[#0c0c0e] focus-visible:ring-2 focus-visible:ring-lime-600 disabled:cursor-not-allowed disabled:opacity-40"
+                className="hover:border-lime-400 hover:text-lime-700"
               >
                 {suggestion}
-              </button>
+              </Button>
             ))}
           </div>
         ) : null}
 
         {!hasMedia ? (
-          <p role="status" className="mt-3 rounded-lg border border-zinc-200 bg-[#ffffff] px-3 py-2 text-sm text-[#71717a]">
+          <p role="status" className="mt-3 rounded-lg border border-border bg-background px-3 py-2 text-sm text-muted-foreground">
             {EMPTY_MEDIA_MESSAGE}
           </p>
         ) : null}
 
         <form
-          className="mt-4 flex items-end gap-2 rounded-2xl border border-zinc-200 bg-white px-3 py-2 focus-within:border-lime-500 focus-within:ring-2 focus-within:ring-lime-500/20"
+          className="mt-4 flex items-end gap-2 rounded-2xl border border-input bg-background px-3 py-2 focus-within:border-lime-500 focus-within:ring-2 focus-within:ring-lime-500/20"
           onSubmit={(event) => {
             event.preventDefault();
             void sendConversation(message, reviewing);
@@ -445,7 +461,7 @@ export default function EditProposalCard({
           <label htmlFor="edit-guide-message" className="sr-only">
             Tell Kria what you want in the edit
           </label>
-          <textarea
+          <Textarea
             ref={inputRef}
             id="edit-guide-message"
             value={message}
@@ -459,61 +475,56 @@ export default function EditProposalCard({
             rows={1}
             maxLength={1000}
             placeholder={reviewing ? "For example: focus more on the food…" : "Tell me in your own words…"}
-            className="min-h-11 flex-1 resize-none bg-transparent py-2 text-base text-[#0c0c0e] outline-none placeholder:text-[#a1a1aa] [field-sizing:content]"
+            className="min-h-11 flex-1 resize-none border-0 bg-transparent px-0 py-2 shadow-none outline-none focus-visible:ring-0 [field-sizing:content]"
           />
-          <button
+          <Button
             type="submit"
+            size="icon"
             disabled={working || conversationInProgress || !message.trim() || !hasMedia}
             aria-label="Send direction"
-            className="flex min-h-11 min-w-11 items-center justify-center rounded-full bg-[#0c0c0e] text-white outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2 disabled:opacity-25"
+            className="shrink-0 rounded-full"
           >
-            →
-          </button>
+            <ArrowUp className="h-4 w-4" />
+          </Button>
         </form>
 
         {showBrief ? (
-          <div className="mt-4 border-t border-zinc-200 pt-4">
-            <p className="text-xs font-medium text-[#71717a]">What I heard</p>
+          <div className="mt-4 border-t border-border pt-4">
+            <p className="text-xs font-medium text-muted-foreground">What I heard</p>
             <div className="mt-2 flex flex-wrap gap-2">
-              <span className="rounded-full border border-lime-200 bg-lime-50 px-3 py-1 text-xs text-lime-800">
-                {DIRECTION_LABELS[brief.direction]}
-              </span>
-              <span className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs text-[#3f3f46]">
-                {PACE_LABELS[brief.pace]} pace
-              </span>
-              <span className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs text-[#3f3f46]">
-                About {brief.duration_s}s
-              </span>
+              <Badge variant="secondary">{DIRECTION_LABELS[brief.direction]}</Badge>
+              <Badge variant="outline">{PACE_LABELS[brief.pace]} pace</Badge>
+              <Badge variant="outline">About {brief.duration_s}s</Badge>
             </div>
-            {brief.goal ? <p className="mt-2 text-sm text-[#3f3f46]">{brief.goal}</p> : null}
+            {brief.goal ? <p className="mt-2 text-sm text-foreground">{brief.goal}</p> : null}
           </div>
         ) : null}
 
-        {error ? <p role="alert" className="mt-3 text-sm text-red-700">{error}</p> : null}
+        {error ? <p role="alert" className="mt-3 text-sm text-destructive">{error}</p> : null}
 
         {!reviewing ? (
           <div className="mt-4 flex flex-wrap items-center gap-3">
-            <button
+            <Button
               type="button"
               disabled={working || conversationBlocked}
               onClick={() => void startDraft()}
-              className="min-h-11 rounded-lg bg-lime-600 px-4 py-2 text-sm font-semibold text-white outline-none hover:bg-lime-700 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2 disabled:opacity-50"
             >
               {workingAction === "plan"
                 ? "Starting…"
                 : proposal?.status === "failed"
                   ? "Try planning again"
                   : "Build this edit plan"}
-            </button>
+            </Button>
             {!proposal ? (
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="sm"
                 disabled={working}
                 onClick={() => setConversationOpen(false)}
-                className="min-h-11 text-sm text-[#71717a] underline underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-zinc-500"
               >
                 Cancel
-              </button>
+              </Button>
             ) : null}
           </div>
         ) : null}
@@ -525,26 +536,26 @@ export default function EditProposalCard({
     const stale = proposal?.status === "stale";
     return (
       <section
-        className="mt-5 rounded-xl border border-zinc-200 bg-white p-4"
+        className="mt-5 rounded-xl border border-border bg-background p-4"
         aria-labelledby="legacy-plan-edit-heading"
       >
         <h2
           id="legacy-plan-edit-heading"
-          className="font-display text-lg font-medium text-[#0c0c0e]"
+          className="font-semibold tracking-tight text-lg text-foreground"
         >
           {stale ? "Your media changed" : "What should this edit do?"}
         </h2>
         {stale && proposal?.last_approved ? (
-          <p className="mt-1 text-sm text-[#71717a]">
+          <p className="mt-1 text-sm text-muted-foreground">
             Your last approved plan, “{proposal.last_approved.snapshot.title},” is saved for comparison.
           </p>
         ) : null}
         {proposal?.failure ? (
-          <p className="mt-2 text-sm text-[#71717a]">{proposal.failure.message}</p>
+          <p className="mt-2 text-sm text-muted-foreground">{proposal.failure.message}</p>
         ) : null}
 
         <fieldset className="mt-4">
-          <legend className="text-sm font-medium text-[#0c0c0e]">Edit direction</legend>
+          <legend className="text-sm font-medium text-foreground">Edit direction</legend>
           <div className="mt-2 grid gap-2 sm:grid-cols-3">
             {DIRECTION_OPTIONS.map((option) => (
               <label
@@ -552,7 +563,7 @@ export default function EditProposalCard({
                 className={`min-h-16 cursor-pointer rounded-lg border p-3 outline-none transition-colors focus-within:ring-2 focus-within:ring-lime-600 ${
                   legacyBrief.direction === option.value
                     ? "border-lime-500 bg-lime-50"
-                    : "border-zinc-200"
+                    : "border-border"
                 }`}
               >
                 <input
@@ -563,27 +574,27 @@ export default function EditProposalCard({
                   onChange={() => setLegacyBrief({ ...legacyBrief, direction: option.value })}
                   className="sr-only"
                 />
-                <span className="block text-sm font-medium text-[#0c0c0e]">{option.label}</span>
-                <span className="mt-0.5 block text-xs text-[#71717a]">{option.description}</span>
+                <span className="block text-sm font-medium text-foreground">{option.label}</span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">{option.description}</span>
               </label>
             ))}
           </div>
         </fieldset>
 
-        <label className="mt-4 block text-sm font-medium text-[#0c0c0e]">
+        <label className="mt-4 block text-sm font-medium text-foreground">
           Goal or context
-          <textarea
+          <Textarea
             value={legacyBrief.goal}
             onChange={(event) => setLegacyBrief({ ...legacyBrief, goal: event.currentTarget.value })}
             maxLength={500}
             rows={3}
             placeholder="For example: show what surprised me about the food, town, and beaches."
-            className="mt-2 w-full resize-none rounded-lg border border-zinc-200 bg-[#ffffff] px-3 py-2 text-base font-normal outline-none focus:border-lime-500 focus:ring-2 focus:ring-lime-500/30"
+            className="mt-2 resize-none focus-visible:ring-lime-500/30"
           />
         </label>
 
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          <label className="text-sm font-medium text-[#0c0c0e]">
+          <label className="text-sm font-medium text-foreground">
             Pace
             <select
               value={legacyBrief.pace}
@@ -593,21 +604,21 @@ export default function EditProposalCard({
                   pace: event.currentTarget.value as EditProposalPace,
                 })
               }
-              className="mt-2 min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-base outline-none focus:border-lime-500 focus:ring-2 focus:ring-lime-500/30"
+              className="mt-2 flex h-10 sm:h-9 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm shadow-sm ring-offset-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
               {PACE_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
           </label>
-          <label className="text-sm font-medium text-[#0c0c0e]">
+          <label className="text-sm font-medium text-foreground">
             Target length
             <select
               value={legacyBrief.duration_s}
               onChange={(event) =>
                 setLegacyBrief({ ...legacyBrief, duration_s: Number(event.currentTarget.value) })
               }
-              className="mt-2 min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-base outline-none focus:border-lime-500 focus:ring-2 focus:ring-lime-500/30"
+              className="mt-2 flex h-10 sm:h-9 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm shadow-sm ring-offset-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
               {durationOptions(legacyBrief.duration_s).map((seconds) => (
                 <option key={seconds} value={seconds}>{seconds} seconds</option>
@@ -617,26 +628,26 @@ export default function EditProposalCard({
         </div>
 
         <div className="mt-4 flex flex-wrap gap-2">
-          <button
+          <Button
             type="button"
             disabled={working}
             onClick={() => void startDraft()}
-            className="min-h-11 rounded-lg bg-lime-600 px-4 py-2 text-sm font-semibold text-white outline-none hover:bg-lime-700 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2 disabled:opacity-50"
           >
             {workingAction === "plan" ? "Starting…" : stale ? "Plan again" : "Build edit plan"}
-          </button>
+          </Button>
           {!proposal ? (
-            <button
+            <Button
               type="button"
+              variant="outline"
               disabled={working}
               onClick={() => setLegacyBriefOpen(false)}
-              className="min-h-11 rounded-lg border border-zinc-200 px-4 py-2 text-sm text-[#3f3f46] outline-none focus-visible:ring-2 focus-visible:ring-zinc-500"
+              className="text-muted-foreground"
             >
               Cancel
-            </button>
+            </Button>
           ) : null}
         </div>
-        {error ? <p role="alert" className="mt-3 text-sm text-red-700">{error}</p> : null}
+        {error ? <p role="alert" className="mt-3 text-sm text-destructive">{error}</p> : null}
       </section>
     );
   }
@@ -644,15 +655,15 @@ export default function EditProposalCard({
   if (!conversationEnabled) {
     if (!proposal && !legacyBriefOpen) {
       return (
-        <div className="mt-5 border-t border-zinc-200 pt-5">
-          <button
+        <div className="mt-5 border-t border-border pt-5">
+          <Button
             type="button"
+            variant="outline"
             onClick={() => setLegacyBriefOpen(true)}
-            className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-[#0c0c0e] outline-none transition-colors hover:border-lime-500 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
           >
             <span aria-hidden>✦</span>
             Plan edit
-          </button>
+          </Button>
         </div>
       );
     }
@@ -668,18 +679,18 @@ export default function EditProposalCard({
 
   if (!proposal && !conversationOpen) {
     return (
-      <div className="mt-5 border-t border-zinc-200 pt-5">
-        <button
+      <div className="mt-5 border-t border-border pt-5">
+        <Button
           type="button"
+          variant="outline"
           onClick={() => {
             setConversationOpen(true);
             window.setTimeout(() => inputRef.current?.focus(), 0);
           }}
-          className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-[#0c0c0e] outline-none transition-colors hover:border-lime-500 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
         >
           <span aria-hidden>✦</span>
           Plan edit
-        </button>
+        </Button>
       </div>
     );
   }
@@ -694,17 +705,17 @@ export default function EditProposalCard({
     const stale = proposal?.status === "stale";
     return (
       <section
-        className="mt-5 rounded-xl border border-zinc-200 bg-white p-4"
+        className="mt-5 rounded-xl border border-border bg-background p-4"
         aria-labelledby="plan-edit-heading"
       >
         <h2 id="plan-edit-heading" className="sr-only">Describe your edit to Kria</h2>
         {stale && proposal?.last_approved ? (
-          <p className="mb-4 text-sm text-[#71717a]">
+          <p className="mb-4 text-sm text-muted-foreground">
             Your last approved plan, “{proposal.last_approved.snapshot.title},” is saved for comparison.
           </p>
         ) : null}
         {proposal?.failure ? (
-          <p className="mb-4 rounded-lg border border-zinc-200 bg-[#ffffff] px-3 py-2 text-sm text-[#3f3f46]">
+          <p className="mb-4 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground">
             {proposal.failure.message}
           </p>
         ) : null}
@@ -715,17 +726,21 @@ export default function EditProposalCard({
 
   if (proposal?.status === "analyzing" || proposal?.status === "drafting") {
     return (
-      <section className="mt-5 rounded-xl border border-lime-200 bg-lime-50 p-4" aria-labelledby="planning-edit-heading">
-        <h2 id="planning-edit-heading" className="font-display text-lg font-medium text-[#0c0c0e]">
-          Planning your edit
-        </h2>
-        <div role="status" aria-live="polite" className="mt-2 flex items-center gap-2 text-sm text-[#3f3f46]">
-          <span aria-hidden className="h-2 w-2 rounded-full bg-lime-600 motion-safe:animate-pulse" />
-          {proposal.status === "analyzing"
-            ? "Understanding every photo and video…"
-            : "Building the direction and story beats…"}
-        </div>
-      </section>
+      <Card aria-labelledby="planning-edit-heading" className="mt-5">
+        <CardHeader>
+          <CardTitle id="planning-edit-heading" className="text-lg">
+            Planning your edit
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div role="status" aria-live="polite" className="flex items-center gap-2 text-sm text-foreground">
+            <span aria-hidden className="h-2 w-2 rounded-full bg-lime-600 motion-safe:animate-pulse" />
+            {proposal.status === "analyzing"
+              ? "Understanding every photo and video…"
+              : "Building the direction and story beats…"}
+          </div>
+        </CardContent>
+      </Card>
     );
   }
 
@@ -735,248 +750,261 @@ export default function EditProposalCard({
 
   if (readOnlyApproved) {
     return (
-      <section className="mt-5 rounded-xl border border-lime-300 bg-lime-50 p-4" aria-labelledby="approved-plan-heading">
-        <p className="text-[11px] font-semibold uppercase tracking-[.15em] text-lime-700">Approved edit plan</p>
-        <h2 id="approved-plan-heading" className="mt-1 font-display text-xl font-medium text-[#0c0c0e]">
-          {visibleDraft.title}
-        </h2>
-        <p className="mt-1 text-sm text-[#3f3f46]">
-          {visibleDraft.story_beats.length} moments · {selectedSourceCount(visibleDraft)} sources · about {visibleDraft.duration_s}s
-        </p>
-        {proposal?.failure ? (
-          <p className="mt-3 rounded-lg border border-zinc-200 bg-[#ffffff] px-3 py-2 text-sm text-[#3f3f46]">
-            {proposal.failure.message}
-          </p>
-        ) : proposal?.render_failure ? (
-          <p className="mt-3 rounded-lg border border-zinc-200 bg-[#ffffff] px-3 py-2 text-sm text-[#3f3f46]">
-            {proposal.render_failure.message}
-          </p>
-        ) : null}
-        <div className="mt-3 flex flex-wrap gap-2">
-          <button
+      <Card aria-labelledby="approved-plan-heading" className="mt-5">
+        <CardHeader>
+          <Badge variant="secondary" className="w-fit">Approved edit plan</Badge>
+          <CardTitle id="approved-plan-heading" className="text-xl">
+            {visibleDraft.title}
+          </CardTitle>
+          <CardDescription>
+            {visibleDraft.story_beats.length} moments · {selectedSourceCount(visibleDraft)} sources · about {visibleDraft.duration_s}s
+          </CardDescription>
+        </CardHeader>
+        {(proposal?.failure || proposal?.render_failure) && (
+          <CardContent>
+            <p className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground">
+              {proposal?.failure?.message ?? proposal?.render_failure?.message}
+            </p>
+          </CardContent>
+        )}
+        <CardFooter className="flex flex-wrap gap-2">
+          <Button
             type="button"
+            variant="outline"
             onClick={() => setEditingApproved(true)}
-            className="min-h-11 rounded-lg border border-lime-700 px-4 py-2 text-sm font-medium text-lime-700 outline-none focus-visible:ring-2 focus-visible:ring-lime-700"
           >
             Edit plan
-          </button>
+          </Button>
           {conversationEnabled ? (
-            <button
+            <Button
               type="button"
+              variant="ghost"
               onClick={() => {
                 setEditingApproved(true);
                 setConversationOpen(true);
               }}
-              className="min-h-11 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-[#3f3f46] outline-none hover:border-lime-500 focus-visible:ring-2 focus-visible:ring-lime-600"
             >
               Tell Kria a change
-            </button>
+            </Button>
           ) : null}
-        </div>
-      </section>
+        </CardFooter>
+      </Card>
     );
   }
 
   return (
-    <section className="mt-5 rounded-xl border border-lime-200 bg-lime-50 p-4" aria-labelledby="draft-plan-heading">
-      <p className="text-[11px] font-semibold uppercase tracking-[.15em] text-lime-700">Kria’s draft</p>
-      <h2 id="draft-plan-heading" className="sr-only">Review edit plan</h2>
-      {conversationEnabled && conversationOpen ? (
-        <div className="mt-3 rounded-xl border border-zinc-200 bg-white p-4">
-          {conversationSurface({ reviewing: true })}
-          <button
+    <Card aria-labelledby="draft-plan-heading" className="mt-5">
+      <CardHeader>
+        <Badge variant="secondary" className="w-fit">Kria’s draft</Badge>
+        <CardTitle id="draft-plan-heading" className="sr-only">Review edit plan</CardTitle>
+        {conversationEnabled && conversationOpen ? (
+          <div className="rounded-xl border border-border bg-background p-4">
+            {conversationSurface({ reviewing: true })}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setConversationOpen(false)}
+              className="mt-4"
+            >
+              Close conversation
+            </Button>
+          </div>
+        ) : conversationEnabled ? (
+          <Button
             type="button"
-            onClick={() => setConversationOpen(false)}
-            className="mt-4 min-h-11 text-sm text-[#71717a] underline underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-zinc-500"
+            variant="outline"
+            className="w-fit"
+            onClick={() => {
+              setConversationOpen(true);
+              window.setTimeout(() => inputRef.current?.focus(), 0);
+            }}
           >
-            Close conversation
-          </button>
+            Tell Kria what to change
+          </Button>
+        ) : null}
+        <label className="block text-sm font-medium text-foreground">
+          Title
+          <Input
+            value={visibleDraft.title}
+            onChange={(event) => setDraft({ ...visibleDraft, title: event.currentTarget.value })}
+            maxLength={100}
+            className="mt-1"
+          />
+        </label>
+        <label className="block text-sm font-medium text-foreground">
+          Goal
+          <Textarea
+            value={visibleDraft.goal}
+            onChange={(event) => setDraft({ ...visibleDraft, goal: event.currentTarget.value })}
+            rows={2}
+            maxLength={500}
+            className="mt-1 resize-none"
+          />
+        </label>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <label className="text-sm font-medium text-foreground">
+            Direction
+            <select
+              value={visibleDraft.direction}
+              onChange={(event) =>
+                setDraft({
+                  ...visibleDraft,
+                  direction: event.currentTarget.value as EditProposalDirection,
+                })
+              }
+              className="mt-1 flex h-10 sm:h-9 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm shadow-sm ring-offset-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              {DIRECTION_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="text-sm font-medium text-foreground">
+            Pace
+            <select
+              value={visibleDraft.pace}
+              onChange={(event) =>
+                setDraft({
+                  ...visibleDraft,
+                  pace: event.currentTarget.value as EditProposalPace,
+                })
+              }
+              className="mt-1 flex h-10 sm:h-9 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm shadow-sm ring-offset-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              {PACE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="text-sm font-medium text-foreground">
+            Target length
+            <select
+              value={visibleDraft.duration_s}
+              onChange={(event) =>
+                setDraft({ ...visibleDraft, duration_s: Number(event.currentTarget.value) })
+              }
+              className="mt-1 flex h-10 sm:h-9 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm shadow-sm ring-offset-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              {durationOptions(visibleDraft.duration_s).map((seconds) => (
+                <option key={seconds} value={seconds}>{seconds} seconds</option>
+              ))}
+            </select>
+          </label>
         </div>
-      ) : conversationEnabled ? (
-        <button
-          type="button"
-          onClick={() => {
-            setConversationOpen(true);
-            window.setTimeout(() => inputRef.current?.focus(), 0);
-          }}
-          className="mt-3 min-h-11 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-[#3f3f46] outline-none hover:border-lime-500 focus-visible:ring-2 focus-visible:ring-lime-600"
-        >
-          Tell Kria what to change
-        </button>
-      ) : null}
-      <label className="mt-2 block text-sm font-medium text-[#0c0c0e]">
-        Title
-        <input
-          value={visibleDraft.title}
-          onChange={(event) => setDraft({ ...visibleDraft, title: event.currentTarget.value })}
-          maxLength={100}
-          className="mt-1 min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-base font-normal outline-none focus:border-lime-500 focus:ring-2 focus:ring-lime-500/30"
-        />
-      </label>
-      <label className="mt-3 block text-sm font-medium text-[#0c0c0e]">
-        Goal
-        <textarea
-          value={visibleDraft.goal}
-          onChange={(event) => setDraft({ ...visibleDraft, goal: event.currentTarget.value })}
-          rows={2}
-          maxLength={500}
-          className="mt-1 w-full resize-none rounded-lg border border-zinc-200 bg-white px-3 py-2 text-base font-normal outline-none focus:border-lime-500 focus:ring-2 focus:ring-lime-500/30"
-        />
-      </label>
 
-      <div className="mt-3 grid gap-3 sm:grid-cols-3">
-        <label className="text-sm font-medium text-[#0c0c0e]">
-          Direction
-          <select
-            value={visibleDraft.direction}
-            onChange={(event) =>
-              setDraft({
-                ...visibleDraft,
-                direction: event.currentTarget.value as EditProposalDirection,
-              })
-            }
-            className="mt-1 min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-base font-normal outline-none focus:border-lime-500 focus:ring-2 focus:ring-lime-500/30"
-          >
-            {DIRECTION_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </label>
-        <label className="text-sm font-medium text-[#0c0c0e]">
-          Pace
-          <select
-            value={visibleDraft.pace}
-            onChange={(event) =>
-              setDraft({
-                ...visibleDraft,
-                pace: event.currentTarget.value as EditProposalPace,
-              })
-            }
-            className="mt-1 min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-base font-normal outline-none focus:border-lime-500 focus:ring-2 focus:ring-lime-500/30"
-          >
-            {PACE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </label>
-        <label className="text-sm font-medium text-[#0c0c0e]">
-          Target length
-          <select
-            value={visibleDraft.duration_s}
-            onChange={(event) =>
-              setDraft({ ...visibleDraft, duration_s: Number(event.currentTarget.value) })
-            }
-            className="mt-1 min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-base font-normal outline-none focus:border-lime-500 focus:ring-2 focus:ring-lime-500/30"
-          >
-            {durationOptions(visibleDraft.duration_s).map((seconds) => (
-              <option key={seconds} value={seconds}>{seconds} seconds</option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      <ol className="mt-5 space-y-3">
-        {visibleDraft.story_beats.map((beat, index) => (
-          <li key={beat.beat_id} className="rounded-lg border border-lime-200 bg-white p-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <label className="block text-sm font-semibold text-[#0c0c0e]">
-                  <span aria-hidden>{index + 1}. </span>
-                  <input
-                    aria-label={`Moment ${index + 1} topic`}
-                    value={beat.topic}
-                    onChange={(event) =>
-                      patchBeat(beat.beat_id, { topic: event.currentTarget.value })
-                    }
-                    maxLength={80}
-                    className="min-h-11 w-[calc(100%-1.5rem)] rounded-md border border-transparent bg-transparent px-1 text-base outline-none hover:border-zinc-200 focus:border-lime-500 focus:bg-white focus:ring-2 focus:ring-lime-500/30"
-                  />
-                </label>
-                <div className="mt-2 flex gap-1.5 overflow-x-auto pb-1">
-                  {beat.media_ids.map((mediaId) => {
-                    const media = mediaById.get(mediaId);
-                    return media ? (
-                      <MediaThumb
-                        key={mediaId}
-                        src={media.preview_url}
-                        kind={media.kind}
-                        label={`${beat.topic}: ${media.source_filename || media.kind}`}
-                      />
-                    ) : null;
-                  })}
+        <ol className="space-y-3">
+          {visibleDraft.story_beats.map((beat, index) => (
+            <li key={beat.beat_id} className="rounded-lg border border-border bg-background p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <label className="flex items-baseline gap-1 text-sm font-semibold text-foreground">
+                    <span aria-hidden className="text-muted-foreground tabular-nums">{index + 1}.</span>
+                    <Input
+                      aria-label={`Moment ${index + 1} topic`}
+                      value={beat.topic}
+                      onChange={(event) =>
+                        patchBeat(beat.beat_id, { topic: event.currentTarget.value })
+                      }
+                      maxLength={80}
+                      className="h-auto flex-1 border-transparent bg-transparent px-1 py-1 text-base font-semibold shadow-none hover:border-input focus-visible:border-lime-500 focus-visible:bg-background focus-visible:ring-lime-500/30"
+                    />
+                    <Badge variant="outline" className="shrink-0 tabular-nums">{beat.duration_s}s</Badge>
+                  </label>
+                  <div className="mt-2 flex gap-1.5 overflow-x-auto pb-1">
+                    {beat.media_ids.map((mediaId) => {
+                      const media = mediaById.get(mediaId);
+                      return media ? (
+                        <MediaThumb
+                          key={mediaId}
+                          src={media.preview_url}
+                          kind={media.kind}
+                          label={`${beat.topic}: ${media.source_filename || media.kind}`}
+                        />
+                      ) : null;
+                    })}
+                  </div>
+                </div>
+                <div className="flex shrink-0 gap-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    disabled={index === 0}
+                    onClick={() => moveBeat(index, -1)}
+                    aria-label={`Move ${beat.topic} earlier`}
+                  >
+                    <ChevronUp className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    disabled={index === visibleDraft.story_beats.length - 1}
+                    onClick={() => moveBeat(index, 1)}
+                    aria-label={`Move ${beat.topic} later`}
+                  >
+                    <ChevronDown className="h-4 w-4" />
+                  </Button>
                 </div>
               </div>
-              <div className="flex shrink-0 gap-1">
-                <button
-                  type="button"
-                  disabled={index === 0}
-                  onClick={() => moveBeat(index, -1)}
-                  aria-label={`Move ${beat.topic} earlier`}
-                  className="min-h-11 min-w-11 rounded-md border border-zinc-200 text-zinc-600 outline-none focus-visible:ring-2 focus-visible:ring-lime-600 disabled:opacity-30"
-                >↑</button>
-                <button
-                  type="button"
-                  disabled={index === visibleDraft.story_beats.length - 1}
-                  onClick={() => moveBeat(index, 1)}
-                  aria-label={`Move ${beat.topic} later`}
-                  className="min-h-11 min-w-11 rounded-md border border-zinc-200 text-zinc-600 outline-none focus-visible:ring-2 focus-visible:ring-lime-600 disabled:opacity-30"
-                >↓</button>
-              </div>
-            </div>
-            <label className="mt-3 block text-sm text-[#3f3f46]">
-              Layout
-              <select
-                value={beat.layout}
-                onChange={(event) =>
-                  patchBeat(beat.beat_id, {
-                    layout: event.currentTarget.value as "fullscreen" | "supporting_card",
-                  })
-                }
-                className="mt-1 min-h-11 w-full rounded-lg border border-zinc-200 bg-[#ffffff] px-3 text-base outline-none focus:border-lime-500 focus:ring-2 focus:ring-lime-500/30"
-              >
-                <option value="fullscreen">Full screen</option>
-                <option value="supporting_card">Supporting card</option>
-              </select>
-            </label>
-            <label className="mt-3 block text-sm text-[#3f3f46]">
-              Thought
-              {beat.thought_source === "ai_draft" && (
-                <span className="ml-2 rounded border border-lime-200 bg-lime-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-lime-800">
-                  AI draft
-                </span>
-              )}
-              <textarea
-                value={beat.thought}
-                onChange={(event) =>
-                  patchBeat(beat.beat_id, {
-                    thought: event.currentTarget.value,
-                    thought_source: "user",
-                  })
-                }
-                maxLength={280}
-                rows={2}
-                className="mt-1 w-full resize-none rounded-lg border border-zinc-200 bg-[#ffffff] px-3 py-2 text-base outline-none focus:border-lime-500 focus:ring-2 focus:ring-lime-500/30"
-              />
-            </label>
-          </li>
-        ))}
-      </ol>
+              <label className="mt-3 block text-sm text-foreground">
+                Layout
+                <select
+                  value={beat.layout}
+                  onChange={(event) =>
+                    patchBeat(beat.beat_id, {
+                      layout: event.currentTarget.value as "fullscreen" | "supporting_card",
+                    })
+                  }
+                  className="mt-1 flex h-10 sm:h-9 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm shadow-sm ring-offset-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                  <option value="fullscreen">Full screen</option>
+                  <option value="supporting_card">Supporting card</option>
+                </select>
+              </label>
+              <label className="mt-3 block text-sm text-foreground">
+                Thought
+                {beat.thought_source === "ai_draft" && (
+                  <Badge variant="outline" className="ml-2 text-[10px] uppercase tracking-wide">
+                    AI draft
+                  </Badge>
+                )}
+                <Textarea
+                  value={beat.thought}
+                  onChange={(event) =>
+                    patchBeat(beat.beat_id, {
+                      thought: event.currentTarget.value,
+                      thought_source: "user",
+                    })
+                  }
+                  maxLength={280}
+                  rows={2}
+                  className="mt-1 resize-none"
+                />
+              </label>
+            </li>
+          ))}
+        </ol>
+      </CardContent>
 
-      <div className="mt-4 flex items-center gap-1">
-        <button
+      <CardFooter className="items-center gap-1">
+        <Button
           type="button"
+          className="flex-1"
           disabled={working || !visibleDraft.title.trim()}
           onClick={approve}
-          className="min-h-11 flex-1 rounded-lg bg-lime-600 px-4 py-2 text-sm font-semibold text-white outline-none hover:bg-lime-700 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {workingAction === "approve" ? "Approving…" : "Approve plan"}
-        </button>
+        </Button>
         <InfoDot label="Plan approval">
           AI thoughts stay drafts until you approve this plan.
         </InfoDot>
-      </div>
-      {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
-    </section>
+      </CardFooter>
+      {error && <p role="alert" className="px-6 pb-6 text-sm text-destructive">{error}</p>}
+    </Card>
   );
 }
 
@@ -1007,32 +1035,29 @@ function ConversationThread({
     sending,
   ]);
   return (
-    // role="log": an append-only running transcript, keyboard-scrollable
-    // (tabIndex) for creators who can't drag the scrollbar. No aria-live
-    // here — ChatThinking already owns its own role="status"/aria-live, and
-    // a live region on the whole thread would announce the creator's own
-    // pending echo back at them as if Kria had said it.
-    <div
-      ref={threadRef}
-      role="log"
-      tabIndex={0}
-      className="mt-3 max-h-[320px] space-y-3 overflow-y-auto"
-    >
-      {showOpener && <ChatBubble role="assistant">{opener}</ChatBubble>}
-      {turns.map((turn, index) => (
-        <ChatBubble
-          key={`${turn.role}-${turn.phase ?? "briefing"}-${index}-${turn.content.slice(0, 24)}`}
-          role={turn.role === "user" ? "user" : "assistant"}
-        >
-          {turn.content}
-        </ChatBubble>
-      ))}
-      {pendingMessage !== null && (
-        <ChatBubble role="user" pending>
-          {pendingMessage}
-        </ChatBubble>
-      )}
-      {sending && <ChatThinking />}
-    </div>
+    <ScrollArea ref={threadRef} className="mt-3 max-h-[320px] rounded-md border border-border">
+      {/* role="log": an append-only running transcript, keyboard-scrollable
+          (tabIndex) for creators who can't drag the scrollbar. No aria-live
+          here — ChatThinking already owns its own role="status"/aria-live, and
+          a live region on the whole thread would announce the creator's own
+          pending echo back at them as if Kria had said it. */}
+      <div role="log" tabIndex={0} className="space-y-3 p-4">
+        {showOpener && <ChatBubble role="assistant">{opener}</ChatBubble>}
+        {turns.map((turn, index) => (
+          <ChatBubble
+            key={`${turn.role}-${turn.phase ?? "briefing"}-${index}-${turn.content.slice(0, 24)}`}
+            role={turn.role === "user" ? "user" : "assistant"}
+          >
+            {turn.content}
+          </ChatBubble>
+        ))}
+        {pendingMessage !== null && (
+          <ChatBubble role="user" pending>
+            {pendingMessage}
+          </ChatBubble>
+        )}
+        {sending && <ChatThinking />}
+      </div>
+    </ScrollArea>
   );
 }
