@@ -21,10 +21,25 @@ jest.mock("@/components/library/LibraryTile", () => ({
   default: ({ job }) => <div data-testid={`tile-${job.id}`}>{job.status}</div>,
 }));
 
-jest.mock("@/components/library/TikTokConnectionCard", () => ({
-  __esModule: true,
-  default: () => <div data-testid="tiktok-card" />,
-}));
+// TikTokConnectionCard reports availability to its parent via onConnection
+// (available:false when TikTok isn't reachable for this account, in which
+// case the real component itself renders null). WorkspaceHome must mount it
+// unconditionally (so the callback ever fires) but hide the surrounding
+// "Integrations" heading until availability is confirmed true.
+let mockTikTokAvailable = true;
+jest.mock("@/components/library/TikTokConnectionCard", () => {
+  const React = require("react");
+  function MockTikTokConnectionCard({ onConnection }) {
+    React.useEffect(() => {
+      onConnection?.(mockTikTokAvailable ? { available: true } : { available: false });
+    }, []);
+    return mockTikTokAvailable ? <div data-testid="tiktok-card" /> : null;
+  }
+  return {
+    __esModule: true,
+    default: MockTikTokConnectionCard,
+  };
+});
 
 jest.mock("@/app/plan/_components/SeedUploadCard", () => ({
   __esModule: true,
@@ -61,6 +76,7 @@ function renderHome(plan = makePlan()) {
 describe("WorkspaceHome (basic home)", () => {
   beforeEach(() => {
     mockListMyJobs.mockReset().mockResolvedValue({ jobs: [], next_cursor: null });
+    mockTikTokAvailable = true;
   });
 
   it("leads with the create block linking to /plan/new", async () => {
@@ -122,9 +138,17 @@ describe("WorkspaceHome (basic home)", () => {
 
   it("renders an Integrations section with the TikTok card under the grid (release rails target /plan#tiktok)", async () => {
     const { container } = renderHome();
-    expect(screen.getByRole("heading", { name: "Integrations" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Integrations" })).toBeInTheDocument();
     expect(container.querySelector("#tiktok")).toBeInTheDocument();
     expect(screen.getByTestId("tiktok-card")).toBeInTheDocument();
     await waitFor(() => expect(mockListMyJobs).toHaveBeenCalled());
+  });
+
+  it("hides the Integrations heading entirely when TikTok isn't available (no empty section)", async () => {
+    mockTikTokAvailable = false;
+    renderHome();
+    await waitFor(() => expect(mockListMyJobs).toHaveBeenCalled());
+    expect(screen.queryByRole("heading", { name: "Integrations" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("tiktok-card")).not.toBeInTheDocument();
   });
 });

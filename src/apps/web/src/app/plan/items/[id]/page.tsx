@@ -102,6 +102,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Separator } from "@/components/ui/separator";
+import { Dropzone } from "@/components/ui/dropzone";
 import AssetPool from "../../_components/AssetPool";
 import SuggestionRail from "../../_components/SuggestionRail";
 import HeroOverlayEditor from "../../_components/HeroOverlayEditor";
@@ -1638,6 +1642,292 @@ export default function PlanItemPage() {
     />
   ) : null;
 
+  // ── Lane G: one-card setup surface (Clips/Visuals tabs + Tell Kria + footer
+  // CTA) — derived JSX kept out of the return so the Card/Tabs/CardFooter
+  // markup below stays legible. clipCount (item.clip_gcs_paths.length) is
+  // already declared above for the generate gate — reused here for the tab
+  // label so both stay in sync. ─────────────────────────────────────────
+  const visualsCount = poolAssets.length;
+
+  const landscapeFitNotice =
+    item.status !== "generating" &&
+    item.status !== "ready" &&
+    variants.length === 0 &&
+    hasLandscapeClip ? (
+      <div>
+        <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          Landscape clip detected
+        </p>
+        <div className="flex gap-2">
+          {LANDSCAPE_FIT_OPTIONS.map(({ value, label, desc }) => {
+            const active = (item.landscape_fit ?? "fit") === value;
+            return (
+              <button
+                key={value}
+                type="button"
+                onClick={async () => {
+                  if (active) return;
+                  await updatePlanItem(item.id, { landscape_fit: value }).catch(() => null);
+                  refetch();
+                }}
+                className={`flex flex-1 flex-col rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                  active
+                    ? "border-lime-200 bg-lime-50"
+                    : "border-zinc-200 bg-white hover:border-zinc-300"
+                }`}
+              >
+                <span className={`text-sm font-medium ${active ? "text-lime-800" : "text-[#0c0c0e]"}`}>
+                  {label}
+                </span>
+                <span className="mt-0.5 text-xs text-zinc-400">{desc}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    ) : null;
+
+  // Uploader — branches:
+  //   0. subtitled: one talk-to-camera clip → pool upload (no shot plan)
+  //   1. talking_head: speech spine + B-roll clips → pool upload
+  //   2. narrated_ready: audio-first flow, pool upload, no step spine
+  //   3. masonry montage → compact pool strip even when guide present
+  //   4. isInstructed (create_new/mixed + guide present) → ShotSlotUploader
+  //   5. isFilmThis, no guide → pool upload (Plan-this-for-me offered above)
+  //   6. existing_footage → PoolUploadCard (use footage you already have)
+  const uploaderNode = isSubtitled ? (
+    <PoolUploadCard
+      clips={item.clip_assignments ?? []}
+      pending={pendingClipUploads}
+      uploading={uploading}
+      onFiles={handleFiles}
+      onCancelUpload={cancelClipUpload}
+      onRetryUpload={retryClipUpload}
+      onKeep={keepUninstructedMatch}
+      onRemove={removeUninstructedClip}
+      onNoteChange={saveUninstructedNote}
+      maxClips={1}
+      accept={itemUploadAccept}
+      subline="One clip of you talking"
+    />
+  ) : isTalkingHead ? (
+    <PoolUploadCard
+      clips={item.clip_assignments ?? []}
+      pending={pendingClipUploads}
+      uploading={uploading}
+      onFiles={handleFiles}
+      onCancelUpload={cancelClipUpload}
+      onRetryUpload={retryClipUpload}
+      onKeep={keepUninstructedMatch}
+      onRemove={removeUninstructedClip}
+      onNoteChange={saveUninstructedNote}
+      accept={itemUploadAccept}
+      subline="First clip: you talking. Then extra footage to cut in."
+    />
+  ) : isNarratedReady ? (
+    <PoolUploadCard
+      clips={item.clip_assignments ?? []}
+      pending={pendingClipUploads}
+      uploading={uploading}
+      onFiles={handleFiles}
+      onCancelUpload={cancelClipUpload}
+      onRetryUpload={retryClipUpload}
+      onKeep={keepUninstructedMatch}
+      onRemove={removeUninstructedClip}
+      onNoteChange={saveUninstructedNote}
+      accept={itemUploadAccept}
+      // Self-narration mode keeps this line short — the gate hint under
+      // Generate carries the "your video's own narration" explanation
+      // (one explanation per screen, DESIGN.md §9).
+      subline={
+        selfNarrationEnabled && !voiceoverGcsPath
+          ? "Upload all the clips you filmed."
+          : "Upload all the clips you filmed. We'll listen to your recording and match each moment to the right clip automatically."
+      }
+    />
+  ) : isCollagePreset ? (
+    <PoolUploadCard
+      clips={item.clip_assignments ?? []}
+      pending={pendingClipUploads}
+      uploading={uploading}
+      onFiles={handleFiles}
+      onCancelUpload={cancelClipUpload}
+      onRetryUpload={retryClipUpload}
+      onKeep={keepUninstructedMatch}
+      onRemove={removeUninstructedClip}
+      onNoteChange={saveUninstructedNote}
+      accept={itemUploadAccept}
+      subline="Photos and videos both work in this style."
+    />
+  ) : isInstructed ? (
+    <ShotSlotUploader
+      item={item}
+      onAttached={(updated) => {
+        conformancePolls.current = 0;
+        refetch();
+      }}
+      onBusyChange={setUploaderBusy}
+    />
+  ) : (
+    // isFilmThis (no guide yet) OR existing_footage — both fall through to
+    // pool upload (find/upload the footage you already have).
+    <PoolUploadCard
+      clips={item.clip_assignments ?? []}
+      pending={pendingClipUploads}
+      uploading={uploading}
+      onFiles={handleFiles}
+      onCancelUpload={cancelClipUpload}
+      onRetryUpload={retryClipUpload}
+      onKeep={keepUninstructedMatch}
+      onRemove={removeUninstructedClip}
+      onNoteChange={saveUninstructedNote}
+      accept={itemUploadAccept}
+      subline={
+        !hasGuide && item.filming_suggestion
+          ? item.filming_suggestion
+          : isMontage
+            ? "3 or more clips work best. Kria cuts them to the beat of a matched song."
+            : undefined
+      }
+    />
+  );
+
+  const clipsTabBody = (
+    <div className="space-y-4">
+      {hasGuide && !isInstructed && <CompactPlanSummary item={item} />}
+      {landscapeFitNotice}
+      <section aria-labelledby="main-footage-heading">
+        <h2 id="main-footage-heading" className="sr-only">
+          {isSubtitled ? "Your clip" : "Your clips"}
+        </h2>
+        {uploaderNode}
+      </section>
+    </div>
+  );
+
+  // Narrated voiceover — a second Separator'd section between the dropzone
+  // and Tell Kria, not its own bordered block (Lane G).
+  const narratedVoiceoverSection = isNarrated ? (
+    <>
+      <Separator />
+      <div>
+        <Label className="mb-2 block">Your voiceover</Label>
+        <p className="mb-3 text-xs text-muted-foreground">
+          This recording becomes the soundtrack. It is separate from a note to Kria.
+        </p>
+        <VoiceRecorder onVoiceover={handleVoiceover} upload={uploadOwnedVoiceover} />
+        {voiceoverSaving && <p className="mt-1 text-xs text-muted-foreground">Saving…</p>}
+        {voiceoverGcsPath && !voiceoverSaving && (
+          <p className="mt-1 text-xs text-lime-700">
+            Voice recorded — clips will be timed to match your narration.
+          </p>
+        )}
+        {/* First-class entry point (moved from a buried inline link during the
+            plan-item redesign) — narrated only. Talking-to-camera does not get
+            this: TeleprompterRecorder/ReviewStep write to voiceover_gcs_path, a
+            field _render_subtitled_variant never reads (see the plan's "Plan
+            correction" section). */}
+        {process.env.NEXT_PUBLIC_TRANSCRIPT_HELPER_ENABLED === "true" && (
+          <Link
+            href={`/plan/items/${item.id}/transcript`}
+            className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[12px] text-[#71717a] transition-colors hover:border-lime-400 hover:text-lime-700"
+          >
+            <span aria-hidden>✦</span>
+            Not sure what to say? Write a script with Kria
+          </Link>
+        )}
+      </div>
+    </>
+  ) : null;
+
+  const tellKriaSection = (
+    <section>
+      <Label htmlFor="tell-kria" className="mb-2 block">
+        Tell Kria <span className="font-normal text-muted-foreground">Optional</span>
+      </Label>
+      <Textarea
+        id="tell-kria"
+        aria-label="Tell Kria"
+        key={item.notes ?? "empty"}
+        defaultValue={item.notes ?? ""}
+        onBlur={async (e) => {
+          const val = e.currentTarget.value.trim() || null;
+          if (val !== (item.notes ?? null)) {
+            await updatePlanItem(item.id, { notes: val ?? undefined }).catch(() => null);
+            refetch();
+          }
+        }}
+        placeholder="For example: start fast and keep the candid moments"
+        rows={2}
+      />
+    </section>
+  );
+
+  const guidedStatusRowNode = guidedEditActive ? (
+    <div className="flex items-center gap-3 text-sm">
+      <Badge variant={guidedEditStatusRow.badgeVariant}>{guidedEditStatusRow.badgeLabel}</Badge>
+      <p className="flex-1 text-muted-foreground">{guidedEditStatusRow.sentence}</p>
+      <Button type="button" variant="outline" size="sm" onClick={() => setThreadOpen(true)}>
+        {guidedEditStatusRow.buttonLabel}
+      </Button>
+    </div>
+  ) : null;
+
+  const cardBody = (
+    <>
+      <TabsContent value="clips" className="mt-0 space-y-6">
+        {clipsTabBody}
+      </TabsContent>
+      {showVisualPools && (
+        <TabsContent value="visuals" className="mt-0">
+          <AssetPool
+            embedded
+            itemId={itemId}
+            attachedPaths={item.clip_assignments?.map((a) => a.gcs_path) ?? []}
+            onUseInEdit={promotePoolAsset}
+            attachBusy={uploading || uploaderBusy || hasActivePoolUploads}
+            onAssetsChanged={setPoolAssets}
+            onMutated={() => {
+              forceFreshFetchRef.current = true;
+              refetch();
+            }}
+            onAssetContextUpdated={(updated) => {
+              overlaySuggestions.setRows([]);
+              overlaySuggestions.setKeptIds(new Set());
+              setSuggestionPoolAssets((prev) =>
+                prev.map((asset) => (asset.id === updated.id ? updated : asset)),
+              );
+            }}
+          />
+        </TabsContent>
+      )}
+      <Separator />
+      {narratedVoiceoverSection}
+      {tellKriaSection}
+      {guidedStatusRowNode}
+    </>
+  );
+
+  const generateGated =
+    gate.disabled || (guidedEditActive && !guidedEditApproved && !guidedEditAutoDesign);
+  const generateLabel = generating
+    ? "Starting…"
+    : uploaderBusy
+      ? FINISHING_UPLOAD_HINT
+      : "Generate video";
+  // #71717a-equivalent (text-muted-foreground), not the faint token: this line
+  // carries must-read gating copy (why the button is off / what drives the
+  // edit) — DESIGN.md §8 keeps faint ink decorative-only.
+  const generateHint =
+    guidedEditActive &&
+    !guidedEditApproved &&
+    // With auto-design on and no attempt yet, Generate just works — only show
+    // guided-specific copy once there's a real state to report
+    // (analyzing/drafting/failed/stale/draft).
+    (!guidedEditAutoDesign || item.edit_proposal?.status)
+      ? guidedEditHint
+      : gate.hint;
+
   return (
     <LightShell size="wide">
       {/* @font-face for style-preview chips */}
@@ -1683,442 +1973,179 @@ export default function PlanItemPage() {
             )}
 
             {showSetupControls && (
-              <div className="flex flex-col">
-            {/* Tell Kria is optional and subordinate to footage — one field,
-                one label, no separate "voice" concept (DESIGN.md §12). */}
-            <section className={isNarrated ? "order-3 mb-5" : "order-2 mb-5"}>
-              <Label htmlFor="tell-kria" className="mb-2 block">
-                Tell Kria <span className="font-normal text-[#a1a1aa]">Optional</span>
-              </Label>
-              <Textarea
-                id="tell-kria"
-                aria-label="Tell Kria"
-                key={item.notes ?? "empty"}
-                defaultValue={item.notes ?? ""}
-                onBlur={async (e) => {
-                  const val = e.currentTarget.value.trim() || null;
-                  if (val !== (item.notes ?? null)) {
-                    await updatePlanItem(item.id, { notes: val ?? undefined }).catch(() => null);
-                    refetch();
-                  }
-                }}
-                placeholder="For example: start fast and keep the candid moments"
-                rows={2}
-              />
-            </section>
-
-            {/* TYPE / STYLE poster picker — mounted only via the setup receipt's
-                "Change" toggle in the header (design: Paper "V2 — Item setup per
-                type"; replaces the old nested "Advanced video style" details). */}
-            {setupPickerOpen &&
-              item.status !== "generating" &&
-              item.status !== "ready" &&
-              variants.length === 0 && (
-              <div className="order-0 mb-4">
-              <SetupPicker
-                resolvedFormat={resolvedFormat}
-                rawEditFormat={rawEditFormat}
-                montagePreset={montagePreset}
-                subtitledEnabled={SUBTITLED_ENABLED}
-                // Intentionally shown only for legacy talking_head items — not a
-                // generally reachable card in the current picker.
-                showTalkingHead={isTalkingHead}
-                hasGuide={(item.filming_guide?.length ?? 0) > 0}
-                contentMode={contentMode}
-                startCollapsed={false}
-                onPatch={async (updates) => {
-                  // Rejections propagate so the picker can drop its optimistic
-                  // state; refetch either way so props reflect the server.
-                  try {
-                    await updatePlanItem(item.id, updates);
-                  } finally {
-                    refetch();
-                  }
-                }}
-              />
-              </div>
-            )}
-
-            {/* Landscape-clip fit picker — only appears once a wide clip is detected on
-                upload (hasLandscapeClip), so the common all-portrait case never sees
-                this control. Reads as a detected notice, not a surprise setting. */}
-            {item.status !== "generating" &&
-              item.status !== "ready" &&
-              variants.length === 0 &&
-              hasLandscapeClip && (
-              <div className="order-6 mb-4">
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
-                  Landscape clip detected
-                </p>
-                <div className="flex gap-2">
-                  {LANDSCAPE_FIT_OPTIONS.map(({ value, label, desc }) => {
-                    const active = (item.landscape_fit ?? "fit") === value;
-                    return (
-                      <button
-                        key={value}
-                        type="button"
-                        onClick={async () => {
-                          if (active) return;
-                          await updatePlanItem(item.id, { landscape_fit: value }).catch(() => null);
-                          refetch();
-                        }}
-                        className={`flex flex-1 flex-col rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                          active
-                            ? "border-lime-200 bg-lime-50"
-                            : "border-zinc-200 bg-white hover:border-zinc-300"
-                        }`}
-                      >
-                        <span className={`text-sm font-medium ${active ? "text-lime-800" : "text-[#0c0c0e]"}`}>
-                          {label}
-                        </span>
-                        <span className="mt-0.5 text-xs text-zinc-400">{desc}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {hasGuide && !isInstructed && (
-              <div className="order-4"><CompactPlanSummary item={item} /></div>
-            )}
-
-            {/* Per-type rule: no audio UI outside the narrated flow. Montage's
-                music is automatic; talking types use the clip's own audio. The
-                old "Audio choice" fieldset (which could silently re-type an
-                item) was removed in the per-type setup redesign. */}
-            {isNarrated && (
-              <div className="order-2 mb-6 rounded-xl border border-zinc-200 bg-white p-4">
-                <div className="mb-3 flex items-center gap-1.5">
-                  <h2 className="sr-only">Your voiceover</h2>
-                  <InfoDot label="Your voiceover">
-                    This recording becomes the soundtrack. It is separate from a note to Kria.
-                  </InfoDot>
-                </div>
-                <VoiceRecorder onVoiceover={handleVoiceover} upload={uploadOwnedVoiceover} />
-                {voiceoverSaving && (
-                  <p className="mt-1 text-xs text-zinc-400">Saving…</p>
-                )}
-                {voiceoverGcsPath && !voiceoverSaving && (
-                  <p className="mt-1 text-xs text-lime-700">
-                    Voice recorded — clips will be timed to match your narration.
-                  </p>
-                )}
-                {/* First-class entry point (moved from a buried inline link during the
-                    plan-item redesign) — narrated only. Talking-to-camera does not get
-                    this: TeleprompterRecorder/ReviewStep write to voiceover_gcs_path, a
-                    field _render_subtitled_variant never reads (see the plan's "Plan
-                    correction" section). */}
-                {process.env.NEXT_PUBLIC_TRANSCRIPT_HELPER_ENABLED === "true" && (
-                  <Link
-                    href={`/plan/items/${item.id}/transcript`}
-                    className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[12px] text-[#71717a] transition-colors hover:border-lime-400 hover:text-lime-700"
-                  >
-                    <span aria-hidden>✦</span>
-                    Not sure what to say? Write a script with Kria
-                  </Link>
-                )}
-              </div>
-            )}
-
-            {/* Background sound (narrated) and caption style/on-off (narrated +
-                talking-to-camera) moved to the post-gen editor — see
-                BackgroundSoundControl / CaptionStyleToggle in PlanVariantEditor.tsx.
-                Talk-to-camera auto-generates WITH subtitles by default; both are
-                tunable after generation, not before. Helper paragraph removed
-                per DESIGN.md §12 — no inline helper text outside InfoDot. */}
-
-            {/* Uploader — branches:
-                0. subtitled: one talk-to-camera clip → pool upload (no shot plan)
-                1. talking_head: speech spine + B-roll clips → pool upload
-                2. narrated_ready: audio-first flow, pool upload, no step spine
-                3. masonry montage → compact pool strip even when guide present
-                4. isInstructed (create_new/mixed + guide present) → ShotSlotUploader
-                5. isFilmThis, no guide → pool upload (Plan-this-for-me offered above)
-                6. existing_footage → PoolUploadCard (use footage you already have) */}
-            <section className="order-1 mb-6" aria-labelledby="main-footage-heading">
-              <h2 id="main-footage-heading" className="sr-only">
-                {isSubtitled ? "Your clip" : "Your clips"}
-              </h2>
-            {isSubtitled ? (
-              <div>
-                <div className="mb-4 flex items-center gap-1.5">
-                  <InfoDot label="Your clip">
-                    Its own audio is the soundtrack — Kria captions every sentence, and you can edit them after. Captions and dead-air cleanup happen automatically.
-                  </InfoDot>
-                </div>
-                <PoolUploadCard
-                  clips={item.clip_assignments ?? []}
-                  pending={pendingClipUploads}
-                  uploading={uploading}
-                  onFiles={handleFiles}
-                  onCancelUpload={cancelClipUpload}
-                  onRetryUpload={retryClipUpload}
-                  onKeep={keepUninstructedMatch}
-                  onRemove={removeUninstructedClip}
-                  onNoteChange={saveUninstructedNote}
-                  maxClips={1}
-                  accept={itemUploadAccept}
-                />
-              </div>
-            ) : isTalkingHead ? (
-              <div>
-                <p className="mb-4 text-sm text-[#71717a]">
-                  First clip: you talking. Then extra footage to cut in.
-                </p>
-                <PoolUploadCard
-                  clips={item.clip_assignments ?? []}
-                  pending={pendingClipUploads}
-                  uploading={uploading}
-                  onFiles={handleFiles}
-                  onCancelUpload={cancelClipUpload}
-                  onRetryUpload={retryClipUpload}
-                  onKeep={keepUninstructedMatch}
-                  onRemove={removeUninstructedClip}
-                  onNoteChange={saveUninstructedNote}
-                  accept={itemUploadAccept}
-                />
-              </div>
-            ) : isNarratedReady ? (
-              <div>
-                {/* Self-narration mode keeps this line short — the gate hint under
-                    Generate carries the "your video's own narration" explanation
-                    (one explanation per screen, DESIGN.md §9). */}
-                <p className="mb-4 text-sm text-[#71717a]">
-                  {selfNarrationEnabled && !voiceoverGcsPath
-                    ? "Upload all the clips you filmed."
-                    : "Upload all the clips you filmed. We'll listen to your recording and match each moment to the right clip automatically."}
-                </p>
-                <PoolUploadCard
-                  clips={item.clip_assignments ?? []}
-                  pending={pendingClipUploads}
-                  uploading={uploading}
-                  onFiles={handleFiles}
-                  onCancelUpload={cancelClipUpload}
-                  onRetryUpload={retryClipUpload}
-                  onKeep={keepUninstructedMatch}
-                  onRemove={removeUninstructedClip}
-                  onNoteChange={saveUninstructedNote}
-                  accept={itemUploadAccept}
-                />
-              </div>
-            ) : isCollagePreset ? (
-              <div>
-                <p className="mb-4 text-sm text-[#71717a]">
-                  Photos and videos both work in this style.
-                </p>
-                <PoolUploadCard
-                  clips={item.clip_assignments ?? []}
-                  pending={pendingClipUploads}
-                  uploading={uploading}
-                  onFiles={handleFiles}
-                  onCancelUpload={cancelClipUpload}
-                  onRetryUpload={retryClipUpload}
-                  onKeep={keepUninstructedMatch}
-                  onRemove={removeUninstructedClip}
-                  onNoteChange={saveUninstructedNote}
-                  accept={itemUploadAccept}
-                />
-              </div>
-            ) : isInstructed ? (
-              <ShotSlotUploader
-                item={item}
-                onAttached={(updated) => {
-                  conformancePolls.current = 0;
-                  refetch();
-                }}
-                onBusyChange={setUploaderBusy}
-              />
-            ) : (
-              /* isFilmThis (no guide yet) OR existing_footage — both fall through
-                 to pool upload (find/upload the footage you already have). */
               <>
-                {!hasGuide && item.filming_suggestion ? (
-                  <p className="mb-4 text-sm text-[#71717a]">{item.filming_suggestion}</p>
-                ) : isMontage ? (
-                  <p className="mb-4 text-sm text-[#71717a]">
-                    3 or more clips work best. Kria cuts them to the beat of a matched song.
-                  </p>
-                ) : null}
-                <PoolUploadCard
-                  clips={item.clip_assignments ?? []}
-                  pending={pendingClipUploads}
-                  uploading={uploading}
-                  onFiles={handleFiles}
-                  onCancelUpload={cancelClipUpload}
-                  onRetryUpload={retryClipUpload}
-                  onKeep={keepUninstructedMatch}
-                  onRemove={removeUninstructedClip}
-                  onNoteChange={saveUninstructedNote}
-                  accept={itemUploadAccept}
+              {/* TYPE / STYLE poster picker — mounted only via the setup receipt's
+                  "Change" toggle in the header (design: Paper "V2 — Item setup per
+                  type"; replaces the old nested "Advanced video style" details). */}
+              {setupPickerOpen &&
+                item.status !== "generating" &&
+                item.status !== "ready" &&
+                variants.length === 0 && (
+                <div className="mb-4">
+                <SetupPicker
+                  resolvedFormat={resolvedFormat}
+                  rawEditFormat={rawEditFormat}
+                  montagePreset={montagePreset}
+                  subtitledEnabled={SUBTITLED_ENABLED}
+                  // Intentionally shown only for legacy talking_head items — not a
+                  // generally reachable card in the current picker.
+                  showTalkingHead={isTalkingHead}
+                  hasGuide={(item.filming_guide?.length ?? 0) > 0}
+                  contentMode={contentMode}
+                  startCollapsed={false}
+                  onPatch={async (updates) => {
+                    // Rejections propagate so the picker can drop its optimistic
+                    // state; refetch either way so props reflect the server.
+                    try {
+                      await updatePlanItem(item.id, updates);
+                    } finally {
+                      refetch();
+                    }
+                  }}
                 />
+                </div>
+              )}
+
+              {/* One-card setup surface (Lane G): Clips/Visuals tabs, Tell Kria,
+                  and the Generate CTA all live in a single shadcn Card instead of
+                  the old stack of bordered blocks. */}
+              <Card>
+                {showVisualPools ? (
+                  <Tabs defaultValue="clips">
+                    <CardHeader className="pb-0">
+                      <TabsList>
+                        <TabsTrigger value="clips">
+                          Clips{clipCount > 0 ? ` (${clipCount})` : ""}
+                        </TabsTrigger>
+                        <TabsTrigger value="visuals">
+                          Visuals{visualsCount > 0 ? ` (${visualsCount})` : ""}
+                        </TabsTrigger>
+                      </TabsList>
+                    </CardHeader>
+                    <CardContent className="space-y-6 pt-6">{cardBody}</CardContent>
+                  </Tabs>
+                ) : (
+                  <CardContent className="space-y-6 pt-6">
+                    <div>{clipsTabBody}</div>
+                    <Separator />
+                    {narratedVoiceoverSection}
+                    {tellKriaSection}
+                    {guidedStatusRowNode}
+                  </CardContent>
+                )}
+                {!isGenerating && (
+                  <CardFooter className="flex items-center justify-between gap-4 border-t pt-6">
+                    <p className="text-sm text-muted-foreground">{generateHint}</p>
+                    <Button
+                      onClick={handleGenerate}
+                      disabled={generateGated}
+                      className="hidden sm:flex"
+                    >
+                      {generateLabel}
+                    </Button>
+                  </CardFooter>
+                )}
+              </Card>
+
+              {guidedEditActive && (
+                <PlanThreadPanel
+                  open={threadOpen}
+                  onOpenChange={setThreadOpen}
+                  item={item}
+                  // P1-2: mirrors the backend's own media gate for a conversation
+                  // turn (routes/plan_items.py) — clip_assignments OR any pool
+                  // asset still finishing analysis (queued/analyzing) or ready.
+                  // Unrelated to guidedEditAutoDesign (hasReadyPoolMedia above),
+                  // which only gates the Generate button.
+                  hasPoolMedia={poolAssets.some((asset) =>
+                    ["queued", "analyzing", "ready"].includes(asset.status),
+                  )}
+                  onRefresh={refetch}
+                  onChanged={(updated) => {
+                    // Apply the authoritative response immediately (G3) — the
+                    // conversation POST/PATCH already returned the fresh item,
+                    // so don't make the creator wait a poll tick to see it.
+                    // Still force-fetch + refetch right after: this keeps the
+                    // job-status half of `data` in sync and re-arms polling
+                    // (e.g. for conversation_in_progress / analyzing states).
+                    applyData((prev) => (prev ? { ...prev, item: updated } : prev));
+                    forceFreshFetchRef.current = true;
+                    refetch();
+                  }}
+                />
+              )}
+
+              {/* Suggestion rail — AI overlay auto-placement review for the
+                  focused variant (plans/005 PR2). Same flag gate as AssetPool;
+                  renders nothing until a variant exists, and nothing when the
+                  variant's editor_capabilities report suggestions=false (plan
+                  010 OV-5 — caption archetypes, song/lyric variants). */}
+              {showVisualPools && (
+                <SuggestionRail
+                  itemId={itemId}
+                  variantId={focused?.variant_id ?? null}
+                  suggestionsCapability={focused?.editor_capabilities?.suggestions ?? null}
+                  previewUrl={
+                    // Frozen-frame veil: a stale mini-preview mid-render reads as
+                    // "already updated" — withhold it so the rail shows its own
+                    // shimmer placeholder until the re-render lands.
+                    focused?.render_status === "rendering"
+                      ? null
+                      : (focused?.output_url ?? focused?.base_video_url ?? null)
+                  }
+                  rows={overlaySuggestions.rows}
+                  onRowsChange={overlaySuggestions.setRows}
+                  keptIds={overlaySuggestions.keptIds}
+                  onKeptIdsChange={overlaySuggestions.setKeptIds}
+                  onSuggestionEdit={overlaySuggestions.onSuggestionEdit}
+                  applyReceipt={focused?.overlay_apply_receipt ?? null}
+                  onApplied={() => {
+                    if (focused) {
+                      markVariantRendering(focused.variant_id, focused.render_finished_at ?? null);
+                    }
+                    refetch();
+                  }}
+                />
+              )}
+
+              {/* Mobile-only sticky Generate bar — the CardFooter button hides on
+                  mobile (Lane G) so Generate never appears twice. */}
+              {!isGenerating && (
+                <div className="sticky bottom-0 z-20 -mx-4 mt-4 space-y-2 bg-background/95 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur sm:hidden">
+                  <InkButton onClick={handleGenerate} disabled={generateGated}>
+                    {generateLabel}
+                  </InkButton>
+                  <p className="text-center text-sm text-muted-foreground">{generateHint}</p>
+                </div>
+              )}
+
+              {/* Optional planning/conformance conversation stays after Generate. */}
+              {showKriaHelper && (
+                <div className="mt-4">
+                <KriaHelper
+                  item={item}
+                  conformanceChecking={conformanceChecking}
+                  askKria={askKria}
+                  onOpen={() => setAskKria("default")}
+                  onContest={() => setAskKria("contest")}
+                  onClose={() => setAskKria(null)}
+                  onDismissConformance={async () => {
+                    try {
+                      await dismissConformance(itemId);
+                    } finally {
+                      refetch();
+                    }
+                  }}
+                  onItemChanged={() => {
+                    conformancePolls.current = 0;
+                    refetch();
+                  }}
+                />
+                </div>
+              )}
               </>
             )}
-            </section>
 
-            {/* Visuals pool — screenshots/screen recordings that feed AI overlay
-                auto-placement (plans/005 PR0). Renders nothing unless
-                NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED=true (gate lives inside). */}
-            {showVisualPools && (
-              <div className="order-1">
-              <AssetPool
-                itemId={itemId}
-                attachedPaths={item.clip_assignments?.map((a) => a.gcs_path) ?? []}
-                onUseInEdit={promotePoolAsset}
-                attachBusy={uploading || uploaderBusy || hasActivePoolUploads}
-                onAssetsChanged={setPoolAssets}
-                onMutated={() => {
-                  forceFreshFetchRef.current = true;
-                  refetch();
-                }}
-                onAssetContextUpdated={(updated) => {
-                  overlaySuggestions.setRows([]);
-                  overlaySuggestions.setKeptIds(new Set());
-                  setSuggestionPoolAssets((prev) =>
-                    prev.map((asset) => (asset.id === updated.id ? updated : asset)),
-                  );
-                }}
-              />
-              </div>
-            )}
-
-            {guidedEditActive && (
-              <div className="order-4 mb-4 flex items-center gap-3 rounded-2xl border border-zinc-200 bg-white p-4">
-                <Badge variant={guidedEditStatusRow.badgeVariant}>
-                  {guidedEditStatusRow.badgeLabel}
-                </Badge>
-                <p className="flex-1 text-sm text-[#3f3f46]">{guidedEditStatusRow.sentence}</p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setThreadOpen(true)}
-                >
-                  {guidedEditStatusRow.buttonLabel}
-                </Button>
-              </div>
-            )}
-
-            {guidedEditActive && (
-              <PlanThreadPanel
-                open={threadOpen}
-                onOpenChange={setThreadOpen}
-                item={item}
-                // P1-2: mirrors the backend's own media gate for a conversation
-                // turn (routes/plan_items.py) — clip_assignments OR any pool
-                // asset still finishing analysis (queued/analyzing) or ready.
-                // Unrelated to guidedEditAutoDesign (hasReadyPoolMedia above),
-                // which only gates the Generate button.
-                hasPoolMedia={poolAssets.some((asset) =>
-                  ["queued", "analyzing", "ready"].includes(asset.status),
-                )}
-                onRefresh={refetch}
-                onChanged={(updated) => {
-                  // Apply the authoritative response immediately (G3) — the
-                  // conversation POST/PATCH already returned the fresh item,
-                  // so don't make the creator wait a poll tick to see it.
-                  // Still force-fetch + refetch right after: this keeps the
-                  // job-status half of `data` in sync and re-arms polling
-                  // (e.g. for conversation_in_progress / analyzing states).
-                  applyData((prev) => (prev ? { ...prev, item: updated } : prev));
-                  forceFreshFetchRef.current = true;
-                  refetch();
-                }}
-              />
-            )}
-
-            {/* Suggestion rail — AI overlay auto-placement review for the
-                focused variant (plans/005 PR2). Same flag gate as AssetPool;
-                renders nothing until a variant exists, and nothing when the
-                variant's editor_capabilities report suggestions=false (plan
-                010 OV-5 — caption archetypes, song/lyric variants). */}
-            {showVisualPools && (
-              <SuggestionRail
-                itemId={itemId}
-                variantId={focused?.variant_id ?? null}
-                suggestionsCapability={focused?.editor_capabilities?.suggestions ?? null}
-                previewUrl={
-                  // Frozen-frame veil: a stale mini-preview mid-render reads as
-                  // "already updated" — withhold it so the rail shows its own
-                  // shimmer placeholder until the re-render lands.
-                  focused?.render_status === "rendering"
-                    ? null
-                    : (focused?.output_url ?? focused?.base_video_url ?? null)
-                }
-                rows={overlaySuggestions.rows}
-                onRowsChange={overlaySuggestions.setRows}
-                keptIds={overlaySuggestions.keptIds}
-                onKeptIdsChange={overlaySuggestions.setKeptIds}
-                onSuggestionEdit={overlaySuggestions.onSuggestionEdit}
-                applyReceipt={focused?.overlay_apply_receipt ?? null}
-                onApplied={() => {
-                  if (focused) {
-                    markVariantRendering(focused.variant_id, focused.render_finished_at ?? null);
-                  }
-                  refetch();
-                }}
-              />
-            )}
-
-            {/* Generate + hint caption compose the shared upload/format gate with
-                the guided-edit approval gate. */}
-            {!isGenerating && (
-              <div className="order-5 sticky bottom-0 z-20 -mx-4 mt-4 space-y-2 border-t border-zinc-200 bg-[#ffffff]/95 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur">
-                <InkButton
-                  onClick={handleGenerate}
-                  disabled={
-                    gate.disabled ||
-                    (guidedEditActive && !guidedEditApproved && !guidedEditAutoDesign)
-                  }
-                >
-                  {generating
-                    ? "Starting…"
-                    : uploaderBusy
-                      ? FINISHING_UPLOAD_HINT
-                      : "Generate video"}
-                </InkButton>
-                {/* #71717a, not the faint #a1a1aa: this line now carries must-read
-                    gating copy (why the button is off / what drives the edit) —
-                    DESIGN.md §8 keeps faint ink decorative-only. */}
-                <p className="text-center text-sm text-[#71717a]">
-                  {guidedEditActive &&
-                  !guidedEditApproved &&
-                  // With auto-design on and no attempt yet, Generate just works —
-                  // only show guided-specific copy once there's a real state to
-                  // report (analyzing/drafting/failed/stale/draft).
-                  (!guidedEditAutoDesign || item.edit_proposal?.status)
-                    ? guidedEditHint
-                    : gate.hint}
-                </p>
-              </div>
-            )}
-
-            {/* Optional planning/conformance conversation stays before Generate. */}
-            {showKriaHelper && (
-              <div className="order-4 mt-4">
-              <KriaHelper
-                item={item}
-                conformanceChecking={conformanceChecking}
-                askKria={askKria}
-                onOpen={() => setAskKria("default")}
-                onContest={() => setAskKria("contest")}
-                onClose={() => setAskKria(null)}
-                onDismissConformance={async () => {
-                  try {
-                    await dismissConformance(itemId);
-                  } finally {
-                    refetch();
-                  }
-                }}
-                onItemChanged={() => {
-                  conformancePolls.current = 0;
-                  refetch();
-                }}
-              />
-              </div>
-            )}
-              </div>
-            )}
 
             {/* Error banner — outside the fork so it shows on both item types */}
             {error && (
@@ -4760,6 +4787,7 @@ function PoolUploadCard({
   onNoteChange,
   maxClips,
   accept = VIDEO_UPLOAD_ACCEPT,
+  subline,
 }: {
   clips: ClipAssignment[];
   pending: PendingClipUpload[];
@@ -4773,13 +4801,17 @@ function PoolUploadCard({
   /** Hard cap on clip count (subtitled = 1). Undefined → unlimited (montage pool). */
   maxClips?: number;
   accept?: string;
+  /** Per-format helper copy shown as the dropzone's subline while empty
+   *  (e.g. "3 or more clips work best..."). Omit for no subline. */
+  subline?: ReactNode;
 }) {
-  const inputRef = useRef<HTMLInputElement>(null);
   // In-flight cards count toward the cap so maxClips=1 can't double-pick.
   const atCap = maxClips != null && clips.length + pending.length >= maxClips;
+  const hasAny = clips.length > 0 || pending.length > 0;
+  const dropzoneLabel = maxClips === 1 ? "Add your clip" : hasAny ? "Add more clips" : "Add clips";
   return (
-    <div className="mb-8 rounded-xl border border-zinc-200 bg-white p-4">
-      {(clips.length > 0 || pending.length > 0) && (
+    <div>
+      {hasAny && (
         <ul
           className="mb-4 flex gap-3 overflow-x-auto pb-2"
           aria-label="Uploaded clips"
@@ -4792,7 +4824,7 @@ function PoolUploadCard({
             return (
               <li
                 key={a.gcs_path}
-                className="min-w-[190px] max-w-[220px] rounded-lg border border-zinc-200 bg-[#ffffff] p-2"
+                className="min-w-[190px] max-w-[220px] rounded-md border border-border bg-card p-2"
               >
                 <div className="flex gap-2">
                   <span
@@ -4804,27 +4836,27 @@ function PoolUploadCard({
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 items-start justify-between gap-2">
                       <span
-                        className={`min-w-0 truncate text-xs font-medium ${
-                          a.machine_matched ? "text-lime-800" : "text-[#0c0c0e]"
-                        }`}
+                        className="min-w-0 truncate text-xs font-medium text-foreground"
                         title={name}
                       >
                         {name}
                       </span>
-                      <button
+                      <Button
                         type="button"
+                        variant="ghost"
+                        size="icon-sm"
                         onClick={() => onRemove(a)}
                         className={POOL_CARD_DISMISS_CLASS}
                         aria-label={`Remove ${name}`}
                       >
                         ×
-                      </button>
+                      </Button>
                     </div>
                     {a.machine_matched ? (
                       <div className="mt-1 flex items-center gap-2">
-                        <span className="rounded border border-dashed border-lime-300 bg-white px-1.5 py-0.5 text-[10px] text-lime-800">
+                        <Badge variant="secondary" className="rounded border-dashed font-normal normal-case tracking-normal">
                           Matched
-                        </span>
+                        </Badge>
                         <button
                           type="button"
                           onClick={() => onKeep(a)}
@@ -4834,14 +4866,14 @@ function PoolUploadCard({
                         </button>
                       </div>
                     ) : (
-                      <span className="mt-1 inline-flex rounded border border-lime-200 bg-lime-50 px-1.5 py-0.5 text-[10px] text-lime-800">
+                      <Badge variant="secondary" className="mt-1 font-normal normal-case tracking-normal">
                         Added
-                      </span>
+                      </Badge>
                     )}
                   </div>
                 </div>
                 <details className="mt-2">
-                  <summary className="cursor-pointer text-[11px] text-[#71717a] marker:text-zinc-300">
+                  <summary className="cursor-pointer text-[11px] text-muted-foreground marker:text-zinc-300">
                     Notes
                     {a.user_note ? (
                       <span className="ml-1 text-lime-700">saved</span>
@@ -4861,11 +4893,11 @@ function PoolUploadCard({
             <li
               key={p.localId}
               data-testid="pending-clip-card"
-              className="min-w-[190px] max-w-[220px] rounded-lg border border-zinc-200 bg-[#ffffff] p-2"
+              className="min-w-[190px] max-w-[220px] rounded-md border border-border bg-card p-2"
             >
               <div className="flex min-w-0 items-start justify-between gap-2">
                 <span
-                  className="min-w-0 truncate text-xs font-medium text-[#0c0c0e]"
+                  className="min-w-0 truncate text-xs font-medium text-foreground"
                   title={p.filename}
                 >
                   {p.filename}
@@ -4873,8 +4905,10 @@ function PoolUploadCard({
                 {/* No cancel while "Saving…" — the attach is committing; the
                     clip is deletable from its card the moment it lands. */}
                 {p.status !== "saving" && (
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
+                    size="icon-sm"
                     onClick={() => onCancelUpload(p.localId)}
                     aria-label={
                       p.status === "uploading"
@@ -4884,7 +4918,7 @@ function PoolUploadCard({
                     className={POOL_CARD_DISMISS_CLASS}
                   >
                     ×
-                  </button>
+                  </Button>
                 )}
               </div>
               {p.status === "saving" ? (
@@ -4948,49 +4982,32 @@ function PoolUploadCard({
       )}
       {atCap ? (
         pending.length === 0 && (
-          <p className="text-sm text-[#71717a]">
+          <p className="text-sm text-muted-foreground">
             {maxClips === 1
               ? "One clip added. Remove it above to swap in a different one."
               : "You've reached the clip limit. Remove one above to add another."}
           </p>
         )
       ) : (
-        <>
-          <input
-            ref={inputRef}
-            type="file"
-            accept={accept}
-            multiple={maxClips !== 1}
-            aria-label="Upload video clips for this idea"
-            className="sr-only"
-            tabIndex={-1}
-            disabled={uploading}
-            onChange={(e) => {
-              onFiles(e.target.files);
-              // Reset so re-selecting the same file fires change again, and
-              // Safari stops rendering the chosen filename + thumbnail after
-              // an app-level delete.
-              e.target.value = "";
-            }}
-          />
-          {/* Disabled ONLY during narrated pre-processing (voiceover split +
-              save) — a concurrent handleFiles there would double-save the
-              voiceover. Clip TRANSFERS clear `uploading` first, so adding
-              more clips mid-batch stays possible. */}
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              disabled={uploading}
-              onClick={() => inputRef.current?.click()}
-              className="inline-flex min-h-11 items-center rounded-full bg-[#0c0c0e] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-80 focus-visible:outline-2 focus-visible:outline-[#0c0c0e] disabled:opacity-40 sm:min-h-0"
-            >
-              {maxClips === 1 ? "Add your clip" : "Add clips"}
-            </button>
-            <InfoDot label="Adding clips">
-              iCloud videos may take a moment to prepare before they appear here.
-            </InfoDot>
-          </div>
-        </>
+        // Disabled ONLY during narrated pre-processing (voiceover split +
+        // save) — a concurrent handleFiles there would double-save the
+        // voiceover. Clip TRANSFERS clear `uploading` first, so adding
+        // more clips mid-batch stays possible.
+        <Dropzone
+          onFiles={onFiles}
+          accept={accept}
+          multiple={maxClips !== 1}
+          disabled={uploading}
+          compact={hasAny}
+          title={hasAny ? "Add more clips" : "Drag clips here, or browse"}
+          subline={
+            hasAny
+              ? undefined
+              : subline ?? "iCloud videos may take a moment to prepare before they appear here."
+          }
+          ariaLabel={dropzoneLabel}
+          inputAriaLabel="Upload video clips for this idea"
+        />
       )}
       {uploading && pending.length === 0 && (
         <p className="mt-3 text-sm text-lime-700">Uploading…</p>

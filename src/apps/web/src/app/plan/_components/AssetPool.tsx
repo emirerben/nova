@@ -32,6 +32,7 @@ import {
 import { poolAssetAnalysisLine } from "@/lib/pool-asset-display";
 import { mergePoolAssetsPreservingDisplayUrls } from "@/lib/pool-assets";
 import { StableVideo } from "@/components/StableVideo";
+import { Dropzone } from "@/components/ui/dropzone";
 import {
   POOL_ASSET_MIME_TYPES,
   usePoolAssetUploader,
@@ -60,6 +61,7 @@ export default function AssetPool({
   onAssetContextUpdated,
   onMutated,
   onAssetsChanged,
+  embedded = false,
 }: {
   itemId: string;
   /** gcs_paths already attached as clips — flips a promoted tile to "In edit ✓". */
@@ -80,6 +82,10 @@ export default function AssetPool({
    *  ready pool asset exists for the auto-design Generate gate, without a
    *  second fetch of the same list (P2-5, 2026-08-18 adversarial review). */
   onAssetsChanged?: (assets: PoolAsset[]) => void;
+  /** Mounted inside the item-setup Card's "Visuals" tab (Lane G): drops the
+   *  "Visuals pool" eyebrow + outer bordered container (the Card already
+   *  supplies both) and swaps the empty state for the shared Dropzone. */
+  embedded?: boolean;
 }) {
   const guidedEditEnabled = process.env.NEXT_PUBLIC_GUIDED_EDIT_ENABLED === "true";
   const enabled =
@@ -299,18 +305,20 @@ export default function AssetPool({
   const isEmpty = count === 0 && pending.length === 0;
   const inputId = `asset-pool-input-${itemId}`;
 
-  return (
-    <div className="my-6">
-      <div className="mb-2 flex items-baseline justify-between">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-lime-700">
-          Visuals pool
-        </p>
-        {!isEmpty && !unavailable && (
-          <p className="text-[12px] text-[#71717a]">
-            {count} of {maxAssets}
+  const body = (
+    <>
+      {!embedded && (
+        <div className="mb-2 flex items-baseline justify-between">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-lime-700">
+            Visuals pool
           </p>
-        )}
-      </div>
+          {!isEmpty && !unavailable && (
+            <p className="text-[12px] text-[#71717a]">
+              {count} of {maxAssets}
+            </p>
+          )}
+        </div>
+      )}
 
       {unavailable ? (
         <div className="rounded-xl border border-dashed border-zinc-200 bg-white px-4 py-3 text-sm text-[#71717a]">
@@ -334,6 +342,30 @@ export default function AssetPool({
           />
 
           {isEmpty ? (
+            embedded ? (
+              /* Embedded (item-setup Card "Visuals" tab, Lane G) — the shared
+                 Dropzone primitive instead of the standalone dashed box; the
+                 Card already supplies the surrounding chrome. */
+              <div>
+                <Dropzone
+                  onFiles={(files) => {
+                    if (!atCap) handleFiles(files);
+                  }}
+                  accept={POOL_ASSET_MIME_TYPES.join(",")}
+                  multiple
+                  disabled={atCap}
+                  title="Drop screenshots or screen recordings"
+                  subline="Kria places them on your video"
+                  ariaLabel="Add visuals"
+                  inputAriaLabel="Add visuals to your pool (embedded)"
+                />
+                {releasingSlots > 0 && (
+                  <p className="mt-2 text-[12px] text-[#71717a]">
+                    Kria is releasing a removed upload slot. You can add another visual when cleanup finishes.
+                  </p>
+                )}
+              </div>
+            ) : (
             /* Empty state — leads with the action (§9), never "Nothing here yet". */
             <div
               className="rounded-xl border border-dashed border-zinc-200 bg-white p-5 text-center"
@@ -367,6 +399,7 @@ export default function AssetPool({
                 </p>
               )}
             </div>
+            )
           ) : (
             <div
               onDragOver={(e) => e.preventDefault()}
@@ -448,8 +481,10 @@ export default function AssetPool({
           )}
         </>
       )}
-    </div>
+    </>
   );
+
+  return embedded ? body : <div className="my-6">{body}</div>;
 }
 
 function PendingUploadTile({

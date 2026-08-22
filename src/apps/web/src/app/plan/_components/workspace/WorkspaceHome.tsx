@@ -69,7 +69,7 @@ export function WorkspaceHome({ plan, onRefresh, onError }: WorkspaceHomeProps) 
   }
 
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-background text-foreground">
       <div className="mx-auto flex max-w-[900px] flex-col gap-10 px-6 pb-24 pt-14">
         {activating && (
           <SeedUploadCard plan={plan} onError={onError} onRefresh={onRefresh} />
@@ -145,14 +145,21 @@ export function WorkspaceHome({ plan, onRefresh, onError }: WorkspaceHomeProps) 
           )}
         </section>
 
-        {/* ---- Integrations (was /library's TikTok card; release rails link here) ---- */}
+        {/* ---- Integrations (was /library's TikTok card; release rails link here) ----
+            TikTokConnectionCard reports availability via onConnection (and
+            renders null itself when unavailable); mount it unconditionally
+            so that callback ever fires, but only show the "Integrations"
+            heading once availability is confirmed — otherwise the page ends
+            in an empty labeled section. */}
         <section id="tiktok" aria-labelledby="integrations-heading">
-          <h2
-            id="integrations-heading"
-            className="mb-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#a1a1aa]"
-          >
-            Integrations
-          </h2>
+          {tiktokConnection?.available && (
+            <h2
+              id="integrations-heading"
+              className="mb-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#a1a1aa]"
+            >
+              Integrations
+            </h2>
+          )}
           <TikTokConnectionCard onConnection={setTikTokConnection} />
         </section>
       </div>
