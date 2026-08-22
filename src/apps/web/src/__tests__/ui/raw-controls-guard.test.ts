@@ -244,8 +244,14 @@ const LANE_D_BASELINE: Record<string, number> = {
 };
 
 // ── Lane E ──────────────────────────────────────────────────────────────
-// (none yet)
-const LANE_E_BASELINE: Record<string, number> = {};
+// E1 (EditorShell.tsx): sonner toast, AlertDialog, Button/Input/Select/
+// Textarea controls. E2/E3 land in later PRs against ToolDrawer/
+// InspectorPanel/inspector-fields/CopilotDrawer/CaptionsDrawer/
+// StylesDrawer/MotionInspector/Sheet.tsx — disjoint files, so they extend
+// this block rather than editing this line.
+const LANE_E_BASELINE: Record<string, number> = {
+  "app/plan/items/[id]/_editor/EditorShell.tsx": 0,
+};
 
 // ── Lane F ──────────────────────────────────────────────────────────────
 // (none yet)

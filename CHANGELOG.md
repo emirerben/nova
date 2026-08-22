@@ -86,6 +86,28 @@ All notable changes to this project will be documented in this file.
   an optional `defaultConversationOpen` prop so the panel seeds straight
   onto the conversation surface.
 - Depends on Lane 0 (`0.47.0.0`, shadcn/ui foundation).
+## [0.47.5.0] — 2026-08-22
+
+### Design system
+- **Editor on shadcn (Kria Design System migration, Lane E1).**
+  `EditorShell.tsx`'s hand-rolled toast, `window.confirm`, and ~34 raw
+  `<button>`/`<input>`/`<select>`/`<textarea>` controls now route through the
+  shadcn primitives from Lane 0: transient feedback goes through sonner's
+  `toast()` (single stable-identity `notify` callback replaces the old
+  `toast` state + auto-clear effect + two DOM render sites), the
+  song/clip-timing collision confirm uses `<ConfirmDialog>` instead of
+  `window.confirm`, and every icon/text button is now `<Button>` (ghost/
+  outline/ink/link variants, `icon`/`icon-sm`/`sm` sizes) with `<Input>`/
+  `<Select>`/`<Textarea>` for the title field, canvas-zoom picker, and
+  `LightEditSheet`'s text field. `MusicAlignmentDialog` stays hand-rolled —
+  Radix's `AlertDialog` doesn't `stopImmediatePropagation` its Escape
+  handling, which broke `MusicAlignmentDialog.test.tsx`'s
+  outer-editor-shortcut isolation guard; its buttons/dialog chrome still
+  moved to the primitives. `SongWindowSelector` and the "Scrub video"
+  transport slider keep native `<input type="range">` (excluded from the
+  raw-control guard by design — continuous scrubbing doesn't fit `Slider`'s
+  discrete-thumb model). Raw-control count for `EditorShell.tsx` in
+  `raw-controls-guard.test.ts` drops from 35 to 0.
 
 ## [0.47.0.0] — 2026-08-22
 
@@ -109,6 +131,17 @@ All notable changes to this project will be documented in this file.
   flips the rule to `error` and deletes the guard test.
 - See DESIGN.md §15 "Component library (shadcn/ui)" for the full variant
   table, token→hex map, and DO/DON'T list.
+
+## [0.46.0.2] — 2026-08-22
+
+### Fixes
+- **Render-worker autostop never fired after v0.46.0.1.** The broker
+  `polling_interval=10` also became the BRPOP timeout on `inspect()` reply
+  queues, so `render_worker_idle()`'s three inspect calls took ~30s (hitting the
+  lifecycle task's soft limit) and intermittently dropped replies → `'unknown'`
+  every 2 min, worker never stopped. `inspect()` now runs on a dedicated
+  connection with the 1s default (`queue_state._inspector`); the throttle stays
+  on the long-lived worker consumers. Reproduced + verified against live Redis.
 
 ## [0.46.0.1] — 2026-08-22
 
