@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.48.2.1] — 2026-08-23
+
+### Fixes
+- **Render-worker autostop flapped: stopped 37s after a wake.** The idle grace
+  clock kept running while the machine was already stopped, so a wake for a
+  short task (conformance analysis) saw a stale ≥15-min timer and was stopped
+  immediately; the user's real render then hit a machine mid soft-shutdown
+  (Fly start → 412) and waited for the next backstop. `_decide_lifecycle_action`
+  now takes the machine state: idle + not running ⇒ `idle_stopped`, timer
+  cleared, no Fly start/stop call. Unknown state still behaves as started.
+
 ## [0.48.2.0] — 2026-08-23
 
 ### Changed
