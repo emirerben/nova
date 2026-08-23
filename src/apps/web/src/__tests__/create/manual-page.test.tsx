@@ -96,7 +96,7 @@ describe("hidden manual create flow", () => {
 
     expect(await screen.findByText("one.mp4")).toBeInTheDocument();
     expect(screen.getByText("two.mp4")).toBeInTheDocument();
-    const continueButton = screen.getByRole("button", { name: /continue to editor/i });
+    const continueButton = screen.getByRole("button", { name: /export video/i });
     expect(continueButton).toHaveClass("min-h-[48px]");
     expect(continueButton.parentElement?.className).toContain("sticky");
     expect(continueButton.parentElement?.className).not.toContain("sm:static");
@@ -133,8 +133,8 @@ describe("hidden manual create flow", () => {
       { upload_url: "https://upload/second", gcs_path: "users/u/plan/item-1/second.mp4" },
     ]);
     const view = render(<ManualCreatePage />);
-    await screen.findByRole("heading", { name: /build from your footage/i });
-    const input = view.container.querySelector('input[aria-label="Upload timeline footage"]');
+    await screen.findByRole("heading", { name: /arrange your footage/i });
+    const input = view.container.querySelector('input[aria-label="Choose videos to add"]');
     const files = [
       new File(["video"], "first.mp4", { type: "video/mp4" }),
       new File(["video"], "second.mp4", { type: "video/mp4" }),
@@ -165,8 +165,8 @@ describe("hidden manual create flow", () => {
 
   it("rejects photos before requesting upload URLs", async () => {
     const view = render(<ManualCreatePage />);
-    await screen.findByRole("heading", { name: /build from your footage/i });
-    const input = view.container.querySelector('input[aria-label="Upload timeline footage"]');
+    await screen.findByRole("heading", { name: /arrange your footage/i });
+    const input = view.container.querySelector('input[aria-label="Choose videos to add"]');
     const photo = new File(["photo"], "still.jpg", { type: "image/jpeg" });
 
     await act(async () => {
@@ -174,7 +174,7 @@ describe("hidden manual create flow", () => {
       fireEvent.change(input);
     });
 
-    expect(screen.getByRole("alert")).toHaveTextContent(/photo timelines are not available/i);
+    expect(screen.getByRole("alert")).toHaveTextContent(/photo timelines.*available/i);
     expect(requestUploadUrls).not.toHaveBeenCalled();
     expect(uploadToGcs).not.toHaveBeenCalled();
   });
@@ -187,8 +187,8 @@ describe("hidden manual create flow", () => {
       .mockRejectedValueOnce(new Error("Connection interrupted"))
       .mockResolvedValue({});
     const view = render(<ManualCreatePage />);
-    await screen.findByRole("heading", { name: /build from your footage/i });
-    const input = view.container.querySelector('input[aria-label="Upload timeline footage"]');
+    await screen.findByRole("heading", { name: /arrange your footage/i });
+    const input = view.container.querySelector('input[aria-label="Choose videos to add"]');
     const file = new File(["video"], "video.mp4", { type: "video/mp4" });
 
     await act(async () => {
@@ -198,7 +198,7 @@ describe("hidden manual create flow", () => {
 
     expect(await screen.findByText("video.mp4")).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent(/files uploaded.*save their order/i);
-    fireEvent.click(screen.getByRole("button", { name: /continue to editor/i }));
+    fireEvent.click(screen.getByRole("button", { name: /export video/i }));
 
     await waitFor(() => expect(initializeManualDraft).toHaveBeenCalledTimes(1));
     expect(uploadToGcs).toHaveBeenCalledTimes(1);

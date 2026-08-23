@@ -85,11 +85,11 @@ export function lyricsFeatureAvailable(capabilities: EditorCapabilities | null |
   return isElementsLyricsModel(capabilities) ? LYRICS_OPTIONAL_UI : LYRICS_EDITOR_UI;
 }
 
-/** Server reason code → human tooltip copy. Unknown codes pass through raw. */
+/** Server reason code → human tooltip copy. Unknown codes use a creator-safe fallback. */
 export function editorReasonCopy(reason: string | null | undefined): string {
   if (!reason) return "This version can't be edited.";
   if (reason === "voiceover_bed_fit" || reason === "locked_to_voiceover") {
-    return "locked to your voiceover";
+    return "locked to your narration";
   }
   if (reason === "lyrics_sync") return "lyrics are synced to the song";
   if (reason === "no_slot_timeline") return "this edit has no clip timeline";
@@ -111,7 +111,7 @@ export function editorReasonCopy(reason: string | null | undefined): string {
   }
   if (reason === "duration_unknown") return "re-render this legacy edit before adding visual blocks";
   if (reason === "no_video") return "waiting for this edit to finish rendering";
-  return reason;
+  return "this feature isn't available for this edit";
 }
 
 export function canEditIntroControls(

@@ -68,9 +68,9 @@ export function ClipGroupStep({
   return (
     <div className="flex flex-col gap-6 px-4 py-8 max-w-lg mx-auto animate-fade-up">
       <div className="border-l-4 border-lime-600 pl-4">
-        <p className="font-display text-2xl text-[#0c0c0e]">Group your clips</p>
+        <p className="font-display text-2xl text-[#0c0c0e]">Group clips by story</p>
         <p className="text-sm text-[#71717a] mt-1">
-          Select clips that go together, add a topic. Ungrouped clips each get their own edit.
+          Select clips that belong in the same video. Clips you leave ungrouped become separate videos.
         </p>
       </div>
 
@@ -129,7 +129,7 @@ export function ClipGroupStep({
             value={topicDraft}
             onChange={(e) => setTopicDraft(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && confirmGroup()}
-            placeholder="What's this group about? (optional)"
+            placeholder="What is this group about? (optional)"
             autoFocus
             className="h-auto flex-1 rounded-xl border-[#e4e4e7] bg-[#ffffff] px-4 py-3 text-[#0c0c0e] placeholder:text-[#a1a1aa] focus-visible:ring-2 focus-visible:ring-lime-600"
           />
@@ -154,7 +154,7 @@ export function ClipGroupStep({
             >
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-[#0c0c0e] font-medium truncate">
-                  {group.topic || <span className="text-[#a1a1aa] font-normal">No topic</span>}
+                  {group.topic || <span className="text-[#a1a1aa] font-normal">No topic yet</span>}
                 </p>
                 <p className="text-xs text-[#71717a] mt-0.5">
                   {group.clipIndices.length} clip{group.clipIndices.length !== 1 ? "s" : ""}
@@ -204,14 +204,14 @@ export function ClipGroupStep({
           onClick={onBack}
           className="h-auto min-h-[44px] rounded px-4 text-sm text-[#71717a] hover:bg-transparent hover:text-[#0c0c0e] focus-visible:ring-lime-600"
         >
-          ← back
+          Back
         </Button>
         <Button
           type="button"
           onClick={handleSubmit}
           className="h-auto min-h-[44px] flex-1 rounded-xl bg-lime-700 py-3 font-medium text-white hover:bg-lime-800 focus-visible:ring-lime-600"
         >
-          Make my edits →
+          Create videos
         </Button>
       </div>
     </div>

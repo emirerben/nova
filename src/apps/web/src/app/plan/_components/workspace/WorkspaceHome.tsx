@@ -81,17 +81,17 @@ export function WorkspaceHome({ plan, onRefresh, onError }: WorkspaceHomeProps) 
             id="create-heading"
             className="font-display text-[32px] font-medium leading-tight text-[#0c0c0e]"
           >
-            Make a new video.
+            Create a new video
           </h1>
           <p className="mt-1.5 max-w-md text-sm text-[#71717a]">
-            Pick what kind, add your footage — Kria edits it into a post.
+            Choose a format, add your footage, and Kria will build a first cut.
           </p>
           <Button asChild variant="ink" size="lg" className="mt-5 w-full sm:w-auto">
-            <Link href="/plan/new">New video</Link>
+            <Link href="/plan/new">Create a video</Link>
           </Button>
           {planGenerating && (
             <p className="mt-3 text-[13px] text-[#71717a]" role="status">
-              Kria is still setting up your plan — you can start a video anyway.
+              Your content plan is still being prepared. You can create a video now.
             </p>
           )}
         </section>
@@ -102,22 +102,25 @@ export function WorkspaceHome({ plan, onRefresh, onError }: WorkspaceHomeProps) 
             id="past-edits-heading"
             className="mb-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#3f3f46]"
           >
-            Past edits
+            Your videos
           </h2>
 
           {loadState === "loading" && <SkeletonGrid />}
 
           {loadState === "error" && (
             <div className="py-10">
-              <p className="text-[#3f3f46]">We couldn&apos;t load your videos.</p>
+              <p className="text-[#3f3f46]">We couldn&apos;t load your videos. Your saved videos are still safe.</p>
               <Button variant="outline" size="sm" className="mt-4" onClick={() => void load()}>
-                Try again
+                Load your videos again
               </Button>
             </div>
           )}
 
           {loadState === "ready" && jobs.length === 0 && (
-            <p className="py-6 text-[15px] text-[#71717a]">Your edits will live here.</p>
+            <div className="py-6">
+              <p className="text-[15px] text-[#3f3f46]">Your finished videos will appear here.</p>
+              <p className="mt-1 text-sm text-[#71717a]">Create your first video to get started.</p>
+            </div>
           )}
 
           {loadState === "ready" && jobs.length > 0 && (
@@ -137,7 +140,7 @@ export function WorkspaceHome({ plan, onRefresh, onError }: WorkspaceHomeProps) 
                     onClick={() => void loadMore()}
                     disabled={loadingMore}
                   >
-                    {loadingMore ? "Loading…" : "Load more"}
+                    {loadingMore ? "Loading videos…" : "Load more videos"}
                   </Button>
                 </div>
               )}
@@ -157,7 +160,7 @@ export function WorkspaceHome({ plan, onRefresh, onError }: WorkspaceHomeProps) 
               id="integrations-heading"
               className="mb-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#a1a1aa]"
             >
-              Integrations
+              Connected accounts
             </h2>
           )}
           <TikTokConnectionCard onConnection={setTikTokConnection} />
@@ -171,7 +174,7 @@ function SkeletonGrid() {
   return (
     <ul
       className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4"
-      aria-label="Loading your videos"
+      aria-label="Loading your videos…"
     >
       {Array.from({ length: 4 }).map((_, i) => (
         <li key={i}>

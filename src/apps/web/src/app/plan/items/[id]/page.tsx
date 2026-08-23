@@ -758,7 +758,7 @@ export default function PlanItemPage() {
 
   useEffect(() => {
     if (pollError instanceof NotAuthenticatedError) setNeedsAuth(true);
-    else if (pollError) setError(pollError.message);
+    else if (pollError) setError("We couldn't load this edit. Try again.");
   }, [pollError]);
 
   const item = data?.item ?? null;
@@ -961,7 +961,7 @@ export default function PlanItemPage() {
         if (msg.toLowerCase().includes("re-rendering") || msg.includes("409")) {
           setError("Still applying your last change — wait for it to finish, then try again.");
         } else {
-          setError(msg);
+          setError("We couldn't apply that change. Try again.");
         }
         refetch();
       }
@@ -1148,7 +1148,7 @@ export default function PlanItemPage() {
             ? {
                 ...p,
                 status: "error" as const,
-                error: err instanceof Error ? err.message : "Upload failed",
+                error: "We couldn't add this video. Try again.",
               }
             : p,
         ),
@@ -1271,12 +1271,12 @@ export default function PlanItemPage() {
       if (isNarratedReady) {
         const { voiceoverFiles, clipFiles } = await splitNarratedReadyUploads(list);
         if (voiceoverFiles.length > 1) {
-          throw new Error("Upload one voiceover audio file at a time");
+          throw new Error("Upload one narration file at a time.");
         }
         if (voiceoverFiles.length === 1) {
           const uploaded = await uploadOwnedVoiceover(voiceoverFiles[0]);
           if (uploaded.kind !== "audio") {
-            throw new Error("Upload an audio file for the voiceover");
+            throw new Error("Upload an audio file for narration.");
           }
           const saved = await handleVoiceover(uploaded.gcs_path);
           if (!saved) return;
@@ -1284,8 +1284,8 @@ export default function PlanItemPage() {
         list = clipFiles;
         if (list.length === 0) return;
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed");
+    } catch {
+      setError("We couldn't add those videos. Try again.");
       return;
     } finally {
       setUploading(false);
@@ -1333,8 +1333,8 @@ export default function PlanItemPage() {
       // Queued: composes with in-flight upload attaches (delete during an
       // upload's settle must not resurrect, and vice versa).
       await enqueueAttach((current) => current.filter((x) => x.gcs_path !== a.gcs_path));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't remove that clip");
+    } catch {
+      setError("We couldn't remove that video. Try again.");
     }
   }
 
@@ -1355,8 +1355,8 @@ export default function PlanItemPage() {
         const assignments = buildPromotedAssignments(current, asset.gcs_path);
         return assignments ?? current;
       });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't add that visual to the edit");
+    } catch {
+      setError("We couldn't add that visual to the edit. Try again.");
     }
   }
 
@@ -1391,10 +1391,10 @@ export default function PlanItemPage() {
         refetch();
       }
       return true;
-    } catch (err) {
+    } catch {
       if (generation === voiceoverSaveGenerationRef.current) {
         setVoiceoverGcsPath(null);
-        setError(err instanceof Error ? err.message : "Failed to save voiceover");
+        setError("We couldn't save your narration. Try again.");
       }
       return false;
     } finally {
@@ -1423,16 +1423,16 @@ export default function PlanItemPage() {
       // Generate before the button re-renders disabled.
       const pendingVoiceoverSave = voiceoverSavePromiseRef.current;
       if (pendingVoiceoverSave && !(await pendingVoiceoverSave)) {
-        throw new Error("Voiceover couldn't be saved — try again before generating.");
+        throw new Error("Your narration couldn't be saved. Try again before creating the video.");
       }
       if (item && needsFormatPersist(item.edit_format)) {
         await updatePlanItem(item.id, { edit_format: resolvedFormat });
       }
       await generatePlanItem(itemId);
       refetch();
-    } catch (err) {
+    } catch {
       awaitingJobSince.current = null;
-      setError(err instanceof Error ? err.message : "Failed to start generation");
+      setError("We couldn't create your video. Try again.");
       setGenerating(false);
     }
   }
@@ -1597,7 +1597,7 @@ export default function PlanItemPage() {
       : item.edit_proposal?.status === "analyzing" || item.edit_proposal?.status === "drafting"
         ? guidedEditAutoDesign
           ? "Kria is designing your edit…"
-          : "Nova is still planning this edit."
+          : "Kria is still planning this edit."
         : item.edit_proposal?.status === "draft"
           ? "Review and approve the edit plan first."
           : item.edit_proposal?.status === "failed"
@@ -1858,9 +1858,9 @@ export default function PlanItemPage() {
     <>
       <Separator />
       <div>
-        <Label className="mb-2 block">Your voiceover</Label>
+        <Label className="mb-2 block">Your narration</Label>
         <p className="mb-3 text-xs text-muted-foreground">
-          This recording becomes the soundtrack. It is separate from a note to Kria.
+          This recording becomes the soundtrack. It is separate from your note to Kria.
         </p>
         <VoiceRecorder onVoiceover={handleVoiceover} upload={uploadOwnedVoiceover} />
         {voiceoverSaving && <p className="mt-1 text-xs text-muted-foreground">Saving…</p>}
@@ -1879,8 +1879,7 @@ export default function PlanItemPage() {
             href={`/plan/items/${item.id}/transcript`}
             className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[12px] text-[#71717a] transition-colors hover:border-lime-400 hover:text-lime-700"
           >
-            <span aria-hidden>✦</span>
-            Not sure what to say? Write a script with Kria
+            Need narration? Write a script with Kria
           </Link>
         )}
       </div>
@@ -1890,7 +1889,7 @@ export default function PlanItemPage() {
   const tellKriaSection = (
     <section>
       <Label htmlFor="tell-kria" className="mb-2 block">
-        Tell Kria <span className="font-normal text-muted-foreground">Optional</span>
+        Tell Kria <span className="font-normal text-muted-foreground">(optional)</span>
       </Label>
       <Textarea
         id="tell-kria"
@@ -1904,7 +1903,7 @@ export default function PlanItemPage() {
             refetch();
           }
         }}
-        placeholder="For example: start fast and keep the candid moments"
+        placeholder="For example: start fast and keep the candid moments."
         rows={2}
       />
     </section>
@@ -1961,7 +1960,7 @@ export default function PlanItemPage() {
     ? "Starting…"
     : uploaderBusy
       ? FINISHING_UPLOAD_HINT
-      : "Generate video";
+      : "Create video";
   // #71717a-equivalent (text-muted-foreground), not the faint token: this line
   // carries must-read gating copy (why the button is off / what drives the
   // edit) — DESIGN.md §8 keeps faint ink decorative-only.
@@ -2564,11 +2563,7 @@ function FocusedResults({
     })
       .then(() => refetch())
       .catch((err) => {
-        onError(
-          err instanceof Error
-            ? err.message
-            : "Couldn't remove that overlay. Try again.",
-        );
+        onError("We couldn't remove that overlay. Try again.");
       });
     setLocalPreviewUrls((prev) => {
       if (!prev[cardId]) return prev;
@@ -2970,11 +2965,7 @@ function FocusedResults({
       } catch (err) {
         pendingExportRef.current = null;
         setExportPending(false);
-        onError(
-          err instanceof Error
-            ? err.message
-            : "Couldn't add your overlays to the video. Try again.",
-        );
+        onError("We couldn't add your overlays to the video. Try again.");
       }
       return;
     }
@@ -2991,11 +2982,7 @@ function FocusedResults({
       } catch (err) {
         pendingExportRef.current = null;
         setExportPending(false);
-        onError(
-          err instanceof Error
-            ? err.message
-            : "Couldn't add your sound effects to the video. Try again.",
-        );
+        onError("We couldn't add your sound effects to the video. Try again.");
       }
       return;
     }
@@ -3042,7 +3029,7 @@ function FocusedResults({
   };
   const modePill = variant
     ? variant.resolved_archetype === "narrated"
-      ? "Voiceover"
+      ? "Narration"
       : variant.track_title || variant.music_track_id
         ? variant.text_mode === "lyrics"
           ? "With lyrics"
@@ -3397,7 +3384,7 @@ function FocusedVariantControls({
               return next;
             });
           }
-          onError(err instanceof Error ? err.message : "Couldn't add that overlay.");
+          onError("We couldn't add that overlay. Try again.");
         })
         .finally(() => setOverlayUploading(false));
     },
@@ -3476,11 +3463,7 @@ function FocusedVariantControls({
         // Cards are safe in local state, but the save failed (e.g. backend
         // media_overlays_enabled off → 404). Surface it so the user knows the
         // overlay positions won't persist / won't be in the render.
-        onError(
-          err instanceof Error
-            ? err.message
-            : "Couldn't save your overlays — they won't be in the render.",
-        );
+        onError("We couldn't save your overlays, so they won't be in the render. Try again.");
       }
     }, 2500);
     return () => clearTimeout(timer);
@@ -3526,8 +3509,8 @@ function FocusedVariantControls({
         }));
         setOverlayCards((prev) => [...prev, ...confirmedCards]);
         overlaysDirtyRef.current = true;
-      } catch (err) {
-        onError(err instanceof Error ? err.message : "Couldn't upload that overlay.");
+      } catch {
+        onError("We couldn't upload that overlay. Try again.");
       } finally {
         setOverlayUploading(false);
       }
@@ -3595,10 +3578,8 @@ function FocusedVariantControls({
     try {
       await setVariantMediaOverlays(itemId, variant.variant_id, [], { render: false });
       refetch();
-    } catch (err) {
-      onError(
-        err instanceof Error ? err.message : "Couldn't clear your overlays. Try again.",
-      );
+    } catch {
+      onError("We couldn't clear your overlays. Try again.");
     }
   }
 
@@ -3701,12 +3682,10 @@ function FocusedVariantControls({
         label: files[i].filename.replace(/\.[^.]+$/, ""),
       }));
       handleSfxChange([...sfxPlacements, ...newPlacements]);
-    } catch (err) {
+    } catch {
       // Upload-URL request or GCS upload failed (e.g. backend
       // SOUND_EFFECTS_ENABLED off → sfx-upload-urls 404). Surface it.
-      onError(
-        err instanceof Error ? err.message : "Couldn't upload that sound effect. Try again.",
-      );
+      onError("We couldn't upload that sound effect. Try again.");
     } finally {
       setSfxUploading(false);
     }
@@ -3724,14 +3703,10 @@ function FocusedVariantControls({
     sfxSaveTimer.current = setTimeout(async () => {
       try {
         await setVariantSoundEffects(itemId, variant.variant_id, newPlacements);
-      } catch (err) {
+      } catch {
         // The client-side preview still plays the effect locally, but the save
         // failed — surface it (e.g. backend SOUND_EFFECTS_ENABLED off → 404).
-        onError(
-          err instanceof Error
-            ? err.message
-            : "Couldn't save your sound effects.",
-        );
+        onError("We couldn't save your sound effects. Try again.");
       }
     }, 600);
   }
@@ -4508,27 +4483,21 @@ function Hero({
         </div>
       ) : heroSrc && playbackFailed ? (
         <div className="flex h-full flex-col items-center justify-center px-5 text-center">
-          <p className="font-display text-base leading-tight text-[#0c0c0e] lg:text-2xl">
-            Preview unavailable
-          </p>
-          <p className="mt-1 text-xs leading-relaxed text-[#3f3f46] lg:hidden">
-            The finished video is safe.
-          </p>
-          <p className="mt-2 hidden max-w-xs text-sm leading-relaxed text-[#3f3f46] lg:block">
-            The finished video is still safe. Try the preview again or download the exact file.
+          <p className="max-w-xs text-xs leading-relaxed text-[#3f3f46] lg:text-sm">
+            The preview couldn&apos;t load, but your finished video is safe. Try the preview again or
+            download the video.
           </p>
           <div className="mt-3 flex w-full flex-col justify-center gap-2 px-2 lg:mt-5 lg:w-auto lg:flex-row lg:flex-wrap lg:gap-3 lg:px-0">
             <Button
               type="button"
-              aria-label="Try video again"
+              aria-label="Try preview again"
               onClick={() => {
                 onPlaybackFailedChange(false);
                 setPlaybackRetry((value) => value + 1);
               }}
               className="h-auto min-h-10 rounded-full px-3 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 lg:min-h-11 lg:px-5 lg:text-sm"
             >
-              <span className="lg:hidden">Try again</span>
-              <span className="hidden lg:inline">Try video again</span>
+              Try preview again
             </Button>
             {onDownload && (
               <Button
@@ -4944,7 +4913,12 @@ function PoolUploadCard({
   // In-flight cards count toward the cap so maxClips=1 can't double-pick.
   const atCap = maxClips != null && clips.length + pending.length >= maxClips;
   const hasAny = clips.length > 0 || pending.length > 0;
-  const dropzoneLabel = maxClips === 1 ? "Add your clip" : hasAny ? "Add more clips" : "Add clips";
+  const dropzoneLabel =
+    maxClips === 1
+      ? "Drop a video here or choose a file"
+      : hasAny
+        ? "Add more videos"
+        : "Drop videos here or choose files";
   return (
     <div>
       {hasAny && (
@@ -5102,7 +5076,7 @@ function PoolUploadCard({
               ) : (
                 <>
                   <p className="mt-1 text-[11px] text-[#3f3f46]">
-                    {p.error ?? "Upload failed"}
+                    {p.error ?? "We couldn't add this video. Try again."}
                   </p>
                   <Button
                     type="button"
@@ -5137,14 +5111,14 @@ function PoolUploadCard({
           multiple={maxClips !== 1}
           disabled={uploading}
           compact={hasAny}
-          title={hasAny ? "Add more clips" : "Drag clips here, or browse"}
+          title={hasAny ? "Add more videos" : "Drop videos here or choose files"}
           subline={
             hasAny
               ? undefined
               : subline ?? "iCloud videos may take a moment to prepare before they appear here."
           }
           ariaLabel={dropzoneLabel}
-          inputAriaLabel="Upload video clips for this idea"
+          inputAriaLabel="Drop videos here or choose files"
         />
       )}
       {uploading && pending.length === 0 && (

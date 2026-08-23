@@ -27,20 +27,20 @@ export interface ModuleNodeData {
 function IssueBadge({ count }: { count: number | null }) {
   if (count === null) {
     return (
-      <span className="ml-auto text-xs font-medium bg-gray-800 text-gray-600 px-1.5 py-0.5 rounded">
+      <span aria-label="Issue count is loading" className="ml-auto text-xs font-medium bg-gray-800 text-gray-600 px-1.5 py-0.5 rounded">
         ...
       </span>
     );
   }
   if (count === 0) {
     return (
-      <span className="ml-auto text-xs font-medium bg-gray-800 text-gray-600 px-1.5 py-0.5 rounded">
+      <span aria-label="No open issues" className="ml-auto text-xs font-medium bg-gray-800 text-gray-600 px-1.5 py-0.5 rounded">
         0
       </span>
     );
   }
   return (
-    <span className="ml-auto text-xs font-medium bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded">
+    <span aria-label={`${count} open issue${count === 1 ? "" : "s"}`} className="ml-auto text-xs font-medium bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded">
       {count}
     </span>
   );
@@ -126,7 +126,7 @@ function ModuleNodeInner({ data }: NodeProps & { data: ModuleNodeData }) {
         </span>
         {isBusiness && biz ? (
           <span className={`ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded ${STATUS_COLORS[biz.status] ?? STATUS_COLORS.planned}`}>
-            {biz.status}
+            {biz.status === "live" ? "Live" : biz.status === "building" ? "Building" : "Planned"}
           </span>
         ) : (
           <IssueBadge count={issueCount} />

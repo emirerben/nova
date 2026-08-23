@@ -6,7 +6,7 @@ describe("public TikTok product workspace", () => {
   test("renders the exact approved video when the server resolves one", () => {
     render(<TikTokProductWorkspace videoSrc="https://cdn.example.com/approved.mp4" />);
 
-    expect(screen.getByLabelText("Exact approved Kria video")).toHaveAttribute(
+    expect(screen.getByLabelText("The exact video you approved")).toHaveAttribute(
       "src",
       "https://cdn.example.com/approved.mp4",
     );
@@ -16,9 +16,9 @@ describe("public TikTok product workspace", () => {
   test("renders a useful approved-render fallback when no video is available", () => {
     render(<TikTokProductWorkspace videoSrc={null} />);
 
-    expect(screen.getAllByText("Exact approved render")).toHaveLength(2);
+    expect(screen.getAllByText("The exact video you approved")).toHaveLength(2);
     expect(screen.getByText("A quiet morning in the studio")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Exact approved Kria video")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("The exact video you approved")).not.toBeInTheDocument();
   });
 
   test("requires manual privacy and music confirmation before review", () => {
@@ -84,7 +84,7 @@ describe("public TikTok product workspace", () => {
     expect(screen.getByRole("heading", { name: "Confirm the exact submission" })).toBeInTheDocument();
     expect(screen.getByText("@review_sandbox")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Complete demo submission" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete preview" }));
 
     expect(screen.getByRole("heading", { name: "Published privately on TikTok" })).toBeInTheDocument();
     expect(screen.getByText("Visibility: Only you")).toBeInTheDocument();
@@ -105,9 +105,9 @@ describe("public TikTok product workspace", () => {
 
     expect(screen.getByRole("heading", { name: "Confirm the TikTok handoff" })).toBeInTheDocument();
     expect(screen.getByText("Open the notification in the TikTok app")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Send demo to TikTok inbox" }));
+    fireEvent.click(screen.getByRole("button", { name: "Preview inbox handoff" }));
 
-    expect(screen.getByRole("heading", { name: "Waiting in the TikTok app inbox" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Waiting in your TikTok inbox" })).toBeInTheDocument();
     expect(screen.getByText("No post created")).toBeInTheDocument();
   });
 
@@ -154,7 +154,7 @@ describe("public TikTok product workspace", () => {
     fireEvent.click(screen.getByRole("radio", { name: /Only you/ }));
     fireEvent.click(screen.getByRole("checkbox", { name: /right to use the music/ }));
     fireEvent.click(screen.getByRole("button", { name: "Review submission" }));
-    fireEvent.click(screen.getByRole("button", { name: "Complete demo submission" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete preview" }));
     fireEvent.click(screen.getByRole("button", { name: "Restart walkthrough" }));
 
     expect(screen.getByRole("heading", { name: "Creator-controlled details" })).toBeInTheDocument();

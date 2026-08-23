@@ -35,15 +35,15 @@ export const PHASE_ORDER: readonly JobPhase[] = [
 
 /** Short copy shown in the active-phase line. Kept upbeat, no jargon. */
 export const PHASE_LABEL: Record<JobPhase, string> = {
-  queued: "Waiting in queue…",
-  download_clips: "Pulling in your clips…",
-  analyze_clips: "Analysing your clips with AI…",
-  match_clips: "Picking the best moments…",
-  assemble: "Assembling the video…",
-  mix_audio: "Mixing the audio…",
-  generate_copy: "Writing your caption…",
-  upload: "Almost there — saving the result…",
-  finalize: "Wrapping up…",
+  queued: "Waiting to start…",
+  download_clips: "Preparing your footage…",
+  analyze_clips: "Reviewing your footage…",
+  match_clips: "Choosing the best moments…",
+  assemble: "Rendering your video…",
+  mix_audio: "Mixing audio…",
+  generate_copy: "Writing on-screen text…",
+  upload: "Saving your video…",
+  finalize: "Finishing up…",
 };
 
 /** Fallback when the backend reports a phase the frontend doesn't recognise
@@ -51,12 +51,7 @@ export const PHASE_LABEL: Record<JobPhase, string> = {
 export function humanisePhase(name: string | null | undefined): string {
   if (!name) return "Working on it…";
   if (name in PHASE_LABEL) return PHASE_LABEL[name as JobPhase];
-  // Humanise: snake_case → Sentence case.
-  return (
-    name.charAt(0).toUpperCase() +
-    name.slice(1).replace(/_/g, " ") +
-    "…"
-  );
+  return "Finishing up…";
 }
 
 /** Format an elapsed-ms value as a short human string ("12.3s", "1m 23s"). */

@@ -20,11 +20,11 @@ jest.mock("next/navigation", () => ({
 // test stays focused on authentication and the landing composition boundary.
 const mockStory = jest.fn(({ mode }: { mode?: string }) => (
   <section
-    aria-label="How Kria turns raw videos into a finished edit"
+    aria-label="How Kria turns your footage into a finished video"
     data-mode={mode}
   >
-    <h1>Save time. Let AI edit your videos. Create more.</h1>
-    <a href="/plan">Create my first edit</a>
+    <h1>Turn your footage into videos people want to watch.</h1>
+    <a href="/plan">Create a video</a>
     <a href="/terms">Terms</a>
     <a href="/privacy">Privacy</a>
   </section>
@@ -73,12 +73,12 @@ describe("HomePage", () => {
 
     expect(mockRedirect).not.toHaveBeenCalled();
     expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /create my first edit/i })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /create a video/i })).toHaveAttribute(
       "href",
       "/plan",
     );
     expect(
-      screen.getByLabelText("How Kria turns raw videos into a finished edit"),
+      screen.getByLabelText("How Kria turns your footage into a finished video"),
     ).toHaveAttribute("data-mode", "auto");
     expect(mockStory).toHaveBeenCalledWith({ mode: "auto" });
     expect(screen.queryByText(/how your agent works/i)).not.toBeInTheDocument();
@@ -92,7 +92,7 @@ describe("HomePage", () => {
     render(await HomePage({ searchParams: { mode: "scroll" } }));
 
     expect(
-      screen.getByLabelText("How Kria turns raw videos into a finished edit"),
+      screen.getByLabelText("How Kria turns your footage into a finished video"),
     ).toHaveAttribute("data-mode", "scroll");
     expect(mockStory).toHaveBeenCalledWith({ mode: "scroll" });
   });

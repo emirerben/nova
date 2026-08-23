@@ -39,13 +39,13 @@ export const TYPE_COPY: Record<
   { label: string; desc: string; meta: string }
 > = {
   montage: {
-    label: "Montage",
-    desc: "Your clips cut to music, beat by beat",
+    label: "Music montage",
+    desc: "Fast cuts timed to music",
     meta: "Best with 3+ clips",
   },
   narrated_planned: {
-    label: "Voiceover",
-    desc: "Your voice tells the story over your footage",
+    label: "Voiceover story",
+    desc: "Your narration guides the story",
     meta: "Voice + clips",
   },
   subtitled: {
@@ -54,8 +54,8 @@ export const TYPE_COPY: Record<
     meta: "1 clip of you talking",
   },
   talking_head: {
-    label: "Talking-head B-roll",
-    desc: "Your talking clip, with other footage cut in",
+    label: "Talking head + supporting clips",
+    desc: "Your talking clip, with supporting footage cut in",
     meta: "1 talking clip + extra footage",
   },
 };
@@ -76,15 +76,15 @@ export const STYLE_TILES: {
   },
   {
     value: "masonry",
-    label: "Masonry collage",
-    desc: "Rounded clips on a white wall",
+    label: "Collage",
+    desc: "Rounded clips arranged on a white wall",
     poster: "/plan/style-tiles/masonry.jpg",
     video: "/plan/style-tiles/masonry.mp4",
   },
   {
     value: "polaroid_wall",
-    label: "Polaroid wall",
-    desc: "Oversized photo cards on a wall",
+    label: "Photo wall",
+    desc: "Oversized photo cards arranged on a wall",
     poster: "/plan/style-tiles/polaroid.jpg",
     video: "/plan/style-tiles/polaroid.mp4",
   },

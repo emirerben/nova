@@ -274,7 +274,7 @@ export default function ToolDrawer({
 
   const title =
     tool === "nova"
-      ? "Nova"
+      ? "Kria"
       : tool === "text"
       ? "Text"
       : tool === "styles"
@@ -1720,7 +1720,7 @@ function VisualAssetButton({
           )}
         </div>
         <div>
-          <span className="font-semibold text-[#3f3f46]">Nova</span>
+          <span className="font-semibold text-[#3f3f46]">Kria</span>
           <p className="line-clamp-2 text-[#71717a]">{novaLine}</p>
         </div>
       </div>

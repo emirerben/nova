@@ -45,7 +45,7 @@ const STEPS: StepRailStep<number>[] = [
   { key: 1, label: "TikTok", state: "done", clickable: true, note: { text: "✓", tone: "lime" } },
   { key: 2, label: "What you make", state: "active" },
   { key: 3, label: "Style", state: "upcoming" },
-  { key: 4, label: "First plan", state: "upcoming" },
+  { key: 4, label: "Content plan", state: "upcoming" },
 ];
 
 describe("StepRail — responsive presentations", () => {

@@ -240,7 +240,9 @@ function setData(item: Record<string, unknown>) {
 }
 
 function pickFiles(files: File[]) {
-  const input = screen.getByLabelText("Upload video clips for this idea") as HTMLInputElement;
+  const input = screen
+    .getAllByLabelText("Drop videos here or choose files")
+    .find((element) => element.tagName === "INPUT") as HTMLInputElement;
   Object.defineProperty(input, "files", { value: files, configurable: true });
   fireEvent.change(input);
 }
@@ -297,7 +299,9 @@ describe("PoolUploadCard — input markup (mobile Safari fix)", () => {
       render(<PlanItemPage />);
     });
 
-    const input = screen.getByLabelText("Upload video clips for this idea");
+    const input = screen
+      .getAllByLabelText("Drop videos here or choose files")
+      .find((element) => element.tagName === "INPUT");
     expect(input).toHaveClass("sr-only");
     // Ghost-tab-stop guard: the visible trigger is the sole keyboard stop.
     expect(input).toHaveAttribute("tabindex", "-1");
@@ -308,7 +312,7 @@ describe("PoolUploadCard — input markup (mobile Safari fix)", () => {
     // Lane G: the pill trigger became a full-size Dropzone — its min-h-48
     // footprint clears the 44px touch-target floor by construction, so there
     // is no separate min-h-11/sm:min-h-0 pair to pin here anymore.
-    const trigger = screen.getByRole("button", { name: "Add clips" });
+    const trigger = screen.getByRole("button", { name: "Drop videos here or choose files" });
     expect(trigger).toBeEnabled();
     expect(trigger).toHaveClass("min-h-48");
   });
@@ -319,7 +323,9 @@ describe("PoolUploadCard — input markup (mobile Safari fix)", () => {
       render(<PlanItemPage />);
     });
 
-    const input = screen.getByLabelText("Upload video clips for this idea") as HTMLInputElement;
+    const input = screen
+      .getAllByLabelText("Drop videos here or choose files")
+      .find((element) => element.tagName === "INPUT") as HTMLInputElement;
     const valueSets: string[] = [];
     Object.defineProperty(input, "value", {
       configurable: true,
@@ -349,7 +355,7 @@ describe("PoolUploadCard — montage clip uploader visibility (regression, PR #8
       render(<PlanItemPage />);
     });
 
-    expect(screen.getByRole("button", { name: "Add clips" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Drop videos here or choose files" })).toBeInTheDocument();
   });
 });
 
@@ -607,7 +613,7 @@ describe("PoolUploadCard — failure + retry", () => {
     await act(async () => {
       capturedUploads[0].reject(new Error("network hiccup"));
     });
-    expect(screen.getByText("network hiccup")).toBeInTheDocument();
+    expect(screen.getByText("We couldn't add this video. Try again.")).toBeInTheDocument();
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Retry" }));
@@ -747,7 +753,7 @@ describe("PoolUploadCard — concurrency + minting", () => {
 
     // A pending card already exists, so the dropzone is now the compact
     // "Add more clips" state (Lane G).
-    expect(screen.getByRole("button", { name: "Add more clips" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Add more videos" })).toBeEnabled();
 
     await act(async () => {
       pickFiles([new File(["b"], "b.mp4", { type: "video/mp4" })]);
@@ -847,7 +853,7 @@ describe("PoolUploadCard — Generate gate composition", () => {
       render(<PlanItemPage />);
     });
 
-    const generate = () => screen.getAllByRole("button", { name: /generate/i })[0];
+    const generate = () => screen.getAllByRole("button", { name: /create video/i })[0];
     expect(generate()).toBeEnabled();
 
     await act(async () => {
@@ -907,7 +913,9 @@ describe("PoolUploadCard — touch targets + maxClips", () => {
     });
 
     await act(async () => {
-      const input = screen.getByLabelText("Upload video clips for this idea") as HTMLInputElement;
+      const input = screen
+        .getAllByLabelText("Drop videos here or choose files")
+        .find((element) => element.tagName === "INPUT") as HTMLInputElement;
       Object.defineProperty(input, "files", {
         value: [new File(["a"], "a.mp4", { type: "video/mp4" })],
         configurable: true,
@@ -917,7 +925,7 @@ describe("PoolUploadCard — touch targets + maxClips", () => {
     await flush();
 
     // Trigger + input are gone while the single slot is pending…
-    expect(screen.queryByRole("button", { name: "Add your clip" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Drop a video here or choose a file" })).toBeNull();
     // …and the "One clip added" copy must NOT show for a still-uploading clip.
     expect(screen.queryByText(/One clip added/)).toBeNull();
     expect(screen.getByTestId("pending-clip-card")).toBeInTheDocument();

@@ -655,7 +655,7 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
                           if (e.key === "Escape") handleCancelEditShot();
                         }}
                         className="text-[#3f3f46]"
-                        placeholder="What to film"
+                        placeholder="What to capture"
                       />
                       <Input
                         type="text"
@@ -666,7 +666,7 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
                           if (e.key === "Escape") handleCancelEditShot();
                         }}
                         className="text-[#71717a]"
-                        placeholder="How (optional)"
+                        placeholder="How to capture it (optional)"
                       />
                       <div className="flex items-center gap-2">
                         <Button
@@ -849,7 +849,7 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
         )}
         {/* Pool upload input */}
         <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-[8px] border border-dashed border-zinc-200 px-3 py-1.5 text-xs text-[#71717a] hover:border-zinc-400 focus-within:ring-2 focus-within:ring-lime-600 focus-within:ring-offset-2">
-          <span>+ Add clips</span>
+          <span>+ Add videos</span>
           <input
             type="file"
             accept={uploadAccept}
@@ -901,7 +901,7 @@ function SlotWell({ shot, shotIndex, state, anyFilled, accept, onFile, onCancel,
         <span>
           {softened
             ? "Optional — add if you filmed it"
-            : "Upload this shot — or drag a file here"}
+            : "Drop a video here or choose a file"}
         </span>
         <input
           ref={inputRef}
@@ -1026,18 +1026,22 @@ function SlotWell({ shot, shotIndex, state, anyFilled, accept, onFile, onCancel,
 
   if (phase === "error") {
     const filename = state.filename ?? "";
+    const fileConstraint = accept.includes("image/")
+      ? "Use an MP4, MOV, JPEG, PNG, WebP, HEIC, or HEIF file."
+      : "Use an MP4 or MOV video.";
     return (
-      <div className="flex min-h-[56px] items-center gap-2">
+      <div className="flex min-h-[56px] items-center gap-2" role="alert">
         <span className="flex items-center gap-1 rounded border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-xs text-[#3f3f46]">
           <span className="max-w-[200px] truncate">{filename}</span>
         </span>
+        <span className="text-xs text-[#71717a]">Upload failed. {fileConstraint}</span>
         <Button
           type="button"
           variant="link"
           onClick={onRetry}
           className="h-auto p-0 text-xs text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
         >
-          Upload failed · Retry
+          Retry upload
         </Button>
       </div>
     );

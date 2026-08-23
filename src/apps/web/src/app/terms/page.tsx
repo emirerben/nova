@@ -26,7 +26,7 @@ import {
 } from "@/lib/legal";
 
 export const metadata = {
-  title: "Terms — Kria",
+  title: "Terms of Service — Kria",
 };
 
 function Section({
@@ -135,8 +135,8 @@ export default function TermsPage() {
             &ldquo;<strong>Service</strong>&rdquo;).
           </p>
           <p>
-            By checking the box or clicking &ldquo;Continue&rdquo; when you sign in, you affirmatively agree to these
-            Terms and our Privacy Policy. If you do not agree, do not use the Service.
+            By clicking &ldquo;Sign in&rdquo;, you affirmatively agree to these Terms and our Privacy Policy. If you do not
+            agree, do not use the Service.
           </p>
           <p>
             You must be at least 18 years old to use Kria. We do not knowingly permit anyone under 18 to create an

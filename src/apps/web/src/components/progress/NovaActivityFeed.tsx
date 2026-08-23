@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { NovaStep } from "@/lib/job-phases";
+import { formatCount } from "@/lib/ux-copy-format";
 import { NovaPendingRow, NovaStepRow } from "./NovaStepRow";
 
 export type StepsPresentation = "full" | "disclosure";
@@ -95,7 +96,7 @@ export function NovaActivityFeed({
   );
 
   const stepList = (
-    <ul role="list" aria-label="Nova AI steps" className="space-y-0.5">
+    <ul role="list" aria-label="How Kria made this video" className="space-y-0.5">
       {steps.map((step) => (
         <NovaStepRow
           key={step.id}
@@ -141,7 +142,7 @@ export function NovaActivityFeed({
           <span aria-hidden="true">·</span>
           <span>
             {successReceipt
-              ? `${totalCount} step${totalCount === 1 ? "" : "s"}`
+              ? formatCount(totalCount, "step")
               : `${doneCount} completed`}
           </span>
           <span aria-hidden="true">·</span>
@@ -189,9 +190,7 @@ export function NovaActivityFeed({
             <span>{receiptText}</span>
           </span>
           <span aria-hidden="true">·</span>
-          <span>
-            {totalCount} step{totalCount === 1 ? "" : "s"}
-          </span>
+          <span>{formatCount(totalCount, "step")}</span>
           <span aria-hidden="true">·</span>
           <Button
             type="button"
@@ -201,7 +200,7 @@ export function NovaActivityFeed({
             aria-controls={listId}
             className={`h-auto p-0 underline underline-offset-2 ${linkColor}`}
           >
-            See what Nova did
+            See how Kria made it
           </Button>
         </p>
         <span id={listId} hidden />

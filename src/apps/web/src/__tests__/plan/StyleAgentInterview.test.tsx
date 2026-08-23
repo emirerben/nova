@@ -131,7 +131,7 @@ describe("StyleAgentInterview — applied confirmation", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText("Done — your next render will use this style."),
+        screen.getByText("Style saved. Your next video will use it."),
       ).toBeInTheDocument();
     });
   });
@@ -160,7 +160,7 @@ describe("StyleAgentInterview — applied confirmation", () => {
     });
 
     await waitFor(() => {
-      expect(screen.queryByText(/Done — your next render/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Style saved\. Your next video/)).not.toBeInTheDocument();
     });
   });
 });
@@ -184,8 +184,8 @@ describe("StyleAgentInterview — error retry", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/Something went wrong/)).toBeInTheDocument();
-      expect(screen.getByText("Try again")).toBeInTheDocument();
+      expect(screen.getByText("We couldn't update your style. Try again.")).toBeInTheDocument();
+      expect(screen.getByText("Retry style update")).toBeInTheDocument();
     });
   });
 });

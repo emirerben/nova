@@ -440,7 +440,9 @@ export default function InspectorPanel({
       ) : selection === null ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 pt-16">
           <MousePointerClick className="h-6 w-6 text-muted-foreground" aria-hidden="true" />
-          <p className="text-sm text-muted-foreground">Select anything to edit it</p>
+          <p className="text-sm text-muted-foreground">
+            Select a clip, caption, or overlay to edit it.
+          </p>
         </div>
       ) : selection.kind === "text" && bar ? (
         <div className="flex min-h-0 flex-1 flex-col">
@@ -814,7 +816,7 @@ function MixInspector({
             <span className="flex items-center gap-1">
               <span id="editor-mix-level-label">Bed level</span>
               <InfoDot label="Bed level" size="compact">
-                Balances the background bed against your voiceover.
+                Balances the background bed against your narration.
               </InfoDot>
             </span>
             <span>{Math.round(safeLevel * 100)}%</span>
@@ -1659,7 +1661,7 @@ function TextInspector({
                   title="Merge with the previous caption"
                   className="min-h-8 rounded-full px-3 text-[12px] font-semibold text-[#3f3f46]"
                 >
-                  {"←"} Merge
+                  Merge previous
                 </Button>
                 <Button
                   type="button"
@@ -1669,7 +1671,7 @@ function TextInspector({
                   title="Merge with the next caption"
                   className="min-h-8 rounded-full px-3 text-[12px] font-semibold text-[#3f3f46]"
                 >
-                  Merge {"→"}
+                  Merge next
                 </Button>
               </>
             )}
@@ -1736,7 +1738,7 @@ function TextInspector({
             onClick={onOpenCaptionsPanel}
             className="h-auto p-0 text-[12px] font-semibold text-lime-700 underline underline-offset-2 hover:text-lime-800"
           >
-            Change font, size or colour for every caption →
+            Edit all captions
           </Button>
         </div>
       )}

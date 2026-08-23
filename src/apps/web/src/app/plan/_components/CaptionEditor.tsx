@@ -257,8 +257,8 @@ export default function CaptionEditor({
       try {
         await setPlanItemCaptionPosition(itemId, variantId, yFrac);
         onApplied?.();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Couldn't move captions");
+      } catch {
+        setError("We couldn't move the captions. Check your connection and try again.");
       } finally {
         setPositioning(false);
       }
@@ -365,8 +365,8 @@ export default function CaptionEditor({
       setDirty(false);
       await applyPlanItemCaptions(itemId, variantId);
       onApplied?.();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't apply caption changes");
+    } catch {
+      setError("We couldn't apply the caption changes. Check your connection and try again.");
     } finally {
       setApplying(false);
     }

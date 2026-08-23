@@ -261,9 +261,9 @@ describe("useEditDirector", () => {
   });
 
   it.each([
-    [new TypeError("network down"), "reach the review service"],
-    [{ status: 502, code: "edit_director_failed", requestId: "req-model" }, "review model"],
-    [{ status: 503, code: "request_failed", requestId: "req-server" }, "server error"],
+    [new TypeError("network down"), "connect to the review service"],
+    [{ status: 502, code: "edit_director_failed", requestId: "req-model" }, "complete this review"],
+    [{ status: 503, code: "request_failed", requestId: "req-server" }, "service is unavailable"],
   ])("distinguishes Director failure classes without changing the draft", async (failure, copy) => {
     const current = snapshot();
     suggestionsMock.mockRejectedValue(failure);
@@ -554,7 +554,7 @@ describe("useEditDirector", () => {
 
     expect(result.current.serverRendering).toBe(false);
     expect(result.current.error).toBe(
-      "Nova couldn't complete that timing change. The current video is unchanged.",
+      "Kria couldn’t complete that timing change. Retry the change. The current video is unchanged.",
     );
     expect(result.current.appliedReceipts).toEqual([]);
   });
@@ -725,7 +725,7 @@ describe("useEditDirector", () => {
 
     expect(result.current.suggestions).toEqual([recommendation]);
     expect(result.current.appliedReceipts).toEqual([]);
-    expect(result.current.error).toContain("couldn't confirm");
+    expect(result.current.error).toContain("couldn’t confirm");
     expect(feedbackMock).not.toHaveBeenCalledWith(
       "item-1",
       "variant-1",
@@ -1210,7 +1210,7 @@ describe("useEditDirector", () => {
     });
 
     expect(result.current.error).toBe(
-      "Nova couldn't generate that clip. Your draft was not changed.",
+      "Kria couldn’t generate that clip. Retry the request. Your draft is unchanged.",
     );
     expect(result.current.error).not.toContain("omni_provider");
   });

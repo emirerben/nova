@@ -10,14 +10,14 @@ export default function GlobalError({
   return (
     <html lang="en">
       <body style={{ margin: 0, backgroundColor: "#000", color: "#fff" }}>
-        <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "0 1rem" }}>
-          <h2 style={{ fontSize: "1.25rem", fontWeight: 600, marginBottom: "0.5rem" }}>Something went wrong</h2>
+        <div role="alert" style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "0 1rem" }}>
+          <h1 style={{ fontSize: "1.25rem", fontWeight: 600, marginBottom: "0.5rem" }}>This page couldn&apos;t load</h1>
           <p style={{ color: "#a1a1aa", fontSize: "0.875rem", marginBottom: "1.5rem", textAlign: "center", maxWidth: "28rem" }}>
-            An unexpected error occurred. Please try again.
+            Your saved videos are safe. Reload this page, or return to your videos.
           </p>
           {error?.digest && (
             <p style={{ color: "#71717a", fontSize: "0.75rem", marginBottom: "1.5rem", fontFamily: "monospace", textAlign: "center", maxWidth: "28rem", wordBreak: "break-all" }}>
-              Error ID: {error.digest}
+              Support reference: {error.digest}
             </p>
           )}
           <div style={{ display: "flex", gap: "0.75rem" }}>
@@ -25,13 +25,13 @@ export default function GlobalError({
               onClick={reset}
               style={{ padding: "0.5rem 1rem", backgroundColor: "#fff", color: "#000", borderRadius: "0.5rem", fontSize: "0.875rem", fontWeight: 500, border: "none", cursor: "pointer" }}
             >
-              Try again
+              Reload page
             </button>
             <a
-              href="/"
+              href="/plan"
               style={{ padding: "0.5rem 1rem", border: "1px solid #3f3f46", borderRadius: "0.5rem", fontSize: "0.875rem", color: "#d4d4d8", textDecoration: "none" }}
             >
-              Back to home
+              Go to My videos
             </a>
           </div>
         </div>

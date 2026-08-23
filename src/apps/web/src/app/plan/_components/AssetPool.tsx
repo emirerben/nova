@@ -176,7 +176,7 @@ export default function AssetPool({
       .catch((err) => {
         if (cancelled) return;
         if (isUnavailableError(err)) setUnavailable(true);
-        else setUploadError(err instanceof Error ? err.message : "Couldn't load your visuals.");
+        else setUploadError("We couldn’t load your visuals. Check your connection and try again.");
       });
     return () => {
       cancelled = true;
@@ -246,7 +246,7 @@ export default function AssetPool({
         onMutated?.();
       } catch (err) {
         if (isUnavailableError(err)) setUnavailable(true);
-        else setUploadError(err instanceof Error ? err.message : "Couldn't remove that file");
+        else setUploadError("We couldn’t remove that visual. Try again.");
       }
     },
     [itemId, onMutated],
@@ -280,7 +280,7 @@ export default function AssetPool({
         showNotice(userContext.trim() ? "Context saved — re-match visuals when ready" : "Context cleared");
       } catch (err) {
         if (isUnavailableError(err)) setUnavailable(true);
-        else setUploadError(err instanceof Error ? err.message : "Couldn't save context");
+        else setUploadError("We couldn’t save that context. Try again.");
       }
     },
     [itemId, onAssetContextUpdated, onMutated, showNotice],
@@ -295,7 +295,7 @@ export default function AssetPool({
         listEpoch.current += 1;
         setAssets((prev) => prev.map((row) => (row.id === updated.id ? updated : row)));
       } catch (err) {
-        setUploadError(err instanceof Error ? err.message : "Kria couldn’t retry that analysis.");
+        setUploadError("Kria couldn’t retry that analysis. Try again.");
       } finally {
         setReanalyzingId(null);
       }
@@ -388,7 +388,7 @@ export default function AssetPool({
               </p>
               <p className="mt-1 text-[12px] text-[#71717a]">
                 {guidedEditEnabled
-                  ? "Nova will understand these alongside your main clips before proposing the edit."
+                  ? "Kria will review these alongside your main clips before proposing the edit."
                   : "Screenshots and screen recordings — Kria will place them on your video for you."}
               </p>
               <Button
@@ -600,7 +600,7 @@ function AssetTile({
       await onSaveContext(draftContext);
       setEditingContext(false);
     } catch (err) {
-      setContextError(err instanceof Error ? err.message : "Couldn't save");
+      setContextError("We couldn’t save that context. Try again.");
     } finally {
       setSavingContext(false);
     }
@@ -616,7 +616,7 @@ function AssetTile({
     return (
       <li className="relative flex aspect-square flex-col items-center justify-center rounded-lg border border-dashed border-zinc-200 bg-white p-2 text-center">
         <p className="text-[12px] text-[#71717a]">
-          {asset.error_detail ?? "Couldn't read this file or prepare it for the editor. Try again."}
+          We couldn&apos;t read this file or prepare it for the editor. Check the file type and try again.
         </p>
         {asset.retryable !== false && (
           <Button
@@ -741,7 +741,7 @@ function AssetTile({
                 rows={3}
                 onChange={(event) => setDraftContext(event.target.value.slice(0, 500))}
                 className="resize-none"
-                placeholder="What should Nova know about this visual?"
+                placeholder="What should Kria know about this visual?"
               />
               {contextError && <p className="text-[11px] text-[#3f3f46]">{contextError}</p>}
               <div className="flex justify-end gap-2">
@@ -775,7 +775,7 @@ function AssetTile({
           )}
         </div>
         <div>
-          <span className="font-semibold text-[#3f3f46]">Nova</span>
+          <span className="font-semibold text-[#3f3f46]">Kria</span>
           <p className="line-clamp-2 text-[#71717a]">{novaStatusLine}</p>
         </div>
       </div>

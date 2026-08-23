@@ -28,7 +28,7 @@ describe("SetupPicker PATCH payloads", () => {
       resolvedFormat: "narrated_planned",
       rawEditFormat: "narrated_ready",
     });
-    fireEvent.click(screen.getByRole("radio", { name: /Montage/ }));
+    fireEvent.click(screen.getByRole("radio", { name: /Music montage/ }));
     await waitFor(() =>
       expect(onPatch).toHaveBeenCalledWith({
         edit_format: "montage",
@@ -43,7 +43,7 @@ describe("SetupPicker PATCH payloads", () => {
       rawEditFormat: "narrated_ready",
       hasGuide: true,
     });
-    fireEvent.click(screen.getByRole("radio", { name: /Montage/ }));
+    fireEvent.click(screen.getByRole("radio", { name: /Music montage/ }));
     await waitFor(() =>
       expect(onPatch).toHaveBeenCalledWith({ edit_format: "montage" }),
     );
@@ -88,7 +88,7 @@ describe("SetupPicker PATCH payloads", () => {
       rawEditFormat: "montage",
       contentMode: "create_new",
     });
-    fireEvent.click(screen.getByRole("radio", { name: /Montage/ }));
+    fireEvent.click(screen.getByRole("radio", { name: /Music montage/ }));
     await waitFor(() =>
       expect(onPatch).toHaveBeenCalledWith({
         edit_format: "montage",
@@ -103,7 +103,7 @@ describe("SetupPicker PATCH payloads", () => {
       rawEditFormat: "montage",
       contentMode: "existing_footage",
     });
-    fireEvent.click(screen.getByRole("radio", { name: /Montage/ }));
+    fireEvent.click(screen.getByRole("radio", { name: /Music montage/ }));
     expect(onPatch).not.toHaveBeenCalled();
   });
 });
@@ -123,7 +123,7 @@ describe("SetupPicker optimistic format", () => {
     expect(typeReceipt().textContent).toContain("Voiceover");
     rejectPatch(new Error("network"));
     await waitFor(() =>
-      expect(typeReceipt().textContent).toContain("Montage"),
+      expect(typeReceipt().textContent).toContain("Music montage"),
     );
   });
 });

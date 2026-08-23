@@ -154,8 +154,11 @@ export function TikTokPublishDialog({
       })
       .catch((reason: unknown) => {
         if (cancelled) return;
+        const rawMessage = reason instanceof Error ? reason.message : "";
         setError(
-          reason instanceof Error ? reason.message : "TikTok publishing is unavailable",
+          isTikTokReconnectError(rawMessage)
+            ? "TikTok authorization needs to be refreshed. Reconnect TikTok, then try again."
+            : "Kria couldn’t load the latest TikTok choices. Check your connection and try again.",
         );
         setState("error");
       });
@@ -277,7 +280,14 @@ export function TikTokPublishDialog({
       onPublished?.(publication);
       onClose();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not send this video to TikTok");
+      const rawMessage = reason instanceof Error ? reason.message : "";
+      setError(
+        /changed|revision|render/i.test(rawMessage)
+          ? "The video changed before TikTok received it. Review it and try again."
+          : isTikTokReconnectError(rawMessage)
+            ? "TikTok authorization changed before the post was sent. Reconnect TikTok, then try again."
+            : "Kria couldn’t send this video to TikTok. Check your connection and try again.",
+      );
       setState("ready");
       submissionInFlight.current = false;
     }
@@ -305,12 +315,11 @@ export function TikTokPublishDialog({
               disabled={state === "submitting"}
               className="h-auto min-h-11 items-center gap-2 rounded-md px-1 text-sm font-medium text-[#3f3f46] transition-colors hover:bg-transparent hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:opacity-40"
             >
-              <span aria-hidden>←</span>
               Exit
             </Button>
             <div className="min-w-0 text-center">
               <h2 id="tiktok-publish-title" className="truncate font-display text-xl text-[#0c0c0e] md:text-2xl">
-                {simulationEnabled ? "Preview TikTok delivery" : "Send to TikTok"}
+                {simulationEnabled ? "Preview TikTok delivery" : "Publish to TikTok"}
               </h2>
               <p className="mt-0.5 text-[11px] font-medium uppercase tracking-[0.16em] text-[#71717a] md:hidden">
                 {step === "details" ? "1 of 2 · Details" : "2 of 2 · Confirm"}
@@ -638,8 +647,8 @@ function DeliveryModePicker({
               className="mt-0.5 h-5 w-5 accent-lime-600"
             />
             <span>
-              <span className="block text-sm font-semibold text-[#0c0c0e]">Post now</span>
-              <span className="mt-1 block text-xs leading-relaxed text-[#71717a]">Choose the audience and publish the approved video directly.</span>
+              <span className="block text-sm font-semibold text-[#0c0c0e]">Publish now</span>
+              <span className="mt-1 block text-xs leading-relaxed text-[#71717a]">Choose the audience and publish the exact video you approved directly to TikTok.</span>
             </span>
           </span>
         </label>
@@ -656,7 +665,7 @@ function DeliveryModePicker({
             />
             <span>
               <span className="block text-sm font-semibold text-[#0c0c0e]">Finish in TikTok</span>
-              <span className="mt-1 block text-xs leading-relaxed text-[#71717a]">Send it to your TikTok inbox, then finish and post it in the TikTok phone app.</span>
+              <span className="mt-1 block text-xs leading-relaxed text-[#71717a]">Send the exact video you approved to your TikTok inbox, then finish and post it in the TikTok app.</span>
             </span>
           </span>
         </label>
@@ -690,7 +699,7 @@ function DraftDetailsStep({
     <div className="grid gap-7 lg:grid-cols-[minmax(280px,0.72fr)_minmax(500px,1.28fr)] lg:items-start xl:gap-12">
       <div className="border-y border-zinc-200 py-4 lg:sticky lg:top-0">
         <div className="grid grid-cols-[88px_minmax(0,1fr)] items-start gap-4 sm:grid-cols-[112px_minmax(0,1fr)] lg:grid-cols-[132px_minmax(0,1fr)]">
-          <video src={options.preview_url} controls playsInline preload="metadata" className="aspect-[9/16] w-full rounded-lg bg-black object-cover" aria-label="Exact video TikTok will receive" />
+            <video src={options.preview_url} controls playsInline preload="metadata" className="aspect-[9/16] w-full rounded-lg bg-black object-cover" aria-label="The exact video you approved" />
           <div className="min-w-0">
             <AccountRow nickname={options.creator_nickname} avatarUrl={accountAvatarUrl} subline="Connected TikTok account" compact />
             <p className="mt-4 line-clamp-4 text-sm leading-relaxed text-[#3f3f46]">{videoTitle}</p>
@@ -700,7 +709,7 @@ function DraftDetailsStep({
       </div>
       <div className="space-y-5">
         <div className="border-l-2 border-lime-600 pl-4">
-          <p className="font-semibold text-[#0c0c0e]">Kria sends the video, TikTok finishes the post</p>
+          <p className="font-semibold text-[#0c0c0e]">Kria sends the video, you finish the post in TikTok</p>
           <p className="mt-1 text-sm leading-relaxed text-[#3f3f46]">TikTok will send an inbox notification. Open it in the TikTok app to add a sound or effects, choose privacy and disclosures, and publish. Kria cannot complete those steps for you.</p>
         </div>
         <label className="flex min-h-14 items-start gap-3 border-y border-zinc-200 px-1 py-4 text-sm text-[#3f3f46] focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-lime-600">
@@ -709,7 +718,7 @@ function DraftDetailsStep({
         </label>
         <label className="flex min-h-14 items-start gap-3 border-y border-zinc-200 px-1 py-4 text-sm text-[#3f3f46] focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-lime-600">
           <input type="checkbox" checked={handoffConfirmed} onChange={(event) => onHandoffConfirmed(event.target.checked)} className="mt-0.5 h-5 w-5 accent-lime-600" />
-          <span>I understand I must open the TikTok app on my phone, tap the notification in my Inbox, and finish and post it there. It will not appear in Drafts or on tiktok.com.</span>
+          <span>I understand I must open the TikTok app on my phone, tap the notification in my Inbox, and finish and post it there. Sending it does not create a post, and it will not appear in Profile drafts or on tiktok.com.</span>
         </label>
       </div>
     </div>
@@ -744,7 +753,7 @@ function DraftConfirmStep({
       </dl>
       <div className="mt-7 border border-lime-600 px-4 py-4">
         <p className="font-semibold text-[#0c0c0e]">Ready to send</p>
-        <p className="mt-1 text-sm text-[#3f3f46]">This does not create a TikTok post. After you send it, open the TikTok app on your phone, tap Inbox, then tap the notification to finish and post. It will not appear on tiktok.com or under Profile → Drafts.</p>
+        <p className="mt-1 text-sm text-[#3f3f46]">This does not create a TikTok post. After you send it, open the TikTok app on your phone, tap Inbox, then tap the notification to finish and post. It will not appear on tiktok.com or in Profile drafts.</p>
       </div>
     </div>
   );
@@ -818,7 +827,7 @@ function DetailsStep({
               playsInline
               preload="metadata"
               className="aspect-[9/16] w-full rounded-lg bg-black object-cover"
-              aria-label="Exact video TikTok will receive"
+              aria-label="The exact video you approved"
             />
             <div className="min-w-0">
               <AccountRow

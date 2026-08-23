@@ -740,7 +740,7 @@ export default function EditorShell({
       } catch (err) {
         if (cancelled) return;
         if (err instanceof NotAuthenticatedError) setNeedsAuth(true);
-        else setLoadError(err instanceof Error ? err.message : "Couldn't load this video.");
+        else setLoadError("We couldn't load this video. Try again.");
         setLoading(false);
       }
     })();
@@ -1143,7 +1143,7 @@ export default function EditorShell({
           throw new Error("That visual is taking longer than expected. Try again shortly.");
         };
         void finalize()
-          .catch((err) => notify(err instanceof Error ? err.message : "Couldn't add that overlay."))
+          .catch(() => notify("We couldn't add that overlay. Try again."))
           .finally(() => setOverlayUploading(false));
       }
       poolListEpoch.current += 1;
@@ -2747,7 +2747,7 @@ export default function EditorShell({
       .catch((err) => {
         if (cancelled) return;
         if (isUnavailableError(err)) setPoolUnavailable(true);
-        else setPoolError(err instanceof Error ? err.message : "Couldn't load your visuals.");
+        else setPoolError("We couldn't load your visuals. Try again.");
       });
     return () => {
       cancelled = true;
@@ -2817,7 +2817,7 @@ export default function EditorShell({
         })
         .catch((err) => {
           if (isUnavailableError(err)) setPoolUnavailable(true);
-          else setPoolError(err instanceof Error ? err.message : "Couldn't remove that file");
+          else setPoolError("We couldn't remove that visual. Try again.");
         });
     },
     [itemId],
@@ -2834,7 +2834,7 @@ export default function EditorShell({
         })
         .catch((err) => {
           if (isUnavailableError(err)) setPoolUnavailable(true);
-          else setPoolError(err instanceof Error ? err.message : "Kria couldn’t retry that analysis.");
+          else setPoolError("We couldn't retry that visual. Try again.");
         });
     },
     [itemId],
@@ -3247,9 +3247,13 @@ export default function EditorShell({
       } catch (err) {
         if (err instanceof LyricSeedsError) {
           setLyricSeedsError(err.reason);
-          notify(err.message);
+          notify(
+            err.reason === "no_lyrics"
+              ? "This song doesn't have synced lyrics."
+              : "Lyrics aren't available for this edit.",
+          );
         } else {
-          notify(err instanceof Error ? err.message : "Couldn't load lyrics.");
+          notify("We couldn't load lyrics. Try again.");
         }
       } finally {
         setLyricSeedsLoading(false);
@@ -4037,7 +4041,7 @@ export default function EditorShell({
           cards.forEach((card) => select("overlay", card.id));
           setOverlaysDirty(true);
         } catch (err) {
-          notify(err instanceof Error ? err.message : "Couldn't upload that overlay.");
+          notify("We couldn't upload that overlay. Try again.");
         } finally {
           setOverlayUploading(false);
         }
@@ -4277,7 +4281,7 @@ export default function EditorShell({
         router.push(`/plan/items/${itemId}`);
       } catch (err) {
         setSaveState("error");
-        setSaveMessage(err instanceof Error ? err.message : "Couldn't apply that style.");
+        setSaveMessage("We couldn't apply that style. Try again.");
       }
     },
     [readOnly, variant, saveState, itemId, router],
@@ -4633,9 +4637,7 @@ export default function EditorShell({
           );
           setVisualBlocksDirty(true);
         })
-        .catch((error) =>
-          notify(error instanceof Error ? error.message : "Couldn't retime that montage."),
-        );
+        .catch(() => notify("Kria couldn’t retime that montage. Try again."));
     },
     [history, itemId, localVisualBlocks, notify, variant],
   );
@@ -5093,7 +5095,7 @@ export default function EditorShell({
               }, 1400);
             })
             .catch((err) => {
-              notify(err instanceof Error ? err.message : failureMessage);
+              notify(failureMessage);
             });
         }
         // Flag off: byte-identical to today — no isRenderTurn/assistantText
@@ -5882,7 +5884,7 @@ export default function EditorShell({
           setSaveState("partial");
           setSaveMessage(
             opts.afterCommitFailedMessage ??
-              (err instanceof Error ? err.message : "Saved, but the follow-up step failed."),
+              "Saved, but the follow-up step failed. Try again.",
           );
           return;
         }
@@ -5925,14 +5927,14 @@ export default function EditorShell({
     } catch (err) {
       if (err instanceof EditorCommitConflictError) {
         setSaveState("conflict");
-        setSaveMessage(err.message);
+        setSaveMessage("This edit changed elsewhere. Refresh and try again.");
       } else {
         // Network-class failures (typed by editor-commit) arm the one-shot
         // auto-retry-on-online below; their message is already the fixed copy.
         networkSaveErrorRef.current = err instanceof EditorCommitNetworkError;
         setSaveState("error");
         setSaveMessage(
-          err instanceof Error ? err.message : "Couldn't save your edits.",
+          "We couldn't save your edits. Try again.",
         );
       }
     }
@@ -6014,7 +6016,7 @@ export default function EditorShell({
         });
       } catch (err) {
         setCaptionsError(
-          err instanceof Error ? err.message : "Couldn't re-transcribe.",
+          "We couldn't re-transcribe. Try again.",
         );
       } finally {
         setCaptionsBusy("idle");
@@ -6302,10 +6304,10 @@ export default function EditorShell({
       !!variant.background_music?.preview_url);
   const soundBedLabel = isVoiceoverVariant
     ? effectiveMusicTrackId
-      ? `Voiceover + ${effectiveMusicTitle}`
-      : "Voiceover"
+      ? `Narration + ${effectiveMusicTitle}`
+      : "Narration"
     : effectiveMusicTitle;
-  const soundLaneTitle = isVoiceoverVariant ? "Voiceover bed" : "Music + effects";
+  const soundLaneTitle = isVoiceoverVariant ? "Narration bed" : "Music + effects";
   const hasUnbakedSfx = sfxDirty || localSfx.length > 0;
   const clipPreviewHint = (() => {
     if (!virtualPreviewActive) return "Clip changes preview after Save";
@@ -6395,7 +6397,7 @@ export default function EditorShell({
                   ? "Queued for analysis…"
                   : asset.status === "analyzing" || asset.status === "uploaded"
                     ? "Analyzing…"
-                    : asset.error_detail ?? "Kria couldn't analyze this file. Try again."}
+                    : "This visual couldn't be analyzed. Try again."}
               </p>
               {asset.status === "failed" && (
                 <div className="mt-1 flex gap-3">
@@ -6681,7 +6683,7 @@ export default function EditorShell({
     soundLaneTitle,
     soundBedLabel,
     soundBedTitle: isVoiceoverVariant
-      ? "Balance this bed against your voiceover in the inspector"
+      ? "Balance this bed against your narration in the inspector"
       : "The song auto-fits your cut",
     videoMuted,
     onToggleVideoMute: () => {
@@ -8301,7 +8303,7 @@ function LightTopBar({
           type="button"
           variant="ghost"
           size="icon"
-          aria-label="Open Nova"
+          aria-label="Open Kria"
           disabled={readOnly}
           onClick={onOpenNova}
           className="text-[15px]"

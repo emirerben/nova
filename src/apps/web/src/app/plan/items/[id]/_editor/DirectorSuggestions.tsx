@@ -80,7 +80,7 @@ function AppliedReceipt({
         {receipt.changes.map((change, index) => (
           <p key={`${change.label}-${index}`} className="text-[11px] leading-4 text-[#52525b]">
             <span className="font-medium text-[#3f3f46]">{change.label}</span>
-            {change.count && change.count > 1 ? ` ×${change.count}` : ""}: {change.from} → {change.to}
+            {change.count && change.count > 1 ? ` ×${change.count}` : ""}: {change.from}, now {change.to}
           </p>
         ))}
       </div>
@@ -149,11 +149,11 @@ export default function DirectorSuggestions({
   }, [firstSuggestionId]);
 
   return (
-    <section aria-label="Nova suggestions" className="space-y-2.5">
+    <section aria-label="Kria suggestions" className="space-y-2.5">
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-[12px] font-semibold uppercase tracking-[0.12em] text-[#3f3f46]">
-            Nova suggests
+            Kria suggests
           </h3>
           {modelUsed && (
             <p className="mt-0.5 text-[11px] text-[#71717a]">
@@ -200,7 +200,7 @@ export default function DirectorSuggestions({
         <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-3">
           <p className="text-[12px] font-semibold text-[#27272a]">No changes recommended</p>
           <p className="mt-0.5 text-[11px] leading-4 text-[#71717a]">
-            Nova did not find a clear improvement for this draft. Refresh after your next edit.
+            Kria did not find a clear improvement for this draft. Refresh after your next edit.
           </p>
         </div>
       )}
@@ -306,7 +306,7 @@ export default function DirectorSuggestions({
       ))}
 
       {appliedReceipts.length > 0 && (
-        <div aria-label="Applied Nova suggestions" aria-live="polite" className="space-y-2">
+        <div aria-label="Applied Kria suggestions" aria-live="polite" className="space-y-2">
           {appliedReceipts.map((receipt) => (
             <AppliedReceipt
               key={receipt.id}

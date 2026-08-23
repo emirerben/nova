@@ -30,7 +30,7 @@ describe("OnboardingShell — rail", () => {
    */
   it("renders all 4 step labels, in both the phone strip and the desktop rail", () => {
     render(<OnboardingShell {...noopProps} />);
-    for (const label of ["TikTok", "What you make", "Style", "First plan"]) {
+    for (const label of ["TikTok", "What you make", "Style", "Content plan"]) {
       expect(screen.getAllByText(label)).toHaveLength(2);
     }
   });
@@ -59,14 +59,14 @@ describe("OnboardingShell — What you make step", () => {
 
   it("Continue is disabled until a card is selected", async () => {
     await advanceToStep2();
-    const continueBtn = screen.getByRole("button", { name: /continue/i });
+    const continueBtn = screen.getByRole("button", { name: /save choices/i });
     expect(continueBtn).toBeDisabled();
   });
 
   it("Continue is enabled after selecting a card", async () => {
     await advanceToStep2();
     fireEvent.click(screen.getByText("Talking to camera"));
-    const continueBtn = screen.getByRole("button", { name: /continue/i });
+    const continueBtn = screen.getByRole("button", { name: /save choices/i });
     expect(continueBtn).not.toBeDisabled();
   });
 
@@ -76,7 +76,7 @@ describe("OnboardingShell — What you make step", () => {
     fireEvent.click(screen.getByText("Talking to camera"));
     // Select second card — both should be selected, Continue should stay enabled
     fireEvent.click(screen.getByText("B-roll & nature"));
-    const continueBtn = screen.getByRole("button", { name: /continue/i });
+    const continueBtn = screen.getByRole("button", { name: /save choices/i });
     expect(continueBtn).not.toBeDisabled();
   });
 
@@ -85,7 +85,7 @@ describe("OnboardingShell — What you make step", () => {
     // Select then deselect the only card
     fireEvent.click(screen.getByText("Talking to camera"));
     fireEvent.click(screen.getByText("Talking to camera")); // toggle off
-    const continueBtn = screen.getByRole("button", { name: /continue/i });
+    const continueBtn = screen.getByRole("button", { name: /save choices/i });
     // With nothing selected, Continue must be disabled again
     expect(continueBtn).toBeDisabled();
   });

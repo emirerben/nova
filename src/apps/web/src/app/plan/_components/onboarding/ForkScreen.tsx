@@ -16,7 +16,7 @@ export function ForkScreen({
     <div className="flex flex-col items-center gap-6 px-4 py-8 max-w-lg mx-auto animate-fade-up">
       <Eyebrow tone="lime">First edit</Eyebrow>
       <h1 className="font-display text-3xl text-[#0c0c0e] text-center leading-tight">
-        Let&apos;s make your first edit
+        Let&apos;s make your first video
       </h1>
 
       {/* Primary: footage card */}
@@ -27,10 +27,10 @@ export function ForkScreen({
         className="flex h-auto min-h-[44px] w-full flex-col items-start justify-start gap-0 rounded-2xl border-2 border-lime-700 bg-[#ffffff] p-6 text-left hover:bg-lime-50 focus-visible:ring-lime-600"
       >
         <p className="font-display text-xl text-[#0c0c0e] mb-1">
-          I have footage to use
+          Use footage I already have
         </p>
         <p className="text-sm text-[#71717a]">
-          Upload clips from your camera roll → get a share-ready edit in ~90s
+          Upload clips from your camera roll. Kria will build a share-ready first video.
         </p>
         {/* thumbnail strip hint */}
         <div className="mt-3 flex gap-1.5 opacity-60">
@@ -50,7 +50,7 @@ export function ForkScreen({
         onClick={onFresh}
         className="h-auto p-0 text-sm text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] focus-visible:ring-lime-600 rounded"
       >
-        or start from a blank slate
+        Start with an idea
       </Button>
 
       {/* Tertiary: skip */}
@@ -60,7 +60,7 @@ export function ForkScreen({
         onClick={onSkip}
         className="h-auto p-0 text-xs text-[#a1a1aa] hover:bg-transparent hover:text-[#71717a] focus-visible:ring-lime-600 rounded"
       >
-        skip, just make something
+        Skip for now
       </Button>
     </div>
   );

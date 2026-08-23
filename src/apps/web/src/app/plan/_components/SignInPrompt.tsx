@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 export default function SignInPrompt({
   callbackUrl,
   title = "Sign in to build your plan",
-  subtitle = "We use your Google account to save your persona and content plan.",
+  subtitle = "We use your Google account to save your creator profile and content plan.",
 }: {
   callbackUrl: string;
   title?: string;

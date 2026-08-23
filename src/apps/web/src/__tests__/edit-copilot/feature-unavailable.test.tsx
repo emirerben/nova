@@ -345,6 +345,6 @@ describe("CopilotDrawer error surface", () => {
 
   it("makes the composer inert when the feature is unavailable", () => {
     render(<CopilotDrawer {...baseProps} error={COPILOT_UNAVAILABLE_MESSAGE} unavailable />);
-    expect(screen.getByLabelText("Tell Nova what to change")).toBeDisabled();
+    expect(screen.getByLabelText("Tell Kria what to change")).toBeDisabled();
   });
 });

@@ -129,9 +129,9 @@ function writeDismissed(itemId: string, variantId: string, ids: string[]): void 
 
 /** Shown once when the API has no director route, in place of a dead retry. */
 export const DIRECTOR_UNAVAILABLE_MESSAGE =
-  "Nova's proactive review isn't enabled on this server yet.";
+  "Kria’s review isn’t available right now. Your draft is unchanged.";
 export const DIRECTOR_CAPABILITY_MISMATCH_MESSAGE =
-  "Nova's proactive review is updating. Try again shortly.";
+  "Kria’s review is updating. Retry the review shortly.";
 const DIRECTOR_REVIEW_DEBOUNCE_MS = 1200;
 const MAX_APPLIED_RECEIPTS = 8;
 
@@ -146,7 +146,7 @@ function friendlyDirectorError(caught: unknown): string {
     ? String((caught as { stage?: unknown }).stage ?? "")
     : "";
   if (status === null) {
-    return "Nova couldn't reach the review service. Check your connection; your draft is unchanged.";
+    return "Kria couldn’t connect to the review service. Check your connection and retry the review. Your draft is unchanged.";
   }
   if (
     status === 502 ||
@@ -154,12 +154,12 @@ function friendlyDirectorError(caught: unknown): string {
     code.includes("model") ||
     stage.includes("model")
   ) {
-    return "Nova's review model couldn't complete this pass. Your draft is unchanged.";
+    return "Kria couldn’t complete this review. Retry the review. Your draft is unchanged.";
   }
   if (status >= 500) {
-    return "Nova's review service had a server error. Your draft is unchanged.";
+    return "Kria couldn’t complete this review because the service is unavailable. Retry shortly. Your draft is unchanged.";
   }
-  return "Nova couldn't review this draft. Your draft is unchanged.";
+  return "Kria couldn’t review this draft. Retry the review. Your draft is unchanged.";
 }
 
 function directorErrorStatus(caught: unknown): number | null {
@@ -172,7 +172,7 @@ function friendlyOmniError(status: OmniAssetResponse["status"]): string {
   if (status === "cancelled") {
     return "Generated clip cancelled. Your draft was not changed.";
   }
-  return "Nova couldn't generate that clip. Your draft was not changed.";
+  return "Kria couldn’t generate that clip. Retry the request. Your draft is unchanged.";
 }
 
 export function directorSnapshotRevision(snapshot: CopilotSnapshot): string {
@@ -447,7 +447,7 @@ export function useEditDirector(
     pendingServerOperationIdRef.current = "";
     pendingServerSuggestionRef.current = null;
     setServerDispatchPending(false);
-    setError("Nova couldn't complete that timing change. The current video is unchanged.");
+    setError("Kria couldn’t complete that timing change. Retry the change. The current video is unchanged.");
     refreshReview();
   }, [opts.serverRenderPending, opts.speechCutLastError, refreshReview]);
 
@@ -474,7 +474,7 @@ export function useEditDirector(
       try {
         presentation = optsRef.current.onApplied(result);
       } catch {
-        setError("Nova couldn't confirm that change. Check the preview or Undo before retrying.");
+        setError("Kria couldn’t confirm that change. Check the preview or undo it before retrying.");
         return false;
       }
 
@@ -513,7 +513,7 @@ export function useEditDirector(
         }
         const revision = optsRef.current.speechCutRevision;
         if (!revision || serverRendering) {
-          setError("This cut is stale. Nova is refreshing the review.");
+          setError("This cut is out of date. Kria is refreshing the review.");
           refreshReview();
           return;
         }
@@ -537,7 +537,7 @@ export function useEditDirector(
             pendingServerSuggestionRef.current = null;
             pendingServerOperationIdRef.current = "";
             setServerDispatchPending(false);
-            setError("Nova couldn't apply that cut. The current video is unchanged.");
+            setError("Kria couldn’t apply that cut. Retry the change. The current video is unchanged.");
             refreshReview();
           });
         return;
@@ -547,7 +547,7 @@ export function useEditDirector(
         const source = sourceSnapshotRef.current;
         const sourceRevision = sourceRevisionRef.current;
         if (!source || directorSnapshotRevision(optsRef.current.buildSnapshot()) !== sourceRevision) {
-          setError("The draft changed. Nova is refreshing this suggestion.");
+          setError("The draft changed. Kria is refreshing this suggestion.");
           refreshReview();
           return;
         }
@@ -569,7 +569,7 @@ export function useEditDirector(
           }
           if (identityIsCurrent()) {
             setGeneration(null);
-            setError("The generated clip is ready, but the draft changed, so Nova did not insert it.");
+            setError("The generated clip is ready, but the draft changed, so Kria didn’t insert it. Review the latest draft and try again.");
           }
         };
         setError(null);
@@ -642,7 +642,7 @@ export function useEditDirector(
               return;
             }
             if (!current.operation) {
-              setError("The generated clip is ready, but Nova couldn't add it to this draft.");
+              setError("The generated clip is ready, but Kria couldn’t add it to this draft. Review the latest draft and try again.");
               setGeneration(null);
               return;
             }
@@ -676,13 +676,13 @@ export function useEditDirector(
           .catch(() => {
             if (token !== generationTokenRef.current) return;
             setGeneration(null);
-            setError("Nova couldn't start generated video just now. Your draft is unchanged.");
+            setError("Kria couldn’t start generating that video. Retry the request. Your draft is unchanged.");
           });
         return;
       }
       const source = sourceSnapshotRef.current;
       if (!source) {
-        setError("The draft changed. Nova is refreshing this suggestion.");
+        setError("The draft changed. Kria is refreshing this suggestion.");
         refreshReview();
         return;
       }
@@ -728,7 +728,7 @@ export function useEditDirector(
       })
       .catch(() => {
         setGeneration(null);
-        setError("Nova couldn't confirm cancellation. Your draft remains unchanged.");
+        setError("Kria couldn’t confirm the cancellation. Retry the cancellation. Your draft is unchanged.");
       });
   }, [generation]);
 
@@ -756,7 +756,7 @@ export function useEditDirector(
       .catch(() => {
         pendingServerOperationIdRef.current = "";
         setServerDispatchPending(false);
-        setError("Nova couldn't restore the original timing. The current video is unchanged.");
+        setError("Kria couldn’t restore the original timing. Retry the change. The current video is unchanged.");
         refreshReview();
       });
   }, [refreshReview, serverRendering]);

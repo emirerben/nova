@@ -65,8 +65,8 @@ describe("Header — isLight predicate", () => {
     expect(header!.className).toContain("bg-[#ffffff]");
     expect(header!.className).not.toContain("border-b");
     expect(screen.getByRole("button", { name: /sign in/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Terms" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Privacy" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Terms of Service" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Privacy Policy" })).toBeInTheDocument();
   });
 
   it("test_header_light_on_plan_items: /plan/items/x is light", () => {

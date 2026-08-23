@@ -30,7 +30,6 @@ import {
   editTimeline,
   getTimeline,
   resetTimeline,
-  TimelineApiError,
   type TimelineBase,
   type TimelineClip,
 } from "@/lib/generative-api";
@@ -892,9 +891,7 @@ export function InlineClipsEditor({
       // In controlled mode, signal parent to re-fetch so header bars also update.
       onReload?.();
     } catch (err) {
-      setSubmitError(
-        err instanceof TimelineApiError ? err.message : "Save failed",
-      );
+      setSubmitError("We couldn’t save your clip timing. Try again.");
     } finally {
       setSubmitting(false);
     }
@@ -908,9 +905,7 @@ export function InlineClipsEditor({
       onRenderEnqueued();
       onReload?.();
     } catch (err) {
-      setSubmitError(
-        err instanceof TimelineApiError ? err.message : "Reset failed",
-      );
+      setSubmitError("We couldn’t reset your clip timing. Try again.");
     } finally {
       setSubmitting(false);
     }

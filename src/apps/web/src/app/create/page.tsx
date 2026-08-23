@@ -170,14 +170,9 @@ export default function CreatePage() {
         );
         setFailedUploads(failed);
         if (failed.length > 0) {
-          const firstError = settled.find(
-            (result): result is PromiseRejectedResult => result.status === "rejected",
-          );
-          const reason =
-            firstError?.reason instanceof Error ? ` ${firstError.reason.message}` : "";
           const completedCount = settled.length - failed.length;
           setError(
-            `${completedCount} uploaded · ${failed.length} didn’t upload.${reason}`,
+            `${completedCount} uploaded · ${failed.length} couldn’t upload. Check the file type and size, then try again.`,
           );
         }
       } finally {
@@ -205,7 +200,7 @@ export default function CreatePage() {
       url.searchParams.set("job", response.job_id);
       window.history.replaceState(null, "", `${url.pathname}${url.search}`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Kria couldn’t start your edit.");
+      setError("We couldn’t create this video. Check your connection and try again.");
     } finally {
       submitInFlightRef.current = false;
       setSubmitting(false);
@@ -244,14 +239,14 @@ export default function CreatePage() {
         <>
           <div className="mb-9">
             <Eyebrow tone="lime" className="mb-3">
-              Create with Kria
+              Video creation
             </Eyebrow>
             <h1 className="font-display text-4xl leading-tight tracking-[-0.02em] text-[#0c0c0e] sm:text-5xl">
-              Start with your footage.
+              Create a video from your footage.
             </h1>
             <p className="mt-4 max-w-xl leading-7 text-[#71717a]">
-              Add the clips and photos you want to use. Kria will build the first cut,
-              then open it in the editor for you.
+              Add the clips and photos you want to use. Kria will build a first cut,
+              then open it in the editor.
             </p>
           </div>
 
@@ -358,7 +353,7 @@ export default function CreatePage() {
 
           <section className="mt-8 border-t border-zinc-200 pt-7">
             <label htmlFor="create-direction" className="text-sm font-semibold text-[#0c0c0e]">
-              Direction for Kria <span className="font-normal text-[#a1a1aa]">(optional)</span>
+              Tell Kria what to emphasize <span className="font-normal text-[#a1a1aa]">(optional)</span>
             </label>
             <p className="mt-1 text-sm text-[#71717a]">
               Tell Kria what the moment is about or what viewers should feel.
@@ -377,7 +372,7 @@ export default function CreatePage() {
           <details className="mt-6 border-t border-zinc-200 pt-6">
             <summary className="flex min-h-[44px] cursor-pointer list-none items-center justify-between text-sm font-semibold text-[#3f3f46] marker:content-none">
               <span>
-                Add a final video voiceover <span className="font-normal text-[#a1a1aa]">(optional)</span>
+                Add narration <span className="font-normal text-[#a1a1aa]">(optional)</span>
               </span>
               <span aria-hidden className="text-lg font-normal text-[#a1a1aa]">+</span>
             </summary>
@@ -397,7 +392,7 @@ export default function CreatePage() {
               disabled={uploads.length === 0 || uploading || submitting}
               className="inline-flex min-h-[48px] w-full items-center justify-center rounded-full bg-[#0c0c0e] px-7 py-3 text-[15px] font-semibold text-white transition-opacity hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0c0c0e] disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {submitting ? "Starting your edit…" : "Make my first cut"}
+              {submitting ? "Creating your video…" : "Create video"}
             </button>
             <p className="mt-2 text-center text-xs text-[#a1a1aa]">
               Your uploads and choices stay here if you need to retry.
@@ -466,11 +461,7 @@ function CreationProgress({
       );
     } catch (cause) {
       setOpeningEditor(false);
-      setPromotionError(
-        cause instanceof Error
-          ? cause.message
-          : "Your first cut is ready, but the editor could not open.",
-      );
+      setPromotionError("Your first cut is ready, but Kria couldn’t open the editor. Try opening it again.");
     }
   }, [direction, jobId, router]);
 
@@ -504,7 +495,7 @@ function CreationProgress({
       promotionAttemptRef.current = null;
       await refetch();
     } catch (cause) {
-      setRetryError(cause instanceof Error ? cause.message : "The render could not be retried");
+      setRetryError("We couldn’t retry this render. Check your connection and try again.");
     } finally {
       setRetryingRender(false);
     }
@@ -522,19 +513,19 @@ function CreationProgress({
     <section aria-labelledby="create-progress-title">
       <div className="mb-9">
         <Eyebrow tone="lime" className="mb-3">
-          Kria is editing
+          Building your video
         </Eyebrow>
         <h1 id="create-progress-title" className="font-display text-4xl leading-tight text-[#0c0c0e]">
-          Building your first cut.
+          Building your video.
         </h1>
         <p className="mt-3 leading-7 text-[#71717a]">
-          You can leave this page. When the video is ready, Kria will take you straight to the editor.
+          You can leave this page. When your video is ready, Kria will open it in the editor.
         </p>
       </div>
 
       {pollError && (
         <div role="status" className="mb-5 rounded-lg border border-zinc-200 bg-white px-4 py-3 text-sm text-[#3f3f46]">
-          Trouble reaching the video service. Kria is still retrying.
+          We’re having trouble reaching the video service. Kria is still retrying.
           <button type="button" onClick={refetch} className="ml-2 min-h-[44px] font-semibold underline underline-offset-4">
             Check again
           </button>
@@ -567,11 +558,11 @@ function CreationProgress({
           <div className="mt-4 flex flex-wrap gap-3">
             {canRetryRender && (
               <button type="button" onClick={() => void retryRender()} disabled={retryingRender} className="min-h-[44px] rounded-full bg-[#0c0c0e] px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">
-                {retryingRender ? "Retrying…" : "Try render again"}
+                {retryingRender ? "Retrying render…" : failureCopy.actionLabel}
               </button>
             )}
             <button type="button" onClick={onStartOver} className="min-h-[44px] rounded-full border border-zinc-300 px-5 py-2 text-sm font-medium text-[#3f3f46]">
-              {hasRetryInputs || failureCopy.action === "review_media" ? "Review my setup" : "Start a new edit"}
+              {hasRetryInputs || failureCopy.action === "review_media" ? "Review my setup" : "Create a new video"}
             </button>
           </div>
           <p className="mt-3 text-xs text-[#a1a1aa]">Support reference: {jobId}</p>
@@ -598,7 +589,7 @@ function CreationProgress({
         <div className="flex min-h-[180px] items-center justify-center rounded-xl border border-dashed border-zinc-300 bg-white px-6 text-center">
           <div>
             <p className="font-display text-2xl text-[#0c0c0e]">
-              {openingEditor ? "Opening your edit…" : failed ? "Your setup is still here." : "Your video will open here."}
+              {openingEditor ? "Opening your video…" : failed ? "Your setup is still here." : "Your video will open here."}
             </p>
             <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-[#71717a]">
               {openingEditor
@@ -610,7 +601,7 @@ function CreationProgress({
       </ProgressTheater>
 
       <Link href="/plan" className="mt-8 inline-flex min-h-[44px] items-center text-sm text-[#71717a] underline-offset-4 hover:text-[#0c0c0e] hover:underline">
-        Back to Create
+        Back to video creation
       </Link>
     </section>
   );
