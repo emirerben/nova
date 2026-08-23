@@ -75,7 +75,7 @@ def test_fast_montage_snapshot_uses_server_requested_duration(monkeypatch) -> No
     )
 
     assert snapshot.duration_s == 3
-    assert sum(cut.output_duration_s for cut in snapshot.fast_cuts or []) == 3
+    assert sum(cut.output_duration_s for cut in snapshot.fast_cuts or []) == pytest.approx(3)
 
 
 def test_fast_montage_uses_analyzed_deterministic_fallback_on_terminal_schema(
@@ -140,7 +140,7 @@ def test_fast_montage_uses_analyzed_deterministic_fallback_on_terminal_schema(
     assert snapshot.duration_s == 4
     assert snapshot.title == "Creator title"
     assert len(cuts) == 4
-    assert sum(cut.output_duration_s for cut in cuts) == 4
+    assert sum(cut.output_duration_s for cut in cuts) == pytest.approx(4)
     assert [cut.media_id for cut in cuts] == ["strong", "support", "strong", "support"]
     assert cuts[0].role == "hook"
     assert cuts[-1].role == "payoff"
@@ -213,7 +213,7 @@ def test_fast_montage_fallback_allocates_short_source_once_without_shortening_lo
     assert len(short_cuts) == 1
     assert short_cuts[0].output_duration_s == 0.4
     assert all(0.8 <= cut.output_duration_s <= 1.2 for cut in long_cuts)
-    assert sum(cut.output_duration_s for cut in cuts) == duration_s
+    assert sum(cut.output_duration_s for cut in cuts) == pytest.approx(duration_s)
     by_id = {ref.media_id: ref for ref in source.media}
     assert all(cut.source_end_s <= float(by_id[cut.media_id].duration_s or 0) for cut in cuts)
 
