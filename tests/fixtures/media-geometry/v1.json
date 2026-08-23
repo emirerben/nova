@@ -1,0 +1,55 @@
+{
+  "canvas": { "width": 1080, "height": 1920 },
+  "cases": [
+    {
+      "name": "portrait contain",
+      "asset_aspect": 0.5625,
+      "fit_mode": "contain",
+      "zoom": 1,
+      "focal_x": 0.5,
+      "focal_y": 0.5,
+      "preview": { "width_pct": 100, "height_pct": 100, "left_pct": 0, "top_pct": 0 },
+      "render": { "target_width": 1080, "target_height": 1920, "aspect_rule": "decrease" }
+    },
+    {
+      "name": "landscape contain",
+      "asset_aspect": 1.7777777777777777,
+      "fit_mode": "contain",
+      "zoom": 1,
+      "focal_x": 0.5,
+      "focal_y": 0.5,
+      "preview": { "width_pct": 100, "height_pct": 31.640625, "left_pct": 0, "top_pct": 34.1796875 },
+      "render": { "target_width": 1080, "target_height": 1920, "aspect_rule": "decrease" }
+    },
+    {
+      "name": "square contain zoom",
+      "asset_aspect": 1,
+      "fit_mode": "contain",
+      "zoom": 2,
+      "focal_x": 0.5,
+      "focal_y": 0.5,
+      "preview": { "width_pct": 200, "height_pct": 112.5, "left_pct": -50, "top_pct": -6.25 },
+      "render": { "target_width": 2160, "target_height": 3840, "aspect_rule": "decrease" }
+    },
+    {
+      "name": "landscape cover focal",
+      "asset_aspect": 1.7777777777777777,
+      "fit_mode": "cover",
+      "zoom": 1,
+      "focal_x": 0.2,
+      "focal_y": 0.8,
+      "preview": { "width_pct": 316.04938271604937, "height_pct": 100, "left_pct": -43.20987654320987, "top_pct": 0 },
+      "render": { "target_width": 1080, "target_height": 1920, "aspect_rule": "increase" }
+    },
+    {
+      "name": "portrait cover zoom focal",
+      "asset_aspect": 0.4,
+      "fit_mode": "cover",
+      "zoom": 2,
+      "focal_x": 0.8,
+      "focal_y": 0.2,
+      "preview": { "width_pct": 200, "height_pct": 281.25, "left_pct": -80, "top_pct": -36.25 },
+      "render": { "target_width": 2160, "target_height": 3840, "aspect_rule": "increase" }
+    }
+  ]
+}

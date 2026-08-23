@@ -554,19 +554,24 @@ render without a human ask.
 
 ## Visual blocks
 
-`visual_blocks` are first-class, per-variant base-layer replacements for rapid
-montages and interstitial text cards. They are not media overlays: blocks are
-composited onto the clean assembled base before authored text and captions.
-The complete render order is clean base → visual blocks → authored text →
-captions → media overlays → sound effects.
+`visual_blocks` are first-class, per-variant base-layer treatments. Structured
+montages and interstitial text cards remain mutually exclusive replacement
+windows. User-authored `kind: "media"` blocks are independent image/video
+layers that may overlap and are ordered by stable `z`. All are composited onto
+the clean assembled base before authored text and captions. The complete render
+order is clean base → structured visual blocks → media blocks → authored text
+→ captions → legacy media overlays → sound effects.
 
 - Schemas and structural validation live in
-  `app/agents/_schemas/visual_block.py`; blocks never overlap, montage shots
-  persist concrete contiguous offsets, and card text links through
-  `TextElement.visual_block_id`.
+  `app/agents/_schemas/visual_block.py`; structured blocks never overlap,
+  montage shots persist concrete contiguous offsets, media blocks may overlap
+  each other, and card text links through `TextElement.visual_block_id`.
 - `app/pipeline/visual_blocks.py` renders image/video shots, crop and Ken Burns
   motion, solid/gradient/blur/asset card backgrounds, transitions, and base
-  audio mute windows. The text-free result is cached as
+  audio mute windows. Media blocks share the same pass: fullscreen defaults to
+  `contain` so unused canvas reveals the underlying base, `cover` uses the
+  authored focal point and zoom, overlays use explicit position/scale, and
+  video windows clamp to selected source footage. The text-free result is cached as
   `visual_blocks_base_path`, while `base_video_path` remains the durable clean
   source for block edits and removal.
 - Editor saves include blocks and linked text in one `editor-commit` baseline.

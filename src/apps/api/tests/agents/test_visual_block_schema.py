@@ -3,12 +3,34 @@ from __future__ import annotations
 import pytest
 
 from app.agents._schemas.visual_block import (
+    MediaBlock,
+    MediaTransform,
     MontageBlock,
     SyncAnchor,
     retime_montage,
     validate_visual_block_text_links,
     validate_visual_blocks,
 )
+
+
+def _media(*, media_kind: str = "image", start: float = 0.0, end: float = 1.0, **extra) -> dict:
+    payload = {
+        "version": 1,
+        "id": f"media-{media_kind}-{start}",
+        "kind": "media",
+        "asset_id": f"asset-{media_kind}",
+        "src_gcs_path": f"users/u/media.{'jpg' if media_kind == 'image' else 'mp4'}",
+        "media_kind": media_kind,
+        "start_s": start,
+        "end_s": end,
+        "timing_mode": "manual",
+        "origin": "user",
+        "audio_policy": {"base": "continue", "sfx": "continue"},
+    }
+    if media_kind == "video":
+        payload["source_duration_s"] = 8.0
+    payload.update(extra)
+    return payload
 
 
 def _shot(index: int, *, offset: float, duration: float) -> dict:
@@ -55,6 +77,59 @@ def test_strict_validation_rejects_overlap() -> None:
     second["id"] = "montage-2"
     with pytest.raises(ValueError, match="overlap"):
         validate_visual_blocks([_montage(), second], duration_s=10.0)
+
+
+def test_media_transform_defaults_and_bounds() -> None:
+    transform = MediaTransform()
+    assert transform.fit_mode == "contain"
+    assert transform.focal_x == pytest.approx(0.5)
+    assert transform.focal_y == pytest.approx(0.5)
+    assert transform.zoom == pytest.approx(1.0)
+    MediaTransform(focal_x=0.0, focal_y=1.0, zoom=4.0)
+    with pytest.raises(ValueError):
+        MediaTransform(zoom=4.01)
+
+
+def test_media_blocks_may_overlap_while_structured_overlap_is_rejected() -> None:
+    result = validate_visual_blocks(
+        [_media(start=0.0, end=2.0), _media(start=1.0, end=3.0, id="media-2")],
+        duration_s=4.0,
+    )
+    assert len(result) == 2
+    second = _montage(start=1.0)
+    second["id"] = "montage-2"
+    with pytest.raises(ValueError, match="structured visual blocks may not overlap"):
+        validate_visual_blocks([_montage(), second], duration_s=8.0)
+
+
+def test_media_window_has_point_one_second_minimum() -> None:
+    with pytest.raises(ValueError, match="at least 0.1s"):
+        MediaBlock.model_validate(_media(start=1.0, end=1.09))
+
+
+def test_video_trim_end_clamps_to_source_and_selected_window_is_checked() -> None:
+    block = MediaBlock.model_validate(
+        _media(
+            media_kind="video",
+            start=0.0,
+            end=1.0,
+            source_duration_s=2.0,
+            trim_start_s=0.0,
+            trim_end_s=10.0,
+        )
+    )
+    assert block.trim_end_s == pytest.approx(2.0)
+    with pytest.raises(ValueError, match="exceeds the selected source footage"):
+        MediaBlock.model_validate(
+            _media(
+                media_kind="video",
+                start=0.0,
+                end=2.0,
+                source_duration_s=3.0,
+                trim_start_s=1.0,
+                trim_end_s=2.0,
+            )
+        )
 
 
 def test_text_card_requires_linked_text_inside_window() -> None:
