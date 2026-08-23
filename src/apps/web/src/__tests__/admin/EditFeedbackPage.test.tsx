@@ -7,6 +7,7 @@ import {
   adminGetEditFeedback,
   adminListEditFeedback,
   adminSaveEditFeedbackAnnotation,
+  adminSaveEditFeedbackAnnotationsBulk,
 } from "@/lib/admin-edit-feedback-api";
 
 const replace = jest.fn();
@@ -22,11 +23,13 @@ jest.mock("@/lib/admin-edit-feedback-api", () => ({
   adminListEditFeedback: jest.fn(),
   adminGetEditFeedback: jest.fn(),
   adminSaveEditFeedbackAnnotation: jest.fn(),
+  adminSaveEditFeedbackAnnotationsBulk: jest.fn(),
 }));
 
 const list = adminListEditFeedback as jest.MockedFunction<typeof adminListEditFeedback>;
 const get = adminGetEditFeedback as jest.MockedFunction<typeof adminGetEditFeedback>;
 const save = adminSaveEditFeedbackAnnotation as jest.MockedFunction<typeof adminSaveEditFeedbackAnnotation>;
+const saveBulk = adminSaveEditFeedbackAnnotationsBulk as jest.MockedFunction<typeof adminSaveEditFeedbackAnnotationsBulk>;
 
 const ITEM = {
   id: "artifact-1",
@@ -75,6 +78,7 @@ describe("EditFeedbackPage", () => {
         created_at: "2026-08-20T12:01:00Z",
       },
     });
+    saveBulk.mockResolvedValue({ annotations: [] });
   });
 
   it("loads server-side filters from the URL", async () => {
@@ -115,7 +119,7 @@ describe("EditFeedbackPage", () => {
   it("appends a correction and retains the draft on failure", async () => {
     render(<EditFeedbackPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Review Morning walk" }));
-    await screen.findByRole("heading", { name: "Append a review correction" });
+    await screen.findByRole("heading", { name: "Detailed feedback" });
     fireEvent.change(screen.getByLabelText("Rationale"), { target: { value: "Hook starts too late" } });
     fireEvent.click(screen.getByRole("button", { name: "Review factor 4: Hook" }));
     fireEvent.click(screen.getByRole("button", { name: "Save rating" }));
@@ -127,6 +131,65 @@ describe("EditFeedbackPage", () => {
       supersedes_annotation_id: null,
     })));
     expect(await screen.findByText("Correction appended.")).toBeInTheDocument();
+  });
+
+  it("marks every unrated factor good in one explicit bulk action", async () => {
+    const existing = {
+      id: "annotation-text",
+      dimension: "text",
+      rating: "bad" as const,
+      rationale: "The title is hard to read.",
+      created_at: "2026-08-20T12:01:00Z",
+      is_current: true,
+      current: true,
+    };
+    get.mockResolvedValueOnce({ ...DETAIL, annotations: [existing] });
+    const dimensions = [
+      "overall_quality",
+      "ai_guidance_and_response",
+      "instruction_fit",
+      "hook",
+      "pacing",
+      "cuts",
+      "clip_selection",
+      "clip_ordering",
+      "captions",
+      "transitions",
+      "music",
+      "audio",
+      "effects",
+      "overlays",
+    ];
+    saveBulk.mockResolvedValueOnce({
+      annotations: dimensions.map((dimension, index) => ({
+        id: `bulk-${index}`,
+        dimension,
+        rating: "good" as const,
+        rationale: "No issue noted in this review pass.",
+        created_at: "2026-08-20T12:02:00Z",
+        is_current: true,
+        current: true,
+      })),
+    });
+
+    render(<EditFeedbackPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Review Morning walk" }));
+    const complete = await screen.findByRole("button", { name: "Mark 14 remaining factors good" });
+    fireEvent.click(complete);
+
+    await waitFor(() => expect(saveBulk).toHaveBeenCalledTimes(1));
+    const [, annotations] = saveBulk.mock.calls[0];
+    expect(annotations).toHaveLength(14);
+    expect(annotations).not.toEqual(expect.arrayContaining([expect.objectContaining({ dimension: "text" })]));
+    expect(annotations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        dimension: "cuts",
+        rating: "good",
+        rationale: "No issue noted in this review pass.",
+      }),
+    ]));
+    expect(await screen.findByText("All factors are rated. This edit is fully reviewed.")).toBeInTheDocument();
+    expect(screen.getByText("14 remaining factors marked good. Review complete.")).toBeInTheDocument();
   });
 
   it("surfaces list errors with a retry action", async () => {

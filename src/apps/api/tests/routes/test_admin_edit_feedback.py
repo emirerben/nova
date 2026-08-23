@@ -10,9 +10,11 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 import app.config as config_mod
+import app.routes.admin_edit_feedback as edit_feedback_route
 from app.main import app
 from app.routes.admin_edit_feedback import (
     SaveAnnotationRequest,
+    SaveAnnotationsBulkRequest,
     _current_annotations,
     _decode_cursor,
     _decode_stratified_cursor,
@@ -22,6 +24,7 @@ from app.routes.admin_edit_feedback import (
     _stratified_cursor,
     _stratified_review_order,
     _timeline,
+    save_edit_feedback_annotations_bulk,
 )
 
 VALID_TOKEN = "test-admin-token"
@@ -81,6 +84,97 @@ def test_annotation_range_requires_both_ordered_bounds():
             frame_start_s=2,
             frame_end_s=1,
         )
+
+
+def test_bulk_annotations_require_distinct_dimensions():
+    annotation = SaveAnnotationRequest(
+        dimension="hook",
+        rating="good",
+        rationale="No issue noted in this review pass.",
+    )
+    with pytest.raises(ValidationError, match="unique dimensions"):
+        SaveAnnotationsBulkRequest(annotations=[annotation, annotation])
+
+    payload = SaveAnnotationsBulkRequest(
+        annotations=[
+            annotation,
+            SaveAnnotationRequest(
+                dimension="cuts",
+                rating="good",
+                rationale="No issue noted in this review pass.",
+            ),
+        ]
+    )
+    assert [row.dimension for row in payload.annotations] == ["hook", "cuts"]
+
+
+def test_bulk_annotations_commit_once(monkeypatch):
+    artifact = SimpleNamespace(id=uuid.uuid4())
+
+    class FakeResult:
+        def scalar_one(self):
+            return artifact.id
+
+    class FakeSession:
+        commit_count = 0
+        added = []
+
+        def execute(self, _query):
+            return FakeResult()
+
+        def add_all(self, rows):
+            self.added = rows
+
+        def commit(self):
+            self.commit_count += 1
+
+        def refresh(self, _row):
+            return None
+
+    class FakeSessionContext:
+        def __init__(self, db):
+            self.db = db
+
+        def __enter__(self):
+            return self.db
+
+        def __exit__(self, *_args):
+            return False
+
+    db = FakeSession()
+    monkeypatch.setattr("app.database.sync_session", lambda: FakeSessionContext(db))
+    monkeypatch.setattr(edit_feedback_route, "_load_eligible_artifact", lambda *_args: artifact)
+    monkeypatch.setattr(
+        edit_feedback_route,
+        "_new_annotation_row",
+        lambda _db, _artifact, req: SimpleNamespace(
+            id=uuid.uuid4(),
+            dimension=req.dimension,
+            rating=req.rating,
+            rationale=req.rationale,
+            frame_start_ms=None,
+            frame_end_ms=None,
+            reviewer_identity="emir",
+            created_at=datetime.now(UTC),
+            supersedes_annotation_id=None,
+        ),
+    )
+    request = SaveAnnotationsBulkRequest(
+        annotations=[
+            SaveAnnotationRequest(
+                dimension=dimension,
+                rating="good",
+                rationale="No issue noted in this review pass.",
+            )
+            for dimension in ("hook", "cuts")
+        ]
+    )
+
+    response = save_edit_feedback_annotations_bulk(artifact.id, request)
+
+    assert db.commit_count == 1
+    assert [row.dimension for row in db.added] == ["hook", "cuts"]
+    assert [row.dimension for row in response.annotations] == ["hook", "cuts"]
 
 
 def test_correction_keeps_history_and_selects_new_leaf():

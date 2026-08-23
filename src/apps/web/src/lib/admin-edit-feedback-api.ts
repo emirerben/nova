@@ -109,6 +109,10 @@ export interface SaveEditFeedbackAnnotationResponse {
   annotation: EditFeedbackAnnotation;
 }
 
+export interface SaveEditFeedbackAnnotationsBulkResponse {
+  annotations: EditFeedbackAnnotation[];
+}
+
 async function adminJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${ADMIN_PROXY}${path}`, init);
   if (!response.ok) {
@@ -164,6 +168,20 @@ export async function adminSaveEditFeedbackAnnotation(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
+    },
+  );
+}
+
+export async function adminSaveEditFeedbackAnnotationsBulk(
+  artifactId: string,
+  annotations: SaveEditFeedbackAnnotationInput[],
+): Promise<SaveEditFeedbackAnnotationsBulkResponse> {
+  return adminJson<SaveEditFeedbackAnnotationsBulkResponse>(
+    `/edit-feedback/${encodeURIComponent(artifactId)}/annotations/bulk`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ annotations }),
     },
   );
 }

@@ -115,6 +115,23 @@ class SaveAnnotationResponse(BaseModel):
     annotation: AnnotationOut
 
 
+class SaveAnnotationsBulkRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    annotations: list[SaveAnnotationRequest] = Field(min_length=1, max_length=15)
+
+    @model_validator(mode="after")
+    def validate_unique_dimensions(self) -> SaveAnnotationsBulkRequest:
+        dimensions = [annotation.dimension for annotation in self.annotations]
+        if len(dimensions) != len(set(dimensions)):
+            raise ValueError("bulk annotations must use unique dimensions")
+        return self
+
+
+class SaveAnnotationsBulkResponse(BaseModel):
+    annotations: list[AnnotationOut]
+
+
 class CreateExportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -942,6 +959,56 @@ def get_edit_feedback(artifact_id: uuid.UUID) -> ArtifactDetailResponse:
         )
 
 
+def _new_annotation_row(db: Any, artifact: Any, req: SaveAnnotationRequest) -> Any:
+    """Build one append-only annotation against the locked artifact state."""
+    from app.models import EditFeedbackAnnotation  # noqa: PLC0415
+
+    duration_ms = int(artifact.duration_ms or 0)
+    start_ms = round(req.frame_start_s * 1000) if req.frame_start_s is not None else None
+    end_ms = round(req.frame_end_s * 1000) if req.frame_end_s is not None else None
+    if end_ms is not None and end_ms > duration_ms:
+        raise HTTPException(status_code=422, detail="annotation frame range exceeds artifact")
+
+    rows = (
+        db.execute(
+            select(EditFeedbackAnnotation)
+            .where(
+                EditFeedbackAnnotation.artifact_id == artifact.id,
+                EditFeedbackAnnotation.dimension == req.dimension,
+            )
+            .with_for_update()
+        )
+        .scalars()
+        .all()
+    )
+    current, _ = _current_annotations(rows)
+    current_row = current.get(req.dimension)
+    supersedes = None
+    if req.supersedes_annotation_id:
+        try:
+            supersedes_id = uuid.UUID(req.supersedes_annotation_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="invalid superseded annotation") from exc
+        if current_row is None or current_row.id != supersedes_id:
+            raise HTTPException(status_code=409, detail="superseded annotation is stale")
+        supersedes = current_row
+    elif current_row is not None:
+        raise HTTPException(status_code=409, detail="annotation state changed")
+
+    return EditFeedbackAnnotation(
+        creator_id=artifact.creator_id,
+        plan_item_id=artifact.plan_item_id,
+        artifact_id=artifact.id,
+        dimension=req.dimension,
+        rating=req.rating,
+        rationale=(req.rationale or "").strip() or None,
+        frame_start_ms=start_ms,
+        frame_end_ms=end_ms,
+        reviewer_identity="emir",
+        supersedes_annotation_id=supersedes.id if supersedes else None,
+    )
+
+
 @router.post(
     "/{artifact_id}/annotations",
     response_model=SaveAnnotationResponse,
@@ -953,51 +1020,42 @@ def save_edit_feedback_annotation(
     req: SaveAnnotationRequest,
 ) -> SaveAnnotationResponse:
     from app.database import sync_session  # noqa: PLC0415
-    from app.models import EditFeedbackAnnotation  # noqa: PLC0415
+    from app.models import EditArtifact  # noqa: PLC0415
 
     with sync_session() as db:
         artifact = _load_eligible_artifact(db, artifact_id)
-        duration_ms = int(artifact.duration_ms or 0)
-        start_ms = round(req.frame_start_s * 1000) if req.frame_start_s is not None else None
-        end_ms = round(req.frame_end_s * 1000) if req.frame_end_s is not None else None
-        if end_ms is not None and end_ms > duration_ms:
-            raise HTTPException(status_code=422, detail="annotation frame range exceeds artifact")
-        supersedes = None
-        if req.supersedes_annotation_id:
-            try:
-                supersedes_id = uuid.UUID(req.supersedes_annotation_id)
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=422, detail="invalid superseded annotation"
-                ) from exc
-            supersedes = db.get(EditFeedbackAnnotation, supersedes_id, with_for_update=True)
-            if (
-                supersedes is None
-                or supersedes.artifact_id != artifact.id
-                or supersedes.dimension != req.dimension
-            ):
-                raise HTTPException(status_code=409, detail="superseded annotation is stale")
-            already_superseded = db.execute(
-                select(EditFeedbackAnnotation.id).where(
-                    EditFeedbackAnnotation.supersedes_annotation_id == supersedes.id
-                )
-            ).scalar_one_or_none()
-            if already_superseded is not None:
-                raise HTTPException(status_code=409, detail="superseded annotation is stale")
-
-        row = EditFeedbackAnnotation(
-            creator_id=artifact.creator_id,
-            plan_item_id=artifact.plan_item_id,
-            artifact_id=artifact.id,
-            dimension=req.dimension,
-            rating=req.rating,
-            rationale=(req.rationale or "").strip() or None,
-            frame_start_ms=start_ms,
-            frame_end_ms=end_ms,
-            reviewer_identity="emir",
-            supersedes_annotation_id=supersedes.id if supersedes else None,
-        )
+        db.execute(
+            select(EditArtifact.id).where(EditArtifact.id == artifact.id).with_for_update()
+        ).scalar_one()
+        row = _new_annotation_row(db, artifact, req)
         db.add(row)
         db.commit()
         db.refresh(row)
         return SaveAnnotationResponse(annotation=_annotation_out(row, {}))
+
+
+@router.post(
+    "/{artifact_id}/annotations/bulk",
+    response_model=SaveAnnotationsBulkResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(_require_admin)],
+)
+def save_edit_feedback_annotations_bulk(
+    artifact_id: uuid.UUID,
+    req: SaveAnnotationsBulkRequest,
+) -> SaveAnnotationsBulkResponse:
+    """Append an explicit set of distinct ratings in one transaction."""
+    from app.database import sync_session  # noqa: PLC0415
+    from app.models import EditArtifact  # noqa: PLC0415
+
+    with sync_session() as db:
+        artifact = _load_eligible_artifact(db, artifact_id)
+        db.execute(
+            select(EditArtifact.id).where(EditArtifact.id == artifact.id).with_for_update()
+        ).scalar_one()
+        rows = [_new_annotation_row(db, artifact, annotation) for annotation in req.annotations]
+        db.add_all(rows)
+        db.commit()
+        for row in rows:
+            db.refresh(row)
+        return SaveAnnotationsBulkResponse(annotations=[_annotation_out(row, {}) for row in rows])

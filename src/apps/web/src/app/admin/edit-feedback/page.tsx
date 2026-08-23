@@ -19,6 +19,7 @@ import {
   adminGetEditFeedback,
   adminListEditFeedback,
   adminSaveEditFeedbackAnnotation,
+  adminSaveEditFeedbackAnnotationsBulk,
   type AnnotationRating,
   type EditFeedbackAnnotation,
   type EditFeedbackArtifact,
@@ -72,6 +73,30 @@ function filtersFromSearch(search: URLSearchParams): Filters {
 
 function display(value: string | null | undefined, fallback = "—") {
   return value || fallback;
+}
+
+function mergeFeedbackAnnotations(
+  existing: EditFeedbackAnnotation[],
+  saved: EditFeedbackAnnotation[],
+) {
+  return saved.reduce<EditFeedbackAnnotation[]>((annotations, annotation) => [
+    ...annotations.map((current) =>
+      current.dimension === annotation.dimension
+      && current.is_current !== false
+      && current.current !== false
+        ? { ...current, is_current: false, current: false, superseded_by: annotation.id }
+        : current,
+    ),
+    annotation,
+  ], existing);
+}
+
+function currentAnnotationDimensions(annotations: EditFeedbackAnnotation[]) {
+  return new Set(
+    annotations
+      .filter((annotation) => annotation.is_current !== false && annotation.current !== false)
+      .map((annotation) => annotation.dimension),
+  );
 }
 
 function evidenceText(record: Record<string, unknown> | null | undefined, ...keys: string[]) {
@@ -284,15 +309,27 @@ export default function EditFeedbackPage() {
           error={detailError}
           closeButtonRef={closeButtonRef}
           onClose={closeDetail}
-          onSaved={(annotation) => setDetail((current) => current ? {
-            ...current,
-            annotations: [
-              ...current.annotations.map((existing) => existing.dimension === annotation.dimension
-                ? { ...existing, is_current: false, current: false, superseded_by: annotation.id }
-                : existing),
-              annotation,
-            ],
-          } : current)}
+          onSaved={(annotations) => {
+            const merged = mergeFeedbackAnnotations(detail?.annotations ?? [], annotations);
+            const dimensions = currentAnnotationDimensions(merged);
+            const reviewState = dimensions.size === 0
+              ? "unreviewed"
+              : dimensions.size === RATING_DIMENSIONS.length
+                ? "reviewed"
+                : "needs_correction";
+            const currentByDimension = new Map(
+              merged
+                .filter((annotation) => annotation.is_current !== false && annotation.current !== false)
+                .map((annotation) => [annotation.dimension, annotation]),
+            );
+            setDetail((current) => current ? { ...current, annotations: merged } : current);
+            setItems((current) => current.map((item) => item.id === selectedId ? {
+              ...item,
+              review_state: reviewState,
+              quality_signal: currentByDimension.get("overall_quality")?.rating ?? null,
+              edit_signal: currentByDimension.get("instruction_fit")?.rating ?? null,
+            } : item));
+          }}
         />
       )}
     </main>
@@ -332,7 +369,7 @@ function EditFeedbackDetailPanel({
   error: string | null;
   closeButtonRef: React.RefObject<HTMLButtonElement>;
   onClose: () => void;
-  onSaved: (annotation: EditFeedbackAnnotation) => void;
+  onSaved: (annotations: EditFeedbackAnnotation[]) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [currentTime, setCurrentTime] = useState(0);
@@ -345,10 +382,15 @@ function EditFeedbackDetailPanel({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [bulkStatus, setBulkStatus] = useState<string | null>(null);
 
   const currentAnnotation = detail?.annotations.find((annotation) =>
     annotation.dimension === dimension && annotation.is_current !== false && annotation.current !== false,
   );
+  const ratedDimensions = currentAnnotationDimensions(detail?.annotations ?? []);
+  const remainingDimensions = RATING_DIMENSIONS.filter(([key]) => !ratedDimensions.has(key));
 
   const togglePlayback = () => {
     const video = videoRef.current;
@@ -400,7 +442,7 @@ function EditFeedbackDetailPanel({
         frame_end_s: frameEnd ? Number(frameEnd) : null,
         supersedes_annotation_id: currentAnnotation?.id ?? null,
       });
-      onSaved(response.annotation);
+      onSaved([response.annotation]);
       setRationale("");
       setFrameStart("");
       setFrameEnd("");
@@ -409,6 +451,34 @@ function EditFeedbackDetailPanel({
       setSaveError(cause instanceof Error ? cause.message : "Unable to save correction.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const completeRemainingAsGood = async () => {
+    if (!detail || remainingDimensions.length === 0) return;
+    setBulkSaving(true);
+    setBulkError(null);
+    setBulkStatus(null);
+    try {
+      const response = await adminSaveEditFeedbackAnnotationsBulk(
+        detail.artifact.id,
+        remainingDimensions.map(([remainingDimension]) => ({
+          dimension: remainingDimension,
+          rating: "good",
+          rationale: "No issue noted in this review pass.",
+          frame_start_s: null,
+          frame_end_s: null,
+          supersedes_annotation_id: null,
+        })),
+      );
+      onSaved(response.annotations);
+      setBulkStatus(
+        `${response.annotations.length} remaining factor${response.annotations.length === 1 ? "" : "s"} marked good. Review complete.`,
+      );
+    } catch (cause) {
+      setBulkError(cause instanceof Error ? cause.message : "Unable to complete this review.");
+    } finally {
+      setBulkSaving(false);
     }
   };
 
@@ -468,8 +538,34 @@ function EditFeedbackDetailPanel({
               onSeek={seek}
               onPlayPause={togglePlayback}
             />
+            <section aria-labelledby="quick-review-heading" className="rounded-md border border-zinc-700 bg-zinc-900/50 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 id="quick-review-heading" className="font-medium">Fast review</h3>
+                <span className="text-xs text-zinc-500">{ratedDimensions.size} of {RATING_DIMENSIONS.length} rated</span>
+              </div>
+              <p className="mt-1 text-sm text-zinc-400">
+                Flag anything that needs work below. When you are done, explicitly mark every unrated factor as good in one step.
+              </p>
+              {remainingDimensions.length > 0 ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="mt-4"
+                  disabled={bulkSaving}
+                  onClick={() => void completeRemainingAsGood()}
+                >
+                  {bulkSaving
+                    ? "Completing review…"
+                    : `Mark ${remainingDimensions.length} remaining factor${remainingDimensions.length === 1 ? "" : "s"} good`}
+                </Button>
+              ) : (
+                <p className="mt-3 text-sm text-emerald-300">All factors are rated. This edit is fully reviewed.</p>
+              )}
+              {bulkError && <p className="mt-3 text-sm text-red-300" role="alert">{bulkError}</p>}
+              {bulkStatus && <p className="mt-3 text-sm text-emerald-300" role="status" aria-live="polite">{bulkStatus}</p>}
+            </section>
             <section aria-labelledby="correction-heading" className="border-t border-zinc-800 pt-5">
-              <h3 id="correction-heading" className="font-medium">Append a review correction</h3>
+              <h3 id="correction-heading" className="font-medium">Detailed feedback</h3>
               <p className="mt-1 text-xs text-zinc-500">Rate each factor separately. Corrections are append-only and supersede the current value for the selected factor.</p>
               <nav aria-label="Review factors" className="mt-4 grid gap-2 sm:grid-cols-2">
                 {RATING_DIMENSIONS.map(([key, label], index) => {
