@@ -116,6 +116,8 @@ export interface EditorCommitRequest {
   /** Guided Story V2 monotonic revision token. Required by the server for
    * guided writes; omitted for legacy/montage variants. */
   guided_revision_number?: number;
+  /** Latest untouched Copilot proposal staged in this atomic Save. */
+  copilot_receipt_ids?: string[];
   /** Idempotent retry of an already-persisted Guided Story revision after its
    * render enqueue failed. Carries no edit sections and never increments. */
   retry_guided_revision?: boolean;
@@ -187,6 +189,8 @@ export interface EditorCommitResponse {
   generation: string;
   /** New/current Guided Story V2 revision; absent for legacy variants. */
   revision_number?: number | null;
+  /** Canonical server identity of the saved editor state. */
+  revision_hash?: string | null;
   /** Per-section persist echo — which sections this commit actually wrote. */
   sections: {
     text_elements?: boolean;

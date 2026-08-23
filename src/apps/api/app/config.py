@@ -71,6 +71,11 @@ class Settings(BaseSettings):
     # Must match INTERNAL_API_KEY in the Next.js environment.
     internal_api_key: str = ""
 
+    # HMAC key for pseudonymous creator/plan-item dataset groups. Exports fail
+    # closed when unset or too short; it must not reuse an auth credential.
+    training_dataset_split_secret: str = ""
+    training_export_ttl_hours: int = Field(default=24, ge=1, le=168)
+
     # Split-rollout gate for the authenticated creation flow. False keeps the
     # old VoiceRecorder's validated voiceover-uploads/* paths working while the
     # API lands ahead of Vercel. After the owned direct uploader is deployed,

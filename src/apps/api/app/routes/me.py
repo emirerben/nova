@@ -38,6 +38,7 @@ from app.models import (
     Persona,
     PlanItem,
     TikTokPublication,
+    TrainingConsentEvent,
     User,
     VideoFeedback,
 )
@@ -73,6 +74,108 @@ OPEN_IN_EDITOR_LINK_CONFLICT_DETAIL = "Video is linked to a different plan item.
 # 24h — mirrors `PLAYBACK_URL_TTL_MIN` / `_variants_for_response` in
 # routes/generative_jobs.py.
 PLAYBACK_URL_TTL_MIN = 360
+
+
+class TrainingConsentRequest(BaseModel):
+    action: Literal["grant", "revoke"]
+    terms_version: str = Field(min_length=1, max_length=100)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class TrainingConsentResponse(BaseModel):
+    active: bool
+    consent_event_id: str | None = None
+    terms_version: str | None = None
+    granted_at: str | None = None
+    revoked_at: str | None = None
+
+
+async def _latest_training_consent(
+    db: AsyncSession,
+    creator_id: uuid.UUID,
+) -> TrainingConsentEvent | None:
+    return (
+        await db.execute(
+            select(TrainingConsentEvent)
+            .where(
+                TrainingConsentEvent.creator_id == creator_id,
+                TrainingConsentEvent.purpose == "edit_feedback_training",
+            )
+            .order_by(
+                TrainingConsentEvent.effective_at.desc(),
+                TrainingConsentEvent.created_at.desc(),
+                TrainingConsentEvent.id.desc(),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+def _training_consent_out(event: TrainingConsentEvent | None) -> TrainingConsentResponse:
+    if event is None:
+        return TrainingConsentResponse(active=False)
+    active = event.action == "grant"
+    return TrainingConsentResponse(
+        active=active,
+        consent_event_id=str(event.id),
+        terms_version=event.policy_version,
+        granted_at=event.effective_at.isoformat() if active else None,
+        revoked_at=event.effective_at.isoformat() if not active else None,
+    )
+
+
+@router.get("/training-consent", response_model=TrainingConsentResponse)
+async def get_training_consent(
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> TrainingConsentResponse:
+    """Return the creator's current explicit edit-training consent state."""
+    return _training_consent_out(await _latest_training_consent(db, user.id))
+
+
+@router.post("/training-consent", response_model=TrainingConsentResponse)
+async def set_training_consent(
+    body: TrainingConsentRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> TrainingConsentResponse:
+    """Append a grant/revoke event; revocation immediately excludes old artifacts."""
+    key = body.idempotency_key.strip()
+    existing = (
+        await db.execute(
+            select(TrainingConsentEvent).where(
+                TrainingConsentEvent.creator_id == user.id,
+                TrainingConsentEvent.idempotency_key == key,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        if existing.action != body.action or existing.policy_version != body.terms_version:
+            raise HTTPException(status_code=409, detail="consent idempotency key mismatch")
+        return _training_consent_out(existing)
+
+    latest = await _latest_training_consent(db, user.id)
+    if body.action == "revoke" and (latest is None or latest.action != "grant"):
+        return _training_consent_out(latest)
+    row = TrainingConsentEvent(
+        creator_id=user.id,
+        purpose="edit_feedback_training",
+        action=body.action,
+        policy_version=body.terms_version.strip(),
+        source="creator_settings",
+        idempotency_key=key,
+        revokes_consent_id=latest.id if body.action == "revoke" and latest else None,
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    if body.action == "revoke" and latest is not None:
+        from app.tasks.edit_training_artifacts import (  # noqa: PLC0415
+            purge_edit_training_artifacts,
+        )
+
+        purge_edit_training_artifacts.delay(str(user.id), str(latest.id))
+    return _training_consent_out(row)
 
 
 async def _provision_editor_plan(db: AsyncSession, user: User) -> tuple[ContentPlan, bool]:

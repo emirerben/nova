@@ -9178,6 +9178,7 @@ def _update_variant_entry(
     write as before. Returns False when the patch was discarded or the row was
     missing.
     """
+    capture_generation: str | None = None
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
@@ -9205,6 +9206,12 @@ def _update_variant_entry(
                     )
                     return False
                 variants[i] = {**v, **{k: val for k, val in patch.items() if k != "variant_id"}}
+                if (
+                    variants[i].get("render_status") == "ready"
+                    and variants[i].get("video_path")
+                    and variants[i].get("render_generation_id")
+                ):
+                    capture_generation = str(variants[i]["render_generation_id"])
                 if getattr(job, "mode", None) == "manual_draft":
                     # The first successful EditorShell Save is the draft's
                     # export boundary. Promote into the normal content-plan job
@@ -9226,6 +9233,19 @@ def _update_variant_entry(
         plan["variants"] = variants
         job.assembly_plan = plan
         db.commit()
+    if capture_generation is not None:
+        try:
+            from app.tasks.edit_training_artifacts import (  # noqa: PLC0415
+                capture_edit_training_artifact,
+            )
+
+            capture_edit_training_artifact.delay(job_id, variant_id, capture_generation)
+        except Exception:  # noqa: BLE001 - training capture never affects creator render
+            log.exception(
+                "edit_training_artifact_dispatch_failed",
+                job_id=job_id,
+                variant_id=variant_id,
+            )
     return True
 
 

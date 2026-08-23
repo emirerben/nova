@@ -5154,6 +5154,7 @@ export default function EditorShell({
     undoVersion: number;
     ops: CopilotOp[];
     summary: string;
+    receiptId?: string;
   } | null>(null);
 
   const buildCopilotApplyContext = useCallback(
@@ -5198,6 +5199,7 @@ export default function EditorShell({
       capabilities,
       captionMeta,
       carouselMoment,
+      clip.clips,
       clip.state.grid,
       effectiveMusicTrackId,
       evolvingTypeExposureEnabled,
@@ -5653,6 +5655,11 @@ export default function EditorShell({
     buildSnapshot: buildCopilotDraftSnapshot,
     applyOps: applyCopilotDraftOps,
     onApplied: handleCopilotOps,
+    onReceiptStaged: (receiptId, undoVersion) => {
+      if (lastAppliedTurnRef.current?.undoVersion === undoVersion) {
+        lastAppliedTurnRef.current.receiptId = receiptId;
+      }
+    },
   });
   const director = useEditDirector({
     enabled: EDIT_DIRECTOR_UI_ENABLED && !readOnly,
@@ -6098,6 +6105,13 @@ export default function EditorShell({
         guidedRevisionNumber: guidedStoryV2 ? clip.revisionNumber : undefined,
         variant,
       });
+      const latestCopilotTurn = lastAppliedTurnRef.current;
+      if (
+        latestCopilotTurn?.receiptId &&
+        latestCopilotTurn.undoVersion === history.version
+      ) {
+        commitRequest.copilot_receipt_ids = [latestCopilotTurn.receiptId];
+      }
       if (partialCommitGenerationRef.current) {
         const draftChangedAfterPartial =
           partialHistoryVersionRef.current != null &&

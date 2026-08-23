@@ -15,6 +15,7 @@ from app.routes import (
     admin,
     admin_build_tasks,
     admin_creator_style,
+    admin_edit_feedback,
     admin_generative,
     admin_jobs,
     admin_music,
@@ -178,6 +179,11 @@ app.include_router(
     admin_build_tasks.router, prefix="/admin/build-tasks", tags=["admin-build-tasks"]
 )
 app.include_router(admin_review.router, prefix="/admin/review", tags=["admin-review"])
+app.include_router(
+    admin_edit_feedback.router,
+    prefix="/admin/edit-feedback",
+    tags=["admin-edit-feedback"],
+)
 app.include_router(
     admin_creator_style.router,
     prefix="/admin/creator-style-assignments",

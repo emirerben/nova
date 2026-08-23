@@ -994,6 +994,9 @@ class EditorCommitRequest(BaseModel):
     # overlay.id inference) so a replayed/double Save is a no-op and validators
     # can never confuse a user upload with an accepted suggestion.
     accepted_suggestion_ids: list[str] | None = None
+    # Audit-only identities for the latest untouched Copilot turn. The Save
+    # route links them to the canonical server revision in the same commit.
+    copilot_receipt_ids: list[uuid.UUID] = Field(default_factory=list, max_length=8)
     # Story-native v2 revision. When present this is the complete normalized
     # guided editor state; legacy sections remain mutually exclusive.
     guided_revision: dict[str, Any] | None = None
@@ -1034,6 +1037,7 @@ class EditorCommitResponse(BaseModel):
     generation: str
     sections: EditorCommitSections
     revision_number: int | None = None
+    revision_hash: str | None = None
 
 
 def _is_generated_effect_source(value: object) -> bool:

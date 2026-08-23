@@ -149,12 +149,12 @@ function AdminNav({ onLogout }: { onLogout: () => void }) {
   const pathname = usePathname();
 
   return (
-    <nav className="border-b border-zinc-800 px-6 py-3 flex items-center justify-between">
-      <div className="flex items-center gap-6">
-        <Link href="/admin" className="text-sm font-semibold text-white">
+    <nav aria-label="Admin navigation" className="border-b border-zinc-800 px-4 py-3 sm:px-6">
+      <div className="flex min-w-0 items-center justify-between gap-4">
+        <Link href="/admin" className="shrink-0 text-sm font-semibold text-white">
           Kria Admin
         </Link>
-        <div className="flex items-center gap-1">
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-1 overflow-x-auto pb-1" aria-label="Admin sections">
           <NavLink href="/admin" active={pathname === "/admin"}>
             Dashboard
           </NavLink>
@@ -184,14 +184,20 @@ function AdminNav({ onLogout }: { onLogout: () => void }) {
           >
             Review
           </NavLink>
+          <NavLink
+            href="/admin/edit-feedback"
+            active={pathname === "/admin/edit-feedback" || pathname.startsWith("/admin/edit-feedback/")}
+          >
+            Edit feedback
+          </NavLink>
           <NavLink href="/admin/templates/new" active={pathname === "/admin/templates/new"}>
             New Template
           </NavLink>
+          <button onClick={onLogout} className="min-h-11 shrink-0 px-2 text-xs text-zinc-500 hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
+            Sign Out
+          </button>
         </div>
       </div>
-      <button onClick={onLogout} className="text-xs text-zinc-500 hover:text-zinc-300">
-        Sign Out
-      </button>
     </nav>
   );
 }
@@ -208,6 +214,7 @@ function NavLink({
   return (
     <Link
       href={href}
+      aria-current={active ? "page" : undefined}
       className={`px-3 py-1.5 text-sm rounded transition-colors ${
         active ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-zinc-300"
       }`}

@@ -61,6 +61,30 @@ class User(Base):
     tiktok_publications: Mapped[list["TikTokPublication"]] = relationship(back_populates="user")
     # 1:1 — the user's onboarding persona (NULL until onboarding starts).
     persona: Mapped["Persona | None"] = relationship(back_populates="user", uselist=False)
+    # Explicit operator-owned eligibility markers for the feedback learning loop.
+    internal_account_grants: Mapped[list["InternalAccountGrant"]] = relationship(
+        back_populates="creator", cascade="all, delete-orphan"
+    )
+    training_consent_events: Mapped[list["TrainingConsentEvent"]] = relationship(
+        back_populates="creator", cascade="all, delete-orphan"
+    )
+    edit_artifacts: Mapped[list["EditArtifact"]] = relationship(
+        back_populates="creator", cascade="all, delete-orphan"
+    )
+    edit_interaction_receipts: Mapped[list["EditInteractionReceipt"]] = relationship(
+        back_populates="creator",
+        cascade="all, delete-orphan",
+        foreign_keys="EditInteractionReceipt.creator_id",
+    )
+    edit_feedback_annotations: Mapped[list["EditFeedbackAnnotation"]] = relationship(
+        back_populates="creator", cascade="all, delete-orphan"
+    )
+    training_artifact_retention_events: Mapped[list["TrainingArtifactRetentionEvent"]] = (
+        relationship(back_populates="creator", cascade="all, delete-orphan")
+    )
+    training_dataset_exports: Mapped[list["TrainingDatasetExport"]] = relationship(
+        back_populates="requested_by_user", foreign_keys="TrainingDatasetExport.requested_by"
+    )
 
 
 class OAuthToken(Base):
@@ -1002,6 +1026,15 @@ class PlanItem(Base):
     content_plan: Mapped["ContentPlan"] = relationship(back_populates="items")
     # One-directional (not the inverse of Job.content_plan_item — distinct FK column).
     current_job: Mapped["Job | None"] = relationship(foreign_keys=[current_job_id])
+    edit_artifacts: Mapped[list["EditArtifact"]] = relationship(
+        back_populates="plan_item", cascade="all, delete-orphan"
+    )
+    edit_interaction_receipts: Mapped[list["EditInteractionReceipt"]] = relationship(
+        back_populates="plan_item", cascade="all, delete-orphan"
+    )
+    edit_feedback_annotations: Mapped[list["EditFeedbackAnnotation"]] = relationship(
+        back_populates="plan_item", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         CheckConstraint(
@@ -1173,6 +1206,529 @@ class VideoFeedback(Base):
         # Batched feedback_signal lookup for GET /me/jobs (job_id = ANY(:ids)).
         Index("idx_video_feedback_job", "job_id"),
         Index("idx_video_feedback_content_plan", "content_plan_id"),
+    )
+
+
+INTERNAL_ACCOUNT_GRANT_STATUSES = ("active", "revoked")
+TRAINING_CONSENT_ACTIONS = ("grant", "revoke")
+TRAINING_CONSENT_PURPOSES = ("edit_feedback_training",)
+EDIT_ARTIFACT_KINDS = ("final_render", "poster", "contact_sheet")
+EDIT_ARTIFACT_CAPTURE_ORIGINS = ("creator", "internal", "admin", "system")
+EDIT_ARTIFACT_ELIGIBILITY_BASES = ("internal_grant", "training_consent")
+EDIT_INTERACTION_EVENT_KINDS = ("proposal", "execution", "save_link")
+EDIT_INTERACTION_PROPOSAL_OUTCOMES = (
+    "applied",
+    "clarification",
+    "no_effect",
+    "unsupported",
+    "stale",
+    "failed",
+)
+EDIT_INTERACTION_EXECUTION_OUTCOMES = ("applied", "no_effect", "rejected", "stale", "failed")
+EDIT_FEEDBACK_RATINGS = ("good", "bad", "mixed", "not_applicable")
+EDIT_FEEDBACK_DIMENSIONS = (
+    "overall_quality",
+    "ai_guidance_and_response",
+    "instruction_fit",
+    "hook",
+    "pacing",
+    "cuts",
+    "clip_selection",
+    "clip_ordering",
+    "captions",
+    "text",
+    "transitions",
+    "music",
+    "audio",
+    "effects",
+    "overlays",
+)
+RETENTION_EVENT_TYPES = ("copy", "purge", "build", "ready", "failed")
+RETENTION_EVENT_STATUSES = ("pending", "started", "succeeded", "failed")
+TRAINING_DATASET_EXPORT_STATUSES = (
+    "pending",
+    "building",
+    "ready",
+    "failed",
+    "revoked",
+)
+
+
+class InternalAccountGrant(Base):
+    """Explicit operator-owned eligibility marker for internal creators.
+
+    Internal status is deliberately not inferred from an email domain,
+    authentication provider, or the synthetic user.  Grant rows are retained
+    as an audit trail; revocation is a status transition performed by the
+    operator-owned service, not a deletion of the grant record.
+    """
+
+    __tablename__ = "internal_account_grants"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
+    granted_by: Mapped[str] = mapped_column(Text, nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    effective_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    creator: Mapped["User"] = relationship(back_populates="internal_account_grants")
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'revoked')",
+            name="ck_internal_account_grants_status",
+        ),
+        UniqueConstraint(
+            "creator_id",
+            "idempotency_key",
+            name="uq_internal_account_grants_idempotency",
+        ),
+        Index(
+            "uq_internal_account_grants_active_creator",
+            "creator_id",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
+        ),
+    )
+
+
+class TrainingConsentEvent(Base):
+    """Append-only grant/revoke ledger for customer training consent."""
+
+    __tablename__ = "training_consent_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    purpose: Mapped[str] = mapped_column(Text, nullable=False)
+    action: Mapped[str] = mapped_column(Text, nullable=False)
+    policy_version: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False, server_default="creator")
+    effective_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    revokes_consent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("training_consent_events.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    creator: Mapped["User"] = relationship(back_populates="training_consent_events")
+    revokes_consent: Mapped["TrainingConsentEvent | None"] = relationship(
+        remote_side="TrainingConsentEvent.id", foreign_keys=[revokes_consent_id]
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "purpose IN ('edit_feedback_training')",
+            name="ck_training_consent_events_purpose",
+        ),
+        CheckConstraint(
+            "action IN ('grant', 'revoke')",
+            name="ck_training_consent_events_action",
+        ),
+        UniqueConstraint(
+            "creator_id",
+            "idempotency_key",
+            name="uq_training_consent_events_idempotency",
+        ),
+        Index(
+            "idx_training_consent_events_creator_purpose_effective",
+            "creator_id",
+            "purpose",
+            "effective_at",
+        ),
+    )
+
+
+class EditArtifact(Base):
+    """Append-only identity record for one retained final render or derivative."""
+
+    __tablename__ = "edit_artifacts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    plan_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_items.id", ondelete="CASCADE"), nullable=False
+    )
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True
+    )
+    parent_artifact_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("edit_artifacts.id", ondelete="SET NULL"), nullable=True
+    )
+    variant_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    render_generation_id: Mapped[str] = mapped_column(Text, nullable=False)
+    artifact_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    artifact_schema_version: Mapped[str] = mapped_column(Text, nullable=False, server_default="1")
+    proposal_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    media_digest: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Allowlisted immutable direction/rationale snapshot. Never read the
+    # mutable PlanItem.edit_proposal when constructing training records.
+    direction_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    render_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    render_receipt_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    render_receipt_schema_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The verified receipt is retained for exact identity/audit. Exporters must
+    # project an allowlisted subset rather than serializing this JSONB wholesale.
+    render_receipt: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    prompt_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prompt_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prompt_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requested_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    effective_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model_provider: Mapped[str | None] = mapped_column(Text, nullable=True)
+    media_manifest: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Exact product-render source identity. This is not the retained training
+    # copy; TrainingArtifactRetentionEvent owns that separate path/generation.
+    storage_path: Mapped[str] = mapped_column(Text, nullable=False)
+    storage_generation: Mapped[str] = mapped_column(Text, nullable=False)
+    storage_content_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    storage_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    content_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    capture_origin: Mapped[str] = mapped_column(Text, nullable=False)
+    eligibility_basis: Mapped[str] = mapped_column(Text, nullable=False)
+    consent_event_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("training_consent_events.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    internal_grant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("internal_account_grants.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    creator_split: Mapped[str] = mapped_column(Text, nullable=False)
+    plan_item_split: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    creator: Mapped["User"] = relationship(back_populates="edit_artifacts")
+    plan_item: Mapped["PlanItem"] = relationship(back_populates="edit_artifacts")
+    parent_artifact: Mapped["EditArtifact | None"] = relationship(
+        remote_side="EditArtifact.id", foreign_keys=[parent_artifact_id]
+    )
+    consent_event: Mapped["TrainingConsentEvent | None"] = relationship(
+        foreign_keys=[consent_event_id]
+    )
+    internal_grant: Mapped["InternalAccountGrant | None"] = relationship(
+        foreign_keys=[internal_grant_id]
+    )
+    feedback_annotations: Mapped[list["EditFeedbackAnnotation"]] = relationship(
+        back_populates="artifact", cascade="all, delete-orphan"
+    )
+    retention_events: Mapped[list["TrainingArtifactRetentionEvent"]] = relationship(
+        back_populates="artifact", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "artifact_kind IN ('final_render', 'poster', 'contact_sheet')",
+            name="ck_edit_artifacts_kind",
+        ),
+        CheckConstraint(
+            "capture_origin IN ('creator', 'internal', 'admin', 'system')",
+            name="ck_edit_artifacts_capture_origin",
+        ),
+        CheckConstraint(
+            "eligibility_basis IN ('internal_grant', 'training_consent')",
+            name="ck_edit_artifacts_eligibility_basis",
+        ),
+        CheckConstraint(
+            "creator_split IN ('train', 'validation', 'test', 'holdout')",
+            name="ck_edit_artifacts_creator_split",
+        ),
+        CheckConstraint(
+            "plan_item_split IN ('train', 'validation', 'test', 'holdout')",
+            name="ck_edit_artifacts_plan_item_split",
+        ),
+        Index("idx_edit_artifacts_creator_created", "creator_id", "created_at"),
+        Index("idx_edit_artifacts_plan_item_created", "plan_item_id", "created_at"),
+        Index("idx_edit_artifacts_kind_created", "artifact_kind", "created_at"),
+        Index("idx_edit_artifacts_split", "creator_split", "plan_item_split"),
+        UniqueConstraint(
+            "storage_path", "storage_generation", name="uq_edit_artifacts_storage_identity"
+        ),
+    )
+
+
+class EditInteractionReceipt(Base):
+    """Append-only Copilot proposal/execution evidence.
+
+    A proposal row records exactly what the server returned. The browser then
+    appends one execution row after its local validator/applier runs. Execution
+    retries reuse ``client_event_id``; the creator-scoped unique constraint
+    prevents a retry against a different proposal from duplicating evidence.
+    """
+
+    __tablename__ = "edit_interaction_receipts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    event_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    proposal_receipt_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("edit_interaction_receipts.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    plan_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_items.id", ondelete="CASCADE"), nullable=False
+    )
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True
+    )
+    variant_id: Mapped[str] = mapped_column(Text, nullable=False)
+    client_event_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    utterance: Mapped[str] = mapped_column(Text, nullable=False)
+    inferred_intent: Mapped[str] = mapped_column(Text, nullable=False)
+    model_reply: Mapped[str] = mapped_column(Text, nullable=False)
+    eligibility_basis: Mapped[str] = mapped_column(Text, nullable=False)
+    consent_event_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("training_consent_events.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    internal_grant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("internal_account_grants.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    proposed_operations: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    proposed_operations_digest: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
+    model: Mapped[str] = mapped_column(Text, nullable=False)
+    proposal_outcome: Mapped[str] = mapped_column(Text, nullable=False)
+    execution_outcome: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rejection_reasons: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    before_revision_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    after_revision_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    creator: Mapped["User"] = relationship(
+        back_populates="edit_interaction_receipts", foreign_keys=[creator_id]
+    )
+    plan_item: Mapped["PlanItem"] = relationship(back_populates="edit_interaction_receipts")
+    proposal_receipt: Mapped["EditInteractionReceipt | None"] = relationship(
+        remote_side="EditInteractionReceipt.id", foreign_keys=[proposal_receipt_id]
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "event_kind IN ('proposal', 'execution', 'save_link')",
+            name="ck_edit_interaction_receipts_event_kind",
+        ),
+        CheckConstraint(
+            "proposal_outcome IN ('applied', 'clarification', 'no_effect', "
+            "'unsupported', 'stale', 'failed')",
+            name="ck_edit_interaction_receipts_proposal_outcome",
+        ),
+        CheckConstraint(
+            "execution_outcome IS NULL OR execution_outcome IN "
+            "('applied', 'no_effect', 'rejected', 'stale', 'failed')",
+            name="ck_edit_interaction_receipts_execution_outcome",
+        ),
+        CheckConstraint(
+            "(eligibility_basis = 'training_consent' AND consent_event_id IS NOT NULL "
+            "AND internal_grant_id IS NULL) OR "
+            "(eligibility_basis = 'internal_grant' AND internal_grant_id IS NOT NULL "
+            "AND consent_event_id IS NULL)",
+            name="ck_edit_interaction_receipts_eligibility",
+        ),
+        CheckConstraint(
+            "(event_kind = 'proposal' AND proposal_receipt_id IS NULL "
+            "AND client_event_id IS NULL AND execution_outcome IS NULL) OR "
+            "(event_kind IN ('execution', 'save_link') AND proposal_receipt_id IS NOT NULL "
+            "AND client_event_id IS NOT NULL AND execution_outcome IS NOT NULL)",
+            name="ck_edit_interaction_receipts_event_shape",
+        ),
+        UniqueConstraint(
+            "creator_id", "client_event_id", name="uq_edit_interaction_receipts_creator_event"
+        ),
+        Index(
+            "idx_edit_interaction_receipts_proposal_created",
+            "proposal_receipt_id",
+            "created_at",
+        ),
+        Index("idx_edit_interaction_receipts_plan_item_created", "plan_item_id", "created_at"),
+    )
+
+
+class EditFeedbackAnnotation(Base):
+    """Append-only reviewer annotation; corrections supersede prior rows."""
+
+    __tablename__ = "edit_feedback_annotations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    plan_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_items.id", ondelete="CASCADE"), nullable=False
+    )
+    artifact_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("edit_artifacts.id", ondelete="CASCADE"), nullable=False
+    )
+    dimension: Mapped[str] = mapped_column(Text, nullable=False)
+    rating: Mapped[str] = mapped_column(Text, nullable=False)
+    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    frame_start_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    frame_end_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    target: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    reviewer_identity: Mapped[str] = mapped_column(Text, nullable=False)
+    supersedes_annotation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("edit_feedback_annotations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    creator: Mapped["User"] = relationship(back_populates="edit_feedback_annotations")
+    plan_item: Mapped["PlanItem"] = relationship(back_populates="edit_feedback_annotations")
+    artifact: Mapped["EditArtifact"] = relationship(back_populates="feedback_annotations")
+    supersedes_annotation: Mapped["EditFeedbackAnnotation | None"] = relationship(
+        remote_side="EditFeedbackAnnotation.id", foreign_keys=[supersedes_annotation_id]
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "dimension IN ('overall_quality', 'ai_guidance_and_response', "
+            "'instruction_fit', 'hook', 'pacing', 'cuts', 'clip_selection', "
+            "'clip_ordering', 'captions', 'text', 'transitions', 'music', "
+            "'audio', 'effects', 'overlays')",
+            name="ck_edit_feedback_annotations_dimension",
+        ),
+        CheckConstraint(
+            "rating IN ('good', 'bad', 'mixed', 'not_applicable')",
+            name="ck_edit_feedback_annotations_rating",
+        ),
+        CheckConstraint(
+            "frame_start_ms IS NULL OR frame_start_ms >= 0",
+            name="ck_edit_feedback_annotations_frame_start",
+        ),
+        CheckConstraint(
+            "frame_end_ms IS NULL OR frame_end_ms >= 0",
+            name="ck_edit_feedback_annotations_frame_end",
+        ),
+        CheckConstraint(
+            "frame_start_ms IS NULL OR frame_end_ms IS NULL OR frame_end_ms >= frame_start_ms",
+            name="ck_edit_feedback_annotations_frame_order",
+        ),
+        CheckConstraint(
+            "rating = 'not_applicable' OR (rationale IS NOT NULL AND length(trim(rationale)) > 0)",
+            name="ck_edit_feedback_annotations_rationale",
+        ),
+        Index("idx_edit_feedback_annotations_creator_created", "creator_id", "created_at"),
+        Index("idx_edit_feedback_annotations_plan_item_created", "plan_item_id", "created_at"),
+        Index("idx_edit_feedback_annotations_artifact_created", "artifact_id", "created_at"),
+    )
+
+
+class TrainingArtifactRetentionEvent(Base):
+    """Immutable audit event for generation-pinned training-copy retention."""
+
+    __tablename__ = "training_artifact_retention_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    artifact_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("edit_artifacts.id", ondelete="CASCADE"), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    # Dedicated generation-pinned training copy under the creator edit-feedback
+    # prefix. Never substitute the product-render source path from EditArtifact.
+    storage_path: Mapped[str] = mapped_column(Text, nullable=False)
+    storage_generation: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+
+    creator: Mapped["User"] = relationship(back_populates="training_artifact_retention_events")
+    artifact: Mapped["EditArtifact"] = relationship(back_populates="retention_events")
+
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ('copy', 'purge', 'build', 'ready', 'failed')",
+            name="ck_training_retention_event_type",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'started', 'succeeded', 'failed')",
+            name="ck_training_retention_event_status",
+        ),
+        UniqueConstraint(
+            "artifact_id", "idempotency_key", name="uq_training_retention_event_idempotency"
+        ),
+        Index("idx_training_retention_events_artifact_created", "artifact_id", "created_at"),
+        Index("idx_training_retention_events_creator_created", "creator_id", "created_at"),
+    )
+
+
+class TrainingDatasetExport(Base):
+    """Immutable manifest for an allowlisted, consent-safe dataset export."""
+
+    __tablename__ = "training_dataset_exports"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    requested_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    purpose: Mapped[str] = mapped_column(Text, nullable=False)
+    policy_version: Mapped[str] = mapped_column(Text, nullable=False)
+    dataset_schema_version: Mapped[str] = mapped_column(Text, nullable=False, server_default="1")
+    export_format: Mapped[str] = mapped_column(Text, nullable=False, server_default="jsonl")
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    creator_split_version: Mapped[str] = mapped_column(Text, nullable=False)
+    plan_item_split_version: Mapped[str] = mapped_column(Text, nullable=False)
+    row_count: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    manifest: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    storage_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    storage_generation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    requested_by_user: Mapped["User | None"] = relationship(
+        back_populates="training_dataset_exports", foreign_keys=[requested_by]
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'building', 'ready', 'failed', 'revoked')",
+            name="ck_training_dataset_exports_status",
+        ),
+        CheckConstraint(
+            "export_format IN ('jsonl', 'parquet')",
+            name="ck_training_dataset_exports_format",
+        ),
+        UniqueConstraint(
+            "requested_by",
+            "idempotency_key",
+            name="uq_training_dataset_exports_idempotency",
+        ),
+        Index("idx_training_dataset_exports_status_created", "status", "created_at"),
+        Index("idx_training_dataset_exports_requested_by_created", "requested_by", "created_at"),
     )
 
 

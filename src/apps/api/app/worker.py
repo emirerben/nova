@@ -44,6 +44,8 @@ celery_app = Celery(
         "app.tasks.omni_generate",
         "app.tasks.tiktok",
         "app.tasks.account_lifecycle",
+        "app.tasks.edit_training_exports",
+        "app.tasks.edit_training_artifacts",
     ],
 )
 

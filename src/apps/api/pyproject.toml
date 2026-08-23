@@ -101,6 +101,10 @@ dependencies = [
     # selfie segmenter tflite).
     "onnxruntime>=1.17,<2",
     "regex>=2024.11",
+    # Admin-only edit-training exports. JSONL and Parquet share one canonical
+    # schema; pyarrow is imported lazily so normal API/render paths pay no
+    # startup cost. Keep a bounded major range for reproducible writer output.
+    "pyarrow>=17,<22",
 ]
 
 [project.optional-dependencies]
