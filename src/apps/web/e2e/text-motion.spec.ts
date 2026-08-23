@@ -22,7 +22,8 @@ test("Smooth Type preview and detailed controls share committed state", async ({
 
   await page.getByLabel("Speed").fill("2");
   await page.getByLabel("Speed").press("Tab");
-  await page.getByLabel("Reveal order").selectOption("center-out");
+  await page.getByLabel("Reveal order").click();
+  await page.getByRole("option", { name: "Center out" }).click();
   await expect
     .poll(async () => JSON.parse((await page.locator("#qa-state").getAttribute("data-motion")) ?? "{}"))
     .toMatchObject({ speed: 2, order: "center-out", version: 2 });

@@ -6996,14 +6996,15 @@ export default function EditorShell({
 
           <div className="flex flex-1 items-center justify-end gap-2">
             {activeGuidedTombstones.length > 0 && (
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 onClick={restoreGuidedTombstones}
-                className="min-h-8 rounded-lg border border-amber-300 bg-amber-50 px-3 text-[12px] text-amber-950 hover:border-amber-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                className="h-auto min-h-8 rounded-lg border-amber-300 bg-amber-50 px-3 text-[12px] text-amber-950 hover:border-amber-500 hover:bg-amber-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
                 title="These anchored items were removed because their complete clip interval disappeared."
               >
                 {activeGuidedTombstones.length} removed · Restore
-              </button>
+              </Button>
             )}
             {showCopilotSaveNotice && (
               <div className="flex max-w-[360px] items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-[12px] text-muted-foreground">

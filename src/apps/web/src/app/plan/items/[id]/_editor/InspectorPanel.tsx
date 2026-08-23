@@ -678,15 +678,16 @@ function MixInspector({
       <div className="mt-4">
         <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Song</p>
         {currentMusicTrackId && (
-          <button
+          <Button
             type="button"
+            variant="outline"
             disabled={!musicRemoveEditable}
             title={!musicRemoveEditable ? musicRemoveDisabledReason ?? undefined : undefined}
             onClick={() => onRemoveMusic?.()}
-            className="mb-2 flex min-h-10 w-full items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#71717a] hover:border-zinc-400 hover:text-[#0c0c0e] disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+            className="mb-2 h-auto min-h-10 w-full justify-center rounded-lg border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#71717a] hover:border-zinc-400 hover:bg-white hover:text-[#0c0c0e] disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
           >
             Remove music
-          </button>
+          </Button>
         )}
         {!musicRemoveEditable && currentMusicTrackId && musicRemoveDisabledReason && (
           <p className="mb-2 text-[11px] leading-4 text-[#71717a]" role="status">
@@ -1316,14 +1317,15 @@ function VideoOverlaySourceWindow({
             width: `${Math.max(2, Math.min(100, rangeWidthPct))}%`,
           }}
         >
-          <button
+          <Button
             type="button"
+            variant="ghost"
             aria-label="Slide overlay source window"
             onPointerDown={(e) => startRangeDrag(e, "body")}
             onPointerMove={updateRangeDrag}
             onPointerUp={finishRangeDrag}
             onPointerCancel={finishRangeDrag}
-            className="absolute inset-0 cursor-grab rounded-md active:cursor-grabbing"
+            className="absolute inset-0 h-auto w-auto cursor-grab rounded-md bg-transparent p-0 hover:bg-transparent active:cursor-grabbing"
           />
           <RangeHandle
             side="left"
@@ -2354,8 +2356,8 @@ function ClipInspector({
         <CloseX onClose={onClose} />
       </div>
       <div className="mt-3 flex gap-2">
-        <button type="button" disabled={!reorderEditable || !onMoveClip} onClick={() => onMoveClip?.(-1)} className="min-h-9 flex-1 rounded-lg border border-zinc-200 text-[11px] font-semibold disabled:cursor-not-allowed disabled:opacity-45">Move earlier</button>
-        <button type="button" disabled={!reorderEditable || !onMoveClip} onClick={() => onMoveClip?.(1)} className="min-h-9 flex-1 rounded-lg border border-zinc-200 text-[11px] font-semibold disabled:cursor-not-allowed disabled:opacity-45">Move later</button>
+        <Button type="button" variant="outline" disabled={!reorderEditable || !onMoveClip} onClick={() => onMoveClip?.(-1)} className="h-auto min-h-9 flex-1 rounded-lg border-zinc-200 text-[11px] font-semibold disabled:cursor-not-allowed disabled:opacity-45">Move earlier</Button>
+        <Button type="button" variant="outline" disabled={!reorderEditable || !onMoveClip} onClick={() => onMoveClip?.(1)} className="h-auto min-h-9 flex-1 rounded-lg border-zinc-200 text-[11px] font-semibold disabled:cursor-not-allowed disabled:opacity-45">Move later</Button>
       </div>
       {!reorderEditable && reorderDisabledReason && (
         <p className="mt-2 text-[11px] leading-4 text-[#71717a]" role="status">
@@ -2486,16 +2488,17 @@ function ClipInspector({
         <legend className="text-[12px] font-semibold text-[#3f3f46]">Transition out</legend>
         <div className="mt-2 flex gap-2">
           {(["cut", "crossfade", "dip_to_black", "flash"] as const).map((transition) => (
-            <button
+            <Button
               key={transition}
               type="button"
+              variant="outline"
               disabled={!transitionsEditable}
               aria-pressed={(timing.slot.transitionAfter ?? "cut") === transition}
               onClick={() => onPatchTransition?.(transition, transition === "cut" ? undefined : timing.slot.transitionDurationS ?? 0.3)}
-              className="min-h-10 flex-1 rounded-lg border border-zinc-200 px-3 text-[12px] font-semibold capitalize disabled:cursor-not-allowed disabled:opacity-45"
+              className="h-auto min-h-10 flex-1 rounded-lg border-zinc-200 px-3 text-[12px] font-semibold capitalize disabled:cursor-not-allowed disabled:opacity-45"
             >
               {transition}
-            </button>
+            </Button>
           ))}
         </div>
         {!transitionsEditable && transitionsDisabledReason && (
@@ -2506,7 +2509,7 @@ function ClipInspector({
         {(timing.slot.transitionAfter ?? "cut") !== "cut" && (
           <label className="mt-3 block text-[11px] text-[#52525b]">
             Duration
-            <input
+            <Input
               type="number"
               min={0.1}
               max={0.3}
@@ -2514,7 +2517,7 @@ function ClipInspector({
               disabled={!transitionsEditable}
               value={timing.slot.transitionDurationS ?? 0.3}
               onChange={(event) => onPatchTransition?.(timing.slot.transitionAfter ?? "crossfade", Number(event.target.value))}
-              className="mt-1 h-10 w-full rounded-lg border border-zinc-200 px-3 text-[12px] disabled:opacity-45"
+              className="mt-1 h-10 rounded-lg border-zinc-200 px-3 text-[12px] disabled:opacity-45"
             />
           </label>
         )}
@@ -2558,15 +2561,16 @@ function ClipInspector({
                 width: `${Math.max(2, Math.min(100, rangeWidthPct))}%`,
               }}
             >
-              <button
+              <Button
                 type="button"
+                variant="ghost"
               aria-label="Slide source window"
               disabled={!timingEditable}
                 onPointerDown={(e) => startRangeDrag(e, "body")}
                 onPointerMove={updateRangeDrag}
                 onPointerUp={finishRangeDrag}
                 onPointerCancel={finishRangeDrag}
-                className="absolute inset-0 cursor-grab rounded-md active:cursor-grabbing"
+                className="absolute inset-0 h-auto w-auto cursor-grab rounded-md bg-transparent p-0 hover:bg-transparent active:cursor-grabbing"
               />
               <RangeHandle
                 side="left"
@@ -2651,15 +2655,16 @@ function RangeHandle({
   onPointerCancel: (e: React.PointerEvent<HTMLElement>) => void;
 }) {
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
       disabled={disabled}
       aria-label={side === "left" ? "Trim source in" : "Trim source out"}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerCancel}
-      className={`absolute top-1/2 flex h-8 w-3 -translate-y-1/2 cursor-ew-resize items-center justify-center rounded bg-white text-[#0c0c0e] shadow-sm disabled:cursor-not-allowed disabled:opacity-45 ${
+      className={`absolute top-1/2 h-8 w-3 -translate-y-1/2 cursor-ew-resize rounded bg-white p-0 text-[#0c0c0e] shadow-sm hover:bg-white disabled:cursor-not-allowed disabled:opacity-45 ${
         side === "left" ? "-left-1.5" : "-right-1.5"
       }`}
     >
@@ -2668,7 +2673,7 @@ function RangeHandle({
         <span className="h-0.5 w-0.5 rounded-full bg-[#0c0c0e]" />
         <span className="h-0.5 w-0.5 rounded-full bg-[#0c0c0e]" />
       </span>
-    </button>
+    </Button>
   );
 }
 

@@ -23,6 +23,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { Button } from "@/components/ui/button";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import type { CameraEffect } from "@/lib/plan-api";
 import type { DraftSlot } from "@/app/generative/timeline-math";
@@ -1426,14 +1427,15 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                           const playing =
                             currentTimeS >= b.start_s && currentTimeS < b.end_s;
                           return (
-                            <button
+                            <Button
                               key={b.id}
                               type="button"
+                              variant="ghost"
                               aria-label={`Caption at ${formatTimecode(b.start_s)}, ${b.text.slice(0, 40)}`}
                               onClick={() => onOpenCaptionCue?.(b.id)}
                               style={{ left, width, top: 4, height: 12 }}
-                              className={`absolute rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-lime-500 ${
-                                playing ? "bg-lime-600" : "bg-[#0c0c0e]/70 hover:bg-[#0c0c0e]"
+                              className={`absolute h-auto w-auto rounded-sm p-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-lime-500 ${
+                                playing ? "bg-lime-600 hover:bg-lime-600" : "bg-[#0c0c0e]/70 hover:bg-[#0c0c0e]"
                               }`}
                             />
                           );
@@ -1635,9 +1637,10 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                       stripSlot.clipIndex,
                     );
                     return (
-                      <button
+                      <Button
                         key={slot.key}
                         type="button"
+                        variant="ghost"
                         aria-label={`Clip ${i + 1}, timeline ${formatTimecode(win.startS)}–${formatTimecode(win.startS + win.durationS)}, source ${slot.inS.toFixed(1)}–${(slot.inS + win.durationS).toFixed(1)}`}
                         aria-pressed={selected}
                         data-editor-bar-kind="clip"
@@ -1656,7 +1659,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                           onSelect("clip", slot.key);
                         }}
                         className={[
-                          "group absolute min-w-11 overflow-hidden rounded border bg-zinc-200 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
+                          "group absolute h-auto min-w-11 justify-start overflow-hidden rounded border bg-zinc-200 p-0 transition-colors hover:bg-zinc-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
                           unusedFilmstripClips.length > 0 ? "top-0.5 h-11" : "inset-y-0.5",
                           clipReadOnly
                             ? "cursor-default active:cursor-default"
@@ -1698,7 +1701,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                         <TimelineEdgeHitZones width={width} />
                         <TimelineTrimHandle side="left" selected={selected} />
                         <TimelineTrimHandle side="right" selected={selected} />
-                      </button>
+                      </Button>
                     );
                   })
                 )}
@@ -1711,9 +1714,10 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                       {allowRepeatedSources ? "Sources" : "Unused"}
                     </span>
                     {unusedFilmstripClips.map((source) => (
-                      <button
+                      <Button
                         key={source.clip_index}
                         type="button"
+                        variant="outline"
                         aria-label={`Add source clip ${source.clip_index + 1} to timeline`}
                         disabled={(clipAddReadOnly ?? clipReadOnly) || !onAddClip}
                         title={
@@ -1725,10 +1729,10 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                           event.stopPropagation();
                           onAddClip?.(source.clip_index);
                         }}
-                        className="h-6 shrink-0 rounded border border-dashed border-zinc-300 bg-white px-2 text-[9px] font-semibold text-[#3f3f46] hover:border-lime-500 hover:text-lime-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
+                        className="h-6 shrink-0 rounded border-dashed border-zinc-300 bg-white px-2 text-[9px] font-semibold text-[#3f3f46] hover:border-lime-500 hover:bg-white hover:text-lime-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-45"
                       >
                         + Clip {source.clip_index + 1}
-                      </button>
+                      </Button>
                     ))}
                   </div>
                 )}
@@ -1832,18 +1836,19 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                     ),
                   )}
                   {sfx.length === 0 && (
-                    <button
+                    <Button
                       type="button"
+                      variant="outline"
                       disabled={sfxReadOnly}
                       title={sfxReadOnly ? (sfxDisabledReason ?? undefined) : undefined}
                       onClick={(e) => {
                         e.stopPropagation();
                         onOpenSounds?.();
                       }}
-                      className="absolute left-1 bottom-0.5 top-0.5 rounded border border-dashed border-zinc-300 px-2 text-[10px] text-zinc-500 hover:border-zinc-400 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                      className="absolute left-1 bottom-0.5 top-0.5 h-auto rounded border-dashed border-zinc-300 bg-transparent px-2 text-[10px] text-zinc-500 hover:border-zinc-400 hover:bg-transparent hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
                     >
                       + Add sounds
-                    </button>
+                    </Button>
                   )}
                   {sfxLane.rows.map(
                     ({ item: s, rowIndex, topPx, heightPx }) => {
@@ -2070,8 +2075,10 @@ function GutterRow({
       style={{ height: heightPx }}
     >
       {muteState ? (
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon"
           aria-label={`${muteState.title} ${muteState.muted ? "muted" : "audible"}`}
           aria-pressed={muteState.muted}
           title={
@@ -2080,14 +2087,14 @@ function GutterRow({
               : `${muteState.title}: audible`
           }
           onClick={muteState.onToggle}
-          className={`flex h-11 w-11 flex-shrink-0 items-center justify-center rounded text-[10px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+          className={`h-11 w-11 flex-shrink-0 rounded text-[10px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
             muteState.muted
               ? "text-zinc-300"
               : "text-[#3f3f46] hover:bg-zinc-100"
           }`}
         >
           {muteState.muted ? "🔇" : "🔊"}
-        </button>
+        </Button>
       ) : (
         <span className="w-11 flex-shrink-0" />
       )}
@@ -2183,8 +2190,9 @@ function BarButton({
 }) {
   const positionedInRow = top != null && height != null;
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
       aria-label={ariaLabel}
       aria-pressed={selected}
       data-editor-bar-kind={dataKind}
@@ -2205,7 +2213,7 @@ function BarButton({
         onSelect();
       }}
       className={[
-        "group absolute flex min-w-11 items-center rounded transition-[filter,outline-color] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
+        "group absolute h-auto min-w-11 items-center justify-start gap-0 rounded p-0 transition-[filter,outline-color] hover:bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
         draggable === false
           ? "cursor-default"
           : "cursor-grab hover:brightness-110 active:cursor-grabbing",
@@ -2228,7 +2236,7 @@ function BarButton({
           <TimelineTrimHandle side="right" selected={selected} />
         </>
       )}
-    </button>
+    </Button>
   );
 }
 

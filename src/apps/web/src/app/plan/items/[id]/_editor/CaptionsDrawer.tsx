@@ -36,6 +36,7 @@ import { FontSelect, HexInput } from "./inspector-fields";
 import { InfoDot } from "@/components/ui/InfoDot";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 
 /** Caption size range — mirrors the inspector's per-cue override slider so the
  *  global and the override can never express different sizes. */
@@ -228,15 +229,17 @@ export default function CaptionsDrawer({
       <div className="flex-none px-5 pb-3">
         <div className="flex min-h-11 items-center justify-between">
           <span className="text-[12px] font-semibold text-[#3f3f46]">Subtitles</span>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon-sm"
             role="switch"
             aria-checked={enabled}
             aria-label="Subtitles"
             disabled={locked}
             onClick={() => patch({ enabled: !enabled })}
-            className={`relative h-6 w-11 shrink-0 rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 ${
-              enabled ? "bg-[#0c0c0e]" : "bg-zinc-200"
+            className={`relative h-6 w-11 shrink-0 rounded-full p-0 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 ${
+              enabled ? "bg-[#0c0c0e] hover:bg-[#0c0c0e]" : "bg-zinc-200 hover:bg-zinc-200"
             }`}
           >
             <span
@@ -245,7 +248,7 @@ export default function CaptionsDrawer({
                 enabled ? "translate-x-6" : "translate-x-1"
               }`}
             />
-          </button>
+          </Button>
         </div>
 
         {language && onChangeLanguage && (
@@ -255,15 +258,16 @@ export default function CaptionsDrawer({
                 <span className="inline-flex items-center rounded-full border border-lime-200 bg-lime-50 px-3 py-1 text-[11px] font-medium text-lime-800">
                   Captions in {LANGUAGE_LABELS[language] ?? language}
                 </span>
-                <button
+                <Button
                   type="button"
+                  variant="link"
                   aria-label="Change caption language"
                   disabled={locked}
                   onClick={() => setPendingLang(language === "tr" ? "en" : "tr")}
-                  className="inline-flex min-h-11 items-center px-1 text-[11px] font-semibold text-lime-700 underline underline-offset-2 hover:text-lime-800 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                  className="h-auto min-h-11 items-center px-1 text-[11px] font-semibold text-lime-700 underline underline-offset-2 hover:text-lime-800 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
                 >
                   Change
-                </button>
+                </Button>
               </div>
             ) : (
               // Honest about BOTH halves: this saves the whole session (every
@@ -273,25 +277,27 @@ export default function CaptionsDrawer({
                 edits, then re-transcribes. Every caption line is rewritten — your caption text
                 edits are replaced.
                 <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <button
+                  <Button
                     type="button"
+                    variant="default"
                     disabled={locked}
                     onClick={() => {
                       const next = pendingLang;
                       setPendingLang(null);
                       onChangeLanguage(next);
                     }}
-                    className="inline-flex min-h-10 items-center rounded-lg bg-[#0c0c0e] px-3 text-[12px] font-semibold text-white hover:bg-[#27272a] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                    className="h-auto min-h-10 rounded-lg bg-[#0c0c0e] px-3 text-[12px] font-semibold text-white hover:bg-[#27272a] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
                   >
                     Save &amp; re-transcribe
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
+                    variant="link"
                     onClick={() => setPendingLang(null)}
-                    className="inline-flex min-h-10 items-center px-1 text-[12px] text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                    className="h-auto min-h-10 px-1 text-[12px] text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
                   >
                     Cancel
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}
@@ -336,44 +342,49 @@ export default function CaptionsDrawer({
                     ? "0"
                     : `${matchCursor + 1} of ${matches.length}`}
               </span>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon-sm"
                 aria-label="Previous match"
                 disabled={matches.length === 0}
                 onClick={() => stepMatch(-1)}
-                className="flex h-11 w-7 shrink-0 items-center justify-center rounded-lg text-[11px] text-[#3f3f46] hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                className="h-11 w-7 shrink-0 rounded-lg text-[11px] text-[#3f3f46] hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
               >
                 ▲
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon-sm"
                 aria-label="Next match"
                 disabled={matches.length === 0}
                 onClick={() => stepMatch(1)}
-                className="flex h-11 w-7 shrink-0 items-center justify-center rounded-lg text-[11px] text-[#3f3f46] hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                className="h-11 w-7 shrink-0 rounded-lg text-[11px] text-[#3f3f46] hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
               >
                 ▼
-              </button>
+              </Button>
             </div>
 
             {matches.length > 0 && onReplaceAll && (
               <div className="mt-1.5 flex items-center gap-1.5">
-                <input
+                <Input
                   type="text"
                   aria-label="Replace matches with"
                   placeholder="Replace with"
                   value={replaceDraft}
                   onChange={(e) => setReplaceDraft(e.target.value)}
-                  className="min-h-11 min-w-0 flex-1 rounded-lg border border-zinc-200 px-2.5 text-[13px] text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:border-lime-500/60 focus:outline-none"
+                  className="min-h-11 min-w-0 flex-1 rounded-lg border-zinc-200 px-2.5 text-[13px] text-[#0c0c0e] placeholder:text-[#a1a1aa] focus-visible:border-lime-500/60"
                 />
-                <button
+                <Button
                   type="button"
+                  variant="outline"
                   disabled={locked}
                   onClick={replaceAll}
-                  className="inline-flex min-h-11 shrink-0 items-center rounded-lg border border-zinc-200 bg-white px-2.5 text-[12px] font-semibold text-[#0c0c0e] hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                  className="h-auto min-h-11 shrink-0 rounded-lg border-zinc-200 bg-white px-2.5 text-[12px] font-semibold text-[#0c0c0e] hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
                 >
                   Replace all
-                </button>
+                </Button>
               </div>
             )}
 
@@ -400,14 +411,15 @@ export default function CaptionsDrawer({
             This edit&rsquo;s audio didn&rsquo;t produce a transcript.
           </p>
           {onRetranscribe && (
-            <button
+            <Button
               type="button"
+              variant="secondary"
               disabled={locked}
               onClick={onRetranscribe}
-              className="mt-3 min-h-11 w-full rounded-lg bg-zinc-100 text-[13px] font-semibold text-[#0c0c0e] hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+              className="mt-3 h-auto min-h-11 w-full rounded-lg bg-zinc-100 text-[13px] font-semibold text-[#0c0c0e] hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
             >
               Re-transcribe
-            </button>
+            </Button>
           )}
         </div>
       ) : (
@@ -433,7 +445,7 @@ export default function CaptionsDrawer({
                   <span className="w-10 shrink-0 text-[11px] tabular-nums text-zinc-400">
                     {formatTimecode(cue.start_s)}
                   </span>
-                  <input
+                  <Input
                     autoFocus
                     value={cue.text}
                     aria-label={`Edit caption at ${formatTimecode(cue.start_s)}`}
@@ -446,26 +458,27 @@ export default function CaptionsDrawer({
                         setEditingId(null);
                       }
                     }}
-                    className="min-h-9 min-w-0 flex-1 rounded border border-lime-400 px-2 text-[13px] text-[#18181b] outline-none"
+                    className="h-auto min-h-9 min-w-0 flex-1 rounded border-lime-400 px-2 text-[13px] text-[#18181b] focus-visible:ring-0"
                   />
                 </li>
               );
             }
             return (
               <li key={cue.id}>
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
                   data-cue-index={i}
                   aria-current={playing ? "true" : undefined}
                   aria-label={`Caption at ${formatTimecode(cue.start_s)}, ${cue.text}`}
                   onClick={() => openCue(cue, { edit: true })}
-                  className={`flex min-h-11 w-full items-center gap-2 rounded-lg border-l-2 px-2 py-1 text-left text-[13px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+                  className={`flex h-auto min-h-11 w-full items-center justify-start gap-2 rounded-lg border-l-2 px-2 py-1 text-left text-[13px] font-normal transition-colors hover:text-inherit focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
                     playing
                       ? // Lime fill AND a left border: the active row must not be
                         // signalled by colour alone.
-                        "border-lime-600 bg-lime-50 text-lime-900"
+                        "border-lime-600 bg-lime-50 text-lime-900 hover:bg-lime-50"
                       : selectedId === cue.id
-                        ? "border-zinc-300 bg-zinc-50 text-[#0c0c0e]"
+                        ? "border-zinc-300 bg-zinc-50 text-[#0c0c0e] hover:bg-zinc-50"
                         : "border-transparent text-[#3f3f46] hover:bg-zinc-50"
                   } ${atCursor ? "ring-1 ring-lime-400" : ""}`}
                 >
@@ -475,7 +488,7 @@ export default function CaptionsDrawer({
                   <span className="min-w-0 flex-1">
                     {isMatch ? highlight(cue.text, query) : cue.text}
                   </span>
-                </button>
+                </Button>
               </li>
             );
           })}
@@ -486,11 +499,12 @@ export default function CaptionsDrawer({
       {enabled && (
         <div className="flex-none border-t border-zinc-100 px-5 py-2">
           <div className="flex items-center gap-1">
-            <button
+            <Button
               type="button"
+              variant="ghost"
               aria-expanded={globalsOpen}
               onClick={() => setGlobalsOpen((o) => !o)}
-              className="flex min-h-11 min-w-0 flex-1 items-center justify-between gap-2 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+              className="h-auto min-h-11 min-w-0 flex-1 items-center justify-between gap-2 rounded-none px-0 text-left font-normal hover:bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
             >
               <span className="min-w-0 truncate">
                 <span className="text-[12px] font-semibold text-[#3f3f46]">All captions</span>
@@ -504,7 +518,7 @@ export default function CaptionsDrawer({
               <span aria-hidden className="shrink-0 text-[9px] text-[#a1a1aa]">
                 {globalsOpen ? "⌄" : "⌃"}
               </span>
-            </button>
+            </Button>
             <InfoDot label="All captions" size="compact">
               Style changes here apply to every caption line.
             </InfoDot>
@@ -575,15 +589,17 @@ export default function CaptionsDrawer({
               </div>
               <div className="mt-2 flex min-h-11 items-center justify-between">
                 <span className="text-[12px] font-semibold text-[#3f3f46]">Shadow</span>
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="icon-sm"
                   role="switch"
                   aria-checked={shadowEnabled}
                   aria-label="All captions shadow"
                   disabled={locked}
                   onClick={() => patch({ shadow_enabled: !shadowEnabled })}
-                  className={`relative h-6 w-11 shrink-0 rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 ${
-                    shadowEnabled ? "bg-[#0c0c0e]" : "bg-zinc-200"
+                  className={`relative h-6 w-11 shrink-0 rounded-full p-0 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 ${
+                    shadowEnabled ? "bg-[#0c0c0e] hover:bg-[#0c0c0e]" : "bg-zinc-200 hover:bg-zinc-200"
                   }`}
                 >
                   <span
@@ -592,7 +608,7 @@ export default function CaptionsDrawer({
                       shadowEnabled ? "translate-x-6" : "translate-x-1"
                     }`}
                   />
-                </button>
+                </Button>
               </div>
             </div>
           )}

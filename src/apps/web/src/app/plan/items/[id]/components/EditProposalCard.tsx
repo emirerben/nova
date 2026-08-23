@@ -39,6 +39,13 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ArrowUp, ChevronDown, ChevronUp } from "lucide-react";
 import { ChatBubble } from "@/components/chat/ChatBubble";
 import { ChatThinking } from "@/components/chat/ChatThinking";
@@ -593,36 +600,41 @@ export default function EditProposalCard({
         </label>
 
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          <label className="text-sm font-medium text-foreground">
+          <label htmlFor="edit-proposal-legacy-pace" className="text-sm font-medium text-foreground">
             Pace
-            <select
+            <Select
               value={legacyBrief.pace}
-              onChange={(event) =>
-                setLegacyBrief({
-                  ...legacyBrief,
-                  pace: event.currentTarget.value as EditProposalPace,
-                })
+              onValueChange={(value) =>
+                setLegacyBrief({ ...legacyBrief, pace: value as EditProposalPace })
               }
-              className="mt-2 flex h-10 sm:h-9 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm shadow-sm ring-offset-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
-              {PACE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
+              <SelectTrigger id="edit-proposal-legacy-pace" aria-label="Pace" className="mt-2">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PACE_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </label>
-          <label className="text-sm font-medium text-foreground">
+          <label htmlFor="edit-proposal-legacy-duration" className="text-sm font-medium text-foreground">
             Target length
-            <select
-              value={legacyBrief.duration_s}
-              onChange={(event) =>
-                setLegacyBrief({ ...legacyBrief, duration_s: Number(event.currentTarget.value) })
+            <Select
+              value={String(legacyBrief.duration_s)}
+              onValueChange={(value) =>
+                setLegacyBrief({ ...legacyBrief, duration_s: Number(value) })
               }
-              className="mt-2 flex h-10 sm:h-9 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm shadow-sm ring-offset-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
-              {durationOptions(legacyBrief.duration_s).map((seconds) => (
-                <option key={seconds} value={seconds}>{seconds} seconds</option>
-              ))}
-            </select>
+              <SelectTrigger id="edit-proposal-legacy-duration" aria-label="Target length" className="mt-2">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {durationOptions(legacyBrief.duration_s).map((seconds) => (
+                  <SelectItem key={seconds} value={String(seconds)}>{seconds} seconds</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </label>
         </div>
 
@@ -840,53 +852,59 @@ export default function EditProposalCard({
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-3">
-          <label className="text-sm font-medium text-foreground">
+          <label htmlFor="edit-proposal-direction" className="text-sm font-medium text-foreground">
             Direction
-            <select
+            <Select
               value={visibleDraft.direction}
-              onChange={(event) =>
-                setDraft({
-                  ...visibleDraft,
-                  direction: event.currentTarget.value as EditProposalDirection,
-                })
+              onValueChange={(value) =>
+                setDraft({ ...visibleDraft, direction: value as EditProposalDirection })
               }
-              className="mt-1 flex h-10 sm:h-9 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm shadow-sm ring-offset-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
-              {DIRECTION_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
+              <SelectTrigger id="edit-proposal-direction" aria-label="Direction" className="mt-1">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {DIRECTION_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </label>
-          <label className="text-sm font-medium text-foreground">
+          <label htmlFor="edit-proposal-pace" className="text-sm font-medium text-foreground">
             Pace
-            <select
+            <Select
               value={visibleDraft.pace}
-              onChange={(event) =>
-                setDraft({
-                  ...visibleDraft,
-                  pace: event.currentTarget.value as EditProposalPace,
-                })
+              onValueChange={(value) =>
+                setDraft({ ...visibleDraft, pace: value as EditProposalPace })
               }
-              className="mt-1 flex h-10 sm:h-9 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm shadow-sm ring-offset-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
-              {PACE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
+              <SelectTrigger id="edit-proposal-pace" aria-label="Pace" className="mt-1">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PACE_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </label>
-          <label className="text-sm font-medium text-foreground">
+          <label htmlFor="edit-proposal-duration" className="text-sm font-medium text-foreground">
             Target length
-            <select
-              value={visibleDraft.duration_s}
-              onChange={(event) =>
-                setDraft({ ...visibleDraft, duration_s: Number(event.currentTarget.value) })
+            <Select
+              value={String(visibleDraft.duration_s)}
+              onValueChange={(value) =>
+                setDraft({ ...visibleDraft, duration_s: Number(value) })
               }
-              className="mt-1 flex h-10 sm:h-9 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm shadow-sm ring-offset-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
-              {durationOptions(visibleDraft.duration_s).map((seconds) => (
-                <option key={seconds} value={seconds}>{seconds} seconds</option>
-              ))}
-            </select>
+              <SelectTrigger id="edit-proposal-duration" aria-label="Target length" className="mt-1">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {durationOptions(visibleDraft.duration_s).map((seconds) => (
+                  <SelectItem key={seconds} value={String(seconds)}>{seconds} seconds</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </label>
         </div>
 
@@ -945,20 +963,31 @@ export default function EditProposalCard({
                   </Button>
                 </div>
               </div>
-              <label className="mt-3 block text-sm text-foreground">
+              <label
+                htmlFor={`edit-proposal-beat-layout-${beat.beat_id}`}
+                className="mt-3 block text-sm text-foreground"
+              >
                 Layout
-                <select
+                <Select
                   value={beat.layout}
-                  onChange={(event) =>
+                  onValueChange={(value) =>
                     patchBeat(beat.beat_id, {
-                      layout: event.currentTarget.value as "fullscreen" | "supporting_card",
+                      layout: value as "fullscreen" | "supporting_card",
                     })
                   }
-                  className="mt-1 flex h-10 sm:h-9 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm shadow-sm ring-offset-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 >
-                  <option value="fullscreen">Full screen</option>
-                  <option value="supporting_card">Supporting card</option>
-                </select>
+                  <SelectTrigger
+                    id={`edit-proposal-beat-layout-${beat.beat_id}`}
+                    aria-label="Layout"
+                    className="mt-1"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="fullscreen">Full screen</SelectItem>
+                    <SelectItem value="supporting_card">Supporting card</SelectItem>
+                  </SelectContent>
+                </Select>
               </label>
               <label className="mt-3 block text-sm text-foreground">
                 Thought

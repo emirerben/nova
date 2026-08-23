@@ -18,6 +18,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import type {
   CameraEffect,
   MediaOverlay,
@@ -1516,8 +1517,9 @@ export default function EditorCanvas({
                     }}
                   >
                     {captionTapSelect ? (
-                      <button
+                      <Button
                         type="button"
+                        variant="ghost"
                         data-caption-tap-target="true"
                         aria-label="Select this caption"
                         onPointerDown={(e) => {
@@ -1529,7 +1531,7 @@ export default function EditorCanvas({
                           e.stopPropagation();
                           onSelectText(visibleCaption.bar.id);
                         }}
-                        className="pointer-events-auto -m-2 min-h-11 min-w-11 cursor-pointer appearance-none border-0 bg-transparent p-2 text-center focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                        className="pointer-events-auto -m-2 h-auto min-h-11 w-auto min-w-11 cursor-pointer bg-transparent p-2 text-center hover:bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
                       >
                         <span
                           style={{
@@ -1545,7 +1547,7 @@ export default function EditorCanvas({
                         >
                           {visibleCaption.text}
                         </span>
-                      </button>
+                      </Button>
                     ) : (
                       <span
                         style={{
@@ -1805,13 +1807,14 @@ export default function EditorCanvas({
                           }}
                         >
                           {(["nw", "ne", "sw", "se"] as const).map((corner) => (
-                            <button
+                            <Button
                               key={corner}
                               type="button"
+                              variant="ghost"
                               tabIndex={-1}
                               aria-label={`Resize text (${corner})`}
                               onPointerDown={(e) => onHandlePointerDown(e, layout.id)}
-                              className="absolute flex h-6 w-6 items-center justify-center touch-none"
+                              className="absolute h-6 w-6 touch-none bg-transparent p-0 hover:bg-transparent"
                               style={{
                                 cursor: corner === "nw" || corner === "se" ? "nwse-resize" : "nesw-resize",
                                 top: corner.startsWith("n") ? -13 : undefined,
@@ -1825,16 +1828,17 @@ export default function EditorCanvas({
                                 className="h-2 w-2 rounded-[1px] bg-white"
                                 style={{ boxShadow: "0 0 0 1px #0c0c0e" }}
                               />
-                            </button>
+                            </Button>
                           ))}
                           {(["left", "right"] as const).map((side) => (
-                            <button
+                            <Button
                               key={side}
                               type="button"
+                              variant="ghost"
                               tabIndex={-1}
                               aria-label={`Adjust text width (${side})`}
                               onPointerDown={(e) => onWidthHandlePointerDown(e, layout.id, side)}
-                              className="absolute flex h-7 w-7 items-center justify-center touch-none"
+                              className="absolute h-7 w-7 touch-none bg-transparent p-0 hover:bg-transparent"
                               style={{
                                 cursor: "ew-resize",
                                 top: "50%",
@@ -1848,7 +1852,7 @@ export default function EditorCanvas({
                                 className="h-3 w-1.5 rounded-[1px] bg-white"
                                 style={{ boxShadow: "0 0 0 1px #0c0c0e" }}
                               />
-                            </button>
+                            </Button>
                           ))}
                         </div>
                       )}
@@ -1881,16 +1885,17 @@ export default function EditorCanvas({
                   <p className="text-[13px] text-[#3f3f46]">
                     This preview couldn&apos;t load — the link may have expired.
                   </p>
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
                     onClick={() => {
                       setVideoError(false);
                       onReloadSource?.();
                     }}
-                    className="mt-3 min-h-11 rounded-full border border-zinc-200 px-4 text-[12px] text-[#3f3f46] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                    className="mt-3 h-auto min-h-11 rounded-full border-zinc-200 px-4 text-[12px] text-[#3f3f46] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
                   >
                     Retry
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}
@@ -1902,14 +1907,16 @@ export default function EditorCanvas({
                 className="absolute bottom-3 right-3 flex items-center gap-2"
                 style={{ zIndex: EDITOR_STAGE_Z.chrome }}
               >
-                <button
+                <Button
                   type="button"
+                  variant="outline"
+                  size="icon"
                   aria-label="Fullscreen"
                   onClick={toggleFullscreen}
-                  className="flex h-11 w-11 items-center justify-center rounded-lg border border-zinc-200 bg-white/90 text-sm text-[#3f3f46] hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                  className="h-11 w-11 rounded-lg border-zinc-200 bg-white/90 text-sm text-[#3f3f46] hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
                 >
                   ⛶
-                </button>
+                </Button>
               </div>
             )}
           </div>
@@ -2061,13 +2068,14 @@ function MediaOverlayCard({
         >
           {allowManipulation &&
             (["nw", "ne", "sw", "se"] as const).map((corner) => (
-              <button
+              <Button
                 key={corner}
                 type="button"
+                variant="ghost"
                 tabIndex={-1}
                 aria-label={`Resize overlay (${corner})`}
                 onPointerDown={(e) => onHandlePointerDown(e, card)}
-                className="absolute flex h-6 w-6 items-center justify-center touch-none"
+                className="absolute h-6 w-6 touch-none bg-transparent p-0 hover:bg-transparent"
                 style={{
                   cursor: corner === "nw" || corner === "se" ? "nwse-resize" : "nesw-resize",
                   top: corner.startsWith("n") ? -13 : undefined,
@@ -2081,7 +2089,7 @@ function MediaOverlayCard({
                   className="h-2 w-2 rounded-[1px] bg-white"
                   style={{ boxShadow: "0 0 0 1px #0c0c0e" }}
                 />
-              </button>
+              </Button>
             ))}
         </div>
       )}

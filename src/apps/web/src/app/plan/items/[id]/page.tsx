@@ -1708,25 +1708,26 @@ export default function PlanItemPage() {
           {LANDSCAPE_FIT_OPTIONS.map(({ value, label, desc }) => {
             const active = (item.landscape_fit ?? "fit") === value;
             return (
-              <button
+              <Button
                 key={value}
                 type="button"
+                variant="ghost"
                 onClick={async () => {
                   if (active) return;
                   await updatePlanItem(item.id, { landscape_fit: value }).catch(() => null);
                   refetch();
                 }}
-                className={`flex flex-1 flex-col rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                className={`h-auto flex-1 flex-col items-start justify-start rounded-xl border px-3 py-2.5 text-left font-normal transition-colors ${
                   active
-                    ? "border-lime-200 bg-lime-50"
-                    : "border-zinc-200 bg-white hover:border-zinc-300"
+                    ? "border-lime-200 bg-lime-50 hover:bg-lime-50"
+                    : "border-zinc-200 bg-white hover:border-zinc-300 hover:bg-white"
                 }`}
               >
                 <span className={`text-sm font-medium ${active ? "text-lime-800" : "text-[#0c0c0e]"}`}>
                   {label}
                 </span>
                 <span className="mt-0.5 text-xs text-zinc-400">{desc}</span>
-              </button>
+              </Button>
             );
           })}
         </div>
@@ -3904,22 +3905,24 @@ function FocusedVariantControls({
                 </span>
                 <span className="flex shrink-0 gap-2">
                   {upload.stage === "failed" && upload.retryable && (
-                    <button
+                    <Button
                       type="button"
-                      className="underline underline-offset-2"
+                      variant="link"
+                      className="h-auto p-0 text-[11px] text-zinc-300 underline underline-offset-2"
                       onClick={() => inlineOverlayUploader.retry(upload.localId)}
                     >
                       Retry
-                    </button>
+                    </Button>
                   )}
                   {upload.stage === "failed" && (
-                    <button
+                    <Button
                       type="button"
-                      className="underline underline-offset-2"
+                      variant="link"
+                      className="h-auto p-0 text-[11px] text-zinc-300 underline underline-offset-2"
                       onClick={() => removeInlineUpload(upload.localId, upload.context)}
                     >
                       Remove
-                    </button>
+                    </Button>
                   )}
                 </span>
               </div>
@@ -4300,16 +4303,17 @@ function VariantReleasePicker({
         {readyVariants.map((value, index) => {
           const selected = value.variant_id === selectedVariantId;
           return (
-            <button
+            <Button
               key={value.variant_id}
               type="button"
+              variant="ghost"
               aria-pressed={selected}
               aria-label={`Publish version ${index + 1}`}
               onClick={() => onSelect(value.variant_id)}
-              className={`flex min-h-11 shrink-0 items-center gap-2 rounded-lg border px-2 text-xs font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-600 ${
+              className={`h-auto min-h-11 shrink-0 items-center gap-2 rounded-lg border px-2 text-xs font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-600 ${
                 selected
-                  ? "border-lime-600 bg-lime-50 text-lime-800"
-                  : "border-zinc-200 bg-white text-[#3f3f46]"
+                  ? "border-lime-600 bg-lime-50 text-lime-800 hover:bg-lime-50"
+                  : "border-zinc-200 bg-white text-[#3f3f46] hover:bg-white"
               }`}
             >
               {value.render_status === "rendering" ? (
@@ -4332,7 +4336,7 @@ function VariantReleasePicker({
                 />
               )}
               Version {index + 1}
-            </button>
+            </Button>
           );
         })}
       </div>
@@ -4514,28 +4518,29 @@ function Hero({
             The finished video is still safe. Try the preview again or download the exact file.
           </p>
           <div className="mt-3 flex w-full flex-col justify-center gap-2 px-2 lg:mt-5 lg:w-auto lg:flex-row lg:flex-wrap lg:gap-3 lg:px-0">
-            <button
+            <Button
               type="button"
               aria-label="Try video again"
               onClick={() => {
                 onPlaybackFailedChange(false);
                 setPlaybackRetry((value) => value + 1);
               }}
-              className="min-h-10 rounded-full bg-[#0c0c0e] px-3 text-xs font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 lg:min-h-11 lg:px-5 lg:text-sm"
+              className="h-auto min-h-10 rounded-full px-3 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 lg:min-h-11 lg:px-5 lg:text-sm"
             >
               <span className="lg:hidden">Try again</span>
               <span className="hidden lg:inline">Try video again</span>
-            </button>
+            </Button>
             {onDownload && (
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 aria-label="Download video"
                 onClick={onDownload}
-                className="min-h-10 rounded-full border border-zinc-300 bg-white px-3 text-xs font-semibold text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 lg:min-h-11 lg:px-5 lg:text-sm"
+                className="h-auto min-h-10 rounded-full px-3 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 lg:min-h-11 lg:px-5 lg:text-sm"
               >
                 <span className="lg:hidden">Download</span>
                 <span className="hidden lg:inline">Download video</span>
-              </button>
+              </Button>
             )}
           </div>
         </div>
@@ -4761,20 +4766,22 @@ function ConformanceVerdictPanel({
         </ul>
       )}
       <div className="mt-3 flex gap-4">
-        <button
+        <Button
           type="button"
+          variant="link"
           onClick={onTellKria}
-          className="text-xs font-medium text-lime-700 underline-offset-2 hover:underline"
+          className="h-auto p-0 text-xs font-medium text-lime-700 underline-offset-2 hover:underline"
         >
           Looks wrong? Tell Kria
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="link"
           onClick={onDismiss}
-          className="text-xs text-[#71717a] underline-offset-2 hover:underline"
+          className="h-auto p-0 text-xs text-[#71717a] underline-offset-2 hover:underline"
         >
           Hide this read
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -4843,13 +4850,14 @@ function KriaHelper({
             aria-hidden="true"
           />
           Looks on-brief.{" "}
-          <button
+          <Button
             type="button"
+            variant="link"
             onClick={onOpen}
-            className="font-medium text-lime-700 underline-offset-2 hover:underline"
+            className="h-auto p-0 font-medium text-lime-700 underline-offset-2 hover:underline"
           >
             Ask Kria ↗
-          </button>
+          </Button>
         </p>
       ) : hasVerdict ? (
         <div className="space-y-1">
@@ -4861,27 +4869,30 @@ function KriaHelper({
             <span>{c!.summary}</span>
           </p>
           <div className="flex gap-3 pl-3.5">
-            <button
+            <Button
               type="button"
+              variant="link"
               onClick={onContest}
-              className="text-xs font-medium text-lime-700 underline-offset-2 hover:underline"
+              className="h-auto p-0 text-xs font-medium text-lime-700 underline-offset-2 hover:underline"
             >
               Tell Kria
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="link"
               onClick={onDismissConformance}
-              className="text-xs text-[#71717a] underline-offset-2 hover:underline"
+              className="h-auto p-0 text-xs text-[#71717a] underline-offset-2 hover:underline"
             >
               Hide
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="link"
               onClick={onOpen}
-              className="text-xs text-[#71717a] underline-offset-2 hover:underline"
+              className="h-auto p-0 text-xs text-[#71717a] underline-offset-2 hover:underline"
             >
               Ask Kria ↗
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}
@@ -4982,13 +4993,14 @@ function PoolUploadCard({
                         <Badge variant="secondary" className="rounded border-dashed font-normal normal-case tracking-normal">
                           Matched
                         </Badge>
-                        <button
+                        <Button
                           type="button"
+                          variant="link"
                           onClick={() => onKeep(a)}
-                          className="text-[11px] font-medium text-lime-700 underline-offset-2 hover:underline"
+                          className="h-auto p-0 text-[11px] font-medium text-lime-700 underline-offset-2 hover:underline"
                         >
                           Keep
-                        </button>
+                        </Button>
                       </div>
                     ) : (
                       <Badge variant="secondary" className="mt-1 font-normal normal-case tracking-normal">
@@ -5092,13 +5104,14 @@ function PoolUploadCard({
                   <p className="mt-1 text-[11px] text-[#3f3f46]">
                     {p.error ?? "Upload failed"}
                   </p>
-                  <button
+                  <Button
                     type="button"
+                    variant="link"
                     onClick={() => onRetryUpload(p.localId)}
-                    className="-mb-2 -ml-2 inline-flex h-11 items-center px-2 text-[11px] font-medium text-lime-700 underline-offset-2 hover:underline sm:mb-0 sm:ml-0 sm:h-auto sm:px-0"
+                    className="-mb-2 -ml-2 h-11 items-center px-2 py-0 text-[11px] font-medium text-lime-700 underline-offset-2 hover:underline sm:mb-0 sm:ml-0 sm:h-auto sm:px-0"
                   >
                     Retry
-                  </button>
+                  </Button>
                 </>
               )}
             </li>

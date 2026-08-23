@@ -7,25 +7,28 @@
         "src/app/generative/**/*.tsx",
         "src/components/**/*.tsx"
       ],
-      "excludedFiles": ["src/components/ui/**", "src/app/admin/**"],
+      "excludedFiles": [
+        "src/components/ui/**",
+        "src/app/admin/**"
+      ],
       "rules": {
         "no-restricted-syntax": [
-          "warn",
+          "error",
           {
             "selector": "JSXOpeningElement[name.name='button']:has(JSXAttribute[name.name='className'])",
-            "message": "Use <Button> from @/components/ui/button instead of a raw <button className=…> (DESIGN.md §15). Follow-up: flip to error once the remaining warnings are migrated."
+            "message": "Use <Button> from @/components/ui/button instead of a raw <button className=…> (DESIGN.md §15)."
           },
           {
             "selector": "JSXOpeningElement[name.name='select']",
-            "message": "Use <Select> from @/components/ui/select instead of a raw <select> (DESIGN.md §15). Follow-up: flip to error once the remaining warnings are migrated."
+            "message": "Use <Select> from @/components/ui/select instead of a raw <select> (DESIGN.md §15)."
           },
           {
             "selector": "JSXOpeningElement[name.name='input']:has(JSXAttribute[name.name='className']):not(:has(JSXAttribute[name.name='type'] Literal[value=/^(file|range|checkbox|radio|hidden|color)$/]))",
-            "message": "Use <Input> from @/components/ui/input instead of a raw <input className=…> (DESIGN.md §15). Follow-up: flip to error once the remaining warnings are migrated."
+            "message": "Use <Input> from @/components/ui/input instead of a raw <input className=…> (DESIGN.md §15)."
           },
           {
             "selector": "JSXOpeningElement[name.name='textarea']:has(JSXAttribute[name.name='className'])",
-            "message": "Use <Textarea> from @/components/ui/textarea instead of a raw <textarea className=…> (DESIGN.md §15). Follow-up: flip to error once the remaining warnings are migrated."
+            "message": "Use <Textarea> from @/components/ui/textarea instead of a raw <textarea className=…> (DESIGN.md §15)."
           }
         ]
       }

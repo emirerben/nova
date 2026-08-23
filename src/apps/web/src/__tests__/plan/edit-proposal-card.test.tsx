@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 import EditProposalCard from "@/app/plan/items/[id]/components/EditProposalCard";
 import {
@@ -296,6 +297,7 @@ describe("EditProposalCard", () => {
   });
 
   it("marks AI thoughts, supports keyboard-operable ordering, and approves with CAS", async () => {
+    const user = userEvent.setup();
     const saved = item({ ...proposal(), proposal_version: 3 });
     const approved = item({ ...proposal("approved"), proposal_version: 4 });
     mockUpdate.mockResolvedValue(saved);
@@ -306,15 +308,19 @@ describe("EditProposalCard", () => {
     expect(screen.getAllByText("AI draft")).toHaveLength(2);
     fireEvent.click(screen.getByRole("button", { name: "Move Coast earlier" }));
     expect(screen.getByLabelText("Moment 1 topic")).toHaveValue("Coast");
-    fireEvent.change(screen.getByLabelText("Direction"), { target: { value: "text_explainer" } });
-    fireEvent.change(screen.getByLabelText("Pace"), { target: { value: "relaxed" } });
-    fireEvent.change(screen.getByLabelText("Target length"), { target: { value: "30" } });
+
+    await user.click(screen.getByRole("combobox", { name: "Direction" }));
+    await user.click(await screen.findByRole("option", { name: "Text explainer" }));
+    await user.click(screen.getByRole("combobox", { name: "Pace" }));
+    await user.click(await screen.findByRole("option", { name: "Relaxed" }));
+    await user.click(screen.getByRole("combobox", { name: "Target length" }));
+    await user.click(await screen.findByRole("option", { name: "30 seconds" }));
+
     fireEvent.change(screen.getByLabelText("Moment 1 topic"), {
       target: { value: "Sea and beaches" },
     });
-    fireEvent.change(screen.getAllByLabelText("Layout")[0], {
-      target: { value: "supporting_card" },
-    });
+    await user.click(screen.getAllByRole("combobox", { name: "Layout" })[0]);
+    await user.click(await screen.findByRole("option", { name: "Supporting card" }));
     fireEvent.change(screen.getAllByRole("textbox", { name: /Thought/ })[0], {
       target: { value: "I kept coming back to the water." },
     });
@@ -333,15 +339,17 @@ describe("EditProposalCard", () => {
     expect(onChanged).toHaveBeenLastCalledWith(approved);
   });
 
-  it("shows a conversational custom duration instead of falling back to 15 seconds", () => {
+  it("shows a conversational custom duration instead of falling back to 15 seconds", async () => {
+    const user = userEvent.setup();
     const custom = proposal();
     custom.draft = { ...custom.draft!, duration_s: 10 };
     custom.brief = { ...custom.brief, duration_s: 10 };
 
     render(<EditProposalCard item={item(custom)} onChanged={jest.fn()} />);
 
-    expect(screen.getByLabelText("Target length")).toHaveValue("10");
-    expect(screen.getByRole("option", { name: "10 seconds" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Target length" })).toHaveTextContent("10 seconds");
+    await user.click(screen.getByRole("combobox", { name: "Target length" }));
+    expect(await screen.findByRole("option", { name: "10 seconds" })).toBeInTheDocument();
   });
 
   it("counts only selected sources in the approved summary", () => {

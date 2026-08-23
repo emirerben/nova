@@ -14,6 +14,7 @@
 
 import React from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 
 import UnifiedTimeline from "@/app/plan/_components/UnifiedTimeline";
@@ -132,11 +133,24 @@ describe("UnifiedTimeline — SFX bars render", () => {
   });
 });
 
+/**
+ * The glossary picker is a Radix <Select> (SfxLane) — it opens on
+ * pointerdown, not the native <select> "change" event, so tests must drive
+ * it with userEvent.click (see DESIGN.md §15 "Jest / Radix-in-jsdom notes").
+ */
+async function pickGlossaryEffect(name: string) {
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox"));
+  await user.click(await screen.findByRole("option", { name: new RegExp(name, "i") }));
+}
+
 describe("UnifiedTimeline — glossary picker", () => {
-  it("renders glossary effects in the select", () => {
+  it("renders glossary effects in the select", async () => {
+    const user = userEvent.setup();
     const effects = [makeGlossaryEffect({ id: "g1", name: "Boom" })];
     render(<UnifiedTimeline {...makeProps({ sfxGlossaryEffects: effects })} />);
-    expect(screen.getByRole("option", { name: /Boom/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("combobox"));
+    expect(await screen.findByRole("option", { name: /Boom/i })).toBeInTheDocument();
   });
 
   it("shows loading placeholder when sfxGlossaryLoading is true", () => {
@@ -154,8 +168,7 @@ describe("UnifiedTimeline — glossary picker", () => {
     );
 
     // Select the glossary effect
-    const select = screen.getByRole("combobox");
-    fireEvent.change(select, { target: { value: "g1" } });
+    await pickGlossaryEffect("Whoosh");
 
     // Click Add
     const addBtn = screen.getByRole("button", { name: /\+ Add/i });
@@ -183,7 +196,7 @@ describe("UnifiedTimeline — glossary picker", () => {
       />,
     );
 
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "g1" } });
+    await pickGlossaryEffect("Whoosh");
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: /\+ Add/i })); });
 
     const [placements] = onSfxChange.mock.calls[0];
@@ -207,7 +220,7 @@ describe("UnifiedTimeline — undo/redo", () => {
     );
 
     // Add a placement
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "g1" } });
+    await pickGlossaryEffect("Whoosh");
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: /\+ Add/i })); });
 
     // Undo button should now be enabled
@@ -231,7 +244,7 @@ describe("UnifiedTimeline — undo/redo", () => {
       />,
     );
 
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "g1" } });
+    await pickGlossaryEffect("Whoosh");
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: /\+ Add/i })); });
 
     expect(screen.getByTitle("Redo")).toBeDisabled();

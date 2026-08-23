@@ -29,6 +29,7 @@ import {
   type PoolAsset,
 } from "@/lib/plan-api";
 import type { EditorOverlaySuggestionsState } from "./useEditorOverlaySuggestions";
+import { Button } from "@/components/ui/button";
 
 const UNAVAILABLE_COPY = "AI suggestions aren't available right now.";
 
@@ -148,14 +149,15 @@ export default function OverlaySuggestions({
           <p className="text-[12px] text-[#3f3f46]">
             Add screenshots or clips of what you talk about
           </p>
-          <button
+          <Button
             type="button"
+            variant="outline"
             disabled={atCap}
             onClick={() => inputRef.current?.click()}
-            className="mt-2 inline-flex min-h-11 items-center rounded-lg border border-zinc-200 bg-white px-4 text-[12px] text-[#3f3f46] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50"
+            className="mt-2 h-auto min-h-11 border-zinc-200 bg-white px-4 text-[12px] text-[#3f3f46] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Add visuals
-          </button>
+          </Button>
           {atCap && (
             <p className="mt-2 text-[12px] text-[#71717a]">
               {releasingSlots > 0
@@ -199,15 +201,17 @@ export default function OverlaySuggestions({
               );
             })}
             <li>
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                size="icon"
                 disabled={atCap}
                 onClick={() => inputRef.current?.click()}
                 aria-label="Add visuals"
-                className="flex h-12 w-12 items-center justify-center rounded-md border border-dashed border-zinc-300 bg-white text-[15px] text-[#71717a] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50"
+                className="h-12 w-12 rounded-md border-dashed border-zinc-300 bg-white text-[15px] text-[#71717a] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 +
-              </button>
+              </Button>
             </li>
           </ul>
           {atCap && (
@@ -228,21 +232,23 @@ export default function OverlaySuggestions({
                 <p>{upload.message}</p>
                 <div className="mt-1 flex gap-3">
                   {upload.retryable && (
-                    <button
+                    <Button
                       type="button"
+                      variant="link"
                       onClick={() => onRetryPending(upload.localId)}
-                      className="min-h-7 text-lime-700 underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+                      className="h-auto min-h-7 p-0 text-lime-700 underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
                     >
                       Retry
-                    </button>
+                    </Button>
                   )}
-                  <button
+                  <Button
                     type="button"
+                    variant="link"
                     onClick={() => onRemovePending(upload.localId)}
-                    className="min-h-7 underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+                    className="h-auto min-h-7 p-0 text-[#71717a] underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
                   >
                     Remove
-                  </button>
+                  </Button>
                 </div>
               </div>
             ))}
@@ -262,21 +268,23 @@ export default function OverlaySuggestions({
                 </p>
                 <div className="mt-1 flex gap-3">
                   {asset.retryable !== false && (
-                    <button
+                    <Button
                       type="button"
+                      variant="link"
                       onClick={() => onRetryAsset(asset)}
-                      className="min-h-7 text-lime-700 underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+                      className="h-auto min-h-7 p-0 text-lime-700 underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
                     >
                       Retry analysis
-                    </button>
+                    </Button>
                   )}
-                  <button
+                  <Button
                     type="button"
+                    variant="link"
                     onClick={() => onRemoveAsset(asset)}
-                    className="min-h-7 underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+                    className="h-auto min-h-7 p-0 text-[#71717a] underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
                   >
                     Remove
-                  </button>
+                  </Button>
                 </div>
               </div>
             ))}
@@ -319,13 +327,14 @@ export default function OverlaySuggestions({
       ) : phase === "failed" ? (
         <div className="mt-3 rounded-lg border border-dashed border-zinc-300 bg-white px-3 py-3 text-center">
           <p className="text-[12px] text-[#71717a]">Couldn&apos;t match your visuals this time.</p>
-          <button
+          <Button
             type="button"
+            variant="outline"
             onClick={suggestions.start}
-            className="mt-2 inline-flex min-h-11 items-center rounded-lg border border-zinc-200 bg-white px-4 text-[12px] text-[#3f3f46] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+            className="mt-2 h-auto min-h-11 border-zinc-200 bg-white px-4 text-[12px] text-[#3f3f46] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
           >
             Retry
-          </button>
+          </Button>
         </div>
       ) : phase === "zero" ? (
         <div className="mt-3 rounded-lg border border-zinc-200 bg-white px-3 py-2.5">
@@ -359,15 +368,16 @@ export default function OverlaySuggestions({
       {/* ── Entry / re-match button (idle, ready with rows resolved, zero) ── */}
       {phase !== "matching" && phase !== "failed" && (
         <div className="mt-3">
-          <button
+          <Button
             type="button"
+            variant="outline"
             disabled={suggestDisabled}
             onClick={suggestions.start}
             title={readyAssetCount === 0 ? "Add at least one visual first" : undefined}
-            className="inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-4 text-[12px] text-[#71717a] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-zinc-200 disabled:hover:text-[#71717a]"
+            className="h-auto min-h-11 w-full gap-1.5 border-zinc-200 bg-white px-4 text-[12px] text-[#71717a] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-zinc-200 disabled:hover:text-[#71717a]"
           >
             {phase === "ready" && rows.length > 0 ? "✦ Re-match visuals" : "✦ Place visuals for me"}
-          </button>
+          </Button>
           {readyAssetCount === 0 && (
             <p className="mt-1.5 text-[12px] text-[#71717a]">Add at least one visual first</p>
           )}
@@ -428,23 +438,27 @@ function PoolThumb({
         // eslint-disable-next-line @next/next/no-img-element -- signed GCS thumbnail
         <img src={asset.display_url} alt={label} className="h-full w-full object-cover" />
       )}
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="icon"
         onClick={onRemove}
         aria-label={`Remove ${label}`}
-        className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-white/90 text-[11px] text-[#3f3f46] opacity-0 transition-opacity focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 group-hover:opacity-100"
+        className="absolute right-0.5 top-0.5 h-5 w-5 rounded-full bg-white/90 text-[11px] text-[#3f3f46] opacity-0 transition-opacity hover:bg-white/90 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 group-hover:opacity-100"
       >
         ×
-      </button>
+      </Button>
       {asset.status === "failed" && asset.retryable !== false && (
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon"
           onClick={onRetry}
           aria-label={`Retry analysis for ${label}`}
-          className="absolute bottom-0.5 left-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-white/90 text-[11px] text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+          className="absolute bottom-0.5 left-0.5 h-5 w-5 rounded-full bg-white/90 text-[11px] text-lime-700 hover:bg-white/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
         >
           ↻
-        </button>
+        </Button>
       )}
     </li>
   );
@@ -514,28 +528,32 @@ function SuggestionRow({
       </div>
 
       <div className="flex shrink-0 gap-1">
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="icon"
           aria-label={`Accept ${label}`}
           onClick={(e) => {
             e.stopPropagation();
             onAccept();
           }}
-          className="flex h-11 w-11 items-center justify-center rounded-lg border border-zinc-200 bg-white text-sm text-[#3f3f46] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+          className="h-11 w-11 rounded-lg border-zinc-200 bg-white text-sm text-[#3f3f46] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
         >
           ✓
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="outline"
+          size="icon"
           aria-label={`Dismiss ${label}`}
           onClick={(e) => {
             e.stopPropagation();
             onReject();
           }}
-          className="flex h-11 w-11 items-center justify-center rounded-lg border border-zinc-200 bg-white text-sm text-[#71717a] transition-colors hover:border-zinc-400 hover:text-[#3f3f46] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+          className="h-11 w-11 rounded-lg border-zinc-200 bg-white text-sm text-[#71717a] transition-colors hover:border-zinc-400 hover:text-[#3f3f46] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
         >
           ×
-        </button>
+        </Button>
       </div>
     </li>
   );

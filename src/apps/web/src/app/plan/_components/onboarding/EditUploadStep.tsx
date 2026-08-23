@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback } from "react";
+import { Button } from "@/components/ui/button";
 import { uploadGenerativeClip } from "@/lib/generative-api";
 
 const MAX_CLIPS = 10;
@@ -85,12 +86,14 @@ export function EditUploadStep({
       />
 
       {!atMax && (
-        <button
+        <Button
+          type="button"
+          variant="outline"
           onClick={() => inputRef.current?.click()}
-          className="w-full rounded-2xl border-2 border-dashed border-[#e4e4e7] bg-[#ffffff] hover:border-lime-600 hover:bg-lime-50 transition py-10 text-center focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
+          className="h-auto min-h-[44px] w-full rounded-2xl border-2 border-dashed border-[#e4e4e7] bg-[#ffffff] py-10 text-center hover:border-lime-600 hover:bg-lime-50 focus-visible:ring-lime-600"
         >
           <p className="text-[#71717a]">+ Add videos</p>
-        </button>
+        </Button>
       )}
 
       {atMax && (
@@ -122,25 +125,30 @@ export function EditUploadStep({
               )}
               {clip.status === "error" && (
                 <div className="absolute inset-0 bg-red-900/40 flex items-center justify-center">
-                  <button
+                  <Button
+                    type="button"
+                    variant="ghost"
                     onClick={() =>
                       setClips((prev) => prev.filter((_, idx) => idx !== i))
                     }
-                    className="min-h-11 min-w-11 text-white text-xs underline sm:min-h-0 sm:min-w-0"
+                    className="h-auto min-h-11 min-w-11 p-0 text-xs text-white underline hover:bg-transparent hover:text-white sm:min-h-0 sm:min-w-0"
                   >
                     retry
-                  </button>
+                  </Button>
                 </div>
               )}
-              <button
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
                 onClick={() =>
                   setClips((prev) => prev.filter((_, idx) => idx !== i))
                 }
-                className="absolute top-1 right-1 flex h-11 w-11 items-center justify-center rounded-full bg-[#0c0c0e]/60 text-xs text-white hover:bg-[#0c0c0e] focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 sm:h-5 sm:w-5"
+                className="absolute top-1 right-1 flex h-11 w-11 items-center justify-center rounded-full bg-[#0c0c0e]/60 p-0 text-xs text-white hover:bg-[#0c0c0e] focus-visible:ring-lime-600 sm:h-5 sm:w-5"
                 aria-label="Remove clip"
               >
                 ×
-              </button>
+              </Button>
             </div>
           ))}
         </div>
@@ -148,20 +156,23 @@ export function EditUploadStep({
 
       <div className="flex gap-3">
         {onBack && (
-          <button
+          <Button
+            type="button"
+            variant="ghost"
             onClick={onBack}
-            className="px-4 text-sm text-[#71717a] hover:text-[#0c0c0e] focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 rounded min-h-[44px]"
+            className="h-auto min-h-[44px] rounded px-4 text-sm text-[#71717a] hover:bg-transparent hover:text-[#0c0c0e] focus-visible:ring-lime-600"
           >
             ← back
-          </button>
+          </Button>
         )}
-        <button
+        <Button
+          type="button"
           onClick={() => onSubmit(readyClips)}
           disabled={readyPaths.length === 0}
-          className="flex-1 rounded-xl bg-lime-700 text-white py-3 font-medium hover:bg-lime-800 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
+          className="h-auto min-h-[44px] flex-1 rounded-xl bg-lime-700 py-3 font-medium text-white hover:bg-lime-800 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:ring-lime-600"
         >
           Make my edit →
-        </button>
+        </Button>
       </div>
     </div>
   );

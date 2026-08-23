@@ -17,6 +17,7 @@ import {
   recordOnboardingFork,
 } from "@/lib/plan-api";
 import { createGenerativeJob } from "@/lib/generative-api";
+import { Button } from "@/components/ui/button";
 import { resolvePlanMode } from "./_lib/route";
 import { GeneratingStateLight } from "./_components/GeneratingStateLight";
 import OnboardingShell from "./_components/OnboardingShell";
@@ -415,7 +416,7 @@ function PlanPageInner() {
             ))}
             <div className="px-4 max-w-2xl mx-auto w-full">
               <div className="border-t border-[#e4e4e7] pt-6">
-                <button
+                <Button
                   onClick={async () => {
                     try {
                       await recordOnboardingFork({
@@ -426,10 +427,10 @@ function PlanPageInner() {
                     setEditJobs([]);
                     void load();
                   }}
-                  className="w-full rounded-xl bg-[#0c0c0e] text-white py-3 font-medium hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
+                  className="w-full rounded-xl py-3 min-h-[44px]"
                 >
                   Continue creating with Kria →
-                </button>
+                </Button>
               </div>
             </div>
           </div>
@@ -462,7 +463,7 @@ function PlanPageInner() {
               />
               <div className="px-4 max-w-2xl mx-auto w-full">
                 <div className="border-t border-[#e4e4e7] pt-6 pb-8">
-                  <button
+                  <Button
                     onClick={async () => {
                       try {
                         await recordOnboardingFork({
@@ -472,10 +473,10 @@ function PlanPageInner() {
                       } catch {}
                       void load();
                     }}
-                    className="w-full rounded-xl bg-[#0c0c0e] text-white py-3 font-medium hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
+                    className="w-full rounded-xl py-3 min-h-[44px]"
                   >
                     Continue creating with Kria →
-                  </button>
+                  </Button>
                 </div>
               </div>
             </div>

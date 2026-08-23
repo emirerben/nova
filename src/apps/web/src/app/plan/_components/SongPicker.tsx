@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import type { MusicTrackSummary } from "@/lib/music-api";
+import { Button } from "@/components/ui/button";
 
 /**
  * Song picker for a plan variant — light editorial canvas (D20/D21).
@@ -84,14 +85,16 @@ export default function SongPicker({
           <p className="truncate text-sm text-[#0c0c0e]">{current?.title ?? "—"}</p>
           <p className="truncate text-xs text-[#71717a]">{current?.artist ?? ""}</p>
         </div>
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           disabled={disabled}
           onClick={() => setOpen((o) => !o)}
-          className="rounded-full border border-zinc-200 px-3 py-2 text-sm text-[#3f3f46] transition-colors hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-full text-[#3f3f46]"
         >
           {open ? "Close" : "Change"}
-        </button>
+        </Button>
       </div>
 
       {open && (
@@ -102,8 +105,10 @@ export default function SongPicker({
               const canPlay = !!t.preview_audio_url && !failed.has(t.id);
               return (
                 <li key={t.id} className="flex items-center gap-3 p-2">
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
+                    size="icon"
                     aria-label={
                       canPlay
                         ? playingId === t.id
@@ -113,10 +118,10 @@ export default function SongPicker({
                     }
                     disabled={!canPlay}
                     onClick={() => togglePlay(t)}
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-zinc-200 text-[#3f3f46] hover:border-zinc-400 disabled:opacity-30"
+                    className="shrink-0 rounded-full text-[#3f3f46] disabled:opacity-30"
                   >
                     {playingId === t.id ? "❚❚" : "►"}
-                  </button>
+                  </Button>
                   <Art track={t} />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm text-[#0c0c0e]">{t.title}</p>
@@ -131,8 +136,10 @@ export default function SongPicker({
                       </p>
                     )}
                   </div>
-                  <button
+                  <Button
                     type="button"
+                    variant={isCurrent ? "secondary" : "default"}
+                    size="sm"
                     disabled={disabled || isCurrent}
                     onClick={() => {
                       stop();
@@ -140,14 +147,12 @@ export default function SongPicker({
                       setOpen(false);
                     }}
                     className={cn(
-                      "rounded-full px-3 py-2 text-xs font-medium transition-colors disabled:cursor-not-allowed",
-                      isCurrent
-                        ? "bg-zinc-100 text-[#a1a1aa]"
-                        : "bg-[#0c0c0e] text-white hover:opacity-80",
+                      "rounded-full text-xs",
+                      isCurrent && "bg-zinc-100 text-[#a1a1aa]",
                     )}
                   >
                     {isCurrent ? "Current" : "Use"}
-                  </button>
+                  </Button>
                 </li>
               );
             })}

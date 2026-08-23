@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { BeamLoader } from "@/components/progress";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { useFocusTrap } from "@/components/ui/useFocusTrap";
 import {
   createTikTokPublication,
@@ -295,16 +297,17 @@ export function TikTokPublishDialog({
       >
         <header className="border-b border-zinc-200 bg-[#ffffff]">
           <div className="mx-auto grid min-h-[72px] w-full max-w-[1280px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 px-4 md:px-8">
-            <button
+            <Button
               ref={initialFocusRef}
               type="button"
+              variant="ghost"
               onClick={onClose}
               disabled={state === "submitting"}
-              className="inline-flex min-h-11 items-center gap-2 rounded-md px-1 text-sm font-medium text-[#3f3f46] transition-colors hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:opacity-40"
+              className="h-auto min-h-11 items-center gap-2 rounded-md px-1 text-sm font-medium text-[#3f3f46] transition-colors hover:bg-transparent hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:opacity-40"
             >
               <span aria-hidden>←</span>
               Exit
-            </button>
+            </Button>
             <div className="min-w-0 text-center">
               <h2 id="tiktok-publish-title" className="truncate font-display text-xl text-[#0c0c0e] md:text-2xl">
                 {simulationEnabled ? "Preview TikTok delivery" : "Send to TikTok"}
@@ -338,29 +341,31 @@ export function TikTokPublishDialog({
                 {publishOptionsErrorMessage(error)}
               </p>
               <div className="mt-7 flex flex-wrap gap-3">
-                <button
+                <Button
                   type="button"
                   onClick={() => setOptionsAttempt((value) => value + 1)}
-                  className="min-h-11 rounded-full bg-[#0c0c0e] px-5 text-sm font-semibold text-white transition-opacity hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600"
+                  className="h-auto min-h-11 rounded-full bg-[#0c0c0e] px-5 text-sm font-semibold text-white transition-opacity hover:bg-[#0c0c0e] hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600"
                 >
                   Retry settings
-                </button>
+                </Button>
                 {isTikTokReconnectError(error) && (
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
                     onClick={() => void startTikTokOAuth(currentReturnTo())}
-                    className="min-h-11 rounded-full border border-zinc-300 bg-white px-5 text-sm font-semibold text-[#0c0c0e] transition-colors hover:border-zinc-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600"
+                    className="h-auto min-h-11 rounded-full border-zinc-300 bg-white px-5 text-sm font-semibold text-[#0c0c0e] transition-colors hover:border-zinc-500 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600"
                   >
                     Reconnect TikTok
-                  </button>
+                  </Button>
                 )}
-                <button
+                <Button
                   type="button"
+                  variant="link"
                   onClick={onClose}
-                  className="min-h-11 px-2 text-sm font-medium text-[#3f3f46] underline decoration-zinc-300 underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600"
+                  className="h-auto min-h-11 px-2 text-sm font-medium text-[#3f3f46] underline decoration-zinc-300 underline-offset-4 hover:no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600"
                 >
                   Return to item
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -485,35 +490,36 @@ export function TikTokPublishDialog({
               </div>
               <div className="flex w-full gap-3 lg:max-w-[460px] lg:justify-end">
               {step === "details" ? (
-                <button
+                <Button
                   type="button"
                   onClick={() => setStep("confirm")}
                   disabled={!canReview}
                   aria-describedby={!canReview ? "tiktok-review-blocker" : undefined}
-                  className="min-h-12 w-full rounded-full bg-[#0c0c0e] px-5 text-sm font-semibold text-white transition-opacity hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:cursor-not-allowed disabled:opacity-35 lg:max-w-[300px]"
+                  className="h-auto min-h-12 w-full rounded-full bg-[#0c0c0e] px-5 text-sm font-semibold text-white transition-opacity hover:bg-[#0c0c0e] hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:cursor-not-allowed disabled:opacity-35 lg:max-w-[300px]"
                 >
                   Review {deliveryMode === "draft_upload" ? "handoff" : "post"}
-                </button>
+                </Button>
               ) : (
                 <>
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
                     onClick={() => setStep("details")}
                     disabled={state === "submitting"}
-                    className="min-h-12 flex-1 rounded-full border border-zinc-300 bg-white px-5 text-sm font-semibold text-[#0c0c0e] transition-colors hover:border-zinc-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:opacity-40"
+                    className="h-auto min-h-12 flex-1 rounded-full border-zinc-300 bg-white px-5 text-sm font-semibold text-[#0c0c0e] transition-colors hover:border-zinc-500 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:opacity-40"
                   >
                     Back to details
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
                     onClick={() => void publish()}
                     disabled={!canReview || state === "submitting"}
-                    className="min-h-12 flex-[1.4] rounded-full bg-[#0c0c0e] px-5 text-sm font-semibold text-white transition-opacity hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:cursor-not-allowed disabled:opacity-35"
+                    className="h-auto min-h-12 flex-[1.4] rounded-full bg-[#0c0c0e] px-5 text-sm font-semibold text-white transition-opacity hover:bg-[#0c0c0e] hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600 disabled:cursor-not-allowed disabled:opacity-35"
                   >
                     {state === "submitting"
                       ? simulationEnabled ? "Simulating…" : "Sending to TikTok…"
                       : simulationEnabled ? "Simulate delivery" : deliveryMode === "draft_upload" ? "Send to TikTok inbox" : "Publish now"}
-                  </button>
+                  </Button>
                 </>
               )}
               </div>
@@ -729,7 +735,7 @@ function DraftConfirmStep({
       </div>
       <div className="mt-7 flex items-center justify-between gap-4">
         <p className="font-display text-3xl text-[#0c0c0e]">Inbox handoff summary</p>
-        <button type="button" onClick={onEdit} className="min-h-11 text-sm font-medium text-lime-700 underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600">Edit choice</button>
+        <Button type="button" variant="link" onClick={onEdit} className="h-auto p-0 min-h-11 text-sm font-medium text-lime-700 underline underline-offset-4 hover:no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600">Edit choice</Button>
       </div>
       <dl className="mt-2 divide-y divide-zinc-200 border-y border-zinc-200">
         <ReviewSummaryRow label="Destination" value="TikTok inbox (phone app)" />
@@ -841,12 +847,12 @@ function DetailsStep({
       <div className="space-y-6">
         <label className="block text-sm font-semibold text-[#18181b]">
         Caption &amp; hashtags
-        <textarea
+        <Textarea
           value={title}
           onChange={(event) => onTitle(event.target.value)}
           maxLength={2200}
           rows={5}
-          className="mt-2 w-full resize-none rounded-lg border border-zinc-300 bg-white px-4 py-3 font-normal leading-relaxed text-[#0c0c0e] focus:border-lime-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
+          className="mt-2 resize-none rounded-lg border-zinc-300 bg-white px-4 py-3 font-normal leading-relaxed text-[#0c0c0e] focus:border-lime-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
         />
         <span aria-live="polite" className="mt-1 block text-right text-xs font-normal text-[#71717a]">
           {title.length} / 2200
@@ -992,13 +998,14 @@ function ConfirmStep({
 
       <div className="mt-7 flex items-center justify-between gap-4">
         <p className="font-display text-3xl text-[#0c0c0e]">Post summary</p>
-        <button
+        <Button
           type="button"
+          variant="link"
           onClick={onEdit}
-          className="min-h-11 text-sm font-medium text-lime-700 underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600"
+          className="h-auto p-0 min-h-11 text-sm font-medium text-lime-700 underline underline-offset-4 hover:no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600"
         >
           Edit details
-        </button>
+        </Button>
       </div>
       <dl className="mt-2 divide-y divide-zinc-200 border-y border-zinc-200">
         <ReviewSummaryRow label="Audience" value={privacyLabel(privacy)} />

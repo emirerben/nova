@@ -12,6 +12,8 @@ import {
 } from "@nova/motion-runtime";
 import { isBoundedCreatorImageAsset, type PoolAsset } from "@/lib/plan-api";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -223,7 +225,7 @@ export default function MotionInspector({
         <div className="mt-3 grid grid-cols-2 gap-3">
           <label className="text-[10px] text-[#71717a]">
             Start (seconds)
-            <input
+            <Input
               type="number"
               min={0}
               max={Math.max(0, (scene.end_frame_exclusive - 1) / MOTION_FPS)}
@@ -239,12 +241,12 @@ export default function MotionInspector({
                 );
                 onPatch(scene.id, { start_frame: next });
               }}
-              className="mt-1 h-11 w-full rounded-lg border border-zinc-200 px-2 text-[16px] text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:text-[11px]"
+              className="mt-1 h-11 rounded-lg border-zinc-200 px-2 text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:text-[11px]"
             />
           </label>
           <label className="text-[10px] text-[#71717a]">
             End (seconds)
-            <input
+            <Input
               type="number"
               min={(scene.start_frame + 1) / MOTION_FPS}
               max={durationS > 0 ? durationS : undefined}
@@ -261,7 +263,7 @@ export default function MotionInspector({
                 );
                 onPatch(scene.id, { end_frame_exclusive: next });
               }}
-              className="mt-1 h-11 w-full rounded-lg border border-zinc-200 px-2 text-[16px] text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:text-[11px]"
+              className="mt-1 h-11 rounded-lg border-zinc-200 px-2 text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:text-[11px]"
             />
           </label>
         </div>
@@ -326,11 +328,11 @@ function CreatorBlockFields({
   const textField = (label: string, key: string, value: string, maxLength: number) => (
     <label className="mt-3 block text-[11px] text-[#71717a]">
       {label}
-      <input
+      <Input
         value={value}
         maxLength={maxLength}
         onChange={(event) => patchParams({ [key]: event.target.value })}
-        className="mt-1 h-11 w-full rounded-lg border border-zinc-200 px-3 text-[16px] text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:text-[12px]"
+        className="mt-1 h-11 rounded-lg border-zinc-200 px-3 text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:text-[12px]"
       />
     </label>
   );
@@ -368,11 +370,11 @@ function CreatorBlockFields({
     return (
       <label className="mt-3 block text-[11px] text-[#71717a]">
         One line per item
-        <textarea
+        <Textarea
           value={values.join("\n")}
           onChange={(event) => patchParams({ [key]: event.target.value.split("\n").slice(0, maxItems) })}
           rows={Math.min(5, values.length + 1)}
-          className="mt-1 min-h-24 w-full resize-none rounded-lg border border-zinc-200 px-3 py-2 text-[16px] leading-relaxed text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:text-[12px]"
+          className="mt-1 min-h-24 resize-none rounded-lg border-zinc-200 px-3 py-2 leading-relaxed text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:text-[12px]"
         />
       </label>
     );
@@ -388,9 +390,10 @@ function CreatorBlockFields({
         {ready.map((asset) => {
           const active = selected.some((item) => item.asset_id === asset.id);
           return (
-            <button
+            <Button
               key={asset.id}
               type="button"
+              variant="ghost"
               aria-pressed={active}
               aria-label={`${active ? "Remove" : "Add"} ${asset.source_filename ?? asset.subject ?? "image"}`}
               title={active && selected.length <= min ? `Keep at least ${min} images` : undefined}
@@ -404,13 +407,13 @@ function CreatorBlockFields({
                     ? [...selected, { asset_id: asset.id, gcs_path: asset.gcs_path }]
                     : selected,
               })}
-              className={`min-h-11 min-w-11 aspect-square overflow-hidden rounded-lg border-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${active ? "border-lime-500" : "border-zinc-200"}`}
+              className={`h-auto min-h-11 w-auto min-w-11 aspect-square overflow-hidden rounded-lg border-2 p-0 hover:bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${active ? "border-lime-500" : "border-zinc-200"}`}
             >
               {asset.display_url ? (
                 // eslint-disable-next-line @next/next/no-img-element -- signed asset-pool thumbnail
                 <img src={asset.display_url} alt="" className="h-full w-full object-cover" />
               ) : null}
-            </button>
+            </Button>
           );
         })}
       </div>

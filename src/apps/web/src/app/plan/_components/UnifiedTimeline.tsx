@@ -25,6 +25,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
 import type { SoundEffectPlacement, MediaOverlay, PlanItemVariant } from "@/lib/plan-api";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
 import { Playhead } from "@/lib/timeline/Playhead";
@@ -413,12 +414,13 @@ interface FullWidthBarProps {
 
 function FullWidthBar({ label, colorClass, onClick }: FullWidthBarProps) {
   return (
-    <button
+    <Button
       type="button"
-      className={["absolute inset-1 rounded flex items-center px-2 border transition-colors", colorClass].join(" ")}
+      variant="outline"
+      className={["absolute inset-1 h-auto w-auto flex justify-start rounded px-2", colorClass].join(" ")}
       onClick={(e) => { e.stopPropagation(); onClick(); }}
     >
       <span className="text-[10px] truncate pointer-events-none">{label}</span>
-    </button>
+    </Button>
   );
 }

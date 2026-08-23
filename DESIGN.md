@@ -494,21 +494,21 @@ lime/amber). `--radius` is `0.5rem`. Dark exists only for `/template-jobs` +
 
 ### Raw-control ratchet (enforcement mechanism)
 
-Two layers, both `src/apps/web/`:
+**`.eslintrc.json` override** on `app/plan/**`, `app/generative/**`,
+`components/**` (excluding `components/ui/**`, `app/admin/**`, and
+`app/plan/items/[id]/components/EditProposalCard.tsx` — see below):
+`no-restricted-syntax` is **error** for a raw `<button className>`,
+`<select>`, `<input className>` (type not `file`/`range`/`checkbox`/`radio`/
+`hidden`/`color`), or `<textarea className>`. Flipped from `warn` to `error`
+once the last migration lane cleared every remaining warning (2026-08-23).
+The earlier numeric-ratchet test (`src/__tests__/ui/raw-controls-guard.test.ts`)
+was removed by the shadcn migration train (#889) once the ESLint rule became
+the sole enforcement layer.
 
-1. **`.eslintrc.json` override** on `app/plan/**`, `app/generative/**`,
-   `components/**` (excluding `components/ui/**` and `app/admin/**`):
-   `no-restricted-syntax` **warn** for a raw `<button className>`, `<select>`,
-   `<input className>` (type not `file`/`range`/`checkbox`/`radio`/`hidden`/
-   `color`), or `<textarea className>`. Warn, not error, until the last
-   migration lane flips it.
-2. **`src/__tests__/ui/raw-controls-guard.test.ts`** — a numeric ratchet.
-   Counts the same shapes per file against `RAW_CONTROL_BASELINE`, declared
-   in per-lane blocks (`LANE_0_BASELINE`, `LANE_A_BASELINE`, …) so each lane's
-   diff touches only its own block. A file present in the baseline may only
-   go **down**; a file absent must be **zero** (new files are written with
-   primitives from the start). The last lane to merge flips the ESLint rule
-   to `error` and deletes this test.
+**`EditProposalCard.tsx` exclusion:** temporarily carved out of the override
+because it was under active, unrelated development (its own Select-primitive
+conversion PR) at the moment the guard flipped to `error`. Remove the
+exclusion once that PR lands and the file's raw `<select>`s are migrated.
 
 ### Jest / Radix-in-jsdom notes
 
@@ -523,18 +523,22 @@ does not synthesize.
 
 ### Backlog (deferred from Lane F)
 
-- **`src/apps/web/src/components/TikTokPublishDialog.tsx`** — NOT converted to
-  the shadcn `Dialog` shell. At 1166 lines it is a hand-rolled `createPortal` +
-  `useFocusTrap` sheet with multi-step state (`details`/`confirm`), per-mode
-  idempotency keys in `sessionStorage`, and a 373-line test suite
-  (`src/__tests__/tiktok/TikTokPublishDialog.test.tsx`) that pins exact focus
-  behavior (e.g. `document.activeElement` lands on the step `<h2>` on open,
-  not a button) incompatible with `Dialog`'s default auto-focus. Swapping the
-  outer shell would mean re-deriving that focus contract under Radix, which
-  did not fit Lane F's budget. Left on the raw-control ratchet at its Lane 0
-  baseline (10). A future lane should re-scope this as its own PR: port the
-  focus-trap/step semantics onto `Dialog` deliberately, updating the pinned
-  test assertions alongside it.
+- **`src/apps/web/src/components/TikTokPublishDialog.tsx`** — the outer shell
+  is still NOT converted to the shadcn `Dialog` primitive. At 1166 lines it is
+  a hand-rolled `createPortal` + `useFocusTrap` sheet with multi-step state
+  (`details`/`confirm`), per-mode idempotency keys in `sessionStorage`, and a
+  373-line test suite (`src/__tests__/tiktok/TikTokPublishDialog.test.tsx`)
+  that pins exact focus behavior (e.g. `document.activeElement` lands on the
+  step `<h2>` on open, not a button) incompatible with `Dialog`'s default
+  auto-focus. Swapping the outer shell would mean re-deriving that focus
+  contract under Radix, which did not fit Lane F's (or the raw-control
+  ratchet flip's) budget. The file's internal controls (buttons, the caption
+  `<textarea>`) WERE migrated to `<Button>`/`<Textarea>` — those are plain
+  styled elements with no portal/focus-trap behavior of their own, so the
+  swap is safe without touching the shell; the pinned focus-order test suite
+  still passes unchanged. A future lane should re-scope the shell itself as
+  its own PR: port the focus-trap/step semantics onto `Dialog` deliberately,
+  updating the pinned test assertions alongside it.
 
 ---
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import {
   BAND_COLLAPSE_MS,
   CELEBRATION_HOLD_MS,
@@ -288,15 +289,15 @@ export function ProgressTheater({
         </p>
       )}
       {isFailed && onRetry && (
-        <button
+        <Button
           type="button"
           onClick={onRetry}
-          className={`min-h-11 rounded-full px-4 text-[13px] font-semibold transition-opacity hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
-            tone === "light" ? "bg-[#0c0c0e] text-white" : "bg-amber-300 text-zinc-900"
+          className={`h-auto min-h-11 rounded-full px-4 text-[13px] font-semibold transition-opacity hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+            tone === "light" ? "bg-[#0c0c0e] text-white hover:bg-[#0c0c0e]" : "bg-amber-300 text-zinc-900 hover:bg-amber-300"
           }`}
         >
           Try again
-        </button>
+        </Button>
       )}
     </>
   );
