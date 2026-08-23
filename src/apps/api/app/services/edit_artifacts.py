@@ -396,7 +396,7 @@ def mark_retention_succeeded(
     event_id: uuid.UUID,
     *,
     generation: str,
-    content_hash: str | None,
+    content_hash: str,
     completed_at: datetime | None = None,
 ) -> None:
     event = db.get(TrainingArtifactRetentionEvent, event_id)

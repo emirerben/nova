@@ -216,7 +216,11 @@ def upgrade() -> None:
             name="ck_edit_artifacts_plan_item_split",
         ),
         sa.UniqueConstraint(
-            "storage_path", "storage_generation", name="uq_edit_artifacts_storage_identity"
+            "job_id",
+            "variant_id",
+            "render_generation_id",
+            "artifact_kind",
+            name="uq_edit_artifacts_render_identity",
         ),
     )
     op.create_index(
@@ -439,7 +443,8 @@ def upgrade() -> None:
         sa.Column("status", sa.Text(), server_default="pending", nullable=False),
         sa.Column("storage_path", sa.Text(), nullable=False),
         sa.Column("storage_generation", sa.Text(), nullable=False),
-        sa.Column("content_hash", sa.Text(), nullable=False),
+        # The hash is only known after the generation-pinned copy succeeds.
+        sa.Column("content_hash", sa.Text(), nullable=True),
         sa.Column("idempotency_key", sa.Text(), nullable=False),
         sa.Column("error_code", sa.Text(), nullable=True),
         sa.Column(
@@ -456,6 +461,10 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "status IN ('pending', 'started', 'succeeded', 'failed')",
             name="ck_training_retention_event_status",
+        ),
+        sa.CheckConstraint(
+            "status != 'succeeded' OR content_hash IS NOT NULL",
+            name="ck_training_retention_succeeded_hash",
         ),
         sa.UniqueConstraint(
             "artifact_id", "idempotency_key", name="uq_training_retention_event_idempotency"

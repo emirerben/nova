@@ -1457,8 +1457,15 @@ class EditArtifact(Base):
         Index("idx_edit_artifacts_plan_item_created", "plan_item_id", "created_at"),
         Index("idx_edit_artifacts_kind_created", "artifact_kind", "created_at"),
         Index("idx_edit_artifacts_split", "creator_split", "plan_item_split"),
+        # Distinct edit versions may intentionally reuse the same immutable
+        # rendered object. Identity belongs to the exact job/variant/render,
+        # not globally to the storage object that backs it.
         UniqueConstraint(
-            "storage_path", "storage_generation", name="uq_edit_artifacts_storage_identity"
+            "job_id",
+            "variant_id",
+            "render_generation_id",
+            "artifact_kind",
+            name="uq_edit_artifacts_render_identity",
         ),
     )
 
@@ -1654,7 +1661,10 @@ class TrainingArtifactRetentionEvent(Base):
     # prefix. Never substitute the product-render source path from EditArtifact.
     storage_path: Mapped[str] = mapped_column(Text, nullable=False)
     storage_generation: Mapped[str] = mapped_column(Text, nullable=False)
-    content_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    # The retained copy does not have a stable hash until the copy succeeds.
+    # Pending/started/failed events therefore keep this null; the table check
+    # below requires it for succeeded events.
+    content_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
@@ -1671,6 +1681,10 @@ class TrainingArtifactRetentionEvent(Base):
         CheckConstraint(
             "status IN ('pending', 'started', 'succeeded', 'failed')",
             name="ck_training_retention_event_status",
+        ),
+        CheckConstraint(
+            "status != 'succeeded' OR content_hash IS NOT NULL",
+            name="ck_training_retention_succeeded_hash",
         ),
         UniqueConstraint(
             "artifact_id", "idempotency_key", name="uq_training_retention_event_idempotency"
