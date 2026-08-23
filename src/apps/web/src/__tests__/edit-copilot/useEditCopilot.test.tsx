@@ -1,10 +1,11 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { editCopilotTurn } from "@/lib/plan-api";
+import { editCopilotTurn, executeEditCopilotReceipt } from "@/lib/plan-api";
 import {
   deriveRecentEditHistory,
   editCopilotStorageKey,
   messagesToCopilotTurns,
   outcomeAuthoritativeReply,
+  reportCopilotExecution,
   useEditCopilot,
   type CopilotMessage,
   type UseEditCopilotOptions,
@@ -15,11 +16,16 @@ import type { EditCopilotTurnResponse } from "@/lib/plan-api";
 
 jest.mock("@/lib/plan-api", () => ({
   editCopilotTurn: jest.fn(),
+  executeEditCopilotReceipt: jest.fn(),
 }));
 
 const mockEditCopilotTurn = editCopilotTurn as jest.MockedFunction<
   typeof editCopilotTurn
 >;
+const mockExecuteEditCopilotReceipt =
+  executeEditCopilotReceipt as jest.MockedFunction<
+    typeof executeEditCopilotReceipt
+  >;
 
 function snapshot(label: string): CopilotSnapshot {
   return {
@@ -99,7 +105,41 @@ function renderCopilot(over: Partial<UseEditCopilotOptions> = {}) {
 
 beforeEach(() => {
   mockEditCopilotTurn.mockReset();
+  mockExecuteEditCopilotReceipt.mockReset();
+  mockExecuteEditCopilotReceipt.mockResolvedValue({
+    receipt_id: "receipt-1",
+    execution_receipt_id: "execution-1",
+    client_event_id: "event-1",
+    recorded: true,
+  });
   window.sessionStorage.clear();
+});
+
+describe("execution receipts", () => {
+  it("retries with the same client event id", async () => {
+    mockExecuteEditCopilotReceipt
+      .mockRejectedValueOnce(new Error("temporary"))
+      .mockResolvedValueOnce({
+        receipt_id: "receipt-1",
+        execution_receipt_id: "execution-1",
+        client_event_id: "stable-event",
+        recorded: false,
+      });
+    const body = {
+      client_event_id: "stable-event",
+      outcome: "applied" as const,
+      rejection_reasons: [],
+      before_revision_hash: "before",
+      after_revision_hash: null,
+    };
+
+    await expect(
+      reportCopilotExecution("item-1", "variant-1", "receipt-1", body, [0, 0]),
+    ).resolves.toBe(true);
+    expect(mockExecuteEditCopilotReceipt).toHaveBeenCalledTimes(2);
+    expect(mockExecuteEditCopilotReceipt.mock.calls[0][3]).toBe(body);
+    expect(mockExecuteEditCopilotReceipt.mock.calls[1][3]).toBe(body);
+  });
 });
 
 describe("messagesToCopilotTurns", () => {
@@ -239,6 +279,106 @@ describe("deriveRecentEditHistory", () => {
 });
 
 describe("useEditCopilot", () => {
+  it("posts the actual local apply outcome without blocking the edit", async () => {
+    mockEditCopilotTurn.mockResolvedValueOnce(
+      response({
+        receipt_id: "proposal-receipt",
+        outcome: "applied",
+        reply: "Done",
+      }),
+    );
+    const applyOps = jest.fn(() =>
+      appliedResult({
+        applied: [{ label: "Size", from: "64", to: "54" }],
+        rejected: [
+          {
+            op: "trim_clip",
+            label: "Trim clip",
+            reason: "stale",
+            detail: "clip changed",
+          },
+        ],
+      }),
+    );
+    const buildSnapshot = jest.fn(() => ({
+      ...snapshot("draft"),
+      guided_revision: {
+        revision_number: 4,
+        base_generation: "render-4",
+        state_hash: "state-before",
+      },
+    }));
+    const { result } = renderCopilot({ applyOps, buildSnapshot });
+
+    await act(async () => {
+      await result.current.send("make it smaller");
+    });
+    await waitFor(() => expect(mockExecuteEditCopilotReceipt).toHaveBeenCalledTimes(1));
+
+    expect(mockExecuteEditCopilotReceipt).toHaveBeenCalledWith(
+      "item-1",
+      "variant-1",
+      "proposal-receipt",
+      expect.objectContaining({
+        outcome: "applied",
+        before_revision_hash: "state-before",
+        after_revision_hash: null,
+        rejection_reasons: [
+          { op: "trim_clip", reason: "stale", detail: "clip changed" },
+        ],
+      }),
+    );
+    expect(result.current.messages[1].text).toContain("Applied: Size");
+  });
+
+  it("stages the durable proposal only when the applied turn has an undo version", async () => {
+    mockEditCopilotTurn.mockResolvedValueOnce(
+      response({ receipt_id: "proposal-receipt", outcome: "applied" }),
+    );
+    const onReceiptStaged = jest.fn();
+    const { result } = renderCopilot({
+      applyOps: jest.fn(() =>
+        appliedResult({ applied: [{ label: "Size", from: "64", to: "54" }] }),
+      ),
+      onApplied: jest.fn(() => ({ undoVersion: 7 })),
+      onReceiptStaged,
+    });
+
+    await act(async () => {
+      await result.current.send("make it smaller");
+    });
+
+    expect(onReceiptStaged).toHaveBeenCalledWith("proposal-receipt", 7);
+  });
+
+  it("records a failed execution when the local applier throws", async () => {
+    mockEditCopilotTurn.mockResolvedValueOnce(
+      response({ receipt_id: "proposal-receipt", outcome: "applied" }),
+    );
+    const { result } = renderCopilot({
+      applyOps: jest.fn(() => {
+        throw new Error("local apply exploded");
+      }),
+    });
+
+    await act(async () => {
+      await result.current.send("make it smaller");
+    });
+    await waitFor(() => expect(mockExecuteEditCopilotReceipt).toHaveBeenCalledTimes(1));
+
+    expect(mockExecuteEditCopilotReceipt.mock.calls[0][3]).toEqual(
+      expect.objectContaining({
+        outcome: "failed",
+        rejection_reasons: [
+          {
+            op: "client_apply",
+            reason: "failed",
+            detail: "The local editor could not execute the proposed operations.",
+          },
+        ],
+      }),
+    );
+  });
   it("queues one follow-up and sends it with a post-apply snapshot", async () => {
     const first = deferred<EditCopilotTurnResponse>();
     mockEditCopilotTurn

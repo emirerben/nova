@@ -171,6 +171,9 @@ export interface EditCopilotTurn {
 }
 
 export interface EditCopilotTurnResponse {
+  /** Durable identity for the server-proposed operation bundle. Absent only
+   * when talking to a pre-receipts backend during a split deployment. */
+  receipt_id?: string | null;
   intent: string;
   ops: CopilotOp[];
   confidence: number;
@@ -185,6 +188,32 @@ export interface EditCopilotTurnResponse {
   }>;
 }
 
+export type EditCopilotExecutionOutcome =
+  | "applied"
+  | "no_effect"
+  | "rejected"
+  | "stale"
+  | "failed";
+
+export interface EditCopilotExecutionReceiptBody {
+  client_event_id: string;
+  outcome: EditCopilotExecutionOutcome;
+  rejection_reasons: Array<{
+    op: string;
+    reason: string;
+    detail: string;
+  }>;
+  before_revision_hash: string | null;
+  after_revision_hash: string | null;
+}
+
+export interface EditCopilotExecutionReceiptResponse {
+  receipt_id: string;
+  execution_receipt_id: string;
+  client_event_id: string;
+  recorded: boolean;
+}
+
 export function editCopilotTurn(
   itemId: string,
   variantId: string,
@@ -196,6 +225,21 @@ export function editCopilotTurn(
 ): Promise<EditCopilotTurnResponse> {
   return request<EditCopilotTurnResponse>(
     `/plan-items/${itemId}/variants/${variantId}/copilot/turn`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export function executeEditCopilotReceipt(
+  itemId: string,
+  variantId: string,
+  receiptId: string,
+  body: EditCopilotExecutionReceiptBody,
+): Promise<EditCopilotExecutionReceiptResponse> {
+  return request<EditCopilotExecutionReceiptResponse>(
+    `/plan-items/${itemId}/variants/${variantId}/copilot/receipts/${receiptId}/execute`,
     {
       method: "POST",
       body: JSON.stringify(body),

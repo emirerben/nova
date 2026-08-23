@@ -3,7 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   editCopilotTurn,
+  executeEditCopilotReceipt,
   type EditCopilotTurn,
+  type EditCopilotExecutionOutcome,
+  type EditCopilotExecutionReceiptBody,
   type EditCopilotTurnResponse,
 } from "@/lib/plan-api";
 import type { CopilotOp } from "./ops";
@@ -84,6 +87,8 @@ export interface UseEditCopilotOptions {
     response: EditCopilotTurnResponse,
     snapshot: CopilotSnapshot,
   ) => { undoVersion?: number; isRenderTurn?: boolean; assistantText?: string } | void;
+  /** Called only for a locally applied, undoable turn with durable proposal identity. */
+  onReceiptStaged?: (receiptId: string, undoVersion: number) => void;
   /** Last ≤8 humanized render steps for the current job (PR1's status-route
    * `steps` field, once a parallel PR lands it — the caller is responsible
    * for sourcing this, e.g. from a polled job-status hook). Undefined/empty
@@ -188,6 +193,87 @@ function summaries(result: ApplyCopilotOpsResult): {
     ),
     rejected: result.rejected.map((op) => `${op.label}: ${op.detail}`),
   };
+}
+
+function newClientEventId(): string {
+  const randomUUID = globalThis.crypto?.randomUUID;
+  if (randomUUID) return randomUUID.call(globalThis.crypto);
+  return `copilot-execution-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function executionOutcome(
+  response: EditCopilotTurnResponse,
+  result: ApplyCopilotOpsResult,
+): EditCopilotExecutionOutcome {
+  if (response.outcome === "stale") return "stale";
+  if (response.outcome === "failed") return "failed";
+  if (result.applied.length > 0) return "applied";
+  if (result.rejected.length > 0 || response.outcome === "unsupported") return "rejected";
+  return "no_effect";
+}
+
+function snapshotRevisionHash(snapshot: CopilotSnapshot): string | null {
+  return (
+    snapshot.guided_revision?.state_hash ||
+    (snapshot.guided_revision
+      ? `${snapshot.guided_revision.revision_number}:${snapshot.guided_revision.base_generation}`.slice(0, 128)
+      : null)
+  );
+}
+
+function executionReceiptBody(
+  response: EditCopilotTurnResponse,
+  result: ApplyCopilotOpsResult,
+  snapshot: CopilotSnapshot,
+): EditCopilotExecutionReceiptBody {
+  const beforeRevisionHash = snapshotRevisionHash(snapshot);
+  const outcome = executionOutcome(response, result);
+  return {
+    client_event_id: newClientEventId(),
+    outcome,
+    rejection_reasons: [
+      ...(response.rejection_reasons ?? []).map((reason) => ({
+        op: reason.op,
+        reason: reason.reason,
+        detail: reason.detail,
+      })),
+      ...result.rejected.map((reason) => ({
+        op: reason.op,
+        reason: reason.reason,
+        detail: reason.detail,
+      })),
+    ],
+    before_revision_hash: beforeRevisionHash,
+    // Applied changes are still a local, unsaved draft at this point. Claiming
+    // the old server revision as the after hash would be false; the eventual
+    // saved artifact can link this receipt once it has a canonical hash.
+    after_revision_hash: outcome === "applied" ? null : beforeRevisionHash,
+  };
+}
+
+/** Best-effort audit delivery. A stable client_event_id is reused across
+ * retries so the append-only server endpoint can return the original row.
+ * Receipt persistence must never delay or undo a successful local edit. */
+export async function reportCopilotExecution(
+  itemId: string,
+  variantId: string,
+  receiptId: string,
+  body: EditCopilotExecutionReceiptBody,
+  retryDelaysMs: readonly number[] = [0, 250, 1000],
+): Promise<boolean> {
+  for (let attempt = 0; attempt < retryDelaysMs.length; attempt += 1) {
+    if (retryDelaysMs[attempt] > 0) {
+      await new Promise((resolve) => setTimeout(resolve, retryDelaysMs[attempt]));
+    }
+    try {
+      await executeEditCopilotReceipt(itemId, variantId, receiptId, body);
+      return true;
+    } catch {
+      // Continue with the same idempotency key. There is deliberately no UI
+      // error: the creator's staged edit already succeeded.
+    }
+  }
+  return false;
 }
 
 /** One line per applied turn: distinct op labels from the summary chip strings,
@@ -391,6 +477,8 @@ export function useEditCopilot(
       recentEditHistory: deriveRecentEditHistory(messagesRef.current),
     });
     let succeeded = false;
+    let receiptResponse: EditCopilotTurnResponse | null = null;
+    let receiptReported = false;
 
     try {
       const response = await editCopilotTurn(
@@ -402,6 +490,7 @@ export function useEditCopilot(
           snapshot,
         },
       );
+      receiptResponse = response;
       const shouldClarify = response.outcome
         ? response.outcome === "clarification"
         : response.needs_clarification;
@@ -418,6 +507,18 @@ export function useEditCopilot(
         snapshot,
       );
       const outcome = summaries(applyResult);
+      if (response.receipt_id) {
+        receiptReported = true;
+        void reportCopilotExecution(
+          optsRef.current.itemId,
+          optsRef.current.variantId,
+          response.receipt_id,
+          executionReceiptBody(response, applyResult, snapshot),
+        );
+        if (applyMeta?.undoVersion != null && response.outcome === "applied") {
+          optsRef.current.onReceiptStaged?.(response.receipt_id, applyMeta.undoVersion);
+        }
+      }
       const assistantText =
         applyMeta?.assistantText ??
         outcomeAuthoritativeReply({
@@ -451,6 +552,29 @@ export function useEditCopilot(
       setSuggestions(response.suggestions);
       succeeded = true;
     } catch (err) {
+      if (receiptResponse?.receipt_id && !receiptReported) {
+        const beforeRevisionHash = snapshotRevisionHash(snapshot);
+        receiptReported = true;
+        void reportCopilotExecution(
+          optsRef.current.itemId,
+          optsRef.current.variantId,
+          receiptResponse.receipt_id,
+          {
+            client_event_id: newClientEventId(),
+            outcome: "failed",
+            rejection_reasons: [
+              ...(receiptResponse.rejection_reasons ?? []),
+              {
+                op: "client_apply",
+                reason: "failed",
+                detail: "The local editor could not execute the proposed operations.",
+              },
+            ],
+            before_revision_hash: beforeRevisionHash,
+            after_revision_hash: beforeRevisionHash,
+          },
+        );
+      }
       if (abandonedTurnsRef.current.has(turnId)) {
         abandonedTurnsRef.current.delete(turnId);
         return;

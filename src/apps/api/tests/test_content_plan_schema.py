@@ -81,7 +81,7 @@ def script_dir() -> ScriptDirectory:
 
 def test_single_alembic_head(script_dir: ScriptDirectory) -> None:
     heads = script_dir.get_heads()
-    assert heads == ["0079"], f"expected a single head 0079, got {heads}"
+    assert heads == ["0080"], f"expected a single head 0080, got {heads}"
 
 
 def test_migration_chain_is_linear(script_dir: ScriptDirectory) -> None:
@@ -258,6 +258,35 @@ def test_plan_item_assets_registered() -> None:
         "status",
         "created_at",
     } <= asset_cols
+
+
+def test_training_retention_hash_is_required_only_after_success() -> None:
+    """A pending copy cannot have a hash; a successful retained copy must."""
+    table = models.Base.metadata.tables["training_artifact_retention_events"]
+    assert table.columns["content_hash"].nullable is True
+    constraint = next(
+        value for value in table.constraints if value.name == "ck_training_retention_succeeded_hash"
+    )
+    assert str(constraint.sqltext) == "status != 'succeeded' OR content_hash IS NOT NULL"
+
+
+def test_edit_artifact_identity_is_render_scoped_not_storage_scoped() -> None:
+    """Different edits may reuse one immutable rendered storage generation."""
+    table = models.Base.metadata.tables["edit_artifacts"]
+    identity = next(
+        constraint
+        for constraint in table.constraints
+        if constraint.name == "uq_edit_artifacts_render_identity"
+    )
+    assert tuple(identity.columns.keys()) == (
+        "job_id",
+        "variant_id",
+        "render_generation_id",
+        "artifact_kind",
+    )
+    assert all(
+        constraint.name != "uq_edit_artifacts_storage_identity" for constraint in table.constraints
+    )
 
 
 def test_jobs_has_content_plan_item_fk() -> None:

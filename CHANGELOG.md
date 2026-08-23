@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.49.1.0] — 2026-08-23
+
+### Added
+- **Emir can now review Nova’s edits factor by factor.** The internal edit-feedback workbench shows exact retained final renders, Nova’s request/response evidence, a frame-aware timeline, and separate good/bad/mixed/not-applicable ratings with written rationale for overall quality, guidance, instruction fit, hooks, pacing, cuts, clip choices, captions, text, transitions, music, audio, effects, and overlays.
+- **The edit-learning loop is consent-safe and versioned.** Final renders, interaction execution receipts, append-only annotations, consent events, and prompt/model provenance are bound to an exact internal grant or customer consent cycle; revocation excludes records and purges retained training copies.
+- **Admin datasets are ready for evaluation and provider-neutral tuning experiments.** Balanced review sampling, creator-isolated splits, JSONL/Parquet exports, replay candidates, preference pairs, held-out cases, and generic fine-tuning preparation remain manual and never promote a production model automatically.
+
+### Changed
+- **Internal review backfill scans every discoverable historic job in bounded pages.** New render versions are captured at completion, while old current-ready versions are queued after an explicit internal-account grant without a 300-job ceiling.
+- **Legacy fixture exporters now fail closed for unconsented user-derived data.** Training exports use an explicit allowlist and never include raw uploads, source paths, signed URLs, whole assembly plans, or unredacted agent-run payloads.
+
 ## [0.49.0.0] — 2026-08-23
 
 ### Added

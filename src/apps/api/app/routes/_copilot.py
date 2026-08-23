@@ -41,6 +41,10 @@ class CopilotTurnBody(BaseModel):
 
 
 class CopilotTurnResponse(BaseModel):
+    # Minted by the owning HTTP route after the final, server-validated
+    # operation bundle is known.  The shared helper deliberately leaves this
+    # unset because it has no database session or plan-item identity.
+    receipt_id: str | None = None
     intent: str
     ops: list[dict] = []
     confidence: float

@@ -336,6 +336,11 @@ def _validate_payload(payload: dict) -> list[str]:
 async def export_all(
     *, only: str | None = None, dry_run: bool = False, include_failing: bool = False
 ) -> dict[str, int]:
+    if only in {"transcript", "platform_copy"}:
+        raise ValueError(
+            "Customer-derived transcript/platform exports are retired. "
+            "Use the consent-safe admin edit-training export instead."
+        )
     counts = {
         "template_recipe": 0,
         "template_text": 0,
@@ -371,25 +376,12 @@ async def export_all(
             .all()
         )
 
+        # Never scan customer Job/JobClip rows. Historical transcript and
+        # platform-copy fixture exports predated explicit training consent and
+        # are now permanently fail-closed.
         jobs: list[Job] = []
         clips: list[JobClip] = []
         tracks: list[MusicTrack] = []
-        if only in (None, "transcript"):
-            jobs = (
-                (await session.execute(select(Job).where(Job.transcript.isnot(None)).limit(50)))
-                .scalars()
-                .all()
-            )
-        if only in (None, "platform_copy"):
-            clips = (
-                (
-                    await session.execute(
-                        select(JobClip).where(JobClip.platform_copy.isnot(None)).limit(50)
-                    )
-                )
-                .scalars()
-                .all()
-            )
         if only in (None, "audio_template"):
             tracks = (
                 (

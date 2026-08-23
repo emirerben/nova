@@ -1840,7 +1840,49 @@ def test_copilot_route_allows_guided_story_text_drafts(client: TestClient, monke
 
     assert resp.status_code == 200
     assert resp.json()["ops"][0]["op"] == "set_text"
+    # Operational editing stays available, but training telemetry fails closed
+    # for a creator without an internal grant or explicit training consent.
+    assert resp.json()["receipt_id"] is None
     run.assert_awaited_once()
+
+
+def test_copilot_execution_receipt_route_forwards_actual_outcome(
+    client: TestClient, monkeypatch
+) -> None:
+    from app.services.edit_interaction_receipts import ExecuteCopilotReceiptResponse
+
+    user = _user()
+    item, plan = _item_and_plan(user.id)
+    _install_route_deps(user, item, plan)
+    receipt_id = uuid.uuid4()
+    execute = AsyncMock(
+        return_value=ExecuteCopilotReceiptResponse(
+            receipt_id=str(receipt_id),
+            execution_receipt_id=str(uuid.uuid4()),
+            client_event_id="browser-event-1",
+            recorded=True,
+        )
+    )
+    monkeypatch.setattr(plan_items, "persist_copilot_execution", execute)
+
+    resp = client.post(
+        f"/plan-items/{item.id}/variants/v1/copilot/receipts/{receipt_id}/execute",
+        json={
+            "client_event_id": "browser-event-1",
+            "outcome": "rejected",
+            "rejection_reasons": [{"op": "trim_clip", "reason": "stale", "detail": "clip changed"}],
+            "before_revision_hash": "before",
+            "after_revision_hash": "before",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["recorded"] is True
+    execute.assert_awaited_once()
+    kwargs = execute.await_args.kwargs
+    assert kwargs["creator_id"] == user.id
+    assert kwargs["plan_item_id"] == item.id
+    assert kwargs["body"].outcome == "rejected"
 
 
 def test_copilot_route_replaces_model_direction_request_with_server_plan(

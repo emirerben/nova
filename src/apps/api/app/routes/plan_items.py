@@ -141,6 +141,12 @@ from app.services.content_plan_persona import (
     load_owned_plan_persona,
     require_plan_persona_owned,
 )
+from app.services.edit_interaction_receipts import (
+    ExecuteCopilotReceiptBody,
+    ExecuteCopilotReceiptResponse,
+    persist_copilot_execution,
+    persist_copilot_proposal,
+)
 from app.services.generative_upload_paths import DIRECT_VOICEOVER_PREFIX
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
 from app.services.media_overlay_preview import (
@@ -3730,6 +3736,13 @@ async def change_item_style(
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
 
+_COPILOT_DIRECTION_ONLY_DETAIL = "direction replacement must be the only operation in this turn"
+_COPILOT_STALE_REPLY = "That edit is based on an older draft. Refresh the editor and try again."
+_COPILOT_FAST_MONTAGE_REPLY = (
+    "I built a fast, music-led replacement draft from the strongest analyzed moments."
+)
+
+
 @router.post(
     "/{item_id}/variants/{variant_id}/copilot/turn",
     response_model=CopilotTurnResponse,
@@ -3762,27 +3775,41 @@ async def plan_item_copilot_turn(
     variant = require_editable_variant(job, variant_id, allow_guided_text=True)
     # agent_run.job_id FKs jobs.id — pass the render job, never the plan-item id.
     response = CopilotTurnResponse.model_validate(await run_copilot_turn(body, job_id=job.id))
+
+    async def record(final_response: CopilotTurnResponse) -> CopilotTurnResponse:
+        return await persist_copilot_proposal(
+            db,
+            creator_id=user.id,
+            plan_item_id=job.content_plan_item_id or uuid.UUID(item_id),
+            job_id=job.id,
+            variant_id=variant_id,
+            body=body,
+            response=final_response,
+        )
+
     direction_ops = [op for op in response.ops if op.get("op") == "set_edit_direction"]
     if not direction_ops:
-        return response
+        return await record(response)
     if len(response.ops) != 1 or len(direction_ops) != 1:
-        return response.model_copy(
-            update={
-                "ops": [],
-                "outcome": "failed",
-                "needs_clarification": False,
-                "reply": (
-                    "I couldn't stage a direction replacement together with other edits. "
-                    "Try that request on its own."
-                ),
-                "rejection_reasons": [
-                    {
-                        "op": "set_edit_direction",
-                        "reason": "invalid_value",
-                        "detail": "direction replacement must be the only operation in this turn",
-                    }
-                ],
-            }
+        return await record(
+            response.model_copy(
+                update={
+                    "ops": [],
+                    "outcome": "failed",
+                    "needs_clarification": False,
+                    "reply": (
+                        "I couldn't stage a direction replacement together with other edits. "
+                        "Try that request on its own."
+                    ),
+                    "rejection_reasons": [
+                        {
+                            "op": "set_edit_direction",
+                            "reason": "invalid_value",
+                            "detail": _COPILOT_DIRECTION_ONLY_DETAIL,
+                        }
+                    ],
+                }
+            )
         )
 
     request_op = direction_ops[0]
@@ -3802,20 +3829,22 @@ async def plan_item_copilot_turn(
         or request_op.get("revision_number") != revision.get("revision_number")
         or request_op.get("base_generation") != current_generation
     ):
-        return response.model_copy(
-            update={
-                "ops": [],
-                "outcome": "stale",
-                "needs_clarification": False,
-                "reply": "That edit is based on an older draft. Refresh the editor and try again.",
-                "rejection_reasons": [
-                    {
-                        "op": "set_edit_direction",
-                        "reason": "stale_target",
-                        "detail": "the guided-story revision changed before replanning",
-                    }
-                ],
-            }
+        return await record(
+            response.model_copy(
+                update={
+                    "ops": [],
+                    "outcome": "stale",
+                    "needs_clarification": False,
+                    "reply": _COPILOT_STALE_REPLY,
+                    "rejection_reasons": [
+                        {
+                            "op": "set_edit_direction",
+                            "reason": "stale_target",
+                            "detail": "the guided-story revision changed before replanning",
+                        }
+                    ],
+                }
+            )
         )
     try:
         _proposal_version, _media_digest, approved = validate_guided_snapshot(
@@ -3838,23 +3867,25 @@ async def plan_item_copilot_turn(
             raise ValueError("fast montage planner returned no cuts")
     except Exception as exc:  # noqa: BLE001 - model/planner failure is honest + retryable
         log.warning("edit_copilot.direction_planner_failed", job_id=str(job.id), exc_info=True)
-        return response.model_copy(
-            update={
-                "ops": [],
-                "outcome": "failed",
-                "needs_clarification": False,
-                "reply": (
-                    "I understood the direction, but couldn't build a valid replacement "
-                    "draft. Try again."
-                ),
-                "rejection_reasons": [
-                    {
-                        "op": "set_edit_direction",
-                        "reason": "invalid_value",
-                        "detail": f"direction planner failed: {type(exc).__name__}",
-                    }
-                ],
-            }
+        return await record(
+            response.model_copy(
+                update={
+                    "ops": [],
+                    "outcome": "failed",
+                    "needs_clarification": False,
+                    "reply": (
+                        "I understood the direction, but couldn't build a valid replacement "
+                        "draft. Try again."
+                    ),
+                    "rejection_reasons": [
+                        {
+                            "op": "set_edit_direction",
+                            "reason": "invalid_value",
+                            "detail": f"direction planner failed: {type(exc).__name__}",
+                        }
+                    ],
+                }
+            )
         )
 
     server_op = {
@@ -3893,16 +3924,52 @@ async def plan_item_copilot_turn(
         "hard_cuts": True,
         "minimal_text": True,
     }
-    return response.model_copy(
-        update={
-            "ops": [server_op],
-            "outcome": "applied",
-            "needs_clarification": False,
-            "reply": (
-                "I built a fast, music-led replacement draft from the strongest analyzed moments."
-            ),
-            "rejection_reasons": [],
-        }
+    return await record(
+        response.model_copy(
+            update={
+                "ops": [server_op],
+                "outcome": "applied",
+                "needs_clarification": False,
+                "reply": _COPILOT_FAST_MONTAGE_REPLY,
+                "rejection_reasons": [],
+            }
+        )
+    )
+
+
+@router.post(
+    "/{item_id}/variants/{variant_id}/copilot/receipts/{receipt_id}/execute",
+    response_model=ExecuteCopilotReceiptResponse,
+)
+async def execute_plan_item_copilot_receipt(
+    item_id: str,
+    variant_id: str,
+    receipt_id: str,
+    body: ExecuteCopilotReceiptBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> ExecuteCopilotReceiptResponse:
+    """Append the browser's actual local-applier outcome.
+
+    The proposal, creator, item, and variant must all match. The browser reuses
+    ``client_event_id`` across best-effort retries, so a duplicate request
+    returns the original execution row without mutating it.
+    """
+
+    try:
+        proposal_id = uuid.UUID(receipt_id)
+        plan_item_id = uuid.UUID(item_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Receipt not found"
+        ) from exc
+    return await persist_copilot_execution(
+        db,
+        proposal_id=proposal_id,
+        creator_id=user.id,
+        plan_item_id=plan_item_id,
+        variant_id=variant_id,
+        body=body,
     )
 
 
@@ -5101,6 +5168,24 @@ async def editor_commit_item(
         visual_assets=visual_assets,
     )
 
+    canonical_revision_hash = str(
+        (prep.get("guided_revision") or {}).get("state_hash") or prep["generation"]
+    )
+    if commit_body.copilot_receipt_ids:
+        from app.services.edit_interaction_receipts import (  # noqa: PLC0415
+            stage_copilot_save_links,
+        )
+
+        await stage_copilot_save_links(
+            db,
+            proposal_ids=commit_body.copilot_receipt_ids,
+            creator_id=user.id,
+            plan_item_id=item.id,
+            job_id=locked_job.id,
+            variant_id=variant_id,
+            revision_hash=canonical_revision_hash,
+        )
+
     if cleaned_title is not None:
         item.theme = cleaned_title
         item.user_edited = True
@@ -5141,6 +5226,7 @@ async def editor_commit_item(
         ok=render_started,
         generation=prep["generation"],
         revision_number=prep.get("revision_number"),
+        revision_hash=canonical_revision_hash,
         sections=EditorCommitSections(
             text_elements=prep["sections"]["text_elements"],
             caption_cues=prep["sections"]["caption_cues"],

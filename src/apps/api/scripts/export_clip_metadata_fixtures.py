@@ -107,6 +107,14 @@ def _bucket(meta: dict) -> str:
 
 
 def main() -> None:
+    sys.exit(
+        "This exporter is retired because cached clip analyses have no durable "
+        "creator-consent identity. Use /admin/edit-feedback exports instead."
+    )
+
+
+def _retired_main() -> None:
+    """Historical implementation retained temporarily for fixture archaeology."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--limit", type=int, default=6, help="Max fixtures to export.")
     parser.add_argument(
