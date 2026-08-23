@@ -1966,6 +1966,9 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
                 "audio_gcs_path": str(matched.audio_gcs_path),
                 "generation": audio_metadata.generation,
                 "start_s": round(float(config.get("best_start_s", 0.0) or 0.0), 3),
+                "beat_timestamps_s": [
+                    round(float(beat), 3) for beat in (matched.beat_timestamps_s or [])
+                ],
             }
         candidate = compile_execution_plan(guided_snapshot, track=track_payload)
         with _sync_session() as db:

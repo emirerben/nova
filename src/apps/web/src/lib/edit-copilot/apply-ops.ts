@@ -11,6 +11,7 @@ import type {
   SoundEffectPlacement,
   VisualBlock,
 } from "@/lib/plan-api";
+import type { TimelineClip } from "@/lib/generative-api";
 import { normalizeCameraEffect } from "@/lib/camera-effects";
 import { removeOverlayEffectGroup } from "@/lib/overlay-effect-groups";
 import { defaultLookAdjustments, lookPresetLabel } from "@/lib/look-presets";
@@ -84,7 +85,9 @@ export type RejectedOpReason =
   | "target_missing"
   | "user_changed"
   | "unsupported_field"
-  | "no_effect";
+  | "no_effect"
+  | "unsupported"
+  | "stale";
 
 export interface ChangeChip {
   label: string;
@@ -171,6 +174,8 @@ export interface ApplyCopilotOpsResult {
 export interface ApplyCopilotOpsContext {
   bars: TextElementBar[];
   slots: DraftSlot[];
+  /** Complete guided source pool used by server-planned direction replacements. */
+  clips?: TimelineClip[];
   snapshot: CopilotSnapshot;
   capabilities?: EditorCapabilities | null;
   grid?: number[];
@@ -539,6 +544,7 @@ function labelForOp(op: CopilotOp): string {
   if (op.op === "apply_custom_effect") return "Custom effect";
   if (op.op === "set_carousel_moment") return "Carousel";
   if (op.op === "set_title") return "Title set";
+  if (op.op === "set_edit_direction") return "Edit direction";
   if (op.op === "add_camera_effect") return "Add camera effect";
   if (op.op === "patch_camera_effect") return `Camera effect ${op.camera_effect_index + 1}`;
   if (op.op === "remove_camera_effect") return `Remove camera effect ${op.camera_effect_index + 1}`;
@@ -784,6 +790,24 @@ export function applyCopilotOps(
   rawOps: readonly unknown[],
   ctx: ApplyCopilotOpsContext,
 ): ApplyCopilotOpsResult {
+  const hasDirectionReplacement = rawOps.some(
+    (raw) => raw != null && typeof raw === "object" &&
+      String((raw as Record<string, unknown>).op ?? "") === "set_edit_direction",
+  );
+  if (hasDirectionReplacement && rawOps.length !== 1) {
+    return {
+      textActions: [],
+      nextSlots: null,
+      applied: [],
+      rejected: [{
+        op: "set_edit_direction",
+        label: "Edit direction",
+        reason: "unsupported",
+        detail: "direction replacement must be the only operation in this turn",
+      }],
+      appliedOps: [],
+    };
+  }
   const textActions: TextEditorAction[] = [];
   const applied: ChangeChip[] = [];
   const rejected: RejectedOp[] = [];
@@ -940,6 +964,124 @@ export function applyCopilotOps(
     }
     if (op.op === "split_clip" && ctx.capabilities?.split_clips === false) {
       rejected.push(reject(op.op, labelForOp(op), "capability_disabled", "clip splitting is disabled for this variant"));
+      continue;
+    }
+
+    if (op.op === "set_edit_direction") {
+      const identity = ctx.snapshot.guided_revision;
+      if (!identity) {
+        rejected.push(reject(op.op, labelForOp(op), "unsupported", "fast montage direction requires an active guided-story revision"));
+        continue;
+      }
+      if (identity.revision_number !== op.revision_number || identity.base_generation !== op.base_generation) {
+        rejected.push(reject(op.op, labelForOp(op), "stale", "guided-story revision is stale; refresh before changing direction"));
+        continue;
+      }
+      const baselineSlots = ctx.snapshot.slots;
+      const slots = currentSlots();
+      if (baselineSlots.length !== slots.length || baselineSlots.some((snap, index) => {
+        const current = slots[index];
+        return !current || !completeSlotFingerprintMatches(slots, grid, current, index, snap);
+      })) {
+        rejected.push(reject(op.op, labelForOp(op), "stale", "the clip timeline changed after Nova read it"));
+        continue;
+      }
+      const clips = ctx.clips ?? [];
+      const directed: DraftSlot[] = [];
+      for (const cut of op.cuts) {
+        const source = clips.find((clip) => clip.media_id === cut.media_id);
+        if (!source) {
+          rejected.push(reject(op.op, labelForOp(op), "stale", `planned source ${cut.media_id} is no longer available`));
+          break;
+        }
+        if (
+          source.kind === "video" &&
+          typeof source.duration_s === "number" &&
+          cut.start_s + cut.duration_s > source.duration_s + 0.001
+        ) {
+          rejected.push(reject(op.op, labelForOp(op), "unsupported", "fast montage cut exceeds the source clip duration"));
+          break;
+        }
+        const template = slots.find((slot) => slot.clipIndex === source.clip_index);
+        const timing = applyClipTimingInput({
+          inS: cut.start_s,
+          durationS: cut.duration_s,
+          sourceDurationS: source.kind === "video" ? source.duration_s : null,
+        });
+        if (!timing) {
+          rejected.push(reject(op.op, labelForOp(op), "unsupported", "fast montage cut timing is invalid"));
+          break;
+        }
+        directed.push({
+          ...(template ?? {
+            key: "",
+            slotId: null,
+            parentSegmentId: null,
+            clipIndex: source.clip_index,
+            durationBeats: null,
+            removed: false,
+            momentDescription: null,
+            lookPreset: "none" as const,
+            lookAdjustments: null,
+          }),
+          key: (ctx.makeSlotKey ?? defaultSlotKey)(
+            template ?? {
+              key: `direction-${source.clip_index}`,
+              slotId: null,
+              parentSegmentId: null,
+              clipIndex: source.clip_index,
+              inS: 0,
+              durationBeats: null,
+              durationS: cut.duration_s,
+              removed: false,
+              momentDescription: null,
+            },
+          ),
+          slotId: null,
+          // A direction replacement authors independent cuts, not split
+          // descendants. Keeping this null also permits repeated image cuts;
+          // the server's split-parent contract intentionally rejects images.
+          parentSegmentId: null,
+          clipIndex: source.clip_index,
+          ...timing,
+          removed: false,
+          transitionAfter: "cut" as const,
+          transitionDurationS: null,
+        });
+      }
+      if (rejected.length > 0 || directed.length !== op.cuts.length) {
+        continue;
+      }
+      sequentialSlotLayout(directed, grid);
+      if (op.minimal_text) {
+        const approvedClear = new Map(
+          (op.clear_text ?? []).map((entry) => [entry.id, entry.expected_text]),
+        );
+        ctx.snapshot.text_bars.forEach((snap, index) => {
+          const expectedText = approvedClear.get(snap.id);
+          // The server only marks still-unmodified planner text. Local or
+          // persisted creator edits fail this exact-text guard and survive.
+          if (expectedText === undefined || snap.text !== expectedText) return;
+          const bar = textBarForSnap(ctx.bars, snap);
+          if (!bar || bar.text !== expectedText || !completeTextFingerprintMatches(bar, snap)) return;
+          // Guided V2 keeps approved text identities immutable until Save.
+          // Empty text is renderer-inert but preserves that atomic commit
+          // contract; deleting the ID would make the whole Save fail closed.
+          textActions.push({ type: "PATCH_BAR", id: bar.id, patch: { text: "" } });
+          applied.push({ label: `Remove text ${index + 1}`, from: bar.text, to: "removed" });
+        });
+      }
+      if (!sameNormalizedValue(directed, slots)) {
+        workingSlots = directed;
+        nextSlots = directed;
+        timelineMutated = true;
+        applied.push({ label: "Edit direction", from: "current pacing", to: "fast montage" });
+      }
+      if (applied.length === appliedCountBeforeOp) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "draft already uses fast montage direction"));
+      } else {
+        appliedOps.push(op);
+      }
       continue;
     }
 

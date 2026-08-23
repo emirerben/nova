@@ -677,6 +677,14 @@ export default function PlanItemPage() {
       if (
         GUIDED_EDIT_ENABLED &&
         item.guided_edit_available === true &&
+        item.edit_proposal?.guidance?.state === "awaiting_direction_confirmation"
+      ) {
+        return true;
+      }
+
+      if (
+        GUIDED_EDIT_ENABLED &&
+        item.guided_edit_available === true &&
         (item.edit_proposal?.status === "analyzing" ||
           item.edit_proposal?.status === "drafting" ||
           item.edit_proposal?.conversation_in_progress === true)
@@ -1428,7 +1436,13 @@ export default function PlanItemPage() {
       if (item && needsFormatPersist(item.edit_format)) {
         await updatePlanItem(item.id, { edit_format: resolvedFormat });
       }
-      await generatePlanItem(itemId);
+      const generated = await generatePlanItem(itemId);
+      if (generated.edit_proposal?.guidance?.state === "awaiting_direction_confirmation") {
+        awaitingJobSince.current = null;
+        setGenerating(false);
+        refetch();
+        return;
+      }
       refetch();
     } catch (err) {
       awaitingJobSince.current = null;
@@ -1440,6 +1454,12 @@ export default function PlanItemPage() {
   // Release the Generate lock once the render registers (or the wait window
   // expires without a job — surface that instead of silently doing nothing).
   useEffect(() => {
+    if (item?.edit_proposal?.guidance?.state === "awaiting_direction_confirmation") {
+      awaitingJobSince.current = null;
+      setGenerating(false);
+      setError((prev) => (prev === RENDER_REGISTER_ERROR ? null : prev));
+      return;
+    }
     const registered = item != null && hasRenderRegistered(item, jobIdBeforeGenerateRef.current);
     if (registered) {
       // A registered render moots any earlier didn't-register complaint —
@@ -1592,7 +1612,9 @@ export default function PlanItemPage() {
     shotsLeft,
   });
   const guidedEditHint =
-    item.edit_proposal?.status === "stale"
+    item.edit_proposal?.guidance?.state === "awaiting_direction_confirmation"
+      ? "Confirm Kria's direction guess before it builds the edit plan."
+      : item.edit_proposal?.status === "stale"
       ? "Your media changed — plan the edit again."
       : item.edit_proposal?.status === "analyzing" || item.edit_proposal?.status === "drafting"
         ? guidedEditAutoDesign
@@ -1610,6 +1632,14 @@ export default function PlanItemPage() {
   // one sentence + button label, all keyed off item.edit_proposal?.status.
   const guidedEditStatusRow = (() => {
     const status = item.edit_proposal?.status;
+    if (item.edit_proposal?.guidance?.state === "awaiting_direction_confirmation") {
+      return {
+        badgeLabel: "Direction check",
+        badgeVariant: "zinc" as const,
+        sentence: "Kria thinks this should be a fast, music-led montage with minimal text.",
+        buttonLabel: "Review direction",
+      };
+    }
     if (status === "draft") {
       return {
         badgeLabel: "Draft ready",
@@ -1956,7 +1986,9 @@ export default function PlanItemPage() {
   );
 
   const generateGated =
-    gate.disabled || (guidedEditActive && !guidedEditApproved && !guidedEditAutoDesign);
+    gate.disabled ||
+    (guidedEditActive && !guidedEditApproved && !guidedEditAutoDesign) ||
+    item.edit_proposal?.guidance?.state === "awaiting_direction_confirmation";
   const generateLabel = generating
     ? "Starting…"
     : uploaderBusy

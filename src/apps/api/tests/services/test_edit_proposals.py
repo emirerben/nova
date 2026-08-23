@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
@@ -17,7 +18,9 @@ from app.services.edit_proposals import (
     ProposalConflictError,
     approve_proposal,
     begin_proposal_attempt,
+    direction_guidance_fingerprint,
     guided_render_is_blocked,
+    infer_direction_guidance,
     mark_edit_proposal_stale,
     proposal_generate_error,
     record_proposal_render_failure,
@@ -30,9 +33,37 @@ from app.services.plan_clips import ensure_clip_media_ids
 
 
 def _item(**overrides):
-    values = {"clip_assignments": [], "edit_proposal": None}
+    values = {"id": uuid4(), "clip_assignments": [], "edit_proposal": None}
     values.update(overrides)
     return SimpleNamespace(**values)
+
+
+def test_inferred_direction_is_fast_and_media_fingerprinted() -> None:
+    item = _item(
+        clip_assignments=[{"media_id": "clip-1", "gcs_path": "users/u/clip.mp4", "generation": "7"}]
+    )
+    guidance = infer_direction_guidance(item, media_digest="a" * 64, duration_s=15)
+
+    assert guidance.state == "awaiting_direction_confirmation"
+    assert guidance.provenance == "ai_inferred"
+    assert guidance.hypothesis.direction == "fast_montage"
+    assert guidance.hypothesis.pace == "fast"
+    assert guidance.hypothesis.text_density == "minimal"
+    assert guidance.hypothesis.audio_role == "music_led"
+    assert guidance.fingerprint == direction_guidance_fingerprint(item, "a" * 64)
+    item.clip_assignments[0]["generation"] = "8"
+    assert guidance.fingerprint != direction_guidance_fingerprint(item, "a" * 64)
+
+
+def test_pending_direction_blocks_generate_until_confirmed() -> None:
+    item = _item()
+    proposal = begin_proposal_attempt(item, approval_mode="auto")
+    guidance = infer_direction_guidance(item, media_digest="b" * 64, duration_s=15)
+    item.edit_proposal = proposal.model_copy(
+        update={"status": "briefing", "media_digest": "b" * 64, "guidance": guidance}
+    ).model_dump(mode="json")
+
+    assert proposal_generate_error(item) == "direction_confirmation_required"
 
 
 def _snapshot() -> EditProposalSnapshot:

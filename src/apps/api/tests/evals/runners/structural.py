@@ -1686,7 +1686,8 @@ def check_edit_copilot(output: Any) -> list[str]:
 
     The parser already drops hallucinated ops. This floor pins the user-visible
     contract: reply always exists, clarification never carries ops, suggestions
-    stay chip-sized, and every surviving op is in the exact v1 vocabulary.
+    stay chip-sized, every turn has a stable execution outcome, and every
+    surviving op is in the exact supported vocabulary.
     """
     if not isinstance(output, EditCopilotOutput):
         return [f"output is {type(output).__name__}, not EditCopilotOutput"]
@@ -1726,6 +1727,7 @@ def check_edit_copilot(output: Any) -> list[str]:
         "apply_custom_effect",
         "set_carousel_moment",
         "set_title",
+        "set_edit_direction",
         "open_tool",
         "add_camera_effect",
         "patch_camera_effect",
@@ -1746,6 +1748,18 @@ def check_edit_copilot(output: Any) -> list[str]:
         failures.append(f"confidence={output.confidence} outside [0, 1]")
     if not output.reply.strip():
         failures.append("reply is empty")
+    valid_outcomes = {
+        "applied",
+        "clarification",
+        "no_effect",
+        "unsupported",
+        "stale",
+        "failed",
+    }
+    if output.outcome not in valid_outcomes:
+        failures.append(f"outcome={output.outcome!r} is not a stable Copilot outcome")
+    if output.outcome == "applied" and not output.ops:
+        failures.append("outcome='applied' must carry at least one valid op")
     if len(output.suggestions) > 5:
         failures.append(f"suggestions has {len(output.suggestions)} items (max 5)")
     ordinary_op_count = sum(op.get("op") != "replace_caption_text" for op in output.ops)
@@ -2099,7 +2113,10 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_overlay_format_matcher(output)
     if agent_name == "nova.plan.edit_proposal":
         known = {media.media_id for media in input.media}
-        used = {media_id for beat in output.story_beats for media_id in beat.media_ids}
+        if input.direction == "fast_montage":
+            used = {cut.media_id for cut in output.fast_cuts or []}
+        else:
+            used = {media_id for beat in output.story_beats for media_id in beat.media_ids}
         failures: list[str] = []
         if not used <= known:
             failures.append("story references unknown media")

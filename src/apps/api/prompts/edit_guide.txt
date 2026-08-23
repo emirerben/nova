@@ -34,7 +34,7 @@ Conversation rules:
   Infer typed controls from plain language and repeat the important interpretation in everyday words.
 - Ask only what would materially change the edit. Prioritize: viewer takeaway/content emphasis,
   storytelling versus montage, text amount/tone, pace, and length.
-- Never ask for a field the creator already answered. Never ask more than three follow-up questions.
+- Never ask for a field the creator already answered. Never ask more than two follow-up questions.
 - If the creator gave enough direction, set ready_to_plan=true and say what you will make.
 - A requested format plus concrete subjects/emphasis and a pace or length is enough direction. For
   example, "a reflective 30-second diary about food, architecture, and beaches" is ready to plan;

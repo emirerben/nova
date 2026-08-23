@@ -1,0 +1,37 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-08-23-v30",
+  "input": {
+    "utterance": "Chaneg this to a fast paced montage video",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["direction"],
+      "guided_revision": {"revision_number": 3, "base_generation": "render-abc"},
+      "slots": [
+        {"index": 0, "clip_index": 0, "output_start_s": 0, "output_end_s": 3, "duration_s": 3, "source_in_s": 0},
+        {"index": 1, "clip_index": 1, "output_start_s": 3, "output_end_s": 6, "duration_s": 3, "source_in_s": 0}
+      ],
+      "total_duration_s": 6,
+      "revision": 8
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"set_edit_direction\",\"direction\":\"fast_montage\",\"revision_number\":3,\"base_generation\":\"render-abc\",\"hard_cuts\":true,\"minimal_text\":true}],\"confidence\":0.97,\"reply\":\"I’ll build a faster, hard-cut montage from the analyzed footage.\",\"suggestions\":[],\"needs_clarification\":false}",
+  "output": {
+    "intent": "edit",
+    "ops": [{
+      "op": "set_edit_direction",
+      "direction": "fast_montage",
+      "revision_number": 3,
+      "base_generation": "render-abc",
+      "hard_cuts": true,
+      "minimal_text": true
+    }],
+    "confidence": 0.97,
+    "reply": "I’ll build a faster, hard-cut montage from the analyzed footage.",
+    "suggestions": [],
+    "needs_clarification": false,
+    "outcome": "applied",
+    "rejection_reasons": []
+  },
+  "meta": {"source": "redacted_production_regression", "case": "content-aware direction replacement"}
+}

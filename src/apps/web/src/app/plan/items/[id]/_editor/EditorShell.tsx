@@ -4823,6 +4823,15 @@ export default function EditorShell({
       motionScenes: localMotionScenes,
       motionScenesEnabled:
         MOTION_SCENES_UI_ENABLED && motionScenesAllowed,
+      guidedRevision:
+        guidedStoryV2 && clip.revisionNumber != null && clip.baseGeneration
+          ? {
+              revision_number: clip.revisionNumber,
+              base_generation: clip.baseGeneration,
+            }
+          : null,
+      editDirectionAvailable:
+        guidedStoryV2 && clip.revisionNumber != null && !!clip.baseGeneration,
       evolvingTypeEnabled: evolvingTypeExposureEnabled,
       readOnly: readOnly || allowedFamilies.length === 0,
       // PR1 (backend, parallel) wires an actual render-step source into this
@@ -4850,12 +4859,15 @@ export default function EditorShell({
     carouselClips,
     carouselMoment,
     clip.clips,
+    clip.baseGeneration,
+    clip.revisionNumber,
     clip.state.grid,
     clipDirty,
     effectiveMusicTitle,
     effectiveMusicTrackId,
     dirty,
     evolvingTypeExposureEnabled,
+    guidedStoryV2,
     history.canUndo,
     history.version,
     introControlsEditable,
@@ -4899,6 +4911,7 @@ export default function EditorShell({
     (snapshot: CopilotSnapshot): ApplyCopilotOpsContext => ({
         bars: state.bars,
         slots,
+        clips: clip.clips,
         snapshot,
         capabilities,
         grid: clip.state.grid,

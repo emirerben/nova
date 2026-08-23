@@ -10,7 +10,12 @@ from billiard.exceptions import SoftTimeLimitExceeded
 from celery.exceptions import Retry
 
 import app.tasks.edit_proposal_build as proposal_build
-from app.schemas.edit_proposal import EditProposal, ProposalBrief, parse_edit_proposal
+from app.schemas.edit_proposal import (
+    EditProposal,
+    FastMontageCut,
+    ProposalBrief,
+    parse_edit_proposal,
+)
 from app.tasks.autoplace import (
     ANALYSIS_VERSION,
     AnalysisTemporarilyUnavailableError,
@@ -132,6 +137,23 @@ def test_attempt_wants_auto_finalize_reads_approval_mode_off_the_row(monkeypatch
     assert proposal_build._attempt_wants_auto_finalize(item_id, "stale-attempt", 7) is False
     assert proposal_build._attempt_wants_auto_finalize(item_id, "attempt-1", 8) is False
     row.edit_proposal = _proposal(approval_mode=None)
+    assert proposal_build._attempt_wants_auto_finalize(item_id, "attempt-1", 7) is False
+
+    row.edit_proposal = _proposal(approval_mode="auto", status="briefing")
+    row.edit_proposal["guidance"] = {
+        "state": "awaiting_direction_confirmation",
+        "provenance": "ai_inferred",
+        "hypothesis": {
+            "direction": "fast_montage",
+            "pace": "fast",
+            "duration_s": 15,
+            "text_density": "minimal",
+            "audio_role": "music_led",
+            "rationale": "A fast montage is my first guess.",
+            "buildability_warnings": [],
+        },
+        "fingerprint": "a" * 64,
+    }
     assert proposal_build._attempt_wants_auto_finalize(item_id, "attempt-1", 7) is False
 
 
@@ -561,6 +583,75 @@ class _FakeAgentOutput:
         self.title = "Athens in a moment"
         self.duration_s = duration_s
         self.story_beats = [_FakeBeat(media_ids)]
+
+
+class _FakeFastAgentOutput:
+    def __init__(self, media_id: str) -> None:
+        self.title = "Athens in three seconds"
+        self.duration_s = 3
+        self.story_beats = []
+        self.fast_cuts = [
+            FastMontageCut(
+                cut_id=f"cut-{index}",
+                media_id=media_id,
+                source_start_s=float(index),
+                source_end_s=float(index + 1),
+                output_duration_s=1,
+                role="hook" if index == 0 else "payoff" if index == 2 else "build",
+                beat_align=index > 0,
+            )
+            for index in range(3)
+        ]
+
+
+def test_fast_cut_program_persists_with_legacy_compatibility_beats(monkeypatch) -> None:
+    item_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    item = _prod_item(item_id)
+    item.edit_proposal = _proposal(
+        brief=ProposalBrief(
+            direction="fast_montage",
+            goal="Lead with the strongest Athens moment",
+            pace="fast",
+            duration_s=3,
+        )
+    )
+    db = _Db(_Result(rows=[]))
+
+    @contextmanager
+    def _session():
+        yield db
+
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    monkeypatch.setattr(proposal_build, "_locked_item", lambda *_a, **_kw: (item, owner_id))
+    monkeypatch.setattr(proposal_build, "_attempt_is_active", lambda *_a, **_kw: True)
+    monkeypatch.setattr(
+        "app.services.pipeline_trace.pipeline_trace_for", lambda _job_id: nullcontext()
+    )
+    monkeypatch.setattr(
+        "app.storage.object_metadata",
+        lambda _path: SimpleNamespace(
+            content_type="video/quicktime", generation="1787000010652201"
+        ),
+    )
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
+    monkeypatch.setattr(
+        "app.agents.edit_proposal.EditProposalAgent.run",
+        lambda self, input: _FakeFastAgentOutput(_PROD_CLIP_ASSIGNMENT["media_id"]),  # noqa: ARG005
+    )
+
+    proposal_build.draft_edit_proposal.run(str(item_id), "attempt-1", 0)
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None and persisted.status == "draft"
+    assert persisted.draft is not None
+    assert [cut.cut_id for cut in persisted.draft.fast_cuts or []] == [
+        "cut-0",
+        "cut-1",
+        "cut-2",
+    ]
+    assert len(persisted.draft.story_beats) == 1
+    assert persisted.draft.story_beats[0].thought == ""
 
 
 def test_agent_output_longer_than_feasible_footage_is_rejected(monkeypatch) -> None:

@@ -19,7 +19,7 @@ import type { NovaStep } from "@/lib/job-phases";
 // alongside PlanItemVariant/editPlanItemVariant without a second import line.
 export type { CarouselMoment } from "@/lib/generative-api";
 import type { ArchetypeFallback } from "@/lib/plan-generate-gate";
-import type { CopilotOp } from "@/lib/edit-copilot/ops";
+import type { CopilotOp, CopilotOutcome } from "@/lib/edit-copilot/ops";
 import type { CopilotSnapshot } from "@/lib/edit-copilot/snapshot";
 import type { TextMotionConfigV2 } from "@/lib/text-motion-v2";
 
@@ -177,6 +177,12 @@ export interface EditCopilotTurnResponse {
   reply: string;
   suggestions: string[];
   needs_clarification: boolean;
+  outcome?: CopilotOutcome;
+  rejection_reasons?: Array<{
+    op: string;
+    reason: "unknown_operation" | "capability_unavailable" | "missing_required" | "invalid_value" | "stale_target";
+    detail: string;
+  }>;
 }
 
 export function editCopilotTurn(
@@ -1161,6 +1167,28 @@ export function approveEditProposal(
   return request<PlanItem>(`/plan-items/${itemId}/edit-proposal/approve`, {
     method: "POST",
     body: JSON.stringify({ expected_proposal_version: expectedProposalVersion }),
+  });
+}
+
+export interface ConfirmDirectionOverrides {
+  direction?: EditProposalDirection;
+  pace?: EditProposalPace;
+  duration_s?: number;
+}
+
+export function confirmEditDirection(
+  itemId: string,
+  expectedProposalVersion: number,
+  fingerprint: string,
+  overrides: ConfirmDirectionOverrides = {},
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/edit-proposal/confirm-direction`, {
+    method: "POST",
+    body: JSON.stringify({
+      expected_proposal_version: expectedProposalVersion,
+      fingerprint,
+      ...overrides,
+    }),
   });
 }
 
@@ -2709,6 +2737,25 @@ export type EditProposalStatus =
   | "failed";
 export type EditProposalDirection = "guided_story" | "fast_montage" | "text_explainer";
 export type EditProposalPace = "relaxed" | "balanced" | "fast";
+export type EditProposalTextDensity = "minimal" | "moderate" | "dense";
+export type EditProposalAudioRole = "music_led" | "original_audio" | "voiceover" | "mixed";
+
+export interface ProposalDirectionHypothesis {
+  direction: EditProposalDirection;
+  pace: EditProposalPace;
+  duration_s: number;
+  text_density: EditProposalTextDensity;
+  audio_role: EditProposalAudioRole;
+  rationale: string;
+  buildability_warnings: string[];
+}
+
+export interface ProposalGuidance {
+  state: "awaiting_direction_confirmation" | "confirmed";
+  provenance: "creator_explicit" | "ai_inferred" | "creator_confirmed";
+  hypothesis: ProposalDirectionHypothesis;
+  fingerprint: string;
+}
 
 export interface EditProposalMediaRef {
   lane: "clip" | "asset";
@@ -2736,6 +2783,17 @@ export interface EditProposalBeat {
   duration_s: number;
 }
 
+export interface EditProposalFastCut {
+  cut_id: string;
+  media_id: string;
+  source_start_s: number;
+  source_end_s: number;
+  output_duration_s: number;
+  role: "hook" | "build" | "payoff";
+  transition: "none";
+  beat_align: boolean;
+}
+
 export interface EditProposalSnapshot {
   direction: EditProposalDirection;
   goal: string;
@@ -2744,6 +2802,7 @@ export interface EditProposalSnapshot {
   title: string;
   media: EditProposalMediaRef[];
   story_beats: EditProposalBeat[];
+  fast_cuts?: EditProposalFastCut[] | null;
 }
 
 export interface EditProposal {
@@ -2752,6 +2811,7 @@ export interface EditProposal {
   generation_attempt_id: string;
   media_digest: string | null;
   status: EditProposalStatus;
+  guidance?: ProposalGuidance | null;
   brief: {
     direction: EditProposalDirection;
     goal: string;

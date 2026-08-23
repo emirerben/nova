@@ -504,6 +504,12 @@ export interface CopilotSnapshot {
    * last_turn_summary: null}` placeholder block. */
   history_state?: CopilotHistoryStateSnapshot;
   allowed_op_families: CopilotOpFamily[];
+  /** Revision/CAS identity required by story-native direction edits. */
+  guided_revision?: {
+    revision_number: number;
+    base_generation: string;
+    state_hash?: string | null;
+  };
 }
 
 export function roundCopilotNumber(value: number): number {
@@ -537,6 +543,7 @@ export interface AllowedOpFamilyOptions {
    * source video AND not read-only. Its own "custom_effect" family,
    * independent of renderLayoutSwitchable — see the CopilotOpFamily note. */
   customEffectsEnabled?: boolean;
+  editDirectionAvailable?: boolean;
 }
 
 export interface CaptionCueLike {
@@ -549,6 +556,11 @@ export interface CaptionCueLike {
 }
 
 export interface BuildCopilotSnapshotOptions extends AllowedOpFamilyOptions {
+  guidedRevision?: {
+    revision_number: number;
+    base_generation: string;
+    state_hash?: string | null;
+  } | null;
   /** Real video duration (seconds) — the total_duration_s fallback for
    * slot-less variants (subtitled talk-to-camera), whose layout total is 0. */
   videoDurationS?: number | null;
@@ -660,6 +672,7 @@ export function allowedOpFamiliesFromCapabilities(
     families.push("motion");
   }
   if (options.customEffectsEnabled) families.push("custom_effect");
+  if (options.editDirectionAvailable) families.push("direction");
   if ((options.openTools?.length ?? 0) > 0) families.push("tool");
   // History (undo/repeat) has no dedicated capability flag — it's gated only
   // by the top-level readOnly/allCoreCapabilitiesFalse checks above, same as
@@ -848,6 +861,7 @@ export function buildCopilotSnapshot(
     musicRemovable: options.musicState?.removable ?? options.musicRemovable,
     mixAllowed: options.mixLevel !== undefined || options.mixAllowed,
     openTools: options.openTools,
+    editDirectionAvailable: options.editDirectionAvailable ?? options.guidedRevision != null,
   };
   const allowedFamilies = allowedOpFamiliesFromCapabilities(capabilities, allowedOptions);
   const allowed = new Set<CopilotOpFamily>(allowedFamilies);
@@ -869,6 +883,7 @@ export function buildCopilotSnapshot(
     max_duration_s: 60,
     remaining_duration_s: roundCopilotNumber(Math.max(0, 60 - total)),
     allowed_op_families: allowedFamilies,
+    ...(options.guidedRevision ? { guided_revision: options.guidedRevision } : {}),
   };
   const marks = strideCapBeatMarks(beatMarks(slots, grid), COPILOT_BEAT_MARKS_MAX);
   if (marks.length > 0) {

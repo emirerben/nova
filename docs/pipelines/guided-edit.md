@@ -11,6 +11,11 @@ the story assembler consumes the approved Job snapshot directly.
    language (for example, “a reflective diary about the food and old town” or “fast highlights,
    little text”). `EditGuideAgent` reflects what it understood, asks at most one useful follow-up
    at a time, and persists a typed direction, goal, pace, and target length.
+   When footage exists but the creator has supplied no brief, Nova instead proposes one concrete,
+   media-aware direction. The hypothesis includes direction, pace, target duration, text density,
+   audio role, rationale, and buildability warnings. It is persisted as
+   `awaiting_direction_confirmation`; no proposal planning or rendering starts until the creator
+   confirms it or supplies supported overrides. Explicit creator directions skip this pause.
 3. `POST /plan-items/{id}/edit-proposal/draft` assigns stable IDs to legacy clip assignments,
    creates a token-fenced attempt, and queues `draft_edit_proposal`.
 4. The task waits for existing visual-pool analysis, analyzes every attached clip without current
@@ -50,6 +55,9 @@ the story assembler consumes the approved Job snapshot directly.
 - `media_digest`: SHA-256 of canonical lane, stable ID, object path, storage generation, kind,
   and content hash. Editorial ordering is intentionally excluded.
 - `status`: `briefing`, `analyzing`, `drafting`, `draft`, `approved`, `stale`, or `failed`.
+- `guidance`: optional direction provenance and confirmation state. Provenance is
+  `creator_explicit`, `ai_inferred`, or `creator_confirmed`; inferred guidance stores a stable
+  hypothesis fingerprint and is `awaiting_direction_confirmation` until version-safe confirmation.
 - `approval_mode`: `"user"` (explicit approval, the default/`null`) or `"auto"` — set at reservation
   time (`begin_proposal_attempt`) and carried onto `last_approved.approval_mode` by `approve_proposal`
   so it survives a later reservation overwriting the envelope. See "AI-designs-by-default" below.
@@ -58,8 +66,10 @@ the story assembler consumes the approved Job snapshot directly.
 - `brief`: requested direction, goal, pace, and duration.
 - `conversation`: up to ten durable creator/Kria exchanges, including reply suggestions. The
   thread survives reloads and proposal-generation retries.
-- `brief_ready`: Kria's advisory signal that it has enough direction to plan. It never gates the
-  creator; **Build this edit plan** is available whenever a conversation reply is not in flight.
+- `brief_ready`: Kria's signal that it has enough direction to plan. **Build this edit plan** is
+  available whenever a conversation reply is not in flight. Once ready, the route returns
+  `409 brief_already_ready` for additional briefing turns, enforcing the two-follow-up ceiling;
+  the creator can build the plan and revise the resulting draft instead.
 - `draft`: the current editable proposal.
 - `last_approved`: immutable approval metadata plus the approved snapshot. It is retained when
   media changes so the creator can compare before planning again.
@@ -99,6 +109,10 @@ The mutation contracts are:
 - `POST /plan-items/{id}/edit-proposal/conversation` with `expected_proposal_version` and a natural
   language `message` returns the updated item (`200`). Before analysis it updates the typed brief.
   During review it may return a revised draft, which always requires approval again.
+- `POST /plan-items/{id}/edit-proposal/confirm-direction` with `expected_proposal_version`, the
+  hypothesis fingerprint, and optional direction/pace/duration overrides confirms an inferred
+  hypothesis and continues proposal planning. A stale version or fingerprint returns `409` and
+  never dispatches work.
 - `PATCH /plan-items/{id}/edit-proposal` with `expected_proposal_version` and a complete `snapshot`
   returns the updated item (`200`) or a structured `409` conflict/stale response.
 - `POST /plan-items/{id}/edit-proposal/approve` with `expected_proposal_version` returns the approved
@@ -256,19 +270,24 @@ proposals an earlier auto-design attempt already approved; see
 
 ## Rollout
 
-All four switches default false:
+The four established proposal switches, the new confirmation gate, and the V2 editor write gate
+default false:
 
 1. `GUIDED_EDIT_CAPABILITY_ENABLED` exposes proposal and visual-pool APIs (API restart).
 2. `NEXT_PUBLIC_GUIDED_EDIT_ENABLED` exposes the item-page flow (Vercel rebuild).
 3. `GUIDED_EDIT_CONVERSATION_ENABLED` switches the compatible item page from the typed brief form
    to conversation after every API and worker can read `briefing` proposals (API restart).
 4. `GUIDED_EDIT_ENFORCEMENT_ENABLED` requires an approval at Generate (API + worker restart).
+5. `GUIDED_EDIT_DIRECTION_CONFIRMATION_ENABLED` pauses unbriefed auto-design after media analysis
+   and requires creator confirmation before planning (API + worker restart).
+6. `GUIDED_STORY_EDITOR_V2_ENABLED` permits story-native timeline and Copilot writes after the
+   compatible API, worker, and web are deployed (API restart).
 
-After merge, deploy the API/worker and frontend with all four switches still off. Then download the
+After merge, deploy the API/worker and frontend with all six switches still off. Then download the
 authorized Corfu inputs read-only into temporary storage, render them through the production Docker
 image without production writes, review the MP4, contact sheet, decision trace, and strict receipt,
 and delete the scratch inputs. Only after that preview passes should rollout enable capability, then
-the frontend, conversation writes, and finally enforcement. The code-owned
+the frontend, conversation writes, the V2 editor, confirmation, and finally enforcement. The code-owned
 `GUIDED_STORY_RENDERER_READY` pin is true only because guided Jobs now render from their approved
 snapshot and verify stage receipts before publication; startup still rejects enforcement without
 capability. Roll back in reverse order. Existing approvals, conversations, and rendered Jobs remain
@@ -294,6 +313,14 @@ fails before FFmpeg only when the complete selected set cannot fill the requeste
 version 1 and 2 plans keep their original portrait canvas, typography, and timing rules on
 redelivery, so a rolling deploy cannot reinterpret queued or already-rendered work.
 
+New fast-montage proposals use `fast_cuts` as their authoritative planning contract rather than
+story chapters. Each cut pins the analyzed source window, output duration, hook/build/payoff role,
+and a hard-cut transition. The planner defaults to the strongest visual first, roughly 0.8–1.2
+seconds per cut, minimal generated text, and optional beat alignment when analyzed beat timestamps
+are available. A strong source may appear more than once, while validation still requires source
+variety. Legacy fast-montage snapshots without `fast_cuts` remain readable and render through the
+older story-shaped contract.
+
 The renderer exact-generation downloads every source selected by a beat. Unselected catalog media
 remains authorized but is not required in the output. Photos and videos become sequential full-screen
 or supporting-card moments. The downloaded bytes stay untouched for the source receipt; every photo
@@ -308,8 +335,9 @@ reburns from that base and refreshes its rendered-alpha evidence. The editor may
 orientation-only rebuild: the worker reuses the pinned story media, timing, music, and current
 validated text, renders a new clean base and final output on the requested canvas, and issues a new
 strict receipt. It never enters the legacy montage path. Other legacy editor operations fail closed.
-Approved title/thought IDs must remain present exactly once with non-blank text; changing wording is
-allowed, silently deleting an approved layer is not.
+Approved title/thought IDs must remain present exactly once; changing wording is allowed and a V2
+direction replacement may blank an unchanged AI-authored thought while preserving its identity.
+Creator-authored or creator-rewritten text is never cleared by the replacement.
 
 ## Render-program compatibility
 
@@ -399,6 +427,12 @@ detail and proposal mutation responses carry the full review payload, keeping li
   `tests/tasks/test_edit_proposal_build.py`
 - Source-diversity, distinct-chapter, and observation-only draft guards:
   `tests/agents/test_edit_proposal_agent.py`
+- Direction confirmation CAS, explicit-direction bypass, and fast-montage proposal routes:
+  `tests/routes/test_edit_proposal_routes.py`
+- Fast-cut schema and persisted compiler compatibility:
+  `tests/schemas/test_edit_proposal_fast_montage.py` and `tests/pipeline/test_guided_story.py`
+- Honest Copilot outcomes, title aliases, and server-planned direction replacement:
+  `tests/test_edit_copilot.py` and `src/__tests__/edit-copilot/`
 - Replay/live+judge travel cases: `tests/evals/test_edit_proposal_evals.py`
 - Frontend review flow: `src/__tests__/plan/edit-proposal-card.test.tsx`
 - Conversation agent/evals: `tests/agents/test_edit_guide_agent.py` and

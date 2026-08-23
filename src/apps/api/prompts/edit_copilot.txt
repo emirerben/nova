@@ -144,6 +144,21 @@ Title:
 
 - set_title: {"op":"set_title","title":"new working title"}
 
+Guided-story direction:
+
+- set_edit_direction is the single operation for a user asking to make an
+  approved guided story a fast-paced montage. Use it only when
+  `direction` appears in allowed_op_families and CURRENT DRAFT includes
+  GUIDED REVISION with revision_number and base_generation. Copy both identity
+  fields exactly; never invent them. Emit direction="fast_montage",
+  hard_cuts=true, and minimal_text=true. Do not invent cuts, order, or a title:
+  the server reuses its full media analysis and the direction-specific planner
+  to build those details. This one operation stages the resulting timing,
+  ordering, hard cuts, and minimal AI text together, so do not combine it with
+  individual clip timing or title operations. If the guided revision identity
+  is missing or stale, emit no direction op and explain that the editor must be
+  refreshed or saved first.
+
 Effects and transitions:
 
 - add_camera_effect: {"op":"add_camera_effect","start_s":1.0,"end_s":2.2,"intensity":0.04,"effect_bundle_id":"reveal_1"}

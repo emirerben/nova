@@ -22,7 +22,7 @@ import structlog
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, status
 from fastapi import UploadFile as MultipartFile
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -124,8 +124,10 @@ from app.routes.waitlist import get_real_ip
 from app.schemas.edit_proposal import (
     EditProposalResponse,
     EditProposalSnapshot,
+    MediaRef,
     ProposalBrief,
     StoryBeat,
+    canonical_media_digest,
     parse_edit_proposal,
 )
 from app.schemas.montage_preset import (
@@ -2020,6 +2022,14 @@ class ApproveEditProposalBody(BaseModel):
     expected_proposal_version: int = Field(ge=1)
 
 
+class ConfirmDirectionBody(BaseModel):
+    expected_proposal_version: int = Field(ge=1)
+    fingerprint: str = Field(min_length=64, max_length=64)
+    direction: Literal["guided_story", "fast_montage", "text_explainer"] | None = None
+    pace: Literal["relaxed", "balanced", "fast"] | None = None
+    duration_s: int | None = Field(default=None, ge=3, le=60)
+
+
 async def _edit_guide_media_summary(
     item: PlanItem,
     db: AsyncSession,
@@ -2116,7 +2126,69 @@ def _snapshot_from_edit_guide_revision(current, revision) -> EditProposalSnapsho
         title=revision.title,
         media=current.media,
         story_beats=beats,
+        fast_cuts=current.fast_cuts if revision.direction == "fast_montage" else None,
     )
+
+
+async def _current_direction_media_refs(
+    item: PlanItem,
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+) -> list[MediaRef]:
+    """Rebuild the immutable identities covered by a direction hypothesis."""
+
+    refs: list[MediaRef] = []
+    seen_paths: set[str] = set()
+    for raw in item.clip_assignments or []:
+        if not isinstance(raw, dict) or not raw.get("gcs_path") or not raw.get("media_id"):
+            continue
+        path = str(raw["gcs_path"])
+        generation = str(raw.get("generation") or "")
+        if not generation:
+            continue
+        kind = str(raw.get("kind") or "")
+        if kind not in {"image", "video"}:
+            kind = "image" if path.lower().endswith((".jpg", ".jpeg", ".png", ".webp")) else "video"
+        refs.append(
+            MediaRef(
+                lane="clip",
+                media_id=str(raw["media_id"]),
+                gcs_path=path,
+                generation=generation,
+                kind=kind,
+                content_hash=str(raw.get("content_hash") or "") or None,
+            )
+        )
+        seen_paths.add(path)
+
+    assets = list(
+        (
+            await db.execute(
+                select(PlanItemAsset)
+                .where(
+                    PlanItemAsset.plan_item_id == item.id,
+                    PlanItemAsset.user_id == user_id,
+                    PlanItemAsset.status == "ready",
+                )
+                .order_by(PlanItemAsset.created_at)
+            )
+        ).scalars()
+    )
+    for asset in assets:
+        if asset.gcs_path in seen_paths or not asset.gcs_generation:
+            continue
+        refs.append(
+            MediaRef(
+                lane="asset",
+                media_id=str(asset.id),
+                gcs_path=asset.gcs_path,
+                generation=str(asset.gcs_generation),
+                kind="image" if asset.kind == "image" else "video",
+                content_hash=asset.content_hash,
+            )
+        )
+    return refs
 
 
 def _proposal_http_conflict(code: str, message: str) -> HTTPException:
@@ -2131,6 +2203,7 @@ _PROPOSAL_GENERATE_MESSAGES = {
     "proposal_draft": "Approve the edit plan before generating.",
     "proposal_stale": "Your media changed. Plan the edit again before generating.",
     "proposal_analyzing": "Kria is still planning this edit.",
+    "direction_confirmation_required": ("Confirm the edit direction before Kria builds this plan."),
     # Was unmapped and fell through to "proposal_draft"'s generic "Approve the
     # edit plan before generating" — misleading for a plan that was never
     # drafted (2026-08 guided-auto-design incident). See
@@ -2344,6 +2417,17 @@ async def _maybe_auto_design_generate(
     locked = await _load_owned_item(item_id, owner_id, db, for_update=True)
     current = parse_edit_proposal(locked.edit_proposal)
 
+    if (
+        settings.guided_edit_direction_confirmation_enabled
+        and current
+        and current.guidance
+        and current.guidance.state == "awaiting_direction_confirmation"
+    ):
+        # The analysis task intentionally settled here. Do not reserve another
+        # attempt just because Generate was retried while the creator reviews
+        # the hypothesis.
+        return await _auto_design_idempotent_current(item_id, owner_id, db)
+
     attempt = current.conversation_attempt if current else None
     if attempt is not None:
         age_s = max(0.0, (datetime.now(UTC) - attempt.started_at).total_seconds())
@@ -2528,6 +2612,12 @@ async def edit_proposal_conversation_turn(
         save_edit_conversation_turn,
     )
 
+    if current and current.brief_ready and current.draft is None:
+        raise _proposal_http_conflict(
+            "brief_already_ready",
+            "This direction is ready to plan. Build it now, or revise it after the draft appears.",
+        )
+
     # Mirror draft_item_edit_proposal's media gate: talking to Kria about an
     # edit with nothing uploaded yet burns a model call for advice the item
     # page can't act on. Registered assets still finishing their own analysis
@@ -2654,12 +2744,30 @@ async def edit_proposal_conversation_turn(
     # the approved/draft render contract. Only a complete revision may do so.
     saved_brief = brief if review_snapshot else result.brief
     if review_snapshot and result.revision:
-        revised_snapshot = _snapshot_from_edit_guide_revision(review_snapshot, result.revision)
         from app.pipeline.guided_story import (  # noqa: PLC0415
             validate_proposal_timing,
         )
 
         try:
+            if result.revision.direction != review_snapshot.direction:
+                from app.services.edit_direction_planner import (  # noqa: PLC0415
+                    plan_direction_snapshot,
+                )
+
+                revised_snapshot = await asyncio.to_thread(
+                    plan_direction_snapshot,
+                    review_snapshot,
+                    direction=result.revision.direction,
+                    goal=result.revision.goal,
+                    pace=result.revision.pace,
+                    duration_s=result.revision.duration_s,
+                    idea=idea,
+                    theme=theme,
+                )
+            else:
+                revised_snapshot = _snapshot_from_edit_guide_revision(
+                    review_snapshot, result.revision
+                )
             validate_proposal_timing(revised_snapshot)
         except Exception as exc:  # noqa: BLE001 - every invalid revision must release its fence
             log.warning("edit_guide.timing_invalid", item_id=item_id, error=str(exc)[:300])
@@ -2807,6 +2915,151 @@ async def draft_item_edit_proposal(
     return plan_item_response(reloaded)
 
 
+@router.post(
+    "/{item_id}/edit-proposal/confirm-direction",
+    response_model=PlanItemResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+@limiter.limit("10/minute", key_func=get_real_ip)
+async def confirm_item_edit_direction(
+    request: Request,
+    item_id: str,
+    body: ConfirmDirectionBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Confirm an analyzed hypothesis and reserve exactly one normal attempt."""
+
+    _ = request
+    _require_guided_edit()
+    if not settings.guided_edit_direction_confirmation_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    item, plan, _persona = await _load_owned_item_context(item_id, user.id, db, for_update=True)
+    _require_guided_edit_applicable(item)
+    current = parse_edit_proposal(item.edit_proposal)
+    if current is None or current.guidance is None:
+        raise _proposal_http_conflict(
+            "direction_confirmation_required",
+            "Analyze the footage before confirming an edit direction.",
+        )
+    from app.schemas.edit_proposal import ProposalGuidance  # noqa: PLC0415
+    from app.services.edit_proposals import (  # noqa: PLC0415
+        begin_proposal_attempt,
+        direction_guidance_fingerprint,
+        media_generations_match_sync,
+    )
+    from app.services.plan_clips import ensure_clip_media_ids  # noqa: PLC0415
+    from app.tasks.edit_proposal_build import draft_edit_proposal  # noqa: PLC0415
+
+    hypothesis_updates = {
+        key: value
+        for key, value in {
+            "direction": body.direction,
+            "pace": body.pace,
+            "duration_s": body.duration_s,
+        }.items()
+        if value is not None
+    }
+    hypothesis = current.guidance.hypothesis.model_copy(update=hypothesis_updates)
+    retry_failed_confirmation = current.guidance.state == "confirmed" and current.status == "failed"
+    if current.guidance.state == "confirmed":
+        # Only the exact lost-response retry is idempotent. A second tab cannot
+        # silently replace the already-confirmed direction or media identity.
+        if (
+            current.guidance.fingerprint != body.fingerprint
+            or hypothesis != current.guidance.hypothesis
+        ):
+            raise _proposal_http_conflict(
+                "proposal_conflict",
+                "A different edit direction was already confirmed. Refresh to continue.",
+            )
+        if not retry_failed_confirmation:
+            return plan_item_response(item)
+    if (
+        current.guidance.state != "awaiting_direction_confirmation"
+        and not retry_failed_confirmation
+    ):
+        raise _proposal_http_conflict(
+            "direction_confirmation_required",
+            "There is no pending direction to confirm.",
+        )
+    if not retry_failed_confirmation and current.proposal_version != body.expected_proposal_version:
+        raise _proposal_http_conflict(
+            "proposal_conflict",
+            "The edit plan changed in another tab. Refresh and try again.",
+        )
+    if current.guidance.fingerprint != body.fingerprint:
+        raise _proposal_http_conflict(
+            "proposal_stale",
+            "The uploaded media changed. Analyze the footage again before confirming.",
+        )
+
+    current_refs = await _current_direction_media_refs(item, db, user_id=user.id)
+    current_digest = canonical_media_digest(current_refs)
+    if (
+        not current.media_digest
+        or current_digest != current.media_digest
+        or not await run_in_threadpool(media_generations_match_sync, current_refs)
+        or direction_guidance_fingerprint(item, current_digest) != body.fingerprint
+    ):
+        raise _proposal_http_conflict(
+            "proposal_stale",
+            "The uploaded media changed. Analyze the footage again before confirming.",
+        )
+    guidance = ProposalGuidance(
+        state="confirmed",
+        provenance="creator_confirmed",
+        hypothesis=hypothesis,
+        fingerprint=body.fingerprint,
+    )
+    brief = ProposalBrief(
+        direction=hypothesis.direction,
+        goal=current.brief.goal or "Show the strongest visual moments quickly.",
+        pace=hypothesis.pace,
+        duration_s=hypothesis.duration_s,
+    )
+    ensure_clip_media_ids(item)
+    proposal = begin_proposal_attempt(item, brief=brief, guidance=guidance)
+    await db.commit()
+    try:
+        draft_edit_proposal.apply_async(
+            args=[
+                str(item.id),
+                proposal.generation_attempt_id,
+                int(getattr(plan, "ownership_epoch", 0) or 0),
+            ],
+            queue=settings.pool_asset_analysis_queue,
+        )
+    except Exception as exc:  # noqa: BLE001
+        locked = await _load_owned_item(item_id, user.id, db, for_update=True)
+        current = parse_edit_proposal(locked.edit_proposal)
+        if current and current.generation_attempt_id == proposal.generation_attempt_id:
+            from app.schemas.edit_proposal import ProposalFailure  # noqa: PLC0415
+
+            failed = current.model_copy(
+                update={
+                    "proposal_version": current.proposal_version + 1,
+                    "status": "failed",
+                    "failure": ProposalFailure(
+                        code="proposal_dispatch_failed",
+                        message="Kria couldn't start planning this edit. Try again.",
+                        retryable=True,
+                    ),
+                }
+            )
+            locked.edit_proposal = failed.model_dump(mode="json")
+            await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "proposal_dispatch_failed",
+                "message": "Kria couldn't start planning this edit. Try again.",
+            },
+        ) from exc
+    reloaded = await _load_owned_item(item_id, user.id, db)
+    return plan_item_response(reloaded)
+
+
 @router.patch("/{item_id}/edit-proposal", response_model=PlanItemResponse)
 async def update_item_edit_proposal(
     item_id: str,
@@ -2843,13 +3096,19 @@ async def update_item_edit_proposal(
             "proposal_stale", "The uploaded media changed. Plan the edit again."
         )
     try:
+        server_snapshot = EditProposalSnapshot.model_validate(
+            {
+                **body.snapshot.model_dump(mode="json"),
+                "media": [ref.model_dump(mode="json") for ref in current.draft.media],
+            }
+        )
         save_proposal_draft(
             item,
             expected_version=body.expected_proposal_version,
             # Media metadata is server-owned. The client may edit the story,
             # text, ordering, and layout, but cannot smuggle arbitrary analysis
             # or context into the approved render snapshot.
-            snapshot=body.snapshot.model_copy(update={"media": current.draft.media}),
+            snapshot=server_snapshot,
             # A human submitting their own corrected snapshot is unambiguous
             # manual review — never let a subsequent approval still record
             # approval_mode="auto" from the original auto-design reservation
@@ -2858,6 +3117,14 @@ async def update_item_edit_proposal(
         )
     except ProposalConflictError as exc:
         raise _proposal_http_conflict("proposal_conflict", str(exc)) from exc
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "proposal_invalid",
+                "message": "The montage timing is outside the analyzed footage.",
+            },
+        ) from exc
     await db.commit()
     reloaded = await _load_owned_item(item_id, user.id, db)
     return plan_item_response(reloaded)
@@ -3477,9 +3744,151 @@ async def plan_item_copilot_turn(
         )
 
     job = await _owned_item_render_job(item_id, user.id, db)
-    require_editable_variant(job, variant_id, allow_guided_text=True)
+    variant = require_editable_variant(job, variant_id, allow_guided_text=True)
     # agent_run.job_id FKs jobs.id — pass the render job, never the plan-item id.
-    return await run_copilot_turn(body, job_id=job.id)
+    response = CopilotTurnResponse.model_validate(await run_copilot_turn(body, job_id=job.id))
+    direction_ops = [op for op in response.ops if op.get("op") == "set_edit_direction"]
+    if not direction_ops:
+        return response
+    if len(response.ops) != 1 or len(direction_ops) != 1:
+        return response.model_copy(
+            update={
+                "ops": [],
+                "outcome": "failed",
+                "needs_clarification": False,
+                "reply": (
+                    "I couldn't stage a direction replacement together with other edits. "
+                    "Try that request on its own."
+                ),
+                "rejection_reasons": [
+                    {
+                        "op": "set_edit_direction",
+                        "reason": "invalid_value",
+                        "detail": "direction replacement must be the only operation in this turn",
+                    }
+                ],
+            }
+        )
+
+    request_op = direction_ops[0]
+    from app.pipeline.guided_story import validate_guided_snapshot  # noqa: PLC0415
+    from app.routes.generative_jobs import (  # noqa: PLC0415
+        _guided_v2_revision,
+        variant_render_baseline,
+    )
+    from app.services.edit_direction_planner import (  # noqa: PLC0415
+        plan_direction_snapshot,
+    )
+
+    revision = _guided_v2_revision(job, variant)
+    current_generation = variant_render_baseline(variant)
+    if (
+        revision is None
+        or request_op.get("revision_number") != revision.get("revision_number")
+        or request_op.get("base_generation") != current_generation
+    ):
+        return response.model_copy(
+            update={
+                "ops": [],
+                "outcome": "stale",
+                "needs_clarification": False,
+                "reply": "That edit is based on an older draft. Refresh the editor and try again.",
+                "rejection_reasons": [
+                    {
+                        "op": "set_edit_direction",
+                        "reason": "stale_target",
+                        "detail": "the guided-story revision changed before replanning",
+                    }
+                ],
+            }
+        )
+    try:
+        _proposal_version, _media_digest, approved = validate_guided_snapshot(
+            (job.assembly_plan or {}).get("guided_edit")
+        )
+        item = await _load_owned_item(item_id, user.id, db)
+        planned = await asyncio.to_thread(
+            plan_direction_snapshot,
+            approved,
+            direction="fast_montage",
+            goal="Show the strongest visual moments quickly.",
+            pace="fast",
+            duration_s=approved.duration_s,
+            idea=str(item.idea or ""),
+            theme=str(item.theme or ""),
+            job_id=str(job.id),
+        )
+        cuts = planned.fast_cuts or []
+        if not cuts:
+            raise ValueError("fast montage planner returned no cuts")
+    except Exception as exc:  # noqa: BLE001 - model/planner failure is honest + retryable
+        log.warning("edit_copilot.direction_planner_failed", job_id=str(job.id), exc_info=True)
+        return response.model_copy(
+            update={
+                "ops": [],
+                "outcome": "failed",
+                "needs_clarification": False,
+                "reply": (
+                    "I understood the direction, but couldn't build a valid replacement "
+                    "draft. Try again."
+                ),
+                "rejection_reasons": [
+                    {
+                        "op": "set_edit_direction",
+                        "reason": "invalid_value",
+                        "detail": f"direction planner failed: {type(exc).__name__}",
+                    }
+                ],
+            }
+        )
+
+    server_op = {
+        "op": "set_edit_direction",
+        "direction": "fast_montage",
+        "revision_number": int(revision["revision_number"]),
+        "base_generation": current_generation,
+        "server_planned": True,
+        "cuts": [
+            {
+                "media_id": cut.media_id,
+                "start_s": cut.source_start_s,
+                "duration_s": cut.output_duration_s,
+            }
+            for cut in cuts
+        ],
+        "clear_text": [
+            {"id": text_id, "expected_text": str(approved_text.get("text") or "")}
+            for text_id, approved_text in {
+                str(row.get("id")): row
+                for row in (
+                    (job.assembly_plan or {})
+                    .get("guided_story_execution_plan", {})
+                    .get("text_elements")
+                    or []
+                )
+                if isinstance(row, dict) and str(row.get("id") or "").startswith("guided-thought-")
+            }.items()
+            if any(
+                isinstance(current_text, dict)
+                and str(current_text.get("id") or "") == text_id
+                and str(current_text.get("text") or "") == str(approved_text.get("text") or "")
+                for current_text in revision.get("text_elements") or []
+            )
+        ],
+        "hard_cuts": True,
+        "minimal_text": True,
+    }
+    return response.model_copy(
+        update={
+            "ops": [server_op],
+            "outcome": "applied",
+            "needs_clarification": False,
+            "reply": (
+                "I built a fast, music-led replacement draft from the strongest analyzed moments."
+            ),
+            "rejection_reasons": [],
+        }
+    )
 
 
 @router.post(
