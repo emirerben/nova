@@ -25,12 +25,21 @@ export type CopilotOpFamily =
   | "motion"
   | "carousel"
   | "history"
+  | "direction"
   // Nova AI sandboxed effect language (PR6): deliberately its own family,
   // NOT folded into "render" — set_intro_layout's eligibility (intro-layout
   // switchability) and apply_custom_effect's (CUSTOM_EFFECTS_ENABLED + a
   // renderable source video) are unrelated, so a variant with one available
   // must not silently unlock the other.
   | "custom_effect";
+
+export type CopilotOutcome =
+  | "applied"
+  | "clarification"
+  | "no_effect"
+  | "unsupported"
+  | "stale"
+  | "failed";
 
 export const TEXT_STYLE_PATCH_KEYS = [
   "font_family",
@@ -191,6 +200,17 @@ export type CopilotOp =
   | { op: "set_carousel_moment"; config: CarouselMoment | null }
   | { op: "set_title"; title: string }
   | {
+      op: "set_edit_direction";
+      direction: "fast_montage";
+      revision_number: number;
+      base_generation: string;
+      server_planned: true;
+      cuts: Array<{ media_id: string; start_s: number; duration_s: number }>;
+      clear_text?: Array<{ id: string; expected_text: string }>;
+      hard_cuts: true;
+      minimal_text: true;
+    }
+  | {
       op: "add_camera_effect";
       start_s: number;
       end_s: number;
@@ -291,6 +311,13 @@ type CaptionMetaPatchValidation =
   | { ok: false; rejection: OpValidationRejection };
 
 export interface CopilotValidationSnapshot {
+  guided_revision?: {
+    revision_number: number;
+    base_generation: string;
+    state_hash?: string | null;
+  } | null;
+  revision_number?: number | null;
+  base_generation?: string | null;
   total_duration_s?: number | null;
   text_bars?: unknown[];
   slots?: Array<{
@@ -298,6 +325,7 @@ export interface CopilotValidationSnapshot {
     clip_index?: number;
     in_s?: number;
     duration_s?: number;
+    source_duration_s?: number | null;
     output_start_s?: number | null;
     output_end_s?: number | null;
     removed?: boolean;
@@ -681,6 +709,7 @@ export function copilotOpFamily(op: Pick<CopilotOp, "op"> | { op: string }): Cop
   // variant can have one available without the other.
   if (op.op === "set_carousel_moment") return "carousel";
   if (op.op === "set_title") return "title";
+  if (op.op === "set_edit_direction") return "direction";
   if (op.op === "open_tool") return "tool";
   if (
     op.op === "add_camera_effect" ||
@@ -708,6 +737,54 @@ export function validateCopilotOp(
 
   const opName = raw.op;
   switch (opName) {
+    case "set_edit_direction": {
+      if (raw.direction !== "fast_montage" || !Number.isInteger(raw.revision_number) || typeof raw.base_generation !== "string" || raw.server_planned !== true) {
+        return reject("missing_required", "fast montage direction requires direction, revision_number, and base_generation", opName);
+      }
+      if (raw.hard_cuts !== true || raw.minimal_text !== true) {
+        return reject("invalid_value", "fast montage direction must use hard cuts and minimal text", opName);
+      }
+      const identity = snapshot?.guided_revision ?? (
+        snapshot?.revision_number != null && snapshot.base_generation
+          ? { revision_number: snapshot.revision_number, base_generation: snapshot.base_generation }
+          : null
+      );
+      if (!identity) {
+        return reject("invalid_value", "fast montage direction requires an active guided-story revision", opName);
+      }
+      if (raw.revision_number !== identity.revision_number || raw.base_generation !== identity.base_generation) {
+        return reject("invalid_value", "guided-story revision is stale; refresh before changing direction", opName);
+      }
+      if (!Array.isArray(raw.cuts) || raw.cuts.length === 0 || raw.cuts.length > 80 || raw.cuts.some((cut) => (
+        !isRecord(cut) || typeof cut.media_id !== "string" || !cut.media_id || !nonNegativeNumber(cut.start_s) ||
+        !finiteNumber(cut.duration_s) || cut.duration_s < 0.4 || cut.duration_s > 1.2
+      ))) {
+        return reject("invalid_value", "fast montage requires server-planned 0.4–1.2s source cuts", opName);
+      }
+      if (raw.clear_text !== undefined && (
+        !Array.isArray(raw.clear_text) || raw.clear_text.length > 50 || raw.clear_text.some((entry) => (
+          !isRecord(entry) || typeof entry.id !== "string" || !entry.id || typeof entry.expected_text !== "string"
+        ))
+      )) {
+        return reject("invalid_value", "fast montage text-clear receipt is invalid", opName);
+      }
+      return {
+        ok: true,
+        op: {
+          op: opName,
+          direction: "fast_montage",
+          revision_number: raw.revision_number,
+          base_generation: raw.base_generation,
+          server_planned: true,
+          hard_cuts: true,
+          minimal_text: true,
+          cuts: raw.cuts as Array<{ media_id: string; start_s: number; duration_s: number }>,
+          ...(Array.isArray(raw.clear_text)
+            ? { clear_text: raw.clear_text as Array<{ id: string; expected_text: string }> }
+            : {}),
+        },
+      };
+    }
     case "add_motion_block": {
       if (
         typeof raw.preset_id !== "string" ||
@@ -1308,6 +1385,12 @@ export function validateCopilotOp(
       if (typeof raw.title !== "string") return reject("missing_required", "set_title requires title", opName);
       const title = cleanUserText(raw.title, 300);
       if (!title) return reject("invalid_value", "title must be non-empty", opName);
+      const guidedTitleIndex = snapshot?.text_bars?.findIndex(
+        (bar) => isRecord(bar) && bar.id === "guided-title",
+      ) ?? -1;
+      if (guidedTitleIndex >= 0) {
+        return { ok: true, op: { op: "edit_text", bar_index: guidedTitleIndex, text: title } };
+      }
       return { ok: true, op: { op: opName, title } };
     }
     case "add_camera_effect": {

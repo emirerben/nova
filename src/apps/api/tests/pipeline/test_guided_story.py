@@ -28,6 +28,7 @@ from app.pipeline.guided_story import (
 )
 from app.schemas.edit_proposal import (
     EditProposalSnapshot,
+    FastMontageCut,
     MediaRef,
     StoryBeat,
     canonical_media_digest,
@@ -180,6 +181,93 @@ def test_compiler_uses_only_beat_selected_media_and_hits_target_duration() -> No
     first_thought = next(row for row in plan["text_elements"] if row["id"] == "guided-thought-food")
     assert first_thought["start_s"] == 0.0
     assert first_thought["end_s"] == plan["beat_windows"][0]["end_s"]
+
+
+def test_fast_montage_compiles_exact_source_windows_and_optional_beats() -> None:
+    raw = _guided_snapshot(direction="fast_montage")
+    proposal = EditProposalSnapshot.model_validate(raw["approved_proposal"])
+    proposal.duration_s = 3
+    proposal.fast_cuts = [
+        FastMontageCut(
+            cut_id="cut-1",
+            media_id="coast-video",
+            source_start_s=2.0,
+            source_end_s=2.8,
+            output_duration_s=0.8,
+            role="hook",
+            beat_align=True,
+        ),
+        FastMontageCut(
+            cut_id="cut-2",
+            media_id="food-photo",
+            source_start_s=0.0,
+            source_end_s=0.8,
+            output_duration_s=0.8,
+            role="build",
+        ),
+        FastMontageCut(
+            cut_id="cut-3",
+            media_id="town-photo",
+            source_start_s=0.0,
+            source_end_s=0.8,
+            output_duration_s=0.8,
+            role="build",
+            beat_align=True,
+        ),
+        FastMontageCut(
+            cut_id="cut-4",
+            media_id="coast-video",
+            source_start_s=6.0,
+            source_end_s=6.6,
+            output_duration_s=0.6,
+            role="payoff",
+        ),
+    ]
+    raw["approved_proposal"] = proposal.model_dump(mode="json")
+    raw["media_digest"] = canonical_media_digest(proposal.media)
+
+    plan = compile_execution_plan(
+        raw,
+        track={
+            "track_id": "track-1",
+            "title": "Corfu beat",
+            "audio_gcs_path": "music/corfu.mp3",
+            "generation": "1",
+            "start_s": 0.0,
+            "beat_timestamps_s": [0.79, 2.41],
+        },
+    )
+
+    moments = plan["story_timeline"]
+    assert plan["selected_media_ids"] == ["coast-video", "food-photo", "town-photo"]
+    assert [(row["source_start_s"], row["source_end_s"]) for row in moments] == [
+        (2.0, 2.79),
+        (0.0, 0.8),
+        (0.0, 0.8),
+        (6.0, 6.59),
+    ]
+    assert moments[0]["output_end_s"] == pytest.approx(0.79, abs=0.001)
+    assert moments[0]["beat_align"] is True
+    assert moments[0]["beat_time_s"] == pytest.approx(0.79, abs=0.001)
+    assert moments[1]["beat_align"] is False
+    assert moments[1].get("beat_time_s") is None
+    assert moments[2]["beat_time_s"] == pytest.approx(2.41, abs=0.001)
+    assert all(row["duration_s"] >= 0.4 for row in moments)
+    assert plan["resolved_duration_s"] == pytest.approx(3, abs=0.001)
+    assert plan["transition_policy"] == {"type": "none", "duration_s": 0.0}
+    assert len(plan["text_elements"]) == 1
+    assert validate_execution_plan(plan, raw) == plan
+
+
+def test_fast_montage_none_policy_resolves_to_hard_cut_boundaries() -> None:
+    from app.pipeline import guided_story
+
+    plan = {
+        "transition_policy": {"type": "none", "duration_s": 0.0},
+        "story_timeline": [{}, {}, {}],
+    }
+
+    assert guided_story._resolved_transition_boundaries(plan) == ["cut", "cut"]
 
 
 def _orientation_snapshot(aspects: list[float], durations: list[float] | None = None) -> dict:

@@ -16,6 +16,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   approveEditProposal,
+  confirmEditDirection,
   draftEditProposal,
   editProposalConversationTurn,
   updateEditProposal,
@@ -111,6 +112,9 @@ function durationOptions(current: number): number[] {
 }
 
 function selectedSourceCount(snapshot: EditProposalSnapshot): number {
+  if (snapshot.fast_cuts?.length) {
+    return new Set(snapshot.fast_cuts.map((cut) => cut.media_id)).size;
+  }
   return new Set(snapshot.story_beats.flatMap((beat) => beat.media_ids)).size;
 }
 
@@ -197,10 +201,11 @@ export default function EditProposalCard({
     defaultConversationOpen || (conversationEnabled && proposal?.status === "briefing"),
   );
   const [legacyBriefOpen, setLegacyBriefOpen] = useState(false);
+  const [showDirectionConversation, setShowDirectionConversation] = useState(false);
   const [legacyBrief, setLegacyBrief] = useState(DEFAULT_BRIEF);
   const [message, setMessage] = useState("");
   const [workingAction, setWorkingAction] = useState<
-    "conversation" | "plan" | "approve" | null
+    "conversation" | "plan" | "approve" | "confirm" | null
   >(null);
   const [editingApproved, setEditingApproved] = useState(false);
   const [draft, setDraft] = useState<EditProposalSnapshot | null>(proposal?.draft ?? null);
@@ -375,6 +380,25 @@ export default function EditProposalCard({
       onChanged(approved);
     } catch (err) {
       setError("Kria couldn’t approve this plan. Check your connection and try again.");
+    } finally {
+      setWorkingAction(null);
+    }
+  }
+
+  async function confirmDirection() {
+    const guidance = proposal?.guidance;
+    if (working || !guidance || proposal?.status !== "briefing") return;
+    setWorkingAction("confirm");
+    setError(null);
+    try {
+      const updated = await confirmEditDirection(
+        item.id,
+        proposal.proposal_version,
+        guidance.fingerprint,
+      );
+      onChanged(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Kria couldn't confirm this direction.");
     } finally {
       setWorkingAction(null);
     }
@@ -662,6 +686,56 @@ export default function EditProposalCard({
     );
   }
 
+  const pendingDirection = proposal?.guidance?.state === "awaiting_direction_confirmation"
+    ? proposal.guidance.hypothesis
+    : null;
+  if (pendingDirection && !showDirectionConversation) {
+    return (
+      <Card aria-labelledby="direction-confirmation-heading" className="mt-5">
+        <CardHeader>
+          <Badge variant="secondary" className="w-fit">I have a first guess</Badge>
+          <CardTitle id="direction-confirmation-heading">Is this the edit you want?</CardTitle>
+          <CardDescription>{pendingDirection.rationale}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline">{DIRECTION_LABELS[pendingDirection.direction]}</Badge>
+            <Badge variant="outline">{PACE_LABELS[pendingDirection.pace]} pace</Badge>
+            <Badge variant="outline">About {pendingDirection.duration_s}s</Badge>
+            <Badge variant="outline">{pendingDirection.text_density} text</Badge>
+            <Badge variant="outline">{pendingDirection.audio_role.replace("_", " ")}</Badge>
+          </div>
+          {pendingDirection.buildability_warnings.length > 0 ? (
+            <ul aria-label="Buildability notes" className="mt-3 space-y-1 text-sm text-muted-foreground">
+              {pendingDirection.buildability_warnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          ) : null}
+        </CardContent>
+        <CardFooter className="flex-wrap gap-2">
+          <Button type="button" disabled={working} onClick={() => void confirmDirection()}>
+            {workingAction === "confirm" ? "Starting plan…" : "Yes, build this edit"}
+          </Button>
+          {conversationEnabled ? (
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={working}
+              onClick={() => {
+                setShowDirectionConversation(true);
+                setConversationOpen(true);
+              }}
+            >
+              Tell Kria something else
+            </Button>
+          ) : null}
+          {error ? <p role="alert" className="basis-full text-sm text-destructive">{error}</p> : null}
+        </CardFooter>
+      </Card>
+    );
+  }
+
   if (!conversationEnabled) {
     if (!proposal && !legacyBriefOpen) {
       return (
@@ -753,6 +827,8 @@ export default function EditProposalCard({
   const visibleDraft = draft ?? proposal?.last_approved?.snapshot ?? null;
   if (!visibleDraft) return null;
   const readOnlyApproved = proposal?.status === "approved" && !editingApproved;
+  const isFastCutProgram =
+    visibleDraft.direction === "fast_montage" && (visibleDraft.fast_cuts?.length ?? 0) > 0;
 
   if (readOnlyApproved) {
     return (
@@ -761,7 +837,9 @@ export default function EditProposalCard({
           <Badge variant="secondary" className="w-fit">Approved edit plan</Badge>
           <CardTitle id="approved-plan-heading">{visibleDraft.title}</CardTitle>
           <CardDescription>
-            {visibleDraft.story_beats.length} moments · {selectedSourceCount(visibleDraft)} sources · about {visibleDraft.duration_s}s
+            {isFastCutProgram
+              ? `${visibleDraft.fast_cuts!.length} cuts`
+              : `${visibleDraft.story_beats.length} moments`} · {selectedSourceCount(visibleDraft)} sources · about {visibleDraft.duration_s}s
           </CardDescription>
         </CardHeader>
         {(proposal?.failure || proposal?.render_failure) && (
@@ -853,6 +931,7 @@ export default function EditProposalCard({
             Direction
             <Select
               value={visibleDraft.direction}
+              disabled={isFastCutProgram}
               onValueChange={(value) =>
                 setDraft({ ...visibleDraft, direction: value as EditProposalDirection })
               }
@@ -871,6 +950,7 @@ export default function EditProposalCard({
             Pace
             <Select
               value={visibleDraft.pace}
+              disabled={isFastCutProgram}
               onValueChange={(value) =>
                 setDraft({ ...visibleDraft, pace: value as EditProposalPace })
               }
@@ -889,6 +969,7 @@ export default function EditProposalCard({
             Target length
             <Select
               value={String(visibleDraft.duration_s)}
+              disabled={isFastCutProgram}
               onValueChange={(value) =>
                 setDraft({ ...visibleDraft, duration_s: Number(value) })
               }
@@ -905,6 +986,31 @@ export default function EditProposalCard({
           </label>
         </div>
 
+        {isFastCutProgram ? (
+          <section aria-labelledby="fast-cut-program-heading" className="rounded-lg border border-border bg-background p-3">
+            <h3 id="fast-cut-program-heading" className="text-sm font-semibold text-foreground">
+              Fast cut program
+            </h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Music-led hard cuts with minimal generated text. Tell Kria what to change if you want a different direction or pacing.
+            </p>
+            <ol className="mt-3 space-y-2">
+              {visibleDraft.fast_cuts!.map((cut, index) => {
+                const media = mediaById.get(cut.media_id);
+                return (
+                  <li key={cut.cut_id} className="flex items-center justify-between gap-3 text-sm">
+                    <span className="min-w-0 truncate text-foreground">
+                      {index + 1}. {media?.source_filename || media?.kind || "Uploaded media"}
+                    </span>
+                    <span className="shrink-0 tabular-nums text-muted-foreground">
+                      {cut.role} · {cut.source_start_s.toFixed(1)}–{cut.source_end_s.toFixed(1)}s · hard cut
+                    </span>
+                  </li>
+                );
+              })}
+            </ol>
+          </section>
+        ) : (
         <ol className="space-y-2">
           {visibleDraft.story_beats.map((beat, index) => (
             <li key={beat.beat_id} className="rounded-lg border border-border bg-background p-3">
@@ -1007,6 +1113,7 @@ export default function EditProposalCard({
             </li>
           ))}
         </ol>
+        )}
       </CardContent>
 
       <CardFooter className="items-center gap-2">

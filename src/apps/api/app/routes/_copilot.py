@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import uuid
 
 import structlog
@@ -16,7 +17,12 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.agents._model_client import default_client
 from app.agents._runtime import RunContext, TerminalError
-from app.agents.edit_copilot import EditCopilotAgent, EditCopilotInput, EditCopilotOutput
+from app.agents.edit_copilot import (
+    CopilotOutcome,
+    EditCopilotAgent,
+    EditCopilotInput,
+    EditCopilotOutput,
+)
 
 log = structlog.get_logger()
 
@@ -41,6 +47,59 @@ class CopilotTurnResponse(BaseModel):
     reply: str
     suggestions: list[str] = []
     needs_clarification: bool = False
+    outcome: CopilotOutcome = "no_effect"
+    rejection_reasons: list[dict[str, str]] = []
+
+
+_SUCCESS_WORDS = re.compile(
+    r"\b(done|stored|changed|updated|applied|edited|trimmed|removed|swapped|made|set)\b",
+    re.IGNORECASE,
+)
+_NEGATED_SUCCESS = re.compile(
+    r"\b(already|unchanged|cannot|can't|couldn't|unable|not|no change|nothing)\b",
+    re.IGNORECASE,
+)
+
+
+def _claims_success(reply: str) -> bool:
+    return bool(_SUCCESS_WORDS.search(reply) and not _NEGATED_SUCCESS.search(reply))
+
+
+def _honest_outcome(output: EditCopilotOutput, ops: list[dict]) -> tuple[CopilotOutcome, str]:
+    """Derive a stable outcome and prevent success prose for empty edits."""
+    reasons = output.rejection_reasons
+    if ops:
+        outcome = "applied"
+    elif any(item.get("reason") == "stale_target" for item in reasons):
+        outcome = "stale"
+    elif output.intent == "reject" or any(
+        item.get("reason") in {"capability_unavailable", "unknown_operation"} for item in reasons
+    ):
+        outcome = "unsupported"
+    elif any(item.get("reason") in {"missing_required", "invalid_value"} for item in reasons):
+        outcome = "failed"
+    elif output.needs_clarification or output.intent == "clarify":
+        outcome = "clarification"
+    else:
+        outcome = "no_effect"
+
+    reply = output.reply.strip()
+    if outcome == "applied":
+        return outcome, reply
+    if outcome == "clarification":
+        if reply and not _claims_success(reply):
+            return outcome, reply
+        return outcome, "I need one detail before changing the draft."
+    if outcome == "stale":
+        return outcome, "That edit is based on an older draft. Refresh the editor and try again."
+    if outcome == "unsupported":
+        detail = next((item.get("detail") for item in reasons if item.get("detail")), None)
+        return outcome, detail or "That kind of edit isn't available for this draft yet."
+    if outcome == "failed":
+        return outcome, "I couldn't build a valid draft change for that request. Try again."
+    if reply and not _claims_success(reply):
+        return outcome, reply
+    return outcome, "That change is already reflected in the draft."
 
 
 def _snapshot_size_bytes(snapshot: dict) -> int:
@@ -94,11 +153,14 @@ async def run_copilot_turn(
     # intent="reject"/"describe"/"clarify" WITH ops must not have them applied
     # while the reply text says nothing was done (adversarial review F5).
     ops = [] if (output.needs_clarification or output.intent != "edit") else output.ops
+    outcome, reply = _honest_outcome(output, ops)
     return CopilotTurnResponse(
         intent=output.intent,
         ops=ops,
         confidence=output.confidence,
-        reply=output.reply,
+        reply=reply,
         suggestions=output.suggestions,
-        needs_clarification=output.needs_clarification,
+        needs_clarification=outcome == "clarification",
+        outcome=outcome,
+        rejection_reasons=output.rejection_reasons,
     )

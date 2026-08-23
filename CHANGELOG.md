@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.48.4.0] — 2026-08-23
+
+### Added
+- **Kria now proposes one concrete edit direction before planning unbriefed footage.** The proposal explains its pace, duration, text density, audio role, rationale, and any buildability warnings; rendering waits for a version-safe confirmation, while explicit creator directions continue immediately.
+- **Fast montage is now a dedicated edit contract.** New montage plans target 0.8–1.2-second source-aware cuts, strongest-moment hooks, hard cuts, optional beat alignment, and minimal generated text instead of guided-story chapters, with a bounded shorter-cut fallback for constrained media.
+
+### Fixed
+- **Nova no longer hides rejected edit requests behind “I didn't change the draft.”** Copilot turns report stable applied, clarification, no-effect, unsupported, stale, or failed outcomes with the parser/client rejection reason and a concrete next action.
+- **“Change the title to Corfu” and explicit fast-montage requests now produce real guided-editor changes.** Title requests target an existing guided title element; direction changes require a current V2 revision and stage a revision-bound, single-step timeline replacement that remains undoable and saves through the existing atomic editor commit. Unsupported or stale drafts now say why the change could not be applied.
+- **Montage timing and confirmation are protected against stale or forged media state.** Server-owned source duration/generation checks bound every cut, conflicting confirmations fail closed, and a failed queue dispatch can be retried safely.
+
 ## [0.48.3.0] — 2026-08-23
 
 ### Changed

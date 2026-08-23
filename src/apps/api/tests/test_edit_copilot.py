@@ -13,6 +13,7 @@ from app.agents.edit_copilot import (
     _MOTION_PRESET_PARAMS,
     EditCopilotAgent,
     EditCopilotInput,
+    EditCopilotOutput,
     EditorOperationParseState,
     parse_editor_operation,
 )
@@ -22,6 +23,7 @@ from app.database import get_db
 from app.main import app
 from app.models import ContentPlan, Job, Persona, PlanItem
 from app.routes import plan_items
+from app.routes._copilot import _honest_outcome
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "copilot-ops"
 
@@ -247,7 +249,14 @@ def _carousel(**overrides) -> dict:
     return carousel
 
 
-def _parse(raw_ops: list[dict], *, confidence: float = 0.9, allowed=None, snapshot=None):
+def _parse(
+    raw_ops: list[dict],
+    *,
+    confidence: float = 0.9,
+    allowed=None,
+    snapshot=None,
+    utterance: str = "change it",
+):
     raw = json.dumps(
         {
             "intent": "edit",
@@ -261,7 +270,7 @@ def _parse(raw_ops: list[dict], *, confidence: float = 0.9, allowed=None, snapsh
     return _agent().parse(
         raw,
         EditCopilotInput(
-            utterance="change it",
+            utterance=utterance,
             prior_turns=[],
             variant_snapshot=snapshot or _snapshot(allowed=allowed),
         ),
@@ -662,6 +671,148 @@ def test_copilot_trim_clip_start_is_segment_relative_and_distinct_from_clip_in()
 def test_copilot_trim_output_start_uses_assembled_output_clock() -> None:
     out = _parse([{"op": "trim_output_start", "start_s": 4}], snapshot=_full_snapshot())
     assert out.ops == [{"op": "trim_output_start", "start_s": 4.0}]
+
+
+def test_copilot_guided_title_normalizes_legacy_set_title_to_text_bar() -> None:
+    snapshot = _full_snapshot(allowed=["text"])
+    snapshot["text_bars"][0]["id"] = "guided-title"
+    out = _parse(
+        [{"op": "set_title", "title": "corfu"}],
+        snapshot=snapshot,
+        utterance="change the title to 'corfu'",
+    )
+    assert out.ops == [{"op": "edit_text", "bar_index": 0, "text": "corfu"}]
+
+
+def test_copilot_fast_direction_is_revision_bound() -> None:
+    snapshot = _full_snapshot(allowed=["direction"])
+    snapshot["guided_revision"] = {"revision_number": 3, "base_generation": "render-abc"}
+    op = {
+        "op": "set_edit_direction",
+        "direction": "fast_montage",
+        "revision_number": 3,
+        "base_generation": "render-abc",
+        "hard_cuts": True,
+        "minimal_text": True,
+    }
+    out = _parse(
+        [op],
+        snapshot=snapshot,
+        utterance="Chaneg this to a fast paced montage video",
+    )
+    assert out.ops == [op]
+    assert out.outcome == "applied"
+
+    missing = _parse([op], snapshot=_full_snapshot(allowed=["direction"]))
+    assert missing.ops == []
+    assert missing.outcome == "unsupported"
+    assert missing.rejection_reasons[0]["reason"] == "capability_unavailable"
+
+    stale = dict(snapshot)
+    stale["guided_revision"] = {"revision_number": 4, "base_generation": "render-abc"}
+    stale_out = _parse([op], snapshot=stale)
+    assert stale_out.ops == []
+    assert stale_out.outcome == "stale"
+    assert stale_out.rejection_reasons[0]["reason"] == "stale_target"
+
+    incomplete = dict(op)
+    incomplete.pop("base_generation")
+    incomplete_out = _parse([incomplete], snapshot=snapshot)
+    assert incomplete_out.ops == []
+    assert incomplete_out.outcome == "failed"
+    assert incomplete_out.rejection_reasons[0]["reason"] == "missing_required"
+
+    soft_transitions = {**op, "hard_cuts": False}
+    assert _parse([soft_transitions], snapshot=snapshot).outcome == "failed"
+
+
+def test_honest_outcome_preserves_concrete_negated_no_effect_explanation() -> None:
+    output = EditCopilotOutput(
+        intent="edit",
+        ops=[],
+        confidence=0.9,
+        reply="No change was made because the title already says Corfu.",
+        outcome="no_effect",
+    )
+
+    outcome, reply = _honest_outcome(output, [])
+
+    assert outcome == "no_effect"
+    assert reply == "No change was made because the title already says Corfu."
+
+
+@pytest.mark.parametrize(
+    ("output", "ops", "expected_outcome", "expected_reply"),
+    [
+        (
+            EditCopilotOutput(
+                intent="edit", ops=[], confidence=0.9, reply="Done.", outcome="applied"
+            ),
+            [{"op": "edit_text", "bar_index": 0, "text": "Corfu"}],
+            "applied",
+            "Done.",
+        ),
+        (
+            EditCopilotOutput(
+                intent="reject",
+                ops=[],
+                confidence=0.9,
+                reply="Done.",
+                outcome="unsupported",
+                rejection_reasons=[
+                    {
+                        "op": "swap_music",
+                        "reason": "capability_unavailable",
+                        "detail": "Music changes are unavailable for this draft.",
+                    }
+                ],
+            ),
+            [],
+            "unsupported",
+            "Music changes are unavailable for this draft.",
+        ),
+        (
+            EditCopilotOutput(
+                intent="edit",
+                ops=[],
+                confidence=0.9,
+                reply="Done.",
+                outcome="stale",
+                rejection_reasons=[
+                    {"op": "edit_text", "reason": "stale_target", "detail": "old target"}
+                ],
+            ),
+            [],
+            "stale",
+            "That edit is based on an older draft. Refresh the editor and try again.",
+        ),
+        (
+            EditCopilotOutput(
+                intent="edit",
+                ops=[],
+                confidence=0.9,
+                reply="Done.",
+                outcome="failed",
+                rejection_reasons=[
+                    {"op": "edit_text", "reason": "invalid_value", "detail": "invalid"}
+                ],
+            ),
+            [],
+            "failed",
+            "I couldn't build a valid draft change for that request. Try again.",
+        ),
+    ],
+)
+def test_honest_outcome_covers_stable_result_taxonomy(
+    output: EditCopilotOutput,
+    ops: list[dict],
+    expected_outcome: str,
+    expected_reply: str,
+) -> None:
+    outcome, reply = _honest_outcome(output, ops)
+
+    assert outcome == expected_outcome
+    assert reply == expected_reply
 
 
 def test_copilot_trim_output_start_drops_normalized_no_effect() -> None:
@@ -1430,6 +1581,39 @@ def test_format_snapshot_renders_caption_role_and_emphasis() -> None:
     assert "emphasis=True" in rendered
 
 
+def test_format_snapshot_exposes_exact_guided_revision_identity() -> None:
+    from app.agents.edit_copilot import _format_snapshot
+
+    snap = _snapshot(allowed=["direction"])
+    snap["guided_revision"] = {
+        "revision_number": 7,
+        "base_generation": "render-generation-abc",
+    }
+
+    rendered = _format_snapshot(snap)
+
+    assert "GUIDED REVISION" in rendered
+    assert "revision_number=7" in rendered
+    assert "base_generation='render-generation-abc'" in rendered
+
+
+def test_honest_outcome_rejection_precedes_clarification_hint() -> None:
+    output = EditCopilotOutput(
+        intent="edit",
+        ops=[],
+        confidence=0.4,
+        reply="Which cut?",
+        needs_clarification=True,
+        rejection_reasons=[
+            {"op": "set_edit_direction", "reason": "invalid_value", "detail": "invalid"}
+        ],
+    )
+
+    outcome, _reply = _honest_outcome(output, [])
+
+    assert outcome == "failed"
+
+
 @pytest.mark.parametrize(
     "op",
     [
@@ -1659,6 +1843,109 @@ def test_copilot_route_allows_guided_story_text_drafts(client: TestClient, monke
     run.assert_awaited_once()
 
 
+def test_copilot_route_replaces_model_direction_request_with_server_plan(
+    client: TestClient, monkeypatch
+) -> None:
+    from types import SimpleNamespace
+
+    from app.pipeline import guided_story
+    from app.routes import generative_jobs
+    from app.schemas.edit_proposal import FastMontageCut
+    from app.services import edit_direction_planner
+
+    settings.edit_copilot_enabled = True
+    user = _user()
+    item, plan = _item_and_plan(user.id)
+    item.idea = "Corfu highlights"
+    item.theme = "Travel"
+    item.current_job.assembly_plan["guided_edit"] = {"server": "snapshot"}
+    item.current_job.assembly_plan["guided_story_execution_plan"] = {
+        "text_elements": [
+            {"id": "guided-thought-1", "text": "AI thought"},
+            {"id": "guided-thought-2", "text": "Old AI thought"},
+        ]
+    }
+    _install_route_deps(user, item, plan)
+    monkeypatch.setattr(
+        plan_items,
+        "run_copilot_turn",
+        AsyncMock(
+            return_value={
+                "intent": "edit",
+                "ops": [
+                    {
+                        "op": "set_edit_direction",
+                        "direction": "fast_montage",
+                        "revision_number": 3,
+                        "base_generation": "render-abc",
+                        "hard_cuts": True,
+                        "minimal_text": True,
+                    }
+                ],
+                "confidence": 0.95,
+                "reply": "I'll make it fast.",
+                "suggestions": [],
+                "needs_clarification": False,
+                "outcome": "applied",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        generative_jobs,
+        "_guided_v2_revision",
+        lambda _job, _variant: {
+            "revision_number": 3,
+            "text_elements": [
+                {"id": "guided-thought-1", "text": "AI thought"},
+                {"id": "guided-thought-2", "text": "Creator rewrite"},
+            ],
+        },
+    )
+    monkeypatch.setattr(generative_jobs, "variant_render_baseline", lambda _variant: "render-abc")
+    approved = SimpleNamespace(duration_s=3)
+    monkeypatch.setattr(
+        guided_story,
+        "validate_guided_snapshot",
+        lambda _raw: (1, "digest", approved),
+    )
+    planned = SimpleNamespace(
+        fast_cuts=[
+            FastMontageCut(
+                cut_id="cut-1",
+                media_id="media-a",
+                source_start_s=1.2,
+                source_end_s=2.0,
+                output_duration_s=0.8,
+                role="hook",
+            ),
+            FastMontageCut(
+                cut_id="cut-2",
+                media_id="media-a",
+                source_start_s=3.0,
+                source_end_s=3.9,
+                output_duration_s=0.9,
+                role="payoff",
+            ),
+        ]
+    )
+    planner = MagicMock(return_value=planned)
+    monkeypatch.setattr(edit_direction_planner, "plan_direction_snapshot", planner)
+
+    response = client.post(f"/plan-items/{item.id}/variants/v1/copilot/turn", json=_payload())
+
+    assert response.status_code == 200
+    op = response.json()["ops"][0]
+    assert op["server_planned"] is True
+    assert op["cuts"] == [
+        {"media_id": "media-a", "start_s": 1.2, "duration_s": 0.8},
+        {"media_id": "media-a", "start_s": 3.0, "duration_s": 0.9},
+    ]
+    assert "order" not in op
+    assert "slot_index" not in op["cuts"][0]
+    assert op["clear_text"] == [{"id": "guided-thought-1", "expected_text": "AI thought"}]
+    planner.assert_called_once()
+
+
 def test_copilot_route_non_edit_intent_empties_ops(client: TestClient, monkeypatch) -> None:
     """A disobedient model returning intent='reject' WITH ops must not have
     them applied while the reply says nothing was done (review F5)."""
@@ -1838,12 +2125,14 @@ def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
     # repeat_last_edit and the HISTORY STATE snapshot section (PR7), then
     # (2026-08-14-v23) for catalog-backed Creator Block Motion v2 controls and
     # normalized existing-block motion state, then (2026-08-22-v28) for
-    # story-native trim and explicit music-removal operations — update
+    # story-native trim and explicit music-removal operations, then
+    # (2026-08-23-v29) for guided-title aliasing and structured outcomes, then
+    # (2026-08-23-v30) for server-planned direction replacement — update
     # this pin whenever EDIT_COPILOT_PROMPT_VERSION moves, per the
     # prompt-change rule.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-22-v28"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-23-v30"
 
 
 def _motion_snapshot() -> dict:

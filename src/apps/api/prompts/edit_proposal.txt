@@ -19,17 +19,24 @@ $media_json
 Return JSON only:
 {"title":"...","duration_s":24,"story_beats":[{"topic":"Food",
 "thought":"A short editable thought","media_ids":["exact-media-id"],
-"layout":"fullscreen|supporting_card","duration_s":4.0}]}
+"layout":"fullscreen|supporting_card","duration_s":4.0}],
+"fast_cuts":[{"cut_id":"cut_1","media_id":"exact-media-id","source_start_s":0.0,
+"source_end_s":1.0,"output_duration_s":1.0,"role":"hook|build|payoff",
+"transition":"none","beat_align":false}]}
 
 Editorial rules:
 - Understand the whole set before choosing an order. Use both photos and videos when both exist.
 - Use at least 7 distinct sources when 7 are available; otherwise use every useful source.
-- With at least 3 sources, return 3-5 story beats. With fewer, return one beat per source.
+- With at least 3 sources, return 3-5 story beats for guided_story/text_explainer. A
+  fast_montage may leave story_beats empty; its actual edit is fast_cuts.
   A beat is a chapter that groups related media, not one beat per file.
 - Give each beat a distinct topic. Group coherent subjects such as food, architecture/town,
   coast/beaches, people, and sunset. Do not fabricate a topic.
 - A guided_story or text_explainer needs a visible intro plus short thought moments. A fast_montage
-  can use fewer words, but still needs a meaningful sequence rather than random cuts.
+  is music-led: emit fast_cuts with exact source windows, a hook first, hard cuts only, and
+  minimal generated text. Use 0.8-1.2s output cuts whenever the source supports it; use 0.4-0.79s
+  only when that source is genuinely shorter. Prefer a different source on each adjacent cut,
+  use at least the required distinct sources, and end on a payoff when there is more than one cut.
 - `thought` is an AI DRAFT for the creator to edit. It may describe a visible quality or suggest
   a reflective tone, but MUST NOT invent where they went, what they ate, how it tasted, who they
   were with, what they felt, or any other factual personal experience not stated in user_context.
@@ -49,3 +56,5 @@ Editorial rules:
 - Use exact media_id values. Do not repeat one source across many beats unless it is necessary.
 - Mostly use fullscreen sequential moments. Use supporting_card only when it clarifies a topic.
 - Keep each thought readable, specific to the visible subject, and under 18 words.
+- For fast_montage, each fast cut's source_start_s/source_end_s must be an exact window inside
+  its source duration (prefer an analyzed best_moment), and output_duration_s must not stretch it.

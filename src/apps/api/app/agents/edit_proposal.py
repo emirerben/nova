@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.pipeline.prompt_loader import load_prompt
+from app.schemas.edit_proposal import FastMontageCut
 
 _SENSORY_CLAIM = re.compile(
     r"\b(?:delicious|tasty|flavorful|refreshing|favorite)\b",
@@ -91,14 +92,17 @@ class DraftStoryBeat(BaseModel):
 class EditProposalAgentOutput(BaseModel):
     title: str = Field(min_length=1, max_length=100)
     duration_s: int = Field(ge=3, le=60)
-    story_beats: list[DraftStoryBeat] = Field(min_length=1, max_length=5)
+    story_beats: list[DraftStoryBeat] = Field(default_factory=list, max_length=5)
+    # New fast-montage proposals use exact source windows. Legacy fast snapshots
+    # omit this field and continue through the old story-beat compiler.
+    fast_cuts: list[FastMontageCut] | None = Field(default=None, max_length=80)
 
 
 class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.1.0",
+        prompt_version="1.2.0",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -147,6 +151,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
         except Exception as exc:  # noqa: BLE001
             raise SchemaError(f"edit_proposal: invalid output — {exc}") from exc
         allowed = {m.media_id for m in input.media}
+        media_by_id = {media.media_id: media for media in input.media}
         used: set[str] = set()
         for beat in output.story_beats:
             if not set(beat.media_ids) <= allowed:
@@ -154,16 +159,61 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             if len(beat.media_ids) != len(set(beat.media_ids)):
                 raise SchemaError("edit_proposal: beat repeats the same media")
             used.update(beat.media_ids)
-        minimum = minimum_required_sources(len(input.media))
-        if len(used) < minimum:
-            raise SchemaError(
-                f"edit_proposal: selected {len(used)} distinct sources; need at least {minimum}"
-            )
+        cuts = output.fast_cuts or []
+        if input.direction == "fast_montage" and not cuts:
+            raise SchemaError("edit_proposal: new fast montage proposals require fast_cuts")
+        if input.direction == "fast_montage" and cuts:
+            if cuts[0].role != "hook":
+                raise SchemaError("edit_proposal: fast montage must open with a hook cut")
+            if len(cuts) > 1 and cuts[-1].role != "payoff":
+                raise SchemaError("edit_proposal: fast montage must end with a payoff cut")
+            previous_media_id: str | None = None
+            cut_sources: set[str] = set()
+            total_cut_duration = 0.0
+            for cut in cuts:
+                media = media_by_id.get(cut.media_id)
+                if media is None:
+                    raise SchemaError("edit_proposal: fast cut references unknown media")
+                if previous_media_id == cut.media_id:
+                    raise SchemaError("edit_proposal: fast montage cannot repeat adjacent sources")
+                previous_media_id = cut.media_id
+                cut_sources.add(cut.media_id)
+                total_cut_duration += cut.output_duration_s
+                source_duration = float(media.duration_s or 0.0)
+                if media.kind == "video" and cut.source_end_s > source_duration + 0.001:
+                    raise SchemaError("edit_proposal: fast cut source window exceeds video")
+                if cut.output_duration_s >= 0.8:
+                    continue
+                if source_duration >= 0.8 or cut.output_duration_s < 0.4:
+                    raise SchemaError(
+                        "edit_proposal: fast cuts target 0.8-1.2s except truly short sources"
+                    )
+            minimum = minimum_required_sources(len(input.media))
+            if len(cut_sources) < minimum:
+                raise SchemaError(
+                    f"edit_proposal: fast montage selected {len(cut_sources)} distinct sources; "
+                    f"need at least {minimum}"
+                )
+            if abs(total_cut_duration - output.duration_s) > 0.15:
+                raise SchemaError(
+                    "edit_proposal: fast cut durations do not fit the declared duration"
+                )
+        else:
+            minimum = minimum_required_sources(len(input.media))
+            if len(used) < minimum:
+                raise SchemaError(
+                    f"edit_proposal: selected {len(used)} distinct sources; need at least {minimum}"
+                )
         available_kinds = {media.kind for media in input.media}
-        used_kinds = {media.kind for media in input.media if media.media_id in used}
+        # Fast montage proposals intentionally leave ``story_beats`` empty;
+        # their source-of-truth is the ordered cut list.
+        variety_ids = cut_sources if input.direction == "fast_montage" and cuts else used
+        used_kinds = {media.kind for media in input.media if media.media_id in variety_ids}
         if len(available_kinds) > 1 and used_kinds != available_kinds:
             raise SchemaError("edit_proposal: story must use both photos and videos")
         if input.direction in {"guided_story", "text_explainer"}:
+            if not output.story_beats:
+                raise SchemaError("edit_proposal: guided story needs story beats")
             minimum_beats = min(3, len(input.media))
             if len(output.story_beats) < minimum_beats:
                 raise SchemaError(
@@ -171,13 +221,13 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 )
             if any(not beat.thought.strip() for beat in output.story_beats):
                 raise SchemaError("edit_proposal: guided story thoughts cannot be empty")
-        minimum_topics = min(3, len(input.media))
-        distinct_topics = {beat.topic.strip().casefold() for beat in output.story_beats}
-        if len(distinct_topics) < minimum_topics:
-            raise SchemaError(
-                f"edit_proposal: story needs at least {minimum_topics} distinct topics"
-            )
-        media_by_id = {media.media_id: media for media in input.media}
+        if input.direction != "fast_montage":
+            minimum_topics = min(3, len(input.media))
+            distinct_topics = {beat.topic.strip().casefold() for beat in output.story_beats}
+            if len(distinct_topics) < minimum_topics:
+                raise SchemaError(
+                    f"edit_proposal: story needs at least {minimum_topics} distinct topics"
+                )
         for beat in output.story_beats:
             has_creator_context = any(
                 media_by_id[media_id].user_context.strip() for media_id in beat.media_ids
@@ -192,8 +242,12 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 )
         if abs(output.duration_s - input.target_duration_s) > 5:
             raise SchemaError("edit_proposal: duration is too far from the creator's target")
-        beat_duration = sum(beat.duration_s for beat in output.story_beats)
-        max_intro_gap = max(6.0, output.duration_s * 0.3)
-        if beat_duration > output.duration_s or output.duration_s - beat_duration > max_intro_gap:
-            raise SchemaError("edit_proposal: beat durations do not fit the declared duration")
+        if input.direction != "fast_montage":
+            beat_duration = sum(beat.duration_s for beat in output.story_beats)
+            max_intro_gap = max(6.0, output.duration_s * 0.3)
+            if (
+                beat_duration > output.duration_s
+                or output.duration_s - beat_duration > max_intro_gap
+            ):
+                raise SchemaError("edit_proposal: beat durations do not fit the declared duration")
         return output

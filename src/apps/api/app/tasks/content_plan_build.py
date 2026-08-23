@@ -663,7 +663,11 @@ def _dispatch_item_render(
     )
 
     approved_proposal: dict | None = None
-    if bypass_guided_edit_gate and guided_applicable:
+    if (
+        bypass_guided_edit_gate
+        and guided_applicable
+        and not settings.guided_edit_direction_confirmation_enabled
+    ):
         # The caller's zero-registered-pool-assets invariant was checked in a
         # SEPARATE transaction — re-assert it under THIS lock (the item row is
         # already FOR-UPDATE-locked by dispatch_item_render_for) before
@@ -682,7 +686,9 @@ def _dispatch_item_render(
         if pool_count > 0:
             return DispatchResult("guided_edit_bypass_unsafe")
     elif guided_applicable and (
-        settings.guided_edit_capability_enabled or settings.guided_edit_enforcement_enabled
+        settings.guided_edit_capability_enabled
+        or settings.guided_edit_enforcement_enabled
+        or settings.guided_edit_direction_confirmation_enabled
     ):
         from app.services.edit_proposals import (  # noqa: PLC0415
             mark_edit_proposal_stale,
@@ -696,7 +702,10 @@ def _dispatch_item_render(
             if proposal_error == "proposal_stale":
                 mark_edit_proposal_stale(item)
                 session.commit()
-            if settings.guided_edit_enforcement_enabled:
+            if (
+                settings.guided_edit_enforcement_enabled
+                or settings.guided_edit_direction_confirmation_enabled
+            ):
                 return DispatchResult(proposal_error)
             approved_proposal = None
 

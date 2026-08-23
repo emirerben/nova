@@ -18,14 +18,20 @@ from app.models import ContentPlan, PlanItem, PlanItemAsset
 from app.schemas.edit_proposal import (
     EditProposal,
     EditProposalSnapshot,
+    FastMontageCut,
     MediaRef,
+    ProposalBrief,
     ProposalFailure,
     StoryBeat,
     canonical_media_digest,
     parse_edit_proposal,
 )
 from app.services.content_plan_persona import load_owned_plan_persona_sync
-from app.services.edit_proposals import media_generations_match_sync, save_proposal_draft
+from app.services.edit_proposals import (
+    infer_direction_guidance,
+    media_generations_match_sync,
+    save_proposal_draft,
+)
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -86,6 +92,38 @@ _IMAGE_FEASIBLE_CREDIT_S = 1.4
 # adversarial review) — it was previously falling into the image branch and
 # being credited as if it were a full _IMAGE_FEASIBLE_CREDIT_S image.
 _RENDERER_MIN_MOMENT_S = 1.4
+
+
+def _fast_story_beats(cuts: list[FastMontageCut]) -> list[StoryBeat]:
+    """Build a compatibility beat projection for the exact fast-cut program.
+
+    New fast plans render from ``fast_cuts``. The proposal envelope still keeps
+    story beats for older readers and API shape compatibility, so group nearby
+    cuts into short, text-free beats without changing their source windows.
+    """
+
+    beats: list[StoryBeat] = []
+    for index in range(0, len(cuts), 4):
+        group = cuts[index : index + 4]
+        media_ids: list[str] = []
+        for cut in group:
+            if cut.media_id not in media_ids:
+                media_ids.append(cut.media_id)
+        group_duration = sum(cut.output_duration_s for cut in group)
+        beats.append(
+            StoryBeat(
+                beat_id=f"fast-beat-{index // 4 + 1}",
+                topic="Fast montage",
+                thought="",
+                thought_source="ai_draft",
+                media_ids=media_ids,
+                layout="fullscreen",
+                duration_s=max(1.0, min(12.0, group_duration)),
+            )
+        )
+    if not beats:
+        raise ValueError("fast montage requires at least one cut")
+    return beats
 
 
 def feasible_guided_duration_s(media: list[MediaRef]) -> float:
@@ -341,6 +379,9 @@ def _attempt_wants_auto_finalize(
             and current
             and current.generation_attempt_id == attempt_id
             and current.approval_mode == "auto"
+            and not (
+                current.guidance and current.guidance.state == "awaiting_direction_confirmation"
+            )
         )
 
 
@@ -404,6 +445,8 @@ def _dispatch_after_auto_design(
         current = parse_edit_proposal(item.edit_proposal) if item else None
         if item is None or current is None or current.generation_attempt_id != attempt_id:
             return  # superseded by a newer attempt — nothing to do
+        if current.guidance and current.guidance.state == "awaiting_direction_confirmation":
+            return
         if current.status == "approved":
             bypass = False
         elif current.status == "failed" and not current.design_fallback:
@@ -737,6 +780,43 @@ def _run_draft_attempt(
                 db.commit()
                 return
             item.clip_assignments = merged_assignments
+            from app.config import settings  # noqa: PLC0415
+
+            # Auto-design has enough analyzed evidence to make a useful first
+            # guess, but an unbriefed creator must confirm that guess before we
+            # spend the proposal-agent call or dispatch a render. Explicit
+            # creator briefs use the normal non-auto attempt and bypass this
+            # pause entirely.
+            if (
+                settings.guided_edit_direction_confirmation_enabled
+                and auto_finalize
+                and current.guidance is None
+                and not current.conversation
+                and not current.brief_ready
+            ):
+                guidance = infer_direction_guidance(
+                    item,
+                    media_digest=digest,
+                    duration_s=adapt_target_duration_s(15, feasible_duration_s),
+                )
+                paused = current.model_copy(
+                    update={
+                        "proposal_version": current.proposal_version + 1,
+                        "status": "briefing",
+                        "media_digest": digest,
+                        "brief": ProposalBrief(
+                            direction=guidance.hypothesis.direction,
+                            goal="Show the strongest visual moments quickly.",
+                            pace=guidance.hypothesis.pace,
+                            duration_s=guidance.hypothesis.duration_s,
+                        ),
+                        "guidance": guidance,
+                        "failure": None,
+                    }
+                )
+                item.edit_proposal = paused.model_dump(mode="json")
+                db.commit()
+                return
             drafting = current.model_copy(
                 update={
                     "proposal_version": current.proposal_version + 1,
@@ -813,18 +893,27 @@ def _run_draft_attempt(
             duration_s=output.duration_s,
             title=output.title,
             media=media,
-            story_beats=[
-                StoryBeat(
-                    beat_id=str(uuid.uuid4()),
-                    topic=beat.topic,
-                    thought=beat.thought,
-                    thought_source="ai_draft",
-                    media_ids=beat.media_ids,
-                    layout=beat.layout,
-                    duration_s=beat.duration_s,
-                )
-                for beat in output.story_beats
-            ],
+            story_beats=(
+                [
+                    StoryBeat(
+                        beat_id=str(uuid.uuid4()),
+                        topic=beat.topic,
+                        thought=beat.thought,
+                        thought_source="ai_draft",
+                        media_ids=beat.media_ids,
+                        layout=beat.layout,
+                        duration_s=beat.duration_s,
+                    )
+                    for beat in output.story_beats
+                ]
+                if brief.direction != "fast_montage"
+                else _fast_story_beats(output.fast_cuts or [])
+            ),
+            fast_cuts=(
+                [cut.model_dump(mode="json") for cut in output.fast_cuts]
+                if brief.direction == "fast_montage" and output.fast_cuts
+                else None
+            ),
         )
         with sync_session() as db:
             locked = _locked_item(db, iid, ownership_epoch)

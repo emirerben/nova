@@ -98,7 +98,7 @@ class EditGuideAgent(Agent[EditGuideInput, EditGuideOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_guide",
         prompt_id="edit_guide",
-        prompt_version="1.0.6",
+        prompt_version="1.0.7",
         model="gemini-2.5-flash",
         # Stay below the web proxy's 60s hard budget even when both attempts
         # reach their timeout. This prevents a late invisible DB commit after

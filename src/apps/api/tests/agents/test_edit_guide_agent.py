@@ -20,7 +20,7 @@ def _brief_payload() -> dict:
     }
 
 
-def test_briefing_forces_ready_after_three_creator_answers() -> None:
+def test_briefing_forces_ready_after_two_follow_up_questions() -> None:
     agent_input = EditGuideInput(
         phase="briefing",
         turns=[

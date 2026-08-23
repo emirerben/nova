@@ -51,6 +51,12 @@ const clips = [
   { source_duration_s: 7 },
 ];
 
+const timelineClips = [
+  { clip_index: 0, signed_url: null, duration_s: 10, used: true, media_id: "media-a", generation: "1", kind: "video" as const },
+  { clip_index: 1, signed_url: null, duration_s: 8, used: true, media_id: "media-b", generation: "1", kind: "video" as const },
+  { clip_index: 2, signed_url: null, duration_s: 7, used: true, media_id: "media-c", generation: "1", kind: "video" as const },
+];
+
 function ctx(over: {
   bars?: TextElementBar[];
   slots?: DraftSlot[];
@@ -141,6 +147,133 @@ function extendedCtx(over: Partial<Parameters<typeof applyCopilotOps>[1]> = {}) 
 }
 
 describe("applyCopilotOps", () => {
+  it("stages a revision-bound fast montage as one atomic editor result", () => {
+    const bars = [
+      bar({ id: "guided-title", text: "Old title" }),
+      bar({ id: "guided-thought-1", text: "An explanatory thought", start_s: 1, end_s: 3 }),
+      bar({ id: "guided-thought-2", text: "Creator rewrite", start_s: 3, end_s: 4 }),
+      bar({ id: "creator-note", text: "My own note", start_s: 3, end_s: 4 }),
+    ];
+    const slots = [
+      slot({ key: "a", slotId: "a", clipIndex: 0, durationS: 3 }),
+      slot({ key: "b", slotId: "b", clipIndex: 1, durationS: 3 }),
+    ];
+    const snapshot = buildCopilotSnapshot(
+      bars,
+      slots,
+      clips,
+      { text_elements: true, timeline: true },
+      [],
+      {
+        guidedRevision: { revision_number: 3, base_generation: "render-abc" },
+        editDirectionAvailable: true,
+      },
+    );
+
+    const result = applyCopilotOpsAtomic(
+      [{
+        op: "set_edit_direction",
+        direction: "fast_montage",
+        revision_number: 3,
+        base_generation: "render-abc",
+        server_planned: true,
+        cuts: [
+          { media_id: "media-b", start_s: 1.1, duration_s: 0.8 },
+          { media_id: "media-a", start_s: 0.2, duration_s: 1 },
+          { media_id: "media-a", start_s: 3.2, duration_s: 0.9 },
+        ],
+        clear_text: [
+          { id: "guided-thought-1", expected_text: "An explanatory thought" },
+          { id: "guided-thought-2", expected_text: "Original AI thought" },
+        ],
+        hard_cuts: true,
+        minimal_text: true,
+      }],
+      { bars, slots, clips: timelineClips, snapshot },
+    );
+
+    expect(result.rejected).toEqual([]);
+    expect(result.nextSlots?.map((entry) => entry.clipIndex)).toEqual([1, 0, 0]);
+    expect(result.nextSlots?.map((entry) => entry.inS)).toEqual([1.1, 0.2, 3.2]);
+    expect(result.nextSlots?.map((entry) => entry.durationS)).toEqual([0.8, 1, 0.9]);
+    expect(result.nextSlots?.every((entry) => entry.transitionAfter === "cut")).toBe(true);
+    expect(result.textActions).toEqual(expect.arrayContaining([
+      { type: "PATCH_BAR", id: "guided-thought-1", patch: { text: "" } },
+    ]));
+    expect(result.textActions).not.toContainEqual(expect.objectContaining({ id: "guided-title" }));
+    expect(result.textActions).not.toContainEqual(expect.objectContaining({ id: "guided-thought-2" }));
+    expect(result.textActions).not.toContainEqual({ type: "DELETE_BAR", id: "creator-note" });
+    expect(result.appliedOps).toHaveLength(1);
+  });
+
+  it("rejects a fast montage cut outside the source clip", () => {
+    const slots = [slot({ key: "a", slotId: "a", clipIndex: 0, durationS: 3 })];
+    const snapshot = buildCopilotSnapshot(
+      [],
+      slots,
+      clips,
+      { timeline: true },
+      [],
+      {
+        guidedRevision: { revision_number: 3, base_generation: "render-abc" },
+        editDirectionAvailable: true,
+      },
+    );
+    snapshot.slots[0].source_duration_s = 1;
+
+    const result = applyCopilotOpsAtomic([{
+      op: "set_edit_direction",
+      direction: "fast_montage",
+      revision_number: 3,
+      base_generation: "render-abc",
+      server_planned: true,
+      cuts: [{ media_id: "media-a", start_s: 9.5, duration_s: 0.8 }],
+      hard_cuts: true,
+      minimal_text: true,
+    }], { bars: [], slots, clips: timelineClips, snapshot });
+
+    expect(result.applied).toEqual([]);
+    expect(result.rejected[0]).toMatchObject({ reason: "unsupported", op: "set_edit_direction" });
+    expect(result.rejected[0]?.detail).toContain("source clip duration");
+  });
+
+  it("rejects a direction replacement bundled with another edit atomically", () => {
+    const bars = [bar({ id: "guided-title", text: "Old title" })];
+    const slots = [slot({ key: "a", slotId: "a", clipIndex: 0, durationS: 3 })];
+    const snapshot = buildCopilotSnapshot(
+      bars,
+      slots,
+      clips,
+      { text_elements: true, timeline: true },
+      [],
+      {
+        guidedRevision: { revision_number: 3, base_generation: "render-abc" },
+        editDirectionAvailable: true,
+      },
+    );
+
+    const result = applyCopilotOpsAtomic([
+      {
+        op: "set_edit_direction",
+        direction: "fast_montage",
+        revision_number: 3,
+        base_generation: "render-abc",
+        server_planned: true,
+        cuts: [{ media_id: "media-a", start_s: 0, duration_s: 0.8 }],
+        hard_cuts: true,
+        minimal_text: true,
+      },
+      { op: "edit_text", bar_index: 0, text: "Corfu" },
+    ], { bars, slots, snapshot });
+
+    expect(result.nextSlots).toBeNull();
+    expect(result.textActions).toEqual([]);
+    expect(result.applied).toEqual([]);
+    expect(result.rejected).toEqual([
+      expect.objectContaining({ op: "set_edit_direction", reason: "unsupported" }),
+    ]);
+  });
+
   it("maps every text op to the expected text action", () => {
     expect(applyCopilotOps([{ op: "edit_text", bar_index: 0, text: "new hook" }], ctx()).textActions)
       .toEqual([{ type: "EDIT_TEXT", id: "bar-1", text: "new hook" }]);

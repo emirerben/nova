@@ -27,7 +27,7 @@ from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-08-22-v28"
+EDIT_COPILOT_PROMPT_VERSION = "2026-08-23-v30"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt prose ("up to 12", twice) and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -89,6 +89,7 @@ _RENDER_OPS = frozenset({"set_intro_layout", "apply_custom_effect"})
 # set_intro_layout it composes freely with any other op in the same turn.
 _CAROUSEL_OPS = frozenset({"set_carousel_moment"})
 _TITLE_OPS = {"set_title"}
+_DIRECTION_OPS = {"set_edit_direction"}
 _TOOL_OPS = {"open_tool"}
 _EFFECT_OPS = {"add_camera_effect", "patch_camera_effect", "remove_camera_effect"}
 _TRANSITION_OPS = {"set_transition"}
@@ -112,6 +113,7 @@ _VALID_OPS = (
     | _RENDER_OPS
     | _CAROUSEL_OPS
     | _TITLE_OPS
+    | _DIRECTION_OPS
     | _TOOL_OPS
     | _EFFECT_OPS
     | _TRANSITION_OPS
@@ -154,6 +156,9 @@ _OP_REQUIRED: dict[str, frozenset[str]] = {
     "apply_custom_effect": frozenset({"effect"}),
     "set_carousel_moment": frozenset({"config"}),
     "set_title": frozenset({"title"}),
+    "set_edit_direction": frozenset(
+        {"direction", "revision_number", "base_generation", "hard_cuts", "minimal_text"}
+    ),
     "open_tool": frozenset({"tool"}),
     "add_camera_effect": frozenset({"start_s", "end_s"}),
     "patch_camera_effect": frozenset({"camera_effect_index"}),
@@ -213,6 +218,15 @@ _OP_FIELDS: dict[str, frozenset[str]] = {
     "apply_custom_effect": frozenset({"effect"}),
     "set_carousel_moment": frozenset({"config"}),
     "set_title": frozenset({"title"}),
+    "set_edit_direction": frozenset(
+        {
+            "direction",
+            "revision_number",
+            "base_generation",
+            "hard_cuts",
+            "minimal_text",
+        }
+    ),
     "open_tool": frozenset({"tool"}),
     "add_camera_effect": frozenset({"start_s", "end_s", "intensity", "effect_bundle_id"}),
     "patch_camera_effect": frozenset({"camera_effect_index", "start_s", "end_s", "intensity"}),
@@ -332,6 +346,12 @@ _DIRECTOR_OPERATION_EXAMPLES: tuple[tuple[str, str], ...] = (
     ("remove_music", '{"op":"remove_music"}'),
     ("set_title", '{"op":"set_title","title":"new working title"}'),
     (
+        "set_edit_direction",
+        '{"op":"set_edit_direction","direction":"fast_montage",'
+        '"revision_number":3,"base_generation":"render-abc",'
+        '"hard_cuts":true,"minimal_text":true}',
+    ),
+    (
         "add_camera_effect",
         '{"op":"add_camera_effect","start_s":1.0,"end_s":2.2,'
         '"intensity":0.04,"effect_bundle_id":"reveal_1"}',
@@ -391,6 +411,22 @@ _VALID_OVERLAY_POSITION = {"top", "center", "bottom", "custom"}
 _VALID_OVERLAY_DISPLAY_MODE = {"pip", "fullscreen"}
 _VALID_CAPTION_STYLE = {"sentence", "word"}
 _VALID_OPEN_TOOLS = {"text", "visuals", "sounds", "overlays", "styles"}
+
+CopilotOutcome = Literal[
+    "applied",
+    "clarification",
+    "no_effect",
+    "unsupported",
+    "stale",
+    "failed",
+]
+CopilotRejectionReason = Literal[
+    "unknown_operation",
+    "capability_unavailable",
+    "missing_required",
+    "invalid_value",
+    "stale_target",
+]
 
 
 def _load_motion_preset_params() -> dict[str, dict[str, dict[str, Any]]]:
@@ -517,6 +553,8 @@ class EditCopilotOutput(BaseModel):
     reply: str
     suggestions: list[str] = Field(default_factory=list)
     needs_clarification: bool = False
+    outcome: CopilotOutcome | None = None
+    rejection_reasons: list[dict[str, str]] = Field(default_factory=list)
 
 
 def _clean_prompt_data(value: object, *, max_chars: int = 220) -> str:
@@ -609,6 +647,14 @@ def _format_snapshot(snapshot: dict) -> str:
     ]
     if total_s is not None:
         lines.append(f"total_duration_s: {total_s:.2f} (cap 60.00)")
+
+    guided_revision = snapshot.get("guided_revision")
+    if isinstance(guided_revision, dict):
+        revision_number = guided_revision.get("revision_number")
+        base_generation = _clean_prompt_data(guided_revision.get("base_generation"), max_chars=200)
+        if isinstance(revision_number, int) and not isinstance(revision_number, bool):
+            lines.append("\nGUIDED REVISION (copy exactly for direction changes):")
+            lines.append(f"revision_number={revision_number} base_generation={base_generation!r}")
 
     intro = snapshot.get("intro")
     if isinstance(intro, dict):
@@ -1232,10 +1278,14 @@ class _ParseState:
     def __init__(self, confidence: float) -> None:
         self.confidence = confidence
         self.invalid_value_seen = False
+        self.rejection_reasons: list[dict[str, str]] = []
 
     def invalid_value(self) -> None:
         self.invalid_value_seen = True
         self.confidence = min(self.confidence, 0.4)
+
+    def reject(self, *, op: str, reason: str, detail: str) -> None:
+        self.rejection_reasons.append({"op": op, "reason": reason, "detail": detail})
 
 
 def _drop_normalized_no_effect_ops(
@@ -1272,6 +1322,28 @@ def _drop_normalized_no_effect_ops(
             f"The draft already starts at {removed_trim_start:g} seconds, so I didn't change it."
         )
     return filtered, message
+
+
+def _guided_title_index(snapshot: dict) -> int | None:
+    """Return the semantic guided title bar, if this snapshot exposes one."""
+    for index, bar in enumerate(_snapshot_list(snapshot, _TEXT_INDEX_KEYS)):
+        if isinstance(bar, dict) and str(bar.get("id") or "") == "guided-title":
+            return index
+    return None
+
+
+def _guided_revision_identity(snapshot: dict) -> tuple[int, str] | None:
+    """Read the revision/CAS identity from the compact Copilot snapshot."""
+    identity = snapshot.get("guided_revision") if isinstance(snapshot, dict) else None
+    if not isinstance(identity, dict):
+        identity = snapshot
+    number = identity.get("revision_number")
+    generation = identity.get("base_generation")
+    if isinstance(number, bool) or not isinstance(number, int) or number < 0:
+        return None
+    if not isinstance(generation, str) or not generation.strip():
+        return None
+    return number, generation.strip()
 
 
 class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
@@ -1369,6 +1441,32 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         if state.confidence < _CONFIDENCE_CLARIFY_THRESHOLD:
             needs_clarification = True
 
+        # Parser rejections lower confidence and therefore keep the legacy
+        # clarification hint, but the stable outcome must disclose what
+        # actually happened. Otherwise an invalid operation is presented as a
+        # question instead of the concrete execution failure.
+        if needs_clarification and not state.rejection_reasons:
+            outcome: CopilotOutcome = "clarification"
+        elif ops:
+            outcome = "applied"
+        elif any(item["reason"] == "stale_target" for item in state.rejection_reasons):
+            outcome = "stale"
+        elif (
+            any(
+                item["reason"] in {"capability_unavailable", "unknown_operation"}
+                for item in state.rejection_reasons
+            )
+            or intent == "reject"
+        ):
+            outcome = "unsupported"
+        elif any(
+            item["reason"] in {"missing_required", "invalid_value"}
+            for item in state.rejection_reasons
+        ):
+            outcome = "failed"
+        else:
+            outcome = "no_effect"
+
         try:
             return EditCopilotOutput(
                 intent=intent,  # type: ignore[arg-type]
@@ -1377,6 +1475,8 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 reply=reply,
                 suggestions=suggestions,
                 needs_clarification=needs_clarification,
+                outcome=outcome,
+                rejection_reasons=state.rejection_reasons,
             )
         except Exception as exc:  # noqa: BLE001
             raise RefusalError(f"edit_copilot: output validation — {exc}") from exc
@@ -1404,14 +1504,23 @@ def _coerce_confidence(value: object) -> float:
 def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None:
     if not isinstance(raw_op, dict):
         log.warning("edit_copilot.drop_non_object_op", op=raw_op)
+        state.reject(op="unknown", reason="unknown_operation", detail="operation must be an object")
         return None
 
     name = str(raw_op.get("op") or raw_op.get("type") or "").strip()
     if name not in _VALID_OPS:
         log.warning("edit_copilot.drop_unknown_op", op=name)
+        state.reject(
+            op=name or "unknown", reason="unknown_operation", detail="operation is not supported"
+        )
         return None
     if not _family_allowed(name, snapshot):
         log.warning("edit_copilot.drop_disallowed_family", op=name)
+        state.reject(
+            op=name,
+            reason="capability_unavailable",
+            detail="operation is unavailable for this draft",
+        )
         return None
 
     raw_payload = raw_op.get("payload")
@@ -1425,21 +1534,53 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
         {"start_s", "end_s"} & payload.keys()
     ):
         log.warning("edit_copilot.drop_missing_timing_bound")
+        state.reject(
+            op=name,
+            reason="missing_required",
+            detail="at least one timing bound is required",
+        )
         return None
     if name == "patch_sfx" and not ({"at_s", "gain"} & payload.keys()):
         log.warning("edit_copilot.drop_missing_sfx_patch")
+        state.reject(
+            op=name,
+            reason="missing_required",
+            detail="at least one sound property is required",
+        )
         return None
     missing = _OP_REQUIRED[name] - payload.keys()
     if missing:
         log.warning("edit_copilot.drop_missing_fields", op=name, missing=sorted(missing))
+        state.reject(
+            op=name,
+            reason="missing_required",
+            detail=f"missing required fields: {', '.join(sorted(missing))}",
+        )
         return None
 
     if not _indices_valid(name, payload, snapshot):
+        state.reject(
+            op=name,
+            reason="stale_target",
+            detail="the requested target is no longer available",
+        )
         return None
 
     parsed = _coerce_payload(name, payload, snapshot, state)
     if parsed is None:
+        if name == "set_edit_direction" and _guided_revision_identity(snapshot) is None:
+            state.reject(
+                op=name,
+                reason="capability_unavailable",
+                detail="fast montage direction requires an active guided-story revision",
+            )
+        else:
+            state.reject(op=name, reason="invalid_value", detail="operation values are invalid")
         return None
+    if name == "set_title":
+        title_index = _guided_title_index(snapshot)
+        if title_index is not None:
+            return {"op": "edit_text", "bar_index": title_index, "text": parsed["title"]}
     return {"op": name, **parsed}
 
 
@@ -1489,7 +1630,9 @@ def _family_allowed(name: str, snapshot: dict) -> bool:
     elif name in _CAROUSEL_OPS:
         aliases = {"carousel", "carousel_moment"}
     elif name in _TITLE_OPS:
-        aliases = {"title"}
+        aliases = {"title", "text"} if _guided_title_index(snapshot) is not None else {"title"}
+    elif name in _DIRECTION_OPS:
+        aliases = {"direction", "edit_direction", "guided_story"}
     elif name in _TOOL_OPS:
         aliases = {"tool", "open_tool", "navigation"}
     elif name in _EFFECT_OPS:
@@ -1621,6 +1764,43 @@ def _coerce_payload(
     state: _ParseState,
 ) -> dict | None:
     out = dict(payload)
+
+    if name == "set_edit_direction":
+        if out.get("direction") != "fast_montage":
+            state.invalid_value()
+            return None
+        identity = _guided_revision_identity(snapshot)
+        if identity is None:
+            return None
+        requested_revision = out.get("revision_number")
+        if isinstance(requested_revision, bool) or not isinstance(requested_revision, int):
+            state.invalid_value()
+            return None
+        base_generation = out.get("base_generation")
+        if not isinstance(base_generation, str) or not base_generation.strip():
+            state.invalid_value()
+            return None
+        if requested_revision != identity[0] or base_generation.strip() != identity[1]:
+            state.reject(
+                op=name,
+                reason="stale_target",
+                detail=(
+                    "the guided-story revision changed; refresh the draft before changing direction"
+                ),
+            )
+            return None
+        out["revision_number"] = requested_revision
+        out["base_generation"] = base_generation.strip()
+        if out.get("hard_cuts") is not True or out.get("minimal_text") is not True:
+            state.invalid_value()
+            return None
+        # The Copilot only selects the direction. The route replaces this
+        # request with cuts from the canonical proposal planner over the
+        # server-owned media analysis before anything reaches the browser.
+        out.pop("order", None)
+        out.pop("cuts", None)
+        out.pop("title", None)
+        return out
 
     for key in (
         "bar_index",

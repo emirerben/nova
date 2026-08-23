@@ -4,6 +4,7 @@ import "@testing-library/jest-dom";
 import EditProposalCard from "@/app/plan/items/[id]/components/EditProposalCard";
 import {
   approveEditProposal,
+  confirmEditDirection,
   draftEditProposal,
   editProposalConversationTurn,
   updateEditProposal,
@@ -40,6 +41,7 @@ jest.mock("@/lib/plan-api", () => {
     editProposalConversationTurn: jest.fn(),
     updateEditProposal: jest.fn(),
     approveEditProposal: jest.fn(),
+    confirmEditDirection: jest.fn(),
     PlanApiError,
   };
 });
@@ -50,6 +52,9 @@ const mockConversation = editProposalConversationTurn as jest.MockedFunction<
 >;
 const mockUpdate = updateEditProposal as jest.MockedFunction<typeof updateEditProposal>;
 const mockApprove = approveEditProposal as jest.MockedFunction<typeof approveEditProposal>;
+const mockConfirmDirection = confirmEditDirection as jest.MockedFunction<
+  typeof confirmEditDirection
+>;
 
 function snapshot() {
   return {
@@ -175,6 +180,44 @@ describe("EditProposalCard", () => {
       );
     });
     expect(mockConversation).not.toHaveBeenCalled();
+  });
+
+  it("shows the inferred direction and confirms it with proposal-version protection", async () => {
+    const awaiting = proposal("briefing");
+    awaiting.guidance = {
+      state: "awaiting_direction_confirmation",
+      provenance: "ai_inferred",
+      fingerprint: "f".repeat(64),
+      hypothesis: {
+        direction: "fast_montage",
+        pace: "fast",
+        duration_s: 15,
+        text_density: "minimal",
+        audio_role: "music_led",
+        rationale: "The footage is strongest as a quick visual highlight reel.",
+        buildability_warnings: ["Only one source has enough motion for the hook."],
+      },
+    };
+    const analyzing = item({
+      ...awaiting,
+      status: "analyzing",
+      proposal_version: awaiting.proposal_version + 1,
+      guidance: { ...awaiting.guidance, state: "confirmed", provenance: "creator_confirmed" },
+    });
+    mockConfirmDirection.mockResolvedValue(analyzing);
+    const onChanged = jest.fn();
+
+    render(<EditProposalCard item={item(awaiting)} onChanged={onChanged} />);
+
+    expect(screen.getByText("Is this the edit you want?")).toBeInTheDocument();
+    expect(screen.getByText("Fast montage")).toBeInTheDocument();
+    expect(screen.getByLabelText("Buildability notes")).toHaveTextContent("enough motion");
+    fireEvent.click(screen.getByRole("button", { name: "Yes, build this edit" }));
+
+    await waitFor(() => {
+      expect(mockConfirmDirection).toHaveBeenCalledWith("item-1", 2, "f".repeat(64));
+    });
+    expect(onChanged).toHaveBeenCalledWith(analyzing);
   });
 
   it("collects natural-language direction and prevents a duplicate turn", async () => {
@@ -352,6 +395,47 @@ describe("EditProposalCard", () => {
     expect(screen.getByRole("combobox", { name: "Target length" })).toHaveTextContent("10 seconds");
     await user.click(screen.getByRole("combobox", { name: "Target length" }));
     expect(await screen.findByRole("option", { name: "10 seconds" })).toBeInTheDocument();
+  });
+
+  it("shows the source-aware cut program instead of editable compatibility beats", () => {
+    const fast = proposal();
+    fast.draft = {
+      ...fast.draft!,
+      direction: "fast_montage",
+      pace: "fast",
+      duration_s: 2,
+      fast_cuts: [
+        {
+          cut_id: "cut-1",
+          media_id: "video-1",
+          source_start_s: 0.2,
+          source_end_s: 1.2,
+          output_duration_s: 1,
+          role: "hook",
+          transition: "none",
+          beat_align: true,
+        },
+        {
+          cut_id: "cut-2",
+          media_id: "photo-1",
+          source_start_s: 0,
+          source_end_s: 1,
+          output_duration_s: 1,
+          role: "payoff",
+          transition: "none",
+          beat_align: false,
+        },
+      ],
+    };
+
+    render(<EditProposalCard item={item(fast)} onChanged={jest.fn()} />);
+
+    expect(screen.getByText("Fast cut program")).toBeInTheDocument();
+    expect(screen.getByText(/coast.mp4/)).toBeInTheDocument();
+    expect(screen.getByText(/hook · 0.2–1.2s · hard cut/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Moment 1 topic")).toBeNull();
+    expect(screen.getByRole("combobox", { name: "Direction" })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Target length" })).toBeDisabled();
   });
 
   it("counts only selected sources in the approved summary", () => {

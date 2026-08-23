@@ -228,21 +228,43 @@ export function outcomeAuthoritativeReply({
   needsClarification,
   applied,
   rejected,
+  outcome,
+  rejectionReasons,
 }: {
   modelReply: string;
   intent: string;
   needsClarification: boolean;
   applied: string[];
   rejected: string[];
+  outcome?: EditCopilotTurnResponse["outcome"];
+  rejectionReasons?: EditCopilotTurnResponse["rejection_reasons"];
 }): string {
+  if (outcome === "clarification" || (outcome === undefined && needsClarification)) {
+    const explanation = modelReply.trim();
+    const claimsSuccess =
+      /\b(done|stored|changed|updated|applied|edited|trimmed|removed|swapped|punchier)\b/i.test(explanation) &&
+      !/\b(already|unchanged|cannot|can't|couldn't|unable|not|no longer)\b/i.test(explanation);
+    return claimsSuccess || !explanation
+      ? "I need one detail before changing the draft."
+      : explanation;
+  }
+  if (outcome === "unsupported") {
+    return rejectionReasons?.find((reason) => reason.detail)?.detail ?? "That kind of edit isn't available for this draft yet.";
+  }
+  if (outcome === "stale") {
+    return "That edit is based on an older draft. Refresh the editor and try again.";
+  }
+  if (outcome === "failed") {
+    return "I couldn't build a valid draft change for that request. Try again.";
+  }
   if (intent !== "edit") {
     if (rejected.length === 0) return modelReply;
     return `${modelReply}\n\nCouldn't apply: ${rejected.join("; ")}`;
   }
-  if (needsClarification || applied.length === 0) {
+  if (outcome === "no_effect" || applied.length === 0) {
     const truth = rejected.length > 0
-      ? `I didn't change the draft. ${rejected.join("; ")}`
-      : "I didn't change the draft.";
+      ? `No change made. ${rejected.join("; ")}`
+      : "No change needed — the draft already reflects that request.";
     const explanation = modelReply.trim();
     const claimsSuccess =
       /\b(done|stored|changed|updated|applied|edited|trimmed|removed|swapped|punchier)\b/i.test(
@@ -250,7 +272,7 @@ export function outcomeAuthoritativeReply({
       ) &&
       !/\b(already|unchanged|cannot|can't|couldn't|unable|not|no longer)\b/i.test(explanation);
     return rejected.length === 0 && explanation && explanation !== truth && !claimsSuccess
-      ? `${truth}\n\n${explanation}`
+      ? explanation
       : truth;
   }
   const appliedReceipt = `Applied: ${applied.join("; ")}.`;
@@ -380,7 +402,10 @@ export function useEditCopilot(
           snapshot,
         },
       );
-      const applyResult = response.needs_clarification
+      const shouldClarify = response.outcome
+        ? response.outcome === "clarification"
+        : response.needs_clarification;
+      const applyResult = shouldClarify
         ? { textActions: [], nextSlots: null, applied: [], rejected: [] }
         : optsRef.current.applyOps(response.ops, snapshot);
       if (abandonedTurnsRef.current.has(turnId)) {
@@ -401,6 +426,8 @@ export function useEditCopilot(
           needsClarification: response.needs_clarification,
           applied: outcome.applied,
           rejected: outcome.rejected,
+          outcome: response.outcome,
+          rejectionReasons: response.rejection_reasons,
         });
       const nextMessages: CopilotMessage[] = [
         ...messagesRef.current.map((message) => {

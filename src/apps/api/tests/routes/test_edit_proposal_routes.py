@@ -14,12 +14,14 @@ from app.agents.edit_guide import EditGuideOutput, EditGuideRevision, EditGuideR
 from app.schemas.edit_proposal import (
     EditProposal,
     EditProposalSnapshot,
+    FastMontageCut,
     MediaRef,
     ProposalBrief,
     StoryBeat,
     canonical_media_digest,
     parse_edit_proposal,
 )
+from app.services.edit_proposals import infer_direction_guidance
 
 
 def _snapshot() -> EditProposalSnapshot:
@@ -70,6 +72,270 @@ def _draft_item() -> SimpleNamespace:
         ],
         edit_proposal=proposal.model_dump(mode="json"),
     )
+
+
+def _awaiting_direction_item() -> SimpleNamespace:
+    snapshot = _snapshot()
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        clip_gcs_paths=[snapshot.media[0].gcs_path],
+        clip_assignments=[
+            {
+                "media_id": snapshot.media[0].media_id,
+                "gcs_path": snapshot.media[0].gcs_path,
+                "generation": snapshot.media[0].generation,
+            }
+        ],
+        edit_proposal=None,
+        voiceover_gcs_path=None,
+        edit_format="montage",
+    )
+    digest = canonical_media_digest(snapshot.media)
+    guidance = infer_direction_guidance(item, media_digest=digest, duration_s=15)
+    item.edit_proposal = EditProposal(
+        proposal_version=3,
+        generation_attempt_id="attempt-inferred",
+        media_digest=digest,
+        status="briefing",
+        approval_mode="auto",
+        guidance=guidance,
+        brief=ProposalBrief(
+            direction="fast_montage",
+            goal="Show the strongest visual moments quickly.",
+            pace="fast",
+            duration_s=15,
+        ),
+    ).model_dump(mode="json")
+    return item
+
+
+def _post_request() -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/",
+            "headers": [],
+            "client": ("127.0.0.1", 1234),
+            "scheme": "http",
+            "server": ("test", 80),
+            "query_string": b"",
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_confirm_direction_is_versioned_and_dispatches_once(monkeypatch) -> None:
+    item = _awaiting_direction_item()
+    proposal = parse_edit_proposal(item.edit_proposal)
+    assert proposal is not None and proposal.guidance is not None
+    plan = SimpleNamespace(ownership_epoch=4)
+    user = SimpleNamespace(id=uuid.uuid4())
+    db = AsyncMock()
+    db.execute.return_value = SimpleNamespace(scalars=lambda: [])
+    dispatches: list[dict] = []
+
+    monkeypatch.setattr(plan_items.settings, "guided_edit_direction_confirmation_enabled", True)
+    monkeypatch.setattr(plan_items, "_require_guided_edit", lambda: None)
+    monkeypatch.setattr(plan_items, "_require_guided_edit_applicable", lambda _item: None)
+    monkeypatch.setattr(
+        plan_items,
+        "_load_owned_item_context",
+        AsyncMock(return_value=(item, plan, None)),
+    )
+    monkeypatch.setattr(plan_items, "_load_owned_item", AsyncMock(return_value=item))
+    monkeypatch.setattr(plan_items, "plan_item_response", lambda loaded, **_kw: loaded)
+    monkeypatch.setattr("app.services.plan_clips.ensure_clip_media_ids", lambda _item: False)
+    monkeypatch.setattr(
+        "app.services.edit_proposals.media_generations_match_sync", lambda _refs: True
+    )
+    monkeypatch.setattr(
+        "app.tasks.edit_proposal_build.draft_edit_proposal.apply_async",
+        lambda **kwargs: dispatches.append(kwargs),
+    )
+
+    result = await plan_items.confirm_item_edit_direction(
+        _post_request(),
+        str(item.id),
+        plan_items.ConfirmDirectionBody(
+            expected_proposal_version=proposal.proposal_version,
+            fingerprint=proposal.guidance.fingerprint,
+        ),
+        user,
+        db,
+    )
+
+    saved = parse_edit_proposal(item.edit_proposal)
+    assert result is item
+    assert saved is not None and saved.guidance is not None
+    assert saved.status == "analyzing"
+    assert saved.guidance.state == "confirmed"
+    assert saved.guidance.provenance == "creator_confirmed"
+    assert saved.approval_mode is None
+    assert len(dispatches) == 1
+
+    # A lost-response retry is idempotent, but a conflicting override is not.
+    await plan_items.confirm_item_edit_direction(
+        _post_request(),
+        str(item.id),
+        plan_items.ConfirmDirectionBody(
+            expected_proposal_version=proposal.proposal_version,
+            fingerprint=proposal.guidance.fingerprint,
+        ),
+        user,
+        db,
+    )
+    assert len(dispatches) == 1
+    with pytest.raises(HTTPException) as conflict:
+        await plan_items.confirm_item_edit_direction(
+            _post_request(),
+            str(item.id),
+            plan_items.ConfirmDirectionBody(
+                expected_proposal_version=proposal.proposal_version,
+                fingerprint=proposal.guidance.fingerprint,
+                direction="guided_story",
+            ),
+            user,
+            db,
+        )
+    assert conflict.value.detail["code"] == "proposal_conflict"
+
+
+@pytest.mark.asyncio
+async def test_confirm_direction_rejects_stale_version_without_dispatch(monkeypatch) -> None:
+    item = _awaiting_direction_item()
+    proposal = parse_edit_proposal(item.edit_proposal)
+    assert proposal is not None and proposal.guidance is not None
+    user = SimpleNamespace(id=uuid.uuid4())
+    dispatches: list[dict] = []
+
+    monkeypatch.setattr(plan_items.settings, "guided_edit_direction_confirmation_enabled", True)
+    monkeypatch.setattr(plan_items, "_require_guided_edit", lambda: None)
+    monkeypatch.setattr(plan_items, "_require_guided_edit_applicable", lambda _item: None)
+    monkeypatch.setattr(
+        plan_items,
+        "_load_owned_item_context",
+        AsyncMock(return_value=(item, SimpleNamespace(ownership_epoch=0), None)),
+    )
+    monkeypatch.setattr(
+        "app.tasks.edit_proposal_build.draft_edit_proposal.apply_async",
+        lambda **kwargs: dispatches.append(kwargs),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await plan_items.confirm_item_edit_direction(
+            _post_request(),
+            str(item.id),
+            plan_items.ConfirmDirectionBody(
+                expected_proposal_version=proposal.proposal_version - 1,
+                fingerprint=proposal.guidance.fingerprint,
+            ),
+            user,
+            AsyncMock(),
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "proposal_conflict"
+    assert dispatches == []
+
+
+@pytest.mark.asyncio
+async def test_confirm_direction_rejects_changed_media_generation(monkeypatch) -> None:
+    item = _awaiting_direction_item()
+    proposal = parse_edit_proposal(item.edit_proposal)
+    assert proposal is not None and proposal.guidance is not None
+    item.clip_assignments[0]["generation"] = "replacement-generation"
+    user = SimpleNamespace(id=uuid.uuid4())
+    db = AsyncMock()
+    db.execute.return_value = SimpleNamespace(scalars=lambda: [])
+    dispatches: list[dict] = []
+
+    monkeypatch.setattr(plan_items.settings, "guided_edit_direction_confirmation_enabled", True)
+    monkeypatch.setattr(plan_items, "_require_guided_edit", lambda: None)
+    monkeypatch.setattr(plan_items, "_require_guided_edit_applicable", lambda _item: None)
+    monkeypatch.setattr(
+        plan_items,
+        "_load_owned_item_context",
+        AsyncMock(return_value=(item, SimpleNamespace(ownership_epoch=0), None)),
+    )
+    monkeypatch.setattr(
+        "app.services.edit_proposals.media_generations_match_sync", lambda _refs: True
+    )
+    monkeypatch.setattr(
+        "app.tasks.edit_proposal_build.draft_edit_proposal.apply_async",
+        lambda **kwargs: dispatches.append(kwargs),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await plan_items.confirm_item_edit_direction(
+            _post_request(),
+            str(item.id),
+            plan_items.ConfirmDirectionBody(
+                expected_proposal_version=proposal.proposal_version,
+                fingerprint=proposal.guidance.fingerprint,
+            ),
+            user,
+            db,
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "proposal_stale"
+    assert dispatches == []
+
+
+@pytest.mark.asyncio
+async def test_confirm_direction_retries_a_failed_dispatch(monkeypatch) -> None:
+    item = _awaiting_direction_item()
+    proposal = parse_edit_proposal(item.edit_proposal)
+    assert proposal is not None and proposal.guidance is not None
+    user = SimpleNamespace(id=uuid.uuid4())
+    db = AsyncMock()
+    db.execute.return_value = SimpleNamespace(scalars=lambda: [])
+    dispatch_attempts = 0
+
+    def dispatch(**_kwargs) -> None:
+        nonlocal dispatch_attempts
+        dispatch_attempts += 1
+        if dispatch_attempts == 1:
+            raise RuntimeError("broker unavailable")
+
+    monkeypatch.setattr(plan_items.settings, "guided_edit_direction_confirmation_enabled", True)
+    monkeypatch.setattr(plan_items, "_require_guided_edit", lambda: None)
+    monkeypatch.setattr(plan_items, "_require_guided_edit_applicable", lambda _item: None)
+    monkeypatch.setattr(
+        plan_items,
+        "_load_owned_item_context",
+        AsyncMock(return_value=(item, SimpleNamespace(ownership_epoch=0), None)),
+    )
+    monkeypatch.setattr(plan_items, "_load_owned_item", AsyncMock(return_value=item))
+    monkeypatch.setattr(plan_items, "plan_item_response", lambda loaded, **_kw: loaded)
+    monkeypatch.setattr("app.services.plan_clips.ensure_clip_media_ids", lambda _item: False)
+    monkeypatch.setattr(
+        "app.services.edit_proposals.media_generations_match_sync", lambda _refs: True
+    )
+    monkeypatch.setattr(
+        "app.tasks.edit_proposal_build.draft_edit_proposal.apply_async",
+        dispatch,
+    )
+    body = plan_items.ConfirmDirectionBody(
+        expected_proposal_version=proposal.proposal_version,
+        fingerprint=proposal.guidance.fingerprint,
+    )
+
+    with pytest.raises(HTTPException) as first:
+        await plan_items.confirm_item_edit_direction(_post_request(), str(item.id), body, user, db)
+    assert first.value.status_code == 503
+    failed = parse_edit_proposal(item.edit_proposal)
+    assert failed is not None and failed.status == "failed"
+
+    result = await plan_items.confirm_item_edit_direction(
+        _post_request(), str(item.id), body, user, db
+    )
+
+    assert result is item
+    retried = parse_edit_proposal(item.edit_proposal)
+    assert retried is not None and retried.status == "analyzing"
+    assert dispatch_attempts == 2
 
 
 def test_snapshot_revision_rejoins_reassigned_media_aliases() -> None:
@@ -477,6 +743,40 @@ async def test_conversation_turn_persists_brief_before_analysis(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
+async def test_conversation_stops_after_brief_is_ready(monkeypatch) -> None:
+    proposal = EditProposal(
+        proposal_version=4,
+        generation_attempt_id="attempt-ready",
+        status="briefing",
+        brief=ProposalBrief(direction="fast_montage", pace="fast", duration_s=15),
+        brief_ready=True,
+    )
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        clip_assignments=[{"gcs_path": "users/u/corfu.mp4"}],
+        edit_proposal=proposal.model_dump(mode="json"),
+    )
+    monkeypatch.setattr(plan_items.settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(plan_items.settings, "guided_edit_conversation_enabled", True)
+    monkeypatch.setattr(plan_items, "_load_owned_item", AsyncMock(return_value=item))
+
+    with pytest.raises(HTTPException) as exc:
+        await plan_items.edit_proposal_conversation_turn(
+            _request(),
+            str(item.id),
+            plan_items.EditGuideTurnBody(
+                expected_proposal_version=4,
+                message="Ask me one more question.",
+            ),
+            SimpleNamespace(id=uuid.uuid4()),
+            AsyncMock(),
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "brief_already_ready"
+
+
+@pytest.mark.asyncio
 async def test_conversation_revision_preserves_media_and_creator_thought(monkeypatch) -> None:
     item = _draft_item()
     item.idea = "Corfu trip"
@@ -858,6 +1158,53 @@ async def test_draft_requires_media_before_dispatch(monkeypatch) -> None:
     db.commit.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_explicit_draft_marks_brief_ready_across_auto_design_retries(monkeypatch) -> None:
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        clip_assignments=[{"gcs_path": "users/u/plan/i/corfu.mp4"}],
+        edit_proposal=None,
+    )
+    plan = SimpleNamespace(ownership_epoch=4)
+    monkeypatch.setattr(plan_items.settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(
+        plan_items,
+        "_load_owned_item_context",
+        AsyncMock(return_value=(item, plan, SimpleNamespace())),
+    )
+    monkeypatch.setattr(plan_items, "plan_item_response", lambda loaded: loaded)
+    db = AsyncMock()
+    db.execute.return_value = SimpleNamespace(scalar_one=lambda: 0)
+    apply_calls = []
+    monkeypatch.setattr(
+        "app.tasks.edit_proposal_build.draft_edit_proposal.apply_async",
+        lambda **kw: apply_calls.append(kw),
+    )
+
+    response = await plan_items.draft_item_edit_proposal(
+        _request(),
+        str(item.id),
+        plan_items.DraftEditProposalBody(
+            direction="fast_montage",
+            goal="Show Corfu quickly",
+            pace="fast",
+            duration_s=12,
+        ),
+        SimpleNamespace(id=uuid.uuid4()),
+        db,
+    )
+
+    assert response is item
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None
+    assert persisted.status == "analyzing"
+    assert persisted.brief_ready is True
+    assert persisted.brief.direction == "fast_montage"
+    assert persisted.brief.goal == "Show Corfu quickly"
+    assert persisted.approval_mode is None
+    assert len(apply_calls) == 1
+
+
 @pytest.mark.parametrize("operation", ["conversation", "draft", "update", "approve"])
 @pytest.mark.asyncio
 async def test_audio_led_proposal_routes_reject_before_side_effects(monkeypatch, operation) -> None:
@@ -986,6 +1333,48 @@ async def test_update_discards_client_supplied_media_analysis(monkeypatch) -> No
     persisted = parse_edit_proposal(item.edit_proposal)
     assert persisted is not None and persisted.draft is not None
     assert persisted.draft.media[0].analysis == {}
+
+
+@pytest.mark.asyncio
+async def test_update_rejects_cut_beyond_server_owned_source_duration(monkeypatch) -> None:
+    item = _draft_item()
+    db = _patch_route_dependencies(monkeypatch, item, media_current=True)
+    client_media = _snapshot().media[0].model_copy(update={"duration_s": 100})
+    snapshot = EditProposalSnapshot(
+        direction="fast_montage",
+        goal="Move quickly through the strongest moments",
+        pace="fast",
+        duration_s=3,
+        title="Corfu",
+        media=[client_media],
+        story_beats=_snapshot().story_beats,
+        fast_cuts=[
+            FastMontageCut(
+                cut_id=f"cut-{index}",
+                media_id=client_media.media_id,
+                source_start_s=30 + index,
+                source_end_s=31 + index,
+                output_duration_s=1,
+                role="hook" if index == 0 else "payoff" if index == 2 else "build",
+            )
+            for index in range(3)
+        ],
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await plan_items.update_item_edit_proposal(
+            str(item.id),
+            plan_items.UpdateEditProposalBody(
+                expected_proposal_version=2,
+                snapshot=snapshot,
+            ),
+            SimpleNamespace(id=uuid.uuid4()),
+            db,
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "proposal_invalid"
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
@@ -13,11 +15,13 @@ from app.schemas.edit_proposal import (
     ApprovalMode,
     ApprovedProposalSnapshot,
     ConversationPhase,
+    DirectionHypothesis,
     EditConversationAttempt,
     EditConversationTurn,
     EditProposal,
     EditProposalSnapshot,
     ProposalBrief,
+    ProposalGuidance,
     ProposalRenderFailure,
     parse_edit_proposal,
 )
@@ -233,6 +237,7 @@ def save_edit_conversation_turn(
         ),
         media_digest=current.media_digest if current else None,
         status=status,
+        guidance=current.guidance if current else None,
         brief=brief,
         conversation=conversation,
         brief_ready=ready_to_plan,
@@ -293,6 +298,7 @@ def begin_proposal_attempt(
     *,
     brief: ProposalBrief | None = None,
     approval_mode: ApprovalMode | None = None,
+    guidance: ProposalGuidance | None = None,
 ) -> EditProposal:
     """Reserve one analysis attempt.
 
@@ -306,9 +312,12 @@ def begin_proposal_attempt(
     proposal = EditProposal(
         proposal_version=(current.proposal_version + 1 if current else 1),
         generation_attempt_id=str(uuid.uuid4()),
-        media_digest=None,
+        # A confirmed direction remains bound to the analyzed media across a
+        # retryable planning attempt. Fresh/manual attempts still recompute it.
+        media_digest=current.media_digest if guidance is not None and current else None,
         status="analyzing",
         approval_mode=approval_mode,
+        guidance=guidance,
         brief=brief or ProposalBrief(),
         conversation=current.conversation if current else [],
         brief_ready=current.brief_ready if current else False,
@@ -318,6 +327,54 @@ def begin_proposal_attempt(
     )
     item.edit_proposal = proposal.model_dump(mode="json")
     return proposal
+
+
+def direction_guidance_fingerprint(item: PlanItem, media_digest: str) -> str:
+    """Fingerprint the analyzed source identity used by a direction hypothesis."""
+
+    payload = {
+        "item_id": str(item.id),
+        "media_digest": media_digest,
+        "clips": [
+            {
+                "media_id": str(row.get("media_id") or ""),
+                "gcs_path": str(row.get("gcs_path") or ""),
+                "generation": str(row.get("generation") or ""),
+            }
+            for row in (item.clip_assignments or [])
+            if isinstance(row, dict)
+        ],
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def infer_direction_guidance(
+    item: PlanItem,
+    *,
+    media_digest: str,
+    duration_s: int,
+) -> ProposalGuidance:
+    """Build the first-pass hypothesis shown before any expensive planning."""
+
+    hypothesis = DirectionHypothesis(
+        direction="fast_montage",
+        pace="fast",
+        duration_s=max(3, min(60, int(duration_s))),
+        text_density="minimal",
+        audio_role="music_led",
+        rationale=(
+            "Based on your uploaded footage, I’m guessing you want a fast, music-led "
+            "montage that moves quickly through the strongest visual moments with minimal text."
+        ),
+        buildability_warnings=[],
+    )
+    return ProposalGuidance(
+        state="awaiting_direction_confirmation",
+        provenance="ai_inferred",
+        hypothesis=hypothesis,
+        fingerprint=direction_guidance_fingerprint(item, media_digest),
+    )
 
 
 def require_expected_version(item: PlanItem, expected: int) -> EditProposal:
@@ -488,6 +545,8 @@ def proposal_generate_error(item: PlanItem) -> str | None:
         # got "Approve the edit plan before generating" for an edit that was
         # never drafted, with no path back to a retry.
         return "proposal_failed"
+    if proposal.guidance and proposal.guidance.state == "awaiting_direction_confirmation":
+        return "direction_confirmation_required"
     if proposal.status != "approved" or proposal.last_approved is None:
         return "proposal_draft"
     if settings.guided_render_recovery_enabled and guided_render_is_blocked(proposal):

@@ -60,13 +60,62 @@ def test_accepts_every_source_for_a_small_upload() -> None:
     assert output.title == "What I noticed in Corfu"
 
 
+def test_fast_montage_uses_cut_sources_for_mixed_media_variety() -> None:
+    agent = EditProposalAgent(None)  # type: ignore[arg-type]
+    agent_input = _input(3)
+    agent_input.direction = "fast_montage"
+    agent_input.pace = "fast"
+    agent_input.target_duration_s = 3
+    for media in agent_input.media:
+        if media.kind == "video":
+            media.duration_s = 2.0
+    payload = {
+        "title": "A quick Corfu cut",
+        "duration_s": 3,
+        "story_beats": [],
+        "fast_cuts": [
+            {
+                "cut_id": "cut-1",
+                "media_id": "media-0",
+                "source_start_s": 0.0,
+                "source_end_s": 0.8,
+                "output_duration_s": 0.8,
+                "role": "hook",
+            },
+            {
+                "cut_id": "cut-2",
+                "media_id": "media-1",
+                "source_start_s": 0.0,
+                "source_end_s": 1.0,
+                "output_duration_s": 1.0,
+                "role": "build",
+            },
+            {
+                "cut_id": "cut-3",
+                "media_id": "media-2",
+                "source_start_s": 0.0,
+                "source_end_s": 1.2,
+                "output_duration_s": 1.2,
+                "role": "payoff",
+            },
+        ],
+    }
+
+    output = agent.parse(json.dumps(payload), agent_input)
+
+    assert output.story_beats == []
+    assert [cut.media_id for cut in output.fast_cuts or []] == [
+        "media-0",
+        "media-1",
+        "media-2",
+    ]
+
+
 def test_accepts_one_intentionally_unused_source_from_six() -> None:
     agent = EditProposalAgent(None)  # type: ignore[arg-type]
     selected = [f"media-{index}" for index in range(5)]
     agent_input = _input(6)
-    agent_input.direction = "fast_montage"
     agent_input.goal = "Make a 10-second travel reel and leave one weaker clip unused."
-    agent_input.pace = "fast"
     agent_input.target_duration_s = 15
     payload = json.loads(_raw(selected))
     payload["duration_s"] = 15

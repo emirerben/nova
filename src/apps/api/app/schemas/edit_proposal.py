@@ -26,6 +26,10 @@ ProposalStatus = Literal[
 ]
 ProposalDirection = Literal["guided_story", "fast_montage", "text_explainer"]
 ProposalPace = Literal["relaxed", "balanced", "fast"]
+DirectionProvenance = Literal["creator_explicit", "ai_inferred", "creator_confirmed"]
+DirectionGuidanceState = Literal["awaiting_direction_confirmation", "confirmed"]
+TextDensity = Literal["minimal", "moderate", "dense"]
+AudioRole = Literal["music_led", "original_audio", "voiceover", "mixed"]
 OutputOrientation = Literal["portrait", "landscape"]
 MediaLane = Literal["clip", "asset"]
 MediaKind = Literal["image", "video"]
@@ -66,6 +70,49 @@ class StoryBeat(BaseModel):
     duration_s: float = Field(ge=1.0, le=12.0)
 
 
+class FastMontageCut(BaseModel):
+    """One enforceable, source-aware cut in a new fast-montage proposal.
+
+    Legacy fast-montage snapshots omit ``fast_cuts`` and continue through the
+    story-beat compiler. New planner output always supplies this contract.
+    """
+
+    cut_id: str = Field(min_length=1, max_length=100)
+    media_id: str = Field(min_length=1, max_length=100)
+    source_start_s: float = Field(ge=0)
+    source_end_s: float = Field(gt=0)
+    output_duration_s: float = Field(ge=0.4, le=1.2)
+    role: Literal["hook", "build", "payoff"]
+    transition: Literal["none"] = "none"
+    beat_align: bool = False
+
+    @model_validator(mode="after")
+    def validate_source_window(self) -> FastMontageCut:
+        if self.source_end_s <= self.source_start_s:
+            raise ValueError("fast montage cut source_end_s must exceed source_start_s")
+        source_duration_s = self.source_end_s - self.source_start_s
+        if abs(self.output_duration_s - source_duration_s) > 0.001:
+            raise ValueError("fast montage output duration must match its source window")
+        return self
+
+
+class DirectionHypothesis(BaseModel):
+    direction: ProposalDirection
+    pace: ProposalPace
+    duration_s: int = Field(ge=3, le=60)
+    text_density: TextDensity
+    audio_role: AudioRole
+    rationale: str = Field(min_length=1, max_length=600)
+    buildability_warnings: list[str] = Field(default_factory=list, max_length=5)
+
+
+class ProposalGuidance(BaseModel):
+    state: DirectionGuidanceState
+    provenance: DirectionProvenance
+    hypothesis: DirectionHypothesis
+    fingerprint: str = Field(min_length=64, max_length=64)
+
+
 class EditProposalSnapshot(BaseModel):
     direction: ProposalDirection = "guided_story"
     goal: str = Field(default="", max_length=500)
@@ -75,6 +122,7 @@ class EditProposalSnapshot(BaseModel):
     title: str = Field(min_length=1, max_length=100)
     media: list[MediaRef] = Field(min_length=1, max_length=60)
     story_beats: list[StoryBeat] = Field(min_length=1, max_length=20)
+    fast_cuts: list[FastMontageCut] | None = Field(default=None, min_length=1, max_length=80)
     output_orientation: OutputOrientation | None = None
     output_orientation_reason: str = Field(default="", max_length=240)
 
@@ -89,6 +137,29 @@ class EditProposalSnapshot(BaseModel):
                 raise ValueError(f"beat {beat.beat_id} references missing media IDs")
         if len({b.beat_id for b in self.story_beats}) != len(self.story_beats):
             raise ValueError("story beat IDs must be unique")
+        if self.fast_cuts:
+            if self.direction != "fast_montage":
+                raise ValueError("fast cuts are only valid for fast montage proposals")
+            cut_ids = {cut.cut_id for cut in self.fast_cuts}
+            if len(cut_ids) != len(self.fast_cuts):
+                raise ValueError("fast montage cut IDs must be unique")
+            missing = {cut.media_id for cut in self.fast_cuts} - known
+            if missing:
+                raise ValueError("fast montage cuts reference missing media IDs")
+            by_id = {ref.media_id: ref for ref in self.media}
+            for cut in self.fast_cuts:
+                ref = by_id[cut.media_id]
+                if ref.kind != "video":
+                    continue
+                if ref.duration_s is None or cut.source_end_s > ref.duration_s + 0.001:
+                    raise ValueError("fast montage cut exceeds its server-owned video duration")
+            if self.fast_cuts[0].role != "hook":
+                raise ValueError("fast montage must open with a hook cut")
+            if any(cut.transition != "none" for cut in self.fast_cuts):
+                raise ValueError("fast montage cuts must use hard cuts")
+            cut_duration_s = sum(cut.output_duration_s for cut in self.fast_cuts)
+            if abs(cut_duration_s - self.duration_s) > 0.15:
+                raise ValueError("fast montage cut durations must match the proposal duration")
         if self.output_orientation is None:
             orientation, reason = infer_story_output_orientation(self)
             self.output_orientation = orientation
@@ -252,6 +323,7 @@ class EditProposal(BaseModel):
     # approval. Set when the attempt is reserved (begin_proposal_attempt) and
     # carried through to ApprovedProposalSnapshot.approval_mode on approval.
     approval_mode: ApprovalMode | None = None
+    guidance: ProposalGuidance | None = None
     brief: ProposalBrief = Field(default_factory=ProposalBrief)
     conversation: list[EditConversationTurn] = Field(
         default_factory=list, max_length=EDIT_CONVERSATION_MAX_TURNS

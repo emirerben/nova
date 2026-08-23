@@ -80,6 +80,8 @@ class GuidedStoryMoment(BaseModel):
     # revisions always materialize an explicit per-boundary value.
     transition_after: Literal["cut", "crossfade", "dip_to_black", "flash"] | None = None
     transition_duration_s: float | None = Field(default=None, ge=0, le=0.3)
+    beat_align: bool = False
+    beat_time_s: float | None = Field(default=None, ge=0)
     required: bool = True
 
 
@@ -286,12 +288,124 @@ def _round_frame(seconds: float) -> float:
 
 
 def _selected_media_ids(snapshot: EditProposalSnapshot) -> list[str]:
+    if snapshot.fast_cuts:
+        selected: list[str] = []
+        for cut in snapshot.fast_cuts:
+            if cut.media_id not in selected:
+                selected.append(cut.media_id)
+        return selected
     selected: list[str] = []
     for beat in snapshot.story_beats:
         for media_id in beat.media_ids:
             if media_id not in selected:
                 selected.append(media_id)
     return selected
+
+
+def _fast_montage_output_windows(
+    cuts: list[Any],
+    *,
+    duration_s: float,
+    track: dict[str, Any] | None,
+    video_media_ids: set[str],
+) -> list[tuple[float, float, float | None]]:
+    """Allocate hard-cut output windows, optionally snapping marked boundaries.
+
+    The approved cut durations remain the baseline.  A marked boundary is
+    snapped only when a nearby track beat keeps both adjacent cuts in the
+    renderer's supported 0.4–1.2s range; the final boundary always remains
+    the approved total duration. A video may be shortened inside its approved
+    source window to meet a beat, but is never lengthened beyond that window.
+    """
+
+    durations = [float(cut.output_duration_s) for cut in cuts]
+    if abs(sum(durations) - float(duration_s)) > 0.15:
+        raise GuidedStoryError(
+            "guided_story_duration_impossible",
+            "Fast montage cut durations do not match the approved duration.",
+        )
+    nominal_boundaries: list[float] = []
+    cursor = 0.0
+    for cut_duration in durations:
+        cursor = round(cursor + cut_duration, 3)
+        nominal_boundaries.append(cursor)
+    boundaries = list(nominal_boundaries)
+    beat_times: list[float] = []
+    if track:
+        music_start_s = float(track.get("start_s") or 0.0)
+        beat_times = sorted(
+            round(float(raw_beat) - music_start_s, 3)
+            for raw_beat in (track.get("beat_timestamps_s") or [])
+            if float(raw_beat) >= music_start_s
+        )
+
+    for index, cut in enumerate(cuts[:-1]):
+        if not cut.beat_align or not beat_times:
+            continue
+        previous_boundary = 0.0 if index == 0 else boundaries[index - 1]
+        nominal_boundary = nominal_boundaries[index]
+        candidates = [
+            beat
+            for beat in beat_times
+            if previous_boundary + 0.4 <= beat <= previous_boundary + 1.2
+            and abs(beat - nominal_boundary) <= 0.15
+            and beat < float(duration_s)
+        ]
+        if not candidates:
+            continue
+        snapped = min(candidates, key=lambda beat: (abs(beat - nominal_boundary), beat))
+        next_boundary = nominal_boundaries[index + 1]
+        left_duration = snapped - previous_boundary
+        right_duration = next_boundary - snapped
+        if not 0.4 <= left_duration <= 1.2:
+            continue
+        if not 0.4 <= right_duration <= 1.2:
+            continue
+        if cut.media_id in video_media_ids and left_duration > durations[index] + 0.001:
+            continue
+        if (
+            cuts[index + 1].media_id in video_media_ids
+            and right_duration > durations[index + 1] + 0.001
+        ):
+            continue
+        boundaries[index] = snapped
+
+    windows: list[tuple[float, float, float | None]] = []
+    previous = 0.0
+    for index, boundary in enumerate(boundaries):
+        boundary = round(boundary, 3)
+        windows.append(
+            (
+                round(previous, 3),
+                boundary,
+                round(boundary, 3) if boundary != nominal_boundaries[index] else None,
+            )
+        )
+        previous = boundary
+    return windows
+
+
+def _music_payload(track: dict[str, Any] | None, *, duration_s: float) -> dict[str, Any] | None:
+    """Drop compiler-only beat metadata before validating the music receipt."""
+
+    if track is None:
+        return None
+    payload = {
+        key: track[key]
+        for key in (
+            "track_id",
+            "title",
+            "audio_gcs_path",
+            "generation",
+            "start_s",
+            "end_s",
+            "level",
+        )
+        if key in track
+    }
+    if payload.get("end_s") is None:
+        payload["end_s"] = round(float(payload.get("start_s") or 0.0) + duration_s, 3)
+    return payload
 
 
 def validate_guided_snapshot(raw: object) -> tuple[int, str, EditProposalSnapshot]:
@@ -664,6 +778,33 @@ def _text_elements(
 ) -> list[dict]:
     total_s = float(snapshot.duration_s)
     title_end = min(total_s, 3.2 if snapshot.direction != "fast_montage" else 2.2)
+    # New fast-montage proposals carry their own dense cut list. Keep only the
+    # short hook/title; generated chapter thoughts would turn a music-led cut
+    # back into an information card edit. Legacy fast snapshots have no
+    # ``fast_cuts`` and retain the old text projection below.
+    if snapshot.direction == "fast_montage" and snapshot.fast_cuts:
+        return [
+            TextElement(
+                id="guided-title",
+                text=snapshot.title,
+                start_s=0.0,
+                end_s=title_end,
+                role="generative_intro",
+                position="custom" if compiler_version >= 3 else "top",
+                x_frac=0.5 if compiler_version >= 3 else None,
+                y_frac=0.16 if compiler_version >= 3 else None,
+                font_family="Fraunces" if compiler_version >= 3 else "Inter-Bold",
+                size_px=(92 if compiler_version >= 3 else 78),
+                color="#FFF8F0" if compiler_version >= 3 else "#FFFFFF",
+                highlight_color="#D9FF70" if compiler_version >= 3 else "#6FE7F7",
+                stroke_width=0 if compiler_version >= 3 else 5,
+                shadow_enabled=True,
+                shadow_style="standard" if compiler_version >= 3 else None,
+                effect="static",
+                alignment="center",
+                max_width_frac=0.8 if compiler_version >= 3 else 0.86,
+            ).model_dump(mode="json", exclude_none=True)
+        ]
     if compiler_version < 3:
         elements = [
             TextElement(
@@ -794,6 +935,105 @@ def _compile_execution_plan_version(
         )
     beat_windows: list[dict[str, Any]] = []
     moments: list[dict[str, Any]] = []
+    if snapshot.direction == "fast_montage" and snapshot.fast_cuts:
+        cursor = 0.0
+        output_windows = _fast_montage_output_windows(
+            snapshot.fast_cuts,
+            duration_s=float(snapshot.duration_s),
+            track=track,
+            video_media_ids={ref.media_id for ref in snapshot.media if ref.kind == "video"},
+        )
+        for cut, (start_s, end_s, beat_time_s) in zip(
+            snapshot.fast_cuts, output_windows, strict=True
+        ):
+            ref = by_id.get(cut.media_id)
+            if ref is None:
+                raise GuidedStoryError(
+                    "guided_story_snapshot_invalid", "A fast montage cut references missing media."
+                )
+            if ref.kind == "video" and cut.source_end_s > float(ref.duration_s or 0.0) + 0.05:
+                raise GuidedStoryError(
+                    "guided_story_duration_impossible",
+                    f"Fast montage source window exceeds {ref.source_filename or ref.media_id}.",
+                )
+            resolved_duration_s = round(end_s - start_s, 3)
+            resolved_source_end_s = float(cut.source_end_s)
+            if ref.kind == "video":
+                resolved_source_end_s = float(cut.source_start_s) + resolved_duration_s
+                if resolved_source_end_s > float(cut.source_end_s) + 0.001:
+                    raise GuidedStoryError(
+                        "guided_story_duration_impossible",
+                        "Beat alignment cannot lengthen an approved video source window.",
+                    )
+            moments.append(
+                {
+                    "moment_id": cut.cut_id,
+                    "beat_id": cut.cut_id,
+                    "topic": cut.role,
+                    "media_id": cut.media_id,
+                    "lane": ref.lane,
+                    "kind": ref.kind,
+                    "gcs_path": ref.gcs_path,
+                    "generation": ref.generation,
+                    "layout": "fullscreen",
+                    "source_start_s": round(float(cut.source_start_s), 3),
+                    "source_end_s": round(resolved_source_end_s, 3),
+                    "output_start_s": start_s,
+                    "output_end_s": end_s,
+                    "duration_s": resolved_duration_s,
+                    "image_motion": "subtle_zoom_in" if ref.kind == "image" else None,
+                    "beat_align": bool(cut.beat_align),
+                    "beat_time_s": beat_time_s,
+                    "required": True,
+                }
+            )
+            beat_windows.append(
+                {
+                    "beat_id": cut.cut_id,
+                    "approved_duration_s": round(float(cut.output_duration_s), 3),
+                    "resolved_duration_s": resolved_duration_s,
+                    "start_s": start_s,
+                    "end_s": end_s,
+                }
+            )
+            cursor = end_s
+        if abs(cursor - float(snapshot.duration_s)) > 0.15:
+            raise GuidedStoryError(
+                "guided_story_duration_impossible",
+                "Fast montage cut durations do not match the approved duration.",
+            )
+        normalized_track = _music_payload(track, duration_s=cursor)
+        try:
+            compiled = GuidedStoryExecutionPlan(
+                compiler_version=compiler_version,
+                proposal_version=proposal_version,
+                media_digest=media_digest,
+                direction=snapshot.direction,
+                goal=snapshot.goal,
+                pace=snapshot.pace,
+                approved_duration_s=float(snapshot.duration_s),
+                resolved_duration_s=round(cursor, 3),
+                output_orientation=output_orientation,
+                output_orientation_reason=output_orientation_reason,
+                selected_media_ids=selected_ids,
+                story_timeline=moments,
+                beat_windows=beat_windows,
+                text_elements=_text_elements(
+                    snapshot, beat_windows, policy, compiler_version=compiler_version
+                ),
+                transition_policy={"type": "none", "duration_s": 0.0},
+                typography=(
+                    {"style_id": "guided_story_v2", "font": "Fraunces"}
+                    if compiler_version >= 3
+                    else {"style_id": "guided_story_v1", "font": "Inter-Bold"}
+                ),
+                music=normalized_track,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise GuidedStoryError(
+                "guided_story_snapshot_invalid", "The fast montage could not be compiled safely."
+            ) from exc
+        return compiled.model_dump(mode="json", exclude_none=False)
     moment_count = sum(len(beat.media_ids) for beat in snapshot.story_beats)
     cursor = 0.0
     planned_beats = (
@@ -891,13 +1131,7 @@ def _compile_execution_plan_version(
             "guided_story_duration_impossible", "The approved story timing could not be resolved."
         )
 
-    normalized_track = track
-    if track is not None and track.get("end_s") is None:
-        music_start_s = float(track.get("start_s") or 0.0)
-        normalized_track = {
-            **track,
-            "end_s": round(music_start_s + cursor, 3),
-        }
+    normalized_track = _music_payload(track, duration_s=cursor)
 
     try:
         compiled = GuidedStoryExecutionPlan(
@@ -988,9 +1222,25 @@ def validate_execution_plan(plan: object, guided_snapshot: object) -> dict[str, 
         raise GuidedStoryError(
             "guided_story_snapshot_invalid", "The saved render plan no longer matches approval."
         )
+    validation_track = (
+        validated.music.model_dump(mode="json") if validated.music is not None else None
+    )
+    if validation_track is not None and validated.direction == "fast_montage":
+        # Beat timestamps are compiler-only input and intentionally absent from
+        # the persisted music receipt. Reconstruct only the exact beats that
+        # affected persisted cut boundaries so canonical validation can replay
+        # the original deterministic snap instead of falsely rejecting it.
+        music_start_s = float(validation_track.get("start_s") or 0.0)
+        snapped_beats = [
+            round(music_start_s + float(moment.beat_time_s), 3)
+            for moment in validated.story_timeline
+            if moment.beat_time_s is not None
+        ]
+        if snapped_beats:
+            validation_track["beat_timestamps_s"] = snapped_beats
     canonical = _compile_execution_plan_version(
         guided_snapshot,
-        track=validated.music.model_dump(mode="json") if validated.music is not None else None,
+        track=validation_track,
         compiler_version=validated.compiler_version,
     )
     normalized = validated.model_dump(mode="json", exclude_none=False)
@@ -2193,6 +2443,19 @@ def _compose_guided_sfx(
         storage.delete_object_best_effort(output_key)
 
 
+def _resolved_transition_boundaries(plan: dict[str, Any]) -> list[str]:
+    """Materialize renderer boundaries without turning `none` into a fade."""
+
+    transition = plan["transition_policy"]
+    return [
+        "cut" if value == "none" else value
+        for value in (
+            str(row.get("transition_after") or transition["type"])
+            for row in plan["story_timeline"][:-1]
+        )
+    ]
+
+
 def render_execution_plan(
     plan: dict[str, Any],
     *,
@@ -2216,10 +2479,7 @@ def render_execution_plan(
     assembled = os.path.join(tmpdir, "guided_story_assembled.mp4")
     canvas = _story_canvas(plan.get("output_orientation"))
     transition = plan["transition_policy"]
-    per_boundary = [
-        str(row.get("transition_after") or transition["type"])
-        for row in plan["story_timeline"][:-1]
-    ]
+    per_boundary = _resolved_transition_boundaries(plan)
     per_durations = [
         float(row.get("transition_duration_s") or transition["duration_s"])
         for row in plan["story_timeline"][:-1]

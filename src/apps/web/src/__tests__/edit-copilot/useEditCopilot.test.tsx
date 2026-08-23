@@ -135,7 +135,7 @@ describe("outcomeAuthoritativeReply", () => {
       needsClarification: false,
       applied: [],
       rejected: ["Replace caption text: No captions contain “Kriya”."],
-    })).toBe("I didn't change the draft. Replace caption text: No captions contain “Kriya”.");
+    })).toBe("No change made. Replace caption text: No captions contain “Kriya”.");
 
     expect(outcomeAuthoritativeReply({
       modelReply: "Everything is fixed.",
@@ -155,7 +155,7 @@ describe("outcomeAuthoritativeReply", () => {
       needsClarification: false,
       applied: [],
       rejected: [],
-    })).toBe("I didn't change the draft.\n\nThe draft already starts at that point.");
+    })).toBe("The draft already starts at that point.");
   });
 
   it("does not repeat a success claim when clarification leaves the draft unchanged", () => {
@@ -165,7 +165,7 @@ describe("outcomeAuthoritativeReply", () => {
       needsClarification: true,
       applied: [],
       rejected: [],
-    })).toBe("I didn't change the draft.");
+    })).toBe("I need one detail before changing the draft.");
 
     expect(outcomeAuthoritativeReply({
       modelReply: "The track is already removed.",
@@ -173,7 +173,32 @@ describe("outcomeAuthoritativeReply", () => {
       needsClarification: true,
       applied: [],
       rejected: [],
-    })).toBe("I didn't change the draft.\n\nThe track is already removed.");
+    })).toBe("The track is already removed.");
+  });
+
+  it("uses concrete outcome copy for unsupported and stale turns", () => {
+    expect(outcomeAuthoritativeReply({
+      modelReply: "Done — made it faster.",
+      intent: "edit",
+      needsClarification: false,
+      applied: [],
+      rejected: [],
+      outcome: "unsupported",
+      rejectionReasons: [{
+        op: "set_edit_direction",
+        reason: "capability_unavailable",
+        detail: "fast montage direction requires an active guided-story revision",
+      }],
+    })).toBe("fast montage direction requires an active guided-story revision");
+
+    expect(outcomeAuthoritativeReply({
+      modelReply: "Updated the pacing.",
+      intent: "edit",
+      needsClarification: false,
+      applied: [],
+      rejected: [],
+      outcome: "stale",
+    })).toBe("That edit is based on an older draft. Refresh the editor and try again.");
   });
 });
 
@@ -294,7 +319,7 @@ describe("useEditCopilot", () => {
       await result.current.send("cut clip 2");
     });
     expect(result.current.messages[1].text).toContain(
-      "I didn't change the draft. Clip 2 duration",
+      "No change made. Clip 2 duration",
     );
 
     await act(async () => {
@@ -332,7 +357,7 @@ describe("useEditCopilot", () => {
     const second = renderCopilot({ variantId: "variant-storage" });
     expect(second.result.current.messages.map((m) => m.text)).toEqual([
       "remember this",
-      "I didn't change the draft.",
+      "No change needed — the draft already reflects that request.",
     ]);
   });
 
@@ -474,7 +499,7 @@ describe("useEditCopilot", () => {
     expect(result.current.messages[0].pending).toBeUndefined();
     expect(result.current.messages[1]).toMatchObject({
       role: "assistant",
-      text: "I didn't change the draft.",
+      text: "No change needed — the draft already reflects that request.",
     });
   });
 
@@ -511,7 +536,7 @@ describe("useEditCopilot", () => {
       storedMessages("item-1", "variant-pending").map(
         (message) => message.text,
       ),
-    ).toEqual(["pending text", "I didn't change the draft."]);
+    ).toEqual(["pending text", "No change needed — the draft already reflects that request."]);
   });
 
   it("stop removes the optimistic bubble and restores the input", async () => {

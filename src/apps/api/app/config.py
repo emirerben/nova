@@ -712,6 +712,14 @@ class Settings(BaseSettings):
         "the API and synchronous dispatch worker; changing it requires API and worker "
         "restarts. Startup also requires the code-owned strict-renderer readiness pin.",
     )
+    guided_edit_direction_confirmation_enabled: bool = Field(
+        default=False,
+        description=(
+            "After media analysis, infer a concrete edit direction and pause for creator "
+            "confirmation before proposal planning or rendering. Explicit briefs bypass this "
+            "pause. Read by the API and worker; changing it requires API and worker restarts."
+        ),
+    )
     guided_auto_design_enabled: bool = Field(
         default=True,
         description="AI-designs-by-default: when enforcement would otherwise 409 Generate on a "
