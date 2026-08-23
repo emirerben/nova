@@ -9,8 +9,7 @@
       ],
       "excludedFiles": [
         "src/components/ui/**",
-        "src/app/admin/**",
-        "src/app/plan/items/\\[id\\]/components/EditProposalCard.tsx"
+        "src/app/admin/**"
       ],
       "rules": {
         "no-restricted-syntax": [
