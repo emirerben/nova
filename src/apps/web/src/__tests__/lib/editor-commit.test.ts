@@ -828,6 +828,50 @@ describe("buildEditorCommitRequest — accepted suggestion ids", () => {
     expect(body.accepted_suggestion_ids).toEqual(["sug-1"]);
   });
 
+  it("resolves an accepted card converted to a media visual before first save", () => {
+    const visual = {
+      version: 1 as const,
+      id: "ov-1",
+      kind: "media" as const,
+      start_s: 2,
+      end_s: 6,
+      timing_mode: "manual" as const,
+      origin: "ai" as const,
+      transition_in: "cut" as const,
+      transition_out: "cut" as const,
+      audio_policy: { base: "continue" as const, sfx: "continue" as const },
+      asset_id: "ov-1",
+      src_gcs_path: overlay.src_gcs_path,
+      media_kind: "image" as const,
+      source_duration_s: null,
+      trim_start_s: null,
+      trim_end_s: null,
+      display_mode: "fullscreen" as const,
+      transform: { fit_mode: "cover" as const, focal_x: 0.5, focal_y: 0.5, zoom: 1 },
+      x_frac: 0.5,
+      y_frac: 0.5,
+      scale: 0.35,
+      z: 0,
+    };
+    const body = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      timelineDirty: false,
+      slots: [],
+      overlaysDirty: true,
+      mediaOverlays: [],
+      visualBlocksDirty: true,
+      visualBlocks: [visual],
+      acceptedSuggestions: [{ id: "sug-1", overlayId: "ov-1" }],
+      titleDirty: false,
+      title: "",
+      variant: {},
+    });
+
+    expect(body.accepted_suggestion_ids).toEqual(["sug-1"]);
+    expect(body.visual_blocks).toEqual([visual]);
+  });
+
   it("omits the field entirely when the filter leaves no ids or none were accepted", () => {
     const allUndone = buildEditorCommitRequest({
       elements: [element],

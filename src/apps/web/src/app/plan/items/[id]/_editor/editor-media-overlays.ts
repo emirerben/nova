@@ -2,7 +2,7 @@ import type { MediaOverlay } from "@/lib/plan-api";
 
 export const MEDIA_OVERLAY_MIN_SCALE = 0.05;
 export const MEDIA_OVERLAY_MAX_SCALE = 1.0;
-export const MEDIA_OVERLAY_MIN_DURATION_S = 0.3;
+export const MEDIA_OVERLAY_MIN_DURATION_S = 0.1;
 
 export const EDITOR_STAGE_Z = {
   video: 0,
@@ -93,7 +93,9 @@ export function isMediaOverlayVisibleAtTime(
   card: Pick<MediaOverlay, "start_s" | "end_s">,
   currentTimeS: number,
 ): boolean {
-  return currentTimeS >= card.start_s && currentTimeS <= card.end_s;
+  // Timeline ranges are half-open: the next card owns the exact boundary,
+  // preventing a one-frame double render at adjacent cuts.
+  return currentTimeS >= card.start_s && currentTimeS < card.end_s;
 }
 
 export function visibleMediaOverlaysAtTime(

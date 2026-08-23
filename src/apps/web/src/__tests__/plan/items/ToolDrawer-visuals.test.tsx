@@ -90,6 +90,21 @@ describe("ToolDrawer visual blocks", () => {
     expect(onAddMontage).toHaveBeenCalledWith(["asset-0", "asset-1", "asset-2"]);
   });
 
+  it("exposes fullscreen, overlay, and adjacent sequence media actions", () => {
+    const onAddMediaBlock = jest.fn();
+    const onAddMediaSequence = jest.fn();
+    renderVisuals({ onAddMediaBlock, onAddMediaSequence });
+    fireEvent.click(screen.getByRole("button", { name: `Select ${assets[0].source_filename}` }));
+    fireEvent.click(screen.getByRole("button", { name: "Add full screen" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add as overlay" }));
+    expect(onAddMediaBlock).toHaveBeenNthCalledWith(1, ["asset-0"], "fullscreen");
+    expect(onAddMediaBlock).toHaveBeenNthCalledWith(2, ["asset-0"], "overlay");
+
+    fireEvent.click(screen.getByRole("button", { name: `Select ${assets[1].source_filename}` }));
+    fireEvent.click(screen.getByRole("button", { name: "Place sequence after selected" }));
+    expect(onAddMediaSequence).toHaveBeenCalledWith(["asset-0", "asset-1"]);
+  });
+
   it("shows source-labeled asset context and saves creator edits", async () => {
     const onSaveVisualAssetContext = jest.fn();
     renderVisuals({ onSaveVisualAssetContext });

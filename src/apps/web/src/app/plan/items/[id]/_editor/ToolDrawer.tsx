@@ -121,6 +121,8 @@ export default function ToolDrawer({
   visualUploadFeedback = null,
   onVisualUpload,
   onAddMontage,
+  onAddMediaBlock,
+  onAddMediaSequence,
   onAddTextCard,
   onAddVisualBlockText,
   onSelectVisualBlockText,
@@ -202,6 +204,8 @@ export default function ToolDrawer({
   visualUploadFeedback?: React.ReactNode;
   onVisualUpload?: (files: File[]) => void;
   onAddMontage?: (assetIds: string[]) => void;
+  onAddMediaBlock?: (assetIds: string[], displayMode: "fullscreen" | "overlay") => void;
+  onAddMediaSequence?: (assetIds: string[]) => void;
   onAddTextCard?: (preset: "card" | "quote" | "statistic" | "transition") => void;
   onAddVisualBlockText?: (blockId: string) => void;
   onSelectVisualBlockText?: (textId: string) => void;
@@ -495,6 +499,8 @@ export default function ToolDrawer({
             uploadFeedback={visualUploadFeedback}
             onUpload={onVisualUpload}
             onAddMontage={onAddMontage}
+            onAddMediaBlock={onAddMediaBlock}
+            onAddMediaSequence={onAddMediaSequence}
             onAddTextCard={onAddTextCard}
             onAddBlockText={onAddVisualBlockText}
             onSelectBlockText={onSelectVisualBlockText}
@@ -712,6 +718,8 @@ function VisualsDrawer({
   uploadFeedback,
   onUpload,
   onAddMontage,
+  onAddMediaBlock,
+  onAddMediaSequence,
   onAddTextCard,
   onAddBlockText,
   onSelectBlockText,
@@ -739,6 +747,8 @@ function VisualsDrawer({
   uploadFeedback?: React.ReactNode;
   onUpload?: (files: File[]) => void;
   onAddMontage?: (assetIds: string[]) => void;
+  onAddMediaBlock?: (assetIds: string[], displayMode: "fullscreen" | "overlay") => void;
+  onAddMediaSequence?: (assetIds: string[]) => void;
   onAddTextCard?: (preset: "card" | "quote" | "statistic" | "transition") => void;
   onAddBlockText?: (blockId: string) => void;
   onSelectBlockText?: (textId: string) => void;
@@ -917,6 +927,11 @@ function VisualsDrawer({
         >
           Add montage ({selectedAssetIds.length})
         </Button>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <Button type="button" variant="outline" disabled={selectedAssetIds.length !== 1} onClick={() => onAddMediaBlock?.(selectedAssetIds, "fullscreen")} className="min-h-11 text-[11px]">Add full screen</Button>
+          <Button type="button" variant="outline" disabled={selectedAssetIds.length !== 1} onClick={() => onAddMediaBlock?.(selectedAssetIds, "overlay")} className="min-h-11 text-[11px]">Add as overlay</Button>
+          <Button type="button" variant="outline" disabled={selectedAssetIds.length < 1} onClick={() => { onAddMediaSequence?.(selectedAssetIds); setSelectedAssetIds([]); }} className="col-span-2 min-h-11 text-[11px]">Place sequence after selected</Button>
+        </div>
       </section>
 
       <section className="space-y-3 border-t border-zinc-100 pt-4">

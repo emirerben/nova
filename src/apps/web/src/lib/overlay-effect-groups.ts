@@ -10,6 +10,27 @@ export function isGeneratedEffectSource(source: string | null | undefined): bool
   return source === "smart_captions" || source === "overlay_suggestion" || source === "edit_ai";
 }
 
+export function removeGeneratedEffectGroup(
+  soundEffects: SoundEffectPlacement[],
+  cameraEffects: CameraEffect[],
+  source: string | null | undefined,
+  groupId: string | null | undefined,
+): Pick<OverlayEffectState, "soundEffects" | "cameraEffects"> {
+  const cascade = Boolean(groupId && isGeneratedEffectSource(source));
+  return {
+    soundEffects: cascade
+      ? soundEffects.filter(
+          (effect) => effect.effect_group_id !== groupId || !isGeneratedEffectSource(effect.source),
+        )
+      : soundEffects,
+    cameraEffects: cascade
+      ? cameraEffects.filter(
+          (effect) => effect.effect_group_id !== groupId || !isGeneratedEffectSource(effect.source),
+        )
+      : cameraEffects,
+  };
+}
+
 /** Remove one card and only the generated effects explicitly linked to it. */
 export function removeOverlayEffectGroup(
   state: OverlayEffectState,
@@ -17,21 +38,14 @@ export function removeOverlayEffectGroup(
 ): OverlayEffectState {
   const target = state.overlays.find((overlay) => overlay.id === overlayId);
   if (!target) return state;
-  const groupId = target.effect_group_id;
-  const cascade = Boolean(groupId && isGeneratedEffectSource(target.source));
+  const linkedEffects = removeGeneratedEffectGroup(
+    state.soundEffects,
+    state.cameraEffects,
+    target.source,
+    target.effect_group_id,
+  );
   return {
     overlays: state.overlays.filter((overlay) => overlay.id !== overlayId),
-    soundEffects: cascade
-      ? state.soundEffects.filter(
-          (effect) =>
-            effect.effect_group_id !== groupId || !isGeneratedEffectSource(effect.source),
-        )
-      : state.soundEffects,
-    cameraEffects: cascade
-      ? state.cameraEffects.filter(
-          (effect) =>
-            effect.effect_group_id !== groupId || !isGeneratedEffectSource(effect.source),
-        )
-      : state.cameraEffects,
+    ...linkedEffects,
   };
 }
