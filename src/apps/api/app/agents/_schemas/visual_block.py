@@ -1,9 +1,8 @@
-"""First-class visual replacement blocks for the plan-item editor.
+"""First-class visual layers for the plan-item editor.
 
-Visual blocks replace the base picture for a bounded timeline window.  They are
-deliberately distinct from ``MediaOverlay``: overlays are composited over the
-finished text/caption render, while visual blocks are composed underneath the
-authored text layer.
+Structured montage/text-card blocks replace the base picture for a bounded
+window. Media blocks are stackable fullscreen or PiP layers below authored text
+and captions; legacy ``MediaOverlay`` cards remain above those lanes.
 """
 
 from __future__ import annotations
@@ -16,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator,
 
 MAX_VISUAL_BLOCKS = 20
 MAX_BLOCK_DURATION_S = 10.0
+MIN_MEDIA_DURATION_S = 0.1
 MIN_MONTAGE_SHOTS = 3
 MAX_MONTAGE_SHOTS = 12
 _FRAME_TOLERANCE_S = 1.0 / 24.0
@@ -57,6 +57,17 @@ class AudioPolicy(BaseModel):
 
     base: Literal["continue", "mute"] = "continue"
     sfx: Literal["continue", "mute"] = "continue"
+
+
+class MediaTransform(BaseModel):
+    """Shared fullscreen transform mirrored by the editor preview."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    fit_mode: Literal["contain", "cover"] = "contain"
+    focal_x: float = Field(default=0.5, ge=0.0, le=1.0)
+    focal_y: float = Field(default=0.5, ge=0.0, le=1.0)
+    zoom: float = Field(default=1.0, ge=1.0, le=4.0)
 
 
 class SolidBackground(BaseModel):
@@ -126,9 +137,12 @@ class VisualBlockBase(BaseModel):
         duration = self.end_s - self.start_s
         if duration <= 0:
             raise ValueError("visual block end_s must be greater than start_s")
-        if duration > MAX_BLOCK_DURATION_S + 1e-6:
-            raise ValueError(f"visual blocks may not exceed {MAX_BLOCK_DURATION_S:g}s")
         return self
+
+
+def _validate_structured_duration(block: VisualBlockBase) -> None:
+    if block.end_s - block.start_s > MAX_BLOCK_DURATION_S + 1e-6:
+        raise ValueError(f"structured visual blocks may not exceed {MAX_BLOCK_DURATION_S:g}s")
 
 
 class MontageBlock(VisualBlockBase):
@@ -137,6 +151,7 @@ class MontageBlock(VisualBlockBase):
 
     @model_validator(mode="after")
     def _contiguous_shots(self) -> MontageBlock:
+        _validate_structured_duration(self)
         expected = 0.0
         for shot in self.shots:
             if abs(shot.start_offset_s - expected) > _FRAME_TOLERANCE_S:
@@ -152,8 +167,57 @@ class TextCardBlock(VisualBlockBase):
     style_preset_id: str | None = Field(default=None, max_length=80)
     background: CardBackground
 
+    @model_validator(mode="after")
+    def _structured_duration(self) -> TextCardBlock:
+        _validate_structured_duration(self)
+        return self
 
-VisualBlock = Annotated[MontageBlock | TextCardBlock, Field(discriminator="kind")]
+
+class MediaBlock(VisualBlockBase):
+    """User-authored image/video layer composed below text and captions."""
+
+    kind: Literal["media"]
+    asset_id: str = Field(min_length=1, max_length=80)
+    src_gcs_path: str = Field(min_length=1, max_length=1024)
+    preview_gcs_path: str | None = Field(default=None, max_length=1024)
+    media_kind: Literal["image", "video"]
+    source_duration_s: float | None = Field(default=None, gt=0.0)
+    trim_start_s: float | None = Field(default=None, ge=0.0)
+    trim_end_s: float | None = Field(default=None, gt=0.0)
+    display_mode: Literal["fullscreen", "overlay"] = "fullscreen"
+    transform: MediaTransform = Field(default_factory=MediaTransform)
+    x_frac: float = Field(default=0.5, ge=0.0, le=1.0)
+    y_frac: float = Field(default=0.5, ge=0.0, le=1.0)
+    scale: float = Field(default=0.35, ge=0.05, le=1.0)
+    z: int = Field(default=0, ge=0)
+    source: str | None = Field(default=None, max_length=80)
+    effect_group_id: str | None = Field(default=None, max_length=80)
+
+    @model_validator(mode="after")
+    def _media_window(self) -> MediaBlock:
+        window = self.end_s - self.start_s
+        if window + 1e-6 < MIN_MEDIA_DURATION_S:
+            raise ValueError(f"media blocks must be at least {MIN_MEDIA_DURATION_S:g}s")
+        if self.media_kind == "image":
+            self.source_duration_s = None
+            self.trim_start_s = None
+            self.trim_end_s = None
+            return self
+        if self.source_duration_s is None:
+            raise ValueError("video media blocks require source_duration_s")
+        trim_start = self.trim_start_s or 0.0
+        trim_end = self.trim_end_s if self.trim_end_s is not None else self.source_duration_s
+        trim_end = min(trim_end, self.source_duration_s)
+        if trim_start >= trim_end - 1e-6:
+            raise ValueError("video media trim end must be greater than trim start")
+        if window > trim_end - trim_start + _FRAME_TOLERANCE_S:
+            raise ValueError("video media window exceeds the selected source footage")
+        self.trim_start_s = trim_start
+        self.trim_end_s = trim_end
+        return self
+
+
+VisualBlock = Annotated[MontageBlock | TextCardBlock | MediaBlock, Field(discriminator="kind")]
 _VISUAL_BLOCK_LIST = TypeAdapter(list[VisualBlock])
 
 
@@ -170,22 +234,26 @@ def coerce_visual_blocks(raw: list[dict] | None) -> list[VisualBlock]:
     return out
 
 
-def validate_visual_blocks(raw: list[dict], *, duration_s: float) -> list[dict]:
+def validate_visual_blocks(raw: list[dict] | list[VisualBlock], *, duration_s: float) -> list[dict]:
     """Strict user/agent write validation, including bounds and overlap."""
     if len(raw) > MAX_VISUAL_BLOCKS:
         raise ValueError(f"Maximum {MAX_VISUAL_BLOCKS} visual blocks allowed")
     blocks = _VISUAL_BLOCK_LIST.validate_python(raw)
-    ordered = sorted(blocks, key=lambda block: (block.start_s, block.end_s, block.id))
+    ordered_structured = sorted(
+        (block for block in blocks if not isinstance(block, MediaBlock)),
+        key=lambda block: (block.start_s, block.end_s, block.id),
+    )
     previous_end = 0.0
     ids: set[str] = set()
-    for block in ordered:
+    for block in blocks:
         if block.id in ids:
             raise ValueError("visual block ids must be unique")
         ids.add(block.id)
         if block.end_s > duration_s + _FRAME_TOLERANCE_S:
             raise ValueError("visual block exceeds the variant duration")
+    for block in ordered_structured:
         if block.start_s < previous_end - _FRAME_TOLERANCE_S:
-            raise ValueError("visual blocks may not overlap")
+            raise ValueError("structured visual blocks may not overlap")
         previous_end = block.end_s
     return [block.model_dump(by_alias=True, exclude_none=True) for block in blocks]
 
@@ -276,6 +344,14 @@ def iter_visual_shots(blocks: list[dict]) -> list[dict]:
     for block in blocks:
         if block.get("kind") == "montage":
             shots.extend(block.get("shots") or [])
+        elif block.get("kind") == "media":
+            shots.append(
+                {
+                    "asset_id": block.get("asset_id"),
+                    "src_gcs_path": block.get("src_gcs_path"),
+                    "kind": block.get("media_kind"),
+                }
+            )
         else:
             background = block.get("background") or {}
             if background.get("type") == "asset" and isinstance(background.get("shot"), dict):

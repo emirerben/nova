@@ -33,6 +33,7 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
 import { TEXT_ELEMENT_ANIMATIONS, THEME_TRANSITIONS } from "@/lib/overlay-constants";
+import type { MediaLayerMove } from "./editor-media-visuals";
 import {
   LETTER_SPACING_MAX_EM,
   LETTER_SPACING_MIN_EM,
@@ -56,7 +57,7 @@ import {
 import { TEXT_PRESETS, type TextPreset } from "@/lib/text-presets";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import { formatTimecode } from "@/lib/timeline/time-format";
-import type { CameraEffect, MediaOverlay, PoolAsset, SoundEffectPlacement } from "@/lib/plan-api";
+import type { CameraEffect, MediaOverlay, MediaVisualBlock, PoolAsset, SoundEffectPlacement } from "@/lib/plan-api";
 import type { MotionPresetInstance, MotionPresetPatch } from "@nova/motion-runtime";
 import {
   CAMERA_EFFECT_MAX_DURATION_S,
@@ -175,6 +176,7 @@ export default function InspectorPanel({
   clipTiming,
   sfx,
   overlay,
+  visualBlock = null,
   motionScene = null,
   motionDurationS = 0,
   motionAssets = [],
@@ -221,6 +223,8 @@ export default function InspectorPanel({
   sfxEditable = true,
   sfxDisabledReason = null,
   onPatchOverlay,
+  onPatchVisualBlock,
+  onReorderVisualBlock,
   onPreviewOverlay,
   onRecordOverlay,
   onDeleteOverlay,
@@ -270,6 +274,7 @@ export default function InspectorPanel({
   clipTiming: InspectorClipTiming | null;
   sfx: SoundEffectPlacement | null;
   overlay: MediaOverlay | null;
+  visualBlock?: MediaVisualBlock | null;
   motionScene?: MotionPresetInstance | null;
   motionDurationS?: number;
   motionAssets?: PoolAsset[];
@@ -323,6 +328,8 @@ export default function InspectorPanel({
   sfxEditable?: boolean;
   sfxDisabledReason?: string | null;
   onPatchOverlay: (id: string, patch: Partial<MediaOverlay>) => void;
+  onPatchVisualBlock?: (id: string, patch: Partial<MediaVisualBlock>) => void;
+  onReorderVisualBlock?: (id: string, move: MediaLayerMove) => void;
   onPreviewOverlay: (id: string, patch: Partial<MediaOverlay>) => void;
   onRecordOverlay: () => void;
   onDeleteOverlay: (id: string) => void;
@@ -520,6 +527,14 @@ export default function InspectorPanel({
           onDelete={onDeleteOverlay}
           editable={overlayEditable}
           disabledReason={overlayDisabledReason}
+          onClose={onClose}
+        />
+      ) : selection.kind === "visual" && visualBlock?.kind === "media" ? (
+        <MediaVisualInspector
+          block={visualBlock}
+          projectDurationS={motionDurationS}
+          onPatch={onPatchVisualBlock}
+          onReorder={onReorderVisualBlock}
           onClose={onClose}
         />
       ) : selection.kind === "motion" && motionScene ? (
@@ -936,6 +951,185 @@ function SfxInspector({
       </div>
       <DangerButton onClick={() => onDelete(placement.id)}>Delete sound</DangerButton>
       </fieldset>
+    </div>
+  );
+}
+
+function MediaVisualInspector({
+  block,
+  projectDurationS,
+  onPatch,
+  onReorder,
+  onClose,
+}: {
+  block: MediaVisualBlock;
+  projectDurationS: number;
+  onPatch?: (id: string, patch: Partial<MediaVisualBlock>) => void;
+  onReorder?: (id: string, move: MediaLayerMove) => void;
+  onClose: () => void;
+}) {
+  const transform = block.transform ?? {
+    fit_mode: "contain" as const,
+    focal_x: 0.5,
+    focal_y: 0.5,
+    zoom: 1,
+  };
+  const patch = (next: Partial<MediaVisualBlock>) => onPatch?.(block.id, next);
+  const patchTransform = (next: Partial<MediaVisualBlock["transform"]>) =>
+    patch({ transform: { ...transform, ...next } });
+  const trimStart = block.trim_start_s ?? 0;
+  const trimEnd = block.trim_end_s ?? block.source_duration_s ?? Number.POSITIVE_INFINITY;
+  const sourceBudget = Math.max(0.1, trimEnd - trimStart);
+  const maximumEnd = Math.min(
+    Math.max(block.start_s + 0.1, projectDurationS),
+    block.start_s + sourceBudget,
+  );
+  const clampWindowToSource = (nextTrimStart: number, nextTrimEnd: number) => {
+    const available = Math.max(0.1, nextTrimEnd - nextTrimStart);
+    return Math.min(block.end_s, block.start_s + available, projectDurationS);
+  };
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-4">
+      <div className="flex items-center justify-between">
+        <h2 className="font-display text-[18px] text-[#0c0c0e]">Media</h2>
+        <CloseX onClose={onClose} />
+      </div>
+      <p className="mt-1 text-[12px] capitalize text-[#71717a]">
+        {block.media_kind} · {block.display_mode}
+      </p>
+      <TimingSection label="Timing (seconds)">
+        <TimingNumberInput
+          label="Start"
+          value={block.start_s}
+          min={0}
+          onChange={(value) => {
+            const earliest = Math.max(0, block.end_s - sourceBudget);
+            patch({ start_s: Math.max(earliest, Math.min(value, block.end_s - 0.1)) });
+          }}
+        />
+        <TimingNumberInput
+          label="End"
+          value={block.end_s}
+          min={0.1}
+          onChange={(value) =>
+            patch({ end_s: Math.max(block.start_s + 0.1, Math.min(maximumEnd, value)) })
+          }
+        />
+      </TimingSection>
+      <div className="mt-3 grid grid-cols-2 gap-2 border-b border-zinc-100 pb-3">
+        {(["fullscreen", "overlay"] as const).map((mode) => (
+          <Button
+            key={mode}
+            type="button"
+            size="sm"
+            className="min-h-11"
+            variant={block.display_mode === mode ? "default" : "outline"}
+            onClick={() => patch({ display_mode: mode })}
+          >
+            {mode === "fullscreen" ? "Full screen" : "Overlay"}
+          </Button>
+        ))}
+      </div>
+      {block.display_mode === "fullscreen" && (
+        <>
+      <div className="mt-4 border-b border-zinc-100 pb-3">
+        <span className="text-[13px] font-bold text-[#0c0c0e]">Fit</span>
+        <div className="mt-2 flex gap-2">
+          {(["contain", "cover"] as const).map((fit) => (
+            <Button
+              key={fit}
+              type="button"
+              size="sm"
+              className="min-h-11"
+              variant={transform.fit_mode === fit ? "default" : "outline"}
+              onClick={() => patchTransform({ fit_mode: fit })}
+            >
+              {fit === "contain" ? "Fit" : "Fill"}
+            </Button>
+          ))}
+        </div>
+      </div>
+      <TimingSection label="Focal point">
+        <PercentNumberInput label="X" value={Math.round(transform.focal_x * 100)} onChange={(value) => patchTransform({ focal_x: Math.max(0, Math.min(100, value) / 100) })} />
+        <PercentNumberInput label="Y" value={Math.round(transform.focal_y * 100)} onChange={(value) => patchTransform({ focal_y: Math.max(0, Math.min(100, value) / 100) })} />
+      </TimingSection>
+      <div className="mt-3 border-b border-zinc-100 pb-3">
+        <div className="mb-2 flex justify-between text-[13px] font-bold text-[#0c0c0e]">
+          <span>Zoom</span><span>{transform.zoom.toFixed(1)}×</span>
+        </div>
+        <Slider
+          aria-label="Media zoom"
+          min={100}
+          max={400}
+          step={5}
+          value={[Math.round(transform.zoom * 100)]}
+          onValueChange={([value]) => patchTransform({ zoom: value / 100 })}
+        />
+      </div>
+        </>
+      )}
+      {block.media_kind === "video" && block.source_duration_s != null && (
+        <TimingSection label={`Source trim · ${block.source_duration_s.toFixed(1)}s available`}>
+          <TimingNumberInput
+            label="In"
+            value={trimStart}
+            min={0}
+            onChange={(value) => {
+              const nextTrimStart = Math.max(0, Math.min(value, trimEnd - 0.1));
+              patch({
+                trim_start_s: nextTrimStart,
+                end_s: clampWindowToSource(nextTrimStart, trimEnd),
+              });
+            }}
+          />
+          <TimingNumberInput
+            label="Out"
+            value={trimEnd}
+            min={0.1}
+            onChange={(value) => {
+              const nextTrimEnd = Math.min(
+                block.source_duration_s!,
+                Math.max(trimStart + 0.1, value),
+              );
+              patch({
+                trim_end_s: nextTrimEnd,
+                end_s: clampWindowToSource(trimStart, nextTrimEnd),
+              });
+            }}
+          />
+          <p className="col-span-2 text-[12px] leading-4 text-[#71717a]">
+            Timeline handles stop at {maximumEnd.toFixed(1)}s because this video cannot extend
+            beyond the selected source range.
+          </p>
+        </TimingSection>
+      )}
+      {block.display_mode === "overlay" && (
+        <>
+      <TimingSection label="Placement">
+        <PercentNumberInput label="X" value={Math.round(block.x_frac * 100)} onChange={(value) => patch({ x_frac: Math.max(0, Math.min(100, value) / 100) })} />
+        <PercentNumberInput label="Y" value={Math.round(block.y_frac * 100)} onChange={(value) => patch({ y_frac: Math.max(0, Math.min(100, value) / 100) })} />
+      </TimingSection>
+      <div className="mt-3 border-b border-zinc-100 pb-3">
+        <div className="mb-2 flex justify-between text-[13px] font-bold text-[#0c0c0e]">
+          <span>Overlay size</span><span>{Math.round(block.scale * 100)}%</span>
+        </div>
+        <Slider
+          aria-label="Media overlay size"
+          min={5}
+          max={100}
+          step={1}
+          value={[Math.round(block.scale * 100)]}
+          onValueChange={([value]) => patch({ scale: value / 100 })}
+        />
+      </div>
+        </>
+      )}
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <Button type="button" size="sm" variant="outline" className="min-h-11" onClick={() => onReorder?.(block.id, "backward")}>Send backward</Button>
+        <Button type="button" size="sm" variant="outline" className="min-h-11" onClick={() => onReorder?.(block.id, "forward")}>Bring forward</Button>
+        <Button type="button" size="sm" variant="outline" className="min-h-11" onClick={() => onReorder?.(block.id, "back")}>Send to back</Button>
+        <Button type="button" size="sm" variant="outline" className="min-h-11" onClick={() => onReorder?.(block.id, "front")}>Bring to front</Button>
+      </div>
     </div>
   );
 }

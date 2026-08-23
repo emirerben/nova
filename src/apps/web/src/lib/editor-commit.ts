@@ -168,9 +168,9 @@ export interface EditorCommitRequest {
   /**
    * AI-suggestion resolution metadata, NOT a section: envelope ids from
    * `variants[i].overlay_suggestions` the user ✓-accepted in the editor. Their
-   * cards ride inside `media_overlays`; the commit drops the envelopes
-   * atomically with that write. The server 422s when these arrive WITHOUT the
-   * media_overlays section — the builder only emits them alongside it.
+   * cards ride inside `media_overlays` or converted media `visual_blocks`; the
+   * commit drops the envelopes atomically with that write. The server 422s
+   * when neither section is present.
    */
   accepted_suggestion_ids?: string[];
   /**
@@ -338,11 +338,14 @@ export function buildEditorCommitRequest({
   const normalizedMix =
     mixLevel == null ? null : Math.max(0, Math.min(1, Number(mixLevel)));
   // An accepted suggestion the user later undid (its card is no longer in the
-  // staged overlay list) must NOT be resolved server-side — filter against the
-  // overlays actually being sent. Ids ride ONLY with the media_overlays
-  // section (the server 422s otherwise).
-  const stagedOverlayIds = new Set(mediaOverlays.map((o) => o.id));
-  const acceptedIds = overlaysDirty
+  // staged document) must NOT be resolved server-side. A just-accepted card
+  // can be converted to a media visual before its first save, so both media
+  // sections are authoritative for envelope resolution.
+  const stagedOverlayIds = new Set([
+    ...mediaOverlays.map((overlay) => overlay.id),
+    ...visualBlocks.filter((block) => block.kind === "media").map((block) => block.id),
+  ]);
+  const acceptedIds = overlaysDirty || visualBlocksDirty
     ? acceptedSuggestions
         .filter((a) => stagedOverlayIds.has(a.overlayId))
         .map((a) => a.id)

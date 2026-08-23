@@ -259,6 +259,22 @@ export function deriveLaneRows<T>(
   };
 }
 
+/** Stable stacking order for media rows. Timeline row order is visual chrome,
+ * not compositing, but matching it to z makes overlapping cards predictable and
+ * keeps equal-z cards deterministic across API reloads. */
+export function sortMediaTimelineBars<
+  T extends { id: string; start_s: number; z?: number | null },
+>(items: readonly T[]): T[] {
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => {
+      const zA = Number.isFinite(a.item.z) ? (a.item.z as number) : 0;
+      const zB = Number.isFinite(b.item.z) ? (b.item.z as number) : 0;
+      return zA - zB || a.item.start_s - b.item.start_s || a.item.id.localeCompare(b.item.id) || a.index - b.index;
+    })
+    .map(({ item }) => item);
+}
+
 /** UI-only row assignment: current ordered text bars map to compacted rows. */
 export function deriveTextLaneRows(bars: TextElementBar[]): TextLaneRows {
   const lane = deriveLaneRows(bars, { baseHeightPx: TEXT_LANE_BASE_HEIGHT_PX });

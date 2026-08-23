@@ -29,12 +29,12 @@ function card(overrides: Partial<MediaOverlay> = {}): MediaOverlay {
 }
 
 describe("editor media overlays", () => {
-  it("uses inclusive playback windows", () => {
+  it("uses half-open playback windows", () => {
     const overlay = card({ start_s: 1, end_s: 3 });
     expect(isMediaOverlayVisibleAtTime(overlay, 0.99)).toBe(false);
     expect(isMediaOverlayVisibleAtTime(overlay, 1)).toBe(true);
     expect(isMediaOverlayVisibleAtTime(overlay, 2)).toBe(true);
-    expect(isMediaOverlayVisibleAtTime(overlay, 3)).toBe(true);
+    expect(isMediaOverlayVisibleAtTime(overlay, 3)).toBe(false);
     expect(isMediaOverlayVisibleAtTime(overlay, 3.01)).toBe(false);
   });
 
@@ -61,6 +61,14 @@ describe("editor media overlays", () => {
       { card: missingUrl, displayUrl: null },
       { card: visibleLow, displayUrl: "https://signed.example/low.png" },
       { card: visibleHigh, displayUrl: "https://signed.example/high.png" },
+    ]);
+  });
+
+  it("gives an exact cut boundary to the next adjacent card", () => {
+    const first = card({ id: "first", start_s: 0, end_s: 2 });
+    const second = card({ id: "second", start_s: 2, end_s: 4 });
+    expect(visibleMediaOverlaysAtTime([first, second], 2, {}).map(({ card: item }) => item.id)).toEqual([
+      "second",
     ]);
   });
 
@@ -106,7 +114,7 @@ describe("editor media overlays", () => {
         trimEndS: 20,
         clipDurationS: 10,
       }),
-    ).toEqual({ clip_trim_start_s: 9.7, clip_trim_end_s: 10 });
+    ).toEqual({ clip_trim_start_s: 9.9, clip_trim_end_s: 10 });
 
     expect(
       applyMediaOverlaySourceWindowInput({
@@ -114,6 +122,6 @@ describe("editor media overlays", () => {
         trimEndS: 0.1,
         clipDurationS: 5,
       }),
-    ).toEqual({ clip_trim_start_s: 0, clip_trim_end_s: 0.3 });
+    ).toEqual({ clip_trim_start_s: 0, clip_trim_end_s: 0.1 });
   });
 });

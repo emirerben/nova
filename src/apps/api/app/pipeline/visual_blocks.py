@@ -1,4 +1,4 @@
-"""Compose first-class montage/text-card blocks underneath authored text."""
+"""Compose structured visual blocks and stackable media beneath authored text."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from app.agents._schemas.visual_block import (
     AssetBackground,
     BlurPreviousBackground,
     GradientBackground,
+    MediaBlock,
     MontageBlock,
     SolidBackground,
     TextCardBlock,
@@ -33,6 +34,20 @@ _TIMEOUT_S = 900
 
 class VisualBlockError(RuntimeError):
     pass
+
+
+def _media_frame_window(start_s: float, end_s: float) -> tuple[float, float]:
+    """Quantize authored media boundaries to output frames.
+
+    Both sides of an adjacent cut pass through the same half-up quantizer, so
+    the compositor's half-open windows meet on exactly one output frame with
+    neither a gap nor a double-visible boundary.
+    """
+    fps = max(1, int(settings.output_fps))
+    frame_s = 1.0 / fps
+    start_frame = math.floor(max(0.0, start_s) * fps + 0.5)
+    end_frame = max(start_frame + 1, math.floor(max(0.0, end_s) * fps + 0.5))
+    return start_frame * frame_s, end_frame * frame_s
 
 
 def _run(cmd: list[str], *, label: str) -> None:
@@ -167,6 +182,36 @@ def _download_shot(shot: VisualShot, tmpdir: str, index: int) -> str:
     local = os.path.join(tmpdir, f"asset_{index}{suffix}")
     storage.download_to_file(shot.src_gcs_path, local)
     return local
+
+
+def _download_media_block(block: MediaBlock, tmpdir: str, index: int) -> str:
+    """Download a media block without baking its transform into a temp movie.
+
+    Media blocks are composed in the final filter graph so contain/cover/focal
+    point and PiP geometry remain editable until the single visual-block pass.
+    Montage shots intentionally keep their existing pre-rendered path.
+    """
+    suffix = Path(block.src_gcs_path).suffix or (".jpg" if block.media_kind == "image" else ".mp4")
+    local = os.path.join(tmpdir, f"media_{index}{suffix}")
+    storage.download_to_file(block.src_gcs_path, local)
+    return local
+
+
+def _media_video_trim_window(block: MediaBlock) -> tuple[float, float]:
+    source_duration = max(float(block.source_duration_s or 0.0), 0.1)
+    frame_s = 1.0 / max(1, settings.output_fps)
+    trim_start = max(
+        0.0,
+        min(float(block.trim_start_s or 0.0), max(0.0, source_duration - frame_s)),
+    )
+    trim_end = min(
+        source_duration,
+        max(
+            trim_start + frame_s,
+            min(float(block.trim_end_s or source_duration), source_duration),
+        ),
+    )
+    return trim_start, trim_end
 
 
 def _render_shot(shot: VisualShot, duration_s: float, tmpdir: str, index: int, output: str) -> None:
@@ -339,12 +384,101 @@ def build_visual_block_composite_command(
     base_has_audio: bool = True,
 ) -> list[str]:
     cmd = ["ffmpeg", "-i", base_local]
-    for path in replacement_paths:
-        cmd.extend(["-i", path])
+    has_media = any(isinstance(block, MediaBlock) for block in blocks)
+    for index, path in enumerate(replacement_paths):
+        block = blocks[index]
+        if has_media and isinstance(block, MediaBlock) and block.media_kind == "image":
+            # Keep the source live until the base ends; the per-card trim and
+            # half-open enable window bound what reaches the overlay filter.
+            cmd.extend(["-loop", "1", "-framerate", str(settings.output_fps), "-i", path])
+        elif has_media and isinstance(block, MediaBlock) and block.media_kind == "video":
+            trim_start, _ = _media_video_trim_window(block)
+            cmd.extend(["-ss", f"{trim_start:.6f}", "-i", path])
+        else:
+            cmd.extend(["-i", path])
 
     filters: list[str] = ["[0:v]setpts=PTS-STARTPTS[base0]"]
     current = "base0"
-    for index, block in enumerate(blocks):
+    if has_media:
+        # Legacy blocks have no z field and must retain their historical order;
+        # media blocks are the explicitly stackable lane and sort by z only.
+        ordered = [
+            (index, block)
+            for index, block in enumerate(blocks)
+            if not isinstance(block, MediaBlock)
+        ] + sorted(
+            ((index, block) for index, block in enumerate(blocks) if isinstance(block, MediaBlock)),
+            key=lambda item: (item[1].z, item[1].start_s, item[1].id),
+        )
+    else:
+        ordered = list(enumerate(blocks))
+
+    for graph_index, (source_index, block) in enumerate(ordered):
+        if isinstance(block, MediaBlock):
+            transform = block.transform
+            start_s, end_s = _media_frame_window(block.start_s, block.end_s)
+            duration_s = end_s - start_s
+            input_index = source_index + 1
+            media_parts: list[str] = []
+            if block.media_kind == "video":
+                trim_start, trim_end = _media_video_trim_window(block)
+                media_parts.append(f"trim=duration={trim_end - trim_start:.6f},setpts=PTS-STARTPTS")
+            else:
+                media_parts.append(f"trim=duration={duration_s:.6f},setpts=PTS-STARTPTS")
+
+            if block.display_mode == "overlay":
+                width = max(2, round(settings.output_width * block.scale))
+                media_parts.append(f"scale={width}:-2,setsar=1")
+                overlay_x = f"({settings.output_width}*{block.x_frac:.6f}-overlay_w/2)"
+                overlay_y = f"({settings.output_height}*{block.y_frac:.6f}-overlay_h/2)"
+            elif transform.fit_mode == "cover":
+                zoom = max(1.0, float(transform.zoom))
+                target_w = max(settings.output_width, round(settings.output_width * zoom))
+                target_h = max(settings.output_height, round(settings.output_height * zoom))
+                media_parts.append(
+                    f"scale={target_w}:{target_h}:force_original_aspect_ratio=increase,"
+                    f"crop={settings.output_width}:{settings.output_height}:"
+                    f"x='(iw-ow)*{transform.focal_x:.6f}':"
+                    f"y='(ih-oh)*{transform.focal_y:.6f}',setsar=1"
+                )
+                overlay_x, overlay_y = "0", "0"
+            else:
+                # Contain intentionally emits only the fitted source. The base
+                # remains visible in the unused area instead of getting black
+                # bars from a padded replacement movie. Zoom is applied before
+                # placement; focal coordinates choose where an oversized or
+                # off-center contained image sits over the base.
+                zoom = max(1.0, float(transform.zoom))
+                target_w = max(settings.output_width, round(settings.output_width * zoom))
+                target_h = max(settings.output_height, round(settings.output_height * zoom))
+                media_parts.append(
+                    f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,setsar=1"
+                )
+                overlay_x = f"(main_w-overlay_w)*{transform.focal_x:.6f}"
+                overlay_y = f"(main_h-overlay_h)*{transform.focal_y:.6f}"
+
+            media_parts.append("format=rgba")
+            if block.transition_in == "fade" and duration_s > _FADE_S * 2:
+                media_parts.append(f"fade=t=in:st=0:d={_FADE_S}:alpha=1")
+            if block.transition_out == "fade" and duration_s > _FADE_S * 2:
+                media_parts.append(
+                    f"fade=t=out:st={max(0.0, duration_s - _FADE_S):.6f}:d={_FADE_S}:alpha=1"
+                )
+            media_label = f"media{graph_index}"
+            media_parts.append(f"setpts=PTS-STARTPTS+{start_s:.6f}/TB,settb=AVTB[{media_label}]")
+            filters.append(f"[{input_index}:v]" + ",".join(media_parts))
+            output_label = f"base{graph_index + 1}"
+            filters.append(
+                f"[{current}][{media_label}]overlay={overlay_x}:{overlay_y}:"
+                f"eof_action=pass:enable='gte(t,{start_s:.6f})*lt(t,{end_s:.6f})'"
+                f"[{output_label}]"
+            )
+            current = output_label
+            continue
+
+        # Legacy Montage/TextCard path. Keep these expressions and input
+        # indices byte-identical when no MediaBlock is present.
+        index = graph_index
         duration_s = block.end_s - block.start_s
         fade_parts: list[str] = []
         if block.transition_in == "fade" and duration_s > _FADE_S * 2:
@@ -354,8 +488,9 @@ def build_visual_block_composite_command(
                 f"fade=t=out:st={max(0.0, duration_s - _FADE_S):.6f}:d={_FADE_S}:alpha=1"
             )
         fade = "," + ",".join(fade_parts) if fade_parts else ""
+        input_index = source_index + 1 if has_media else index + 1
         filters.append(
-            f"[{index + 1}:v]setpts=PTS-STARTPTS+{block.start_s:.6f}/TB,"
+            f"[{input_index}:v]setpts=PTS-STARTPTS+{block.start_s:.6f}/TB,"
             f"format=rgba{fade}[vb{index}]"
         )
         filters.append(
@@ -365,11 +500,18 @@ def build_visual_block_composite_command(
         )
         current = f"base{index + 1}"
 
-    mute_filters = [
-        f"volume=0:enable='between(t,{block.start_s:.6f},{block.end_s:.6f})'"
-        for block in blocks
-        if block.audio_policy.base == "mute"
-    ]
+    mute_filters = []
+    for block in blocks:
+        if block.audio_policy.base != "mute":
+            continue
+        if isinstance(block, MediaBlock):
+            start_s, end_s = _media_frame_window(block.start_s, block.end_s)
+            mute_filters.append(f"volume=0:enable='gte(t,{start_s:.6f})*lt(t,{end_s:.6f})'")
+        else:
+            # Preserve the legacy inclusive audio window exactly.
+            mute_filters.append(
+                f"volume=0:enable='between(t,{block.start_s:.6f},{block.end_s:.6f})'"
+            )
     filters.append(f"[{current}]format=yuv420p[vout]")
     if mute_filters and base_has_audio:
         filters.append(f"[0:a]{','.join(mute_filters)}[aout]")
@@ -418,11 +560,12 @@ def apply_visual_blocks(
         replacements: list[str] = []
         for index, block in enumerate(blocks):
             try:
-                replacement = (
-                    _render_montage(block, tmpdir, index)
-                    if isinstance(block, MontageBlock)
-                    else _render_text_card(block, base_local, tmpdir, index)
-                )
+                if isinstance(block, MontageBlock):
+                    replacement = _render_montage(block, tmpdir, index)
+                elif isinstance(block, TextCardBlock):
+                    replacement = _render_text_card(block, base_local, tmpdir, index)
+                else:
+                    replacement = _download_media_block(block, tmpdir, index)
             except Exception as exc:  # noqa: BLE001 - per-block fail-open
                 log.warning(
                     "visual_block_dropped",

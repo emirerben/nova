@@ -43,6 +43,7 @@ import {
   type CarouselMoment,
   type EditCopilotTurnResponse,
   type MediaOverlay,
+  type MediaVisualBlock,
   type OverlaySuggestion,
   type PlanItem,
   type PlanItemVariant,
@@ -60,7 +61,10 @@ import type { CarouselClipThumb } from "./CarouselPanel";
 import type { NovaStep } from "@/lib/job-phases";
 import { POLL_INTERVAL_MS } from "@/components/progress";
 import { normalizeCameraEffect } from "@/lib/camera-effects";
-import { removeOverlayEffectGroup } from "@/lib/overlay-effect-groups";
+import {
+  removeGeneratedEffectGroup,
+  removeOverlayEffectGroup,
+} from "@/lib/overlay-effect-groups";
 import { getSoundEffects, type SoundEffectSummary } from "@/lib/sfx-api";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 import { canvasForOrientation } from "@/lib/overlay-constants";
@@ -210,6 +214,7 @@ import {
   rangesDiffer,
   sequentialSlotLayout,
 } from "./editor-bar-drag";
+import { placeAfterSelected } from "./editor-bar-drag";
 import TransportBar from "./TransportBar";
 import type {
   EditorMotionBar,
@@ -218,6 +223,16 @@ import type {
 import EditorCanvas from "./EditorCanvas";
 import OverlaySuggestions from "./OverlaySuggestions";
 import { usePoolAssetUploader } from "@/app/plan/_hooks/usePoolAssetUploader";
+import {
+  copyMediaPreviewForDuplicate,
+  mediaOverlayPatchToVisualPatch,
+  mediaOverlayToVisualBlock,
+  duplicateMediaVisualBlock,
+  normalizeMediaVisualBlock,
+  removeMediaPreview,
+  reorderMediaVisualBlocks,
+  type MediaLayerMove,
+} from "./editor-media-visuals";
 import { computeReseedSections } from "./editor-reseed";
 import InspectorPanel from "./InspectorPanel";
 import type { InspectorTab } from "./InspectorRail";
@@ -295,6 +310,12 @@ import {
 import type { CreatorBlockMotionControlPatch } from "./MotionInspector";
 
 const ZOOM_OPTIONS = [100, 125, 150] as const;
+
+function revokeLocalObjectUrl(url: string | null | undefined): void {
+  if (url?.startsWith("blob:") && typeof URL.revokeObjectURL === "function") {
+    URL.revokeObjectURL(url);
+  }
+}
 
 /** Default duration + look of a freshly added text bar (plan §2). */
 const NEW_TEXT_DURATION_S = 2.0;
@@ -791,6 +812,8 @@ export default function EditorShell({
   );
   const [localOverlayPreviewUrls, setLocalOverlayPreviewUrls] = useState<Record<string, string>>({});
   const localOverlayPreviewUrlsRef = useRef<Record<string, string>>({});
+  const [localVisualPreviewUrls, setLocalVisualPreviewUrls] = useState<Record<string, string>>({});
+  const localVisualPreviewUrlsRef = useRef<Record<string, string>>({});
   const [sfxDirty, setSfxDirty] = useState(false);
   const [overlaysDirty, setOverlaysDirty] = useState(false);
   const [visualBlocksDirty, setVisualBlocksDirty] = useState(false);
@@ -904,7 +927,7 @@ export default function EditorShell({
     if (sections.overlays) {
       setLocalOverlays((variant.media_overlays ?? []).map((o) => ({ ...o })));
       setLocalOverlayPreviewUrls((current) => {
-        Object.values(current).forEach((url) => URL.revokeObjectURL(url));
+        Object.values(current).forEach(revokeLocalObjectUrl);
         return {};
       });
       // Re-seeded from the server ⇒ any accepted-but-unsaved cards are gone.
@@ -913,6 +936,10 @@ export default function EditorShell({
     }
     if (!keepCoupledVisualDocument) {
       setLocalVisualBlocks((variant.visual_blocks ?? []).map((block) => ({ ...block })));
+      Object.values(localVisualPreviewUrlsRef.current).forEach(revokeLocalObjectUrl);
+      const persistedPreviewUrls = { ...(variant.visual_block_preview_urls ?? {}) };
+      localVisualPreviewUrlsRef.current = persistedPreviewUrls;
+      setLocalVisualPreviewUrls(persistedPreviewUrls);
       setVisualBlocksDirty(false);
       setLocalMotionScenes((variant.motion_scenes ?? []).map((scene) => ({ ...scene })));
       setMotionScenesDirty(false);
@@ -954,8 +981,13 @@ export default function EditorShell({
   }, [localOverlayPreviewUrls]);
 
   useEffect(() => {
+    localVisualPreviewUrlsRef.current = localVisualPreviewUrls;
+  }, [localVisualPreviewUrls]);
+
+  useEffect(() => {
     return () => {
-      Object.values(localOverlayPreviewUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
+      Object.values(localOverlayPreviewUrlsRef.current).forEach(revokeLocalObjectUrl);
+      Object.values(localVisualPreviewUrlsRef.current).forEach(revokeLocalObjectUrl);
     };
   }, []);
 
@@ -1122,10 +1154,27 @@ export default function EditorShell({
                 z: overlay.z,
               };
               editorHistoryRef.current?.record();
-              setLocalOverlays((cur) => [...cur, card]);
-              setLocalOverlayPreviewUrls((cur) => ({ ...cur, [card.id]: previewUrl }));
-              setOverlaysDirty(true);
-              select("overlay", card.id);
+              if (visualBlocksAllowed) {
+                if (current.kind === "video" && !(current.duration_s && current.duration_s > 0)) {
+                  throw new Error("Video duration is not ready yet.");
+                }
+                const block = normalizeMediaVisualBlock({
+                  ...mediaOverlayToVisualBlock(card, current),
+                  asset_id: current.id,
+                  source_duration_s: current.kind === "video" ? current.duration_s ?? null : null,
+                  trim_end_s: current.kind === "video" ? current.duration_s ?? null : null,
+                  display_mode: "fullscreen",
+                });
+                setLocalVisualBlocks((cur) => [...cur, block]);
+                setLocalVisualPreviewUrls((cur) => ({ ...cur, [block.id]: previewUrl }));
+                setVisualBlocksDirty(true);
+                select("visual", block.id);
+              } else {
+                setLocalOverlays((cur) => [...cur, card]);
+                setLocalOverlayPreviewUrls((cur) => ({ ...cur, [card.id]: previewUrl }));
+                setOverlaysDirty(true);
+                select("overlay", card.id);
+              }
               setInspectorTab("basic");
               return;
             }
@@ -2020,6 +2069,14 @@ export default function EditorShell({
     [localOverlays, selection],
   );
 
+  const selectedVisualBlock = useMemo(
+    () =>
+      selection?.kind === "visual"
+        ? (localVisualBlocks.find((block) => block.id === selection.id) ?? null)
+        : null,
+    [localVisualBlocks, selection],
+  );
+
   const selectedMotionScene = useMemo(
     () =>
       selection?.kind === "motion"
@@ -2056,7 +2113,7 @@ export default function EditorShell({
     // Drop any blob copy first — if it errored (or masked a bad fetch), the
     // retry must go back to a freshly-signed remote URL.
     setVirtualMusicBlob((prev) => {
-      if (prev) URL.revokeObjectURL(prev.url);
+      if (prev) revokeLocalObjectUrl(prev.url);
       return null;
     });
     if (!musicRefetchAttemptedRef.current) {
@@ -2167,7 +2224,7 @@ export default function EditorShell({
       .then((blob) => {
         if (cancelled) return;
         setVirtualMusicBlob((prev) => {
-          if (prev) URL.revokeObjectURL(prev.url);
+          if (prev) revokeLocalObjectUrl(prev.url);
           return { trackId: effectiveAudioTrackId, url: URL.createObjectURL(blob) };
         });
       })
@@ -2182,7 +2239,7 @@ export default function EditorShell({
   useEffect(
     () => () => {
       setVirtualMusicBlob((prev) => {
-        if (prev) URL.revokeObjectURL(prev.url);
+        if (prev) revokeLocalObjectUrl(prev.url);
         return null;
       });
     },
@@ -2922,6 +2979,12 @@ export default function EditorShell({
         if (layoutMode === "light" && POCKET_UI) {
           dispatchPocket({ type: "OPEN_INSPECTOR" });
         }
+      } else if (kind === "visual") {
+        setInspectorTab("basic");
+        const block = localVisualBlocks.find((candidate) => candidate.id === id);
+        if (block) seekPlaybackTo(baseToOutputTimeRef.current(block.start_s));
+        setActiveTool("visuals");
+        if (layoutMode === "light" && POCKET_UI) dispatchPocket({ type: "OPEN_INSPECTOR" });
       } else if (kind === "carousel") {
         setInspectorTab("basic");
         setActiveTool("visuals");
@@ -2934,7 +2997,7 @@ export default function EditorShell({
         }
       }
     },
-    [activeTool, clip.state.grid, duration, layoutMode, localMotionScenes, localOverlays, localSfx, seekPlaybackTo, select, slots, virtualPreview.timeline.entries, virtualPreviewActive],
+    [activeTool, clip.state.grid, duration, layoutMode, localMotionScenes, localOverlays, localSfx, localVisualBlocks, seekPlaybackTo, select, slots, virtualPreview.timeline.entries, virtualPreviewActive],
   );
 
   const selectText = useCallback(
@@ -3940,11 +4003,41 @@ export default function EditorShell({
   const patchOverlay = useCallback(
     (id: string, patch: Partial<MediaOverlay>, options: { record?: boolean } = {}) => {
       if (readOnly || !overlaysAllowed) return;
+      const legacy = localOverlays.find((overlay) => overlay.id === id);
+      if (legacy && visualBlocksAllowed) {
+        const asset = poolAssets.find((candidate) => candidate.gcs_path === legacy.src_gcs_path);
+        if (legacy.kind === "video" && !(legacy.clip_duration_s ?? asset?.duration_s)) return;
+        if (options.record !== false) history.record();
+        const converted = normalizeMediaVisualBlock(mediaOverlayToVisualBlock(legacy, asset));
+        const next = {
+          ...converted,
+          ...mediaOverlayPatchToVisualPatch(patch),
+        } as MediaVisualBlock;
+        setLocalOverlays((overlays) => overlays.filter((overlay) => overlay.id !== id));
+        setLocalVisualBlocks((blocks) => [...blocks, next]);
+        setOverlaysDirty(true);
+        setVisualBlocksDirty(true);
+        setLocalVisualPreviewUrls((current) => ({
+          ...current,
+          [id]: localOverlayPreviewUrls[id] ?? legacy.preview_url ?? "",
+        }));
+        select("visual", id);
+        return;
+      }
+      const visual = localVisualBlocks.find((block) => block.id === id && block.kind === "media");
+      if (visual) {
+        if (options.record !== false) history.record();
+        setLocalVisualBlocks((blocks) =>
+          blocks.map((block) => (block.id === id ? normalizeMediaVisualBlock({ ...block, ...patch } as MediaVisualBlock) : block)),
+        );
+        setVisualBlocksDirty(true);
+        return;
+      }
       if (options.record !== false) history.record();
       setLocalOverlays((cur) => cur.map((o) => (o.id === id ? { ...o, ...patch } : o)));
       setOverlaysDirty(true);
     },
-    [history, overlaysAllowed, readOnly],
+    [history, localOverlayPreviewUrls, localOverlays, localVisualBlocks, overlaysAllowed, poolAssets, readOnly, select, visualBlocksAllowed],
   );
 
   const removeOverlay = useCallback(
@@ -3998,8 +4091,23 @@ export default function EditorShell({
     async (
       files: { file: File; filename: string; content_type: string; file_size_bytes: number }[],
     ) => {
-      if (readOnly || !overlaysAllowed || files.length === 0) return;
+      if (
+        readOnly ||
+        files.length === 0 ||
+        (!visualBlocksAllowed && !overlaysAllowed)
+      ) {
+        return;
+      }
       setOverlayUploading(true);
+      if (visualBlocksAllowed) {
+        const accepted = poolUploader.addFiles(files.map((entry) => entry.file));
+        setOverlayUploading(false);
+        if (accepted > 0) {
+          setActiveTool("visuals");
+          notify("Media added to Visuals. Choose Full screen, Overlay, or Sequence when it is ready.");
+        }
+        return;
+      }
       const start = Math.min(
         Math.max(0, outputToBaseTimeRef.current(currentTime)),
         Math.max(0, duration - 0.3),
@@ -4068,6 +4176,7 @@ export default function EditorShell({
       readOnly,
       select,
       notify,
+      visualBlocksAllowed,
     ],
   );
 
@@ -4468,6 +4577,78 @@ export default function EditorShell({
     ],
   );
 
+  const addMediaVisualBlocks = useCallback(
+    (assetIds: string[], displayMode: "fullscreen" | "overlay", afterSelected = false) => {
+      if (readOnly || !visualBlocksAllowed) return;
+      const selected = selection?.kind === "visual" ? localVisualBlocks.find((block) => block.id === selection.id) : null;
+      if (afterSelected && !selected) {
+        notify("Select a media layer to place the sequence after.");
+        return;
+      }
+      let cursorEnd = afterSelected ? selected?.end_s ?? null : null;
+      const additions: MediaVisualBlock[] = [];
+      for (const assetId of assetIds) {
+        const asset = poolAssets.find((candidate) => candidate.id === assetId && candidate.status === "ready");
+        if (!asset || (asset.kind === "video" && !(asset.duration_s && asset.duration_s > 0))) continue;
+        const desiredDuration = asset.kind === "video"
+          ? Math.min(2, asset.duration_s ?? 0)
+          : 2;
+        const adjacent = cursorEnd == null
+          ? null
+          : placeAfterSelected({
+              selected: { end_s: cursorEnd },
+              durationS: desiredDuration,
+              videoDurationS: duration,
+            });
+        const openWindow = displayMode === "fullscreen" && adjacent == null
+          ? nextVisualBlockWindow(desiredDuration)
+          : null;
+        const start = adjacent?.start_s ?? (displayMode === "overlay"
+          ? Math.min(
+              Math.max(0, outputToBaseTimeRef.current(currentTime)),
+              Math.max(0, duration - 0.1),
+            )
+          : openWindow?.start ?? 0);
+        const end = adjacent?.end_s ?? (displayMode === "overlay"
+          ? Math.min(duration || start + desiredDuration, start + desiredDuration)
+          : openWindow?.end ?? start);
+        if (end - start < 0.1) break;
+        additions.push({
+          version: 1,
+          id: crypto.randomUUID(),
+          start_s: start,
+          end_s: end,
+          timing_mode: "manual",
+          origin: "user",
+          transition_in: "cut",
+          transition_out: "cut",
+          audio_policy: { base: "continue", sfx: "continue" },
+          kind: "media",
+          asset_id: asset.id,
+          src_gcs_path: asset.gcs_path,
+          media_kind: asset.kind,
+          source_duration_s: asset.kind === "video" ? asset.duration_s : null,
+          trim_start_s: asset.kind === "video" ? 0 : null,
+          trim_end_s: asset.kind === "video" ? asset.duration_s : null,
+          display_mode: displayMode,
+          transform: { fit_mode: "contain", focal_x: 0.5, focal_y: 0.5, zoom: 1 },
+          x_frac: 0.5,
+          y_frac: 0.5,
+          scale: 0.35,
+          z: Math.max(-1, ...localVisualBlocks.filter((block) => block.kind === "media").map((block) => block.z)) + 1 + additions.length,
+        });
+        cursorEnd = afterSelected ? end : null;
+      }
+      if (!additions.length) return;
+      history.record();
+      setLocalVisualBlocks((blocks) => [...blocks, ...additions]);
+      setVisualBlocksDirty(true);
+      setActiveTool("visuals");
+      selectElement("visual", additions[0].id);
+    },
+    [currentTime, duration, history, localVisualBlocks, nextVisualBlockWindow, notify, poolAssets, readOnly, selectElement, selection, visualBlocksAllowed],
+  );
+
   const addVisualBlockText = useCallback(
     (blockId: string) => {
       if (readOnly || textElementsLocked) return;
@@ -4509,11 +4690,11 @@ export default function EditorShell({
   );
 
   const patchVisualBlock = useCallback(
-    (id: string, patch: Partial<VisualBlock>) => {
+    (id: string, patch: Partial<VisualBlock>, options: { record?: boolean } = {}) => {
       if (readOnly || !visualBlocksAllowed) return;
       const current = localVisualBlocks.find((block) => block.id === id);
       if (!current) return;
-      history.record();
+      if (options.record !== false) history.record();
       const next = patchVisualBlockConcreteTiming(current, patch);
       setLocalVisualBlocks((blocks) => blocks.map((block) => (block.id === id ? next : block)));
       setVisualBlocksDirty(true);
@@ -4535,18 +4716,77 @@ export default function EditorShell({
     [history, localVisualBlocks, readOnly, state.bars, visualBlocksAllowed],
   );
 
+  const previewVisualMediaBlock = useCallback(
+    (id: string, patch: Partial<MediaVisualBlock>) => {
+      if (readOnly || !visualBlocksAllowed) return;
+      setLocalVisualBlocks((blocks) => blocks.map((block) =>
+        block.id === id && block.kind === "media"
+          ? normalizeMediaVisualBlock({ ...block, ...patch })
+          : block,
+      ));
+      setVisualBlocksDirty(true);
+    },
+    [readOnly, visualBlocksAllowed],
+  );
+  const commitVisualMediaBlock = useCallback(
+    (id: string, patch: Partial<MediaVisualBlock>) => patchVisualBlock(id, patch, { record: false }),
+    [patchVisualBlock],
+  );
+  const recordVisualMediaBlock = useCallback(() => {
+    if (!readOnly && visualBlocksAllowed) history.record();
+  }, [history, readOnly, visualBlocksAllowed]);
+  const reorderVisualMediaBlock = useCallback(
+    (id: string, move: MediaLayerMove) => {
+      if (readOnly || !visualBlocksAllowed) return;
+      history.record();
+      setLocalVisualBlocks((blocks) => reorderMediaVisualBlocks(blocks, id, move));
+      setVisualBlocksDirty(true);
+    },
+    [history, readOnly, visualBlocksAllowed],
+  );
+
   const deleteVisualBlock = useCallback(
     (id: string) => {
       if (readOnly || !visualBlocksAllowed) return;
+      const source = localVisualBlocks.find((block) => block.id === id);
       history.record();
       setLocalVisualBlocks((blocks) => blocks.filter((block) => block.id !== id));
+      if (source?.kind === "media") {
+        const linkedEffects = removeGeneratedEffectGroup(
+          localSfx,
+          localCameraEffects,
+          source.source,
+          source.effect_group_id,
+        );
+        if (linkedEffects.soundEffects !== localSfx) {
+          setLocalSfx(linkedEffects.soundEffects);
+          setSfxDirty(true);
+        }
+        if (linkedEffects.cameraEffects !== localCameraEffects) {
+          setLocalCameraEffects(linkedEffects.cameraEffects);
+          setCameraEffectsDirty(true);
+        }
+      }
+      setLocalVisualPreviewUrls((urls) => {
+        const removed = removeMediaPreview(urls, id);
+        revokeLocalObjectUrl(removed.orphanedUrl);
+        return removed.previews;
+      });
       setVisualBlocksDirty(true);
       state.bars
         .filter((bar) => bar.visual_block_id === id)
         .forEach((bar) => dispatch({ type: "DELETE_BAR", id: bar.id }));
       setTextDirty(true);
     },
-    [history, readOnly, state.bars, visualBlocksAllowed],
+    [
+      history,
+      localCameraEffects,
+      localSfx,
+      localVisualBlocks,
+      readOnly,
+      state.bars,
+      visualBlocksAllowed,
+    ],
   );
 
   const duplicateVisualBlock = useCallback(
@@ -4572,7 +4812,8 @@ export default function EditorShell({
             rationale: null,
             shots: source.shots.map((shot) => ({ ...shot, id: crypto.randomUUID() })),
           }
-        : {
+        : source.kind === "text_card"
+        ? {
             ...source,
             id: newId,
             start_s: start,
@@ -4587,9 +4828,15 @@ export default function EditorShell({
                     shot: { ...source.background.shot, id: crypto.randomUUID() },
                   }
                 : { ...source.background },
-          };
+          }
+        : duplicateMediaVisualBlock(source, newId, start, end);
       history.record();
       setLocalVisualBlocks((blocks) => [...blocks, copied]);
+      if (source.kind === "media") {
+        setLocalVisualPreviewUrls((previews) =>
+          copyMediaPreviewForDuplicate(previews, source, newId),
+        );
+      }
       setVisualBlocksDirty(true);
       if (source.kind === "text_card") {
         const sourceDuration = Math.max(0.001, source.end_s - source.start_s);
@@ -6604,6 +6851,16 @@ export default function EditorShell({
       kind: block.kind,
       start_s: block.start_s,
       end_s: block.end_s,
+      ...(block.kind === "media"
+        ? {
+            media_kind: block.media_kind,
+            source_duration_s: block.source_duration_s,
+            trim_start_s: block.trim_start_s,
+            trim_end_s: block.trim_end_s,
+            display_mode: block.display_mode,
+            z: block.z,
+          }
+        : {}),
     })),
     showVisualBlocks:
       VISUAL_BLOCKS_UI_ENABLED && visualBlocksAllowed,
@@ -6720,6 +6977,11 @@ export default function EditorShell({
       start_s: o.start_s,
       end_s: o.end_s,
       label: o.kind === "video" ? "Video" : "Image",
+      media_kind: o.kind,
+      source_duration_s: o.kind === "video" ? o.clip_duration_s : null,
+      trim_start_s: o.kind === "video" ? o.clip_trim_start_s : null,
+      trim_end_s: o.kind === "video" ? o.clip_trim_end_s : null,
+      z: o.z,
       // Provenance until Save: accepted AI suggestions get the dashed ✦ bar.
       suggested: suggestedOverlayIds.has(o.id),
     })),
@@ -7112,6 +7374,7 @@ export default function EditorShell({
             motionRuntimeHash={motionPreviewRuntimeHash}
             cameraEffects={canvasCameraEffects}
             visualAssets={poolAssets}
+            visualPreviewUrls={localVisualPreviewUrls}
             mediaOverlays={canvasOverlays}
             overlayPreviewUrls={localOverlayPreviewUrls}
             suggestedOverlayIds={suggestedOverlayIds}
@@ -7119,6 +7382,7 @@ export default function EditorShell({
             sfxAudioUrls={localSfxAudioUrls}
             selectedTextId={selection?.kind === "text" ? selection.id : null}
             selectedOverlayId={selection?.kind === "overlay" ? selection.id : null}
+            selectedVisualBlockId={selection?.kind === "visual" ? selection.id : null}
             flashTextIds={flashTextIds}
             flashOverlayIds={flashOverlayIds}
             currentTime={currentTime}
@@ -7133,6 +7397,7 @@ export default function EditorShell({
             videoRef={videoRef}
             onSelectText={selectText}
             onSelectOverlay={(id) => selectElement("overlay", id)}
+            onSelectVisualBlock={(id) => selectElement("visual", id)}
             captionTapSelect={POCKET_UI}
             onClearSelection={() => {
               clear();
@@ -7140,6 +7405,9 @@ export default function EditorShell({
             }}
             onPatchBar={patchBar}
             onPatchOverlay={POCKET_UI ? patchOverlay : undefined}
+            onPreviewVisualBlock={POCKET_UI ? previewVisualMediaBlock : undefined}
+            onPatchVisualBlock={POCKET_UI ? commitVisualMediaBlock : undefined}
+            onRecordVisualBlock={POCKET_UI ? recordVisualMediaBlock : undefined}
             onFocusContent={() => {
               if (POCKET_UI) {
                 dispatchPocket({ type: "OPEN_INSPECTOR" });
@@ -7281,6 +7549,8 @@ export default function EditorShell({
               visualUploadFeedback={visualUploadFeedback}
               onVisualUpload={handlePoolFiles}
               onAddMontage={addMontageBlock}
+              onAddMediaBlock={(ids, mode) => addMediaVisualBlocks(ids, mode)}
+              onAddMediaSequence={(ids) => addMediaVisualBlocks(ids, "fullscreen", true)}
               onAddTextCard={addTextCard}
               onAddVisualBlockText={addVisualBlockText}
               onSelectVisualBlockText={selectText}
@@ -7369,6 +7639,8 @@ export default function EditorShell({
               visualUploadFeedback={visualUploadFeedback}
               onVisualUpload={handlePoolFiles}
               onAddMontage={addMontageBlock}
+              onAddMediaBlock={(ids, mode) => addMediaVisualBlocks(ids, mode)}
+              onAddMediaSequence={(ids) => addMediaVisualBlocks(ids, "fullscreen", true)}
               onAddTextCard={addTextCard}
               onAddVisualBlockText={addVisualBlockText}
               onSelectVisualBlockText={selectText}
@@ -7433,6 +7705,7 @@ export default function EditorShell({
             motionRuntimeHash={motionPreviewRuntimeHash}
             cameraEffects={canvasCameraEffects}
             visualAssets={poolAssets}
+            visualPreviewUrls={localVisualPreviewUrls}
             mediaOverlays={canvasOverlays}
             overlayPreviewUrls={localOverlayPreviewUrls}
             suggestedOverlayIds={suggestedOverlayIds}
@@ -7440,6 +7713,7 @@ export default function EditorShell({
             sfxAudioUrls={localSfxAudioUrls}
             selectedTextId={selection?.kind === "text" ? selection.id : null}
             selectedOverlayId={selection?.kind === "overlay" ? selection.id : null}
+            selectedVisualBlockId={selection?.kind === "visual" ? selection.id : null}
             flashTextIds={flashTextIds}
             flashOverlayIds={flashOverlayIds}
             currentTime={currentTime}
@@ -7454,9 +7728,13 @@ export default function EditorShell({
             videoRef={videoRef}
             onSelectText={selectText}
             onSelectOverlay={(id) => selectElement("overlay", id)}
+            onSelectVisualBlock={(id) => selectElement("visual", id)}
             onClearSelection={clear}
             onPatchBar={patchBar}
             onPatchOverlay={patchOverlay}
+            onPreviewVisualBlock={previewVisualMediaBlock}
+            onPatchVisualBlock={commitVisualMediaBlock}
+            onRecordVisualBlock={recordVisualMediaBlock}
             onFocusContent={focusContent}
             onTimeUpdate={commitPlaybackTime}
             onDuration={setDuration}
@@ -7477,6 +7755,7 @@ export default function EditorShell({
           clipTiming={selectedClip}
           sfx={selectedSfx}
           overlay={selectedOverlay}
+          visualBlock={selectedVisualBlock?.kind === "media" ? selectedVisualBlock : null}
           motionScene={selectedMotionScene}
           motionDurationS={timelineDuration}
           motionAssets={poolAssets}
@@ -7542,6 +7821,8 @@ export default function EditorShell({
           sfxEditable={sfxAllowed}
           sfxDisabledReason={sfxDisabledReason}
           onPatchOverlay={patchOverlay}
+          onPatchVisualBlock={patchVisualBlock}
+          onReorderVisualBlock={reorderVisualMediaBlock}
           onPreviewOverlay={previewOverlayPatch}
           onRecordOverlay={recordTimelineDrag}
           onDeleteOverlay={removeOverlay}
@@ -7739,7 +8020,7 @@ export default function EditorShell({
               history.record();
               setLocalOverlays([]);
               setLocalOverlayPreviewUrls((current) => {
-                Object.values(current).forEach((url) => URL.revokeObjectURL(url));
+                Object.values(current).forEach(revokeLocalObjectUrl);
                 return {};
               });
               setOverlaysDirty(true);
@@ -7910,6 +8191,7 @@ export default function EditorShell({
             clipTiming={selectedClip}
             sfx={selectedSfx}
             overlay={selectedOverlay}
+            visualBlock={selectedVisualBlock?.kind === "media" ? selectedVisualBlock : null}
             motionScene={selectedMotionScene}
             motionDurationS={timelineDuration}
             motionAssets={poolAssets}
@@ -7974,6 +8256,8 @@ export default function EditorShell({
             sfxEditable={sfxAllowed}
             sfxDisabledReason={sfxDisabledReason}
             onPatchOverlay={patchOverlay}
+            onPatchVisualBlock={patchVisualBlock}
+            onReorderVisualBlock={reorderVisualMediaBlock}
             onPreviewOverlay={previewOverlayPatch}
             onRecordOverlay={recordTimelineDrag}
             onDeleteOverlay={removeOverlay}

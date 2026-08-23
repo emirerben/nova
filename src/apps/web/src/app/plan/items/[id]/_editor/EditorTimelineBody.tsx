@@ -25,7 +25,7 @@ import {
 } from "react";
 import { Button } from "@/components/ui/button";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
-import type { CameraEffect } from "@/lib/plan-api";
+import type { CameraEffect, MediaVisualBlock } from "@/lib/plan-api";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import {
   projectBaseRange,
@@ -59,6 +59,7 @@ import {
   AI_SEQUENCE_BADGE_TOOLTIP,
   deriveLaneRows,
   deriveTextLaneRows,
+  sortMediaTimelineBars,
   isAiSequenceBar,
   isCaptionBar,
   TEXT_LANE_ROW_GAP_PX,
@@ -70,13 +71,17 @@ import {
   CLIP_MIN_DURATION_S,
   CLICK_DRAG_THRESHOLD_PX,
   applyClipSourceWindowDrag,
+  applyTimelineBarDrag,
   applySfxBarDrag,
   applyTextBarDrag,
   effectiveBarEdgeHitPx,
   minimumClipDurationForSlot,
   renderedSequentialSlotLayout,
   resolveBarDragHandle,
+  selectedMediaSourceDuration,
   secondsDeltaFromTimelineX,
+  TIMELINE_MIN_DURATION_S,
+  TIMELINE_TIME_STEP_S,
   sequentialSlotLayout,
   timelineXFromClient,
 } from "./editor-bar-drag";
@@ -121,13 +126,25 @@ export interface EditorOverlayBar {
   label?: string | null;
   /** ✓-accepted AI suggestion, unsaved — dashed lime provenance styling. */
   suggested?: boolean;
+  /** Media metadata is optional while legacy overlay drafts are in flight. */
+  media_kind?: MediaVisualBlock["media_kind"];
+  source_duration_s?: MediaVisualBlock["source_duration_s"];
+  trim_start_s?: MediaVisualBlock["trim_start_s"];
+  trim_end_s?: MediaVisualBlock["trim_end_s"];
+  z?: MediaVisualBlock["z"];
 }
 
 export interface EditorVisualBlockBar {
   id: string;
-  kind: "montage" | "text_card";
+  kind: "montage" | "text_card" | MediaVisualBlock["kind"];
   start_s: number;
   end_s: number;
+  media_kind?: MediaVisualBlock["media_kind"];
+  source_duration_s?: MediaVisualBlock["source_duration_s"];
+  trim_start_s?: MediaVisualBlock["trim_start_s"];
+  trim_end_s?: MediaVisualBlock["trim_end_s"];
+  display_mode?: MediaVisualBlock["display_mode"];
+  z?: MediaVisualBlock["z"];
 }
 
 export interface EditorMotionBar {
@@ -333,6 +350,7 @@ type ActiveDrag =
       startTimelineX: number;
       pxPerSecond: number;
       origin: Pick<EditorOverlayBar, "start_s" | "end_s">;
+      sourceDurationS: number | null;
       active: boolean;
     }
   | {
@@ -342,6 +360,7 @@ type ActiveDrag =
       startTimelineX: number;
       pxPerSecond: number;
       origin: Pick<EditorVisualBlockBar, "start_s" | "end_s">;
+      sourceDurationS: number | null;
       active: boolean;
     }
   | {
@@ -665,7 +684,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       ? CAPTIONS_LANE_EXPANDED_HEIGHT_PX
       : CAPTIONS_LANE_COLLAPSED_HEIGHT_PX;
   const textLane = deriveTextLaneRows(plainTextBars);
-  const visualLane = deriveLaneRows(visualBlocks, {
+  const visualLane = deriveLaneRows(sortMediaTimelineBars(visualBlocks), {
     baseHeightPx: TEXT_LANE_BASE_HEIGHT_PX,
   });
   const motionLane = deriveLaneRows(motionBlocks, {
@@ -678,7 +697,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     baseHeightPx: SFX_SUB_LANE_BASE_HEIGHT_PX,
   });
   const soundLaneHeight = sfxLane.totalHeightPx + MUSIC_BED_HEIGHT_PX;
-  const overlayLane = deriveLaneRows(overlays, {
+  const overlayLane = deriveLaneRows(sortMediaTimelineBars(overlays), {
     baseHeightPx: TEXT_LANE_BASE_HEIGHT_PX,
   });
   const laneRows = [
@@ -855,31 +874,24 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
         text: `${Math.max(0, (next.end_s ?? next.at_s) - next.at_s).toFixed(1)}s`,
       });
     } else {
-      const duration = active.origin.end_s - active.origin.start_s;
-      const minDuration = active.kind === "motion" ? 1 / 30 : 0.3;
-      const snapTiming = (value: number) =>
-        active.kind === "motion" ? Math.round(value * 30) / 30 : Math.round(value * 10) / 10;
-      let next = active.origin;
-      if (active.handle === "body") {
-        const maxStart = Math.max(0, effectiveDurationS - duration);
-        const start_s = Math.max(0, Math.min(maxStart, active.origin.start_s + deltaS));
-        next = {
-          start_s: snapTiming(start_s),
-          end_s: snapTiming(start_s + duration),
-        };
-      } else if (active.handle === "left") {
-        const start_s = Math.max(0, Math.min(active.origin.end_s - minDuration, active.origin.start_s + deltaS));
-        next = {
-          start_s: snapTiming(start_s),
-          end_s: active.origin.end_s,
-        };
-      } else {
-        const end_s = Math.min(effectiveDurationS, Math.max(active.origin.start_s + minDuration, active.origin.end_s + deltaS));
-        next = {
-          start_s: active.origin.start_s,
-          end_s: snapTiming(end_s),
-        };
-      }
+      const minDuration = active.kind === "motion"
+        ? 1 / 30
+        : active.kind === "camera"
+          ? 0.3
+          : TIMELINE_MIN_DURATION_S;
+      const stepS = active.kind === "motion" ? 1 / 30 : TIMELINE_TIME_STEP_S;
+      const next = applyTimelineBarDrag({
+        bar: active.origin,
+        handle: active.handle,
+        deltaS,
+        videoDurationS: effectiveDurationS,
+        sourceDurationS:
+          active.kind === "overlay" || active.kind === "visual"
+            ? active.sourceDurationS
+            : null,
+        minDurationS: minDuration,
+        stepS,
+      });
       if (active.kind === "visual") {
         onPreviewVisualTiming?.(active.id, toBaseRange(next));
       } else if (active.kind === "motion") {
@@ -1007,6 +1019,14 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       startTimelineX: pointerTimelineX(e.clientX),
       pxPerSecond: pps,
       origin: { start_s: bar.start_s, end_s: bar.end_s },
+      sourceDurationS:
+        bar.media_kind === "video" && bar.source_duration_s != null
+          ? selectedMediaSourceDuration(
+              bar.source_duration_s,
+              bar.trim_start_s,
+              bar.trim_end_s,
+            )
+          : null,
       active: false,
     };
   }
@@ -1030,6 +1050,14 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       startTimelineX: pointerTimelineX(e.clientX),
       pxPerSecond: pps,
       origin: block,
+      sourceDurationS:
+        block.kind === "media" && block.media_kind === "video" && block.source_duration_s != null
+          ? selectedMediaSourceDuration(
+              block.source_duration_s,
+              block.trim_start_s,
+              block.trim_end_s,
+            )
+          : null,
       active: false,
     };
   }
@@ -1471,7 +1499,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                           height={heightPx}
                           selected={selected}
                           ringCls={ringCls}
-                          ariaLabel={`${block.kind === "montage" ? "Montage" : "Text card"}, ${formatTimecode(block.start_s)}–${formatTimecode(block.end_s)}`}
+                          ariaLabel={`${block.kind === "montage" ? "Montage" : block.kind === "media" ? "Media" : "Text card"}, ${formatTimecode(block.start_s)}–${formatTimecode(block.end_s)}`}
                           onSelect={() => onSelect("visual", block.id)}
                           dataKind="visual"
                           dataId={block.id}
@@ -1498,7 +1526,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                           className="border border-lime-200 bg-lime-50 text-lime-800"
                         >
                           <span className="pointer-events-none truncate px-2 text-[10px] font-semibold">
-                            {block.kind === "montage" ? "Montage" : "Text card"}
+                            {block.kind === "montage" ? "Montage" : block.kind === "media" ? "Media" : "Text card"}
                           </span>
                         </BarButton>
                       );

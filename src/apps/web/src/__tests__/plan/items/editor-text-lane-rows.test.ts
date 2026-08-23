@@ -7,6 +7,7 @@ import {
   convertCaptionCues,
   deriveLaneRows,
   deriveTextLaneRows,
+  sortMediaTimelineBars,
   isAiSequenceBar,
   localCaptionBarPatchFromPatch,
   seedBarsFromVariant,
@@ -693,6 +694,22 @@ describe("caption bar style patches", () => {
 });
 
 describe("deriveLaneRows", () => {
+  it("orders overlapping media rows by z with a stable id tie-break", () => {
+    const rows = deriveLaneRows(
+      sortMediaTimelineBars([
+        { id: "z2", start_s: 0, end_s: 3, z: 2 },
+        { id: "z1b", start_s: 0, end_s: 2, z: 1 },
+        { id: "z1a", start_s: 0, end_s: 2, z: 1 },
+      ]),
+      { baseHeightPx: TEXT_LANE_BASE_HEIGHT_PX },
+    );
+    expect(rows.rows.map((row) => [row.item.id, row.rowIndex])).toEqual([
+      ["z1a", 0],
+      ["z1b", 1],
+      ["z2", 2],
+    ]);
+  });
+
   it("assigns appended SFX to the next compacted row", () => {
     const rows = deriveLaneRows([sfx("first"), sfx("second"), sfx("third")], {
       baseHeightPx: SFX_SUB_LANE_BASE_HEIGHT_PX,

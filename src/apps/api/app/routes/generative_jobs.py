@@ -44,6 +44,7 @@ from app.agents._schemas.text_element import (
     append_ai_text_tombstones,
     merge_projected_text_elements_for_variant,
 )
+from app.agents._schemas.visual_block import VisualBlock
 from app.auth import CurrentUserOrSynthetic, ensure_job_owner
 from app.config import settings
 from app.database import get_db
@@ -971,7 +972,7 @@ class EditorCommitRequest(BaseModel):
     orientation: str | None = None
     sound_effects: list[dict] | None = None
     media_overlays: list[dict] | None = None
-    visual_blocks: list[dict] | None = None
+    visual_blocks: list[VisualBlock] | None = None
     motion_scenes: list[dict] | None = None
     motion_runtime_hash: str | None = None
     camera_effects: list[dict] | None = None
@@ -1043,6 +1044,7 @@ def _is_generated_effect_source(value: object) -> bool:
 def _removed_overlay_effect_groups(
     existing: list[dict] | None,
     replacement: list[dict] | None,
+    transferred_media_owners: list[dict] | None = None,
 ) -> set[str]:
     """Groups whose generated owner card was explicitly removed.
 
@@ -1055,6 +1057,15 @@ def _removed_overlay_effect_groups(
         for item in replacement or []
         if isinstance(item, dict) and item.get("id")
     }
+    transferred_owners = {
+        (str(item.get("id")), str(item.get("effect_group_id")))
+        for item in transferred_media_owners or []
+        if isinstance(item, dict)
+        and item.get("kind") == "media"
+        and item.get("id")
+        and item.get("effect_group_id")
+        and _is_generated_effect_source(item.get("source"))
+    }
     return {
         str(item.get("effect_group_id"))
         for item in existing or []
@@ -1062,6 +1073,7 @@ def _removed_overlay_effect_groups(
         and item.get("id")
         and str(item.get("id")) not in kept_ids
         and item.get("effect_group_id")
+        and (str(item.get("id")), str(item.get("effect_group_id"))) not in transferred_owners
         and _is_generated_effect_source(item.get("source"))
     }
 
@@ -1087,6 +1099,7 @@ def cascade_removed_overlay_effect_groups(
     *,
     sound_effects: list[dict] | None = None,
     camera_effects: list[dict] | None = None,
+    transferred_media_owners: list[dict] | None = None,
 ) -> tuple[list[dict] | None, list[dict] | None]:
     """Return explicit sibling-lane replacements for removed generated cards.
 
@@ -1098,6 +1111,7 @@ def cascade_removed_overlay_effect_groups(
     removed_group_ids = _removed_overlay_effect_groups(
         list(variant.get("media_overlays") or []),
         replacement_overlays,
+        transferred_media_owners,
     )
     if not removed_group_ids:
         return sound_effects, camera_effects
@@ -1548,6 +1562,40 @@ def _variants_for_response(job: Job) -> list[dict]:
                 else:
                     signed_overlays.append(card)
             v = {**v, "media_overlays": signed_overlays}
+        raw_visual_blocks = v.get("visual_blocks")
+        if raw_visual_blocks:
+            signed_visual_previews: dict[str, str] = {}
+            for block in raw_visual_blocks:
+                if not isinstance(block, dict) or block.get("kind") != "media":
+                    continue
+                block_id = nonblank_str(block.get("id"))
+                src = nonblank_str(block.get("src_gcs_path"))
+                preview = nonblank_str(block.get("preview_gcs_path"))
+                # Authoritative pool/legacy previews are sibling JPEGs derived
+                # from the owned source key. The shape check also protects any
+                # pre-release rows created before commit-time canonicalization.
+                trusted_preview = (
+                    preview
+                    if src
+                    and preview
+                    and preview.startswith(f"{src}.preview")
+                    and preview.endswith(".jpg")
+                    else None
+                )
+                src = trusted_preview or src
+                if block_id and src:
+                    try:
+                        signed_visual_previews[block_id] = signed_get_url(src, PLAYBACK_URL_TTL_MIN)
+                    except Exception:  # noqa: BLE001 — one bad sign must not 500 the poll
+                        log.warning(
+                            "variant_visual_block_preview_resign_failed",
+                            job_id=str(job.id),
+                            variant_id=v.get("variant_id"),
+                            visual_block_id=block_id,
+                            exc_info=True,
+                        )
+            if signed_visual_previews:
+                v = {**v, "visual_block_preview_urls": signed_visual_previews}
         raw_sound_effects = v.get("sound_effects")
         if raw_sound_effects:
             v = {
@@ -7182,13 +7230,18 @@ def prepare_editor_commit(
             detail="Provide at least one section to commit.",
         )
 
-    # Accepted-suggestion ids only make sense riding a media_overlays write —
-    # accepting a suggestion stages its card, which marks the section dirty.
-    # An id list without the section is a client bug; fail loudly, not silently.
-    if payload.accepted_suggestion_ids and payload.media_overlays is None:
+    # Accepted suggestions may still be legacy overlays or may have been
+    # converted to first-class media visual blocks before their initial save.
+    if (
+        payload.accepted_suggestion_ids
+        and payload.media_overlays is None
+        and payload.visual_blocks is None
+    ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="accepted_suggestion_ids requires the media_overlays section.",
+            detail=(
+                "accepted_suggestion_ids requires the media_overlays or visual_blocks section."
+            ),
         )
     if (
         payload.music_window is not None
@@ -7562,17 +7615,90 @@ def prepare_editor_commit(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                 ) from exc
             assets = visual_assets or {}
+            legacy_media = {
+                str(card.get("id")): card
+                for card in (variant.get("media_overlays") or [])
+                if isinstance(card, dict) and card.get("id")
+            }
+            persisted_media = {
+                str(block.get("asset_id")): block
+                for block in (variant.get("visual_blocks") or [])
+                if isinstance(block, dict)
+                and block.get("kind") == "media"
+                and block.get("asset_id")
+            }
+            submitted_media: dict[str, list[dict]] = {}
+            for block in validated_visual_blocks:
+                if block.get("kind") == "media" and block.get("asset_id"):
+                    submitted_media.setdefault(str(block["asset_id"]), []).append(block)
             for shot in iter_visual_shots(validated_visual_blocks):
                 asset = assets.get(str(shot.get("asset_id")))
-                if (
+                pool_asset_valid = not (
                     asset is None
                     or asset.get("status") != "ready"
                     or asset.get("gcs_path") != shot.get("src_gcs_path")
                     or asset.get("kind") != shot.get("kind")
-                ):
+                )
+                legacy = legacy_media.get(str(shot.get("asset_id")))
+                legacy_asset_valid = bool(
+                    legacy
+                    and legacy.get("src_gcs_path") == shot.get("src_gcs_path")
+                    and legacy.get("kind") == shot.get("kind")
+                )
+                persisted = persisted_media.get(str(shot.get("asset_id")))
+                persisted_asset_valid = bool(
+                    persisted
+                    and persisted.get("src_gcs_path") == shot.get("src_gcs_path")
+                    and persisted.get("media_kind") == shot.get("kind")
+                )
+                if not pool_asset_valid and not legacy_asset_valid and not persisted_asset_valid:
                     raise HTTPException(
                         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                         detail="Visual block assets must be ready assets owned by this plan item.",
+                    )
+                trusted_preview = None
+                if pool_asset_valid:
+                    trusted_preview = nonblank_str(asset.get("preview_gcs_path"))
+                elif legacy_asset_valid:
+                    trusted_preview = nonblank_str(legacy.get("preview_gcs_path"))
+                elif persisted_asset_valid:
+                    trusted_preview = nonblank_str(persisted.get("preview_gcs_path"))
+                # Preview identity is server-owned. Replace, rather than merely
+                # validate, the client value so an owned source cannot be paired
+                # with a guessed private object path.
+                for submitted_media_block in submitted_media.get(str(shot.get("asset_id")), []):
+                    if trusted_preview:
+                        submitted_media_block["preview_gcs_path"] = trusted_preview
+                    else:
+                        submitted_media_block.pop("preview_gcs_path", None)
+            for block in validated_visual_blocks:
+                if block.get("kind") != "media" or block.get("media_kind") != "video":
+                    continue
+                asset = assets.get(str(block.get("asset_id")))
+                authoritative_duration = asset.get("duration_s") if asset is not None else None
+                if authoritative_duration is None:
+                    legacy = legacy_media.get(str(block.get("asset_id")))
+                    authoritative_duration = (
+                        legacy.get("clip_duration_s") if legacy is not None else None
+                    )
+                if authoritative_duration is None:
+                    persisted = persisted_media.get(str(block.get("asset_id")))
+                    authoritative_duration = (
+                        persisted.get("source_duration_s") if persisted is not None else None
+                    )
+                if authoritative_duration is None or float(authoritative_duration) <= 0:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=(
+                            "Video media is still being analyzed. "
+                            "Try again when its duration is ready."
+                        ),
+                    )
+                submitted_duration = float(block.get("source_duration_s") or 0)
+                if abs(submitted_duration - float(authoritative_duration)) > 0.05:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="Video media duration changed. Reload the asset before editing it.",
                     )
 
     if validated_orientation is not None and validated_visual_blocks is not None:
@@ -7712,6 +7838,7 @@ def prepare_editor_commit(
             validated_overlays,
             sound_effects=validated_sfx,
             camera_effects=validated_camera_effects,
+            transferred_media_owners=validated_visual_blocks,
         )
 
     # Carousel-moment edit (Blossom carousel), staged synchronously — unlike
@@ -7941,7 +8068,7 @@ def prepare_editor_commit(
             # sibling staged section carries the same bit for that reason.
             updated["carousel_moment_cache_stale"] = True
         if payload.accepted_suggestion_ids:
-            # Accepted AI suggestions became cards in the media_overlays section;
+            # Accepted AI suggestions became legacy cards or media visual blocks;
             # drop their envelopes in the SAME atomic write. Unknown ids no-op
             # (replayed Save, already-cleared envelope). An envelope is only
             # cleared when its card actually landed in the committed overlay
@@ -7950,6 +8077,11 @@ def prepare_editor_commit(
             # pending-set bookkeeping in plan_items._clear_suggestions_for_asset.
             accepted = set(payload.accepted_suggestion_ids)
             committed_ids = {o.get("id") for o in (validated_overlays or [])}
+            committed_ids.update(
+                block.get("id")
+                for block in (validated_visual_blocks or [])
+                if block.get("kind") == "media"
+            )
             pending = list(updated.get("overlay_suggestions") or [])
             kept = [
                 s

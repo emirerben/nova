@@ -10,6 +10,7 @@ section and the single-commit + kick-after-commit flow.
 from __future__ import annotations
 
 import copy
+import json
 import types
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -680,6 +681,13 @@ def _commit_req(**kw) -> gj.EditorCommitRequest:
     return gj.EditorCommitRequest(**kw)
 
 
+def test_editor_commit_openapi_exposes_media_visual_block_contract():
+    schema = json.dumps(gj.EditorCommitRequest.model_json_schema()["properties"]["visual_blocks"])
+
+    assert "MediaBlock" in schema
+    assert "discriminator" in schema
+
+
 def _music_track(**overrides):
     values = {
         "id": "t1",
@@ -738,6 +746,33 @@ def _text_card_block() -> dict:
         "transition_out": "fade",
         "audio_policy": {"base": "continue", "sfx": "continue"},
         "background": {"type": "solid", "color": "#111111"},
+    }
+
+
+def _media_block(*, asset_id: str = "media-1", source_duration_s: float = 4.0) -> dict:
+    return {
+        "version": 1,
+        "id": asset_id,
+        "kind": "media",
+        "asset_id": asset_id,
+        "src_gcs_path": f"users/u/plan/i/pool/{asset_id}.mp4",
+        "media_kind": "video",
+        "source_duration_s": source_duration_s,
+        "trim_start_s": 0.5,
+        "trim_end_s": 3.5,
+        "display_mode": "fullscreen",
+        "transform": {"fit_mode": "contain", "focal_x": 0.5, "focal_y": 0.5, "zoom": 1},
+        "x_frac": 0.5,
+        "y_frac": 0.5,
+        "scale": 0.35,
+        "z": 0,
+        "start_s": 0.0,
+        "end_s": 3.0,
+        "timing_mode": "manual",
+        "origin": "user",
+        "transition_in": "cut",
+        "transition_out": "cut",
+        "audio_policy": {"base": "continue", "sfx": "continue"},
     }
 
 
@@ -921,6 +956,261 @@ def test_visual_block_commit_rejects_unowned_asset(monkeypatch):
         )
     assert exc.value.status_code == 422
     assert "owned" in str(exc.value.detail)
+
+
+def test_media_block_commit_accepts_ready_pool_video_with_authoritative_duration(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True, raising=False)
+    prep = gj.prepare_editor_commit(
+        _job(),
+        "song_text",
+        _commit_req(visual_blocks=[_media_block()]),
+        visual_assets={
+            "media-1": {
+                "status": "ready",
+                "gcs_path": "users/u/plan/i/pool/media-1.mp4",
+                "kind": "video",
+                "duration_s": 4.0,
+            }
+        },
+    )
+
+    assert prep["sections"]["visual_blocks"] is True
+
+
+def test_media_block_commit_rejects_stale_video_duration(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True, raising=False)
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            _job(),
+            "song_text",
+            _commit_req(visual_blocks=[_media_block(source_duration_s=6.0)]),
+            visual_assets={
+                "media-1": {
+                    "status": "ready",
+                    "gcs_path": "users/u/plan/i/pool/media-1.mp4",
+                    "kind": "video",
+                    "duration_s": 4.0,
+                }
+            },
+        )
+
+    assert exc.value.status_code == 422
+    assert "duration changed" in str(exc.value.detail)
+
+
+@pytest.mark.parametrize("authoritative_duration", [None, 0.0])
+def test_media_block_commit_rejects_unanalyzed_video_duration(monkeypatch, authoritative_duration):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True, raising=False)
+    job = _job()
+    before = copy.deepcopy(job.assembly_plan)
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(visual_blocks=[_media_block()]),
+            visual_assets={
+                "media-1": {
+                    "status": "ready",
+                    "gcs_path": "users/u/plan/i/pool/media-1.mp4",
+                    "kind": "video",
+                    "duration_s": authoritative_duration,
+                }
+            },
+        )
+
+    assert exc.value.status_code == 422
+    assert "still being analyzed" in str(exc.value.detail)
+    assert job.assembly_plan == before
+
+
+def test_media_block_commit_accepts_atomic_conversion_of_existing_legacy_card(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True, raising=False)
+    legacy_path = "users/u/plan/i/pool/media-1.mp4"
+    job = _job(
+        media_overlays=[
+            {
+                "id": "media-1",
+                "kind": "video",
+                "src_gcs_path": legacy_path,
+                "clip_duration_s": 4.0,
+                "start_s": 0.0,
+                "end_s": 3.0,
+            }
+        ]
+    )
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(media_overlays=[], visual_blocks=[_media_block()]),
+        user_id="u",
+        visual_assets={},
+    )
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["media_overlays"] is None
+    assert variant["visual_blocks"][0]["id"] == "media-1"
+    assert prep["sections"]["media_overlays"] is True
+    assert prep["sections"]["visual_blocks"] is True
+
+
+def test_media_conversion_transfers_generated_effect_group_ownership(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True, raising=False)
+    group = "generated-event-1"
+    block = {
+        **_media_block(),
+        "source": "overlay_suggestion",
+        "effect_group_id": group,
+    }
+    job = _job(
+        media_overlays=[
+            {
+                "id": "media-1",
+                "kind": "video",
+                "src_gcs_path": block["src_gcs_path"],
+                "clip_duration_s": 4.0,
+                "start_s": 0.0,
+                "end_s": 3.0,
+                "source": "overlay_suggestion",
+                "effect_group_id": group,
+            }
+        ],
+        sound_effects=[
+            {
+                "id": "sfx-1",
+                "src_gcs_path": "sound-effects/pop.mp3",
+                "at_s": 0.0,
+                "gain": 1.0,
+                "source": "overlay_suggestion",
+                "effect_group_id": group,
+            }
+        ],
+        camera_effects=[
+            {
+                "id": "camera-1",
+                "start_s": 0.0,
+                "end_s": 1.0,
+                "intensity": 0.04,
+                "easing": "sine_pulse",
+                "source": "overlay_suggestion",
+                "effect_group_id": group,
+            }
+        ],
+    )
+
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(media_overlays=[], visual_blocks=[block]),
+        user_id="u",
+        visual_assets={},
+    )
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["media_overlays"] is None
+    assert variant["visual_blocks"][0]["effect_group_id"] == group
+    assert [effect["id"] for effect in variant["sound_effects"]] == ["sfx-1"]
+    assert [effect["id"] for effect in variant["camera_effects"]] == ["camera-1"]
+
+
+def test_legacy_media_conversion_can_be_saved_again(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True, raising=False)
+    job = _job(
+        media_overlays=[
+            {
+                "id": "media-1",
+                "kind": "video",
+                "src_gcs_path": "users/u/plan/i/pool/media-1.mp4",
+                "clip_duration_s": 4.0,
+                "start_s": 0.0,
+                "end_s": 3.0,
+            }
+        ]
+    )
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(media_overlays=[], visual_blocks=[_media_block()]),
+        user_id="u",
+        visual_assets={},
+    )
+    persisted = copy.deepcopy(job.assembly_plan["variants"][0]["visual_blocks"])
+    persisted[0]["transform"]["zoom"] = 1.5
+    base_generation = job.assembly_plan["variants"][0]["render_generation_id"]
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(visual_blocks=persisted, base_generation=base_generation),
+        user_id="u",
+        visual_assets={},
+    )
+
+    assert prep["sections"]["visual_blocks"] is True
+    assert job.assembly_plan["variants"][0]["visual_blocks"][0]["transform"]["zoom"] == 1.5
+
+
+@pytest.mark.parametrize("mismatch", ["path", "kind"])
+def test_legacy_media_conversion_rejects_mismatched_identity(monkeypatch, mismatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True, raising=False)
+    legacy_path = "users/u/plan/i/pool/media-1.mp4"
+    job = _job(
+        media_overlays=[
+            {
+                "id": "media-1",
+                "kind": "video",
+                "src_gcs_path": legacy_path,
+                "clip_duration_s": 4.0,
+                "start_s": 0.0,
+                "end_s": 3.0,
+            }
+        ]
+    )
+    block = _media_block()
+    if mismatch == "path":
+        block["src_gcs_path"] = "users/u/plan/i/pool/other.mp4"
+    else:
+        block.update(
+            media_kind="image",
+            source_duration_s=None,
+            trim_start_s=None,
+            trim_end_s=None,
+        )
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(media_overlays=[], visual_blocks=[block]),
+            user_id="u",
+            visual_assets={},
+        )
+
+    assert exc.value.status_code == 422
+    assert "owned" in str(exc.value.detail)
+    assert job.assembly_plan == before
 
 
 # ── carousel-moment section: tri-state staging (Lane C) ────────────────────────
@@ -1409,6 +1699,77 @@ def test_sequence_text_commit_serializes_saved_elements_not_projection(monkeypat
     assert out["text_elements_user_edited"] is True
     assert [e["text"] for e in out["text_elements"]] == ["QA live text"]
     assert out["text_elements"][0]["id"] == "qa-live"
+
+
+def test_variants_for_response_signs_persisted_media_visual_preview(monkeypatch):
+    _arm(monkeypatch)
+    signed_paths: list[str] = []
+
+    def sign(path, ttl=None):
+        signed_paths.append(path)
+        return f"https://signed/{path}"
+
+    monkeypatch.setattr(gj, "signed_get_url", sign)
+    job = _job(
+        visual_blocks=[
+            {
+                **_media_block(),
+                "preview_gcs_path": "users/u/plan/i/pool/media-1-preview.jpg",
+            }
+        ]
+    )
+    stored = copy.deepcopy(job.assembly_plan["variants"][0]["visual_blocks"])
+
+    out = gj._variants_for_response(job)[0]
+
+    assert out["visual_block_preview_urls"] == {
+        "media-1": "https://signed/users/u/plan/i/pool/media-1.mp4"
+    }
+    assert "users/u/plan/i/pool/media-1.mp4" in signed_paths
+    assert "users/u/plan/i/pool/media-1-preview.jpg" not in signed_paths
+    assert job.assembly_plan["variants"][0]["visual_blocks"] == stored
+    assert "preview_url" not in job.assembly_plan["variants"][0]["visual_blocks"][0]
+
+
+def test_heic_media_commit_canonicalizes_and_signs_owned_browser_preview(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True, raising=False)
+    source = "users/u/plan/i/pool/heic-1.heic"
+    preview = f"{source}.preview.jpg"
+    block = {
+        **_media_block(asset_id="heic-1"),
+        "src_gcs_path": source,
+        "preview_gcs_path": "users/other/private.heic.preview.jpg",
+        "media_kind": "image",
+        "source_duration_s": None,
+        "trim_start_s": None,
+        "trim_end_s": None,
+    }
+    job = _job()
+
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(visual_blocks=[block]),
+        user_id="u",
+        visual_assets={
+            "heic-1": {
+                "status": "ready",
+                "gcs_path": source,
+                "kind": "image",
+                "duration_s": None,
+                "preview_gcs_path": preview,
+            }
+        },
+    )
+
+    persisted = job.assembly_plan["variants"][0]["visual_blocks"][0]
+    assert persisted["preview_gcs_path"] == preview
+    assert gj._variants_for_response(job)[0]["visual_block_preview_urls"] == {
+        "heic-1": f"https://signed/{preview}"
+    }
 
 
 def test_narrated_caption_commit_persists_cues_and_reburns_caption_task(monkeypatch):
@@ -4425,6 +4786,41 @@ def test_commit_clears_accepted_suggestion_envelopes_atomically(monkeypatch):
     assert v["media_overlays"][0]["id"] == "ov-accepted"
 
 
+def test_commit_clears_accepted_suggestion_converted_to_media_visual(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True, raising=False)
+    job = _job(
+        overlay_suggestions=[_suggestion("sug-1", "media-1")],
+        overlay_suggest_status="ready",
+    )
+
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            media_overlays=[],
+            visual_blocks=[_media_block()],
+            accepted_suggestion_ids=["sug-1"],
+        ),
+        user_id="u123",
+        visual_assets={
+            "media-1": {
+                "status": "ready",
+                "gcs_path": "users/u/plan/i/pool/media-1.mp4",
+                "kind": "video",
+                "duration_s": 4.0,
+            }
+        },
+    )
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["overlay_suggestions"] is None
+    assert variant["overlay_suggest_status"] == "zero"
+    assert variant["visual_blocks"][0]["id"] == "media-1"
+
+
 def test_commit_clearing_last_envelope_flips_status_to_zero(monkeypatch):
     _arm(monkeypatch)
     job = _job(
@@ -4478,7 +4874,7 @@ def test_commit_unknown_accepted_ids_noop(monkeypatch):
     assert v["overlay_suggest_status"] == "ready"
 
 
-def test_accepted_ids_without_media_overlays_section_422(monkeypatch):
+def test_accepted_ids_without_media_section_422(monkeypatch):
     _arm(monkeypatch)
     job = _job()
     with pytest.raises(HTTPException) as exc:
@@ -4488,7 +4884,7 @@ def test_accepted_ids_without_media_overlays_section_422(monkeypatch):
             _commit_req(title="New title", accepted_suggestion_ids=["sug-1"]),
         )
     assert exc.value.status_code == 422
-    assert "media_overlays" in str(exc.value.detail)
+    assert "media_overlays or visual_blocks" in str(exc.value.detail)
 
 
 def test_commit_keeps_envelope_when_accepted_card_not_committed(monkeypatch):

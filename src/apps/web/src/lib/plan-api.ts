@@ -1556,6 +1556,32 @@ export interface VisualBlockBase {
   };
 }
 
+export interface MediaTransform {
+  fit_mode: "contain" | "cover";
+  focal_x: number;
+  focal_y: number;
+  zoom: number;
+}
+
+export interface MediaVisualBlock extends VisualBlockBase {
+  kind: "media";
+  asset_id: string;
+  src_gcs_path: string;
+  preview_gcs_path?: string | null;
+  media_kind: "image" | "video";
+  source_duration_s?: number | null;
+  trim_start_s?: number | null;
+  trim_end_s?: number | null;
+  display_mode: "fullscreen" | "overlay";
+  transform: MediaTransform;
+  x_frac: number;
+  y_frac: number;
+  scale: number;
+  z: number;
+  source?: string | null;
+  effect_group_id?: string | null;
+}
+
 export interface MontageVisualBlock extends VisualBlockBase {
   kind: "montage";
   shots: VisualShot[];
@@ -1573,7 +1599,7 @@ export interface TextCardVisualBlock extends VisualBlockBase {
   background: TextCardBackground;
 }
 
-export type VisualBlock = MontageVisualBlock | TextCardVisualBlock;
+export type VisualBlock = MontageVisualBlock | TextCardVisualBlock | MediaVisualBlock;
 
 /**
  * Plan 009 ARCH-4: variant-level apply receipt — mirrors the dict written by
@@ -1924,6 +1950,8 @@ export interface PlanItemVariant {
   media_overlays?: MediaOverlay[] | null;
   /** Full-frame replacement blocks rendered below authored text and captions. */
   visual_blocks?: VisualBlock[] | null;
+  /** Read-time signed preview URLs keyed by persisted media visual-block id. */
+  visual_block_preview_urls?: Record<string, string> | null;
   /** Editable semantic camera emphasis applied only to the base video layer. */
   camera_effects?: CameraEffect[] | null;
   /** Cached text-free visual-block composite used for fast text reburns. */

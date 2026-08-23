@@ -5083,6 +5083,8 @@ async def editor_commit_item(
                 "status": row.status,
                 "gcs_path": row.gcs_path,
                 "kind": row.kind,
+                "duration_s": getattr(row, "duration_s", None),
+                "preview_gcs_path": getattr(row, "preview_gcs_path", None),
                 "user_context": getattr(row, "user_context", None),
             }
             for row in rows
@@ -5130,7 +5132,7 @@ async def editor_commit_item(
             len(commit_body.visual_blocks) if commit_body.visual_blocks is not None else None
         ),
         ai_visual_block_count=(
-            sum(1 for block in commit_body.visual_blocks if block.get("origin") == "ai")
+            sum(1 for block in commit_body.visual_blocks if block.origin == "ai")
             if commit_body.visual_blocks is not None
             else None
         ),

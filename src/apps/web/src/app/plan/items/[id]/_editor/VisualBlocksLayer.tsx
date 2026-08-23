@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useRef, type CSSProperties } from "react";
-import type { PoolAsset, VisualBlock, VisualShot } from "@/lib/plan-api";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import type { MediaVisualBlock, PoolAsset, VisualBlock, VisualShot } from "@/lib/plan-api";
+import { Button } from "@/components/ui/button";
 import {
   useEditorPlaybackTime,
   type EditorPlaybackClock,
 } from "./editor-playback-clock";
+import { mediaPreviewGeometry } from "./editor-media-visuals";
 
 function shotAt(block: Extract<VisualBlock, { kind: "montage" }>, timeS: number) {
   const offset = timeS - block.start_s;
@@ -22,6 +24,54 @@ const VISUAL_MOTION_ZOOM_FACTOR = 1.08;
 const VISUAL_MOTION_PAN_FRACTION = 0.08;
 const VISUAL_VIDEO_SEEK_TOLERANCE_S = 0.15;
 const VISUAL_VIDEO_CORRECTION_INTERVAL_MS = 500;
+
+function MediaBlockPreview({
+  block,
+  url,
+  localTimeS,
+  frameDriven,
+  playing,
+}: {
+  block: MediaVisualBlock;
+  url: string | null;
+  localTimeS: number;
+  frameDriven: boolean;
+  playing: boolean;
+}) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const lastCorrectionMsRef = useRef(Number.NEGATIVE_INFINITY);
+  const [failed, setFailed] = useState(false);
+  const trimStart = block.trim_start_s ?? 0;
+  useEffect(() => setFailed(false), [url]);
+  useEffect(() => {
+    if (!frameDriven || block.media_kind !== "video" || !ref.current) return;
+    const video = ref.current;
+    if (playing) void video.play().catch(() => {});
+    else video.pause();
+  }, [block.media_kind, frameDriven, playing, url]);
+  useEffect(() => {
+    if (!frameDriven || block.media_kind !== "video" || !ref.current) return;
+    const video = ref.current;
+    const now = performance.now();
+    if (playing && now - lastCorrectionMsRef.current < VISUAL_VIDEO_CORRECTION_INTERVAL_MS) {
+      return;
+    }
+    lastCorrectionMsRef.current = now;
+    const target = trimStart + Math.max(0, localTimeS);
+    if (Math.abs(video.currentTime - target) > VISUAL_VIDEO_SEEK_TOLERANCE_S) {
+      try { video.currentTime = target; } catch { /* metadata is not ready */ }
+    }
+  }, [block.media_kind, frameDriven, localTimeS, playing, trimStart, url]);
+  if (!url || failed) return <div className="flex h-full w-full items-center justify-center bg-zinc-800 text-[11px] text-white/70">Preview unavailable</div>;
+  const style: CSSProperties = {
+    objectFit: block.transform.fit_mode === "cover" ? "cover" : "contain",
+    objectPosition: "center",
+  };
+  if (block.media_kind === "video") {
+    return <video ref={ref} src={url} muted loop playsInline autoPlay={playing} className="h-full w-full" style={style} onLoadedMetadata={(event) => { event.currentTarget.currentTime = trimStart + Math.max(0, localTimeS); }} onError={() => setFailed(true)} />;
+  }
+  return <img src={url} alt="" className="h-full w-full" style={style} draggable={false} onError={() => setFailed(true)} />;
+}
 
 export function visualShotPreviewState(shot: VisualShot, localTimeS: number) {
   const frames = Math.max(1, Math.round(shot.duration_s * VISUAL_BLOCK_FPS));
@@ -149,26 +199,234 @@ function Shot({
 export default function VisualBlocksLayer({
   blocks,
   assets,
+  previewUrls = {},
   currentTime,
   frameDriven = false,
   playbackClock,
   playing = false,
+  allowManipulation = false,
+  selectedMediaBlockId = null,
+  onSelectMediaBlock,
+  onPreviewMediaBlock,
+  onPatchMediaBlock,
+  onRecordMediaBlock,
 }: {
   blocks: VisualBlock[];
   assets: PoolAsset[];
+  previewUrls?: Record<string, string>;
   currentTime: number;
   frameDriven?: boolean;
   playbackClock?: EditorPlaybackClock | null;
   playing?: boolean;
+  allowManipulation?: boolean;
+  selectedMediaBlockId?: string | null;
+  onSelectMediaBlock?: (id: string) => void;
+  onPreviewMediaBlock?: (id: string, patch: Partial<MediaVisualBlock>) => void;
+  onPatchMediaBlock?: (id: string, patch: Partial<MediaVisualBlock>) => void;
+  onRecordMediaBlock?: () => void;
 }) {
   const sampledTime = useEditorPlaybackTime(playbackClock, currentTime);
-  const block = blocks.find(
-    (candidate) => sampledTime >= candidate.start_s && sampledTime < candidate.end_s,
+  const activeBlocks = blocks
+    .filter((candidate) => sampledTime >= candidate.start_s && sampledTime < candidate.end_s)
+    .sort((a, b) => {
+      const aMedia = a.kind === "media" ? 1 : 0;
+      const bMedia = b.kind === "media" ? 1 : 0;
+      return aMedia - bMedia || (a.kind === "media" && b.kind === "media" ? a.z - b.z : 0);
+    });
+  if (activeBlocks.length === 0) return null;
+  const urls = new Map(assets.map((asset) => [asset.id, asset.display_url ?? asset.preview_url ?? null]));
+  const aspects = new Map(assets.map((asset) => [asset.id, asset.aspect]));
+
+  return (
+    <div
+      data-visual-block-layer="true"
+      className="pointer-events-none absolute inset-0 isolate overflow-hidden"
+      style={{ zIndex: 10 }}
+    >
+      {activeBlocks.map((block) => (
+        <VisualBlockContent
+          key={block.id}
+          block={block}
+          sampledTime={sampledTime}
+          frameDriven={frameDriven}
+          playing={playing}
+          urls={urls}
+          aspects={aspects}
+          previewUrls={previewUrls}
+          allowManipulation={allowManipulation}
+          selected={selectedMediaBlockId === block.id}
+          onSelect={onSelectMediaBlock}
+          onPreview={onPreviewMediaBlock}
+          onPatch={onPatchMediaBlock}
+          onRecord={onRecordMediaBlock}
+        />
+      ))}
+    </div>
   );
-  if (!block) return null;
-  const urls = new Map(assets.map((asset) => [asset.id, asset.display_url ?? null]));
+}
+
+function VisualBlockContent({
+  block,
+  sampledTime,
+  frameDriven,
+  playing,
+  urls,
+  aspects,
+  previewUrls,
+  allowManipulation,
+  selected,
+  onSelect,
+  onPreview,
+  onPatch,
+  onRecord,
+}: {
+  block: VisualBlock;
+  sampledTime: number;
+  frameDriven: boolean;
+  playing: boolean;
+  urls: Map<string, string | null>;
+  aspects: Map<string, number | null>;
+  previewUrls: Record<string, string>;
+  allowManipulation: boolean;
+  selected: boolean;
+  onSelect?: (id: string) => void;
+  onPreview?: (id: string, patch: Partial<MediaVisualBlock>) => void;
+  onPatch?: (id: string, patch: Partial<MediaVisualBlock>) => void;
+  onRecord?: () => void;
+}) {
 
   let content: React.ReactNode = null;
+  if (block.kind === "media") {
+    const url = previewUrls[block.id] ?? previewUrls[block.asset_id] ?? urls.get(block.asset_id) ?? null;
+    const aspect = aspects.get(block.asset_id) ?? null;
+    const localTimeS = Math.max(0, sampledTime - block.start_s);
+    const mediaContent = (
+      <MediaBlockPreview
+        block={block}
+        url={url}
+        localTimeS={localTimeS}
+        frameDriven={frameDriven}
+        playing={playing}
+      />
+    );
+    const isFullscreen = block.display_mode === "fullscreen";
+    const geometry = mediaPreviewGeometry(block, aspect);
+    const duration = Math.max(0.001, block.end_s - block.start_s);
+    const fadeS = Math.min(0.15, duration / 3);
+    const fadeEnabled = duration > 0.3;
+    const opacity = fadeEnabled && block.transition_in === "fade" && localTimeS < fadeS
+      ? localTimeS / fadeS
+      : fadeEnabled && block.transition_out === "fade" && duration - localTimeS < fadeS
+        ? (duration - localTimeS) / fadeS
+        : 1;
+    return (
+      <div
+        data-visual-block-id={block.id}
+        data-media-visual-block="true"
+        className={`absolute overflow-hidden ${allowManipulation ? "pointer-events-auto touch-none" : "pointer-events-none"}`}
+        style={{
+          left: `${geometry.leftPct}%`,
+          top: `${geometry.topPct}%`,
+          width: `${geometry.widthPct}%`,
+          height: `${geometry.heightPct}%`,
+          // Structured visuals are composited first by FFmpeg, followed by
+          // media blocks. Reserve 0 for that structured pass so the live
+          // canvas has the same ordering even when a media block's z is 0.
+          zIndex: block.z + 1,
+          opacity: Math.max(0, Math.min(1, opacity)),
+        }}
+        onPointerDown={(event) => {
+          if (!allowManipulation || (event.button != null && event.button !== 0)) return;
+          event.stopPropagation();
+          onSelect?.(block.id);
+          onRecord?.();
+          const stage = event.currentTarget.parentElement?.getBoundingClientRect();
+          if (!stage) return;
+          const startX = block.x_frac;
+          const startY = block.y_frac;
+          const startFocalX = block.transform.focal_x;
+          const startFocalY = block.transform.focal_y;
+          const focalAfterDrag = (
+            start: number,
+            deltaPx: number,
+            stagePx: number,
+            renderedPct: number,
+          ) => {
+            const availablePct = 100 - renderedPct;
+            if (stagePx <= 0 || Math.abs(availablePct) < 0.001) return start;
+            return Math.max(
+              0,
+              Math.min(1, start + ((deltaPx / stagePx) * 100) / availablePct),
+            );
+          };
+          const pointerPatch = (clientX: number, clientY: number): Partial<MediaVisualBlock> =>
+            isFullscreen
+              ? {
+                  transform: {
+                    ...block.transform,
+                    focal_x: focalAfterDrag(
+                      startFocalX,
+                      clientX - event.clientX,
+                      stage.width,
+                      geometry.widthPct,
+                    ),
+                    focal_y: focalAfterDrag(
+                      startFocalY,
+                      clientY - event.clientY,
+                      stage.height,
+                      geometry.heightPct,
+                    ),
+                  },
+                }
+              : {
+                  x_frac: Math.max(0, Math.min(1, startX + (clientX - event.clientX) / stage.width)),
+                  y_frac: Math.max(0, Math.min(1, startY + (clientY - event.clientY) / stage.height)),
+                };
+          const move = (moveEvent: PointerEvent) => {
+            onPreview?.(block.id, pointerPatch(moveEvent.clientX, moveEvent.clientY));
+          };
+          const up = (upEvent: PointerEvent) => {
+            window.removeEventListener("pointermove", move);
+            window.removeEventListener("pointerup", up);
+            onPatch?.(block.id, pointerPatch(upEvent.clientX, upEvent.clientY));
+          };
+          window.addEventListener("pointermove", move);
+          window.addEventListener("pointerup", up, { once: true });
+        }}
+      >
+        {mediaContent}
+        {selected && allowManipulation && block.display_mode === "overlay" && (
+          <div className="pointer-events-none absolute inset-0 border-[1.5px] border-lime-500">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Resize media overlay"
+              className="pointer-events-auto absolute bottom-0 right-0 h-11 w-11 rounded-none bg-transparent p-0 hover:bg-transparent"
+              onPointerDown={(event) => {
+                event.stopPropagation();
+                const stage = event.currentTarget.parentElement?.parentElement?.getBoundingClientRect();
+                if (!stage) return;
+                onRecord?.();
+                const startScale = block.scale;
+                const startDistance = Math.max(1, Math.hypot(event.clientX - stage.left, event.clientY - stage.top));
+                const move = (moveEvent: PointerEvent) => onPreview?.(block.id, { scale: Math.max(0.05, Math.min(1, startScale * Math.hypot(moveEvent.clientX - stage.left, moveEvent.clientY - stage.top) / startDistance)) });
+                const up = (upEvent: PointerEvent) => {
+                  window.removeEventListener("pointermove", move);
+                  window.removeEventListener("pointerup", up);
+                  onPatch?.(block.id, { scale: Math.max(0.05, Math.min(1, startScale * Math.hypot(upEvent.clientX - stage.left, upEvent.clientY - stage.top) / startDistance)) });
+                };
+                window.addEventListener("pointermove", move);
+                window.addEventListener("pointerup", up, { once: true });
+              }}
+            >
+              <span className="absolute bottom-0 right-0 h-5 w-5 rounded-sm border border-zinc-900 bg-white" />
+            </Button>
+          </div>
+        )}
+      </div>
+    );
+  }
   if (block.kind === "montage") {
     const active = shotAt(block, sampledTime);
     content = active ? (
@@ -227,7 +485,7 @@ export default function VisualBlocksLayer({
     <div
       data-visual-block-id={block.id}
       className="pointer-events-none absolute inset-0 overflow-hidden"
-      style={{ zIndex: 10, opacity: Math.max(0, Math.min(1, opacity)) }}
+      style={{ zIndex: 0, opacity: Math.max(0, Math.min(1, opacity)) }}
     >
       {content}
       {!frameDriven && (

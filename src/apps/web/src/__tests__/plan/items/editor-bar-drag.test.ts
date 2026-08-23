@@ -6,6 +6,7 @@ import {
   applyManualClipTimingPatch,
   applySfxBarDrag,
   applySfxMove,
+  applyTimelineBarDrag,
   applyTextBarDrag,
   applyTextTimingInput,
   effectiveBarEdgeHitPx,
@@ -13,6 +14,9 @@ import {
   outputTimeForSlotBoundary,
   renderedSequentialSlotLayout,
   resolveBarDragHandle,
+  selectedMediaSourceDuration,
+  placeAfterSelected,
+  snapTimelineTime,
   secondsDeltaFromTimelineX,
   sequentialSlotLayout,
   timelineXFromClient,
@@ -34,6 +38,84 @@ function slot(over: Partial<DraftSlot> = {}): DraftSlot {
 }
 
 describe("editor bar drag math", () => {
+  it("uses the selected trim range, not the remaining source file, as the resize budget", () => {
+    expect(selectedMediaSourceDuration(12, 3, 5.4)).toBeCloseTo(2.4, 10);
+    expect(selectedMediaSourceDuration(12, 3, null)).toBe(9);
+    expect(selectedMediaSourceDuration(null, 3, 5.4)).toBeNull();
+  });
+
+  it("uses the shared 0.1s timing step and exact boundaries", () => {
+    expect(snapTimelineTime(1.049)).toBe(1);
+    expect(snapTimelineTime(1.051)).toBe(1.1);
+    expect(
+      applyTimelineBarDrag({
+        bar: { start_s: 1, end_s: 2 },
+        handle: "right",
+        deltaS: 9,
+        videoDurationS: 3,
+        sourceDurationS: 2.05,
+      }),
+    ).toEqual({ start_s: 1, end_s: 3 });
+  });
+
+  it("clamps a video right handle to source duration without a later snap-back", () => {
+    expect(
+      applyTimelineBarDrag({
+        bar: { start_s: 4, end_s: 5 },
+        handle: "right",
+        deltaS: 4,
+        videoDurationS: 20,
+        sourceDurationS: 2.05,
+      }),
+    ).toEqual({ start_s: 4, end_s: 6.05 });
+  });
+
+  it("lets a source-limited video move later on the project timeline", () => {
+    expect(
+      applyTimelineBarDrag({
+        bar: { start_s: 4, end_s: 6 },
+        handle: "body",
+        deltaS: 8,
+        videoDurationS: 20,
+        sourceDurationS: 2,
+      }),
+    ).toEqual({ start_s: 12, end_s: 14 });
+  });
+
+  it("keeps both source resize handles inside the source budget", () => {
+    expect(
+      applyTimelineBarDrag({
+        bar: { start_s: 4, end_s: 6 },
+        handle: "left",
+        deltaS: -4,
+        videoDurationS: 20,
+        sourceDurationS: 2,
+      }),
+    ).toEqual({ start_s: 4, end_s: 6 });
+    expect(
+      applyTimelineBarDrag({
+        bar: { start_s: 4, end_s: 6 },
+        handle: "right",
+        deltaS: 4,
+        videoDurationS: 20,
+        sourceDurationS: 2,
+      }),
+    ).toEqual({ start_s: 4, end_s: 6 });
+  });
+
+  it("places a new item directly at the selected boundary", () => {
+    expect(
+      placeAfterSelected({
+        selected: { end_s: 2.35 },
+        durationS: 1.25,
+        videoDurationS: 5,
+      }),
+    ).toEqual({ start_s: 2.35, end_s: 3.65 });
+    expect(placeAfterSelected({ selected: null, durationS: 1 })).toBeNull();
+    expect(
+      placeAfterSelected({ selected: { end_s: 4.95 }, durationS: 1, videoDurationS: 5 }),
+    ).toBeNull();
+  });
   it("resolves 24px edge hit zones with a body center", () => {
     expect(resolveBarDragHandle({ localX: 10, width: 120 })).toBe("left");
     expect(resolveBarDragHandle({ localX: 96, width: 120 })).toBe("right");

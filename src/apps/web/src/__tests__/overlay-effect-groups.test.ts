@@ -1,4 +1,7 @@
-import { removeOverlayEffectGroup } from "@/lib/overlay-effect-groups";
+import {
+  removeGeneratedEffectGroup,
+  removeOverlayEffectGroup,
+} from "@/lib/overlay-effect-groups";
 import type { CameraEffect, MediaOverlay, SoundEffectPlacement } from "@/lib/plan-api";
 
 const overlay = (values: Partial<MediaOverlay> = {}): MediaOverlay => ({
@@ -76,5 +79,20 @@ it("removes generated siblings but preserves manual effects in the same group", 
   );
 
   expect(result.soundEffects.map((item) => item.id)).toEqual(["manual"]);
+  expect(result.cameraEffects).toEqual([]);
+});
+
+it("removes generated siblings for a converted media layer", () => {
+  const group = "event-2";
+  const generatedSfx = sfx({ source: "overlay_suggestion", effect_group_id: group });
+  const generatedCamera = camera({ source: "edit_ai", effect_group_id: group });
+  const result = removeGeneratedEffectGroup(
+    [generatedSfx],
+    [generatedCamera],
+    "overlay_suggestion",
+    group,
+  );
+
+  expect(result.soundEffects).toEqual([]);
   expect(result.cameraEffects).toEqual([]);
 });

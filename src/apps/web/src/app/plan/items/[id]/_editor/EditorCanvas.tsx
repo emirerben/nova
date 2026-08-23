@@ -229,12 +229,14 @@ export default function EditorCanvas({
   motionRuntimeHash,
   cameraEffects = [],
   visualAssets = [],
+  visualPreviewUrls = {},
   overlayPreviewUrls = {},
   suggestedOverlayIds,
   sfxPlacements = [],
   sfxAudioUrls = {},
   selectedTextId,
   selectedOverlayId,
+  selectedVisualBlockId,
   flashTextIds,
   flashOverlayIds,
   currentTime: committedCurrentTime,
@@ -250,10 +252,14 @@ export default function EditorCanvas({
   videoRef,
   onSelectText,
   onSelectOverlay,
+  onSelectVisualBlock,
   captionTapSelect = false,
   onClearSelection,
   onPatchBar,
   onPatchOverlay,
+  onPreviewVisualBlock,
+  onPatchVisualBlock,
+  onRecordVisualBlock,
   onFocusContent,
   onTimeUpdate,
   onDuration,
@@ -278,6 +284,7 @@ export default function EditorCanvas({
   motionRuntimeHash?: string | null;
   cameraEffects?: CameraEffect[];
   visualAssets?: PoolAsset[];
+  visualPreviewUrls?: Record<string, string>;
   overlayPreviewUrls?: Record<string, string>;
   /** Overlay ids that came from ✓-accepted AI suggestions — dashed ✦
    *  provenance outline until Save (never stored on MediaOverlay itself). */
@@ -286,6 +293,7 @@ export default function EditorCanvas({
   sfxAudioUrls?: Record<string, string>;
   selectedTextId: string | null;
   selectedOverlayId?: string | null;
+  selectedVisualBlockId?: string | null;
   flashTextIds?: Set<string>;
   flashOverlayIds?: Set<string>;
   currentTime: number;
@@ -306,6 +314,7 @@ export default function EditorCanvas({
   videoRef: React.RefObject<HTMLVideoElement>;
   onSelectText: (id: string) => void;
   onSelectOverlay?: (id: string) => void;
+  onSelectVisualBlock?: (id: string) => void;
   /** Pocket editor only: the caption preview becomes a tap target that selects
    * the current cue's bar (desktop keeps it pointer-events-none). Tap-select
    * only — captions never gain drag/scale handles. */
@@ -313,6 +322,9 @@ export default function EditorCanvas({
   onClearSelection: () => void;
   onPatchBar: (id: string, patch: Partial<Omit<TextElementBar, "id" | "role">>) => void;
   onPatchOverlay?: (id: string, patch: Partial<MediaOverlay>) => void;
+  onPreviewVisualBlock?: (id: string, patch: Partial<Extract<VisualBlock, { kind: "media" }>>) => void;
+  onPatchVisualBlock?: (id: string, patch: Partial<Extract<VisualBlock, { kind: "media" }>>) => void;
+  onRecordVisualBlock?: () => void;
   /** Double-click contract: focus the inspector content textarea, select-all. */
   onFocusContent: () => void;
   onTimeUpdate: (t: number) => void;
@@ -1464,6 +1476,13 @@ export default function EditorCanvas({
             <VisualBlocksLayer
               blocks={visualBlocks}
               assets={visualAssets}
+              previewUrls={visualPreviewUrls}
+              allowManipulation={allowManipulation}
+              selectedMediaBlockId={selectedVisualBlockId}
+              onSelectMediaBlock={onSelectVisualBlock}
+              onPreviewMediaBlock={onPreviewVisualBlock}
+              onPatchMediaBlock={onPatchVisualBlock}
+              onRecordMediaBlock={onRecordVisualBlock}
               currentTime={currentTime}
               frameDriven={Boolean(playbackClock)}
               playbackClock={playbackClock}
@@ -1497,11 +1516,9 @@ export default function EditorCanvas({
                 return <>
             {hasPreview && (
               <div
-                className="absolute inset-0"
+                data-canvas-foreground-layer="true"
+                className="pointer-events-none absolute inset-0"
                 style={{ zIndex: EDITOR_STAGE_Z.mediaOverlay }}
-                onPointerDown={(e) => {
-                  if (tool === "select" && e.target === e.currentTarget) onClearSelection();
-                }}
                 onPointerMove={onPointerMove}
                 onPointerUp={onPointerUp}
               >
@@ -1684,7 +1701,7 @@ export default function EditorCanvas({
                       }}
                       data-text-id={layout.id}
                       data-max-width-frac={maxWidthFrac}
-                      className={`absolute select-none touch-none ${
+                      className={`pointer-events-auto absolute select-none touch-none ${
                         tool === "select" ? "cursor-pointer" : ""
                       }`}
                       style={{
@@ -1996,7 +2013,7 @@ function MediaOverlayCard({
     <div
       ref={setRef}
       data-overlay-id={card.id}
-      className={`absolute select-none touch-none ${allowManipulation ? "cursor-pointer" : ""}`}
+      className={`pointer-events-auto absolute select-none touch-none ${allowManipulation ? "cursor-pointer" : ""}`}
       style={{
         left: `${xFrac * 100}%`,
         top: `${yFrac * 100}%`,

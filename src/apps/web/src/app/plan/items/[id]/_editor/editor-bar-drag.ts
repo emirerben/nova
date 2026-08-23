@@ -12,6 +12,10 @@ export const BAR_EDGE_HIT_PX = 24;
 export const CLICK_DRAG_THRESHOLD_PX = 3;
 export const TEXT_MIN_DURATION_S = 0.3;
 export const CLIP_MIN_DURATION_S = 0.1;
+/** Shared media/timeline resolution. Keep this in one place so pointer drags,
+ * direct timing controls, and adjacent placement agree on the same contract. */
+export const TIMELINE_MIN_DURATION_S = 0.1;
+export const TIMELINE_TIME_STEP_S = 0.1;
 
 const EPSILON = 1e-6;
 
@@ -22,6 +26,120 @@ function clamp(value: number, min: number, max: number): number {
 
 export function roundTiming(value: number): number {
   return Math.round(value * 1000) / 1000;
+}
+
+export function snapTimelineTime(
+  value: number,
+  stepS = TIMELINE_TIME_STEP_S,
+): number {
+  if (!Number.isFinite(value) || !Number.isFinite(stepS) || stepS <= 0) {
+    return roundTiming(value);
+  }
+  return roundTiming(Math.round(value / stepS) * stepS);
+}
+
+export interface TimelineBarRange {
+  start_s: number;
+  end_s: number;
+}
+
+export function selectedMediaSourceDuration(
+  sourceDurationS: number | null | undefined,
+  trimStartS: number | null | undefined,
+  trimEndS: number | null | undefined,
+): number | null {
+  if (sourceDurationS == null || !Number.isFinite(sourceDurationS)) return null;
+  const sourceEnd = Math.min(sourceDurationS, trimEndS ?? sourceDurationS);
+  return Math.max(TIMELINE_MIN_DURATION_S, sourceEnd - (trimStartS ?? 0));
+}
+
+/** Pure range math shared by overlay and visual-media timeline rows. Source
+ * duration is a duration budget (not an output timestamp), so a right trim
+ * cannot silently grow beyond the file. The final clamp happens after snap,
+ * which makes a source/video boundary exact instead of snapping back later. */
+export function applyTimelineBarDrag({
+  bar,
+  handle,
+  deltaS,
+  videoDurationS,
+  sourceDurationS,
+  minDurationS = TIMELINE_MIN_DURATION_S,
+  stepS = TIMELINE_TIME_STEP_S,
+}: {
+  bar: TimelineBarRange;
+  handle: BarDragHandle;
+  deltaS: number;
+  videoDurationS: number;
+  sourceDurationS?: number | null;
+  minDurationS?: number;
+  stepS?: number;
+}): TimelineBarRange {
+  const min = Math.max(0.001, minDurationS);
+  const videoEnd = Math.max(min, videoDurationS);
+  const sourceBudget =
+    sourceDurationS != null && Number.isFinite(sourceDurationS)
+      ? Math.max(min, sourceDurationS)
+      : Number.POSITIVE_INFINITY;
+  const duration = Math.max(min, Math.min(bar.end_s - bar.start_s, sourceBudget));
+  const snap = (value: number) => snapTimelineTime(value, stepS);
+
+  if (handle === "body") {
+    // Source duration limits the media window length, not where that window
+    // may be placed on the project timeline.
+    const maxStart = Math.max(0, videoEnd - duration);
+    const start = clamp(snap(bar.start_s + deltaS), 0, maxStart);
+    return {
+      start_s: roundTiming(start),
+      end_s: roundTiming(Math.min(videoEnd, start + duration)),
+    };
+  }
+
+  if (handle === "left") {
+    const earliestStart = Math.max(0, bar.end_s - sourceBudget);
+    const latestStart = Math.min(bar.end_s - min, videoEnd - min);
+    const start = clamp(snap(bar.start_s + deltaS), earliestStart, latestStart);
+    return {
+      start_s: roundTiming(start),
+      end_s: roundTiming(bar.end_s),
+    };
+  }
+
+  const maxEnd = Math.min(videoEnd, bar.start_s + sourceBudget);
+  const requestedEnd = snap(bar.end_s + deltaS);
+  const end = clamp(requestedEnd, bar.start_s + min, maxEnd);
+  return {
+    start_s: roundTiming(bar.start_s),
+    end_s: roundTiming(end),
+  };
+}
+
+/** Place a new media item directly after the selected item. Returning null
+ * when there is no selection keeps callers from inventing an ordering policy. */
+export function placeAfterSelected({
+  selected,
+  durationS,
+  videoDurationS,
+  minDurationS = TIMELINE_MIN_DURATION_S,
+}: {
+  selected: Pick<TimelineBarRange, "end_s"> | null | undefined;
+  durationS: number;
+  videoDurationS?: number | null;
+  minDurationS?: number;
+}): TimelineBarRange | null {
+  if (!selected) return null;
+  const min = Math.max(0.001, minDurationS);
+  // Preserve the selected endpoint exactly (to the storage precision). Only
+  // the new item's own duration follows the 100ms step; rounding the start
+  // would introduce a visible gap when the selected item has a non-grid end.
+  const start = roundTiming(Math.max(0, selected.end_s));
+  const requestedDuration = Math.max(min, snapTimelineTime(durationS));
+  const projectEnd =
+    videoDurationS == null || !Number.isFinite(videoDurationS)
+      ? Number.POSITIVE_INFINITY
+      : videoDurationS;
+  if (projectEnd - start < min) return null;
+  const end = Math.min(start + requestedDuration, projectEnd);
+  return { start_s: start, end_s: roundTiming(end) };
 }
 
 export interface SequentialSlotLayout {

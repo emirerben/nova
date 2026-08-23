@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.49.0.0] — 2026-08-23
+
+### Added
+- **Images and videos are now one flexible media layer in the editor.** Creators can add ready assets full screen, as overlays, or as an exact adjacent sequence; overlap and reorder layers; choose Fit or Fill; adjust fullscreen zoom and focal point; drag and resize overlays; trim video source independently from timeline timing; and place hard cuts without a gap.
+- **The editor canvas, canonical timeline, and renderer now share the same media contract.** Media is composed in one z-sorted pass below authored text and captions, adjacent windows use half-open frame boundaries, and video duration limits remain visible while editing.
+
+### Changed
+- **New full-screen media shows the whole asset by default.** Unused canvas reveals the underlying edit, while untouched legacy full-screen overlays retain their existing center-cover render until the creator edits them.
+- **Editing a legacy media card upgrades it atomically.** Identity, timing, transform, provenance, and effect-group ownership are preserved, and Undo restores the original legacy representation.
+
 ## [0.48.4.1] — 2026-08-23
 
 ### Fixed
