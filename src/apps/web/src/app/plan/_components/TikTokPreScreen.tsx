@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 /**
  * One-field pre-screen before the chat interview.
@@ -37,7 +39,7 @@ export default function TikTokPreScreen({
       </h1>
 
       <div className="mt-6">
-        <input
+        <Input
           type="text"
           value={handle}
           onChange={(e) => setHandle(e.target.value)}
@@ -51,28 +53,29 @@ export default function TikTokPreScreen({
           aria-label="Your TikTok handle"
           autoComplete="off"
           spellCheck={false}
-          className="w-full rounded-lg border border-zinc-200 bg-white px-4 py-3 text-lg text-[#0c0c0e] placeholder-zinc-400 transition-colors focus:border-lime-600/60 focus:outline-none"
+          className="h-auto w-full rounded-lg border-zinc-200 bg-white px-4 py-3 text-lg text-[#0c0c0e] placeholder-zinc-400 transition-colors focus-visible:border-lime-600/60 focus-visible:ring-0"
         />
       </div>
 
       <div className="mt-4 flex items-center gap-4">
-        <button
+        <Button
           type="button"
           onClick={submit}
           disabled={submitting || !handle.trim()}
-          className="inline-flex min-h-[44px] items-center rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
+          className="h-auto min-h-[44px] items-center rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {submitting ? "Looking up…" : "Continue →"}
-        </button>
+        </Button>
 
-        <button
+        <Button
           type="button"
+          variant="ghost"
           onClick={() => onContinue("")}
           disabled={submitting}
-          className="px-4 py-2 text-sm text-[#71717a] transition-colors hover:underline underline-offset-4 disabled:opacity-50"
+          className="h-auto px-4 py-2 text-sm text-[#71717a] transition-colors hover:bg-transparent hover:underline underline-offset-4 disabled:opacity-50"
         >
           Skip →
-        </button>
+        </Button>
       </div>
     </div>
   );

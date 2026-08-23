@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 
 export function EditContextStep({
   onSubmit,
@@ -20,28 +22,31 @@ export function EditContextStep({
         </p>
       </div>
 
-      <textarea
+      <Textarea
         value={topic}
         onChange={(e) => setTopic(e.target.value)}
         placeholder="e.g. hiking trip with friends last weekend"
-        className="w-full rounded-xl border border-[#e4e4e7] bg-[#ffffff] px-4 py-3 text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:outline-none focus:ring-2 focus:ring-lime-600 resize-none min-h-[80px]"
+        className="w-full rounded-xl border-[#e4e4e7] bg-[#ffffff] px-4 py-3 text-[#0c0c0e] placeholder:text-[#a1a1aa] focus-visible:ring-2 focus-visible:ring-lime-600 resize-none min-h-[80px]"
         rows={3}
       />
 
       <div className="flex gap-3">
-        <button
+        <Button
+          type="button"
           onClick={() => onSubmit(topic)}
           disabled={!topic.trim()}
-          className="flex-1 rounded-xl bg-lime-700 text-white py-3 font-medium hover:bg-lime-800 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
+          className="h-auto min-h-[44px] flex-1 rounded-xl bg-lime-700 py-3 font-medium text-white hover:bg-lime-800 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:ring-lime-600"
         >
           Make my edit →
-        </button>
-        <button
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
           onClick={onSkip}
-          className="px-4 text-sm text-[#71717a] hover:text-[#0c0c0e] focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 rounded min-h-[44px]"
+          className="h-auto min-h-[44px] rounded px-4 text-sm text-[#71717a] hover:bg-transparent hover:text-[#0c0c0e] focus-visible:ring-lime-600"
         >
           skip
-        </button>
+        </Button>
       </div>
     </div>
   );

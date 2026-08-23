@@ -250,6 +250,21 @@ describe("ToolDock", () => {
     fireEvent.click(screen.getByTestId("pocket-dock-styles"));
     expect(onToggleTool).toHaveBeenCalledWith("styles");
   });
+
+  it("keeps all six tools reachable at 375px via a horizontally scrollable dock", () => {
+    // At 375–430px the label text overflows a flex-1 row (min-width: auto
+    // wins over the 1/7th share) and the trailing tools clip off-screen. The
+    // dock must instead scroll horizontally so every tool stays reachable by
+    // its accessible name, not just visible in the initial viewport.
+    renderDock({ novaEnabled: false });
+    const nav = screen.getByRole("navigation", { name: "Editor tools" });
+    expect(nav.className).toContain("overflow-x-auto");
+    expect(nav.className).toContain("scrollbar-none");
+
+    for (const label of ["Text", "Captions", "Visuals", "Sounds", "Overlays", "Styles"]) {
+      expect(screen.getByRole("button", { name: `${label} tool` })).toBeInTheDocument();
+    }
+  });
 });
 
 // ── ContextStrip ──────────────────────────────────────────────────────────────

@@ -7,9 +7,17 @@
  * out as a safe-area-aware bottom dock. Disabled tools use the
  * focusable-disabled pattern (aria-disabled, NOT the disabled attribute) so a
  * tap still fires and can surface the reason via onDisabledTap.
+ *
+ * At 375–430px the 7-tool set (or 6 without Nova) doesn't fit a flex-1 row —
+ * label text forces each item's min-content width past its 1/7th share, and
+ * the trailing tools (Overlays, Styles) clip or fall off-screen. Fixed-width
+ * flex-none items in a horizontally scrollable, snap-x row keep every tool
+ * reachable regardless of viewport width; the active tool auto-scrolls into
+ * view (instant unless the visitor allows motion — see motion-safe:scroll-smooth
+ * on the nav).
  */
 
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import type { PocketTool } from "./mobile-editor-state";
 import {
@@ -59,11 +67,22 @@ export function ToolDock({
     ? DOCK_TOOLS
     : DOCK_TOOLS.filter((tool) => tool.id !== "nova");
 
+  const buttonRefs = useRef<Partial<Record<DockTool, HTMLButtonElement | null>>>({});
+
+  // Auto-scroll the active tool into view when it changes (e.g. keyboard nav,
+  // or a tool opened from elsewhere in the shell). `motion-safe:scroll-smooth`
+  // on the nav is what makes this animate — this call stays behavior-agnostic
+  // so a reduced-motion visitor gets an instant jump instead.
+  useEffect(() => {
+    if (!activeTool) return;
+    buttonRefs.current[activeTool]?.scrollIntoView({ inline: "nearest", block: "nearest" });
+  }, [activeTool]);
+
   return (
     <nav
       aria-label="Editor tools"
       data-testid="pocket-dock"
-      className="flex flex-row border-t border-border bg-background pb-[max(8px,env(safe-area-inset-bottom))] pt-1.5"
+      className="flex flex-row overflow-x-auto snap-x scrollbar-none motion-safe:scroll-smooth border-t border-border bg-background pb-[max(8px,env(safe-area-inset-bottom))] pt-1.5"
     >
       {tools.map((tool) => {
         const active = activeTool === tool.id;
@@ -72,6 +91,9 @@ export function ToolDock({
         return (
           <Button
             key={tool.id}
+            ref={(el) => {
+              buttonRefs.current[tool.id] = el;
+            }}
             type="button"
             variant="ghost"
             data-testid={`pocket-dock-${tool.id}`}
@@ -86,7 +108,7 @@ export function ToolDock({
               }
               onToggleTool(tool.id);
             }}
-            className={`flex h-auto min-h-[56px] flex-1 flex-col items-center justify-center gap-0.5 rounded-none active:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+            className={`flex h-auto min-h-[56px] w-[72px] flex-none snap-start flex-col items-center justify-center gap-0.5 rounded-none active:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
               active ? "bg-transparent text-foreground hover:bg-transparent" : "bg-transparent text-muted-foreground hover:bg-transparent"
             }`}
           >

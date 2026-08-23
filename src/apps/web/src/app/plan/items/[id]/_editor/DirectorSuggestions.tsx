@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { Button } from "@/components/ui/button";
 import type { EditorSuggestion, SuggestionCategory } from "@/lib/plan-api";
 import type {
   DirectorAppliedReceipt,
@@ -86,13 +87,14 @@ function AppliedReceipt({
       {receipt.previewFocus && isCurrent ? (
         <div className="mt-1.5 flex items-center justify-between gap-2">
           <p className="text-[11px] text-lime-900">Showing this moment in preview.</p>
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={() => onReveal(receipt)}
-            className="min-h-11 shrink-0 rounded-lg px-2.5 text-[11px] font-semibold text-lime-900 hover:bg-lime-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+            className="h-auto min-h-11 shrink-0 rounded-lg px-2.5 text-[11px] font-semibold text-lime-900 hover:bg-lime-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
           >
             Show again
-          </button>
+          </Button>
         </div>
       ) : receipt.previewFocus ? (
         <p className="mt-1.5 text-[11px] text-[#71717a]">
@@ -159,25 +161,27 @@ export default function DirectorSuggestions({
             </p>
           )}
         </div>
-        <button
+        <Button
           type="button"
+          variant="ghost"
           onClick={onRefresh}
           disabled={loading}
-          className="min-h-11 rounded-full px-3 text-[11px] font-medium text-[#3f3f46] hover:bg-zinc-100 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+          className="h-auto min-h-11 rounded-full px-3 text-[11px] font-medium text-[#3f3f46] hover:bg-zinc-100 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
         >
           {loading ? "Reviewing…" : "Refresh"}
-        </button>
+        </Button>
       </div>
 
       {canRestoreOriginalTiming && (
-        <button
+        <Button
           type="button"
+          variant="outline"
           onClick={onRestoreOriginalTiming}
           disabled={serverRendering}
-          className="min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-3 text-[12px] font-medium text-[#3f3f46] hover:bg-zinc-50 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+          className="h-auto min-h-11 w-full border-zinc-200 bg-white px-3 text-[12px] font-medium text-[#3f3f46] hover:bg-zinc-50 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
         >
           Restore original timing
-        </button>
+        </Button>
       )}
 
       {loading && suggestions.length === 0 && (
@@ -225,14 +229,15 @@ export default function DirectorSuggestions({
                 Your current draft stays unchanged until this finishes.
               </p>
             </div>
-            <button
+            <Button
               type="button"
+              variant="ghost"
               onClick={onCancelGeneration}
               disabled={generation.status === "cancellation_requested"}
-              className="min-h-11 rounded-lg px-2.5 text-[11px] font-medium text-[#3f3f46] hover:bg-zinc-200 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+              className="h-auto min-h-11 rounded-lg px-2.5 text-[11px] font-medium text-[#3f3f46] hover:bg-zinc-200 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
             >
               Cancel
-            </button>
+            </Button>
           </div>
           <div
             aria-hidden="true"
@@ -274,26 +279,28 @@ export default function DirectorSuggestions({
             ))}
           </div>
           <div className="mt-3 flex items-center gap-2">
-            <button
+            <Button
               type="button"
+              variant="default"
               onClick={() => onAccept(suggestion)}
               disabled={generation !== null || serverRendering}
-              className="min-h-11 flex-1 rounded-lg bg-[#0c0c0e] px-3 text-[12px] font-semibold text-white hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+              className="h-auto min-h-11 flex-1 rounded-lg bg-[#0c0c0e] px-3 text-[12px] font-semibold text-white hover:bg-[#0c0c0e] hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
             >
               {suggestion.apply_mode === "omni_async"
                 ? "Generate & add"
                 : suggestion.apply_mode === "server_async"
                   ? "Apply & rebuild"
                   : "Accept"}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="ghost"
               aria-label={`Dismiss ${suggestion.title}`}
               onClick={() => onDismiss(suggestion)}
-              className="min-h-11 rounded-lg px-3 text-[12px] text-[#71717a] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+              className="h-auto min-h-11 rounded-lg px-3 text-[12px] text-[#71717a] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
             >
               Dismiss
-            </button>
+            </Button>
           </div>
         </article>
       ))}

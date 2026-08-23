@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
 import { Eyebrow } from "@/components/ui/Eyebrow";
 
 export function ForkScreen({
@@ -19,9 +20,11 @@ export function ForkScreen({
       </h1>
 
       {/* Primary: footage card */}
-      <button
+      <Button
+        type="button"
+        variant="outline"
         onClick={onFootage}
-        className="w-full rounded-2xl border-2 border-lime-700 bg-[#ffffff] p-6 text-left hover:bg-lime-50 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
+        className="flex h-auto min-h-[44px] w-full flex-col items-start justify-start gap-0 rounded-2xl border-2 border-lime-700 bg-[#ffffff] p-6 text-left hover:bg-lime-50 focus-visible:ring-lime-600"
       >
         <p className="font-display text-xl text-[#0c0c0e] mb-1">
           I have footage to use
@@ -38,23 +41,27 @@ export function ForkScreen({
             />
           ))}
         </div>
-      </button>
+      </Button>
 
       {/* Secondary: fresh text link */}
-      <button
+      <Button
+        type="button"
+        variant="link"
         onClick={onFresh}
-        className="text-sm text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 rounded"
+        className="h-auto p-0 text-sm text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] focus-visible:ring-lime-600 rounded"
       >
         or start from a blank slate
-      </button>
+      </Button>
 
       {/* Tertiary: skip */}
-      <button
+      <Button
+        type="button"
+        variant="ghost"
         onClick={onSkip}
-        className="text-xs text-[#a1a1aa] hover:text-[#71717a] focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 rounded"
+        className="h-auto p-0 text-xs text-[#a1a1aa] hover:bg-transparent hover:text-[#71717a] focus-visible:ring-lime-600 rounded"
       >
         skip, just make something
-      </button>
+      </Button>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
 import {
   INTRO_ANIMATIONS,
   INTRO_FONTS,
@@ -61,19 +62,20 @@ export function EditToolbar({
                       {INTRO_FONTS.map((f) => {
                         const selected = current === f.name;
                         return (
-                          <button
+                          <Button
                             key={f.name}
+                            variant="outline"
                             onClick={() => setter(f.name)}
                             aria-pressed={selected}
                             style={{ fontFamily: f.cssFamily, fontWeight: f.weight }}
-                            className={`shrink-0 whitespace-nowrap rounded-lg border px-3 py-1.5 text-sm transition-colors ${
+                            className={`h-auto shrink-0 whitespace-nowrap rounded-lg border px-3 py-1.5 text-sm font-normal transition-colors ${
                               selected
-                                ? "border-lime-600 bg-lime-50 text-lime-800"
+                                ? "border-lime-600 bg-lime-50 text-lime-800 hover:bg-lime-50"
                                 : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
                             }`}
                           >
                             {f.name}
-                          </button>
+                          </Button>
                         );
                       })}
                     </div>
@@ -122,19 +124,20 @@ export function EditToolbar({
                   const current = draft.fontFamily ?? resolvedParams?.fontFamily ?? null;
                   const selected = current === f.name;
                   return (
-                    <button
+                    <Button
                       key={f.name}
+                      variant="outline"
                       onClick={() => session.setFont(f.name)}
                       aria-pressed={selected}
                       style={{ fontFamily: f.cssFamily, fontWeight: f.weight }}
-                      className={`shrink-0 whitespace-nowrap rounded-lg border px-3 py-1.5 text-sm transition-colors ${
+                      className={`h-auto shrink-0 whitespace-nowrap rounded-lg border px-3 py-1.5 text-sm font-normal transition-colors ${
                         selected
-                          ? "border-lime-600 bg-lime-50 text-lime-800"
+                          ? "border-lime-600 bg-lime-50 text-lime-800 hover:bg-lime-50"
                           : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
                       }`}
                     >
                       {f.name}
-                    </button>
+                    </Button>
                   );
                 })}
               </div>
@@ -152,18 +155,19 @@ export function EditToolbar({
                   const current = draft.animation ?? resolvedParams?.effect ?? null;
                   const selected = current === a.value;
                   return (
-                    <button
+                    <Button
                       key={a.value}
+                      variant="outline"
                       onClick={() => session.setAnimation(a.value)}
                       aria-pressed={selected}
-                      className={`rounded-lg border px-3 py-1 text-xs transition-colors ${
+                      className={`h-auto rounded-lg border px-3 py-1 text-xs font-normal transition-colors ${
                         selected
-                          ? "border-lime-600 bg-lime-50 text-lime-800"
+                          ? "border-lime-600 bg-lime-50 text-lime-800 hover:bg-lime-50"
                           : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
                       }`}
                     >
                       {a.label}
-                    </button>
+                    </Button>
                   );
                 })}
               </div>
@@ -225,17 +229,18 @@ export function EditToolbar({
               <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#71717a]">
                 Behind subject
               </div>
-              <button
+              <Button
+                variant="outline"
                 onClick={() => session.setBehindSubject(!draft.behindSubject)}
                 aria-pressed={draft.behindSubject}
-                className={`rounded-lg border px-3 py-1 text-xs transition-colors ${
+                className={`h-auto rounded-lg border px-3 py-1 text-xs font-normal transition-colors ${
                   draft.behindSubject
-                    ? "border-lime-600 bg-lime-50 text-lime-800"
+                    ? "border-lime-600 bg-lime-50 text-lime-800 hover:bg-lime-50"
                     : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
                 }`}
               >
                 {draft.behindSubject ? "On" : "Off"}
-              </button>
+              </Button>
             </div>
           )}
         </>
@@ -249,35 +254,38 @@ export function EditToolbar({
 
       {/* Actions */}
       <div className="flex items-center justify-between pt-0.5">
-        <button
+        <Button
+          variant="link"
           onClick={() => session.setRemoved(!draft.removed)}
-          className="text-xs text-[#71717a] underline-offset-2 hover:text-[#3f3f46] hover:underline"
+          className="h-auto p-0 text-xs font-normal text-[#71717a] underline-offset-2 hover:text-[#3f3f46] hover:underline"
         >
           {draft.removed ? "Add text back" : "Remove text"}
-        </button>
+        </Button>
         <div className="flex items-center gap-2">
           {!draft.removed && (
-            <button
+            <Button
+              variant="outline"
               onClick={session.replay}
               title="Replay entrance animation"
-              className="rounded-lg border border-zinc-200 px-2.5 py-1 text-xs text-[#3f3f46] hover:border-zinc-300 hover:bg-zinc-50"
+              className="h-auto rounded-lg border-zinc-200 px-2.5 py-1 text-xs font-normal text-[#3f3f46] hover:border-zinc-300 hover:bg-zinc-50"
             >
               ↺ Replay
-            </button>
+            </Button>
           )}
-          <button
+          <Button
+            variant="outline"
             onClick={session.cancel}
-            className="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs text-[#3f3f46] hover:border-zinc-300 hover:bg-zinc-50"
+            className="h-auto rounded-lg border-zinc-200 px-3 py-1.5 text-xs font-normal text-[#3f3f46] hover:border-zinc-300 hover:bg-zinc-50"
           >
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
             onClick={() => void session.commit()}
             disabled={!session.isDirty}
-            className="rounded-lg bg-[#0c0c0e] px-4 py-1.5 text-xs font-semibold text-white hover:opacity-80 disabled:opacity-40"
+            className="h-auto rounded-lg bg-[#0c0c0e] px-4 py-1.5 text-xs font-semibold text-white hover:bg-[#0c0c0e] hover:opacity-80 disabled:opacity-40"
           >
             Done
-          </button>
+          </Button>
         </div>
       </div>
     </div>

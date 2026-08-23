@@ -26,6 +26,8 @@ import {
   type FilmingShot,
   type PlanItem,
 } from "@/lib/plan-api";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 // Mode-aware header (direction fork, 2026-06-11): an existing-footage creator
 // FINDS clips in their gallery; a create-new creator FILMS them.
@@ -643,7 +645,7 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
                   <div className="flex items-start gap-2">
                     <span className="font-display italic text-[#a1a1aa]">{i + 1}.</span>
                     <div className="flex flex-1 flex-col gap-1.5">
-                      <input
+                      <Input
                         autoFocus
                         type="text"
                         value={editWhat}
@@ -652,10 +654,10 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
                           if (e.key === "Enter") { e.preventDefault(); void handleSaveEditedShot(shot); }
                           if (e.key === "Escape") handleCancelEditShot();
                         }}
-                        className="rounded border border-zinc-300 bg-white px-2 py-0.5 text-sm text-[#3f3f46] focus:border-lime-600 focus:outline-none focus:ring-1 focus:ring-lime-600"
+                        className="text-[#3f3f46]"
                         placeholder="What to film"
                       />
-                      <input
+                      <Input
                         type="text"
                         value={editHow}
                         onChange={(e) => setEditHow(e.target.value)}
@@ -663,24 +665,26 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
                           if (e.key === "Enter") { e.preventDefault(); void handleSaveEditedShot(shot); }
                           if (e.key === "Escape") handleCancelEditShot();
                         }}
-                        className="rounded border border-zinc-300 bg-white px-2 py-0.5 text-sm text-[#71717a] focus:border-lime-600 focus:outline-none focus:ring-1 focus:ring-lime-600"
+                        className="text-[#71717a]"
                         placeholder="How (optional)"
                       />
                       <div className="flex items-center gap-2">
-                        <button
+                        <Button
                           type="button"
+                          variant="link"
                           onClick={() => void handleSaveEditedShot(shot)}
-                          className="text-xs font-medium text-lime-700 underline underline-offset-2 hover:text-lime-800 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
+                          className="h-auto p-0 text-xs font-medium text-lime-700 underline underline-offset-2 hover:text-lime-800 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
                         >
                           Save
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           type="button"
+                          variant="link"
                           onClick={handleCancelEditShot}
-                          className="text-xs text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
+                          className="h-auto p-0 text-xs text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
                         >
                           Cancel
-                        </button>
+                        </Button>
                         {shotEditError && (
                           <span className="text-xs text-red-600">{shotEditError}</span>
                         )}
@@ -710,11 +714,12 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
                   </span>
                   {/* WS3: pencil edit button — only visible on hover, only when canEdit */}
                   {canEdit && (
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
                       onClick={() => startEditShot(shot)}
                       aria-label={`Edit shot ${i + 1} text`}
-                      className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
+                      className="h-auto w-auto shrink-0 p-0 opacity-0 transition-opacity hover:bg-transparent group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2 [&_svg]:size-auto"
                     >
                       <svg
                         width="14"
@@ -732,7 +737,7 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
                           strokeLinejoin="round"
                         />
                       </svg>
-                    </button>
+                    </Button>
                   )}
                 </div>
               )}
@@ -771,14 +776,15 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
                           >
                             <span>✓</span>
                             <span className="max-w-[160px] truncate">{name}</span>
-                            <button
+                            <Button
                               type="button"
+                              variant="ghost"
                               aria-label={`Remove clip ${name}`}
                               onClick={() => void handleRemoveExtraClip(sid, a.gcs_path)}
-                              className="ml-0.5 text-lime-600 hover:text-lime-800 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
+                              className="h-auto w-auto ml-0.5 p-0 text-lime-600 hover:bg-transparent hover:text-lime-800 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
                             >
                               ✕
-                            </button>
+                            </Button>
                           </span>
                         );
                       })}
@@ -827,14 +833,15 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
                   className="flex items-center gap-1 rounded border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-xs text-[#3f3f46]"
                 >
                   <span className="max-w-[200px] truncate">{name}</span>
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
                     aria-label={`Remove ${name}`}
                     onClick={() => handlePoolRemove(a.gcs_path)}
-                    className="ml-0.5 rounded focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
+                    className="h-auto w-auto ml-0.5 p-0 rounded hover:bg-transparent focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
                   >
                     ✕
-                  </button>
+                  </Button>
                 </span>
               );
             })}
@@ -921,13 +928,14 @@ function SlotWell({ shot, shotIndex, state, anyFilled, accept, onFile, onCancel,
         <div className="mb-1 flex items-center justify-between">
           <span className="max-w-[200px] truncate text-xs text-[#71717a]">{filename}</span>
           {phase === "uploading" && (
-            <button
+            <Button
               type="button"
+              variant="link"
               onClick={onCancel}
-              className="text-xs text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
+              className="h-auto p-0 text-xs text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
             >
               Cancel
-            </button>
+            </Button>
           )}
         </div>
         {/* 4px progress bar (D13) */}
@@ -983,29 +991,32 @@ function SlotWell({ shot, shotIndex, state, anyFilled, accept, onFile, onCancel,
           )}
           {state.machineMatched ? (
             <>
-              <button
+              <Button
                 type="button"
+                variant="link"
                 onClick={onKeepMatch}
-                className="shrink-0 text-xs font-medium text-lime-700 underline underline-offset-2 hover:text-lime-800 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
+                className="h-auto shrink-0 p-0 text-xs font-medium text-lime-700 underline underline-offset-2 hover:text-lime-800 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
               >
                 Keep
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant="link"
                 onClick={onReplace}
-                className="shrink-0 text-xs text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
+                className="h-auto shrink-0 p-0 text-xs text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
               >
                 Swap
-              </button>
+              </Button>
             </>
           ) : (
-            <button
+            <Button
               type="button"
+              variant="link"
               onClick={onReplace}
-              className="shrink-0 text-xs text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
+              className="h-auto shrink-0 p-0 text-xs text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
             >
               Replace
-            </button>
+            </Button>
           )}
         </div>
         <ClipNoteControl note={state.userNote ?? ""} onSave={onSaveNote} />
@@ -1020,13 +1031,14 @@ function SlotWell({ shot, shotIndex, state, anyFilled, accept, onFile, onCancel,
         <span className="flex items-center gap-1 rounded border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-xs text-[#3f3f46]">
           <span className="max-w-[200px] truncate">{filename}</span>
         </span>
-        <button
+        <Button
           type="button"
+          variant="link"
           onClick={onRetry}
-          className="text-xs text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
+          className="h-auto p-0 text-xs text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
         >
           Upload failed · Retry
-        </button>
+        </Button>
       </div>
     );
   }
@@ -1082,32 +1094,34 @@ export function ClipNoteControl({
           Context <span className="font-normal text-[#a1a1aa]">optional</span>
         </label>
         <div className="flex gap-2">
-          <input
+          <Input
             id={inputId}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             maxLength={200}
             placeholder="e.g. a famous vegan restaurant in Buenos Aires"
-            className="w-full rounded border border-zinc-200 bg-white px-2 py-1.5 text-xs text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:border-lime-600 focus:outline-none"
+            className="text-[#0c0c0e] placeholder:text-[#a1a1aa] focus-visible:ring-lime-600"
           />
-          <button
+          <Button
             type="submit"
+            variant="link"
             disabled={saveState === "saving"}
-            className="shrink-0 text-xs font-medium text-lime-700 underline underline-offset-2 disabled:opacity-50"
+            className="h-auto shrink-0 p-0 text-xs font-medium text-lime-700 underline underline-offset-2 disabled:opacity-50"
           >
             {saveState === "saving" ? "Saving…" : "Save"}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="link"
             onClick={() => {
               setDraft(note);
               setEditing(false);
               setSaveState("idle");
             }}
-            className="shrink-0 text-xs text-[#71717a] underline underline-offset-2"
+            className="h-auto shrink-0 p-0 text-xs text-[#71717a] underline underline-offset-2"
           >
             Cancel
-          </button>
+          </Button>
         </div>
         {saveState === "error" && (
           <p className="mt-1 rounded border border-zinc-200 bg-white px-2 py-1 text-xs text-[#3f3f46]">
@@ -1122,28 +1136,30 @@ export function ClipNoteControl({
     return (
       <p className="mt-1.5 text-xs italic text-[#71717a]">
         &ldquo;{note}&rdquo;{" "}
-        <button
+        <Button
           type="button"
+          variant="link"
           onClick={() => {
             setDraft(note);
             setEditing(true);
           }}
-          className="not-italic text-lime-700 underline-offset-2 hover:underline"
+          className="h-auto p-0 not-italic text-lime-700 underline-offset-2 hover:underline"
         >
           Edit
-        </button>
+        </Button>
         {saveState === "saved" && <span className="ml-2 not-italic text-[#a1a1aa]">Saved ✓</span>}
       </p>
     );
   }
 
   return (
-    <button
+    <Button
       type="button"
+      variant="link"
       onClick={() => setEditing(true)}
-      className="mt-1.5 text-xs text-[#71717a] underline-offset-2 hover:text-[#0c0c0e] hover:underline"
+      className="h-auto p-0 mt-1.5 text-xs text-[#71717a] underline-offset-2 hover:text-[#0c0c0e] hover:underline"
     >
       + Add context
-    </button>
+    </Button>
   );
 }

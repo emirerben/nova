@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
 import StyleChip from "@/components/ui/StyleChip";
 import {
   getGenerativeStyleSets,
@@ -158,13 +159,14 @@ function VideoLookCard({
 }) {
   const preview = lookPreviewStyles(preset);
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
       role="radio"
       aria-checked={selected}
       disabled={disabled}
       onClick={onSelect}
-      className={`group overflow-hidden rounded-lg border text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 ${
+      className={`group h-auto w-full flex-col items-stretch overflow-hidden rounded-lg border p-0 text-left hover:bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 ${
         selected
           ? "border-[#0c0c0e] ring-1 ring-[#0c0c0e]"
           : "border-zinc-200 hover:border-zinc-400"
@@ -196,6 +198,6 @@ function VideoLookCard({
       >
         {lookPresetLabel(preset)}
       </span>
-    </button>
+    </Button>
   );
 }

@@ -20,6 +20,7 @@ import {
   getChildCount,
   type Module,
 } from "@/lib/architecture-config";
+import { Button } from "@/components/ui/button";
 import { useActiveJobs } from "@/hooks/useArchitectureData";
 import { ModuleNode, type ModuleNodeData } from "./ModuleNode";
 import { DataFlowEdge } from "./DataFlowEdge";
@@ -251,39 +252,42 @@ export function ArchitectureMap() {
 
         {/* View mode toggle */}
         <div className="flex items-center bg-gray-800 rounded p-0.5 mr-3">
-          <button
+          <Button
+            variant="ghost"
             onClick={() => setViewMode("business")}
-            className={`text-xs px-2.5 py-1 rounded transition-colors ${
+            className={`h-auto rounded px-2.5 py-1 text-xs transition-colors hover:bg-transparent ${
               viewMode === "business"
-                ? "bg-gray-700 text-gray-100"
+                ? "bg-gray-700 text-gray-100 hover:bg-gray-700 hover:text-gray-100"
                 : "text-gray-500 hover:text-gray-300"
             }`}
           >
             Business
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="ghost"
             onClick={() => setViewMode("technical")}
-            className={`text-xs px-2.5 py-1 rounded transition-colors ${
+            className={`h-auto rounded px-2.5 py-1 text-xs transition-colors hover:bg-transparent ${
               viewMode === "technical"
-                ? "bg-gray-700 text-gray-100"
+                ? "bg-gray-700 text-gray-100 hover:bg-gray-700 hover:text-gray-100"
                 : "text-gray-500 hover:text-gray-300"
             }`}
           >
             Technical
-          </button>
+          </Button>
         </div>
         {expandedL1 ? (
-          <button
+          <Button
+            variant="link"
             onClick={() => {
               setExpandedL1(null);
               setDetailModule(null);
               setSelectedModuleId(null);
               setHighlightedIds(new Set());
             }}
-            className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+            className="h-auto p-0 text-xs text-blue-400 hover:text-blue-300 hover:no-underline transition-colors"
           >
             ← Back to L1
-          </button>
+          </Button>
         ) : null}
         <span className="text-xs text-gray-500 ml-1">{breadcrumb}</span>
 

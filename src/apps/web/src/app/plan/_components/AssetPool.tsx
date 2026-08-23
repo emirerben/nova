@@ -32,6 +32,8 @@ import { poolAssetAnalysisLine } from "@/lib/pool-asset-display";
 import { mergePoolAssetsPreservingDisplayUrls } from "@/lib/pool-assets";
 import { StableVideo } from "@/components/StableVideo";
 import { Dropzone } from "@/components/ui/dropzone";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import {
   POOL_ASSET_MIME_TYPES,
   usePoolAssetUploader,
@@ -389,14 +391,15 @@ export default function AssetPool({
                   ? "Nova will understand these alongside your main clips before proposing the edit."
                   : "Screenshots and screen recordings — Kria will place them on your video for you."}
               </p>
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 disabled={atCap}
                 onClick={() => inputRef.current?.click()}
-                className="mt-3 inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm text-[#3f3f46] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0"
+                className="mt-3 min-h-11 sm:min-h-0"
               >
                 Add visuals
-              </button>
+              </Button>
               {releasingSlots > 0 && (
                 <p className="mt-2 text-[12px] text-[#71717a]">
                   Kria is releasing a removed upload slot. You can add another visual when cleanup finishes.
@@ -442,15 +445,16 @@ export default function AssetPool({
                 ))}
                 {/* Add tile — disabled at cap with an inline reason below (never tooltip-only). */}
                 <li>
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
                     disabled={atCap}
                     onClick={() => inputRef.current?.click()}
-                    className="flex aspect-square w-full flex-col items-center justify-center rounded-lg border border-dashed border-zinc-200 bg-white text-[#71717a] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-zinc-200 disabled:hover:text-[#71717a]"
+                    className="aspect-square h-auto w-full flex-col gap-0 rounded-lg border-dashed p-0 text-[#71717a] hover:text-[#71717a]"
                   >
                     <span aria-hidden className="text-lg leading-none">+</span>
                     <span className="mt-1 text-[12px]">Add</span>
-                  </button>
+                  </Button>
                 </li>
               </ul>
               {atCap && (
@@ -509,21 +513,23 @@ function PendingUploadTile({
         <p className="line-clamp-3 text-[12px] text-[#71717a]">{upload.message}</p>
         <div className="mt-1 flex gap-2 text-[12px]">
           {upload.retryable && (
-            <button
+            <Button
               type="button"
+              variant="link"
               onClick={onRetry}
-              className="min-h-7 text-lime-700 underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+              className="h-auto min-h-7 p-0"
             >
               Retry
-            </button>
+            </Button>
           )}
-          <button
+          <Button
             type="button"
+            variant="link"
             onClick={onRemove}
-            className="min-h-7 text-[#71717a] underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+            className="h-auto min-h-7 p-0 text-[#71717a]"
           >
             Remove
-          </button>
+          </Button>
         </div>
       </li>
     );
@@ -613,23 +619,25 @@ function AssetTile({
           {asset.error_detail ?? "Couldn't read this file or prepare it for the editor. Try again."}
         </p>
         {asset.retryable !== false && (
-          <button
+          <Button
             type="button"
+            variant="link"
             onClick={onRetryAnalysis}
             disabled={retryingAnalysis}
-            className="mt-1 min-h-11 min-w-11 text-[12px] text-lime-700 underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:opacity-50 sm:min-h-[28px] sm:min-w-[28px]"
+            className="mt-1 h-auto min-h-11 min-w-11 p-0 text-[12px] sm:min-h-[28px] sm:min-w-[28px]"
           >
             {retryingAnalysis ? "Retrying…" : "Retry analysis"}
-          </button>
+          </Button>
         )}
-        <button
+        <Button
           type="button"
+          variant="link"
           onClick={onRemove}
           aria-label={`Remove ${label}`}
-          className="mt-1 min-h-11 min-w-11 text-[12px] text-[#71717a] underline underline-offset-2 transition-colors hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:min-h-[28px] sm:min-w-[28px]"
+          className="mt-1 h-auto min-h-11 min-w-11 p-0 text-[12px] text-[#71717a] hover:text-[#0c0c0e] sm:min-h-[28px] sm:min-w-[28px]"
         >
           Remove
-        </button>
+        </Button>
       </li>
     );
   }
@@ -696,15 +704,16 @@ function AssetTile({
             ) : promoting ? (
               <span className="shrink-0 text-lime-700">Adding…</span>
             ) : (
-              <button
+              <Button
                 type="button"
+                variant="link"
                 onClick={onUseInEdit}
                 disabled={promotionDisabled}
                 aria-label={`Use ${label} in the edit`}
-                className="-my-1 flex min-h-11 min-w-11 shrink-0 items-center px-1 text-lime-700 underline underline-offset-2 transition-colors hover:text-lime-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-lime-700 sm:min-h-[28px] sm:min-w-[28px]"
+                className="-my-1 h-auto min-h-11 min-w-11 shrink-0 px-1 sm:min-h-[28px] sm:min-w-[28px]"
               >
                 Use in edit
-              </button>
+              </Button>
             )
           )}
         </span>
@@ -714,45 +723,49 @@ function AssetTile({
           <div className="mb-0.5 flex items-center justify-between gap-2">
             <span className="font-semibold text-[#3f3f46]">You</span>
             {!busy && !editingContext && (
-              <button
+              <Button
                 type="button"
+                variant="link"
                 onClick={() => setEditingContext(true)}
-                className="min-h-7 shrink-0 text-lime-700 underline underline-offset-2 hover:text-lime-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+                className="h-auto min-h-7 shrink-0 p-0"
               >
                 {asset.user_context ? "Edit" : "Add context"}
-              </button>
+              </Button>
             )}
           </div>
           {editingContext ? (
             <div className="space-y-1.5">
-              <textarea
+              <Textarea
                 value={draftContext}
                 maxLength={500}
                 rows={3}
                 onChange={(event) => setDraftContext(event.target.value.slice(0, 500))}
-                className="w-full resize-none rounded-md border border-zinc-200 px-2 py-1.5 text-[12px] text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+                className="resize-none"
                 placeholder="What should Nova know about this visual?"
               />
               {contextError && <p className="text-[11px] text-[#3f3f46]">{contextError}</p>}
               <div className="flex justify-end gap-2">
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="sm"
                   onClick={() => {
                     setDraftContext(asset.user_context ?? "");
                     setEditingContext(false);
                   }}
-                  className="min-h-8 px-2 text-[11px] text-[#71717a] hover:text-[#0c0c0e]"
+                  className="h-auto min-h-8 px-2 text-[11px] text-[#71717a] hover:text-[#0c0c0e]"
                 >
                   Cancel
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  size="sm"
                   disabled={savingContext}
                   onClick={saveContext}
-                  className="min-h-8 rounded-md bg-[#0c0c0e] px-2 text-[11px] font-semibold text-white disabled:opacity-50"
+                  className="h-auto min-h-8 px-2 text-[11px]"
                 >
                   {savingContext ? "Saving…" : "Save"}
-                </button>
+                </Button>
               </div>
             </div>
           ) : (
@@ -766,14 +779,16 @@ function AssetTile({
           <p className="line-clamp-2 text-[#71717a]">{novaStatusLine}</p>
         </div>
       </div>
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="icon"
         onClick={onRemove}
         aria-label={`Remove ${label}`}
-        className="absolute right-1 top-1 flex h-11 w-11 items-center justify-center rounded-full bg-white/90 text-[#3f3f46] opacity-100 transition-opacity focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:h-7 sm:w-7 sm:opacity-0 sm:group-hover:opacity-100"
+        className="absolute right-1 top-1 h-11 w-11 rounded-full bg-white/90 text-[#3f3f46] opacity-100 hover:bg-white sm:h-7 sm:w-7 sm:opacity-0 sm:group-hover:opacity-100"
       >
         ×
-      </button>
+      </Button>
     </li>
   );
 }

@@ -1,5 +1,7 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
+
 /**
  * ContextStrip — floating selection-action pills (mobile editor Lane A).
  *
@@ -141,9 +143,10 @@ export function ContextStrip({
             ? "border border-zinc-200 bg-white text-[#3f3f46]"
             : "border border-zinc-200 bg-white text-[#0c0c0e]";
         return (
-          <button
+          <Button
             key={pill.label}
             type="button"
+            variant="ghost"
             aria-disabled={disabled ? true : undefined}
             onClick={() => {
               // Focusable-disabled: the tap still fires so the WHY surfaces.
@@ -153,12 +156,12 @@ export function ContextStrip({
               }
               pill.onPress();
             }}
-            className={`min-h-11 rounded-full px-4 text-[13px] font-semibold shadow-[0_3px_10px_rgba(12,12,14,0.1)] active:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${tone}${
+            className={`h-auto min-h-11 rounded-full px-4 text-[13px] font-semibold shadow-[0_3px_10px_rgba(12,12,14,0.1)] active:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 hover:bg-transparent ${tone}${
               disabled ? " opacity-50" : ""
             }`}
           >
             {pill.label}
-          </button>
+          </Button>
         );
       })}
     </div>

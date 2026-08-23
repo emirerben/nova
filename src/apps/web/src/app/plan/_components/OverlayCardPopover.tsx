@@ -30,6 +30,8 @@
  */
 
 import { useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import type { MediaOverlay } from "@/lib/plan-api";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -199,7 +201,7 @@ function NumField({
   }
 
   return (
-    <input
+    <Input
       type="number"
       step={0.1}
       min={Math.round(min * 10) / 10}
@@ -212,7 +214,7 @@ function NumField({
         onCommit(Math.min(max, Math.max(min, Math.round(v * 10) / 10)));
       }}
       onFocus={(e) => scrollIntoView(e.currentTarget)}
-      className="h-11 w-20 rounded border border-zinc-600 bg-zinc-900 px-2 py-2 text-base text-white tabular-nums focus:border-amber-400/60 focus:outline-none sm:h-auto sm:w-16 sm:px-1.5 sm:py-1 sm:text-xs"
+      className="h-11 w-20 rounded border-zinc-600 bg-zinc-900 px-2 py-2 text-base text-white tabular-nums focus-visible:border-amber-400/60 focus-visible:ring-0 sm:h-auto sm:w-16 sm:px-1.5 sm:py-1 sm:text-xs"
     />
   );
 }
@@ -345,14 +347,15 @@ export default function OverlayCardPopover({
           </span>
           {/* Suggestions are removed via the rail's × (review index), not here. */}
           {!isSuggestion && onRemove && (
-            <button
+            <Button
               type="button"
+              variant="ghost"
               onClick={onRemove}
-              className="ml-2 flex h-11 w-11 items-center justify-center text-xs text-white/30 hover:text-red-400 sm:h-auto sm:w-auto"
+              className="ml-2 flex h-11 w-11 items-center justify-center p-0 text-xs text-white/30 hover:bg-transparent hover:text-red-400 sm:h-auto sm:w-auto"
               aria-label="Remove card"
             >
               ✕
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -361,17 +364,19 @@ export default function OverlayCardPopover({
           option is hidden entirely when the flag is off on a pip card (a card
           already fullscreen keeps both so it can demote). */}
       <div role="radiogroup" aria-label="Display mode" className="flex gap-2">
-        <button
+        <Button
           type="button"
+          variant="ghost"
           disabled={!isFullscreen}
           onClick={() => onPatch(demotePatch(card))}
-          className={pill(!isFullscreen)}
+          className={`h-auto hover:bg-transparent ${pill(!isFullscreen)}`}
         >
           PiP
-        </button>
+        </Button>
         {showPromoteAffordances && (
-          <button
+          <Button
             type="button"
+            variant="ghost"
             // D5/E9: disabled both when selected (radiogroup pattern) and when
             // fullscreen is unavailable on this variant (lyrics) — the reason
             // copy below explains the latter.
@@ -381,12 +386,12 @@ export default function OverlayCardPopover({
               if (fullscreenDisabled) return;
               onPatch({ display_mode: "fullscreen" });
             }}
-            className={`${pill(isFullscreen)}${
+            className={`h-auto hover:bg-transparent ${pill(isFullscreen)}${
               fullscreenDisabled && !isFullscreen ? " opacity-50" : ""
             }`}
           >
             Full screen
-          </button>
+          </Button>
         )}
       </div>
       {fullscreenDisabled && (
@@ -404,13 +409,14 @@ export default function OverlayCardPopover({
           <p className="text-xs text-zinc-400">
             Fills the whole frame. Your voice keeps playing underneath.
           </p>
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={() => onPatch(demotePatch(card))}
-            className="flex min-h-11 items-center text-xs text-zinc-400 underline underline-offset-2 transition-colors hover:text-white sm:min-h-0"
+            className="flex h-auto min-h-11 items-center justify-start p-0 text-xs text-zinc-400 underline underline-offset-2 transition-colors hover:bg-transparent hover:text-white sm:min-h-0"
           >
             Show as small card instead
-          </button>
+          </Button>
         </div>
       )}
 
@@ -435,18 +441,19 @@ export default function OverlayCardPopover({
         <>
           <div className="flex gap-1">
             {POSITION_PRESETS.map((p) => (
-              <button
+              <Button
                 key={p.value}
                 type="button"
+                variant="ghost"
                 onClick={() => onPatch({ position: p.value })}
-                className={`min-h-11 flex-1 rounded px-2 py-2 text-xs transition-colors sm:min-h-0 sm:py-1 ${
+                className={`h-auto min-h-11 flex-1 rounded px-2 py-2 text-xs transition-colors sm:min-h-0 sm:py-1 ${
                   card.position === p.value
-                    ? "bg-lime-400 text-black font-semibold"
+                    ? "bg-lime-400 text-black font-semibold hover:bg-lime-400"
                     : "bg-white/10 text-white/60 hover:bg-white/20"
                 }`}
               >
                 {p.label}
-              </button>
+              </Button>
             ))}
           </div>
           <div className="flex items-center gap-2">
@@ -465,13 +472,14 @@ export default function OverlayCardPopover({
           </div>
           {/* R2/C8: hidden when the fullscreen flag is off (old-api skew). */}
           {atMaxScale && !fullscreenDisabled && fullscreenPromoteEnabled && (
-            <button
+            <Button
               type="button"
+              variant="ghost"
               onClick={() => onPatch({ display_mode: "fullscreen" })}
-              className="flex min-h-11 items-center text-xs text-zinc-300 underline underline-offset-2 transition-colors hover:text-white sm:min-h-0"
+              className="flex h-auto min-h-11 items-center justify-start p-0 text-xs text-zinc-300 underline underline-offset-2 transition-colors hover:bg-transparent hover:text-white sm:min-h-0"
             >
               Make full screen →
-            </button>
+            </Button>
           )}
         </>
       )}

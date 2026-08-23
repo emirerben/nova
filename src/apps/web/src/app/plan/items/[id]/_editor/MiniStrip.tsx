@@ -13,6 +13,7 @@
  */
 
 import { useRef, type PointerEvent as ReactPointerEvent } from "react";
+import { Button } from "@/components/ui/button";
 import {
   useEditorPlaybackTime,
   type EditorPlaybackClock,
@@ -181,9 +182,10 @@ export function MiniStrip({
         const selected = selectedClipId === segment.id;
         const last = index === segments.length - 1;
         return (
-          <button
+          <Button
             key={segment.id}
             type="button"
+            variant="ghost"
             aria-label={`Clip ${index + 1}, ${segment.startS.toFixed(1)}–${segment.endS.toFixed(1)} seconds`}
             onClick={() => handleSegmentClick(segment)}
             style={{
@@ -191,8 +193,8 @@ export function MiniStrip({
               width: pct(segment.endS - segment.startS),
             }}
             className={[
-              "absolute inset-y-0",
-              index % 2 === 0 ? "bg-zinc-300" : "bg-zinc-200",
+              "absolute inset-y-0 h-auto w-auto rounded-none p-0",
+              index % 2 === 0 ? "bg-zinc-300 hover:bg-zinc-300" : "bg-zinc-200 hover:bg-zinc-200",
               last ? "" : "border-r-2 border-white",
               selected ? "outline outline-2 -outline-offset-2 outline-lime-600" : "",
               // Inset focus ring — the container clips outset outlines.
@@ -207,13 +209,14 @@ export function MiniStrip({
                 className="absolute bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-lime-600"
               />
             )}
-          </button>
+          </Button>
         );
       })}
       {marks.map((mark) => (
-        <button
+        <Button
           key={mark.id}
           type="button"
+          variant="ghost"
           aria-label={`${mark.label}, ${mark.startS.toFixed(1)}–${mark.endS.toFixed(1)} seconds`}
           aria-pressed={selectedMarkId === mark.id}
           onPointerDown={(event) => event.stopPropagation()}
@@ -226,7 +229,7 @@ export function MiniStrip({
             width: pct(Math.max(1 / 30, mark.endS - mark.startS)),
           }}
           className={[
-            "absolute inset-y-0 z-10 min-w-11 bg-transparent",
+            "absolute inset-y-0 z-10 h-auto min-w-11 rounded-none bg-transparent p-0 hover:bg-transparent",
             "focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-lime-600",
           ].filter(Boolean).join(" ")}
         >
@@ -238,7 +241,7 @@ export function MiniStrip({
                 : ""
             }`}
           />
-        </button>
+        </Button>
       ))}
       <div
         aria-hidden="true"

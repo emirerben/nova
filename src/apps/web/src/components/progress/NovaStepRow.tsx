@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
 import type { NovaStep } from "@/lib/job-phases";
 
 interface NovaStepRowProps {
@@ -55,17 +56,19 @@ export function NovaStepRow({ step, tone, size, expanded, onToggle }: NovaStepRo
           <div className="flex items-center gap-1.5">
             <span className={`${textSize} ${labelColor} leading-snug`}>{step.label}</span>
             {hasDetail && (
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon"
                 aria-expanded={expanded}
                 aria-label={expanded ? `Hide details for ${step.label}` : `Show details for ${step.label}`}
                 onClick={onToggle}
-                className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full transition-transform ${
+                className={`h-5 w-5 shrink-0 rounded-full transition-transform hover:bg-transparent ${
                   tone === "light" ? "text-[#71717a] hover:text-[#0c0c0e]" : "text-zinc-500 hover:text-zinc-200"
                 } ${expanded ? "rotate-180" : ""}`}
               >
                 <ChevronIcon />
-              </button>
+              </Button>
             )}
           </div>
           {hasDetail && (

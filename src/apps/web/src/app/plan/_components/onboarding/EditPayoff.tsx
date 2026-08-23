@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { StableVideo } from "@/components/StableVideo";
 import {
   changeVariantStyle,
@@ -150,7 +151,9 @@ function FocusedVariantPanel({
           )}
         </div>
         {!failed && variant.output_url && (
-          <button
+          <Button
+            type="button"
+            variant="outline"
             disabled={session.isSaving}
             onClick={
               session.isSaving
@@ -162,14 +165,14 @@ function FocusedVariantPanel({
                       !variant.download_url,
                     )
             }
-            className={`mt-2 w-full rounded-lg border py-2 text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px] ${
+            className={`mt-2 h-auto min-h-[44px] w-full rounded-lg py-2 text-xs focus-visible:ring-lime-600 ${
               session.isSaving
                 ? "border-zinc-200 text-[#a1a1aa] cursor-not-allowed"
                 : "border-zinc-200 text-[#3f3f46] hover:border-zinc-400"
             }`}
           >
             {session.isSaving ? "Saving…" : "Download"}
-          </button>
+          </Button>
         )}
       </div>
 
@@ -335,18 +338,22 @@ export function EditPayoff({
         <p className="text-[#71717a]">
           {status.error_detail ?? "We couldn't finish your edit right now."}
         </p>
-        <button
+        <Button
+          type="button"
+          variant="link"
           onClick={onReRoll}
-          className="text-sm text-lime-700 underline hover:text-lime-900 min-h-[44px]"
+          className="h-auto min-h-[44px] p-0 text-sm text-lime-700 underline hover:text-lime-900"
         >
           Try again
-        </button>
-        <button
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
           onClick={onMakePlan}
-          className="text-sm text-[#71717a] hover:text-[#0c0c0e] min-h-[44px]"
+          className="h-auto min-h-[44px] p-0 text-sm text-[#71717a] hover:bg-transparent hover:text-[#0c0c0e]"
         >
           Make a plan instead
-        </button>
+        </Button>
       </div>
     );
   }
@@ -396,14 +403,16 @@ export function EditPayoff({
                 const isReady = v.render_status === "ready";
                 const isFailed = v.render_status === "failed";
                 return (
-                  <button
+                  <Button
                     key={v.variant_id}
+                    type="button"
+                    variant="ghost"
                     role="radio"
                     aria-checked={isSelected}
                     aria-label={TEXT_MODE_LABEL[v.text_mode] ?? v.text_mode}
                     disabled={!isReady}
                     onClick={() => setFocusedVariantId(v.variant_id)}
-                    className="flex shrink-0 flex-col items-center gap-1 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600"
+                    className="flex h-auto w-auto shrink-0 flex-col items-center gap-1 rounded p-0 hover:bg-transparent focus-visible:ring-lime-600"
                   >
                     <div
                       className={[
@@ -438,7 +447,7 @@ export function EditPayoff({
                     <span className="w-16 truncate text-center text-[10px] text-[#71717a]">
                       {TEXT_MODE_LABEL[v.text_mode] ?? v.text_mode}
                     </span>
-                  </button>
+                  </Button>
                 );
               })}
             </div>
@@ -459,12 +468,14 @@ export function EditPayoff({
       )}
 
       {/* Re-roll */}
-      <button
+      <Button
+        type="button"
+        variant="ghost"
         onClick={onReRoll}
-        className="text-xs text-[#a1a1aa] hover:text-[#71717a] text-center focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 rounded min-h-[44px]"
+        className="h-auto min-h-[44px] rounded text-center text-xs text-[#a1a1aa] hover:bg-transparent hover:text-[#71717a] focus-visible:ring-lime-600"
       >
         try different clips or style
-      </button>
+      </Button>
 
       {/* Second-act plan CTA (suppressed when stacked with other jobs) */}
       {!hidePlanCta && (
@@ -472,12 +483,13 @@ export function EditPayoff({
           <p className="text-center text-sm text-[#71717a] mb-3">
             Want video ideas from this footage?
           </p>
-          <button
+          <Button
+            type="button"
             onClick={onMakePlan}
-            className="w-full rounded-xl bg-[#0c0c0e] text-white py-3 font-medium hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
+            className="h-auto min-h-[44px] w-full rounded-xl bg-[#0c0c0e] py-3 font-medium text-white hover:opacity-80 focus-visible:ring-lime-600"
           >
             Make my plan →
-          </button>
+          </Button>
         </div>
       )}
     </div>

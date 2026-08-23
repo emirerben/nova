@@ -3,6 +3,9 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { InfoDot } from "@/components/ui/InfoDot";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import type { PersonaContent, PersonaStatus, TikTokProfile } from "@/lib/plan-api";
 
 const PIN_COMFORT_PX = 24;
@@ -241,21 +244,22 @@ export default function PersonaEditor({
               "sticky bottom-0 z-10 -mx-5 border-t border-zinc-200 bg-[#ffffff] px-5 pt-4 pb-[max(16px,env(safe-area-inset-bottom))] md:mx-0 md:px-0",
           )}
         >
-          <button
+          <Button
+            variant="ink"
+            size="lg"
             onClick={handleContinue}
             disabled={continuing || saving}
-            className="inline-flex min-h-[44px] items-center rounded-full bg-[#0c0c0e] px-6 py-3 font-medium text-white transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {continuing || saving ? "Starting…" : continueLabel}
-          </button>
+          </Button>
 
-          <button
+          <Button
+            variant="outline"
             onClick={() => setEditing(true)}
             disabled={continuing || saving}
-            className="inline-flex min-h-[44px] items-center rounded-full border border-zinc-200 px-5 py-3 text-sm font-medium text-[#3f3f46] transition-colors hover:border-zinc-400 hover:text-[#0c0c0e] disabled:opacity-60"
           >
             Tweak
-          </button>
+          </Button>
 
           {!dirty && status === "edited" && (
             <span className="text-sm text-emerald-600">Saved ✓</span>
@@ -266,7 +270,8 @@ export default function PersonaEditor({
               const hasRealContent = !!draft.summary?.trim();
               const isBlocked = status === "edited" && hasRealContent;
               return (
-                <button
+                <Button
+                  variant="outline"
                   onClick={handleRetune}
                   disabled={retuning || continuing || saving || isBlocked}
                   title={
@@ -274,14 +279,13 @@ export default function PersonaEditor({
                       ? "Your hand-edited persona stays as you wrote it. Reset to AI to retune."
                       : "Re-tune this persona from your video feedback"
                   }
-                  className="inline-flex min-h-[44px] items-center rounded-full border border-zinc-200 px-5 py-3 text-sm font-medium text-[#3f3f46] transition-colors hover:border-zinc-400 hover:text-[#0c0c0e] disabled:opacity-60"
                 >
                   {retuning
                     ? "Updating…"
                     : !draft.summary?.trim()
                       ? "Generate persona"
                       : "Update from feedback"}
-                </button>
+                </Button>
               );
             })()}
         </div>
@@ -339,30 +343,27 @@ export default function PersonaEditor({
       )}
 
       <div className="mt-10 flex flex-wrap items-center gap-4 border-t border-zinc-200 pt-6">
-        <button
+        <Button
+          variant="ink"
+          size="lg"
           onClick={handleContinue}
           disabled={continuing || saving}
-          className="inline-flex min-h-[44px] items-center rounded-full bg-[#0c0c0e] px-6 py-3 font-medium text-white transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {continuing || saving ? "Starting…" : continueLabel}
-        </button>
+        </Button>
 
         {editing ? (
-          <button
-            onClick={save}
-            disabled={saving || !dirty}
-            className="inline-flex min-h-[44px] items-center rounded-full border border-zinc-200 px-5 py-3 text-sm font-medium text-[#3f3f46] transition-colors hover:border-zinc-400 hover:text-[#0c0c0e] disabled:opacity-60"
-          >
+          <Button variant="outline" onClick={save} disabled={saving || !dirty}>
             {saving ? "Saving…" : "Save edits"}
-          </button>
+          </Button>
         ) : (
-          <button
+          <Button
+            variant="outline"
             onClick={() => setEditing(true)}
             disabled={continuing || saving}
-            className="inline-flex min-h-[44px] items-center rounded-full border border-zinc-200 px-5 py-3 text-sm font-medium text-[#3f3f46] transition-colors hover:border-zinc-400 hover:text-[#0c0c0e] disabled:opacity-60"
           >
             Tweak
-          </button>
+          </Button>
         )}
 
         {!dirty && status === "edited" && !editing && (
@@ -376,7 +377,8 @@ export default function PersonaEditor({
           const hasRealContent = !!draft.summary?.trim();
           const isBlocked = status === "edited" && hasRealContent;
           return (
-            <button
+            <Button
+              variant="outline"
               onClick={handleRetune}
               disabled={retuning || continuing || saving || isBlocked}
               title={
@@ -384,10 +386,9 @@ export default function PersonaEditor({
                   ? "Your hand-edited persona stays as you wrote it. Reset to AI to retune."
                   : "Re-tune this persona from your video feedback"
               }
-              className="inline-flex min-h-[44px] items-center rounded-full border border-zinc-200 px-5 py-3 text-sm font-medium text-[#3f3f46] transition-colors hover:border-zinc-400 hover:text-[#0c0c0e] disabled:opacity-60"
             >
               {retuning ? "Updating…" : !draft.summary?.trim() ? "Generate persona" : "Update from feedback"}
-            </button>
+            </Button>
           );
         })()}
       </div>
@@ -544,11 +545,11 @@ function PersonaForm({
       {TEXT_FIELDS.map((f) => (
         <label key={f.key} className="block">
           <span className="mb-1 block text-sm font-medium text-[#3f3f46]">{f.label}</span>
-          <textarea
+          <Textarea
             value={(draft[f.key] as string) ?? ""}
             onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
             rows={f.key === "summary" ? 3 : 1}
-            className="w-full resize-y rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[#0c0c0e] transition-colors focus:border-lime-600/60 focus:outline-none"
+            className="w-full resize-y focus-visible:ring-lime-600/60"
           />
         </label>
       ))}
@@ -563,7 +564,7 @@ function PersonaForm({
             Drives your plan&apos;s idea count. Leave blank and Kria infers it from your cadence.
           </InfoDot>
         </div>
-        <input
+        <Input
           id="persona-posts-per-week"
           type="number"
           min={1}
@@ -579,7 +580,7 @@ function PersonaForm({
             }
           }}
           placeholder="1–7"
-          className="w-24 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[#0c0c0e] transition-colors focus:border-lime-600/60 focus:outline-none"
+          className="w-24 focus-visible:ring-lime-600/60"
         />
       </div>
 
@@ -635,20 +636,21 @@ function ChipListEditor({
             className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-50 py-1 pl-3 pr-1 text-sm text-[#3f3f46]"
           >
             {c}
-            <button
+            <Button
               type="button"
+              variant="ghost"
               onClick={() => remove(i)}
               aria-label={`Remove ${c}`}
               className={cn(
-                "flex h-5 w-5 items-center justify-center rounded-full text-[#a1a1aa]",
-                "transition-colors hover:bg-zinc-100 hover:text-[#0c0c0e]",
+                "h-5 w-5 rounded-full p-0 text-[#a1a1aa]",
+                "hover:bg-zinc-100 hover:text-[#0c0c0e]",
               )}
             >
               ×
-            </button>
+            </Button>
           </span>
         ))}
-        <input
+        <Input
           id={inputId}
           value={buffer}
           onChange={(e) => setBuffer(e.target.value)}
@@ -662,7 +664,7 @@ function ChipListEditor({
           }}
           onBlur={() => commit(buffer)}
           placeholder={values.length === 0 ? "Type and press Enter…" : "Add another…"}
-          className="min-w-[8rem] flex-1 bg-transparent px-1 py-1 text-sm text-[#0c0c0e] placeholder-zinc-400 focus:outline-none"
+          className="h-auto min-w-[8rem] flex-1 border-0 bg-transparent px-1 py-1 text-sm placeholder-zinc-400 focus-visible:ring-0"
         />
       </div>
     </div>

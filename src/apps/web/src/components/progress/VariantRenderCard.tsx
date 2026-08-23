@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { StableVideo } from "../StableVideo";
 import { BeamLoader } from "./BeamLoader";
 import { errorCopy, variantDisplayName } from "./constants";
@@ -190,17 +191,17 @@ function RenderingStatus({
   const stalled = elapsed >= STALL_HINT_MS;
   const textClass = tone === "light" ? "text-[#71717a]" : "text-zinc-400";
   const btnClass = tone === "light"
-    ? "rounded border border-zinc-200 px-3 py-1 text-xs text-[#3f3f46] hover:bg-zinc-100"
-    : "rounded border border-zinc-600 px-3 py-1 text-xs text-zinc-300 hover:bg-zinc-800";
+    ? "h-auto rounded border border-zinc-200 px-3 py-1 text-xs text-[#3f3f46] hover:bg-zinc-100"
+    : "h-auto rounded border border-zinc-600 px-3 py-1 text-xs text-zinc-300 hover:bg-zinc-800";
 
   if (stalled) {
     return (
       <>
         <p className={`text-sm ${textClass}`}>Taking longer than usual…</p>
         {onRetry && (
-          <button onClick={onRetry} className={btnClass}>
+          <Button variant="outline" onClick={onRetry} className={btnClass}>
             Try again
-          </button>
+          </Button>
         )}
       </>
     );
@@ -301,12 +302,13 @@ function FailedCard({
       <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
         <p className={`text-sm ${textClass}`}>Couldn&apos;t finish this one — {copy}</p>
         {onRetry && (
-          <button
+          <Button
+            variant="outline"
             onClick={onRetry}
-            className={`rounded border px-3 py-1.5 text-xs ${btnClass}`}
+            className={`h-auto rounded border px-3 py-1.5 text-xs ${btnClass}`}
           >
             Try again
-          </button>
+          </Button>
         )}
       </div>
     </div>
@@ -354,11 +356,12 @@ function ShareButton({ url, label, tone }: { url: string; label: string; tone: "
   };
 
   return (
-    <button
+    <Button
+      variant="outline"
       onClick={handleShare}
-      className={`flex-1 rounded border py-1.5 text-center text-xs ${btnClass}`}
+      className={`h-auto flex-1 rounded border py-1.5 text-center text-xs ${btnClass}`}
     >
       {copied ? "Copied!" : "Share"}
-    </button>
+    </Button>
   );
 }

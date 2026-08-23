@@ -36,6 +36,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import type { MediaOverlay } from "@/lib/plan-api";
 import { mediaClassFor } from "./cardMedia";
 import { overlayCardStyle } from "./overlayCardStyle";
@@ -149,13 +150,15 @@ function FailedCardTile({
     >
       <p className="text-xs text-[#3f3f46]">This visual couldn&apos;t load</p>
       {onRemove && (
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           onClick={onRemove}
-          className="rounded border border-zinc-300 bg-white px-2.5 py-1 text-[11px] text-[#3f3f46] transition-colors hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+          className="h-auto rounded px-2.5 py-1 text-[11px] text-[#3f3f46] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
         >
           Remove
-        </button>
+        </Button>
       )}
     </div>
   );

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 
 export interface SongWindowState {
   startS: number;
@@ -211,16 +212,17 @@ export default function SongWindowSelector({
         <span>{formatTime(endS)}</span>
       </div>
       {value.editable ? (
-        <button
+        <Button
           type="button"
-          className="mt-3 min-h-11 w-full rounded-lg border border-zinc-300 bg-white px-3 text-[12px] font-semibold text-[#0c0c0e] hover:border-zinc-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+          variant="outline"
+          className="mt-3 h-auto min-h-11 w-full rounded-lg border-zinc-300 px-3 text-[12px] font-semibold text-[#0c0c0e] hover:border-zinc-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
           onClick={() => {
             onBegin();
             commitSnapped(value.recommendedStartS);
           }}
         >
           Reset to recommended section
-        </button>
+        </Button>
       ) : (
         <p className="mt-2 text-[11px] leading-relaxed text-[#71717a]">
           {disabledCopy(value.reason)}
