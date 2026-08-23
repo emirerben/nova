@@ -1039,8 +1039,8 @@ export function applyCopilotOps(
           ),
           slotId: null,
           // A direction replacement authors independent cuts, not split
-          // descendants. Keeping this null also permits repeated image cuts;
-          // the server's split-parent contract intentionally rejects images.
+          // descendants. Keeping this null permits repeated video or image
+          // cuts without inventing a parent relationship.
           parentSegmentId: null,
           clipIndex: source.clip_index,
           ...timing,
