@@ -983,7 +983,7 @@ export function applyCopilotOps(
         const current = slots[index];
         return !current || !completeSlotFingerprintMatches(slots, grid, current, index, snap);
       })) {
-        rejected.push(reject(op.op, labelForOp(op), "stale", "the clip timeline changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "stale", "clip timeline changed after Kria read it"));
         continue;
       }
       const clips = ctx.clips ?? [];
