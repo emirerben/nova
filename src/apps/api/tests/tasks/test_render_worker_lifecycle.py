@@ -221,6 +221,7 @@ def test_idle_past_grace_stops_and_clears_redis_key(
     from app.tasks.maintenance import _RENDER_WORKER_IDLE_SINCE_KEY, manage_render_worker_lifecycle
 
     mock_idle.return_value = True
+    mock_get_state.return_value = "started"
     redis_client = _redis_with_stored_idle_since(0.0)  # very old — definitely past grace
     mock_get_redis.return_value = redis_client
 
@@ -254,6 +255,7 @@ def test_idle_within_grace_neither_starts_nor_stops(
     from app.tasks.maintenance import manage_render_worker_lifecycle
 
     mock_idle.return_value = True
+    mock_get_state.return_value = "started"
     mock_get_redis.return_value = _redis_with_stored_idle_since(None)  # first idle tick
 
     with patch("app.config.settings") as mock_settings:
@@ -284,6 +286,7 @@ def test_redis_unavailable_still_makes_a_safe_decision(
     from app.tasks.maintenance import manage_render_worker_lifecycle
 
     mock_idle.return_value = True
+    mock_get_state.return_value = "started"
     mock_get_redis.return_value = None
 
     with patch("app.config.settings") as mock_settings:
@@ -293,3 +296,57 @@ def test_redis_unavailable_still_makes_a_safe_decision(
 
     assert result == "grace"
     mock_stop.assert_not_called()
+
+
+def test_idle_while_machine_stopped_does_not_run_the_grace_clock():
+    """Regression (prod 2026-08-23): idle_since accumulated across the
+    stopped period, so a wake-for-a-short-task was stopped 37s after it
+    started because the timer was already ≥grace old."""
+    for state in ("stopped", "stopping", "starting", "replacing"):
+        action, new_idle_since = _decide_lifecycle_action(
+            idle=True, idle_since=0.0, now=999_999.0, grace_min=_GRACE_MIN, machine_state=state
+        )
+        assert action == "idle_stopped", state
+        assert new_idle_since is None, state
+
+
+def test_idle_with_unknown_machine_state_behaves_as_started():
+    action, new_idle_since = _decide_lifecycle_action(
+        idle=True, idle_since=None, now=1000.0, grace_min=_GRACE_MIN, machine_state=None
+    )
+    assert action == "grace"
+    assert new_idle_since == 1000.0
+
+
+@patch("app.tasks.maintenance._get_lifecycle_redis")
+@patch("app.services.fly_machines.stop_render_worker")
+@patch("app.services.fly_machines.start_render_worker")
+@patch("app.services.fly_machines.get_render_worker_state")
+@patch("app.services.queue_state.render_worker_idle")
+def test_idle_and_machine_stopped_clears_stale_timer_and_calls_nothing(
+    mock_idle: MagicMock,
+    mock_get_state: MagicMock,
+    mock_start: MagicMock,
+    mock_stop: MagicMock,
+    mock_get_redis: MagicMock,
+):
+    from app.tasks.maintenance import _RENDER_WORKER_IDLE_SINCE_KEY, manage_render_worker_lifecycle
+
+    mock_idle.return_value = True
+    mock_get_state.return_value = "stopped"
+    redis_client = _redis_with_stored_idle_since(0.0)  # stale, ≥grace old
+    mock_get_redis.return_value = redis_client
+
+    with (
+        patch("app.config.settings") as mock_settings,
+        patch("app.tasks.maintenance.datetime") as mock_dt,
+    ):
+        mock_settings.RENDER_AUTOSTOP_ENABLED = True
+        mock_settings.RENDER_IDLE_GRACE_MIN = _GRACE_MIN
+        mock_dt.now.return_value.timestamp.return_value = 999_999_999.0
+        result = manage_render_worker_lifecycle()
+
+    assert result == "idle_stopped"
+    mock_stop.assert_not_called()
+    mock_start.assert_not_called()
+    redis_client.delete.assert_called_once_with(_RENDER_WORKER_IDLE_SINCE_KEY)

@@ -164,8 +164,7 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
                         _heif_decoder_recovery_predicate(),
                         and_(
                             PlanItemAsset.status == "deduped",
-                            PlanItemAsset.created_at
-                            <= current - _POOL_DEDUPE_RECEIPT_RETENTION,
+                            PlanItemAsset.created_at <= current - _POOL_DEDUPE_RECEIPT_RETENTION,
                         ),
                     )
                 )
@@ -667,10 +666,24 @@ def _decide_lifecycle_action(
     idle_since: float | None,
     now: float,
     grace_min: int,
+    machine_state: str | None = "started",
 ) -> tuple[str, float | None]:
     """Pure decision logic — no Celery/Redis/Fly I/O, fully unit-testable.
 
     Returns (action, new_idle_since_to_persist):
+      "idle_stopped" — idle AND the machine is not running (stopped /
+                   stopping / starting / replacing). Nothing to stop, and —
+                   critically — the grace clock must NOT run while the
+                   machine is down: before this branch existed idle_since
+                   accumulated across the stopped period, so the first tick
+                   after a wake-for-a-short-task (e.g. a 5s conformance
+                   analysis) saw a ≥grace-old timer and stopped the machine
+                   37s after it started (prod 2026-08-23 06:47→06:48). The
+                   user's real render then landed on a machine mid
+                   soft-shutdown (Fly start → 412) and waited for the next
+                   backstop. idle_since is cleared. machine_state=None
+                   (unknown) is treated as started — never infer "stopped"
+                   from a missing answer.
       "unknown"  — render_worker_idle() couldn't determine state (broker
                    hiccup). Do nothing at all — never act on missing
                    information, same principle as the reaper.
@@ -690,6 +703,8 @@ def _decide_lifecycle_action(
         return "unknown", idle_since
     if not idle:
         return "not_idle", None
+    if machine_state is not None and machine_state != "started":
+        return "idle_stopped", None
     since = idle_since if idle_since is not None else now
     if (now - since) >= grace_min * 60:
         return "stop", None
@@ -722,6 +737,10 @@ def manage_render_worker_lifecycle(self) -> str:
         return "disabled"
 
     idle = render_worker_idle(celery_app)
+    # Read the machine state (one GET /machines/{id} per tick) so the grace
+    # clock only runs while the machine is actually up. Skipped when idle is
+    # unknown — that tick takes no action, so it makes no Fly calls at all.
+    machine_state = get_render_worker_state() if idle is not None else None
     now = datetime.now(UTC).timestamp()
 
     redis_client = _get_lifecycle_redis()
@@ -734,7 +753,7 @@ def manage_render_worker_lifecycle(self) -> str:
             log.warning("render_worker_lifecycle_redis_read_failed", error=str(exc))
 
     action, new_idle_since = _decide_lifecycle_action(
-        idle, idle_since, now, settings.RENDER_IDLE_GRACE_MIN
+        idle, idle_since, now, settings.RENDER_IDLE_GRACE_MIN, machine_state
     )
 
     if redis_client is not None:
@@ -754,9 +773,8 @@ def manage_render_worker_lifecycle(self) -> str:
         # regardless of whether the wake hook already handled it — this is
         # the mechanism that bounds a missed/failed wake to one poll
         # interval instead of an indefinite hang.
-        state = get_render_worker_state()
-        if state != "started":
+        if machine_state != "started":
             ok = start_render_worker()
-            log.info("render_worker_lifecycle_backstop_start", ok=ok, prior_state=state)
+            log.info("render_worker_lifecycle_backstop_start", ok=ok, prior_state=machine_state)
 
     return action
