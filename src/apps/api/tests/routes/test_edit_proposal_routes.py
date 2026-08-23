@@ -1158,6 +1158,53 @@ async def test_draft_requires_media_before_dispatch(monkeypatch) -> None:
     db.commit.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_explicit_draft_marks_brief_ready_across_auto_design_retries(monkeypatch) -> None:
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        clip_assignments=[{"gcs_path": "users/u/plan/i/corfu.mp4"}],
+        edit_proposal=None,
+    )
+    plan = SimpleNamespace(ownership_epoch=4)
+    monkeypatch.setattr(plan_items.settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(
+        plan_items,
+        "_load_owned_item_context",
+        AsyncMock(return_value=(item, plan, SimpleNamespace())),
+    )
+    monkeypatch.setattr(plan_items, "plan_item_response", lambda loaded: loaded)
+    db = AsyncMock()
+    db.execute.return_value = SimpleNamespace(scalar_one=lambda: 0)
+    apply_calls = []
+    monkeypatch.setattr(
+        "app.tasks.edit_proposal_build.draft_edit_proposal.apply_async",
+        lambda **kw: apply_calls.append(kw),
+    )
+
+    response = await plan_items.draft_item_edit_proposal(
+        _request(),
+        str(item.id),
+        plan_items.DraftEditProposalBody(
+            direction="fast_montage",
+            goal="Show Corfu quickly",
+            pace="fast",
+            duration_s=12,
+        ),
+        SimpleNamespace(id=uuid.uuid4()),
+        db,
+    )
+
+    assert response is item
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None
+    assert persisted.status == "analyzing"
+    assert persisted.brief_ready is True
+    assert persisted.brief.direction == "fast_montage"
+    assert persisted.brief.goal == "Show Corfu quickly"
+    assert persisted.approval_mode is None
+    assert len(apply_calls) == 1
+
+
 @pytest.mark.parametrize("operation", ["conversation", "draft", "update", "approve"])
 @pytest.mark.asyncio
 async def test_audio_led_proposal_routes_reject_before_side_effects(monkeypatch, operation) -> None:

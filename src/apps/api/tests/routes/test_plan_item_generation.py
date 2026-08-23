@@ -318,6 +318,85 @@ def test_generate_auto_designs_instead_of_409_when_flag_on_and_media_present(
     assert body["edit_proposal"]["approval_mode"] == "auto"
 
 
+def test_generate_direction_confirmation_starts_analysis_without_enforcement(
+    monkeypatch, client: TestClient
+) -> None:
+    """The confirmation rollout gate must reach inference on its own.
+
+    Production rollout enables direction confirmation before strict guided-edit
+    enforcement. Leaving enforcement off must not bypass analysis and dispatch
+    the legacy renderer before the creator can confirm Nova's inferred direction.
+    """
+
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "guided_edit_enforcement_enabled", False)
+    monkeypatch.setattr(app_settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(app_settings, "guided_auto_design_enabled", True)
+    monkeypatch.setattr(app_settings, "guided_edit_direction_confirmation_enabled", True)
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[f"users/{user.id}/plan/0/a.mp4"])
+    item.edit_proposal = None
+    item.clip_assignments = [
+        {"gcs_path": f"users/{user.id}/plan/0/a.mp4", "shot_id": None, "user_note": ""}
+    ]
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    apply_calls: list[dict] = []
+    monkeypatch.setattr(
+        "app.tasks.edit_proposal_build.draft_edit_proposal.apply_async",
+        lambda **kw: apply_calls.append(kw),
+    )
+
+    with patch(
+        "app.tasks.content_plan_build.dispatch_item_render_for",
+        side_effect=AssertionError("render must wait for direction confirmation"),
+    ) as dispatch:
+        response = client.post(f"/plan-items/{item.id}/generate")
+
+    assert response.status_code == 200
+    assert len(apply_calls) == 1
+    dispatch.assert_not_called()
+    body = response.json()
+    assert body["edit_proposal"]["status"] == "analyzing"
+    assert body["edit_proposal"]["approval_mode"] == "auto"
+
+
+def test_generate_confirmation_without_capability_fails_closed_without_unconfirmable_attempt(
+    monkeypatch, client: TestClient
+) -> None:
+    """Flag skew must not create a proposal the UI cannot show or confirm."""
+
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "guided_edit_enforcement_enabled", False)
+    monkeypatch.setattr(app_settings, "guided_edit_capability_enabled", False)
+    monkeypatch.setattr(app_settings, "guided_edit_direction_confirmation_enabled", True)
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[f"users/{user.id}/plan/0/a.mp4"])
+    item.edit_proposal = None
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with (
+        patch(
+            "app.tasks.content_plan_build.dispatch_item_render_for",
+            return_value=DispatchResult("proposal_required"),
+        ) as dispatch,
+        patch("app.tasks.edit_proposal_build.draft_edit_proposal.apply_async") as draft_task,
+    ):
+        response = client.post(f"/plan-items/{item.id}/generate")
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "proposal_required"
+    dispatch.assert_called_once_with(str(item.id), 0)
+    draft_task.assert_not_called()
+    assert item.edit_proposal is None
+
+
 def test_generate_audio_led_bypasses_guided_gate_and_hides_capabilities(
     monkeypatch, client: TestClient
 ) -> None:

@@ -30,9 +30,11 @@ from app.main import app
 from app.models import ContentPlan, Job, Persona, PlanItem, PlanItemAsset, User
 from app.schemas.edit_proposal import (
     ApprovedProposalSnapshot,
+    DirectionHypothesis,
     EditProposal,
     EditProposalSnapshot,
     MediaRef,
+    ProposalGuidance,
     ProposalRenderFailure,
     StoryBeat,
     canonical_media_digest,
@@ -437,6 +439,62 @@ def test_task_side_enforcement_rejects_missing_proposal(
     assert _jobs_for(item_id) == []
 
 
+def test_task_side_confirmation_gate_rejects_unconfirmed_proposal_without_enforcement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every caller shares the same no-render-before-confirmation boundary."""
+
+    monkeypatch.setattr(settings, "guided_edit_enforcement_enabled", False)
+    monkeypatch.setattr(settings, "guided_edit_direction_confirmation_enabled", True)
+    _user_id, item_id = _seed_item()
+    with patch(_ENQUEUE) as enqueue:
+        result = dispatch_item_render_for(str(item_id))
+
+    assert result.outcome == "proposal_required"
+    enqueue.assert_not_called()
+    assert _jobs_for(item_id) == []
+
+
+def test_task_side_confirmation_gate_rejects_pending_direction_proposal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The worker-produced confirmation state cannot reach a renderer."""
+
+    monkeypatch.setattr(settings, "guided_edit_enforcement_enabled", False)
+    monkeypatch.setattr(settings, "guided_edit_direction_confirmation_enabled", True)
+    _user_id, item_id = _seed_item()
+    with sync_session() as session:
+        item = session.get(PlanItem, item_id)
+        assert item is not None
+        item.edit_proposal = EditProposal(
+            proposal_version=1,
+            generation_attempt_id=str(uuid.uuid4()),
+            status="briefing",
+            media_digest="a" * 64,
+            guidance=ProposalGuidance(
+                state="awaiting_direction_confirmation",
+                provenance="ai_inferred",
+                hypothesis=DirectionHypothesis(
+                    direction="fast_montage",
+                    pace="fast",
+                    duration_s=15,
+                    text_density="minimal",
+                    audio_role="music_led",
+                    rationale="The strongest moments suit a fast montage.",
+                ),
+                fingerprint="b" * 64,
+            ),
+        ).model_dump(mode="json")
+        session.commit()
+
+    with patch(_ENQUEUE) as enqueue:
+        result = dispatch_item_render_for(str(item_id))
+
+    assert result.outcome == "direction_confirmation_required"
+    enqueue.assert_not_called()
+    assert _jobs_for(item_id) == []
+
+
 def test_bypass_guided_edit_gate_refuses_when_pool_asset_present() -> None:
     """P2-4 (2026-08-18 adversarial review): draft_edit_proposal's clip-only
 
@@ -480,6 +538,23 @@ def test_bypass_guided_edit_gate_dispatches_when_pool_is_genuinely_empty() -> No
 
     assert result.outcome == "dispatched"
     assert len(_jobs_for(item_id)) == 1
+
+
+def test_confirmation_gate_overrides_failed_analysis_fallback_bypass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Analysis failure must not spend a render before direction confirmation."""
+
+    monkeypatch.setattr(settings, "guided_edit_enforcement_enabled", False)
+    monkeypatch.setattr(settings, "guided_edit_direction_confirmation_enabled", True)
+    _user_id, item_id = _seed_item()
+
+    with patch(_ENQUEUE) as enqueue:
+        result = dispatch_item_render_for(str(item_id), bypass_guided_edit_gate=True)
+
+    assert result.outcome == "proposal_required"
+    enqueue.assert_not_called()
+    assert _jobs_for(item_id) == []
 
 
 def test_approved_proposal_exact_media_is_snapshotted_into_job(

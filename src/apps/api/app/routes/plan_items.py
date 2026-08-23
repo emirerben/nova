@@ -2877,6 +2877,11 @@ async def draft_item_edit_proposal(
 
     ensure_clip_media_ids(item)
     proposal = begin_proposal_attempt(item, brief=ProposalBrief.model_validate(body.model_dump()))
+    # Supplying this body is an explicit creator direction, not an unbriefed
+    # auto-design attempt. Persist that provenance across failed retries so a
+    # later Generate cannot replace it with an AI-inferred confirmation card.
+    proposal = proposal.model_copy(update={"brief_ready": True})
+    item.edit_proposal = proposal.model_dump(mode="json")
     await db.commit()
     try:
         draft_edit_proposal.apply_async(
@@ -3224,7 +3229,17 @@ async def generate_item(
         )
 
     guided_applicable = _guided_edit_is_applicable(item)
-    if settings.guided_edit_enforcement_enabled and guided_applicable:
+    # Direction confirmation is an independent rollout gate: it must make the
+    # proposal-analysis path reachable before strict guided-edit enforcement
+    # is enabled. Otherwise Generate falls through to the legacy renderer and
+    # spends the render before the creator ever sees Nova's inferred direction.
+    if (
+        settings.guided_edit_enforcement_enabled
+        or (
+            settings.guided_edit_capability_enabled
+            and settings.guided_edit_direction_confirmation_enabled
+        )
+    ) and guided_applicable:
         from app.services.edit_proposals import proposal_generate_error  # noqa: PLC0415
 
         if proposal_error := proposal_generate_error(item):
