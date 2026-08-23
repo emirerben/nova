@@ -47,7 +47,7 @@ const DOCK_TOOLS: Array<{
   label: string;
   icon: (className: string) => ReactNode;
 }> = [
-  { id: "nova", label: "Nova", icon: (c) => <NovaIcon className={c} /> },
+  { id: "nova", label: "Kria", icon: (c) => <NovaIcon className={c} /> },
   { id: "text", label: "Text", icon: (c) => <TextIcon className={c} /> },
   { id: "captions", label: "Captions", icon: (c) => <CaptionsIcon className={c} /> },
   { id: "visuals", label: "Visuals", icon: (c) => <VisualsIcon className={c} /> },

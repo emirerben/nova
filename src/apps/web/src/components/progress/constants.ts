@@ -38,12 +38,12 @@ export const POLL_INTERVAL_MS = 2000;
 
 // ===== D20 Variant display names =====
 export const VARIANT_DISPLAY_NAME: Record<string, string> = {
-  song_lyrics: "Song Lyrics",
-  song_text: "Song Text",
+  song_lyrics: "Song lyrics",
+  song_text: "Song text",
   original_text: "Original",
   voiceover_only: "Voiceover",
-  voiceover_music: "Voiceover + Music",
-  talking_head: "Talking Head",
+  voiceover_music: "Voiceover + music",
+  talking_head: "Talking head",
 };
 
 /** Human-readable variant name. Falls back to id with underscores replaced. */
@@ -53,14 +53,14 @@ export function variantDisplayName(id: string): string {
 
 // ===== D10 Error class → human copy =====
 export const ERROR_CLASS_COPY: Record<string, string> = {
-  timeout: "This render took too long and was stopped",
-  encoder_error: "Something went wrong while encoding this video",
-  clip_read_error: "We couldn't read one of your clips",
-  storage_error: "A storage error interrupted this render",
-  match_failed: "We couldn't find a matching song for this edit",
+  timeout: "This render took too long and stopped. Retry the render.",
+  encoder_error: "This video couldn’t finish rendering. Retry the render.",
+  clip_read_error: "Kria couldn’t read one of your clips. Review your footage, then retry the render.",
+  storage_error: "Kria lost the connection while saving this video. Retry the render.",
+  match_failed: "Kria couldn’t find matching music for this video. Choose another song or retry the render.",
 };
 
-export const ERROR_FALLBACK_COPY = "Something went wrong with this edit";
+export const ERROR_FALLBACK_COPY = "This video couldn’t finish rendering. Retry the render.";
 
 /** Human-readable error copy from an error_class string, with safe fallback. */
 export function errorCopy(errorClass?: string | null): string {

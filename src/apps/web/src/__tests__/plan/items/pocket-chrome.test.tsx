@@ -193,7 +193,7 @@ describe("ToolDock", () => {
     const buttons = within(nav).getAllByRole("button");
     expect(buttons).toHaveLength(7);
     expect(buttons.map((b) => b.textContent)).toEqual([
-      "Nova",
+      "Kria",
       "Text",
       "Captions",
       "Visuals",

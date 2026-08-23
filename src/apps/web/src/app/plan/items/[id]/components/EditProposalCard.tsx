@@ -50,7 +50,6 @@ import { ArrowUp, ChevronDown, ChevronUp } from "lucide-react";
 import { ChatBubble } from "@/components/chat/ChatBubble";
 import { ChatThinking } from "@/components/chat/ChatThinking";
 import { useAutoScrollToEnd } from "@/components/chat/useAutoScrollToEnd";
-import { chatErrorMessage } from "@/lib/chat-errors";
 
 const DIRECTION_OPTIONS: Array<{
   value: EditProposalDirection;
@@ -302,7 +301,7 @@ export default function EditProposalCard({
       setError(
         code === "media_required"
           ? EMPTY_MEDIA_MESSAGE
-          : chatErrorMessage(err, "Kria couldn't think that through."),
+          : "Kria couldn’t update your edit direction. Check your connection and try again.",
       );
       // A network timeout is ambiguous: the server may have committed the
       // turn even though this response was lost. Reconcile before a retry so
@@ -327,7 +326,7 @@ export default function EditProposalCard({
       setLegacyBriefOpen(false);
       onChanged(updated);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Kria couldn't start planning this edit.");
+      setError("Kria couldn’t start planning this edit. Check your connection and try again.");
     } finally {
       setWorkingAction(null);
     }
@@ -375,7 +374,7 @@ export default function EditProposalCard({
       setEditingApproved(false);
       onChanged(approved);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Kria couldn't approve this plan.");
+      setError("Kria couldn’t approve this plan. Check your connection and try again.");
     } finally {
       setWorkingAction(null);
     }
@@ -672,7 +671,6 @@ export default function EditProposalCard({
             variant="outline"
             onClick={() => setLegacyBriefOpen(true)}
           >
-            <span aria-hidden>✦</span>
             Plan edit
           </Button>
         </div>
@@ -699,7 +697,6 @@ export default function EditProposalCard({
             window.setTimeout(() => inputRef.current?.focus(), 0);
           }}
         >
-          <span aria-hidden>✦</span>
           Plan edit
         </Button>
       </div>

@@ -1883,19 +1883,28 @@ export default function EditorCanvas({
               >
                 <div className="max-w-[280px] rounded-xl border border-dashed border-zinc-300 bg-white/95 p-5 text-center">
                   <p className="text-[13px] text-[#3f3f46]">
-                    This preview couldn&apos;t load — the link may have expired.
+                    The preview couldn&apos;t load, but your finished video is safe. Try the preview again or download the video.
                   </p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      setVideoError(false);
-                      onReloadSource?.();
-                    }}
-                    className="mt-3 h-auto min-h-11 rounded-full border-zinc-200 px-4 text-[12px] text-[#3f3f46] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
-                  >
-                    Retry
-                  </Button>
+                  <div className="mt-3 flex flex-wrap justify-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        setVideoError(false);
+                        onReloadSource?.();
+                      }}
+                      className="h-auto min-h-11 rounded-full border-zinc-200 px-4 text-[12px] text-[#3f3f46] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                    >
+                      Try preview again
+                    </Button>
+                    <a
+                      href={src}
+                      download
+                      className="inline-flex min-h-11 items-center rounded-full border border-zinc-200 px-4 text-[12px] text-[#3f3f46] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                    >
+                      Download video
+                    </a>
+                  </div>
                 </div>
               </div>
             )}

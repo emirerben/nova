@@ -8,6 +8,7 @@ import {
 } from "@/lib/transcript-api";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { ArrowUp } from "lucide-react";
 
 type Phase = "loading" | "chat" | "thinking" | "error";
 
@@ -100,7 +101,7 @@ export default function QuestionsStep({
       setSuggestions(res.suggestions);
       setPhase("chat");
     } catch {
-      setError("Something went wrong — you can skip to writing.");
+      setError("We couldn’t save your answer. Try again or skip to writing.");
       setPhase("error");
     }
   }
@@ -174,7 +175,7 @@ export default function QuestionsStep({
           onClick={() => onDone(answersRef.current)}
           className="h-auto p-0 text-xs font-normal text-[#71717a] underline underline-offset-4 hover:text-[#0c0c0e] hover:no-underline"
         >
-          Skip — just write it
+          Skip — write the narration
         </Button>
       </div>
 
@@ -206,7 +207,7 @@ export default function QuestionsStep({
             aria-label="Send answer"
             className="flex-shrink-0 text-sm font-medium disabled:opacity-25"
           >
-            →
+            <ArrowUp className="size-4" aria-hidden="true" />
           </Button>
         </div>
       </div>

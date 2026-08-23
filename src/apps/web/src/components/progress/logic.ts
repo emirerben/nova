@@ -171,7 +171,7 @@ export function formatElapsed(elapsedMs: number): string {
 // ===== D12 receipt text =====
 
 /** Copy shown when we can't state an honest duration. */
-export const RECEIPT_FALLBACK = "Your edits are ready";
+export const RECEIPT_FALLBACK = "Your video is ready";
 
 /**
  * D12 receipt: "Ready in m:ss", or the generic fallback when the pair can't

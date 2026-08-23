@@ -185,7 +185,7 @@ describe("SuggestionRail — variant capability gating (plan 010 OV-5)", () => {
       );
     });
     expect(
-      screen.getByRole("button", { name: /place visuals for me/i }),
+      screen.getByRole("button", { name: /place visuals automatically/i }),
     ).toBeInTheDocument();
   });
 });
@@ -210,7 +210,7 @@ describe("SuggestionRail — unavailable-error heuristic", () => {
       result = render(<SuggestionRail itemId="item-1" variantId="var-1" />);
     });
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /place visuals for me/i }));
+      fireEvent.click(screen.getByRole("button", { name: /place visuals automatically/i }));
     });
     return result!;
   }
@@ -222,7 +222,7 @@ describe("SuggestionRail — unavailable-error heuristic", () => {
     // Calm unavailable — the rail hides entirely instead of dead-ending.
     expect(container).toBeEmptyDOMElement();
     expect(screen.queryByText("Couldn't match your visuals this time.")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Match visuals again" })).toBeNull();
   });
 
   it("still maps the older 'not available' wording to unavailable", async () => {
@@ -230,13 +230,13 @@ describe("SuggestionRail — unavailable-error heuristic", () => {
       "Auto-placement is not available for this variant.",
     );
     expect(container).toBeEmptyDOMElement();
-    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Match visuals again" })).toBeNull();
   });
 
   it("keeps genuine failures on the Retry tile (heuristic doesn't overmatch)", async () => {
     await renderAndSuggest("The matcher exploded.");
     expect(screen.getByText("Couldn't match your visuals this time.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Match visuals again" })).toBeInTheDocument();
   });
 });
 
@@ -257,7 +257,7 @@ describe("SuggestionRail — entry button gating", () => {
     });
     await renderRail();
 
-    const button = screen.getByRole("button", { name: /place visuals for me/i });
+    const button = screen.getByRole("button", { name: /place visuals automatically/i });
     expect(button).toBeDisabled();
     // Inline reason TEXT, never tooltip-only.
     expect(screen.getByText("Add at least one visual first")).toBeInTheDocument();
@@ -276,7 +276,7 @@ describe("SuggestionRail — entry button gating", () => {
     });
     await renderRail();
 
-    expect(screen.getByRole("button", { name: /place visuals for me/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /place visuals automatically/i })).toBeEnabled();
     expect(screen.queryByText("Add at least one visual first")).toBeNull();
   });
 });
@@ -306,7 +306,7 @@ describe("SuggestionRail — suggest → matching → ready flow", () => {
     await renderRail();
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /place visuals for me/i }));
+      fireEvent.click(screen.getByRole("button", { name: /place visuals automatically/i }));
     });
     expect(suggestPosted).toBe(true);
 
@@ -378,7 +378,7 @@ describe("SuggestionRail — suggest → matching → ready flow", () => {
     jest.useFakeTimers();
     await renderRail();
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /place visuals for me/i }));
+      fireEvent.click(screen.getByRole("button", { name: /place visuals automatically/i }));
     });
 
     await act(async () => {
@@ -408,7 +408,7 @@ describe("SuggestionRail — suggest → matching → ready flow", () => {
     jest.useFakeTimers();
     await renderRail();
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /place visuals for me/i }));
+      fireEvent.click(screen.getByRole("button", { name: /place visuals automatically/i }));
     });
 
     // Well past the removed 5-min GIVE_UP window (was 300s → local "failed").
@@ -459,7 +459,7 @@ describe("SuggestionRail — suggest → matching → ready flow", () => {
     jest.useFakeTimers();
     await renderRail();
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /place visuals for me/i }));
+      fireEvent.click(screen.getByRole("button", { name: /place visuals automatically/i }));
     });
     // Long wait, still matching (no client give-up).
     await act(async () => {
@@ -473,7 +473,7 @@ describe("SuggestionRail — suggest → matching → ready flow", () => {
       await jest.advanceTimersByTimeAsync(2500);
     });
     expect(screen.getByText("Couldn't match your visuals this time.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Match visuals again" })).toBeInTheDocument();
   });
 });
 
@@ -541,7 +541,9 @@ describe("SuggestionRail — review interactions", () => {
 
     // Receipt line + rail cleared.
     expect(
-      screen.getByText(/Baking your 2 visuals in — the preview above is exactly what renders\./),
+      screen.getByText(
+        /Adding your 2 visuals to the video\. The preview above shows the final placement\./,
+      ),
     ).toBeInTheDocument();
     expect(screen.queryByText("Suggested edit")).toBeNull();
   });
@@ -688,7 +690,7 @@ describe("SuggestionRail — zero / failed / stale states", () => {
 
     // Single Retry action re-POSTs suggest.
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      fireEvent.click(screen.getByRole("button", { name: "Match visuals again" }));
     });
     expect(retried).toBe(true);
     expect(screen.getByText("Matching your visuals to the script…")).toBeInTheDocument();
@@ -961,7 +963,7 @@ describe("SuggestionRail — re-match label", () => {
     });
     await renderRail();
 
-    expect(screen.getByRole("button", { name: /re-match visuals/i })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /place visuals for me/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /match visuals again/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /place visuals automatically/i })).toBeNull();
   });
 });

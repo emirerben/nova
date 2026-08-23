@@ -213,7 +213,7 @@ export default function CopilotDrawer({
   return (
     <section
       data-testid={`copilot-${layoutMode}`}
-      aria-label="Nova editor copilot"
+      aria-label="Kria editor copilot"
       className={rootClass}
       style={layoutMode === "light" ? { paddingBottom: keyboardOffset } : undefined}
     >
@@ -224,9 +224,9 @@ export default function CopilotDrawer({
       )}
       <div className="flex h-12 flex-none items-center justify-between px-4">
         <span className="flex items-center gap-1">
-          <h2 className="text-base font-semibold text-foreground">Nova</h2>
-          <InfoDot label="Nova">
-            Nova can rewrite your hook, restyle text, and tighten or reorder cuts. Draft
+          <h2 className="text-base font-semibold text-foreground">Kria</h2>
+          <InfoDot label="Kria">
+            Kria can rewrite your hook, restyle text, and tighten or reorder cuts. Draft
             edits preview instantly.
           </InfoDot>
         </span>
@@ -235,7 +235,7 @@ export default function CopilotDrawer({
           variant="ghost"
           size="icon"
           className="h-8 w-8"
-          aria-label="Close Nova"
+          aria-label="Close Kria"
           onClick={onClose}
         >
           <CloseIcon className="h-4 w-4" />
@@ -325,7 +325,7 @@ export default function CopilotDrawer({
                   NovaStepRows replace the retired lime ChangeChip pills. */}
               {!isRenderTurnMsg && stepsFeedEnabled && !isUser && chips.length > 0 && (
                 <div className="space-y-1">
-                  <ul role="list" aria-label="Nova AI changes" className="space-y-0.5">
+                  <ul role="list" aria-label="Kria AI changes" className="space-y-0.5">
                     {shownApplied.map((summary, idx) => (
                       <NovaStepRow
                         key={`applied-${idx}`}
@@ -537,12 +537,12 @@ export default function CopilotDrawer({
             disabled={unavailable}
             placeholder={
               unavailable
-                ? "Nova editing is unavailable"
+                ? "Kria editing is unavailable"
                 : sending
                   ? "Add more while I work..."
                   : "Tell me what to change..."
             }
-            aria-label="Tell Nova what to change"
+            aria-label="Tell Kria what to change"
           />
           {draft.length >= MAX_CHARS * 0.8 && (
             <p className="mt-1.5 text-right text-xs text-muted-foreground">

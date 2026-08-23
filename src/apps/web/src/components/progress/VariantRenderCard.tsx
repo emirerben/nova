@@ -80,7 +80,7 @@ export function VariantRenderCard({ variant, isNewlyReady, onRetry, tone = "dark
   // Failed state: no t-skel needed, render directly.
   if (render_status === "failed") {
     return (
-      <div role="group" aria-label={`${displayName} edit`} className="flex flex-col gap-2">
+      <div role="group" aria-label={`${displayName} video`} className="flex flex-col gap-2">
         <p className={`text-sm font-medium ${labelClass}`}>{displayName}</p>
         <FailedCard errorClass={error_class ?? null} onRetry={onRetry} tone={tone} />
       </div>
@@ -90,7 +90,7 @@ export function VariantRenderCard({ variant, isNewlyReady, onRetry, tone = "dark
   return (
     <div
       role="group"
-      aria-label={`${displayName} edit`}
+      aria-label={`${displayName} video`}
       className="flex flex-col gap-2"
     >
       {/* Variant label */}
@@ -163,7 +163,7 @@ export function VariantRenderCard({ variant, isNewlyReady, onRetry, tone = "dark
 
 function PendingStatus({ tone }: { tone: "dark" | "light" }) {
   const textClass = tone === "light" ? "text-[#71717a]" : "text-zinc-500";
-  return <p className={`text-sm ${textClass}`}>Getting ready…</p>;
+  return <p className={`text-sm ${textClass}`}>Preparing your video…</p>;
 }
 
 function RenderingStatus({
@@ -197,10 +197,10 @@ function RenderingStatus({
   if (stalled) {
     return (
       <>
-        <p className={`text-sm ${textClass}`}>Taking longer than usual…</p>
+        <p className={`text-sm ${textClass}`}>This is taking longer than usual.</p>
         {onRetry && (
           <Button variant="outline" onClick={onRetry} className={btnClass}>
-            Try again
+            Retry render
           </Button>
         )}
       </>
@@ -242,7 +242,7 @@ function ReadyCardInner({
           playsInline
           loop
           className="h-full w-full object-cover"
-          aria-label={`${displayName} edit preview`}
+          aria-label={`${displayName} video preview`}
         />
       ) : (
         <div className={`flex h-full items-center justify-center text-sm ${emptyTextClass}`}>
@@ -273,7 +273,7 @@ function ReadyCardActions({
         download
         className={`flex-1 rounded border py-1.5 text-center text-xs ${btnClass}`}
       >
-        Download
+        Download video
       </a>
       <ShareButton url={outputUrl} label={displayName} tone={tone} />
     </div>
@@ -300,14 +300,14 @@ function FailedCard({
   return (
     <div className={`aspect-[9/16] w-full rounded-lg border border-dashed p-4 ${cardClass}`}>
       <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
-        <p className={`text-sm ${textClass}`}>Couldn&apos;t finish this one — {copy}</p>
+        <p className={`text-sm ${textClass}`}>{copy}</p>
         {onRetry && (
           <Button
             variant="outline"
             onClick={onRetry}
             className={`h-auto rounded border px-3 py-1.5 text-xs ${btnClass}`}
           >
-            Try again
+            Retry render
           </Button>
         )}
       </div>

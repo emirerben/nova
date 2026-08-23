@@ -93,10 +93,10 @@ describe("authenticated create flow", () => {
       fireEvent.change(input);
     });
     await screen.findByText("first.mp4");
-    fireEvent.change(screen.getByRole("textbox", { name: /direction for kria/i }), {
+    fireEvent.change(screen.getByRole("textbox", { name: /tell kria what to emphasize/i }), {
       target: { value: "Lead with the reaction and keep it warm." },
     });
-    const generate = screen.getByRole("button", { name: /make my first cut/i });
+    const generate = screen.getByRole("button", { name: /create video/i });
     fireEvent.click(generate);
     fireEvent.click(generate);
 
@@ -130,15 +130,17 @@ describe("authenticated create flow", () => {
       fireEvent.change(input);
     });
     await screen.findByText("kept.mp4");
-    const direction = screen.getByRole("textbox", { name: /direction for kria/i });
+    const direction = screen.getByRole("textbox", { name: /tell kria what to emphasize/i });
     fireEvent.change(direction, { target: { value: "Keep this exact direction" } });
 
-    fireEvent.click(screen.getByRole("button", { name: /make my first cut/i }));
+    fireEvent.click(screen.getByRole("button", { name: /create video/i }));
 
-    expect(await screen.findByText("The video service is unavailable")).toBeInTheDocument();
+    expect(
+      await screen.findByText("We couldn’t create this video. Check your connection and try again."),
+    ).toBeInTheDocument();
     expect(screen.getByText("kept.mp4")).toBeInTheDocument();
     expect(direction).toHaveValue("Keep this exact direction");
-    fireEvent.click(screen.getByRole("button", { name: /make my first cut/i }));
+    fireEvent.click(screen.getByRole("button", { name: /create video/i }));
 
     await screen.findByTestId("progress-theater");
     expect(createOwnedGenerativeJob).toHaveBeenCalledTimes(2);
@@ -315,12 +317,12 @@ describe("authenticated create flow", () => {
       });
       fireEvent.change(input);
     });
-    fireEvent.change(screen.getByRole("textbox", { name: /direction for kria/i }), {
+    fireEvent.change(screen.getByRole("textbox", { name: /tell kria what to emphasize/i }), {
       target: { value: "Keep this direction" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /make my first cut/i }));
-    expect(await screen.findByRole("button", { name: /try render again/i })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /try render again/i }));
+    fireEvent.click(screen.getByRole("button", { name: /create video/i }));
+    expect(await screen.findByRole("button", { name: /retry render/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /retry render/i }));
 
     await waitFor(() => expect(retryOwnedGenerativeJob).toHaveBeenCalledWith("job-failed"));
     expect(createOwnedGenerativeJob).toHaveBeenCalledTimes(1);
@@ -349,11 +351,11 @@ describe("authenticated create flow", () => {
       });
       fireEvent.change(input);
     });
-    fireEvent.change(screen.getByRole("textbox", { name: /direction for kria/i }), {
+    fireEvent.change(screen.getByRole("textbox", { name: /tell kria what to emphasize/i }), {
       target: { value: "Keep this after refresh" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /make my first cut/i }));
-    await screen.findByRole("button", { name: /try render again/i });
+    fireEvent.click(screen.getByRole("button", { name: /create video/i }));
+    await screen.findByRole("button", { name: /retry render/i });
     await waitFor(() =>
       expect(window.sessionStorage.getItem("kria:create-draft:v1:user-1")).toContain(
         "job-persisted",
@@ -362,8 +364,8 @@ describe("authenticated create flow", () => {
 
     firstView.unmount();
     const refreshedView = render(<CreatePage />);
-    expect(await screen.findByRole("button", { name: /try render again/i })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /try render again/i }));
+    expect(await screen.findByRole("button", { name: /retry render/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /retry render/i }));
 
     await waitFor(() => expect(retryOwnedGenerativeJob).toHaveBeenCalledWith("job-persisted"));
     expect(createOwnedGenerativeJob).toHaveBeenCalledTimes(1);
@@ -373,7 +375,7 @@ describe("authenticated create flow", () => {
   it("keeps the create action sticky at desktop breakpoints used by 200% zoom", () => {
     render(<CreatePage />);
 
-    const chrome = screen.getByRole("button", { name: /make my first cut/i }).parentElement;
+    const chrome = screen.getByRole("button", { name: /create video/i }).parentElement;
     expect(chrome?.className).toContain("sticky");
     expect(chrome?.className).not.toContain("sm:static");
   });

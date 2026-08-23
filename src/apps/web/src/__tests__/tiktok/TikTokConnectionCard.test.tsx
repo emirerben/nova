@@ -89,7 +89,7 @@ it("keeps the account connected when the disconnect AlertDialog is cancelled", a
   await user.click(await screen.findByRole("menuitem", { name: "Disconnect" }));
 
   const dialog = await screen.findByRole("alertdialog", { name: "Disconnect TikTok?" });
-  expect(screen.getByText("Erases the stored TikTok credentials. Your videos stay.")).toBeInTheDocument();
+  expect(screen.getByText("Removes TikTok access from Kria. Your videos remain in Kria and on TikTok.")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Cancel" }));
 
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
@@ -117,8 +117,8 @@ it("syncs performance from the overflow menu and surfaces failures", async () =>
 
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "More TikTok actions" }));
-  await user.click(await screen.findByRole("menuitem", { name: "Sync performance" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Sync TikTok performance" }));
 
-  expect(await screen.findByText("TikTok is busy")).toBeInTheDocument();
+  expect(await screen.findByText("Kria couldn't sync TikTok performance. Try again.")).toBeInTheDocument();
   expect((screen.getByRole("button", { name: "More TikTok actions" }) as HTMLButtonElement).disabled).toBe(false);
 });

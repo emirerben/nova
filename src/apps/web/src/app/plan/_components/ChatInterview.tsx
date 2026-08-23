@@ -6,6 +6,7 @@ import { chatStart, chatTurn, NotAuthenticatedError } from "@/lib/plan-api";
 import type { TikTokProfile } from "@/lib/plan-api";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { ArrowUp } from "lucide-react";
 
 type Phase = "loading" | "chat" | "thinking" | "error";
 
@@ -61,7 +62,7 @@ export default function ChatInterview({
           window.location.href = "/api/auth/signin?callbackUrl=/plan";
           return;
         }
-        setError("Couldn't start the interview. Try refreshing.");
+        setError("We couldn’t start your creator profile. Check your connection and try again.");
         setPhase("error");
       });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -90,7 +91,7 @@ export default function ChatInterview({
       setPhase("chat");
     } catch {
       setRetryPayload(payload);
-      setError("Something went wrong — let me try again.");
+      setError("We couldn’t save that answer. Check your connection and try again.");
       setPhase("error");
     }
   }
@@ -111,7 +112,7 @@ export default function ChatInterview({
       setTurnLabel(res.turn_label);
       setPhase("chat");
     } catch {
-      setError("I hit a snag. Try refreshing.");
+      setError("We still couldn’t save that answer. Check your connection and try again.");
     }
   }
 
@@ -120,12 +121,12 @@ export default function ChatInterview({
       <BeamLoader
         tone="light"
         mode="line"
-        ariaLabel="Getting ready"
+        ariaLabel="Preparing your creator profile"
         className="inline-block rounded-full"
       >
         <div className="flex items-center gap-2 px-3 py-2">
           <span className="h-1.5 w-1.5 motion-safe:animate-ping rounded-full bg-lime-600" />
-          <span className="text-sm text-[#71717a]">Getting ready…</span>
+        <span className="text-sm text-[#71717a]">Preparing your creator profile…</span>
         </div>
       </BeamLoader>
     );
@@ -205,7 +206,7 @@ export default function ChatInterview({
         >
           <div className="flex items-center gap-2 px-3 py-2">
             <span className="h-1.5 w-1.5 motion-safe:animate-ping rounded-full bg-lime-600" />
-            <span className="text-sm text-[#71717a]">Thinking…</span>
+        <span className="text-sm text-[#71717a]">Working on your creator profile…</span>
           </div>
         </BeamLoader>
       )}
@@ -232,7 +233,7 @@ export default function ChatInterview({
             ref={inputRef}
             value={answer}
             rows={1}
-            placeholder="Tell me…"
+            placeholder="Type your answer…"
             disabled={phase === "thinking"}
             aria-label="Your answer"
             onChange={(e) => setAnswer(e.target.value)}
@@ -253,7 +254,7 @@ export default function ChatInterview({
             aria-label="Send answer"
             className="flex-shrink-0 text-sm font-medium disabled:opacity-25"
           >
-            →
+            <ArrowUp aria-hidden="true" className="size-4" />
           </Button>
         </div>
       </div>

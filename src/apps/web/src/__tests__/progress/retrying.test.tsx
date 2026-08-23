@@ -44,19 +44,19 @@ const BASE_PROPS = {
 describe("ProgressTheater retrying contract", () => {
   it("test_retrying_shows_recovery_note: retrying replaces the leave-note", () => {
     render(<ProgressTheater {...BASE_PROPS} retrying />);
-    expect(screen.getByText(/Hit a snag mid-render — retrying automatically/)).toBeInTheDocument();
+    expect(screen.getByText(/The render paused, so Kria is retrying automatically/)).toBeInTheDocument();
     expect(screen.queryByText(/You can leave this page/)).not.toBeInTheDocument();
   });
 
   it("test_not_retrying_keeps_leave_note: default stays on the reassuring copy", () => {
     render(<ProgressTheater {...BASE_PROPS} />);
     expect(screen.getByText(/You can leave this page/)).toBeInTheDocument();
-    expect(screen.queryByText(/Hit a snag mid-render/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/The render paused/)).not.toBeInTheDocument();
   });
 
   it("test_terminal_hides_recovery_note: a finished job never shows retry copy", () => {
     render(<ProgressTheater {...BASE_PROPS} retrying isTerminal isSuccess />);
-    expect(screen.queryByText(/Hit a snag mid-render/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/The render paused/)).not.toBeInTheDocument();
   });
 
   it("test_retrying_suppresses_eta: no confident ETA above the recovery note", () => {
@@ -69,7 +69,7 @@ describe("ProgressTheater retrying contract", () => {
 
   it("test_recovery_note_is_a_live_region: screen readers hear the state change", () => {
     render(<ProgressTheater {...BASE_PROPS} retrying />);
-    const note = screen.getByText(/Hit a snag mid-render/);
+    const note = screen.getByText(/The render paused/);
     expect(note).toHaveAttribute("role", "status");
     expect(note).toHaveAttribute("aria-live", "polite");
   });

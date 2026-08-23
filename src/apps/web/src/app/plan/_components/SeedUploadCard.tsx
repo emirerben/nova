@@ -14,6 +14,7 @@ import {
 import { ProgressTheater } from "@/components/progress";
 import { ACTIVATION_PHASE_ORDER, ACTIVATION_PHASE_LABEL } from "@/lib/job-phases";
 import { InfoDot } from "@/components/ui/InfoDot";
+import { formatCount } from "@/lib/ux-copy-format";
 
 const POLL_MS = 2000;
 const ACCEPT = "video/mp4,video/quicktime";
@@ -105,7 +106,7 @@ export default function SeedUploadCard({
         setSeededCount((n) => n + list.length);
         setDone(null);
       } catch (err) {
-        onError(err instanceof Error ? err.message : "Upload failed");
+        onError("Kria couldn’t upload those clips. Check the file type and size, then try again.");
       } finally {
         setUploading(false);
       }
@@ -120,7 +121,7 @@ export default function SeedUploadCard({
       setActivating(true);
       setDone(null);
     } catch (err) {
-      onError(err instanceof Error ? err.message : "Couldn't start matching");
+      onError("Kria couldn’t start matching your clips. Check your connection and try again.");
     }
   }, [plan.id, onError]);
 
@@ -181,7 +182,7 @@ export default function SeedUploadCard({
       </div>
       {seededCount > 0 && (
         <p className="mb-4 text-sm text-[#71717a]">
-          {seededCount} clip{seededCount === 1 ? "" : "s"} ready.
+          {formatCount(seededCount, "clip")} ready.
         </p>
       )}
       {done === "activated_empty" && (
@@ -192,7 +193,7 @@ export default function SeedUploadCard({
       )}
       {done === "failed" && (
         <div className="mb-4 rounded border border-zinc-200 bg-[#ffffff] px-4 py-3 text-sm text-[#3f3f46]">
-          Something went wrong matching your clips. Try uploading again.
+          We couldn&apos;t match these clips to your content plan. Upload them again or choose different clips.
         </div>
       )}
       <input

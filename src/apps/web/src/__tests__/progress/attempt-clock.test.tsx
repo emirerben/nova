@@ -132,7 +132,7 @@ describe("ProgressTheater band revival on re-render", () => {
     // failure must never claim the last phase, e.g. "Assembling", is still
     // in progress) — the un-collapse assertion below is what this test cares
     // about; the exact failed-state copy is asserted separately.
-    const revived = bandOf(screen.getByRole("heading", { name: "This one didn't render" }));
+    const revived = bandOf(screen.getByRole("heading", { name: "This video didn’t render" }));
     expect(revived.className).not.toMatch(/h-0/);
     jest.useRealTimers();
   });

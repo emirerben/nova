@@ -158,7 +158,7 @@ describe("detailLine", () => {
       { variant_id: "original_text", render_status: null },
     ];
     const line = detailLine(variants);
-    expect(line).toContain("Song Text");
+    expect(line).toContain("Song text");
     expect(line).toContain("Rendering");
   });
 

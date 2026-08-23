@@ -428,7 +428,7 @@ describe("OverlayCardPopover — fullscreen stack", () => {
 
     expect(screen.getByText("Full width")).toBeInTheDocument();
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Make full screen →" }));
+      fireEvent.click(screen.getByRole("button", { name: "Make full screen" }));
     });
     expect(onUpdateCard).toHaveBeenCalledWith("ov-1", { display_mode: "fullscreen" });
     unmount();
@@ -437,7 +437,7 @@ describe("OverlayCardPopover — fullscreen stack", () => {
     render(<OverlayLane {...laneProps({ overlayCards: [makeCard({ scale: 0.5 })] })} />);
     openPopover("ov-1");
     expect(screen.getByText("50%")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Make full screen →" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Make full screen" })).toBeNull();
   });
 });
 
@@ -791,7 +791,7 @@ describe("OverlayLane — fullscreenPromoteEnabled flag (R2/C8)", () => {
     expect(screen.getByRole("button", { name: "PiP" })).toBeInTheDocument();
     // Both NEW promote affordances are gone.
     expect(screen.queryByRole("button", { name: "Full screen" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Make full screen →" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Make full screen" })).toBeNull();
   });
 
   it("flag off makes the F-promote shortcut a no-op on a pip chip", () => {
@@ -842,7 +842,7 @@ describe("OverlayLane — fullscreenPromoteEnabled flag (R2/C8)", () => {
     );
     openPopover("ov-1");
     expect(screen.getByRole("button", { name: "Full screen" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Make full screen →" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Make full screen" })).toBeInTheDocument();
   });
 });
 

@@ -107,7 +107,7 @@ describe("CopilotDrawer — steps feed flag gate", () => {
       />,
     );
     expect(screen.getByText("32px → 44px")).toBeInTheDocument();
-    expect(screen.queryByRole("list", { name: "Nova AI changes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Kria AI changes" })).not.toBeInTheDocument();
   });
 
   it("flag on: applied ops render as compact rows, rejected ops as dashed/failed rows", () => {
@@ -121,7 +121,7 @@ describe("CopilotDrawer — steps feed flag gate", () => {
       />,
     );
     expect(screen.queryByText("32px → 44px")).not.toBeInTheDocument();
-    const list = screen.getByRole("list", { name: "Nova AI changes" });
+    const list = screen.getByRole("list", { name: "Kria AI changes" });
     expect(within(list).getByText("Hook size 32px → 44px")).toBeInTheDocument();
     expect(within(list).getByText("Hook color Ink → Lime")).toBeInTheDocument();
     expect(
@@ -270,7 +270,7 @@ describe("CopilotDrawer — steps feed flag gate", () => {
       ).toBeInTheDocument();
       expect(screen.queryByText("Intro layout")).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
-      expect(screen.queryByRole("list", { name: "Nova AI changes" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("list", { name: "Kria AI changes" })).not.toBeInTheDocument();
     });
 
     it("renders the live compact feed once steps arrive from the poll", () => {
@@ -287,7 +287,7 @@ describe("CopilotDrawer — steps feed flag gate", () => {
           ]}
         />,
       );
-      const list = screen.getByRole("list", { name: /nova ai steps/i });
+      const list = screen.getByRole("list", { name: /how kria made this video/i });
       expect(within(list).getByText("Read your current cut")).toBeInTheDocument();
       expect(within(list).getByText("Rendering your new intro")).toBeInTheDocument();
       expect(screen.queryByText(/can't be undone from chat/i)).not.toBeInTheDocument();

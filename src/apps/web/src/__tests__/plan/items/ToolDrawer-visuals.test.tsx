@@ -95,7 +95,7 @@ describe("ToolDrawer visual blocks", () => {
     renderVisuals({ onSaveVisualAssetContext });
 
     expect(screen.getAllByText("You")[0]).toBeInTheDocument();
-    expect(screen.getAllByText("Nova")[0]).toBeInTheDocument();
+    expect(screen.getAllByText("Kria")[0]).toBeInTheDocument();
     expect(screen.getByText("Nova frame 0")).toBeInTheDocument();
 
     fireEvent.click(screen.getAllByRole("button", { name: "Add" })[0]);

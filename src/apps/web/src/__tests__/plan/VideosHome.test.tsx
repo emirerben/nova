@@ -82,9 +82,9 @@ describe("WorkspaceHome (basic home)", () => {
   it("leads with the create block linking to /plan/new", async () => {
     renderHome();
     expect(
-      screen.getByRole("heading", { name: "Make a new video." }),
+      screen.getByRole("heading", { name: "Create a new video" }),
     ).toBeInTheDocument();
-    const cta = screen.getByRole("link", { name: "New video" });
+    const cta = screen.getByRole("link", { name: "Create a video" });
     expect(cta).toHaveAttribute("href", "/plan/new");
     await waitFor(() => expect(mockListMyJobs).toHaveBeenCalled());
   });
@@ -97,12 +97,15 @@ describe("WorkspaceHome (basic home)", () => {
     renderHome();
     expect(await screen.findByTestId("tile-j1")).toBeInTheDocument();
     expect(screen.getByTestId("tile-j2")).toBeInTheDocument();
-    expect(screen.getByText("Past edits")).toBeInTheDocument();
+    expect(screen.getByText("Your videos")).toBeInTheDocument();
   });
 
   it("shows the quiet empty line with zero jobs — no ideas ledger anywhere", async () => {
     renderHome();
-    expect(await screen.findByText("Your edits will live here.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Your finished videos will appear here."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Create your first video to get started.")).toBeInTheDocument();
     expect(screen.queryByText(/Pitch your first idea/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Generate with AI/)).not.toBeInTheDocument();
   });
@@ -119,9 +122,9 @@ describe("WorkspaceHome (basic home)", () => {
   it("notes a still-generating plan without blocking creation", async () => {
     renderHome(makePlan({ plan_status: "generating" }));
     expect(
-      await screen.findByText(/still setting up your plan/),
+      await screen.findByText(/content plan is still being prepared/),
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "New video" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Create a video" })).toBeInTheDocument();
   });
 
   it("pages through more jobs via the cursor", async () => {
@@ -129,16 +132,20 @@ describe("WorkspaceHome (basic home)", () => {
       .mockResolvedValueOnce({ jobs: [job("j1")], next_cursor: "c2" })
       .mockResolvedValueOnce({ jobs: [job("j2")], next_cursor: null });
     renderHome();
-    const more = await screen.findByRole("button", { name: "Load more" });
+    const more = await screen.findByRole("button", { name: "Load more videos" });
     more.click();
     expect(await screen.findByTestId("tile-j2")).toBeInTheDocument();
     expect(mockListMyJobs).toHaveBeenLastCalledWith({ cursor: "c2" });
-    expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Load more videos" }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders an Integrations section with the TikTok card under the grid (release rails target /plan#tiktok)", async () => {
     const { container } = renderHome();
-    expect(await screen.findByRole("heading", { name: "Integrations" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Connected accounts" }),
+    ).toBeInTheDocument();
     expect(container.querySelector("#tiktok")).toBeInTheDocument();
     expect(screen.getByTestId("tiktok-card")).toBeInTheDocument();
     await waitFor(() => expect(mockListMyJobs).toHaveBeenCalled());
@@ -148,7 +155,9 @@ describe("WorkspaceHome (basic home)", () => {
     mockTikTokAvailable = false;
     renderHome();
     await waitFor(() => expect(mockListMyJobs).toHaveBeenCalled());
-    expect(screen.queryByRole("heading", { name: "Integrations" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Connected accounts" }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByTestId("tiktok-card")).not.toBeInTheDocument();
   });
 });

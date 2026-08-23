@@ -5,6 +5,7 @@ import { InkButton } from "@/components/ui/InkButton";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { fmtTime } from "@/hooks/useAudioRecorder";
+import { formatDurationWords } from "@/lib/ux-copy-format";
 import {
   generateTranscriptScript,
   saveTranscriptScript,
@@ -94,9 +95,7 @@ export default function ScriptStep({
       duration_s: durationS,
     })
       .then(adopt)
-      .catch((e: unknown) =>
-        setError(e instanceof Error ? e.message : "Couldn't write the script."),
-      )
+      .catch(() => setError("We couldn't write your narration. Try again."))
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -113,8 +112,8 @@ export default function ScriptStep({
         duration_s: durationS,
       });
       adopt(res);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't rewrite the script.");
+    } catch {
+      setError("We couldn't rewrite your narration. Try again.");
     } finally {
       setRewriting(false);
     }
@@ -144,7 +143,7 @@ export default function ScriptStep({
     return (
       <div className="flex items-center gap-2 py-10">
         <span className="h-1.5 w-1.5 motion-safe:animate-ping rounded-full bg-lime-600" />
-        <span className="text-sm text-[#71717a]">Writing your script…</span>
+        <span className="text-sm text-[#71717a]">Writing your narration…</span>
       </div>
     );
   }
@@ -176,11 +175,11 @@ export default function ScriptStep({
     <div className="max-w-2xl">
       <div className="flex items-center justify-between gap-4">
         <p className="text-xs font-medium uppercase tracking-wide text-lime-700">
-          Your script
+          Your narration script
         </p>
         {/* Read-time badge — lime soft cell (DESIGN §2 pill / §-teleprompter) */}
         <span className="inline-flex items-center rounded-full border border-lime-200 bg-lime-50 px-3 py-1 text-xs font-medium text-lime-800">
-          ≈ {fmtTime(script.readTimeS)} to read
+          About {formatDurationWords(script.readTimeS)} to read
         </span>
       </div>
 
@@ -190,7 +189,7 @@ export default function ScriptStep({
           onChange={(e) => setDraft(e.target.value)}
           onBlur={() => void commitDraft()}
           autoFocus
-          aria-label="Edit your script"
+          aria-label="Edit your narration"
           rows={Math.max(6, draft.split("\n").length + 1)}
           className="min-h-0 resize-none border-0 bg-transparent p-0 font-display text-xl leading-relaxed text-[#0c0c0e] focus-visible:border-transparent focus-visible:ring-0"
         />
@@ -198,7 +197,7 @@ export default function ScriptStep({
 
       {staleTake && (
         <p className="mt-3 text-sm text-[#71717a]">
-          Heads up — your take was for the previous script. Record again to match this
+          Heads up — your take was for the previous narration. Record again to match this
           version.
         </p>
       )}
@@ -213,7 +212,7 @@ export default function ScriptStep({
             })()
           }
         >
-          Record this →
+          Record this script
         </InkButton>
         <Button
           type="button"
@@ -222,7 +221,7 @@ export default function ScriptStep({
           disabled={rewriting}
           className="h-auto p-0 text-sm font-normal text-[#71717a] underline underline-offset-4 hover:text-[#0c0c0e] hover:no-underline"
         >
-          {rewriting ? "Rewriting…" : "Rewrite"}
+          {rewriting ? "Rewriting…" : "Rewrite narration"}
         </Button>
       </div>
     </div>

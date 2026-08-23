@@ -127,7 +127,7 @@ describe("ShotSlotUploader — idle slot render", () => {
     expect(screen.getByText("creator to camera")).toBeInTheDocument();
     expect(screen.getByText("close-up product")).toBeInTheDocument();
     // Upload copy on idle slots.
-    expect(screen.getAllByText("Upload this shot — or drag a file here").length).toBe(2);
+    expect(screen.getAllByText("Drop a video here or choose a file").length).toBe(2);
   });
 
   it("shows '0 of N filmed' muted text when nothing is filled", () => {
@@ -179,8 +179,8 @@ describe("ShotSlotUploader — shot text editing sentinel", () => {
 
     expect(screen.getByText("legacy opener")).toBeInTheDocument();
     expect(screen.getByText("legacy detail")).toBeInTheDocument();
-    expect(screen.queryByPlaceholderText("What to film")).toBeNull();
-    expect(screen.queryByPlaceholderText("How (optional)")).toBeNull();
+    expect(screen.queryByPlaceholderText("What to capture")).toBeNull();
+    expect(screen.queryByPlaceholderText("How to capture it (optional)")).toBeNull();
     expect(screen.queryByText("Save")).toBeNull();
     expect(screen.queryByText("Cancel")).toBeNull();
   });
@@ -274,7 +274,7 @@ describe("ShotSlotUploader — label softening (D10)", () => {
     // s2 is idle but softened.
     expect(screen.getByText("Optional — add if you filmed it")).toBeInTheDocument();
     // s1 is filled, so the strong copy is gone.
-    expect(screen.queryByText("Upload this shot — or drag a file here")).not.toBeInTheDocument();
+    expect(screen.queryByText("Drop a video here or choose a file")).not.toBeInTheDocument();
   });
 });
 
@@ -367,7 +367,7 @@ describe("ShotSlotUploader — uploading / committing states", () => {
 });
 
 describe("ShotSlotUploader — error state", () => {
-  it("shows error chip with 'Upload failed · Retry' on upload failure", async () => {
+  it("shows the accepted file types and a working retry action on upload failure", async () => {
     mockRequestUploadUrls.mockRejectedValue(new Error("network error"));
 
     const item = makeItem({ filming_guide: [shot({ shot_id: "s1" })] });
@@ -379,7 +379,8 @@ describe("ShotSlotUploader — error state", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Upload failed · Retry")).toBeInTheDocument();
+      expect(screen.getByText("Upload failed. Use an MP4 or MOV video.")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Retry upload" })).toBeInTheDocument();
     });
   });
 
@@ -397,7 +398,7 @@ describe("ShotSlotUploader — error state", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Upload failed · Retry")).toBeInTheDocument();
+      expect(screen.getByText("Upload failed. Use an MP4 or MOV video.")).toBeInTheDocument();
     });
 
     // Error chip must use zinc bg-zinc-50, NOT bg-lime-50.
@@ -465,7 +466,7 @@ describe("ShotSlotUploader — filled chip after successful upload", () => {
     });
 
     // Slot back to idle.
-    expect(screen.getByText("Upload this shot — or drag a file here")).toBeInTheDocument();
+    expect(screen.getByText("Drop a video here or choose a file")).toBeInTheDocument();
   });
 
   it("calls attachClips with the correct assignments payload", async () => {

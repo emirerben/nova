@@ -82,12 +82,12 @@ describe("ModuleDetailPanel", () => {
     expect(link).toHaveAttribute("target", "_blank");
   });
 
-  test("shows 'No recent commits' when no commit data", () => {
+  test("shows 'No recent commits.' when no commit data", () => {
     render(
       <ModuleDetailPanel module={testModule} onClose={jest.fn()} viewMode="technical" />
     );
 
-    expect(screen.getByText("No recent commits")).toBeInTheDocument();
+    expect(screen.getByText("No recent commits.")).toBeInTheDocument();
   });
 
   test("shows 'No open issues' with checkmark when issue count is 0", () => {
@@ -98,11 +98,11 @@ describe("ModuleDetailPanel", () => {
     expect(screen.getByText(/No open issues/)).toBeInTheDocument();
   });
 
-  test("shows 'No files listed' for module with empty files array", () => {
+  test("shows 'No files are listed.' for module with empty files array", () => {
     render(
       <ModuleDetailPanel module={emptyFilesModule} onClose={jest.fn()} viewMode="technical" />
     );
 
-    expect(screen.getByText("No files listed")).toBeInTheDocument();
+    expect(screen.getByText("No files are listed.")).toBeInTheDocument();
   });
 });

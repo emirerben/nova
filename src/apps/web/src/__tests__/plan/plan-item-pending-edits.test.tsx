@@ -540,8 +540,12 @@ describe("Frozen-frame veil (rendering state on the hero)", () => {
 
     // Recovery UI is showing and its actions are reachable (not covered by
     // the veil)…
-    expect(screen.getByText("Preview unavailable")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Try video again" })).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "The preview couldn't load, but your finished video is safe. Try the preview again or download the video.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try preview again" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Download video" })).toBeInTheDocument();
     // …and the veil itself is gone, not just visually — it's unmounted.
     expect(screen.queryByLabelText("Rendering new version")).toBeNull();
@@ -676,7 +680,11 @@ describe("Veil vs theater dedup — veil is the sole rendering voice while visib
 
     // Recovery UI replaces the frozen hero video, the veil unmounts, and the
     // theater — now the only rendering indicator — must reappear.
-    expect(screen.getByText("Preview unavailable")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "The preview couldn't load, but your finished video is safe. Try the preview again or download the video.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByLabelText("Rendering new version")).toBeNull();
     expect((await screen.findAllByText(RENDER_VARIANTS_LABEL)).length).toBeGreaterThan(0);
   });

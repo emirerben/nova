@@ -8,6 +8,7 @@ const MAX_CLIPS = 10;
 
 interface UploadedClip {
   name: string;
+  file: File;
   gcsPath: string;
   status: "uploading" | "done" | "error";
   objectUrl?: string;
@@ -23,6 +24,30 @@ export function EditUploadStep({
   const [clips, setClips] = useState<UploadedClip[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const uploadClip = useCallback(async (file: File, objectUrl: string) => {
+    setClips((prev) =>
+      prev.map((clip) =>
+        clip.objectUrl === objectUrl ? { ...clip, status: "uploading" } : clip,
+      ),
+    );
+    try {
+      const result = await uploadGenerativeClip(file);
+      setClips((prev) =>
+        prev.map((clip) =>
+          clip.objectUrl === objectUrl
+            ? { ...clip, gcsPath: result.gcs_path, status: "done" }
+            : clip,
+        ),
+      );
+    } catch {
+      setClips((prev) =>
+        prev.map((clip) =>
+          clip.objectUrl === objectUrl ? { ...clip, status: "error" } : clip,
+        ),
+      );
+    }
+  }, []);
+
   const handleFiles = useCallback(
     async (files: FileList) => {
       const toAdd = Array.from(files).slice(0, MAX_CLIPS - clips.length);
@@ -30,32 +55,16 @@ export function EditUploadStep({
         const objectUrl = URL.createObjectURL(file);
         const pending: UploadedClip = {
           name: file.name,
+          file,
           gcsPath: "",
           status: "uploading",
           objectUrl,
         };
         setClips((prev) => [...prev, pending]);
-        try {
-          const result = await uploadGenerativeClip(file);
-          setClips((prev) =>
-            prev.map((c) =>
-              c.name === file.name && c.status === "uploading"
-                ? { ...c, gcsPath: result.gcs_path, status: "done" }
-                : c,
-            ),
-          );
-        } catch {
-          setClips((prev) =>
-            prev.map((c) =>
-              c.name === file.name && c.status === "uploading"
-                ? { ...c, status: "error" }
-                : c,
-            ),
-          );
-        }
+        await uploadClip(file, objectUrl);
       }
     },
-    [clips.length],
+    [clips.length, uploadClip],
   );
 
   const readyClips = clips
@@ -69,7 +78,7 @@ export function EditUploadStep({
       <div className="border-l-4 border-lime-600 pl-4">
         <p className="font-display text-2xl text-[#0c0c0e]">Add your clips</p>
         <p className="text-sm text-[#71717a] mt-1">
-          Up to {MAX_CLIPS} videos · from your camera roll
+          You can add up to {MAX_CLIPS} clips from your camera roll.
         </p>
       </div>
 
@@ -79,6 +88,7 @@ export function EditUploadStep({
         type="file"
         multiple
         accept="video/*"
+        aria-label="Add video clips"
         className="sr-only"
         onChange={(e) => {
           if (e.target.files) void handleFiles(e.target.files);
@@ -92,13 +102,13 @@ export function EditUploadStep({
           onClick={() => inputRef.current?.click()}
           className="h-auto min-h-[44px] w-full rounded-2xl border-2 border-dashed border-[#e4e4e7] bg-[#ffffff] py-10 text-center hover:border-lime-600 hover:bg-lime-50 focus-visible:ring-lime-600"
         >
-          <p className="text-[#71717a]">+ Add videos</p>
+          <p className="text-[#71717a]">Add videos</p>
         </Button>
       )}
 
       {atMax && (
         <p className="text-xs text-amber-700 text-center">
-          10 clips max — remove one to add more
+          You can add up to 10 clips. Remove one to add another.
         </p>
       )}
 
@@ -124,16 +134,17 @@ export function EditUploadStep({
                 </div>
               )}
               {clip.status === "error" && (
-                <div className="absolute inset-0 bg-red-900/40 flex items-center justify-center">
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-red-950/70 p-2 text-center" role="alert">
+                  <p className="text-xs text-white">
+                    {clip.name} couldn&apos;t upload. Use an MP4 or MOV video.
+                  </p>
                   <Button
                     type="button"
                     variant="ghost"
-                    onClick={() =>
-                      setClips((prev) => prev.filter((_, idx) => idx !== i))
-                    }
+                    onClick={() => void uploadClip(clip.file, clip.objectUrl ?? "")}
                     className="h-auto min-h-11 min-w-11 p-0 text-xs text-white underline hover:bg-transparent hover:text-white sm:min-h-0 sm:min-w-0"
                   >
-                    retry
+                    Retry upload
                   </Button>
                 </div>
               )}
@@ -162,7 +173,7 @@ export function EditUploadStep({
             onClick={onBack}
             className="h-auto min-h-[44px] rounded px-4 text-sm text-[#71717a] hover:bg-transparent hover:text-[#0c0c0e] focus-visible:ring-lime-600"
           >
-            ← back
+            Back
           </Button>
         )}
         <Button
@@ -171,7 +182,7 @@ export function EditUploadStep({
           disabled={readyPaths.length === 0}
           className="h-auto min-h-[44px] flex-1 rounded-xl bg-lime-700 py-3 font-medium text-white hover:bg-lime-800 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:ring-lime-600"
         >
-          Make my edit →
+          Create video
         </Button>
       </div>
     </div>

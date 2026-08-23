@@ -325,7 +325,7 @@ describe("EditorShell — Lyrics toggle ON (elements model)", () => {
       "This song doesn't have synced lyrics",
     );
     expect(mockToast).toHaveBeenCalledWith(
-      "This song doesn't have synced lyrics",
+      "This song doesn't have synced lyrics.",
       expect.objectContaining({ duration: 2600 }),
     );
   });

@@ -165,20 +165,20 @@ export default function TranscriptTakeoverPage() {
     body = (
       <div className="max-w-xl">
         <p className="mb-3 text-xs font-medium uppercase tracking-wide text-lime-700">
-          Get a transcript
+          Write narration
         </p>
         <h1 className="font-display text-3xl leading-snug text-[#0c0c0e]">
-          This item isn&apos;t set up for a voiceover yet.
+          This item isn&apos;t set up for narration yet.
         </h1>
         <p className="mt-4 text-[#71717a]">
-          Switch it to Voiceover on the item page, then come back to write your script.
+          Choose Voiceover story on the item page, then come back to write your narration.
         </p>
         <div className="mt-8">
           <Link
             href={backToItem}
             className="inline-flex min-h-[44px] items-center rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white transition-opacity hover:opacity-80"
           >
-            Back to item →
+            Back to item
           </Link>
         </div>
       </div>
@@ -267,7 +267,7 @@ export default function TranscriptTakeoverPage() {
             href={backToItem}
             className="text-sm text-[#71717a] underline underline-offset-4 hover:text-[#0c0c0e]"
           >
-            ← Back to item
+            Back to item
           </Link>
         </div>
 

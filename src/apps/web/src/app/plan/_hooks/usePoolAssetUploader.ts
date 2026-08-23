@@ -247,9 +247,7 @@ export function usePoolAssetUploader({
       if (isUnavailable(err)) onUnavailable();
       upload.stage = "failed";
       upload.failedStage = stage;
-      const actionableClientError =
-        err instanceof PlanApiError && err.status < 500 && typeof err.message === "string";
-      upload.message = actionableClientError ? err.message : stageMessage(stage);
+      upload.message = stageMessage(stage);
       upload.retryable =
         err instanceof FeatureDisabledError
           ? false

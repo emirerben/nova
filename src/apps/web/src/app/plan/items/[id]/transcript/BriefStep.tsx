@@ -106,7 +106,7 @@ export default function BriefStep({
     } catch (e) {
       // Networked failure of the analyze kickoff itself — still let them write
       // from the brief, but surface a quiet note.
-      setSoftNote("We couldn't read your footage — we'll write from your brief.");
+      setSoftNote("We couldn't read your videos, so we'll write from your brief.");
       onDone({ brief: trimmed, durationS: fallbackDurationS, footageSummary: null });
       void e;
     } finally {
@@ -119,17 +119,17 @@ export default function BriefStep({
     return (
       <div className="max-w-xl">
         <p className="mb-3 text-xs font-medium uppercase tracking-wide text-lime-700">
-          Get a transcript
+          Plan your narration
         </p>
         <h1 className="font-display text-3xl leading-snug text-[#0c0c0e]">
-          Add your clips first, and Kria will write what to say over them.
+          Add your videos first, and Kria will write narration to match them.
         </h1>
         <div className="mt-8">
           <Link
             href={`/plan/items/${itemId}`}
             className="inline-flex min-h-[44px] items-center rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white transition-opacity hover:opacity-80"
           >
-            Add clips →
+            Add videos
           </Link>
         </div>
       </div>
@@ -142,7 +142,7 @@ export default function BriefStep({
       <div className="max-w-xl">
         <div className="flex items-center gap-2 py-2" role="status" aria-live="polite">
           <span className="h-1.5 w-1.5 motion-safe:animate-ping rounded-full bg-lime-600" />
-          <span className="text-sm text-[#71717a]">Reading your footage…</span>
+          <span className="text-sm text-[#71717a]">Reading your videos…</span>
         </div>
         <div className="mt-8 h-24 w-full motion-safe:animate-pulse rounded-2xl border border-zinc-200 bg-zinc-50" />
       </div>
@@ -152,14 +152,14 @@ export default function BriefStep({
   return (
     <div className="max-w-xl">
       <p className="mb-3 text-xs font-medium uppercase tracking-wide text-lime-700">
-        Get a transcript
+        Plan your narration
       </p>
       <h1 className="font-display text-3xl leading-snug text-[#0c0c0e] sm:text-4xl">
-        What&apos;s this video about?
+        What should this video say?
       </h1>
       <p className="mt-4 text-[#71717a]">
-        A sentence or two is plenty — Kria reads your footage and writes what to say
-        over it.
+        A sentence or two is enough. Kria reads your footage and writes narration to
+        match it.
       </p>
 
       <Textarea
@@ -168,7 +168,7 @@ export default function BriefStep({
         rows={4}
         autoFocus
         placeholder="e.g. My morning routine as a new dad — the chaos and the quiet moments."
-        aria-label="What's this video about"
+        aria-label="What should this video say?"
         onKeyDown={(e) => {
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
             e.preventDefault();
@@ -182,7 +182,7 @@ export default function BriefStep({
 
       <div className="mt-8">
         <InkButton onClick={() => void handleContinue()} disabled={!brief.trim()}>
-          Continue →
+          Review footage
         </InkButton>
       </div>
     </div>

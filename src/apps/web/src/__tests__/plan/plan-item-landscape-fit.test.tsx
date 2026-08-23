@@ -240,10 +240,13 @@ beforeAll(() => {
 });
 
 function uploadFile() {
-  const input = screen.getByLabelText("Upload video clips for this idea") as HTMLInputElement;
+  const input = screen
+    .getAllByLabelText("Drop videos here or choose files")
+    .find((element): element is HTMLInputElement => element instanceof HTMLInputElement);
+  expect(input).toBeDefined();
   const file = new File(["x"], "clip.mp4", { type: "video/mp4" });
-  Object.defineProperty(input, "files", { value: [file] });
-  fireEvent.change(input);
+  Object.defineProperty(input!, "files", { value: [file] });
+  fireEvent.change(input!);
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

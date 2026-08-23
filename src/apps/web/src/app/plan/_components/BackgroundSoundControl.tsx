@@ -42,7 +42,7 @@ export default function BackgroundSoundControl({
       setError(null);
       setPlanItemNarratedBedLevel(itemId, variantId, value)
         .then(() => onCommitted?.())
-        .catch((e) => setError(e instanceof Error ? e.message : "Couldn't update background sound"))
+        .catch(() => setError("We couldn't update the background sound. Check your connection and try again."))
         .finally(() => setSaving(false));
     },
     [itemId, variantId, onCommitted],

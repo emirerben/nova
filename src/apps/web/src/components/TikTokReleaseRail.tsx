@@ -302,7 +302,7 @@ function republishWouldRace(publication: TikTokPublication, simulation: boolean)
 function buildFailureNote(publication: TikTokPublication): { heading: string; detail: string } {
   return {
     heading: "Last attempt failed",
-    detail: publication.failure_detail ?? "TikTok could not publish this post. Nothing was posted.",
+    detail: "TikTok couldn't publish this video. Nothing was posted. Try again when you're ready.",
   };
 }
 
@@ -427,7 +427,7 @@ function ReleasePreparationPane({
               )}
               {simulation && (
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  Connected-state preview. Nothing will be sent to TikTok.
+                  Preview of your connected account. Nothing will be sent to TikTok.
                 </p>
               )}
               {!canPublish && !hasContentPostingAccess && (
@@ -593,7 +593,7 @@ function PublicationReceipt({
           </ol>
           <p className="mt-3 text-sm leading-relaxed text-[#71717a]">
             This only works in the TikTok mobile app. It will not appear on tiktok.com in a
-            desktop browser, and it will not appear under Profile → Drafts.
+            desktop browser, and it will not appear in Profile drafts.
           </p>
           {onDownload && (
             <div className="mt-3">
@@ -839,7 +839,7 @@ function publicationStatus(publication: TikTokPublication) {
   if (publication.processing_status === "submission_unknown") return { title: "Check TikTok before retrying", detail: "TikTok did not confirm whether it received the delivery.", short: "Check TikTok" };
   if (publication.processing_status === "failed") return publication.retryable
     ? { title: "TikTok is retrying", detail: "Kria is retrying this post without creating a duplicate.", short: "Retrying" }
-    : { title: "Publishing failed", detail: publication.failure_detail ?? "TikTok could not publish this post.", short: "Failed" };
+    : { title: "Publishing failed", detail: "TikTok couldn't publish this video. Nothing was posted. Try again when you're ready.", short: "Failed" };
   if (publication.processing_status === "complete") return { title: "TikTok is reviewing your post", detail: "The upload finished and TikTok moderation is pending.", short: "Reviewing" };
   return { title: "Sending to TikTok", detail: "TikTok is processing your post. This may take a few moments.", short: "Sending" };
 }

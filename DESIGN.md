@@ -3,6 +3,7 @@
 This document is the **calibration target** for all design reviews and the token source for implementation.
 Consumers: `/plan-design-review` and `/design-review` skills, implementers, and AI agents.
 **Rule:** any change to the design system must update this document in the same PR. The doc codifies shipped reality — open a new PR to change the system, then update the doc in that same PR.
+Product language is governed by [`docs/UX_COPY.md`](docs/UX_COPY.md); this file remains authoritative for visual presentation.
 
 ---
 

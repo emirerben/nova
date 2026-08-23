@@ -111,6 +111,7 @@ describe("ArchitectureMap", () => {
     // Nodes should render even with null issue counts (the mock returns null)
     expect(screen.getByTestId("node-upload")).toBeInTheDocument();
     expect(screen.getByTestId("node-processing")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Loading live activity.");
   });
 
   test("click L1 node expands to show L2 children", () => {
@@ -137,8 +138,8 @@ describe("ArchitectureMap", () => {
     fireEvent.click(screen.getByTestId("node-processing"));
     expect(screen.getByTestId("node-probe")).toBeInTheDocument();
 
-    // Click "Back to L1" button
-    const backButton = screen.getByText("← Back to L1");
+    // Click the overview button
+    const backButton = screen.getByText("Back to overview");
     fireEvent.click(backButton);
 
     // Should be back to L1 view

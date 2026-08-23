@@ -343,7 +343,10 @@ describe("PlanItemPage — masonry collage item UX", () => {
       ).toBeInTheDocument();
       expect(screen.queryByTestId("shot-slot-uploader")).not.toBeInTheDocument();
       expect(
-        screen.getByLabelText("Upload video clips for this idea").getAttribute("accept"),
+        screen
+          .getAllByLabelText("Drop videos here or choose files")
+          .find((element) => element.tagName === "INPUT")
+          ?.getAttribute("accept"),
       ).toContain("image/webp");
     },
   );
@@ -441,8 +444,8 @@ describe("PlanItemPage — ProgressTheater renders with phase data", () => {
       render(<PlanItemPage />);
     });
 
-    expect(screen.getByText("This one didn't render")).toBeInTheDocument();
-    const retryButton = screen.getByRole("button", { name: "Try again" });
+    expect(screen.getByText("Your setup is saved. Retry the render without uploading again.")).toBeInTheDocument();
+    const retryButton = screen.getByRole("button", { name: "Retry render" });
 
     await act(async () => {
       fireEvent.click(retryButton);
@@ -583,7 +586,7 @@ describe("PlanItemPage — ProgressTheater renders with phase data", () => {
     });
 
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
-    expect(screen.getByText("This one didn't render")).toBeInTheDocument();
+    expect(screen.getByText("Kria couldn’t finish this video")).toBeInTheDocument();
     expect(document.querySelector("[data-variant-preview]")).toBeNull();
   });
 });
@@ -757,8 +760,10 @@ describe("PlanItemPage — result cleanup", () => {
     });
     fireEvent.error(view!.container.querySelector("video")!);
 
-    expect(screen.getByText("Preview unavailable")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Try video again" })).toBeInTheDocument();
+    expect(
+      screen.getByText(/The preview couldn't load, but your finished video is safe/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try preview again" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Download video" })).toBeInTheDocument();
   });
 
@@ -1035,7 +1040,7 @@ describe("PlanItemPage — conformance verdict tile (D10 redesign)", () => {
     });
 
     // Generate button should be enabled — off_brief verdict never blocks it.
-    const generateBtn = screen.getAllByRole("button", { name: /generate video/i })[0];
+    const generateBtn = screen.getAllByRole("button", { name: /create video/i })[0];
     expect(generateBtn).not.toBeDisabled();
   });
 
@@ -1063,7 +1068,7 @@ describe("PlanItemPage — conformance verdict tile (D10 redesign)", () => {
     });
 
     await act(async () => {
-      fireEvent.click(screen.getAllByRole("button", { name: /generate video/i })[0]);
+      fireEvent.click(screen.getAllByRole("button", { name: /create video/i })[0]);
     });
 
     await waitFor(() => {
@@ -1105,7 +1110,7 @@ describe("PlanItemPage — guided edit Generate gating", () => {
 
   it.each([
     [null, "Plan this edit before generating."],
-    [makeGuidedProposal("analyzing"), "Nova is still planning this edit."],
+    [makeGuidedProposal("analyzing"), "Kria is still planning this edit."],
     [makeGuidedProposal("draft"), "Review and approve the edit plan first."],
     [makeGuidedProposal("stale"), "Your media changed — plan the edit again."],
   ])("blocks Generate until the proposal is current and approved", async (proposal, hint) => {
@@ -1120,7 +1125,7 @@ describe("PlanItemPage — guided edit Generate gating", () => {
       render(<PlanItemPage />);
     });
 
-    expect(screen.getAllByRole("button", { name: /generate video/i })[0]).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: /create video/i })[0]).toBeDisabled();
     expect(screen.getAllByText(hint)[0]).toBeInTheDocument();
   });
 
@@ -1136,7 +1141,7 @@ describe("PlanItemPage — guided edit Generate gating", () => {
       render(<PlanItemPage />);
     });
 
-    expect(screen.getAllByRole("button", { name: /generate video/i })[0]).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: /create video/i })[0]).toBeDisabled();
     expect(screen.getAllByText("Plan this edit before generating.")[0]).toBeInTheDocument();
   });
 
@@ -1154,9 +1159,9 @@ describe("PlanItemPage — guided edit Generate gating", () => {
     });
 
     // Clicking just works — Kria designs the edit, no planner step required.
-    expect(screen.getAllByRole("button", { name: /generate video/i })[0]).toBeEnabled();
+    expect(screen.getAllByRole("button", { name: /create video/i })[0]).toBeEnabled();
     await act(async () => {
-      fireEvent.click(screen.getAllByRole("button", { name: /generate video/i })[0]);
+      fireEvent.click(screen.getAllByRole("button", { name: /create video/i })[0]);
     });
     await waitFor(() => {
       expect(mockGeneratePlanItem).toHaveBeenCalledWith("test-item-id");
@@ -1188,10 +1193,10 @@ describe("PlanItemPage — guided edit Generate gating", () => {
 
     expect(screen.queryByText("Review and approve the edit plan first.")).toBeNull();
     expect(screen.queryByTestId("edit-proposal-card")).toBeNull();
-    expect(screen.getAllByRole("button", { name: /generate video/i })[0]).toBeEnabled();
+    expect(screen.getAllByRole("button", { name: /create video/i })[0]).toBeEnabled();
 
     await act(async () => {
-      fireEvent.click(screen.getAllByRole("button", { name: /generate video/i })[0]);
+      fireEvent.click(screen.getAllByRole("button", { name: /create video/i })[0]);
     });
     await waitFor(() => {
       expect(mockGeneratePlanItem).toHaveBeenCalledWith("test-item-id");
@@ -1211,7 +1216,7 @@ describe("PlanItemPage — guided edit Generate gating", () => {
     });
 
     // No clips, no approval, no known pool media yet -> blocked.
-    expect(screen.getAllByRole("button", { name: /generate video/i })[0]).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: /create video/i })[0]).toBeDisabled();
 
     // AssetPool now lives behind the "Visuals" tab (Lane G) — switch to it
     // before its mocked test hook is reachable. Radix's Tabs.Trigger needs a
@@ -1222,7 +1227,7 @@ describe("PlanItemPage — guided edit Generate gating", () => {
     });
 
     // AssetPool reported a ready pool asset up -> the gate now sees media.
-    expect(screen.getAllByRole("button", { name: /generate video/i })[0]).toBeEnabled();
+    expect(screen.getAllByRole("button", { name: /create video/i })[0]).toBeEnabled();
   });
 
   it("shows the designing hint while auto-design is drafting, but stays enabled", async () => {
@@ -1237,7 +1242,7 @@ describe("PlanItemPage — guided edit Generate gating", () => {
       render(<PlanItemPage />);
     });
 
-    expect(screen.getAllByRole("button", { name: /generate video/i })[0]).toBeEnabled();
+    expect(screen.getAllByRole("button", { name: /create video/i })[0]).toBeEnabled();
     expect(screen.getAllByText("Kria is designing your edit…")[0]).toBeInTheDocument();
   });
 
@@ -1259,7 +1264,7 @@ describe("PlanItemPage — guided edit Generate gating", () => {
     await act(async () => {});
 
     await act(async () => {
-      fireEvent.click(screen.getAllByRole("button", { name: /generate video/i })[0]);
+      fireEvent.click(screen.getAllByRole("button", { name: /create video/i })[0]);
     });
     await waitFor(() => {
       expect(mockGeneratePlanItem).toHaveBeenCalledWith("test-item-id");
@@ -1315,7 +1320,7 @@ describe("PlanItemPage — guided edit Generate gating", () => {
       });
 
       expect(screen.getAllByText(hint)[0]).toBeInTheDocument();
-      const generateBtn = screen.getAllByRole("button", { name: /generate video/i })[0];
+      const generateBtn = screen.getAllByRole("button", { name: /create video/i })[0];
       if (autoDesign) {
         expect(generateBtn).toBeEnabled();
       } else {
@@ -1337,7 +1342,7 @@ describe("PlanItemPage — guided edit Generate gating", () => {
       render(<PlanItemPage />);
     });
 
-    const generate = screen.getAllByRole("button", { name: /generate video/i })[0];
+    const generate = screen.getAllByRole("button", { name: /create video/i })[0];
     expect(generate).toBeEnabled();
 
     await act(async () => {
@@ -1368,7 +1373,7 @@ describe("PlanItemPage — guided edit Generate gating", () => {
       render(<PlanItemPage />);
     });
 
-    const generate = screen.getAllByRole("button", { name: /generate video/i })[0];
+    const generate = screen.getAllByRole("button", { name: /create video/i })[0];
     expect(generate).toBeEnabled();
     expect(screen.queryByText("Add clips to generate")).not.toBeInTheDocument();
 
@@ -1491,7 +1496,9 @@ describe("PlanItemPage — per-type uploaders with an accepted plan", () => {
       render(<PlanItemPage />);
     });
 
-    const input = screen.getByLabelText("Upload video clips for this idea") as HTMLInputElement;
+    const input = screen
+      .getAllByLabelText("Drop videos here or choose files")
+      .find((element) => element.tagName === "INPUT") as HTMLInputElement;
     const file = new File(["aac"], "audio_only.mp4", { type: "audio/mp4" });
 
     await act(async () => {
@@ -1561,12 +1568,11 @@ describe("PlanItemPage — per-type setup truth table (V2 redesign)", () => {
     await act(async () => {
       renderTyped({ edit_format: "montage", idea: "Montage", montage_preset: "classic" });
     });
-    expect(screen.getByText("MONTAGE · CLASSIC")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Add your clips." })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Montage" })).toBeInTheDocument();
     expect(screen.getByText(/Kria cuts them to the beat of a matched song/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Original audio/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /Kria decides/i })).toBeNull();
-    expect(screen.queryByText(/Your voiceover/)).toBeNull();
+    expect(screen.queryByText(/Your narration/)).toBeNull();
     expect(screen.queryByText(/captions/i)).toBeNull();
     expect(screen.queryByText(/Photo collage before using photos/)).toBeNull();
     expect(screen.queryByRole("button", { name: /Plan this for me/i })).toBeNull();
@@ -1576,15 +1582,12 @@ describe("PlanItemPage — per-type setup truth table (V2 redesign)", () => {
     await act(async () => {
       renderTyped({ edit_format: "narrated_ready", idea: "Voiceover" });
     });
-    expect(screen.getByText("VOICEOVER")).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "Your voice tells the story." }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Voiceover" })).toBeInTheDocument();
     // Lane G: a visible Label + one-line caption inside the Card, replacing
     // the old sr-only heading + InfoDot popover pattern — no step numeral.
-    expect(screen.getByText("Your voiceover")).toBeInTheDocument();
+    expect(screen.getByText("Your narration")).toBeInTheDocument();
     expect(
-      screen.getByText("This recording becomes the soundtrack. It is separate from a note to Kria."),
+      screen.getByText("This recording becomes the soundtrack. It is separate from your note to Kria."),
     ).toBeInTheDocument();
     // Direction/voice-note section is gone — replaced by the single "Tell Kria" field.
     expect(screen.getByRole("textbox", { name: "Tell Kria" })).toBeInTheDocument();
@@ -1639,13 +1642,13 @@ describe("PlanItemPage — per-type setup truth table (V2 redesign)", () => {
     });
 
     await waitFor(() => expect(mockSetItemVoiceover).toHaveBeenCalled());
-    expect(screen.getAllByRole("button", { name: /generate video/i })[0]).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: /create video/i })[0]).toBeDisabled();
 
     await act(async () => {
       resolveSave({ ...item, voiceover_gcs_path: "voiceover-uploads/u1/voice.m4a" });
     });
     await waitFor(() =>
-      expect(screen.getAllByRole("button", { name: /generate video/i })[0]).toBeEnabled(),
+    expect(screen.getAllByRole("button", { name: /create video/i })[0]).toBeEnabled(),
     );
   });
 
@@ -1688,8 +1691,10 @@ describe("PlanItemPage — per-type setup truth table (V2 redesign)", () => {
       });
     });
 
-    await waitFor(() => expect(screen.getByText("attachment failed")).toBeInTheDocument());
-    expect(screen.getAllByRole("button", { name: /generate video/i })[0]).toBeDisabled();
+    await waitFor(() =>
+      expect(screen.getByText("We couldn't save your narration. Try again.")).toBeInTheDocument(),
+    );
+    expect(screen.getAllByRole("button", { name: /create video/i })[0]).toBeDisabled();
   });
 
   it("talking to camera (subtitled): single clip slot, own-audio helper, no recorder", async () => {
@@ -1704,7 +1709,7 @@ describe("PlanItemPage — per-type setup truth table (V2 redesign)", () => {
     expect(screen.queryByRole("button", { name: "About Your clip" })).toBeNull();
     expect(screen.queryByText(/Its own audio is the soundtrack/)).toBeNull();
     expect(screen.queryByText(/Captions and dead-air cleanup happen automatically/)).toBeNull();
-    expect(screen.queryByText(/Your voiceover/)).toBeNull();
+    expect(screen.queryByText(/Your narration/)).toBeNull();
     expect(screen.queryByRole("button", { name: /Original audio/i })).toBeNull();
   });
 
@@ -1767,7 +1772,6 @@ describe("PlanItemPage — release desk untitled receipt (V2)", () => {
     await act(async () => {
       render(<PlanItemPage />);
     });
-    expect(screen.getByText("MONTAGE · CLASSIC")).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Montage" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Montage" })).toBeInTheDocument();
   });
 });

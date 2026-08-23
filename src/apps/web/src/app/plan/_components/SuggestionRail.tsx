@@ -392,9 +392,7 @@ export default function SuggestionRail({
       setPhase("applied");
       onApplied?.();
     } catch (err) {
-      setActionError(
-        err instanceof Error ? err.message : "Couldn't apply your visuals. Try again.",
-      );
+      setActionError("We couldn’t apply your visuals. Try again.");
     } finally {
       setApplying(false);
     }
@@ -527,7 +525,7 @@ export default function SuggestionRail({
             onClick={handleSuggest}
             className="mt-2 min-h-[44px] text-sm font-normal hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
           >
-            Retry
+            Match visuals again
           </Button>
         </div>
       ) : phase === "zero" ? (
@@ -542,7 +540,7 @@ export default function SuggestionRail({
           <SuggestButton
             onClick={handleSuggest}
             disabled={suggestDisabled}
-            label="✦ Place visuals for me"
+            label="Place visuals automatically"
             className="mt-3"
           />
           {suggestDisabled && <InlineReason />}
@@ -696,7 +694,7 @@ export default function SuggestionRail({
             <SuggestButton
               onClick={handleSuggest}
               disabled={suggestDisabled}
-              label="✦ Re-match visuals"
+              label="Match visuals again"
             />
           </div>
         </div>
@@ -705,14 +703,14 @@ export default function SuggestionRail({
         <div>
           {phase === "applied" && (
             <p className="mb-2 text-[12px] text-[#3f3f46]">
-              Baking your {appliedCount} visual{appliedCount === 1 ? "" : "s"} in — the preview
-              above is exactly what renders.
+              Adding your {appliedCount} visual{appliedCount === 1 ? "" : "s"} to the video.
+              The preview above shows the final placement.
             </p>
           )}
           <SuggestButton
             onClick={handleSuggest}
             disabled={suggestDisabled}
-            label="✦ Place visuals for me"
+            label="Place visuals automatically"
           />
           {suggestDisabled && <InlineReason />}
         </div>

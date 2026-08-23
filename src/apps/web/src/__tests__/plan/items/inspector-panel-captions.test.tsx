@@ -41,7 +41,9 @@ describe("InspectorPanel empty state", () => {
   it("shows the generic empty state", () => {
     renderEmptyInspector();
 
-    expect(screen.getByText("Select anything to edit it")).toBeInTheDocument();
+    expect(
+      screen.getByText("Select a clip, caption, or overlay to edit it."),
+    ).toBeInTheDocument();
     expect(screen.queryByTestId("inspector-captions-cta")).not.toBeInTheDocument();
   });
 });

@@ -249,7 +249,7 @@ describe("EditorShell — Styles drawer on a lyrics-synced variant", () => {
     await openStylesAndPick();
 
     expect(mockRouterPush).not.toHaveBeenCalled();
-    expect(screen.getByText("Backend unavailable")).toBeInTheDocument();
+    expect(screen.getByText("We couldn't apply that style. Try again.")).toBeInTheDocument();
   });
 
   it("previews a moved song window over the rendered lyrics video", async () => {

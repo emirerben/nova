@@ -50,7 +50,7 @@ describe("PersonaEditor — reveal moves the CTA, and changes nothing else", () 
     render(<PersonaEditor {...baseProps} variant="reveal" />);
 
     expect(screen.getByText("AI-generated")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "About Your persona" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "About Your creator profile" })).toBeInTheDocument();
     expect(screen.getByText("Why this lane")).toBeInTheDocument();
   });
 
@@ -98,11 +98,11 @@ describe("PersonaEditor — reveal with an empty persona", () => {
   const empty = { footage_type_bias: ["talking_head"] } as unknown as PersonaContent;
   const emptyProps = { ...baseProps, persona: empty, status: "failed" as const };
 
-  it("offers the Generate persona recovery path", () => {
+  it("offers the Generate profile recovery path", () => {
     render(
       <PersonaEditor {...emptyProps} variant="reveal" onRetuneFromFeedback={async () => {}} />,
     );
-    expect(screen.getByRole("button", { name: /Generate persona/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Generate profile/i })).toBeInTheDocument();
   });
 
   it("omits the supporting-detail section rather than rendering a bare divider", () => {

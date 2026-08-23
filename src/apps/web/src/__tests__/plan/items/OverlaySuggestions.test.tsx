@@ -249,7 +249,7 @@ describe("OverlaySuggestions — rows from a pending ready set", () => {
     expect(screen.getByText(/0:38–0:47/)).toBeInTheDocument();
     expect(screen.getByText(/\+ pop sound/)).toBeInTheDocument();
     // With rows pending, the entry button flips to re-match.
-    expect(screen.getByRole("button", { name: /re-match visuals/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /match visuals again/i })).toBeEnabled();
   });
 
   it("row click seeks the editor transport to max(0, start_s − 1)", async () => {
@@ -266,11 +266,11 @@ describe("OverlaySuggestions — rows from a pending ready set", () => {
     const { onAccept } = await renderSection();
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Accept payload.png" }));
+      fireEvent.click(screen.getByRole("button", { name: "Use payload.png" }));
     });
     expect(onAccept).toHaveBeenCalledTimes(1);
     expect(onAccept.mock.calls[0][0].id).toBe("sug-1");
-    expect(screen.queryByRole("button", { name: "Accept payload.png" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Use payload.png" })).toBeNull();
     // Accepted envelopes must survive server-side until the commit drops them.
     const dismissCalls = fetchSpy.mock.calls.filter(
       ([input, init]) =>
@@ -284,9 +284,9 @@ describe("OverlaySuggestions — rows from a pending ready set", () => {
     await renderSection();
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Dismiss payload.png" }));
+      fireEvent.click(screen.getByRole("button", { name: "Skip payload.png" }));
     });
-    expect(screen.queryByRole("button", { name: "Dismiss payload.png" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Skip payload.png" })).toBeNull();
     await waitFor(() => {
       const dismissCalls = fetchSpy.mock.calls.filter(
         ([input, init]) =>
@@ -314,7 +314,7 @@ describe("OverlaySuggestions — pool gating", () => {
       screen.getByText("Add screenshots or clips of what you talk about"),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add visuals" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: /place visuals for me/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /place visuals automatically/i })).toBeDisabled();
     expect(screen.getByText("Add at least one visual first")).toBeInTheDocument();
   });
 
@@ -331,7 +331,7 @@ describe("OverlaySuggestions — pool gating", () => {
     jest.useFakeTimers();
     await renderSection();
 
-    expect(screen.getByRole("button", { name: /place visuals for me/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /place visuals automatically/i })).toBeDisabled();
     expect(screen.getByText("Add at least one visual first")).toBeInTheDocument();
   });
 
@@ -348,7 +348,7 @@ describe("OverlaySuggestions — pool gating", () => {
     await renderSection();
 
     expect(screen.getByText("Queued")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /place visuals for me/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /place visuals automatically/i })).toBeDisabled();
   });
 
   it("counts local pending uploads toward capacity and renders stage plus batch guidance", async () => {
@@ -403,7 +403,7 @@ describe("OverlaySuggestions — pool gating", () => {
     const onRemoveAsset = jest.fn();
     await renderSection({ onRetryAsset, onRemoveAsset });
 
-    expect(screen.getByText("Kria couldn't analyze this file. Try exporting it again.")).toBeInTheDocument();
+    expect(screen.getByText("This visual couldn't be read. Try exporting it again, then retry.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry analysis" }));
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     expect(onRetryAsset).toHaveBeenCalledWith(expect.objectContaining({ source_filename: "broken.mov" }));
@@ -434,16 +434,16 @@ describe("OverlaySuggestions — suggest → matching → ready flow", () => {
     await renderSection();
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /place visuals for me/i }));
+      fireEvent.click(screen.getByRole("button", { name: /place visuals automatically/i }));
     });
     expect(suggestPosted).toBe(true);
-    expect(screen.getByText("Matching your visuals to the script…")).toBeInTheDocument();
+    expect(screen.getByText("Matching visuals to your script…")).toBeInTheDocument();
 
     // First poll: still matching.
     await act(async () => {
       await jest.advanceTimersByTimeAsync(2500);
     });
-    expect(screen.getByText("Matching your visuals to the script…")).toBeInTheDocument();
+    expect(screen.getByText("Matching visuals to your script…")).toBeInTheDocument();
 
     // Second poll: the set arrives.
     suggestionsPayload = suggestionsResponse({
@@ -453,7 +453,7 @@ describe("OverlaySuggestions — suggest → matching → ready flow", () => {
     await act(async () => {
       await jest.advanceTimersByTimeAsync(2500);
     });
-    expect(screen.queryByText("Matching your visuals to the script…")).toBeNull();
+    expect(screen.queryByText("Matching visuals to your script…")).toBeNull();
     expect(
       screen.getByText("You say “it builds a payload” — this diagram shows it."),
     ).toBeInTheDocument();
@@ -499,11 +499,11 @@ describe("OverlaySuggestions — zero and failed states", () => {
     jest.useFakeTimers();
     await renderSection();
 
-    expect(screen.getByText("Couldn't match your visuals this time.")).toBeInTheDocument();
+    expect(screen.getByText("We couldn't match visuals to your script this time.")).toBeInTheDocument();
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     });
     expect(suggestPosts).toBe(1);
-    expect(screen.getByText("Matching your visuals to the script…")).toBeInTheDocument();
+    expect(screen.getByText("Matching visuals to your script…")).toBeInTheDocument();
   });
 });

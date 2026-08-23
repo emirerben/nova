@@ -37,7 +37,7 @@ export function EditContextStep({
           disabled={!topic.trim()}
           className="h-auto min-h-[44px] flex-1 rounded-xl bg-lime-700 py-3 font-medium text-white hover:bg-lime-800 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:ring-lime-600"
         >
-          Make my edit →
+          Create video
         </Button>
         <Button
           type="button"
@@ -45,7 +45,7 @@ export function EditContextStep({
           onClick={onSkip}
           className="h-auto min-h-[44px] rounded px-4 text-sm text-[#71717a] hover:bg-transparent hover:text-[#0c0c0e] focus-visible:ring-lime-600"
         >
-          skip
+          Skip for now
         </Button>
       </div>
     </div>

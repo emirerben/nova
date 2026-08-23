@@ -165,7 +165,7 @@ describe("KriaEditStory reduced motion", () => {
 
     render(<KriaEditStory />);
 
-    expect(screen.getByText("How Kria builds your edit:")).toBeInTheDocument();
+    expect(screen.getByText("How Kria builds your video:")).toBeInTheDocument();
     expect(screen.getAllByRole("heading")).toHaveLength(1);
     expect(screen.getByRole("heading", { level: 1 })).toHaveAttribute("aria-label");
     expect(
@@ -193,7 +193,7 @@ describe("KriaEditStory reduced motion", () => {
       expect(screen.getByText("Add sound effects, 82–100%")).toBeInTheDocument();
     });
     expect(
-      screen.getByLabelText("How Kria turns raw videos into a finished edit"),
+      screen.getByLabelText("How Kria turns your footage into a finished video"),
     ).toHaveAttribute("data-reduced-motion", "true");
   });
 
@@ -246,16 +246,19 @@ describe("KriaEditStory reduced motion", () => {
 
     render(<KriaEditStory mode="auto" />);
 
-    expect(screen.getByRole("link", { name: /create my first edit/i })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /create a video/i })).toHaveAttribute(
       "href",
       "/plan",
     );
-    expect(screen.getByRole("link", { name: "Terms" })).toHaveAttribute("href", "/terms");
-    expect(screen.getByRole("link", { name: "Privacy" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Terms of Service" })).toHaveAttribute(
+      "href",
+      "/terms",
+    );
+    expect(screen.getByRole("link", { name: "Privacy Policy" })).toHaveAttribute(
       "href",
       "/privacy",
     );
-    expect(screen.getByText(/by continuing, you agree to our/i)).toBeInTheDocument();
+    expect(screen.getByText(/by signing in, you agree to Kria's/i)).toBeInTheDocument();
     expect(screen.queryByText("Auto")).not.toBeInTheDocument();
     expect(screen.queryByText("0%")).not.toBeInTheDocument();
   });
@@ -280,7 +283,7 @@ describe("KriaEditStory reduced motion", () => {
     expect(audio.volume).toBe(0);
     expect(audio.muted).toBe(true);
     expect(
-      screen.getByLabelText("How Kria turns raw videos into a finished edit"),
+      screen.getByLabelText("How Kria turns your footage into a finished video"),
     ).toHaveAttribute("data-mode", "auto");
   });
 
@@ -317,7 +320,7 @@ describe("KriaEditStory reduced motion", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByLabelText("How Kria turns raw videos into a finished edit"),
+        screen.getByLabelText("How Kria turns your footage into a finished video"),
       ).toHaveAttribute("data-reduced-motion", "true");
     });
     expect(screen.getByText("Add sound effects, 82–100%")).toBeInTheDocument();
@@ -415,7 +418,7 @@ describe("KriaEditStory reduced motion", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByLabelText("How Kria turns raw videos into a finished edit"),
+      screen.getByLabelText("How Kria turns your footage into a finished video"),
       ).toHaveAttribute("data-reduced-motion", "true");
     });
     expect(screen.getByText("Add sound effects, 82–100%")).toBeInTheDocument();
@@ -577,7 +580,7 @@ describe("KriaEditStory reduced motion", () => {
     const frames = mockAnimationFrames();
 
     const { container, unmount } = render(<KriaEditStory />);
-    const section = screen.getByLabelText("How Kria turns raw videos into a finished edit");
+    const section = screen.getByLabelText("How Kria turns your footage into a finished video");
     Object.defineProperty(section, "offsetHeight", { configurable: true, value: 1_000 });
     Object.defineProperty(section, "offsetTop", { configurable: true, value: 0 });
     Object.defineProperty(window, "innerHeight", { configurable: true, value: 100 });
@@ -638,7 +641,7 @@ describe("KriaEditStory reduced motion", () => {
     const frames = mockAnimationFrames();
 
     const { container } = render(<KriaEditStory />);
-    const section = screen.getByLabelText("How Kria turns raw videos into a finished edit");
+    const section = screen.getByLabelText("How Kria turns your footage into a finished video");
     Object.defineProperty(section, "offsetHeight", { configurable: true, value: 1_000 });
     Object.defineProperty(section, "offsetTop", { configurable: true, value: 0 });
     Object.defineProperty(window, "innerHeight", { configurable: true, value: 100 });

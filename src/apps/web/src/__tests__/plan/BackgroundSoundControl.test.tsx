@@ -82,6 +82,10 @@ describe("BackgroundSoundControl", () => {
     fireEvent.change(slider, { target: { value: "0.4" } });
     fireEvent.pointerUp(slider);
 
-    expect(await screen.findByText("network down")).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "We couldn't update the background sound. Check your connection and try again.",
+      ),
+    ).toBeInTheDocument();
   });
 });

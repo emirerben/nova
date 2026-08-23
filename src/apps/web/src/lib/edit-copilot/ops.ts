@@ -498,7 +498,7 @@ function validateStylePatch(raw: unknown): StylePatchValidation {
     if (!STYLE_PATCH_KEY_SET.has(key)) continue;
     if (key === "font_family") {
       if (typeof value !== "string" || !validFont(value)) {
-        return rejectStyle("invalid_value", "font_family must be in the Nova font registry");
+        return rejectStyle("invalid_value", "font_family must be in the Kria font library");
       }
       patch.font_family = value;
     } else if (key === "color" || key === "highlight_color") {
