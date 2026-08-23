@@ -148,14 +148,15 @@ function AuthControl({
             isLight ? "text-[#a1a1aa]" : "text-zinc-500"
           }`}
         >
-          Agree to{" "}
+          By signing in, you agree to Kria&apos;s{" "}
           <Link href="/terms" className="underline underline-offset-2 hover:text-lime-700">
-            Terms
+            Terms of Service
           </Link>{" "}
-          &amp;{" "}
+          and{" "}
           <Link href="/privacy" className="underline underline-offset-2 hover:text-lime-700">
-            Privacy
+            Privacy Policy
           </Link>
+          .
         </p>
       </div>
     );

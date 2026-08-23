@@ -42,10 +42,10 @@ export default function ReviewStep({
   return (
     <div className="max-w-xl">
       <p className="mb-3 text-xs font-medium uppercase tracking-wide text-lime-700">
-        Your take
+        Your narration
       </p>
       <h1 className="font-display text-3xl leading-snug text-[#0c0c0e]">
-        Have a listen.
+        Review your recording
       </h1>
 
       <div className="mt-6 rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
@@ -55,22 +55,22 @@ export default function ReviewStep({
       </div>
 
       <p className="mt-4 text-sm text-[#71717a]">
-        Your take:{" "}
+        Your recording:{" "}
         <span className="tabular-nums text-[#3f3f46]">
           {takeDurationS != null ? fmtTime(takeDurationS) : "—"}
         </span>{" "}
-        · estimate was ~{fmtTime(estimateS)}
+        · target length {fmtTime(estimateS)}
       </p>
 
       <div className="mt-8 flex flex-wrap items-center gap-4">
-        <InkButton onClick={onUse}>Use this take</InkButton>
+        <InkButton onClick={onUse}>Use this recording</InkButton>
         <Button
           type="button"
           variant="link"
           onClick={onRetake}
           className="h-auto p-0 text-sm font-normal text-[#71717a] underline underline-offset-4 hover:text-[#0c0c0e] hover:no-underline"
         >
-          Retake
+          Record again
         </Button>
       </div>
     </div>

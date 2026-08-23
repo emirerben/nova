@@ -2,6 +2,7 @@ export interface JobFailureMessage {
   title: string;
   detail: string;
   action: "review_media" | "retry_upload" | "retry_render" | "contact_support";
+  actionLabel: string;
 }
 
 /**
@@ -22,9 +23,10 @@ export function jobFailureCopy(reason?: string | null): JobFailureMessage {
     key.includes("fetch")
   ) {
     return {
-      title: "Your files are still here",
-      detail: "We lost the connection while moving your files. Retry without uploading them again.",
+      title: "We couldn’t move your files",
+      detail: "Your files are still here. Retry the transfer without uploading them again.",
       action: "retry_upload",
+      actionLabel: "Retry transfer",
     };
   }
 
@@ -40,6 +42,7 @@ export function jobFailureCopy(reason?: string | null): JobFailureMessage {
       title: "Review your footage",
       detail: "One or more files couldn’t be used. Review the named upload, replace it, then generate again.",
       action: "review_media",
+      actionLabel: "Review footage",
     };
   }
 
@@ -48,6 +51,7 @@ export function jobFailureCopy(reason?: string | null): JobFailureMessage {
       title: "The render took too long",
       detail: "Your footage and direction are saved. Retry the render.",
       action: "retry_render",
+      actionLabel: "Retry render",
     };
   }
 
@@ -61,6 +65,7 @@ export function jobFailureCopy(reason?: string | null): JobFailureMessage {
       title: "The render didn’t finish",
       detail: "Your setup is saved. Retry the render without uploading again.",
       action: "retry_render",
+      actionLabel: "Retry render",
     };
   }
 
@@ -68,5 +73,6 @@ export function jobFailureCopy(reason?: string | null): JobFailureMessage {
     title: "Kria couldn’t finish this video",
     detail: "Try again. If it keeps happening, send the support reference below so we can trace it.",
     action: "contact_support",
+    actionLabel: "Retry video",
   };
 }

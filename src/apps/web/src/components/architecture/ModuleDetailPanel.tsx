@@ -12,7 +12,7 @@ interface ModuleDetailPanelProps {
 
 function FilesSection({ files }: { files: string[] }) {
   if (files.length === 0) {
-    return <p className="text-xs text-gray-500 italic">No files listed</p>;
+    return <p className="text-xs text-gray-500 italic">No files are listed.</p>;
   }
   return (
     <ul className="space-y-1">
@@ -46,11 +46,11 @@ function CommitsSection({ modulePath }: { modulePath: string | null }) {
   }
 
   if (data?.rateLimited) {
-    return <p className="text-xs text-gray-500 italic">Commits unavailable</p>;
+    return <p className="text-xs text-gray-500 italic">Recent commits are unavailable.</p>;
   }
 
   if (!data || data.items.length === 0) {
-    return <p className="text-xs text-gray-500 italic">No recent commits</p>;
+    return <p className="text-xs text-gray-500 italic">No recent commits.</p>;
   }
 
   return (
@@ -89,13 +89,13 @@ function IssuesSection({ label }: { label: string | null }) {
   }
 
   if (data?.rateLimited) {
-    return <p className="text-xs text-gray-500 italic">Issues unavailable</p>;
+    return <p className="text-xs text-gray-500 italic">Open issues are unavailable.</p>;
   }
 
   if (!data || data.items.length === 0) {
     return (
       <p className="text-xs text-gray-500">
-        No open issues <span className="text-emerald-500">✓</span>
+        No open issues <span className="text-emerald-500" aria-hidden="true">✓</span>
       </p>
     );
   }
@@ -148,7 +148,7 @@ function getPrimaryPath(files: string[]): string | null {
 
 function BusinessSection({ module }: { module: Module }) {
   const biz = module.business;
-  if (!biz) return <p className="text-xs text-gray-500 italic">No business context defined</p>;
+  if (!biz) return <p className="text-xs text-gray-500 italic">No plain-language context is available.</p>;
 
   const statusColor = {
     live: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
@@ -161,7 +161,7 @@ function BusinessSection({ module }: { module: Module }) {
       <div className={`rounded-lg border p-3 ${statusColor}`}>
         <div className="flex items-center gap-2 mb-1">
           <span className="text-xs font-medium uppercase tracking-wider">Status</span>
-          <span className="text-xs font-semibold">{biz.status}</span>
+          <span className="text-xs font-semibold">{biz.status === "live" ? "Live" : biz.status === "building" ? "Building" : "Planned"}</span>
         </div>
       </div>
 
@@ -212,7 +212,7 @@ export function ModuleDetailPanel({ module, onClose, viewMode }: ModuleDetailPan
                       : module.description}
                   </Dialog.Description>
                 </div>
-                <Dialog.Close className="text-gray-500 hover:text-gray-300 transition-colors p-1">
+                <Dialog.Close aria-label="Close module details" className="text-gray-500 hover:text-gray-300 transition-colors p-1">
                   ✕
                 </Dialog.Close>
               </div>

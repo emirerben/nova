@@ -271,7 +271,9 @@ describe("EditProposalCard", () => {
     fireEvent.change(input, { target: { value: "Keep my notes about the food" } });
     fireEvent.keyDown(input, { key: "Enter" });
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("temporarily unavailable");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Kria couldn’t update your edit direction. Check your connection and try again.",
+    );
     expect(input).toHaveValue("Keep my notes about the food");
     expect(onRefresh).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "Send direction" }));
@@ -751,7 +753,9 @@ describe("EditProposalCard", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Approve plan" }));
     await waitFor(() => expect(onChanged).toHaveBeenCalledWith(savedV3));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Approval service unavailable");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Kria couldn’t approve this plan. Check your connection and try again.",
+    );
 
     view.rerender(
       <EditProposalCard item={savedV3} onChanged={onChanged} />,
@@ -817,7 +821,7 @@ describe("EditProposalCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send direction" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Kria couldn't think that through.",
+      "Kria couldn’t update your edit direction. Check your connection and try again.",
     );
     expect(input).toHaveValue("Slow it down");
     // The pending echo bubble is gone — the only match left is the textarea

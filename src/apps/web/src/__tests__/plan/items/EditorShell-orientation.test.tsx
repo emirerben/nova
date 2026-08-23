@@ -212,7 +212,7 @@ describe("EditorShell orientation", () => {
       rejectSave(new Error("Couldn't rebuild this format."));
     });
 
-    expect(await screen.findByText("Couldn't rebuild this format.")).toBeInTheDocument();
+    expect(await screen.findByText("We couldn't save your edits. Try again.")).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Output format" })).toHaveAttribute(
       "aria-busy",
       "false",
@@ -295,7 +295,7 @@ describe("EditorShell orientation", () => {
       fireEvent.click(screen.getByRole("button", { name: "Save" }));
     });
 
-    expect(await screen.findByText("Render queue unavailable")).toBeInTheDocument();
+    expect(await screen.findByText("We couldn't save your edits. Try again.")).toBeInTheDocument();
     expect(mockRouterPush).not.toHaveBeenCalled();
     expect(
       window.sessionStorage.getItem("nova-editor-draft:item-1:song_text"),

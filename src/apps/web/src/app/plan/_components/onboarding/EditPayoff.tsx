@@ -24,6 +24,7 @@ import { TEXT_MODE_LABEL } from "@/app/generative/VariantCard";
 import { InlineClipsEditor } from "@/app/plan/_components/InlineClipsEditor";
 import { downloadVideo } from "@/lib/download-video";
 import { deriveReceiptText } from "@/components/progress/logic";
+import { jobFailureCopy } from "@/lib/job-failure-copy";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 import PlanVariantEditor from "@/app/plan/_components/PlanVariantEditor";
 import type { PlanItemVariant } from "@/lib/plan-api";
@@ -135,7 +136,7 @@ function FocusedVariantPanel({
             </div>
           ) : failed ? (
             <div className="flex h-full items-center justify-center px-3 text-center text-sm text-[#3f3f46]">
-              This variant didn&apos;t render
+              We couldn&apos;t render this version.
             </div>
           ) : variant.output_url ? (
             <StableVideo
@@ -146,7 +147,7 @@ function FocusedVariantPanel({
             />
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-[#71717a]">
-              No preview
+              Preview will appear after the first render.
             </div>
           )}
         </div>
@@ -305,7 +306,7 @@ export function EditPayoff({
 
   const theaterIsTerminal = status != null && isTerminalAndDone(status);
   const theaterIsSuccess = status != null && isSuccessStatus(status.status);
-  const receiptText = status ? deriveReceiptText(status.started_at ?? status.created_at, status.finished_at ?? status.updated_at) : "Your edits are ready";
+  const receiptText = status ? deriveReceiptText(status.started_at ?? status.created_at, status.finished_at ?? status.updated_at) : "Your video is ready";
 
   const currentPhase: string | null = (() => {
     if (!status) return null;
@@ -333,10 +334,11 @@ export function EditPayoff({
 
   // Total failure state
   if (status?.status === "processing_failed") {
+    const failure = jobFailureCopy(status.error_detail);
     return (
       <div className="flex flex-col gap-6 px-4 py-8 max-w-lg mx-auto text-center animate-fade-up">
         <p className="text-[#71717a]">
-          {status.error_detail ?? "We couldn't finish your edit right now."}
+          {failure.detail}
         </p>
         <Button
           type="button"
@@ -344,7 +346,7 @@ export function EditPayoff({
           onClick={onReRoll}
           className="h-auto min-h-[44px] p-0 text-sm text-lime-700 underline hover:text-lime-900"
         >
-          Try again
+          Create another version
         </Button>
         <Button
           type="button"
@@ -352,7 +354,7 @@ export function EditPayoff({
           onClick={onMakePlan}
           className="h-auto min-h-[44px] p-0 text-sm text-[#71717a] hover:bg-transparent hover:text-[#0c0c0e]"
         >
-          Make a plan instead
+          Create my content plan
         </Button>
       </div>
     );
@@ -360,14 +362,6 @@ export function EditPayoff({
 
   return (
     <div className="flex flex-col gap-6 py-4 animate-fade-up">
-      {/* Loading state expectation-setter — suppressed while retrying so
-          "About 90 seconds" never sits above the theater's recovery note. */}
-      {!theaterIsTerminal && !status?.retrying && (
-        <p className="text-center text-xs text-[#a1a1aa]">
-          About 90 seconds to render
-        </p>
-      )}
-
       {/* Progress theater — shows phases while rendering, receipt when done */}
       <ProgressTheater
         phases={GENERATIVE_PHASE_ORDER}
@@ -474,21 +468,21 @@ export function EditPayoff({
         onClick={onReRoll}
         className="h-auto min-h-[44px] rounded text-center text-xs text-[#a1a1aa] hover:bg-transparent hover:text-[#71717a] focus-visible:ring-lime-600"
       >
-        try different clips or style
+        Try different footage or style
       </Button>
 
       {/* Second-act plan CTA (suppressed when stacked with other jobs) */}
       {!hidePlanCta && (
         <div className="border-t border-[#e4e4e7] pt-6">
           <p className="text-center text-sm text-[#71717a] mb-3">
-            Want video ideas from this footage?
+            Want a content plan from this footage?
           </p>
           <Button
             type="button"
             onClick={onMakePlan}
             className="h-auto min-h-[44px] w-full rounded-xl bg-[#0c0c0e] py-3 font-medium text-white hover:opacity-80 focus-visible:ring-lime-600"
           >
-            Make my plan →
+            Create my content plan
           </Button>
         </div>
       )}

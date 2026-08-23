@@ -94,8 +94,8 @@ export default function TeleprompterRecorder({
           // Provenance link is best-effort — the take is already attached.
         });
         onRecorded(take);
-      } catch (e) {
-        onError(e instanceof Error ? e.message : "Couldn't save your take.");
+      } catch {
+        onError("We couldn't save your narration. Try again.");
       } finally {
         setSaving(false);
       }
@@ -125,7 +125,7 @@ export default function TeleprompterRecorder({
     rec.phase === "recording"
       ? `Recording — ${fmtTime(rec.elapsed)}`
       : saving
-        ? "Saving your take…"
+        ? "Saving your narration…"
         : "Ready to record";
 
   const videoPane = footageSrc ? (
@@ -142,14 +142,14 @@ export default function TeleprompterRecorder({
   ) : (
     <div className="flex h-full w-full items-center justify-center rounded-[14px] border border-dashed border-zinc-200 bg-zinc-50 px-4 text-center">
       <p className="text-sm text-[#71717a]">
-        Your footage will play here once a first cut has rendered — read from the
-        script on the right.
+        Your video will play here once the first cut is ready — read your narration on
+        the right.
       </p>
     </div>
   );
 
   const fontControls = (
-    <div className="flex items-center gap-1.5" role="group" aria-label="Transcript text size">
+    <div className="flex items-center gap-1.5" role="group" aria-label="Narration text size">
       <Button
         type="button"
         variant="outline"
@@ -269,7 +269,7 @@ export default function TeleprompterRecorder({
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="mb-2 flex items-center justify-between">
             <p className="text-xs font-medium uppercase tracking-wide text-lime-700">
-              Read this
+              Read your narration
             </p>
             {fontControls}
           </div>

@@ -39,6 +39,6 @@ export function variantFailureCopy(errorClass?: string | null): string {
       // archetype with no song/style concept (e.g. subtitled). The "Try again"
       // button above (ProgressTheater) now covers every archetype, so this can
       // point at that instead of prescribing an edit that may not exist.
-      return "This one didn't render — try again above.";
+      return jobFailureCopy(errorClass ?? "processing_failed").detail;
   }
 }

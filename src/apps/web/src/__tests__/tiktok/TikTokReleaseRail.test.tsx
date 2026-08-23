@@ -244,7 +244,7 @@ it("names the real destination for an inbox handoff and never claims TikTok's Dr
   expect(screen.getAllByText(/Open the TikTok app on your phone/).length).toBeGreaterThan(0);
   expect(screen.getByText(/Tap the notification about your uploaded video/)).not.toBeNull();
   expect(screen.getByText(/will not appear on tiktok\.com in a desktop browser/)).not.toBeNull();
-  expect(screen.getByText(/will not appear under Profile → Drafts/)).not.toBeNull();
+  expect(screen.getByText(/will not appear in Profile drafts/)).not.toBeNull();
   expect(screen.getByText(/publish-abc123/)).not.toBeNull();
 
   // Manual fallback is reachable from the receipt.
@@ -326,7 +326,8 @@ it("returns a confirmed failure to the full preparation pane instead of a dead r
 
   expect(screen.queryByText("Publishing failed")).toBeNull();
   expect(screen.getByText("Last attempt failed")).not.toBeNull();
-  expect(screen.getByText("TikTok rejected the video's aspect ratio.")).not.toBeNull();
+  expect(screen.getByText("TikTok couldn't publish this video. Nothing was posted. Try again when you're ready.")).not.toBeNull();
+  expect(screen.queryByText("TikTok rejected the video's aspect ratio.")).toBeNull();
   expect(screen.getByRole("link", { name: "Edit video" })).not.toBeNull();
 
   fireEvent.click(screen.getByRole("button", { name: "Publish to TikTok" }));
@@ -509,7 +510,7 @@ it("falls back to generic failure copy when TikTok gives no detail", () => {
   });
 
   expect(screen.getByText("Last attempt failed")).not.toBeNull();
-  expect(screen.getByText("TikTok could not publish this post. Nothing was posted.")).not.toBeNull();
+  expect(screen.getByText("TikTok couldn't publish this video. Nothing was posted. Try again when you're ready.")).not.toBeNull();
 });
 
 it("does not offer a repeat publish when the account can no longer publish", () => {

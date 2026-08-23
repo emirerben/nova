@@ -1093,7 +1093,7 @@ export function applyCopilotOps(
         continue;
       }
       if (!textFingerprintMatches(bar, snap, ["text"])) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "text was changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "text was changed after Kria read it"));
         continue;
       }
       if (bar.text === op.text) {
@@ -1146,7 +1146,7 @@ export function applyCopilotOps(
         continue;
       }
       if (!textFingerprintMatches(bar, snap, patchKeys)) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "style was changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "style was changed after Kria read it"));
         continue;
       }
       if (patchKeys.every((key) => sameValue(textValue(bar, snap, key), patch[key]))) {
@@ -1177,7 +1177,7 @@ export function applyCopilotOps(
         ...(op.end_s !== undefined ? (["end_s"] as const) : []),
       ];
       if (!textFingerprintMatches(bar, snap, fields)) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "timing was changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "timing was changed after Kria read it"));
         continue;
       }
       const span = snapSpanToBeatMarks(op.start_s, op.end_s, beatMarksNow());
@@ -1237,7 +1237,7 @@ export function applyCopilotOps(
         continue;
       }
       if (!completeTextFingerprintMatches(bar, snap)) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "text was changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "text was changed after Kria read it"));
         continue;
       }
       textActions.push({ type: "DELETE_BAR", id: bar.id });
@@ -1252,7 +1252,7 @@ export function applyCopilotOps(
         continue;
       }
       if (!slotFingerprintMatches(slots, grid, slot, index, snap, ["duration_s"])) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "clip duration was changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "clip duration was changed after Kria read it"));
         continue;
       }
       const patch = applyClipTimingInput({
@@ -1279,7 +1279,7 @@ export function applyCopilotOps(
         continue;
       }
       if (!slotFingerprintMatches(slots, grid, slot, index, snap, ["in_s"])) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "clip in-point was changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "clip in-point was changed after Kria read it"));
         continue;
       }
       const duration = slotDuration(slots, grid, index);
@@ -1306,7 +1306,7 @@ export function applyCopilotOps(
         continue;
       }
       if (!slotFingerprintMatches(slots, grid, slot, index, snap, ["in_s", "duration_s"])) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "clip timing changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "clip timing changed after Kria read it"));
         continue;
       }
       const beforeDuration = slotDuration(slots, grid, index);
@@ -1331,7 +1331,7 @@ export function applyCopilotOps(
     } else if (op.op === "trim_output_start") {
       const slots = currentSlots();
       if (!slotOrderMatches(slots, ctx.snapshot)) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "clip timeline changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "clip timeline changed after Kria read it"));
         continue;
       }
       const layout = sequentialSlotLayout(slots, grid);
@@ -1383,7 +1383,7 @@ export function applyCopilotOps(
         continue;
       }
       if (!slotOrderMatches(slots, ctx.snapshot)) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "clip order was changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "clip order was changed after Kria read it"));
         continue;
       }
       const from = currentSlotIndex(slots, fromSnap.key);
@@ -1410,7 +1410,7 @@ export function applyCopilotOps(
         continue;
       }
       if (!completeSlotFingerprintMatches(slots, grid, slot, index, snap)) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "clip was changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "clip was changed after Kria read it"));
         continue;
       }
       const res = deleteSlotEnforceFloor(slots, slot.key);
@@ -1432,7 +1432,7 @@ export function applyCopilotOps(
         continue;
       }
       if (!slotFingerprintMatches(slots, grid, slot, index, snap, ["in_s", "duration_s", "output_start_s", "output_end_s"])) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "clip was changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "clip was changed after Kria read it"));
         continue;
       }
       const res = splitSlotAt(slots, grid, slot.key, op.at_s, ctx.makeSlotKey?.(slot) ?? defaultSlotKey(slot));
@@ -1454,7 +1454,7 @@ export function applyCopilotOps(
         continue;
       }
       if (!completeSlotFingerprintMatches(slots, grid, slot, index, snap)) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "clip was changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "clip was changed after Kria read it"));
         continue;
       }
       const before = slot.lookPreset ?? "none";
@@ -1515,7 +1515,7 @@ export function applyCopilotOps(
         ...(op.gain !== undefined ? (["gain"] as const) : []),
       ];
       if (!sfxFingerprintMatches(placement, snap, fields)) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "sound placement changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "sound placement changed after Kria read it"));
         continue;
       }
       const snappedAtS = op.at_s === undefined ? undefined : snapAtS(op.at_s);
@@ -1546,7 +1546,7 @@ export function applyCopilotOps(
         continue;
       }
       if (!completeSfxFingerprintMatches(placement, snap)) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "sound placement changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "sound placement changed after Kria read it"));
         continue;
       }
       workingSfx = placements.filter((sfx) => sfx.id !== placement.id);
@@ -1562,7 +1562,7 @@ export function applyCopilotOps(
       }
       const patchKeys = Object.keys(op.patch) as OverlayPatchKey[];
       if (!overlayFingerprintMatches(card, snap, patchKeys)) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "overlay changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "overlay changed after Kria read it"));
         continue;
       }
       const overlaySpan = snapSpanToBeatMarks(op.patch.start_s, op.patch.end_s, beatMarksNow());
@@ -1592,7 +1592,7 @@ export function applyCopilotOps(
         continue;
       }
       if (!completeOverlayFingerprintMatches(card, snap)) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "overlay changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "overlay changed after Kria read it"));
         continue;
       }
       const removed = removeOverlayEffectGroup(
@@ -1690,7 +1690,7 @@ export function applyCopilotOps(
         continue;
       }
       if (bar.text !== snap.text) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "caption text was changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "caption text was changed after Kria read it"));
         continue;
       }
       textActions.push({ type: "EDIT_TEXT", id: bar.id, text: op.text });
@@ -1709,7 +1709,7 @@ export function applyCopilotOps(
         expectedFingerprint &&
         captionMutationFingerprint(ctx.bars) !== expectedFingerprint
       ) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "captions were changed after Nova read them"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "captions were changed after Kria read them"));
         continue;
       }
       const replacement = buildCaptionTextReplacement(ctx.bars, op.find, op.replace);
@@ -1743,7 +1743,7 @@ export function applyCopilotOps(
       ];
       const matches = fields.every((field) => sameValue(round(bar[field]), snap[field]));
       if (!matches) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "caption timing was changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "caption timing was changed after Kria read it"));
         continue;
       }
       const next = applyTextTimingInput({
@@ -1771,7 +1771,7 @@ export function applyCopilotOps(
       const currentEmphasis = bar.smart_emphasis === true;
       const snapEmphasis = snap.smart_emphasis === true;
       if (currentEmphasis !== snapEmphasis) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "caption emphasis was changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "caption emphasis was changed after Kria read it"));
         continue;
       }
       // smart_style follows the cue's own role (hook/context/list_item/example/
@@ -1794,7 +1794,7 @@ export function applyCopilotOps(
       }
       const patchKeys = Object.keys(op.patch) as Array<keyof CopilotCaptionMetaSnapshot>;
       if (!captionMetaFingerprintMatches(ctx.captionMeta, snap, patchKeys)) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "caption settings changed after Nova read them"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "caption settings changed after Kria read them"));
         continue;
       }
       captionMetaPatch = { ...(captionMetaPatch ?? {}), ...op.patch };
@@ -1812,7 +1812,7 @@ export function applyCopilotOps(
         continue;
       }
       if ((ctx.musicTrackId ?? null) !== music.current_track_id) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "song changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "song changed after Kria read it"));
         continue;
       }
       if (op.track_id === (ctx.musicTrackId ?? null)) {
@@ -1832,7 +1832,7 @@ export function applyCopilotOps(
         continue;
       }
       if (ctx.musicTrackId !== music.current_track_id) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "song changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "song changed after Kria read it"));
         continue;
       }
       musicRemoved = true;
@@ -1843,7 +1843,7 @@ export function applyCopilotOps(
         continue;
       }
       if (!sameValue(ctx.mixLevel ?? null, ctx.snapshot.mix.music_level)) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "music volume changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "music volume changed after Kria read it"));
         continue;
       }
       if (sameValue(op.music_level, ctx.mixLevel ?? null)) {
@@ -1960,7 +1960,7 @@ export function applyCopilotOps(
         continue;
       }
       if (ctx.title !== ctx.snapshot.title) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "title changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "title changed after Kria read it"));
         continue;
       }
       if (op.title === ctx.title) {
@@ -1997,7 +1997,7 @@ export function applyCopilotOps(
         continue;
       }
       if (!completeCameraEffectFingerprintMatches(effect, snap)) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "camera effect changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "camera effect changed after Kria read it"));
         continue;
       }
       const patched = normalizeCameraEffect({
@@ -2026,7 +2026,7 @@ export function applyCopilotOps(
         continue;
       }
       if (!completeCameraEffectFingerprintMatches(effect, snap)) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "camera effect changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "camera effect changed after Kria read it"));
         continue;
       }
       workingCameraEffects = workingCameraEffects.filter((candidate) => candidate.id !== effect.id);
@@ -2052,7 +2052,7 @@ export function applyCopilotOps(
         activeLeftIndex < 0 ||
         activeRightIndex !== activeLeftIndex + 1
       ) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "clip order changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "clip order changed after Kria read it"));
         continue;
       }
       const left = slots[leftIndex];
@@ -2062,7 +2062,7 @@ export function applyCopilotOps(
         currentTransition !== (leftSnap.transition_after ?? "cut") ||
         !sameValue(currentDuration, leftSnap.transition_duration_s ?? null)
       ) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "transition changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "transition changed after Kria read it"));
         continue;
       }
       const duration = op.transition === "cut" ? null : (op.duration_s ?? 0.3);
@@ -2100,7 +2100,7 @@ export function applyCopilotOps(
         block.transition_out !== snap.transition_out
       ) {
         rejected.push(
-          reject(op.op, labelForOp(op), "user_changed", "visual fade changed after Nova read it"),
+          reject(op.op, labelForOp(op), "user_changed", "visual fade changed after Kria read it"),
         );
         continue;
       }
@@ -2145,7 +2145,7 @@ export function applyCopilotOps(
         durationBeats: null,
         durationS: op.duration_s,
         removed: false,
-        momentDescription: "Generated by Nova",
+        momentDescription: "Generated by Kria",
         transitionAfter: "cut",
         transitionDurationS: null,
       };
@@ -2182,7 +2182,7 @@ export function applyCopilotOps(
         Math.abs(source.inS + sourceWindow.durationS - op.source_end_s) > 0.05
       ) {
         rejected.push(
-          reject(op.op, labelForOp(op), "user_changed", "restyle source changed after Nova read it"),
+          reject(op.op, labelForOp(op), "user_changed", "restyle source changed after Kria read it"),
         );
         continue;
       }
@@ -2194,7 +2194,7 @@ export function applyCopilotOps(
         durationBeats: null,
         durationS: op.duration_s,
         removed: false,
-        momentDescription: "Restyled by Nova",
+        momentDescription: "Restyled by Kria",
         transitionAfter: source.transitionAfter ?? "cut",
         transitionDurationS: source.transitionDurationS ?? null,
         lookPreset: source.lookPreset ?? "none",
@@ -2234,7 +2234,7 @@ export function applyCopilotOps(
         return asset ? [{ asset_id: asset.id, gcs_path: asset.gcs_path }] : [];
       });
       if (assets.length !== assetIds.length || (entry.kind === "media" && assets.length < entry.min_assets)) {
-        rejected.push(reject(op.op, labelForOp(op), "target_missing", "eligible image assets changed after Nova read them"));
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "eligible image assets changed after Kria read them"));
         continue;
       }
       const startFrame = Math.round(op.start_s * 30);
@@ -2301,7 +2301,7 @@ export function applyCopilotOps(
         continue;
       }
       if (snap.mutation_fingerprint && motionMutationFingerprint(scene) !== snap.mutation_fingerprint) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "Creator Block changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "Creator Block changed after Kria read it"));
         continue;
       }
       const rawParams = op.patch.params ? { ...op.patch.params } : undefined;
@@ -2315,7 +2315,7 @@ export function applyCopilotOps(
         return asset ? [{ asset_id: asset.id, gcs_path: asset.gcs_path }] : [];
       });
       if (assetIds && assets?.length !== assetIds.length) {
-        rejected.push(reject(op.op, labelForOp(op), "target_missing", "eligible image assets changed after Nova read them"));
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "eligible image assets changed after Kria read them"));
         continue;
       }
       if (rawParams) delete rawParams.asset_ids;
@@ -2441,7 +2441,7 @@ export function applyCopilotOps(
         continue;
       }
       if (snap.mutation_fingerprint && motionMutationFingerprint(scene) !== snap.mutation_fingerprint) {
-        rejected.push(reject(op.op, labelForOp(op), "user_changed", "Creator Block changed after Nova read it"));
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "Creator Block changed after Kria read it"));
         continue;
       }
       workingMotionScenes = workingMotionScenes.filter((item) => item.id !== op.motion_id);

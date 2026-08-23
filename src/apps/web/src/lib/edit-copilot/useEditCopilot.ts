@@ -18,11 +18,11 @@ import { isFeatureUnavailable } from "./availability";
 
 /** Shown once when the API has no copilot route, in place of a dead retry. */
 export const COPILOT_UNAVAILABLE_MESSAGE =
-  "Nova editing isn't enabled on this server yet.";
+  "Kria editing isn’t available right now. Your video is unchanged.";
 
 /** Fallback copy for failures with nothing worth showing the user. */
 export const COPILOT_GENERIC_ERROR =
-  "I couldn't reach Nova just now. Your edit is untouched — try again.";
+  "Kria couldn’t connect just now. Your edit is unchanged. Retry the request.";
 
 /**
  * Pick what the drawer actually shows.
@@ -184,14 +184,14 @@ function summaries(result: ApplyCopilotOpsResult): {
   return {
     applied: result.applied.map(
       (chip) =>
-        `${chip.label}: ${chip.from} → ${chip.to}${(chip.count ?? 1) > 1 ? ` (×${chip.count})` : ""}`,
+        `${chip.label}: ${chip.from}, now ${chip.to}${(chip.count ?? 1) > 1 ? ` (×${chip.count})` : ""}`,
     ),
     rejected: result.rejected.map((op) => `${op.label}: ${op.detail}`),
   };
 }
 
-/** One line per applied turn: distinct op labels (from the `label: from →
- * to` chip strings summaries() builds) plus a total edit count — e.g.
+/** One line per applied turn: distinct op labels from the summary chip strings,
+ * plus a total edit count — e.g.
  * "Text color, Font size (3 edits)". Mirrors the "+N more" collapse the
  * receipt chips already use in the drawer. Exported so EditorShell can build
  * the same one-line shape for `history_state.last_turn_summary` (PR7)

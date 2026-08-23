@@ -59,7 +59,7 @@ const ACCESSIBLE_STORY_STEPS = [
   "Captions and visual effects arrive together and appear on the video.",
   "The overlay inputs land, and the rendered video reveals the finished placement.",
   "Sound effects arrive, and only then does the finished edit begin playing music.",
-  "The finished message appears one centered line at a time: Save time, let AI edit your videos, and create more.",
+  "The finished message appears one centered line at a time: Keep filming, let Kria edit your videos, and share more.",
 ] as const;
 
 type TravelKey =
@@ -471,7 +471,7 @@ export default function KriaEditStory({ mode = "scroll" }: { mode?: KriaEditStor
       className={styles.scrollStory}
       data-mode={mode}
       data-reduced-motion={reducedMotion}
-      aria-label="How Kria turns raw videos into a finished edit"
+      aria-label="How Kria turns your footage into a finished video"
     >
       {isAuto ? (
         <audio
@@ -484,7 +484,7 @@ export default function KriaEditStory({ mode = "scroll" }: { mode?: KriaEditStor
         />
       ) : null}
       <div className={styles.srOnly}>
-        <p>How Kria builds your edit:</p>
+        <p>How Kria builds your video:</p>
         <ol>
           {ACCESSIBLE_STORY_STEPS.map((storyStep) => (
             <li key={storyStep}>{storyStep}</li>
@@ -500,11 +500,11 @@ export default function KriaEditStory({ mode = "scroll" }: { mode?: KriaEditStor
           className={styles.headline}
           data-image-blend="difference"
           data-screen-alignment="center"
-          aria-label="Save time. Let AI edit your videos. Create more."
+          aria-label="Keep filming. Let Kria edit your videos. Share more."
         >
-          <span className={styles.headlineOne} data-active={headlineLines === 1}>Save time</span>
-          <span className={styles.headlineTwo} data-active={headlineLines === 2}>Let AI edit your videos</span>
-          <span className={styles.headlineThree} data-active={headlineLines === 3}>Create more</span>
+          <span className={styles.headlineOne} data-active={headlineLines === 1}>Keep filming</span>
+          <span className={styles.headlineTwo} data-active={headlineLines === 2}>Let Kria edit your videos</span>
+          <span className={styles.headlineThree} data-active={headlineLines === 3}>Share more</span>
         </h1>
 
         <div
@@ -653,12 +653,13 @@ export default function KriaEditStory({ mode = "scroll" }: { mode?: KriaEditStor
         </div>
 
         <Link href="/plan" className={styles.cta}>
-          Create my first edit <span aria-hidden="true">→</span>
+          Create a video
         </Link>
 
         <p className={styles.legalLinks}>
-          By continuing, you agree to our <Link href="/terms">Terms</Link> and{" "}
-          <Link href="/privacy">Privacy</Link>.
+          By signing in, you agree to Kria&apos;s{" "}
+          <Link href="/terms">Terms of Service</Link> and{" "}
+          <Link href="/privacy">Privacy Policy</Link>.
         </p>
       </div>
     </section>

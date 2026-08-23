@@ -156,7 +156,7 @@ it("prevents rapid double submission while the first request is pending", async 
   expect(mockedCreate).toHaveBeenCalledTimes(1);
   expect((screen.getByRole("button", { name: "Sending to TikTok…" }) as HTMLButtonElement).disabled).toBe(true);
   expect((screen.getByRole("button", { name: "Exit" }) as HTMLButtonElement).disabled).toBe(true);
-  expect(screen.getByRole("dialog", { name: "Send to TikTok" })).not.toBeNull();
+  expect(screen.getByRole("dialog", { name: "Publish to TikTok" })).not.toBeNull();
   resolvePublication?.({
     id: "publication-1",
     job_id: "job-1",
@@ -317,7 +317,7 @@ it("auto-selects draft handoff when the grant only includes upload", async () =>
   );
 
   await screen.findByText("Upload-only creator");
-  expect((screen.getByRole("radio", { name: /Post now/ }) as HTMLInputElement).disabled).toBe(true);
+  expect((screen.getByRole("radio", { name: /Publish now/ }) as HTMLInputElement).disabled).toBe(true);
   expect(
     (screen.getByRole("radio", { name: /Finish in TikTok/ }) as HTMLInputElement).checked,
   ).toBe(true);

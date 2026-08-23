@@ -137,7 +137,7 @@ function TikTokStatus({ publication }: { publication: TikTokPublication }) {
     <div className="mt-3 rounded-lg bg-zinc-50 p-2 text-xs text-[#3f3f46]">
       <p className="font-medium">{label}</p>
       {publication.visibility_status === "draft" ? (
-        <p className="mt-0.5 text-[#71717a]">Open the TikTok app → Inbox → tap the notification. It won&apos;t appear on tiktok.com or under Drafts.</p>
+        <p className="mt-0.5 text-[#71717a]">Open the TikTok app, go to Inbox, and tap the notification. It won&apos;t appear on tiktok.com or under Drafts.</p>
       ) : publication.visibility_status !== "public" ? (
         <p className="mt-0.5 text-[#71717a]">Metrics begin when the post is public.</p>
       ) : null}

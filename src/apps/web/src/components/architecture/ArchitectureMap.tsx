@@ -238,8 +238,8 @@ export function ArchitectureMap() {
 
   // Breadcrumb
   const breadcrumb = expandedL1
-    ? `L1 Pipeline > ${modules[expandedL1]?.name ?? expandedL1}`
-    : "L1 Pipeline";
+    ? `Pipeline overview > ${modules[expandedL1]?.name ?? expandedL1}`
+    : "Pipeline overview";
 
   return (
     <div className="w-full h-full flex flex-col bg-gray-950">
@@ -247,13 +247,15 @@ export function ArchitectureMap() {
       <div className="h-12 flex items-center px-4 bg-gray-900 border-b border-gray-800 shrink-0">
         <span className="text-sm text-gray-400">Kria</span>
         <span className="text-gray-600 mx-2">·</span>
-        <span className="text-sm font-medium text-gray-200">Architecture Map</span>
+        <span className="text-sm font-medium text-gray-200">System architecture</span>
         <span className="text-gray-600 mx-2">·</span>
 
         {/* View mode toggle */}
         <div className="flex items-center bg-gray-800 rounded p-0.5 mr-3">
           <Button
             variant="ghost"
+            aria-pressed={viewMode === "business"}
+            aria-label="Show plain-language architecture"
             onClick={() => setViewMode("business")}
             className={`h-auto rounded px-2.5 py-1 text-xs transition-colors hover:bg-transparent ${
               viewMode === "business"
@@ -265,6 +267,8 @@ export function ArchitectureMap() {
           </Button>
           <Button
             variant="ghost"
+            aria-pressed={viewMode === "technical"}
+            aria-label="Show technical architecture"
             onClick={() => setViewMode("technical")}
             className={`h-auto rounded px-2.5 py-1 text-xs transition-colors hover:bg-transparent ${
               viewMode === "technical"
@@ -286,19 +290,24 @@ export function ArchitectureMap() {
             }}
             className="h-auto p-0 text-xs text-blue-400 hover:text-blue-300 hover:no-underline transition-colors"
           >
-            ← Back to L1
+            Back to overview
           </Button>
         ) : null}
         <span className="text-xs text-gray-500 ml-1">{breadcrumb}</span>
 
         {/* Right side: help hint */}
-        <div className="ml-auto text-xs text-gray-600">
-          Click to drill in · Right-click to highlight dependents · Esc to close
+        <div className="ml-auto text-xs text-gray-600" aria-label="Architecture map instructions">
+          Select a module to explore · right-click to highlight what depends on it · Esc to close
         </div>
       </div>
 
       {/* react-flow canvas */}
-      <div className="flex-1">
+      <div className="flex-1" aria-label="Interactive architecture map">
+        <span className="sr-only" role="status" aria-live="polite">
+          {activeJobs == null
+            ? "Loading live activity."
+            : `${activeJobs.length} active job${activeJobs.length === 1 ? "" : "s"}.`}
+        </span>
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -330,19 +339,19 @@ export function ArchitectureMap() {
       <div className="h-8 flex items-center px-4 bg-gray-900 border-t border-gray-800 shrink-0 gap-4">
         <span className="flex items-center gap-1.5 text-[10px] text-gray-500">
           <span className="w-2 h-2 rounded-full bg-emerald-400 motion-safe:animate-pulse" />
-          active
+          Active
         </span>
         <span className="flex items-center gap-1.5 text-[10px] text-gray-500">
           <span className="w-2 h-2 rounded-full bg-gray-600" />
-          idle
+          Idle
         </span>
         <span className="flex items-center gap-1.5 text-[10px] text-gray-500">
           <span className="w-2 h-2 rounded-full bg-amber-400" />
-          has issues
+          Has issues
         </span>
         <span className="flex items-center gap-1.5 text-[10px] text-gray-500">
           <span className="w-2 h-2 rounded-full bg-blue-950 border border-blue-800" />
-          data store
+          Data store
         </span>
       </div>
 

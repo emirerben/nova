@@ -93,7 +93,7 @@ describe("InspectorPanel caption section split (Lane PR-A)", () => {
       captionsPanelOpen: false,
     });
     fireEvent.click(
-      screen.getByRole("button", { name: /Change font, size or colour for every caption/ }),
+      screen.getByRole("button", { name: "Edit all captions" }),
     );
     expect(onOpenCaptionsPanel).toHaveBeenCalled();
   });
@@ -107,14 +107,14 @@ describe("InspectorPanel caption section split (Lane PR-A)", () => {
     // instruction, not a shortcut — this is the confusion the rule removes.
     expect(screen.queryByText(/Captions panel/)).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /Change font, size or colour/ }),
+      screen.queryByRole("button", { name: "Edit all captions" }),
     ).not.toBeInTheDocument();
   });
 
   it("does not advertise a panel the shell cannot open", () => {
     renderCaptionInspector(makeCaptionBar(), { onOpenCaptionsPanel: undefined });
     expect(
-      screen.queryByRole("button", { name: /Change font, size or colour/ }),
+      screen.queryByRole("button", { name: "Edit all captions" }),
     ).not.toBeInTheDocument();
   });
 

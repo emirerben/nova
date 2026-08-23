@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BeamLoader } from "@/components/progress";
 import { styleAgentStart, styleAgentTurn, NotAuthenticatedError } from "@/lib/plan-api";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { ArrowUp } from "lucide-react";
 
 type Phase = "loading" | "chat" | "thinking" | "error";
 
@@ -33,8 +34,11 @@ export default function StyleAgentInterview({ onDone }: { onDone?: () => void })
   const [priorTurns, setPriorTurns] = useState<unknown[]>([]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => {
-    styleAgentStart()
+  const loadStyle = useCallback(() => {
+    setPhase("loading");
+    setError(null);
+    setRetryPayload(null);
+    return styleAgentStart()
       .then((res) => {
         setReply(res.reply);
         setSuggestions(res.suggestions);
@@ -45,10 +49,14 @@ export default function StyleAgentInterview({ onDone }: { onDone?: () => void })
           window.location.href = "/api/auth/signin?callbackUrl=/plan/style";
           return;
         }
-        setError("Couldn't start the style editor. Try refreshing.");
+        setError("We couldn't open your style editor. Try again.");
         setPhase("error");
       });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    void loadStyle();
+  }, [loadStyle]);
 
   useEffect(() => {
     if (phase === "chat") inputRef.current?.focus();
@@ -76,18 +84,21 @@ export default function StyleAgentInterview({ onDone }: { onDone?: () => void })
       setReply(res.reply);
       setSuggestions(res.suggestions);
       if (res.applied) {
-        setAppliedMessage("Done — your next render will use this style.");
+        setAppliedMessage("Style saved. Your next video will use it.");
       }
       setPhase("chat");
     } catch {
       setRetryPayload({ answer: payload, turns: currentTurns });
-      setError("Something went wrong — let me try again.");
+      setError("We couldn't update your style. Try again.");
       setPhase("error");
     }
   }
 
   async function retry() {
-    if (!retryPayload) return;
+    if (!retryPayload) {
+      await loadStyle();
+      return;
+    }
     setPhase("thinking");
     setError(null);
     try {
@@ -102,11 +113,11 @@ export default function StyleAgentInterview({ onDone }: { onDone?: () => void })
       setReply(res.reply);
       setSuggestions(res.suggestions);
       if (res.applied) {
-        setAppliedMessage("Done — your next render will use this style.");
+        setAppliedMessage("Style saved. Your next video will use it.");
       }
       setPhase("chat");
     } catch {
-      setError("I hit a snag. Try refreshing.");
+      setError("We couldn't update your style. Try again.");
     }
   }
 
@@ -130,7 +141,7 @@ export default function StyleAgentInterview({ onDone }: { onDone?: () => void })
     <div className="py-2">
       {/* Eyebrow */}
       <p className="mb-3 text-xs font-medium uppercase tracking-wide text-lime-700">
-        Your style
+        Your editing style
       </p>
 
       {/* Agent reply — LEFT-ALIGNED, Playfair Display, no card, no border */}
@@ -186,7 +197,7 @@ export default function StyleAgentInterview({ onDone }: { onDone?: () => void })
 
       {/* Error state */}
       {error && phase === "error" && (
-        <div className="mt-5 rounded-lg border border-zinc-200 bg-white px-4 py-3">
+        <div role="alert" className="mt-5 rounded-lg border border-zinc-200 bg-white px-4 py-3">
           <p className="text-sm text-[#3f3f46]">{error}</p>
           <Button
             type="button"
@@ -194,7 +205,7 @@ export default function StyleAgentInterview({ onDone }: { onDone?: () => void })
             onClick={() => void retry()}
             className="mt-2 h-auto p-0 text-xs font-normal text-[#71717a] underline hover:text-[#0c0c0e]"
           >
-            Try again
+            {retryPayload ? "Retry style update" : "Retry loading style"}
           </Button>
         </div>
       )}
@@ -208,7 +219,7 @@ export default function StyleAgentInterview({ onDone }: { onDone?: () => void })
             onClick={onDone}
             className="h-auto p-0 text-xs font-normal text-[#71717a] underline hover:text-[#0c0c0e]"
           >
-            Back to workspace
+            Back to content plan
           </Button>
         </div>
       )}
@@ -220,7 +231,7 @@ export default function StyleAgentInterview({ onDone }: { onDone?: () => void })
             ref={inputRef}
             value={answer}
             rows={1}
-            placeholder="Tell me what to change…"
+            placeholder="Describe the style you want to change…"
             disabled={phase === "thinking"}
             aria-label="Your style request"
             onChange={(e) => setAnswer(e.target.value)}
@@ -241,7 +252,7 @@ export default function StyleAgentInterview({ onDone }: { onDone?: () => void })
             aria-label="Send request"
             className="flex-shrink-0 text-sm font-medium disabled:opacity-25"
           >
-            →
+            <ArrowUp className="size-4" aria-hidden="true" />
           </Button>
         </div>
       </div>

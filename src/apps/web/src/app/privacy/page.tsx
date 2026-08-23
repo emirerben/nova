@@ -26,25 +26,22 @@ import {
 } from "@/lib/legal";
 
 export const metadata = {
-  title: "Privacy — Kria",
+  title: "Privacy Policy — Kria",
 };
 
 function Section({
   n,
   title,
   children,
-  flag,
 }: {
   n: string;
   title: string;
   children: ReactNode;
-  flag?: boolean;
 }) {
   return (
     <section id={`s${n}`} className="scroll-mt-20 border-t border-zinc-100 py-9 first:border-t-0 first:pt-0">
       <Eyebrow tone="muted" className="mb-3">
         {n}. {title}
-        {flag && <span className="ml-2 normal-case tracking-normal text-amber-700">⚠ legal review</span>}
       </Eyebrow>
       <div className="space-y-3 text-[15px] leading-relaxed text-[#3f3f46]">{children}</div>
     </section>
@@ -223,7 +220,7 @@ export default function PrivacyPage() {
         </Section>
 
         {/* ── 4 ─────────────────────────────────────────────────────────── */}
-        <Section n="4" title="Legal Basis for Processing (GDPR)" flag>
+        <Section n="4" title="Legal Basis for Processing (GDPR)">
           <p>If you are in the European Economic Area or United Kingdom, we process your data on these legal bases:</p>
           <ul className="list-disc space-y-1.5 pl-4">
             <li><strong>Contract</strong> — processing your uploads, generating your plan, and rendering videos is necessary to provide the Service you asked for.</li>
@@ -313,7 +310,7 @@ export default function PrivacyPage() {
         </Section>
 
         {/* ── 7 ─────────────────────────────────────────────────────────── */}
-        <Section n="7" title="International Data Transfers" flag>
+        <Section n="7" title="International Data Transfers">
           <p>
             Kria&apos;s infrastructure and processors (Fly.io, Vercel, Google, OpenAI, Resend) are US-based. If you
             are located in the EEA, UK, or elsewhere outside the US, your data will be transferred to and processed
@@ -341,7 +338,7 @@ export default function PrivacyPage() {
         </Section>
 
         {/* ── 9 ─────────────────────────────────────────────────────────── */}
-        <Section n="9" title="Your Rights" flag>
+        <Section n="9" title="Your Rights">
           <p>Depending on where you live, you have the right to:</p>
           <ul className="list-disc space-y-1.5 pl-4">
             <li><strong>Access</strong> a copy of the personal data we hold about you;</li>
@@ -368,7 +365,7 @@ export default function PrivacyPage() {
         </Section>
 
         {/* ── 10 ─────────────────────────────────────────────────────────── */}
-        <Section n="10" title="Cookies & Tracking" flag>
+        <Section n="10" title="Cookies and Tracking">
           <p>
             Kria uses only the cookies required to keep you signed in — session, CSRF-protection, and sign-in-flow
             cookies set by our authentication provider. We do not use analytics cookies, advertising cookies, or any

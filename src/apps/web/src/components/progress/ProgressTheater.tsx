@@ -110,7 +110,7 @@ export function ProgressTheater({
   jobCreatedAt,
   isTerminal,
   isSuccess,
-  receiptText = "Your edits are ready",
+  receiptText = "Your video is ready",
   variants,
   onRetry,
   retrying = false,
@@ -176,10 +176,10 @@ export function ProgressTheater({
     totalBaseline,
   );
   const leaveNote = retrying
-    ? "Hit a snag mid-render — retrying automatically. This can add a few minutes."
+    ? "The render paused, so Kria is retrying automatically. This can add a few minutes."
     : tier >= 2
-      ? "Taking a bit longer than expected — still working on it."
-      : "You can leave this page — we'll keep rendering.";
+      ? "This is taking longer than expected. Kria is still working on it."
+      : "You can leave this page. Kria will keep rendering.";
 
   // Nova AI steps feed — additive, flag-gated. Flag off or steps absent/empty
   // ⇒ useStepsFeed is false and PhaseChipRow + the legacy D12 receipt render
@@ -233,7 +233,7 @@ export function ProgressTheater({
   // Headline text.
   const headlineText = (() => {
     if (isTerminal && isSuccess) return receiptText;
-    if (isFailed) return "This one didn't render";
+    if (isFailed) return "This video didn’t render";
     if (currentPhase && phaseLabels[currentPhase]) return phaseLabels[currentPhase];
     return "Working on it…";
   })();
@@ -296,7 +296,7 @@ export function ProgressTheater({
             tone === "light" ? "bg-[#0c0c0e] text-white hover:bg-[#0c0c0e]" : "bg-amber-300 text-zinc-900 hover:bg-amber-300"
           }`}
         >
-          Try again
+          Retry render
         </Button>
       )}
     </>

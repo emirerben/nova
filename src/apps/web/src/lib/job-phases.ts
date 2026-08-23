@@ -18,11 +18,11 @@ export const GENERATIVE_PHASE_ORDER = [
 export type GenerativePhase = (typeof GENERATIVE_PHASE_ORDER)[number];
 
 export const GENERATIVE_PHASE_LABEL: Record<GenerativePhase, string> = {
-  queued: "Waiting for a render slot",
-  analyze_clips: "Analyzing your clips",
-  match_song: "Selecting the perfect song",
-  render_variants: "Rendering your edits",
-  finalize: "Wrapping up",
+  queued: "Waiting to start",
+  analyze_clips: "Reviewing your footage",
+  match_song: "Choosing music",
+  render_variants: "Rendering your video",
+  finalize: "Finishing up",
 };
 
 // ===== TEMPLATE PHASES (re-export from legacy location, exact names preserved) =====

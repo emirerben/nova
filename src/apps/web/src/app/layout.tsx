@@ -7,12 +7,13 @@ import { Toaster } from "@/components/ui/sonner";
 
 export const metadata: Metadata = {
   metadataBase: new URL(CANONICAL_WEB_ORIGIN),
-  title: `${BRAND_NAME} — Your AI content agent`,
+  title: `${BRAND_NAME} — AI video editor for short-form content`,
   description:
-    "An AI agent that gives you video ideas, tells you what to film, and edits every video. You just press record.",
+    "Turn raw footage into polished short-form videos with Kria, from content planning through the final edit.",
   openGraph: {
-    title: `${BRAND_NAME} — Your AI content agent`,
-    description: "An AI agent for your content career.",
+    title: `${BRAND_NAME} — AI video editor for short-form content`,
+    description:
+      "Turn raw footage into polished short-form videos with Kria, from content planning through the final edit.",
     url: CANONICAL_WEB_ORIGIN,
     siteName: BRAND_NAME,
   },

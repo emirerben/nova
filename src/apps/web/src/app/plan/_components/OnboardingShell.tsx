@@ -124,7 +124,7 @@ const STEP_LABELS: Record<OnboardingStep, string> = {
   1: "TikTok",
   2: "What you make",
   3: "Style",
-  4: "First plan",
+  4: "Content plan",
 };
 
 /**
@@ -193,10 +193,10 @@ function WhatYouMakeStep({
         Step 2 of 4
       </p>
       <h1 className="mt-4 font-display text-4xl font-medium leading-tight tracking-tight text-[#0c0c0e]">
-        What do you make?
+        What do you like to make?
       </h1>
       <p className="mt-3 text-[#71717a]">
-        Pick all that apply — Kria adapts edits to your style.
+        Choose any that fit. We’ll use this to shape your edits.
       </p>
 
       {/* DESIGN.md §8 "mobile-first: single column default, sm:/md: enhance" —
@@ -233,7 +233,7 @@ function WhatYouMakeStep({
         disabled={selected.length === 0 || saving}
         className="mt-10 min-h-[48px] rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white hover:bg-[#0c0c0e] hover:opacity-80 disabled:opacity-40"
       >
-        {saving ? "Saving…" : "Continue →"}
+        {saving ? "Saving your choices…" : "Save choices"}
       </Button>
     </div>
   );
@@ -358,7 +358,7 @@ export default function OnboardingShell({
     const status = persona.persona_status;
 
     if (status === "generating") {
-      return <GeneratingStateLight label="Building your persona…" />;
+      return <GeneratingStateLight label="Building your creator profile…" />;
     }
 
     if ((status === "ready" || status === "edited" || status === "failed") && persona.persona) {
@@ -368,7 +368,7 @@ export default function OnboardingShell({
           status={persona.persona_status}
           onSave={onSavePersona}
           onContinue={handlePersonaContinue}
-          continueLabel="Get my ideas →"
+          continueLabel="Create my content plan"
           continuing={planBusy}
           tiktokProfile={persona.tiktok_profile}
           variant="reveal"
@@ -421,7 +421,7 @@ export default function OnboardingShell({
             {step === 3 && renderStep3()}
 
             {/* Step 4 — Navigating to plan (transient) */}
-            {step === 4 && <GeneratingStateLight label="Building your ideas…" />}
+        {step === 4 && <GeneratingStateLight label="Creating your content plan…" />}
           </StepSlide>
         </div>
       </main>

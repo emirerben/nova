@@ -109,7 +109,7 @@ export default function OverlaySuggestions({
   if (poolUnavailable || suggestions.unavailable) {
     return (
       <div className="mt-6 border-t border-zinc-200 pt-4" data-testid="overlay-suggestions">
-        <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">AI suggestions</p>
+        <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Suggested visuals</p>
         <p className="rounded-lg border border-dashed border-zinc-300 px-3 py-3 text-[12px] text-[#71717a]">
           {UNAVAILABLE_COPY}
         </p>
@@ -127,7 +127,7 @@ export default function OverlaySuggestions({
 
   return (
     <div className="mt-6 border-t border-zinc-200 pt-4" data-testid="overlay-suggestions">
-      <p className="mb-3 text-[12px] font-semibold text-[#3f3f46]">AI suggestions</p>
+      <p className="mb-3 text-[12px] font-semibold text-[#3f3f46]">Suggested visuals</p>
 
       <input
         ref={inputRef}
@@ -229,7 +229,7 @@ export default function OverlaySuggestions({
                 className="mt-2 rounded border border-dashed border-zinc-300 bg-white px-3 py-2 text-[12px] text-[#71717a]"
               >
                 <p className="font-medium text-[#3f3f46]">{upload.filename}</p>
-                <p>{upload.message}</p>
+                <p>We couldn&apos;t add this visual. Try again.</p>
                 <div className="mt-1 flex gap-3">
                   {upload.retryable && (
                     <Button
@@ -263,8 +263,7 @@ export default function OverlaySuggestions({
                   {asset.source_filename ?? "This visual"}
                 </p>
                 <p>
-                  {asset.error_detail ??
-                    "Couldn't read this file. Try exporting it again, then retry."}
+                  This visual couldn&apos;t be read. Try exporting it again, then retry.
                 </p>
                 <div className="mt-1 flex gap-3">
                   {asset.retryable !== false && (
@@ -308,7 +307,7 @@ export default function OverlaySuggestions({
 
       {suggestions.staleNotice && (
         <p className="mt-2 rounded border border-zinc-200 bg-white px-3 py-2 text-[12px] text-[#3f3f46]">
-          Your script changed — suggestions were cleared. Place visuals again?
+          Your script changed, so suggestions were cleared. Match visuals again when you&apos;re ready.
         </p>
       )}
 
@@ -319,14 +318,14 @@ export default function OverlaySuggestions({
             <span className="absolute inline-flex h-full w-full rounded-full bg-lime-500 opacity-75 motion-safe:animate-ping" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-lime-500" />
           </span>
-          <p className="text-[12px] text-[#0c0c0e]">Matching your visuals to the script…</p>
+          <p className="text-[12px] text-[#0c0c0e]">Matching visuals to your script…</p>
           {suggestions.stillWorking && (
             <p className="text-[12px] text-[#71717a]">Still working…</p>
           )}
         </div>
       ) : phase === "failed" ? (
         <div className="mt-3 rounded-lg border border-dashed border-zinc-300 bg-white px-3 py-3 text-center">
-          <p className="text-[12px] text-[#71717a]">Couldn&apos;t match your visuals this time.</p>
+          <p className="text-[12px] text-[#71717a]">We couldn&apos;t match visuals to your script this time.</p>
           <Button
             type="button"
             variant="outline"
@@ -376,7 +375,7 @@ export default function OverlaySuggestions({
             title={readyAssetCount === 0 ? "Add at least one visual first" : undefined}
             className="h-auto min-h-11 w-full gap-1.5 border-zinc-200 bg-white px-4 text-[12px] text-[#71717a] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-zinc-200 disabled:hover:text-[#71717a]"
           >
-            {phase === "ready" && rows.length > 0 ? "✦ Re-match visuals" : "✦ Place visuals for me"}
+            {phase === "ready" && rows.length > 0 ? "Match visuals again" : "Place visuals automatically"}
           </Button>
           {readyAssetCount === 0 && (
             <p className="mt-1.5 text-[12px] text-[#71717a]">Add at least one visual first</p>
@@ -415,7 +414,7 @@ function PoolThumb({
       {asset.status === "failed" ? (
         <div
           className="flex h-full w-full items-center justify-center border border-dashed border-zinc-300 text-[10px] text-[#71717a]"
-          title={asset.error_detail ?? "Kria couldn't analyze this file"}
+          title="This visual couldn't be analyzed. Try again."
         >
           !
         </div>
@@ -532,7 +531,7 @@ function SuggestionRow({
           type="button"
           variant="outline"
           size="icon"
-          aria-label={`Accept ${label}`}
+          aria-label={`Use ${label}`}
           onClick={(e) => {
             e.stopPropagation();
             onAccept();
@@ -545,7 +544,7 @@ function SuggestionRow({
           type="button"
           variant="outline"
           size="icon"
-          aria-label={`Dismiss ${label}`}
+          aria-label={`Skip ${label}`}
           onClick={(e) => {
             e.stopPropagation();
             onReject();

@@ -70,7 +70,7 @@ describe("ProgressTheater — steps feed flag gate", () => {
     delete process.env.NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED;
     render(<ProgressTheater {...baseProps()} steps={steps} />);
     expect(screen.getByRole("list", { name: "Processing phases" })).toBeInTheDocument();
-    expect(screen.queryByRole("list", { name: /nova ai steps/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: /how kria made this video/i })).not.toBeInTheDocument();
   });
 
   it("flag on, steps empty: falls back to PhaseChipRow", () => {
@@ -88,7 +88,7 @@ describe("ProgressTheater — steps feed flag gate", () => {
   it("flag on, steps non-empty: renders NovaActivityFeed instead of PhaseChipRow", () => {
     process.env.NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED = "true";
     render(<ProgressTheater {...baseProps()} steps={steps} />);
-    const list = screen.getByRole("list", { name: /nova ai steps/i });
+    const list = screen.getByRole("list", { name: /how kria made this video/i });
     expect(screen.queryByRole("list", { name: "Processing phases" })).not.toBeInTheDocument();
     expect(within(list).getByText("Rendering variant 1 of 3")).toBeInTheDocument();
   });
@@ -102,11 +102,11 @@ describe("ProgressTheater — steps feed flag gate", () => {
         stepsPresentation="disclosure"
       />,
     );
-    expect(screen.queryByRole("list", { name: /nova ai steps/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: /how kria made this video/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Show analysis steps" })).toBeInTheDocument();
 
     rerender(<ProgressTheater {...baseProps()} steps={steps} />);
-    expect(screen.getByRole("list", { name: /nova ai steps/i })).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: /how kria made this video/i })).toBeInTheDocument();
   });
 
   it("passes pending phase labels (beyond currentPhase) into the feed while not terminal", () => {
@@ -164,7 +164,7 @@ describe("ProgressTheater — D12 receipt-collapse override for the steps feed",
     // The plain D12 receipt — no step count, no toggle. Passing `steps` when
     // the flag is off must never leak steps-feed UI into the legacy path.
     expect(screen.queryByText(/steps/)).not.toBeInTheDocument();
-    expect(screen.queryByText("See what Nova did")).not.toBeInTheDocument();
+    expect(screen.queryByText("See how Kria made it")).not.toBeInTheDocument();
   });
 
   it("steps-feed path (flag on): band never collapses — settles into NovaActivityFeed's persistent receipt, toggle keeps working", () => {
@@ -189,7 +189,7 @@ describe("ProgressTheater — D12 receipt-collapse override for the steps feed",
     expect(settled.className).not.toMatch(/h-0/);
     expect(settled.className).not.toMatch(/opacity-0/);
     expect(screen.getByText("2 steps")).toBeInTheDocument();
-    const toggle = screen.getByRole("button", { name: "See what Nova did" });
+    const toggle = screen.getByRole("button", { name: "See how Kria made it" });
     expect(toggle).toBeInTheDocument();
 
     // Advance well past the old collapse window again — still persistent.
@@ -199,8 +199,8 @@ describe("ProgressTheater — D12 receipt-collapse override for the steps feed",
     expect(bandOf(screen.getByText("Ready in 2:41")).className).not.toMatch(/h-0/);
 
     // The toggle keeps working indefinitely, not just within some window.
-    fireEvent.click(screen.getByRole("button", { name: "See what Nova did" }));
-    expect(screen.getByRole("list", { name: /nova ai steps/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "See how Kria made it" }));
+    expect(screen.getByRole("list", { name: /how kria made this video/i })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Hide steps" }));
     expect(screen.queryByRole("list")).not.toBeInTheDocument();
     expect(bandOf(screen.getByText("Ready in 2:41")).className).not.toMatch(/h-0/);

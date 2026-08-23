@@ -130,7 +130,7 @@ export default function PersonaEditor({
     try {
       await onRetuneFromFeedback();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't update from feedback");
+      setError("We couldn't update your creator profile. Try again.");
     } finally {
       setRetuning(false);
     }
@@ -160,7 +160,7 @@ export default function PersonaEditor({
       setEditing(false);
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save");
+      setError("We couldn't save your creator profile. Try again.");
       return false;
     } finally {
       setSaving(false);
@@ -200,9 +200,9 @@ export default function PersonaEditor({
                 className="font-display text-3xl text-[#0c0c0e] animate-fade-up"
                 style={{ animationDelay: tiktokProfile ? "100ms" : "0ms" }}
               >
-                Meet your persona
+                Your creator profile
               </h1>
-              <InfoDot label="Your persona">
+              <InfoDot label="Your creator profile">
                 This guides every video Kria makes for you. Edit anything that feels off.
               </InfoDot>
             </div>
@@ -227,9 +227,9 @@ export default function PersonaEditor({
           <p className="font-display text-xl leading-relaxed text-[#0c0c0e]">{draft.summary}</p>
         ) : (
           <p className="text-[#71717a]">
-            No summary yet — tap{" "}
-            <span className="font-medium text-[#3f3f46]">Generate persona</span> to create one, or{" "}
-            <span className="font-medium text-[#3f3f46]">Tweak</span> to write one manually.
+            Your profile summary will appear here. Choose{" "}
+            <span className="font-medium text-[#3f3f46]">Generate profile</span> to create one,
+            or <span className="font-medium text-[#3f3f46]">Edit profile</span> to write one.
           </p>
         )}
 
@@ -250,7 +250,7 @@ export default function PersonaEditor({
             onClick={handleContinue}
             disabled={continuing || saving}
           >
-            {continuing || saving ? "Starting…" : continueLabel}
+            {saving ? "Saving profile…" : continuing ? "Creating content plan…" : continueLabel}
           </Button>
 
           <Button
@@ -258,11 +258,11 @@ export default function PersonaEditor({
             onClick={() => setEditing(true)}
             disabled={continuing || saving}
           >
-            Tweak
+            Edit profile
           </Button>
 
           {!dirty && status === "edited" && (
-            <span className="text-sm text-emerald-600">Saved ✓</span>
+            <span className="text-sm text-emerald-600">Profile saved</span>
           )}
 
           {onRetuneFromFeedback &&
@@ -276,14 +276,14 @@ export default function PersonaEditor({
                   disabled={retuning || continuing || saving || isBlocked}
                   title={
                     isBlocked
-                      ? "Your hand-edited persona stays as you wrote it. Reset to AI to retune."
-                      : "Re-tune this persona from your video feedback"
+                      ? "Your edited profile stays as you wrote it. Reset it before using feedback."
+                      : "Update this profile from your video feedback"
                   }
                 >
                   {retuning
                     ? "Updating…"
                     : !draft.summary?.trim()
-                      ? "Generate persona"
+                      ? "Generate profile"
                       : "Update from feedback"}
                 </Button>
               );
@@ -313,9 +313,9 @@ export default function PersonaEditor({
               className="font-display text-3xl text-[#0c0c0e] animate-fade-up"
               style={{ animationDelay: tiktokProfile ? "100ms" : "0ms" }}
             >
-              Meet your persona
+              Your creator profile
             </h1>
-            <InfoDot label="Your persona">
+            <InfoDot label="Your creator profile">
               This guides every video Kria makes for you. Edit anything that feels off.
             </InfoDot>
           </div>
@@ -349,12 +349,12 @@ export default function PersonaEditor({
           onClick={handleContinue}
           disabled={continuing || saving}
         >
-          {continuing || saving ? "Starting…" : continueLabel}
+          {saving ? "Saving profile…" : continuing ? "Creating content plan…" : continueLabel}
         </Button>
 
         {editing ? (
           <Button variant="outline" onClick={save} disabled={saving || !dirty}>
-            {saving ? "Saving…" : "Save edits"}
+            {saving ? "Saving profile…" : "Save profile"}
           </Button>
         ) : (
           <Button
@@ -362,12 +362,12 @@ export default function PersonaEditor({
             onClick={() => setEditing(true)}
             disabled={continuing || saving}
           >
-            Tweak
+            Edit profile
           </Button>
         )}
 
         {!dirty && status === "edited" && !editing && (
-          <span className="text-sm text-emerald-600">Saved ✓</span>
+          <span className="text-sm text-emerald-600">Profile saved</span>
         )}
 
         {onRetuneFromFeedback && !editing && (() => {
@@ -383,11 +383,11 @@ export default function PersonaEditor({
               disabled={retuning || continuing || saving || isBlocked}
               title={
                 isBlocked
-                  ? "Your hand-edited persona stays as you wrote it. Reset to AI to retune."
-                  : "Re-tune this persona from your video feedback"
+                  ? "Your edited profile stays as you wrote it. Reset it before using feedback."
+                  : "Update this profile from your video feedback"
               }
             >
-              {retuning ? "Updating…" : !draft.summary?.trim() ? "Generate persona" : "Update from feedback"}
+              {retuning ? "Updating profile…" : !draft.summary?.trim() ? "Generate profile" : "Update from feedback"}
             </Button>
           );
         })()}
@@ -452,9 +452,9 @@ function PersonaSummary({ persona }: { persona: PersonaContent }) {
         <p className="font-display text-xl leading-relaxed text-[#0c0c0e]">{persona.summary}</p>
       ) : (
         <p className="text-[#71717a]">
-          No summary yet — tap{" "}
-          <span className="font-medium text-[#3f3f46]">Generate persona</span> to create one,
-          or <span className="font-medium text-[#3f3f46]">Tweak</span> to write one manually.
+          Your profile summary will appear here. Choose{" "}
+          <span className="font-medium text-[#3f3f46]">Generate profile</span> to create one,
+          or <span className="font-medium text-[#3f3f46]">Edit profile</span> to write one.
         </p>
       )}
 

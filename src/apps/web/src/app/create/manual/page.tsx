@@ -24,7 +24,7 @@ const MANUAL_VARIANT_ID = "original_text";
 const MAX_MANUAL_MEDIA = 20;
 const IMAGE_EXTENSIONS = [".avif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".webp"];
 const PHOTO_DRAFT_MESSAGE =
-  "Photo timelines are not available in the manual editor yet. Use Make a video with Kria for photos, or choose videos only.";
+  "Photo timelines aren’t available in the manual editor yet. Create a video from your footage to use photos, or choose videos only.";
 
 type DraftUpload = ManualDraftMedia & {
   name: string;
@@ -150,11 +150,7 @@ export default function ManualCreatePage() {
       })
       .catch((cause) => {
         if (!active) return;
-        setError(
-          cause instanceof Error
-            ? cause.message
-            : "Kria couldn’t open your manual draft.",
-        );
+        setError("Kria couldn’t open your manual draft. Check your connection and try again.");
       })
       .finally(() => {
         if (active) setLoadingDraft(false);
@@ -245,11 +241,7 @@ export default function ManualCreatePage() {
             );
           } catch (cause) {
             setFailedUploads(failed);
-            setError(
-              cause instanceof Error
-                ? `Your files uploaded, but Kria couldn’t save their order. ${cause.message}`
-                : "Your files uploaded, but Kria couldn’t save their order. Continue to retry.",
-            );
+            setError("Your files uploaded, but Kria couldn’t save their order. Try again.");
             return;
           }
         }
@@ -261,7 +253,7 @@ export default function ManualCreatePage() {
         }
       } catch (cause) {
         setFailedUploads(selected);
-        setError(cause instanceof Error ? cause.message : "Your media couldn’t be uploaded.");
+        setError("Kria couldn’t upload your media. Check the file type and size, then try again.");
       } finally {
         setUploading(false);
       }
@@ -279,7 +271,7 @@ export default function ManualCreatePage() {
           uploadsRef.current.filter((candidate) => candidate.order !== upload.order),
         );
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : "Kria couldn’t remove that file.");
+        setError("Kria couldn’t remove that file. Try again.");
       } finally {
         setRemovingOrder(null);
       }
@@ -310,7 +302,7 @@ export default function ManualCreatePage() {
       replaceWithEditor({ ...response, variant_id: response.variant_id || MANUAL_VARIANT_ID });
     } catch (cause) {
       setOpeningEditor(false);
-      setError(cause instanceof Error ? cause.message : "Kria couldn’t open the editor.");
+      setError("Kria couldn’t open the editor. Check your connection and try again.");
     }
   }, [draft, openingEditor, replaceWithEditor, uploading]);
 
@@ -319,7 +311,8 @@ export default function ManualCreatePage() {
   if (authStatus === "loading" || loadingDraft) {
     return (
       <LightShell size="narrow">
-        <div className="motion-safe:animate-pulse space-y-5 py-10" aria-label="Loading manual draft">
+        <div className="motion-safe:animate-pulse space-y-5 py-10" role="status" aria-live="polite">
+          <span className="sr-only">Loading your draft…</span>
           <div className="h-3 w-28 rounded bg-zinc-200" />
           <div className="h-12 w-3/4 rounded bg-zinc-200" />
           <div className="h-44 rounded-xl bg-zinc-100" />
@@ -347,11 +340,10 @@ export default function ManualCreatePage() {
           Manual draft
         </Eyebrow>
         <h1 className="font-display text-4xl leading-tight tracking-[-0.02em] sm:text-5xl">
-          Build from your footage.
+          Arrange your footage
         </h1>
         <p className="mt-4 max-w-xl leading-7 text-[#71717a]">
-          Add videos in the order you want them to start. You can trim,
-          rearrange, add text, and choose audio in the editor.
+          Add videos in order. Trim, rearrange, add text, and choose audio in the editor.
         </p>
       </div>
 
@@ -360,14 +352,19 @@ export default function ManualCreatePage() {
           role="alert"
           className="mb-5 rounded-lg border border-zinc-200 bg-white px-4 py-3 text-sm text-[#3f3f46]"
         >
-          {error}
+          <p>{error}</p>
+          {error === PHOTO_DRAFT_MESSAGE && (
+            <Link href="/create" className="mt-2 inline-flex min-h-11 items-center font-semibold underline underline-offset-4">
+              Create a video with photos
+            </Link>
+          )}
         </div>
       )}
 
       <section aria-labelledby="manual-footage-heading">
         <div className="mb-3 flex items-baseline justify-between gap-4">
           <h2 id="manual-footage-heading" className="text-sm font-semibold">
-            Timeline footage
+            Videos in timeline
           </h2>
           <span className="text-xs text-[#a1a1aa]">Videos · up to 20</span>
         </div>
@@ -377,7 +374,7 @@ export default function ManualCreatePage() {
           accept="video/*"
           multiple
           disabled={!draft || uploading || openingEditor}
-          aria-label="Upload timeline footage"
+          aria-label="Choose videos to add"
           className="sr-only"
           onChange={(event) => {
             void handleFiles(event.target.files);
@@ -405,7 +402,7 @@ export default function ManualCreatePage() {
             </svg>
           </span>
           <span className="text-sm font-semibold">
-            {uploading ? "Uploading and saving…" : "Choose videos"}
+            {uploading ? "Uploading and saving…" : "Choose videos to add"}
           </span>
           <span className="mt-1 text-sm text-[#71717a]">or drop files here</span>
         </button>
@@ -461,10 +458,10 @@ export default function ManualCreatePage() {
           disabled={uploads.length === 0 || uploading || openingEditor || !draft}
           className="inline-flex min-h-[48px] w-full items-center justify-center rounded-full bg-[#0c0c0e] px-7 py-3 text-[15px] font-semibold text-white transition-opacity hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0c0c0e] disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {openingEditor ? "Opening editor…" : "Continue to editor"}
+          {openingEditor ? "Opening editor…" : "Export video"}
         </button>
         <p className="mt-2 text-center text-xs text-[#a1a1aa]">
-          Your order is saved. The first export creates the finished video.
+          Your order is saved. Export when you’re ready to create the finished video.
         </p>
       </div>
 
@@ -472,7 +469,7 @@ export default function ManualCreatePage() {
         href="/plan"
         className="mt-6 inline-flex min-h-[44px] items-center text-sm text-[#71717a] underline-offset-4 hover:text-[#0c0c0e] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0c0c0e]"
       >
-        Back to Create
+        Back to video creation
       </Link>
     </LightShell>
   );

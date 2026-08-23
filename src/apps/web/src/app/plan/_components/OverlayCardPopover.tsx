@@ -478,7 +478,7 @@ export default function OverlayCardPopover({
               onClick={() => onPatch({ display_mode: "fullscreen" })}
               className="flex h-auto min-h-11 items-center justify-start p-0 text-xs text-zinc-300 underline underline-offset-2 transition-colors hover:bg-transparent hover:text-white sm:min-h-0"
             >
-              Make full screen →
+              Make full screen
             </Button>
           )}
         </>

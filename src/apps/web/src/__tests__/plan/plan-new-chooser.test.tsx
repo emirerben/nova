@@ -63,7 +63,7 @@ describe("/plan/new chooser", () => {
     render(<NewVideoPage />);
     // Cards become tappable once the plan loads (aria-disabled clears).
     await waitFor(() =>
-      expect(screen.getByRole("radio", { name: /Montage/ })).not.toHaveAttribute(
+      expect(screen.getByRole("radio", { name: /Music montage/ })).not.toHaveAttribute(
         "aria-disabled",
       ),
     );
@@ -71,10 +71,10 @@ describe("/plan/new chooser", () => {
 
   it("renders the type cards with Montage selected by default", async () => {
     await ready();
-    const montage = screen.getByRole("radio", { name: /Montage/ });
+    const montage = screen.getByRole("radio", { name: /Music montage/ });
     expect(montage).toHaveAttribute("aria-checked", "true");
     expect(screen.getByRole("radio", { name: /Voiceover/ })).toBeInTheDocument();
-    expect(screen.getByText("What kind of video?")).toBeInTheDocument();
+    expect(screen.getByText("What do you want to make?")).toBeInTheDocument();
   });
 
   it("has no Continue button", async () => {
@@ -85,8 +85,8 @@ describe("/plan/new chooser", () => {
   async function throughStyleStep() {
     // Montage inserts Step 2 "Pick a style." — tapping the (already
     // selected) Montage card advances instead of creating anything.
-    fireEvent.click(screen.getByRole("radio", { name: /Montage/ }));
-    expect(await screen.findByText("Pick a style.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: /Music montage/ }));
+    expect(await screen.findByText("Choose a visual style")).toBeInTheDocument();
     expect(mockAddIdea).not.toHaveBeenCalled();
   }
 
@@ -101,7 +101,7 @@ describe("/plan/new chooser", () => {
     await waitFor(() =>
       expect(push).toHaveBeenCalledWith("/plan/items/item-1?setup=done"),
     );
-    expect(mockAddIdea).toHaveBeenCalledWith("plan-1", "Montage");
+    expect(mockAddIdea).toHaveBeenCalledWith("plan-1", "Music montage");
     expect(mockUpdatePlanItem).toHaveBeenCalledWith("item-1", {
       edit_format: "montage",
       content_mode: "existing_footage",
@@ -112,7 +112,7 @@ describe("/plan/new chooser", () => {
   it("Montage: picking Masonry persists montage_preset masonry", async () => {
     await ready();
     await throughStyleStep();
-    fireEvent.click(screen.getByRole("radio", { name: /Masonry/ }));
+    fireEvent.click(screen.getByRole("radio", { name: /Collage/ }));
     await waitFor(() => expect(push).toHaveBeenCalled());
     expect(mockUpdatePlanItem).toHaveBeenCalledWith("item-1", {
       edit_format: "montage",
@@ -125,18 +125,18 @@ describe("/plan/new chooser", () => {
     await ready();
     await throughStyleStep();
     fireEvent.click(screen.getByRole("button", { name: "Back to video kind" }));
-    expect(await screen.findByText("What kind of video?")).toBeInTheDocument();
+    expect(await screen.findByText("What do you want to make?")).toBeInTheDocument();
     expect(mockAddIdea).not.toHaveBeenCalled();
   });
 
   it("Voiceover skips the style step and persists as narrated_ready", async () => {
     await ready();
     fireEvent.click(screen.getByRole("radio", { name: /Voiceover/ }));
-    expect(screen.queryByText("Pick a style.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Choose a visual style")).not.toBeInTheDocument();
     await waitFor(() =>
       expect(push).toHaveBeenCalledWith("/plan/items/item-1?setup=done"),
     );
-    expect(mockAddIdea).toHaveBeenCalledWith("plan-1", "Voiceover");
+    expect(mockAddIdea).toHaveBeenCalledWith("plan-1", "Voiceover story");
     expect(mockUpdatePlanItem).toHaveBeenCalledWith("item-1", {
       edit_format: "narrated_ready",
     });
@@ -145,10 +145,10 @@ describe("/plan/new chooser", () => {
   it("Enter on a focused card advances", async () => {
     const user = userEvent.setup();
     await ready();
-    const montage = screen.getByRole("radio", { name: /Montage/ });
+    const montage = screen.getByRole("radio", { name: /Music montage/ });
     montage.focus();
     await user.keyboard("{Enter}");
-    expect(await screen.findByText("Pick a style.")).toBeInTheDocument();
+    expect(await screen.findByText("Choose a visual style")).toBeInTheDocument();
     expect(mockAddIdea).not.toHaveBeenCalled();
   });
 
@@ -202,7 +202,7 @@ describe("/plan/new chooser", () => {
     async function readyForItem() {
       render(<NewVideoPage />);
       await waitFor(() =>
-        expect(screen.getByRole("radio", { name: /Montage/ })).not.toHaveAttribute(
+        expect(screen.getByRole("radio", { name: /Music montage/ })).not.toHaveAttribute(
           "aria-disabled",
         ),
       );
@@ -232,8 +232,8 @@ describe("/plan/new chooser", () => {
         montage_preset: "masonry",
       });
       render(<NewVideoPage />);
-      expect(await screen.findByText("Pick a style.")).toBeInTheDocument();
-      expect(screen.getByRole("radio", { name: /Masonry/ })).toHaveAttribute(
+      expect(await screen.findByText("Choose a visual style")).toBeInTheDocument();
+      expect(screen.getByRole("radio", { name: /Collage/ })).toHaveAttribute(
         "aria-checked",
         "true",
       );
@@ -265,8 +265,8 @@ describe("/plan/new chooser", () => {
         montage_preset: "classic",
       });
       render(<NewVideoPage />);
-      await screen.findByText("Pick a style.");
-      fireEvent.click(screen.getByRole("radio", { name: /Masonry/ }));
+      await screen.findByText("Choose a visual style");
+      fireEvent.click(screen.getByRole("radio", { name: /Collage/ }));
       await waitFor(() =>
         expect(push).toHaveBeenCalledWith("/plan/items/existing-1?setup=done"),
       );
@@ -300,9 +300,9 @@ describe("/plan/new chooser", () => {
         montage_preset: "classic",
       });
       render(<NewVideoPage />);
-      await screen.findByText("Pick a style.");
+      await screen.findByText("Choose a visual style");
       fireEvent.click(screen.getByRole("button", { name: "Back to video kind" }));
-      expect(await screen.findByText("What kind of video?")).toBeInTheDocument();
+      expect(await screen.findByText("What do you want to make?")).toBeInTheDocument();
       expect(mockAddIdea).not.toHaveBeenCalled();
       expect(mockUpdatePlanItem).not.toHaveBeenCalled();
     });

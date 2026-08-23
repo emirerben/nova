@@ -50,8 +50,8 @@ export default function TikTokProductWorkspace({ videoSrc }: { videoSrc: string 
               </h1>
               <p className="mt-4 max-w-2xl text-pretty text-base leading-relaxed text-[#52525b]">
                 This public workspace demonstrates every TikTok permission Kria requests: account
-                connection, an exact-video Direct Post, and a draft handoff that the creator finishes
-                inside TikTok.
+                connection, publishing the exact video you approved, and an inbox handoff that you
+                finish inside TikTok.
               </p>
             </div>
             <Link
@@ -65,7 +65,7 @@ export default function TikTokProductWorkspace({ videoSrc }: { videoSrc: string 
 
         <section className="grid gap-3 border-b border-zinc-200 py-6 sm:grid-cols-3" aria-label="Integration status">
           <StatusCard label="Connection" value="TikTok connected" detail="Login Kit + granted scopes" />
-          <StatusCard label="Content Posting" value="Post or inbox" detail="Exact approved render" />
+          <StatusCard label="Publishing" value="Publish now or finish in TikTok" detail="The exact video you approved" />
           <StatusCard label="Sandbox review" value="Private testing" detail="Target user only" />
         </section>
 
@@ -91,13 +91,13 @@ export default function TikTokProductWorkspace({ videoSrc }: { videoSrc: string 
                     controls
                     playsInline
                     preload="metadata"
-                    aria-label="Exact approved Kria video"
+                    aria-label="The exact video you approved"
                     className="size-full object-cover"
                   />
                 ) : (
                   <div className="flex size-full items-end bg-zinc-800 p-6 text-white">
                     <div>
-                      <p className="text-xs uppercase text-white/60">Exact approved render</p>
+                      <p className="text-xs uppercase text-white/60">The exact video you approved</p>
                       <p className="mt-2 text-pretty font-display text-2xl">A quiet morning in the studio</p>
                     </div>
                   </div>
@@ -115,14 +115,14 @@ export default function TikTokProductWorkspace({ videoSrc }: { videoSrc: string 
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   <DeliveryModeCard
                     checked={deliveryMode === "direct_post"}
-                    title="Post now"
-                    detail="Kria submits a private Direct Post after final confirmation."
+                    title="Publish now"
+                    detail="Kria sends the exact video you approved directly to TikTok after final confirmation."
                     onChange={() => chooseDeliveryMode("direct_post")}
                   />
                   <DeliveryModeCard
                     checked={deliveryMode === "draft_upload"}
                     title="Finish in TikTok"
-                    detail="Kria sends the video to TikTok; the creator completes the draft there."
+                    detail="Kria sends the exact video you approved to your TikTok inbox. Open the TikTok app to finish editing and post it."
                     onChange={() => chooseDeliveryMode("draft_upload")}
                   />
                 </div>
@@ -141,8 +141,8 @@ export default function TikTokProductWorkspace({ videoSrc }: { videoSrc: string 
                   </h3>
                   <p className="mt-2 text-pretty text-sm leading-relaxed text-[#71717a]">
                     {deliveryMode === "direct_post"
-                      ? "Kria suggests copy, but never chooses privacy or enables interactions for the creator."
-                      : "TikTok will send a notification to the TikTok app inbox on a phone. Open it there to edit and finish the post; this step does not publish anything."}
+                      ? "Kria suggests copy, but you choose privacy and interactions before publishing."
+                      : "TikTok will send an inbox notification to the TikTok app on your phone. Open it there to edit and finish the post; sending it does not publish anything."}
                   </p>
 
                   {deliveryMode === "draft_upload" ? (
@@ -265,7 +265,7 @@ export default function TikTokProductWorkspace({ videoSrc }: { videoSrc: string 
                   </p>
                   <dl className="mt-7 divide-y divide-zinc-200 border-y border-zinc-200">
                     <SummaryRow label="Account" value="@review_sandbox" />
-                    <SummaryRow label="Delivery" value={deliveryMode === "direct_post" ? "Private Direct Post" : "Finish in TikTok"} />
+                    <SummaryRow label="Delivery" value={deliveryMode === "direct_post" ? "Publish now" : "Finish in TikTok"} />
                     {deliveryMode === "direct_post" ? (
                       <>
                         <SummaryRow label="Audience" value="Only you" />
@@ -291,7 +291,7 @@ export default function TikTokProductWorkspace({ videoSrc }: { videoSrc: string 
                       onClick={() => setStage("receipt")}
                       className="min-h-11 flex-1 rounded-full bg-[#0c0c0e] px-5 py-2 text-sm font-semibold text-white hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-lime-600"
                     >
-                      {deliveryMode === "direct_post" ? "Complete demo submission" : "Send demo to TikTok inbox"}
+                      {deliveryMode === "direct_post" ? "Complete preview" : "Preview inbox handoff"}
                     </button>
                   </div>
                 </div>
@@ -303,12 +303,12 @@ export default function TikTokProductWorkspace({ videoSrc }: { videoSrc: string 
                     Demo receipt
                   </div>
                   <h3 className="mt-4 text-balance font-display text-2xl">
-                    {deliveryMode === "direct_post" ? "Published privately on TikTok" : "Waiting in the TikTok app inbox"}
+                    {deliveryMode === "direct_post" ? "Published privately on TikTok" : "Waiting in your TikTok inbox"}
                   </h3>
                   <p className="mt-2 text-pretty text-sm leading-relaxed text-[#71717a]">
                     {deliveryMode === "direct_post"
                       ? "Processing is complete and visibility is private. Completion never implies public visibility; Kria tracks both states independently."
-                      : "TikTok accepted the video for handoff and sent an inbox notification to the TikTok app on a phone. Open it there to continue — it does not appear on tiktok.com or under Profile → Drafts, and Kria has not created a post."}
+                      : "TikTok accepted the video for handoff and sent an inbox notification to the TikTok app on your phone. Open it there to continue — it does not appear on tiktok.com or in Profile drafts, and Kria has not created a post."}
                   </p>
                   <ol className="mt-7 space-y-4" aria-label="Demo publication lifecycle">
                     <LifecycleRow label="Immutable snapshot created" detail="Approved generation preserved" />
@@ -338,7 +338,7 @@ export default function TikTokProductWorkspace({ videoSrc }: { videoSrc: string 
         </section>
 
         <section className="grid gap-5 border-t border-zinc-200 py-12 md:grid-cols-3" aria-label="Integration safeguards">
-          <InfoCard title="Exact media" body="Kria snapshots the approved GCS generation and streams it directly to TikTok with a short-lived media token." />
+          <InfoCard title="Exact video" body="Kria sends the exact approved video to TikTok with a short-lived media token." />
           <InfoCard title="Creator consent" body="Privacy is always selected manually. Interactions start off, and commercial, AIGC, and music declarations are explicit." />
           <InfoCard title="Account control" body="Disconnect revokes access and erases stored TikTok credentials. Kria requests no profile, statistics, or video-list scopes in this review." />
         </section>

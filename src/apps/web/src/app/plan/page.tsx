@@ -95,7 +95,7 @@ function PlanPageInner() {
     } catch (err) {
       if (epoch !== loadEpochRef.current) return null;
       if (err instanceof NotAuthenticatedError) setNeedsAuth(true);
-      else setError(err instanceof Error ? err.message : "Failed to load your plan");
+      else setError("We couldn’t load your content plan. Check your connection and try again.");
       return null;
     } finally {
       if (epoch === loadEpochRef.current) setLoading(false);
@@ -225,7 +225,7 @@ function PlanPageInner() {
       setPlan(p);
     } catch (err) {
       if (err instanceof NotAuthenticatedError) setNeedsAuth(true);
-      else setError(err instanceof Error ? err.message : "Couldn't start your plan");
+      else setError("We couldn’t create your content plan. Check your connection and try again.");
     } finally {
       setBusy(false);
     }
@@ -407,8 +407,10 @@ function PlanPageInner() {
                           j.jobId === job.jobId ? { ...j, jobId: result.job_id } : j,
                         ),
                       );
-                    } catch (err) {
-                      setError(err instanceof Error ? err.message : "Couldn't re-roll");
+                    } catch {
+                      setError(
+                        "We couldn’t create another version. Check your connection and try again.",
+                      );
                     }
                   }}
                 />
@@ -429,7 +431,7 @@ function PlanPageInner() {
                   }}
                   className="w-full rounded-xl py-3 min-h-[44px]"
                 >
-                  Continue creating with Kria →
+                  Continue to content plan
                 </Button>
               </div>
             </div>
@@ -455,8 +457,10 @@ function PlanPageInner() {
                         onboarding_edit_job_id: result.job_id,
                       });
                       void load();
-                    } catch (err) {
-                      setError(err instanceof Error ? err.message : "Couldn't re-roll");
+                    } catch {
+                      setError(
+                        "We couldn’t create another version. Check your connection and try again.",
+                      );
                     }
                   }
                 }}
@@ -475,7 +479,7 @@ function PlanPageInner() {
                     }}
                     className="w-full rounded-xl py-3 min-h-[44px]"
                   >
-                    Continue creating with Kria →
+                    Continue to content plan
                   </Button>
                 </div>
               </div>

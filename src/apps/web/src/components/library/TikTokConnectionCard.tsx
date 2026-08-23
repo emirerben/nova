@@ -53,27 +53,27 @@ export default function TikTokConnectionCard({ onConnection }: { onConnection?: 
 
   async function connect() {
     setBusy(true); setError(null);
-    try { await startTikTokOAuth(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not connect TikTok"); setBusy(false); }
+    try { await startTikTokOAuth(); } catch (reason) { setError(tiktokConnectionError("connect to TikTok", reason)); setBusy(false); }
   }
   async function disconnect() {
     setConfirmDisconnectOpen(false);
     setBusy(true); setError(null);
-    try { await disconnectTikTok(); await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not disconnect TikTok"); }
+    try { await disconnectTikTok(); await load(); } catch (reason) { setError(tiktokConnectionError("disconnect TikTok", reason)); }
     finally { setBusy(false); }
   }
   async function sync() {
     setBusy(true); setError(null);
-    try { await syncTikTok(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not sync TikTok"); }
+    try { await syncTikTok(); } catch (reason) { setError(tiktokConnectionError("sync TikTok performance", reason)); }
     finally { setBusy(false); }
   }
 
   const showConnect = !connection.connected || reconnectRequired || partialGrant;
   const displayName = connection.account?.display_name || "TikTok";
   const meta = connection.connected
-    ? [displayName !== "TikTok" ? displayName : null, connection.last_synced_at ? `synced ${formatSyncedAgo(connection.last_synced_at)}` : null]
+    ? [displayName !== "TikTok" ? displayName : null, connection.last_synced_at ? `Last synced ${formatSyncedAgo(connection.last_synced_at)}` : null]
         .filter(Boolean)
         .join(" · ") || "Connected"
-    : "Post straight from Kria";
+    : "Publish directly from Kria";
 
   return (
     <section className="rounded-2xl border border-zinc-200 bg-white p-4" aria-label="TikTok connection">
@@ -113,7 +113,7 @@ export default function TikTokConnectionCard({ onConnection }: { onConnection?: 
         <div className="shrink-0">
           {showConnect ? (
             <Button variant="ink" size="sm" disabled={busy} onClick={() => void connect()}>
-              {connection.connected ? "Reconnect" : "Connect"}
+              {busy ? (connection.connected ? "Reconnecting…" : "Connecting…") : connection.connected ? "Reconnect" : "Connect"}
             </Button>
           ) : (
             <DropdownMenu>
@@ -124,7 +124,7 @@ export default function TikTokConnectionCard({ onConnection }: { onConnection?: 
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 {connection.can_analyze && (
-                  <DropdownMenuItem onSelect={() => void sync()}>Sync performance</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => void sync()}>Sync TikTok performance</DropdownMenuItem>
                 )}
                 <DropdownMenuItem onSelect={() => setConfirmDisconnectOpen(true)}>Disconnect</DropdownMenuItem>
               </DropdownMenuContent>
@@ -135,13 +135,24 @@ export default function TikTokConnectionCard({ onConnection }: { onConnection?: 
       <ConfirmDialog
         open={confirmDisconnectOpen}
         question="Disconnect TikTok?"
-        detail="Erases the stored TikTok credentials. Your videos stay."
+        detail="Removes TikTok access from Kria. Your videos remain in Kria and on TikTok."
         confirmLabel="Disconnect"
         onConfirm={() => void disconnect()}
         onCancel={() => setConfirmDisconnectOpen(false)}
       />
     </section>
   );
+}
+
+function tiktokConnectionError(action: string, reason: unknown): string {
+  const message = reason instanceof Error ? reason.message : "";
+  if (/connect|reconnect|authorization|expired|permission/i.test(message)) {
+    return "TikTok access needs to be reconnected before Kria can do that.";
+  }
+  if (/network|fetch|timeout|reach/i.test(message)) {
+    return "Kria couldn't reach TikTok. Check your connection and try again.";
+  }
+  return `Kria couldn't ${action}. Try again.`;
 }
 
 function formatSyncedAgo(value: string): string {

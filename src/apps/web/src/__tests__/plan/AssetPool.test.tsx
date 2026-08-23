@@ -476,7 +476,7 @@ describe("AssetPool — upload flow (presigned direct-PUT, R1/C9+C14)", () => {
     });
 
     expect(
-      await screen.findByText("This upload retry does not match the originally selected file."),
+      await screen.findByText("Kria couldn’t start this upload. Retry in a moment."),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
     expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
@@ -948,7 +948,7 @@ describe("AssetPool — upload flow (presigned direct-PUT, R1/C9+C14)", () => {
     fireEvent.change(screen.getByLabelText(/add visuals to your pool/i), {
       target: { files: [new File(["expired"], "expired.png", { type: "image/png" })] },
     });
-    expect(await screen.findByText("This upload expired. Upload the file again.")).toBeInTheDocument();
+    expect(await screen.findByText("Upload interrupted. Check your connection and retry.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(screen.getByText("1 of 1 added.")).toBeInTheDocument());
     expect({ presignCalls, putCalls, registerCalls }).toEqual({
@@ -1956,11 +1956,11 @@ describe("AssetPool — creator context", () => {
     });
 
     expect(screen.getByText("You")).toBeInTheDocument();
-    expect(screen.getByText("Nova")).toBeInTheDocument();
+    expect(screen.getByText("Kria")).toBeInTheDocument();
     expect(screen.getByText("Nova sees a generic chart")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Add context" }));
-    fireEvent.change(screen.getByPlaceholderText("What should Nova know about this visual?"), {
+    fireEvent.change(screen.getByPlaceholderText("What should Kria know about this visual?"), {
       target: { value: "Use this when I mention churn" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));

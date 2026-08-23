@@ -26,6 +26,7 @@
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { ChevronLeft } from "lucide-react";
 import { useSession } from "next-auth/react";
 import SignInPrompt from "@/app/plan/_components/SignInPrompt";
 import { LightShell } from "@/components/ui/LightShell";
@@ -183,7 +184,7 @@ function NewVideoPageInner() {
           });
           router.push(`/plan/items/${itemId}?setup=done`);
         } catch {
-          setError("That didn't go through — try again.");
+          setError("We couldn’t save this format. Check your connection and try again.");
           setCreating(false);
         }
         return;
@@ -197,7 +198,7 @@ function NewVideoPageInner() {
         const item = await addIdea(plan.id, TYPE_COPY[kind].label);
         newItemId = item.id;
       } catch {
-        setError("That didn't go through — try again.");
+        setError("We couldn’t create this video. Check your connection and try again.");
         setCreating(false);
         return;
       }
@@ -263,7 +264,7 @@ function NewVideoPageInner() {
               aria-label="Back to video kind"
               className="text-[20px] leading-none text-[#3f3f46]"
             >
-              ‹
+              <ChevronLeft className="size-5" aria-hidden="true" />
             </Button>
           ) : (
             <Button variant="ghost" size="icon" asChild className="text-[22px] leading-none text-[#3f3f46]">
@@ -281,9 +282,9 @@ function NewVideoPageInner() {
         {onStyleStep ? (
           <>
             <h1 className="font-display mt-6 text-[30px] font-medium leading-tight text-[#0c0c0e]">
-              Pick a style.
+              Choose a visual style
             </h1>
-            <p className="mt-1.5 text-sm text-[#71717a]">How your clips are arranged.</p>
+            <p className="mt-1.5 text-sm text-[#71717a]">Choose how your footage should be arranged.</p>
 
             <div
               className="scrollbar-none mt-6 grid grid-cols-2 gap-3.5 pb-4 sm:grid-cols-3"
@@ -312,10 +313,10 @@ function NewVideoPageInner() {
         ) : (
           <>
             <h1 className="font-display mt-6 text-[30px] font-medium leading-tight text-[#0c0c0e]">
-              What kind of video?
+              What do you want to make?
             </h1>
             <p className="mt-1.5 text-sm text-[#71717a]">
-              Tap one — Kria edits each kind differently.
+              Choose a format. You can change it later.
             </p>
 
             <div

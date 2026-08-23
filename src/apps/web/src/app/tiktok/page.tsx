@@ -7,7 +7,7 @@ const DEMO_VIDEO_FETCH_TIMEOUT_MS = 4_000;
 export const metadata: Metadata = {
   title: "TikTok publishing workspace — Kria",
   description:
-    "Explore Kria's TikTok sandbox workflow: account connection, creator-controlled Direct Post, and draft handoff completed inside TikTok.",
+    "Explore Kria's TikTok delivery workflow: connect your account, publish the exact video you approved, or finish it in TikTok's mobile app.",
 };
 
 async function resolveDemoVideo(): Promise<string | null> {

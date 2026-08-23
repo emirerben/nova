@@ -658,6 +658,6 @@ describe("useEditCopilot", () => {
     const assistantMessage = result.current.messages[1];
     expect(assistantMessage.isRenderTurn).toBeUndefined();
     expect(assistantMessage.undoVersion).toBe(5);
-    expect(assistantMessage.text).toBe("Applied: Size: 64 → 54.");
+    expect(assistantMessage.text).toBe("Applied: Size: 64, now 54.");
   });
 });

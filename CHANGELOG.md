@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.48.2.2] — 2026-08-23
+## [0.48.4.0] — 2026-08-23
 
 ### Added
 - **Kria now proposes one concrete edit direction before planning unbriefed footage.** The proposal explains its pace, duration, text density, audio role, rationale, and any buildability warnings; rendering waits for a version-safe confirmation, while explicit creator directions continue immediately.
@@ -12,6 +12,17 @@ All notable changes to this project will be documented in this file.
 - **Nova no longer hides rejected edit requests behind “I didn't change the draft.”** Copilot turns report stable applied, clarification, no-effect, unsupported, stale, or failed outcomes with the parser/client rejection reason and a concrete next action.
 - **“Change the title to Corfu” and explicit fast-montage requests now produce real guided-editor changes.** Title requests target an existing guided title element; direction changes require a current V2 revision and stage a revision-bound, single-step timeline replacement that remains undoable and saves through the existing atomic editor commit. Unsupported or stale drafts now say why the change could not be applied.
 - **Montage timing and confirmation are protected against stale or forged media state.** Server-owned source duration/generation checks bound every cut, conflicting confirmations fail closed, and a failed queue dispatch can be retried safely.
+
+## [0.48.3.0] — 2026-08-23
+
+### Changed
+- Added the canonical Kria UX writing standard and a completed route-by-route
+  audit ledger for every production non-admin surface.
+- Rewrote creator-facing copy across landing, onboarding, workspace, creation,
+  editor, narration, progress, TikTok, legal UI, architecture, and error states.
+- Unified safe render failure and progress copy, added shared plural and duration
+  formatters, and added an AST contract that prevents user-visible internal names,
+  vague fallbacks, legal-review markers, and textual arrows in action labels.
 
 ## [0.48.2.1] — 2026-08-23
 

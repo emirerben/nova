@@ -34,9 +34,8 @@ const SUBTITLED_EFFECTS_LIVE: EditorCapabilities = {
   mix: false,
   sfx: true,
   overlays: true,
-  // The live server sends the human sentence (CAPTION_TAB_COPY byte-stable
-  // contract), NOT the "caption_archetype" code — keep this fixture realistic.
-  reason: CAPTIONS_TAB_REASON,
+  // The capability code maps to the byte-stable caption guidance below.
+  reason: "caption_archetype",
 };
 
 /**
@@ -74,8 +73,10 @@ describe("editorReasonCopy", () => {
     expect(editorReasonCopy("no_video")).toBe("waiting for this edit to finish rendering");
   });
 
-  it("passes unknown reason codes through raw", () => {
-    expect(editorReasonCopy("some_future_reason")).toBe("some_future_reason");
+  it("uses safe fallback copy for unknown reason codes", () => {
+    expect(editorReasonCopy("some_future_reason")).toBe(
+      "this feature isn't available for this edit",
+    );
   });
 
   it("routes guided-story structure changes back to Plan edit", () => {
@@ -90,7 +91,7 @@ describe("editorReasonCopy", () => {
 
   it("keeps the existing mappings and the empty-reason fallback", () => {
     expect(editorReasonCopy("caption_archetype")).toBe(CAPTIONS_TAB_REASON);
-    expect(editorReasonCopy("locked_to_voiceover")).toBe("locked to your voiceover");
+    expect(editorReasonCopy("locked_to_voiceover")).toBe("locked to your narration");
     expect(editorReasonCopy(null)).toBe("This version can't be edited.");
     expect(editorReasonCopy(undefined)).toBe("This version can't be edited.");
   });
@@ -118,10 +119,10 @@ describe("textElementsLockedCopy", () => {
   it("falls back to the text-specific line for unmapped reason codes", () => {
     expect(
       textElementsLockedCopy({ ...SUBTITLED_EFFECTS_LIVE, reason: "some_future_reason" }),
-    ).toBe(TEXT_ELEMENTS_LOCKED_FALLBACK);
+    ).toBe("this feature isn't available for this edit");
   });
 
-  it("keeps a server-authored human sentence verbatim (the live caption reason is the sentence, not a code)", () => {
+  it("uses safe fallback copy for unknown server reasons", () => {
     expect(
       textElementsLockedCopy({ ...SUBTITLED_EFFECTS_LIVE, reason: "caption_archetype" }),
     ).toBe(CAPTIONS_TAB_REASON);
@@ -130,7 +131,7 @@ describe("textElementsLockedCopy", () => {
         ...SUBTITLED_EFFECTS_LIVE,
         reason: "Some future server-authored sentence",
       }),
-    ).toBe("Some future server-authored sentence");
+    ).toBe("this feature isn't available for this edit");
   });
 });
 
@@ -220,8 +221,8 @@ describe("computeToolDisabledReasons", () => {
         captions: "editable",
       }),
     ).toEqual({
-      sounds: "sound effects aren't available for this edit",
-      overlays: "media overlays aren't available for this edit",
+      sounds: "this feature isn't available for this edit",
+      overlays: "this feature isn't available for this edit",
     });
   });
 

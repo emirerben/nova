@@ -47,7 +47,7 @@ describe("NovaActivityFeed — empty fallback (state a)", () => {
 describe("NovaActivityFeed — live feed (state b)", () => {
   it("renders a role=list with one listitem per step", () => {
     render(<NovaActivityFeed steps={liveSteps} isTerminal={false} isSuccess={false} />);
-    const list = screen.getByRole("list", { name: /nova ai steps/i });
+    const list = screen.getByRole("list", { name: /how kria made this video/i });
     expect(list).toBeInTheDocument();
     expect(screen.getAllByRole("listitem")).toHaveLength(4);
     expect(within(list).getByText("Rendering variant 1 of 3")).toBeInTheDocument();
@@ -123,7 +123,7 @@ describe("NovaActivityFeed — analysis disclosure", () => {
 
     expect(screen.getAllByText("Rendering variant 1 of 3")).toHaveLength(2);
     expect(screen.getByText("3 completed")).toBeInTheDocument();
-    expect(screen.queryByRole("list", { name: /nova ai steps/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: /how kria made this video/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Show analysis steps" })).toHaveAttribute(
       "aria-expanded",
       "false",
@@ -148,7 +148,7 @@ describe("NovaActivityFeed — analysis disclosure", () => {
     showButton.focus();
     fireEvent.click(showButton);
 
-    const list = screen.getByRole("list", { name: /nova ai steps/i });
+    const list = screen.getByRole("list", { name: /how kria made this video/i });
     const hideButton = screen.getByRole("button", { name: "Hide analysis steps" });
     expect(hideButton).toBe(showButton);
     expect(hideButton).toHaveFocus();
@@ -158,7 +158,7 @@ describe("NovaActivityFeed — analysis disclosure", () => {
     expect(within(controlledRegion!).getByRole("list")).toBe(list);
 
     fireEvent.click(hideButton);
-    expect(screen.queryByRole("list", { name: /nova ai steps/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: /how kria made this video/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Show analysis steps" })).toBe(showButton);
     expect(showButton).toHaveFocus();
     expect(controlledRegion).not.toBeVisible();
@@ -226,10 +226,10 @@ describe("NovaActivityFeed — success receipt (state c)", () => {
     expect(screen.getByText("Ready in 2:41")).toBeInTheDocument();
     expect(screen.getByText("4 steps")).toBeInTheDocument();
     expect(screen.queryByRole("list")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "See what Nova did" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "See how Kria made it" })).toBeInTheDocument();
   });
 
-  it("'See what Nova did' toggles the full list back open, and back closed", () => {
+  it("'See how Kria made it' toggles the full list back open, and back closed", () => {
     render(
       <NovaActivityFeed
         steps={liveSteps}
@@ -238,8 +238,8 @@ describe("NovaActivityFeed — success receipt (state c)", () => {
         receiptText="Ready in 2:41"
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "See what Nova did" }));
-    expect(screen.getByRole("list", { name: /nova ai steps/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "See how Kria made it" }));
+    expect(screen.getByRole("list", { name: /how kria made this video/i })).toBeInTheDocument();
     expect(screen.getAllByRole("listitem")).toHaveLength(4);
 
     fireEvent.click(screen.getByRole("button", { name: "Hide steps" }));
