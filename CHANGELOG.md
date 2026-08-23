@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.48.3.0] — 2026-08-23
+
+### Changed
+- Added the canonical Kria UX writing standard and a completed route-by-route
+  audit ledger for every production non-admin surface.
+- Rewrote creator-facing copy across landing, onboarding, workspace, creation,
+  editor, narration, progress, TikTok, legal UI, architecture, and error states.
+- Unified safe render failure and progress copy, added shared plural and duration
+  formatters, and added an AST contract that prevents user-visible internal names,
+  vague fallbacks, legal-review markers, and textual arrows in action labels.
+
 ## [0.48.2.1] — 2026-08-23
 
 ### Fixes
