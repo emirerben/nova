@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import math
 import re
+from collections import defaultdict, deque
 from typing import ClassVar, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.pipeline.prompt_loader import load_prompt
@@ -26,6 +28,10 @@ _UNSUPPORTED_ACTION_LEAD = re.compile(
     r"visiting|tasting|trying)\b",
     re.IGNORECASE,
 )
+_FAST_CUT_TOTAL_TOLERANCE_S = 0.15
+_FAST_DURATION_RECONCILE_TOLERANCE_S = 0.5
+_FAST_DURATION_EPSILON_S = 0.001
+_FAST_RECOVERABLE_CUT_MAX_S = 2.4
 
 
 def minimum_required_sources(available: int) -> int:
@@ -98,11 +104,214 @@ class EditProposalAgentOutput(BaseModel):
     fast_cuts: list[FastMontageCut] | None = Field(default=None, max_length=80)
 
 
+class _RawFastMontageCut(BaseModel):
+    """Provider cut shape before bounded server compilation."""
+
+    cut_id: str = Field(min_length=1, max_length=100)
+    media_id: str = Field(min_length=1, max_length=100)
+    source_start_s: float = Field(ge=0)
+    source_end_s: float = Field(gt=0)
+    output_duration_s: float = Field(ge=0.4, le=_FAST_RECOVERABLE_CUT_MAX_S)
+    role: Literal["hook", "build", "payoff"]
+    transition: Literal["none"] = "none"
+    beat_align: bool = False
+
+    @model_validator(mode="after")
+    def validate_finite_source_window(self) -> _RawFastMontageCut:
+        values = (self.source_start_s, self.source_end_s, self.output_duration_s)
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("fast montage cut timing must be finite")
+        if self.source_end_s <= self.source_start_s:
+            raise ValueError("fast montage cut source window must be positive")
+        if abs(self.source_end_s - self.source_start_s - self.output_duration_s) > 0.001:
+            raise ValueError("fast montage output duration must match its source window")
+        return self
+
+
+def _strict_fast_cut(raw_cut: _RawFastMontageCut, **updates) -> FastMontageCut:  # noqa: ANN003
+    try:
+        return FastMontageCut.model_validate({**raw_cut.model_dump(), **updates})
+    except Exception as exc:  # noqa: BLE001
+        raise SchemaError(f"edit_proposal: invalid fast cut — {exc}") from exc
+
+
+def _compile_fast_cuts(
+    raw_cuts: list,
+) -> tuple[list[FastMontageCut], set[str], float]:
+    """Compile a narrow provider timing violation into the persisted cut schema.
+
+    Only exact, contiguous windows between 1.2s and 2.4s are recoverable. They
+    are split without scaling or dropping source time, then interleaved by
+    source so the resulting montage never repeats a source adjacently.
+    """
+
+    try:
+        relaxed = [_RawFastMontageCut.model_validate(raw_cut) for raw_cut in raw_cuts]
+    except Exception as exc:  # noqa: BLE001
+        raise SchemaError(f"edit_proposal: invalid fast cut — {exc}") from exc
+    if len({cut.cut_id for cut in relaxed}) != len(relaxed):
+        raise SchemaError("edit_proposal: fast cut ids must be unique")
+    raw_total_s = sum(cut.output_duration_s for cut in relaxed)
+    if all(cut.output_duration_s <= 1.2 for cut in relaxed):
+        return [_strict_fast_cut(cut) for cut in relaxed], set(), raw_total_s
+
+    source_order: dict[str, int] = {}
+    lanes: dict[str, deque[FastMontageCut]] = defaultdict(deque)
+    repaired_ids: set[str] = set()
+    expanded_count = 0
+    for cut in relaxed:
+        source_order.setdefault(cut.media_id, len(source_order))
+        part_count = math.ceil(cut.output_duration_s / 1.2)
+        part_duration_s = cut.output_duration_s / part_count
+        if part_duration_s < 0.4 - _FAST_DURATION_EPSILON_S:
+            raise SchemaError("edit_proposal: overlong fast cut cannot be split safely")
+        for part_index in range(part_count):
+            part_start_s = cut.source_start_s + part_duration_s * part_index
+            part_end_s = (
+                cut.source_end_s
+                if part_index == part_count - 1
+                else cut.source_start_s + part_duration_s * (part_index + 1)
+            )
+            part_start_s = round(part_start_s, 3)
+            part_end_s = round(part_end_s, 3)
+            normalized_duration_s = round(part_end_s - part_start_s, 3)
+            cut_id = cut.cut_id if part_count == 1 else f"{cut.cut_id}-part-{part_index + 1}"
+            compiled = _strict_fast_cut(
+                cut,
+                cut_id=cut_id,
+                source_start_s=part_start_s,
+                source_end_s=part_end_s,
+                output_duration_s=normalized_duration_s,
+                role="build",
+                beat_align=False if part_count > 1 else cut.beat_align,
+            )
+            lanes[cut.media_id].append(compiled)
+            if part_count > 1:
+                repaired_ids.add(cut_id)
+            expanded_count += 1
+            if expanded_count > 80:
+                raise SchemaError("edit_proposal: fast cut expansion exceeds 80 cuts")
+
+    scheduled: list[FastMontageCut] = []
+    previous_media_id: str | None = None
+    while any(lanes.values()):
+        candidates = [
+            media_id for media_id, queue in lanes.items() if queue and media_id != previous_media_id
+        ]
+        if not candidates:
+            raise SchemaError("edit_proposal: split fast cuts cannot avoid adjacent sources")
+        media_id = min(
+            candidates,
+            key=lambda candidate: (-len(lanes[candidate]), source_order[candidate]),
+        )
+        scheduled.append(lanes[media_id].popleft())
+        previous_media_id = media_id
+
+    normalized: list[FastMontageCut] = []
+    for index, cut in enumerate(scheduled):
+        role = "hook" if index == 0 else "payoff" if index == len(scheduled) - 1 else "build"
+        try:
+            normalized.append(FastMontageCut.model_validate({**cut.model_dump(), "role": role}))
+        except Exception as exc:  # noqa: BLE001
+            raise SchemaError(f"edit_proposal: invalid scheduled fast cut — {exc}") from exc
+    return normalized, repaired_ids, raw_total_s
+
+
+def _normalize_fast_montage_duration(
+    payload: dict,
+    input: EditProposalAgentInput,  # noqa: A002
+) -> tuple[dict, set[str]]:
+    """Reconcile harmless provider decimal drift to the server-owned target.
+
+    Fast cuts are render-critical, so this validates their original shape and
+    total before making a small, deterministic tail-first adjustment. Story
+    directions deliberately keep the legacy strict-integer output contract.
+    """
+
+    declared_duration = payload.get("duration_s")
+    if (
+        isinstance(declared_duration, bool)
+        or not isinstance(declared_duration, (int, float))
+        or not math.isfinite(float(declared_duration))
+    ):
+        raise SchemaError("edit_proposal: fast montage duration must be finite and numeric")
+    declared_duration_s = float(declared_duration)
+    target_duration_s = float(input.target_duration_s)
+    target_delta_s = target_duration_s - declared_duration_s
+    if abs(target_delta_s) > _FAST_DURATION_RECONCILE_TOLERANCE_S:
+        raise SchemaError("edit_proposal: fast montage duration is too far from the server target")
+
+    raw_cuts = payload.get("fast_cuts")
+    if not isinstance(raw_cuts, list) or not raw_cuts:
+        # Let the normal output model retain its established missing/shape error.
+        return payload, set()
+    cuts, repaired_cut_ids, raw_total_s = _compile_fast_cuts(raw_cuts)
+
+    if abs(raw_total_s - declared_duration_s) > _FAST_CUT_TOTAL_TOLERANCE_S:
+        raise SchemaError("edit_proposal: fast cut durations do not fit the declared duration")
+
+    # Reconcile against the actual cut total, after verifying the model's own
+    # declaration. This also absorbs sub-tolerance summation/rounding drift.
+    remaining_s = target_duration_s - raw_total_s
+    media_by_id = {media.media_id: media for media in input.media}
+    normalized_cuts = list(cuts)
+    for index in range(len(normalized_cuts) - 1, -1, -1):
+        if abs(remaining_s) <= _FAST_DURATION_EPSILON_S:
+            break
+        cut = normalized_cuts[index]
+        media = media_by_id.get(cut.media_id)
+        if media is None:
+            # The established source-identity check below reports this clearly.
+            continue
+        if remaining_s < 0:
+            source_duration_s = float(media.duration_s or 0.0)
+            minimum_duration_s = 0.8 if media.kind == "video" and source_duration_s >= 0.8 else 0.4
+            capacity_s = cut.output_duration_s - minimum_duration_s
+            adjustment_s = -min(-remaining_s, max(0.0, capacity_s))
+        else:
+            capacity_s = 1.2 - cut.output_duration_s
+            if media.kind == "video":
+                source_capacity_s = float(media.duration_s or 0.0) - cut.source_end_s
+                capacity_s = min(capacity_s, max(0.0, source_capacity_s))
+            adjustment_s = min(remaining_s, max(0.0, capacity_s))
+        if abs(adjustment_s) <= _FAST_DURATION_EPSILON_S:
+            continue
+        new_duration_s = round(cut.output_duration_s + adjustment_s, 3)
+        new_end_s = round(cut.source_start_s + new_duration_s, 3)
+        try:
+            normalized_cuts[index] = FastMontageCut.model_validate(
+                {
+                    **cut.model_dump(),
+                    "source_end_s": new_end_s,
+                    "output_duration_s": new_duration_s,
+                    "beat_align": False,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise SchemaError(f"edit_proposal: invalid reconciled fast cut — {exc}") from exc
+        repaired_cut_ids.add(cut.cut_id)
+        remaining_s = target_duration_s - sum(
+            normalized.output_duration_s for normalized in normalized_cuts
+        )
+
+    if abs(remaining_s) > _FAST_DURATION_EPSILON_S:
+        raise SchemaError("edit_proposal: fast montage duration cannot fit the server target")
+
+    return (
+        {
+            **payload,
+            "duration_s": input.target_duration_s,
+            "fast_cuts": [cut.model_dump() for cut in normalized_cuts],
+        },
+        repaired_cut_ids,
+    )
+
+
 class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.2.0",
+        prompt_version="1.3.0",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -128,6 +337,15 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             if video_footage_s > 0
             else "No video footage was uploaded — every beat must use only the photos provided."
         )
+        fast_timing_note = ""
+        if input.direction == "fast_montage":
+            minimum_fast_cuts = math.ceil(input.target_duration_s / 1.2)
+            maximum_fast_cuts = math.floor(input.target_duration_s / 0.8)
+            fast_timing_note = (
+                f"For this {input.target_duration_s}s target, emit at least "
+                f"{minimum_fast_cuts} cuts (normally no more than {maximum_fast_cuts}) so every "
+                "cut stays at or below the absolute 1.2s maximum."
+            )
         return load_prompt(
             "edit_proposal",
             idea=input.idea[:500],
@@ -137,6 +355,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             or "Make the uploaded material feel intentional and worth sharing.",
             pace=input.pace,
             target_duration_s=str(input.target_duration_s),
+            fast_timing_note=fast_timing_note,
             footage_note=footage_note,
             media_json=json.dumps([row.model_dump() for row in input.media], ensure_ascii=False),
         )
@@ -147,7 +366,16 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
         input: EditProposalAgentInput,  # noqa: A002
     ) -> EditProposalAgentOutput:
         try:
-            output = EditProposalAgentOutput.model_validate(json.loads(raw_text))
+            payload = json.loads(raw_text)
+        except Exception as exc:  # noqa: BLE001
+            raise SchemaError(f"edit_proposal: invalid output — {exc}") from exc
+        if not isinstance(payload, dict):
+            raise SchemaError("edit_proposal: invalid output — expected an object")
+        repaired_cut_ids: set[str] = set()
+        if input.direction == "fast_montage":
+            payload, repaired_cut_ids = _normalize_fast_montage_duration(payload, input)
+        try:
+            output = EditProposalAgentOutput.model_validate(payload)
         except Exception as exc:  # noqa: BLE001
             raise SchemaError(f"edit_proposal: invalid output — {exc}") from exc
         allowed = {m.media_id for m in input.media}
@@ -182,7 +410,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 source_duration = float(media.duration_s or 0.0)
                 if media.kind == "video" and cut.source_end_s > source_duration + 0.001:
                     raise SchemaError("edit_proposal: fast cut source window exceeds video")
-                if cut.output_duration_s >= 0.8:
+                if cut.output_duration_s >= 0.8 or cut.cut_id in repaired_cut_ids:
                     continue
                 if source_duration >= 0.8 or cut.output_duration_s < 0.4:
                     raise SchemaError(
@@ -194,7 +422,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                     f"edit_proposal: fast montage selected {len(cut_sources)} distinct sources; "
                     f"need at least {minimum}"
                 )
-            if abs(total_cut_duration - output.duration_s) > 0.15:
+            if abs(total_cut_duration - output.duration_s) > _FAST_CUT_TOTAL_TOLERANCE_S:
                 raise SchemaError(
                     "edit_proposal: fast cut durations do not fit the declared duration"
                 )

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.48.4.1] — 2026-08-23
+
+### Fixed
+- **Explicit fast-montage requests no longer fail when the planning model returns harmless timing arithmetic drift.** Nova now reconciles fractional duration totals to the server-owned target, compiles bounded overlong source windows into strict fast cuts, and falls back to a deterministic strongest-moment plan when model output remains invalid. Malformed windows, source overruns, unsupported transitions, and material target mismatches still fail closed.
+
 ## [0.48.4.0] — 2026-08-23
 
 ### Added
