@@ -1595,6 +1595,40 @@ async def test_auto_design_preserves_creators_brief_on_a_fresh_attempt(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_auto_design_resumes_legacy_pending_direction_idempotently(monkeypatch) -> None:
+    """Old paused attempts must resume from Generate without a second click."""
+
+    item = _awaiting_direction_item()
+    monkeypatch.setattr(plan_items.settings, "guided_auto_design_enabled", True)
+    monkeypatch.setattr(plan_items, "_load_owned_item", AsyncMock(return_value=item))
+    monkeypatch.setattr(plan_items, "plan_item_response", lambda loaded, **_kw: loaded)
+    monkeypatch.setattr(plan_items, "_get_instruction_level", AsyncMock(return_value="full"))
+    monkeypatch.setattr("app.services.plan_clips.ensure_clip_media_ids", lambda _item: False)
+    apply_calls = []
+    monkeypatch.setattr(
+        "app.tasks.edit_proposal_build.draft_edit_proposal.apply_async",
+        lambda **kw: apply_calls.append(kw),
+    )
+    db = AsyncMock()
+
+    first = await plan_items._maybe_auto_design_generate(
+        str(item.id), item, _auto_design_plan(), _auto_design_user(), db
+    )
+    second = await plan_items._maybe_auto_design_generate(
+        str(item.id), item, _auto_design_plan(), _auto_design_user(), db
+    )
+
+    proposal = parse_edit_proposal(item.edit_proposal)
+    assert first is item and second is item
+    assert proposal is not None and proposal.status == "analyzing"
+    assert proposal.approval_mode == "auto"
+    assert proposal.guidance is not None
+    assert proposal.guidance.state == "confirmed"
+    assert proposal.guidance.provenance == "ai_inferred"
+    assert len(apply_calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_auto_design_finalizes_an_existing_draft_instead_of_redrafting(monkeypatch) -> None:
     """P2-2c: status="draft" auto-finalizes THAT draft (approve + dispatch)
 

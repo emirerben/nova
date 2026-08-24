@@ -6,16 +6,20 @@ the story assembler consumes the approved Job snapshot directly.
 
 ## Product flow
 
+The primary clip-only path is **Upload clips → Create video → AI analyzes and builds in the
+background → rendered video**. Direction confirmation is not part of that path; **Plan with Kria**
+is an optional advanced tool for creators who want to shape the edit before building it.
+
 1. The creator uploads main clips and any supporting photos/videos.
-2. **Plan edit** opens an editorial conversation. The creator can describe the result in ordinary
+2. **Plan with Kria** opens an optional editorial conversation. The creator can describe the result in ordinary
    language (for example, “a reflective diary about the food and old town” or “fast highlights,
    little text”). `EditGuideAgent` reflects what it understood, asks at most one useful follow-up
    at a time, and persists a typed direction, goal, pace, and target length.
-   When footage exists but the creator has supplied no brief, Nova instead proposes one concrete,
-   media-aware direction. The hypothesis includes direction, pace, target duration, text density,
-   audio role, rationale, and buildability warnings. It is persisted as
-   `awaiting_direction_confirmation`; no proposal planning or rendering starts until the creator
-   confirms it or supplies supported overrides. Explicit creator directions skip this pause.
+   When footage exists but the creator has supplied no brief, Nova instead uses one concrete,
+   media-aware direction for automatic planning. The hypothesis includes direction, pace, target
+   duration, text density, audio role, rationale, and buildability warnings. The primary Generate
+   path does not pause for creator confirmation; the optional planner may still expose the
+   hypothesis for creators who want to shape the edit before building it.
 3. `POST /plan-items/{id}/edit-proposal/draft` assigns stable IDs to legacy clip assignments,
    creates a token-fenced attempt, and queues `draft_edit_proposal`.
 4. The task waits for existing visual-pool analysis, analyzes every attached clip without current
@@ -56,8 +60,10 @@ the story assembler consumes the approved Job snapshot directly.
   and content hash. Editorial ordering is intentionally excluded.
 - `status`: `briefing`, `analyzing`, `drafting`, `draft`, `approved`, `stale`, or `failed`.
 - `guidance`: optional direction provenance and confirmation state. Provenance is
-  `creator_explicit`, `ai_inferred`, or `creator_confirmed`; inferred guidance stores a stable
-  hypothesis fingerprint and is `awaiting_direction_confirmation` until version-safe confirmation.
+  `creator_explicit`, `ai_inferred`, or `creator_confirmed`; the optional planner may store
+  inferred guidance as `awaiting_direction_confirmation` until version-safe confirmation.
+  Automatic Generate does not pause at this state; legacy automatic attempts are resumed by
+  the next Generate request.
 - `approval_mode`: `"user"` (explicit approval, the default/`null`) or `"auto"` — set at reservation
   time (`begin_proposal_attempt`) and carried onto `last_approved.approval_mode` by `approve_proposal`
   so it survives a later reservation overwriting the envelope. See "AI-designs-by-default" below.
@@ -157,18 +163,18 @@ When enforcement is enabled, Generate returns one explicit 409 code:
   a plan that was never actually drafted.
 
 The same checks run in the synchronous dispatch helper, so direct or delayed task delivery cannot
-bypass the route. With `GUIDED_AUTO_DESIGN_ENABLED` on, Generate reserves and drafts instead of
-raising most of these (see below) — the plain 409s above are what a creator sees only with that flag
-off, or with it on and the item has no media at all yet.
+bypass the route. With `GUIDED_AUTO_DESIGN_ENABLED` on and the guided capability available,
+Generate reserves and drafts instead of requiring a proposal review (see below). Plain 409s remain
+for missing media and the independent voiceover/photo business rules.
 
 ## AI-designs-by-default (GUIDED_AUTO_DESIGN_ENABLED)
 
 Product decision (2026-08-18): asking the creator for direction stays optional. If they never open
 the planner, Kria designs the edit and Generate still works in one click, as long as media exists.
 
-`GUIDED_AUTO_DESIGN_ENABLED` defaults **true**. When it is on and `guided_edit_enforcement_enabled`
-would otherwise 409 Generate (`proposal_generate_error` returned any code above) and the item has
-media (`clip_gcs_paths` non-empty or at least one `ready` pool asset):
+`GUIDED_AUTO_DESIGN_ENABLED` defaults **true**. When it is on, the guided capability is available,
+and the item has media (`clip_gcs_paths` non-empty or at least one `ready` pool asset), Generate
+uses the automatic design path instead of requiring a proposal review:
 
 1. `generate_item` runs its two hard, guided-edit-independent business-rule checks FIRST — the
    narrated-voiceover requirement and the photos-need-collage-preset requirement — before auto-design
@@ -278,8 +284,8 @@ default false:
 3. `GUIDED_EDIT_CONVERSATION_ENABLED` switches the compatible item page from the typed brief form
    to conversation after every API and worker can read `briefing` proposals (API restart).
 4. `GUIDED_EDIT_ENFORCEMENT_ENABLED` requires an approval at Generate (API + worker restart).
-5. `GUIDED_EDIT_DIRECTION_CONFIRMATION_ENABLED` pauses unbriefed auto-design after media analysis
-   and requires creator confirmation before planning (API + worker restart).
+5. `GUIDED_EDIT_DIRECTION_CONFIRMATION_ENABLED` only exposes the optional planner's legacy
+   confirmation state; it never blocks the primary Generate path (API + worker restart).
 6. `GUIDED_STORY_EDITOR_V2_ENABLED` permits story-native timeline and Copilot writes after the
    compatible API, worker, and web are deployed (API restart).
 

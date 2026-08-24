@@ -19,6 +19,8 @@ import {
 function input(overrides: Partial<GenerateGateInput> = {}): GenerateGateInput {
   return {
     generating: false,
+    designing: false,
+    designingHint: "Analyzing your clips…",
     isGenerating: false,
     uploaderBusy: false,
     clipCount: 1,
@@ -118,6 +120,17 @@ describe("generateGate — busy states and non-narrated items", () => {
   it("generating / isGenerating disable without stealing the hint", () => {
     expect(generateGate(input({ generating: true })).disabled).toBe(true);
     expect(generateGate(input({ isGenerating: true })).disabled).toBe(true);
+  });
+
+  it("AI design disables the primary action with an explicit progress hint", () => {
+    expect(generateGate(input({ designing: true }))).toEqual({
+      disabled: true,
+      hint: "Analyzing your clips…",
+    });
+    expect(generateGate(input({ designing: true, designingHint: "Building your edit…" }))).toEqual({
+      disabled: true,
+      hint: "Building your edit…",
+    });
   });
 
   it("non-narrated: clipCount drives it, voiceover and flag are irrelevant", () => {

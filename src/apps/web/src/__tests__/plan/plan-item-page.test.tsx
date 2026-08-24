@@ -1168,6 +1168,41 @@ describe("PlanItemPage — guided edit Generate gating", () => {
     });
   });
 
+  it("lets Create video resume a legacy direction checkpoint", async () => {
+    const legacyProposal = makeGuidedProposal("analyzing");
+    legacyProposal.status = "briefing";
+    legacyProposal.guidance = {
+      state: "awaiting_direction_confirmation",
+      provenance: "ai_inferred",
+    };
+    const item = guidedItem(legacyProposal, { autoDesign: true });
+    mockGeneratePlanItem.mockResolvedValue({
+      ...item,
+      edit_proposal: { ...legacyProposal, status: "analyzing", guidance: { state: "confirmed" } },
+    });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    const createButton = screen.getAllByRole("button", { name: /create video/i })[0];
+    expect(createButton).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /review direction/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /plan with kria/i })).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(createButton);
+    });
+    await waitFor(() => {
+      expect(mockGeneratePlanItem).toHaveBeenCalledWith("test-item-id");
+    });
+  });
+
   it("does not let a dormant proposal block an audio-led Generate flow", async () => {
     const item = makeItem({
       status: "awaiting_clips",
@@ -1230,7 +1265,7 @@ describe("PlanItemPage — guided edit Generate gating", () => {
     expect(screen.getAllByRole("button", { name: /create video/i })[0]).toBeEnabled();
   });
 
-  it("shows the designing hint while auto-design is drafting, but stays enabled", async () => {
+  it("disables Create video while auto-design is already running", async () => {
     const item = guidedItem(makeGuidedProposal("analyzing"), { autoDesign: true });
     mockUsePolledJobStatus.mockReturnValue({
       data: { item, job: null },
@@ -1242,8 +1277,10 @@ describe("PlanItemPage — guided edit Generate gating", () => {
       render(<PlanItemPage />);
     });
 
-    expect(screen.getAllByRole("button", { name: /create video/i })[0]).toBeEnabled();
-    expect(screen.getAllByText("Kria is designing your edit…")[0]).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /create video|creating/i })[0]).toBeDisabled();
+    expect(
+      screen.getAllByText("Kria is analyzing your clips…")[0],
+    ).toBeInTheDocument();
   });
 
   it("P3: the render-register watchdog does not fire while auto-design is still designing", async () => {
@@ -1291,7 +1328,9 @@ describe("PlanItemPage — guided edit Generate gating", () => {
     expect(
       screen.queryByText("The render didn't register — give it another go."),
     ).not.toBeInTheDocument();
-    expect(screen.getAllByText("Kria is designing your edit…")[0]).toBeInTheDocument();
+    expect(
+      screen.getAllByText("Kria is analyzing your clips…")[0],
+    ).toBeInTheDocument();
 
     nowSpy.mockRestore();
   });

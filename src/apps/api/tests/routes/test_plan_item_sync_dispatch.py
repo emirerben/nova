@@ -540,10 +540,10 @@ def test_bypass_guided_edit_gate_dispatches_when_pool_is_genuinely_empty() -> No
     assert len(_jobs_for(item_id)) == 1
 
 
-def test_confirmation_gate_overrides_failed_analysis_fallback_bypass(
+def test_clip_only_fallback_ignores_legacy_confirmation_flag(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Analysis failure must not spend a render before direction confirmation."""
+    """The optional legacy planner flag cannot block safe clip-only fallback."""
 
     monkeypatch.setattr(settings, "guided_edit_enforcement_enabled", False)
     monkeypatch.setattr(settings, "guided_edit_direction_confirmation_enabled", True)
@@ -552,9 +552,9 @@ def test_confirmation_gate_overrides_failed_analysis_fallback_bypass(
     with patch(_ENQUEUE) as enqueue:
         result = dispatch_item_render_for(str(item_id), bypass_guided_edit_gate=True)
 
-    assert result.outcome == "proposal_required"
-    enqueue.assert_not_called()
-    assert _jobs_for(item_id) == []
+    assert result.outcome == "dispatched"
+    enqueue.assert_called_once()
+    assert len(_jobs_for(item_id)) == 1
 
 
 def test_approved_proposal_exact_media_is_snapshotted_into_job(
