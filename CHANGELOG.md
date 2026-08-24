@@ -7,6 +7,10 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - **Clip and visual pools now support up to 50 uploads per plan item.** Upload signing and final attachment enforce the same cap while accounting for existing usage.
 - **Upload capacity errors now explain the limit and remaining room.** Clip and visual upload flows expose stable error codes and render actionable feedback when an item is full or nearly full.
+## [0.49.1.1] — 2026-08-24
+
+### Changed
+- **Edit feedback now starts from the normal production Kria link.** The `$review-edit` skill resolves the newest eligible render for the exact plan item and variant behind the scenes, accepts free-form critique, and asks for one compact confirmation without requiring the admin interface or an admin artifact URL.
 
 ## [0.49.1.0] — 2026-08-23
 

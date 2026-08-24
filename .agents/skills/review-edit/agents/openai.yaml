@@ -1,4 +1,4 @@
 interface:
   display_name: "Review Edit"
   short_description: "Turn edit thoughts into structured feedback"
-  default_prompt: "Use $review-edit to record my feedback on the current Nova edit."
+  default_prompt: "Use $review-edit on this production Kria edit link and turn my notes into structured feedback."
