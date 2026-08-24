@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.50.1.2] — 2026-08-24
+## [0.51.0.0] — 2026-08-24
 
 ### Added
 - **Kria can now own one complete creative direction for a plan item behind dark rollout flags.** The new Main Creator Agent discusses the goal, proposes a capability-aware format, audio approach, story, pacing, captions, and opening concept, then waits for an explicit **Render this** confirmation.
@@ -14,6 +14,11 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Plan-item overlays and uploaded sound effects can no longer cross item ownership boundaries.** Curated licensed sound effects retain their separate catalog policy.
 - **Main Creator opening concepts are never burned verbatim.** The grounded intro writer remains the only native on-screen hook author, preventing analysis metadata from crossing into visible copy.
+
+## [0.50.2.0] — 2026-08-24
+
+### Changed
+- **Render timing stays visible while editing.** On phones it appears above the video preview; on desktop it sits above the release controls so progress remains in view.
 
 ## [0.50.1.1] — 2026-08-24
 
