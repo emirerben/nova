@@ -668,6 +668,14 @@ async def confirm_creator_plan(
     _require_feature(user.id, execution=True)
     item, plan_row, persona = await _owned_context(db, item_id, user.id, for_update=True)
     session = await _load_session(db, body.session_id, user.id, item.id, for_update=True)
+    # Keep identity/ownership scalars local.  The guided auto-design helper
+    # commits its own proposal work, and the rollback below expires every ORM
+    # instance in this AsyncSession; reading those instances afterward would
+    # trigger an implicit async refresh (MissingGreenlet).
+    user_id = user.id
+    plan_item_id = item.id
+    creator_session_id = session.id
+    creator_ownership_epoch = getattr(session, "ownership_epoch", None)
     request_digest = canonical_context_hash(body.model_dump(mode="json"))
     receipt = (
         await db.execute(
@@ -746,6 +754,7 @@ async def confirm_creator_plan(
         await db.commit()
 
     assert receipt is not None  # narrowed after new-or-resume handling
+    receipt_id = receipt.id
 
     # Reuse the product's only PlanItem→Job dispatch boundary. Guided plans use
     # the existing auto-design path so the strict guided renderer still receives
@@ -773,9 +782,9 @@ async def confirm_creator_plan(
         )
         exact_owner = bool(
             candidate
-            and candidate.user_id == user.id
-            and candidate.content_plan_item_id == item.id
-            and candidate.content_plan_ownership_epoch == session.ownership_epoch
+            and candidate.user_id == user_id
+            and candidate.content_plan_item_id == plan_item_id
+            and candidate.content_plan_ownership_epoch == creator_ownership_epoch
         )
         expected_guided_attempt = (session.active_plan or {}).get("guided_generation_attempt_id")
         candidate_guided = (candidate.assembly_plan or {}).get("guided_edit") if candidate else None
@@ -801,7 +810,7 @@ async def confirm_creator_plan(
                 raise RuntimeError("guided creator execution requires guided auto design")
             from app.routes.plan_items import _maybe_auto_design_generate  # noqa: PLC0415
 
-            live_item, live_plan, _ = await _owned_context(db, item_id, user.id)
+            live_item, live_plan, _ = await _owned_context(db, item_id, user_id)
             if live_item.current_job_id:
                 live_job = await db.get(Job, live_item.current_job_id)
                 if live_job is not None and live_job.status not in PLAN_ITEM_JOB_TERMINAL:
@@ -809,7 +818,7 @@ async def confirm_creator_plan(
                         db,
                         session=session,
                         item=item,
-                        user_id=user.id,
+                        user_id=user_id,
                         receipt=receipt,
                     )
             if guided_generation_attempt_id is None:
@@ -825,7 +834,19 @@ async def confirm_creator_plan(
             if result is None:
                 raise RuntimeError("guided auto design was not applicable")
             await db.rollback()
-            refreshed_item, _plan, _persona = await _owned_context(db, item_id, user.id)
+            # Rehydrate all rows touched after the rollback.  In particular,
+            # session/receipt are needed for idempotent job matching and the
+            # success/error state transition below.
+            refreshed_item, _plan, _persona = await _owned_context(db, item_id, user_id)
+            session = await _load_session(
+                db, creator_session_id, user_id, plan_item_id, for_update=True
+            )
+            refreshed_receipt = await db.get(
+                CreatorAgentExecution, receipt_id, with_for_update=True
+            )
+            if refreshed_receipt is None:
+                raise RuntimeError("creator execution receipt disappeared during execution")
+            receipt = refreshed_receipt
             proposal_state = (
                 refreshed_item.edit_proposal
                 if isinstance(refreshed_item.edit_proposal, dict)
@@ -844,9 +865,9 @@ async def confirm_creator_plan(
                     and candidate.created_at
                     and receipt.created_at
                     and candidate.created_at >= receipt.created_at
-                    and candidate.user_id == user.id
-                    and candidate.content_plan_item_id == item.id
-                    and candidate.content_plan_ownership_epoch == session.ownership_epoch
+                    and candidate.user_id == user_id
+                    and candidate.content_plan_item_id == plan_item_id
+                    and candidate.content_plan_ownership_epoch == creator_ownership_epoch
                     and _job_matches_guided_attempt(candidate, guided_generation_attempt_id)
                 )
                 if exact_guided_job:
@@ -855,8 +876,8 @@ async def confirm_creator_plan(
                     return await _concurrent_render_response(
                         db,
                         session=session,
-                        item=item,
-                        user_id=user.id,
+                        item=refreshed_item,
+                        user_id=user_id,
                         receipt=receipt,
                     )
         else:
@@ -873,20 +894,26 @@ async def confirm_creator_plan(
                     db,
                     session=session,
                     item=item,
-                    user_id=user.id,
+                    user_id=user_id,
                     receipt=receipt,
                 )
             if outcome.outcome != "dispatched":
                 raise RuntimeError(f"render dispatch failed: {outcome.outcome}")
             job_id = uuid.UUID(outcome.job_id) if outcome.job_id else None
     except Exception as exc:  # noqa: BLE001
+        # A failed helper/dispatch may have left the transaction aborted or
+        # expired its ORM state.  Start the failure transition from a clean
+        # transaction and reload by the preserved scalar identities.
+        await db.rollback()
         log.warning(
-            "main_creator.execution_failed", session_id=str(session.id), error=str(exc)[:300]
+            "main_creator.execution_failed",
+            session_id=str(creator_session_id),
+            error=str(exc)[:300],
         )
-        failed = await _load_session(db, session.id, user.id, item.id, for_update=True)
+        failed = await _load_session(db, creator_session_id, user_id, plan_item_id, for_update=True)
         failed.status = "failed"
         failed.last_error = {"code": "execution_failed", "message": str(exc)[:300]}
-        failed_receipt = await db.get(CreatorAgentExecution, receipt.id, with_for_update=True)
+        failed_receipt = await db.get(CreatorAgentExecution, receipt_id, with_for_update=True)
         if failed_receipt:
             failed_receipt.status = "failed"
             failed_receipt.error = failed.last_error
@@ -899,7 +926,7 @@ async def confirm_creator_plan(
         )
         return await _response(db, failed)
 
-    completed = await _load_session(db, session.id, user.id, item.id, for_update=True)
+    completed = await _load_session(db, creator_session_id, user_id, plan_item_id, for_update=True)
     if guided_generation_attempt_id is not None:
         completed.active_plan = {
             **(completed.active_plan or {}),
@@ -908,7 +935,7 @@ async def confirm_creator_plan(
         }
     completed.target_job_id = job_id
     completed.status = "rendering" if job_id else "executing"
-    completed_receipt = await db.get(CreatorAgentExecution, receipt.id, with_for_update=True)
+    completed_receipt = await db.get(CreatorAgentExecution, receipt_id, with_for_update=True)
     if completed_receipt:
         completed_receipt.status = "succeeded"
         completed_receipt.result = {"job_id": str(job_id) if job_id else None}

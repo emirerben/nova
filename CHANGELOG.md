@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.51.2.0] — 2026-08-24
+
+### Fixed
+- **Main Creator guided edits can now start rendering after confirmation.** The confirmation route safely reloads creator, plan-item, and execution state after guided auto-design clears its database transaction, instead of failing with a generic retry error.
+- **Failed guided confirmations now remain recoverable.** Post-rollback errors are recorded on the creator session and execution receipt rather than escaping as an unhandled server error.
+
+### Changed
+- **Guided confirmation recovery is regression-tested across success, failure, and retry paths.** Coverage now includes rollback-expired database rows, exact-job idempotent resume, missing execution receipts, and durable failure state.
+
 ## [0.51.1.0] — 2026-08-24
 
 ### Fixed
