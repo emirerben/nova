@@ -284,6 +284,7 @@ export function MediaRadioCard({
       variant="ghost"
       role="radio"
       aria-checked={active}
+      data-layout="rail"
       // aria-disabled (not disabled) so keyboard focus survives the save —
       // disabling the just-clicked element would drop focus to <body>.
       aria-disabled={saving || undefined}

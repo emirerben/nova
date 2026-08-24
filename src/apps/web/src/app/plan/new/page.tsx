@@ -248,8 +248,8 @@ function NewVideoPageInner() {
   const kindStepLabel = "Back to your videos";
 
   return (
-    <div className="min-h-screen bg-white">
-      <div className="mx-auto flex min-h-screen max-w-[900px] flex-col px-6 pt-6">
+    <div className="min-h-[100dvh] bg-white">
+      <div className="mx-auto flex min-h-[100dvh] max-w-[900px] flex-col px-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-6">
         <div className="flex items-center justify-between">
           {onStyleStep ? (
             /* In-app back only: the kind→style transition is local state, so a
@@ -287,7 +287,7 @@ function NewVideoPageInner() {
             <p className="mt-1.5 text-sm text-[#71717a]">Choose how your footage should be arranged.</p>
 
             <div
-              className="scrollbar-none mt-6 grid grid-cols-2 gap-3.5 pb-4 sm:grid-cols-3"
+              className="scrollbar-none -mx-6 mt-6 flex snap-x snap-mandatory gap-3.5 overflow-x-auto px-6 py-1 [scroll-padding-inline:1.5rem] sm:mx-0 sm:grid sm:grid-cols-3 sm:overflow-visible sm:px-0 sm:pb-4 sm:pt-0"
               role="radiogroup"
               aria-label="Montage style"
               onKeyDown={radioGroupKeyDown}
