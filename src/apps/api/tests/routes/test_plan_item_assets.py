@@ -1,7 +1,7 @@
 """Route tests for the plan-item asset pool (auto-placement PR0, plans/005).
 
 Mock-DB style, mirroring test_plan_item_variant_edit.py. Locks the PR0 contract:
-flag gating (404 when OVERLAY_AUTOPLACE_ENABLED off), ownership, the 50-asset cap,
+flag gating (404 when OVERLAY_AUTOPLACE_ENABLED off), ownership, the 100-asset cap,
 content-hash dedupe (never re-registers identical bytes), the pool GCS-prefix
 check on register, and the silent-rollback trap (`db.commit` awaited on writes).
 """
@@ -466,7 +466,7 @@ def test_upload_urls_rejects_more_than_capacity_before_route_work(client: TestCl
             "file_size_bytes": 1,
             "client_upload_id": f"file-{index}",
         }
-        for index in range(51)
+        for index in range(101)
     ]
     with (
         patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
@@ -522,13 +522,13 @@ def test_upload_urls_accepts_exact_size_limits(
 def test_upload_urls_enforces_cap_counting_existing(client: TestClient):
     user = _user()
     item, plan = _owned_item(user.id)
-    # 49 existing + 2 requested > 50 -> reject
+    # 99 existing + 2 requested > 100 -> reject
     db = _db(
         [
             _scalar_result(item),
             _scalars_result([]),
             _scalars_result([]),
-            _scalar_result(49),
+            _scalar_result(99),
         ],
         plan,
     )
@@ -546,12 +546,12 @@ def test_upload_urls_enforces_cap_counting_existing(client: TestClient):
     assert resp.status_code == 400
     detail = resp.json()["detail"]
     assert detail["code"] == "visual_upload_limit_exceeded"
-    assert detail["limit"] == 50
-    assert detail["current"] == 49
+    assert detail["limit"] == 100
+    assert detail["current"] == 99
     assert detail["requested"] == 2
     assert detail["remaining"] == 1
     assert detail["message"] == (
-        "This item is capped at 50 visuals. You currently have 49; you can add 1 more."
+        "This item is capped at 100 visuals. You currently have 99; you can add 1 more."
     )
 
 
@@ -1492,7 +1492,7 @@ def test_register_enforces_cap(client: TestClient):
     user = _user()
     item, plan = _owned_item(user.id)
     db = _db(
-        [_scalar_result(item), _scalar_result(None), _scalar_result(None), _scalar_result(50)],
+        [_scalar_result(item), _scalar_result(None), _scalar_result(None), _scalar_result(100)],
         plan,
     )
     _override(user, db)
@@ -1595,7 +1595,7 @@ def test_list_returns_assets_with_display_urls(client: TestClient):
         resp = client.get(f"/plan-items/{item.id}/assets")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["max_assets"] == 50
+    assert body["max_assets"] == 100
     assert len(body["assets"]) == 2
     assert body["occupied_assets"] == 2
     assert body["active_reservations"] == []

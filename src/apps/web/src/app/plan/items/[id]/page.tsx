@@ -4958,7 +4958,7 @@ function PoolUploadCard({
   onKeep: (a: ClipAssignment) => void;
   onRemove: (a: ClipAssignment) => void;
   onNoteChange: (a: ClipAssignment, note: string) => Promise<void>;
-  /** Hard cap on clip count (subtitled = 1); montage pools use the shared 50 cap. */
+  /** Hard cap on clip count (subtitled = 1); montage pools use the shared 100 cap. */
   maxClips?: number;
   accept?: string;
   /** Per-format helper copy shown as the dropzone's subline while empty

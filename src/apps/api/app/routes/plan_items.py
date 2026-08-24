@@ -5992,7 +5992,7 @@ async def transcript_recorded(
 # twin is NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED — keep Fly + Vercel in sync).
 # Objects land under the persistent users/{uid}/plan/{item_id}/pool/ prefix.
 
-_MAX_POOL_ASSETS = 50  # plan 005 finding 9: cap + dedupe keep analysis spend bounded
+_MAX_POOL_ASSETS = 100  # plan 005 finding 9: cap + dedupe keep analysis spend bounded
 _MAX_POOL_CONTEXT_CHARS = 500
 _POOL_RESERVATION_TTL = timedelta(minutes=15)
 _POOL_RESERVATION_CLEANUP_GRACE = timedelta(minutes=15)
