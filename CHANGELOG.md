@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.51.1.0] — 2026-08-24
+
+### Fixed
+- **The new-video mobile flow no longer overflows during style selection.** The visual-style chooser now uses the same rail card sizing as the edit-format step on phones while preserving the existing desktop grid sizing from `origin/main`.
+- **The plan-item setup CTA now follows the light pinned-action mobile bar.** Empty generate hints no longer leave a dead bordered footer row above the sticky Create video action.
+
+### Added
+- **Mobile fit coverage now locks the new-video journey at 375, 390, and 430px widths.** A gated dev-QA fixture exercises the real chooser/setup pieces and asserts no horizontal page overflow with the Create video CTA visible and reachable.
+
 ## [0.51.0.0] — 2026-08-24
 
 ### Added
