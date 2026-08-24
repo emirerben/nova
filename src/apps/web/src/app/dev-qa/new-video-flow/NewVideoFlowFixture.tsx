@@ -9,7 +9,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 export default function NewVideoFlowFixture() {
   return (
     <main className="mx-auto flex min-h-[100dvh] max-w-[900px] flex-col bg-[#ffffff] px-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-6 text-[#0c0c0e]">
-      <style>{`html, body { background: #ffffff !important; } header { display: none; }`}</style>
+      <style>{`html, body.bg-black { background: #ffffff; } header { display: none; }`}</style>
       <section aria-labelledby="kind-title">
         <p className="text-[12px] text-[#71717a]">Step 1 of 3</p>
         <h1 id="kind-title" className="font-display mt-6 text-[30px] font-medium leading-tight">

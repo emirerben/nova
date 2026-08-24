@@ -30,13 +30,34 @@ test("new-video flow has no horizontal overflow and keeps Generate reachable", a
   await page.locator("#setup-title").scrollIntoViewIfNeeded();
   await expectNoHorizontalOverflow(page);
 
-  const createVideo = page.getByRole("button", { name: "Create video" }).last();
-  await expect(createVideo).toBeVisible();
-  await expect(createVideo).toBeEnabled();
-  const box = await createVideo.boundingBox();
+  const visibleCreateButtons = await page
+    .getByRole("button", { name: "Create video" })
+    .evaluateAll((buttons) =>
+      buttons
+        .map((button) => {
+          const rect = button.getBoundingClientRect();
+          const style = window.getComputedStyle(button);
+          return {
+            disabled: (button as HTMLButtonElement).disabled,
+            height: rect.height,
+            visible:
+              rect.width > 0 &&
+              rect.height > 0 &&
+              style.display !== "none" &&
+              style.visibility !== "hidden",
+            width: rect.width,
+            x: rect.x,
+            y: rect.y,
+          };
+        })
+        .filter((button) => button.visible),
+    );
+  expect(visibleCreateButtons).toHaveLength(1);
+  expect(visibleCreateButtons[0].disabled).toBe(false);
   const viewport = page.viewportSize();
-  expect(box).not.toBeNull();
   expect(viewport).not.toBeNull();
-  expect(box!.y).toBeGreaterThanOrEqual(0);
-  expect(box!.y + box!.height).toBeLessThanOrEqual(viewport!.height);
+  expect(visibleCreateButtons[0].y).toBeGreaterThanOrEqual(0);
+  expect(visibleCreateButtons[0].y + visibleCreateButtons[0].height).toBeLessThanOrEqual(
+    viewport!.height,
+  );
 });
