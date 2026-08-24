@@ -12401,9 +12401,10 @@ def _silence_cut_analysis(
          "plan": CutPlan | None, "retake_span_count": int,
          "cut_video_path": str | None}
 
-    ``failed`` True ⇒ transcription/detection blew up — the caller renders
-    today's uncut flow (fail-open; the failure is cached too, so sibling
-    variants don't re-spend a failing whisper call and can never disagree).
+    ``failed`` True ⇒ transcription/detection blew up — the caller decides
+    whether to fail the eligible render or use its explicit fail-open path;
+    the failure is cached too, so sibling variants don't re-spend a failing
+    whisper call and can never disagree.
     ``cut_video_path`` is filled by the render path after its first cut encode
     so later variants copy the file instead of re-running ffmpeg.
 
@@ -13278,8 +13279,9 @@ def _render_subtitled_variant(
     clip is transcribed verbatim + silence-scanned, the CutPlan executes inside the
     reframe (`keep_segments` + alternating punch-in), and captions come from the
     remapped transcript minus filler tokens — no second whisper call on the base.
-    Every gate/failure falls OPEN to the flag-off flow above; flag off is
-    byte-identical to pre-feature behavior (kill-switch pinned).
+    Explicit opt-outs and ineligible clips fall OPEN to the flag-off flow above;
+    an enabled, eligible clip never silently publishes an uncut fallback after
+    silence-cut analysis or apply failure.
     """
     from app.pipeline.caption_correct import correct_caption_cues  # noqa: PLC0415
     from app.pipeline.captions import (  # noqa: PLC0415
@@ -13294,12 +13296,17 @@ def _render_subtitled_variant(
     )
     from app.pipeline.probe import probe_video  # noqa: PLC0415
     from app.pipeline.reframe import reframe_and_export, resolve_output_fit  # noqa: PLC0415
+    from app.pipeline.silence_cut import is_filler_token, remap_words  # noqa: PLC0415
     from app.pipeline.text_overlay import FONTS_DIR  # noqa: PLC0415
     from app.pipeline.transcribe import (  # noqa: PLC0415
         transcribe_whisper,
         transcribe_whisper_cached,
     )
-    from app.services.pipeline_trace import record_render_stage, render_stage_timer  # noqa: PLC0415
+    from app.services.pipeline_trace import (  # noqa: PLC0415
+        record_pipeline_event,
+        record_render_stage,
+        render_stage_timer,
+    )
     from app.storage import upload_public_read  # noqa: PLC0415
 
     variant_id = spec["variant_id"]
@@ -13343,6 +13350,21 @@ def _render_subtitled_variant(
             counts=counts,
             error_class=error_class,
         )
+
+    def _cut_caption_words(words: list, plan: Any) -> list:
+        """Build caption words from the cut timeline, excluding vocal fillers."""
+        from app.pipeline.transcribe import Word  # noqa: PLC0415
+
+        return [
+            Word(
+                text=word["text"],
+                start_s=word["start_s"],
+                end_s=word["end_s"],
+                confidence=1.0,
+            )
+            for word in remap_words(words, plan)
+            if not is_filler_token(word["text"])
+        ]
 
     # Caption style: "word" → word-by-word lime pop (line visible, active word popped);
     # anything else → sentence blocks (the safe default). Reuses the narrated key.
@@ -13470,8 +13492,6 @@ def _render_subtitled_variant(
         if not clip_path:
             raise ValueError("subtitled variant has no clip")
         if len(clip_id_to_local) > 1:
-            from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
-
             record_pipeline_event(
                 "assembly",
                 "subtitled_extra_clips_ignored",
@@ -13510,25 +13530,43 @@ def _render_subtitled_variant(
         # Detection runs on the ORIGINAL clip BEFORE the reframe. The base renders
         # start=0 / full duration / speed 1.0, so clip timeline == base timeline:
         # the plan's keep_segments apply directly inside the reframe and the
-        # remapped word times are natively base-relative. Every gate below fails
-        # OPEN to the flag-off flow — this stage may shorten the video, never
-        # fail the job.
+        # remapped word times are natively base-relative. Explicit opt-outs and
+        # ineligible clips remain fail-open; enabled eligible clips fail visibly
+        # instead of silently publishing an uncut fallback.
         sc_entry: dict[str, Any] | None = None  # per-clip cache entry (7A)
         sc_words: list | None = None  # verbatim original-clip words for captions
         sc_language = ""
         sc_plan = None  # CutPlan captions remap against (no-op when nothing cut)
         sc_apply = False  # True ⇒ pass keep_segments into the reframe
         sc_apply_failed = False
+        strict_silence_cut = False
         if settings.silence_cut_enabled or settings.retake_cut_enabled:
             from app.pipeline.silence_cut import (  # noqa: PLC0415
+                BAILOUT_CLIP_TOO_SHORT,
+                BAILOUT_NO_WORDS,
                 KEEP_SEGMENTS_PUNCH_IN,
-                is_filler_token,
+                MIN_CLIP_S,
                 plan_event_payload,
                 plan_summary,
-                remap_words,
             )
-            from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
+            record_pipeline_event(
+                "silence_cut",
+                "silence_cut_config",
+                {
+                    "variant_id": variant_id,
+                    "silence_cut_enabled": bool(settings.silence_cut_enabled),
+                    "retake_cut_enabled": bool(settings.retake_cut_enabled),
+                    "has_audio": bool(probe.has_audio),
+                    "silence_cut_disabled": bool(silence_cut_disabled),
+                },
+            )
+            strict_silence_cut = bool(
+                settings.silence_cut_enabled
+                and probe.has_audio
+                and not silence_cut_disabled
+                and float(probe.duration_s) >= MIN_CLIP_S
+            )
             if silence_cut_disabled:
                 # Per-item opt-out (10A) — skips the WHOLE stage, retakes included.
                 record_pipeline_event(
@@ -13550,6 +13588,13 @@ def _render_subtitled_variant(
                         cache=silence_cut_cache,
                         source_fingerprint=next(iter(clip_id_to_local)),
                     )
+                if strict_silence_cut and sc_entry["failed"]:
+                    record_pipeline_event(
+                        "silence_cut",
+                        "silence_cut_required_failed",
+                        {"variant_id": variant_id, "reason": "analysis_failed"},
+                    )
+                    raise RuntimeError("silence_cut_required: analysis failed")
                 # `words` must be non-empty to adopt the verbatim transcript:
                 # an empty-words bailout (e.g. clip_too_short — P3 returns
                 # before whisper runs) must caption from the base-transcription
@@ -13558,6 +13603,30 @@ def _render_subtitled_variant(
                     sc_words = sc_entry["words"]
                     sc_language = sc_entry["language"]
                     sc_plan = sc_entry["plan"]
+                    if sc_plan is None:
+                        if strict_silence_cut:
+                            record_pipeline_event(
+                                "silence_cut",
+                                "silence_cut_required_failed",
+                                {"variant_id": variant_id, "reason": "analysis_no_plan"},
+                            )
+                            raise RuntimeError("silence_cut_required: analysis returned no plan")
+                    elif strict_silence_cut and sc_plan.bailout_reason not in (
+                        None,
+                        BAILOUT_CLIP_TOO_SHORT,
+                        BAILOUT_NO_WORDS,
+                    ):
+                        record_pipeline_event(
+                            "silence_cut",
+                            "silence_cut_required_failed",
+                            {
+                                "variant_id": variant_id,
+                                "reason": sc_plan.bailout_reason,
+                            },
+                        )
+                        raise RuntimeError(
+                            f"silence_cut_required: unsafe plan bailout ({sc_plan.bailout_reason})"
+                        )
                     # A bailed-out plan is a no-op (render uncut); a clean plan
                     # with zero removals skips the segmented encode too. Captions
                     # still come from the already-paid-for verbatim transcript.
@@ -13571,18 +13640,7 @@ def _render_subtitled_variant(
         smart_compiled = None
         if smart_v2:
             if sc_words is not None:
-                from app.pipeline.transcribe import Word  # noqa: PLC0415
-
-                caption_words = [
-                    Word(
-                        text=word["text"],
-                        start_s=word["start_s"],
-                        end_s=word["end_s"],
-                        confidence=1.0,
-                    )
-                    for word in remap_words(sc_words, sc_plan)
-                    if not is_filler_token(word["text"])
-                ]
+                caption_words = _cut_caption_words(sc_words, sc_plan)
                 detected_lang = sc_language or detected_lang
                 cues = build_plain_cues(caption_words, attach_words=True)
             else:
@@ -13699,14 +13757,9 @@ def _render_subtitled_variant(
                 # None when the camera-less retry succeeded.
                 if exc is not None and not sc_apply:
                     raise exc
-                # Fail-open on the CUT apply (R3a, mirroring talking_head's
-                # uncut retry): a segment-filter failure must cost the cuts,
-                # never the variant. Clear every plan-derived state so captions
-                # fall back to the base-transcription path below (the remapped
-                # verbatim words describe a cut timeline that no longer
-                # exists), drop the partial output, and re-run the reframe
-                # WITHOUT keep_segments. No summary is persisted on this path —
-                # a removed[] blob on an uncut video lies to the admin viewer.
+                # An enabled eligible render cannot publish an uncut fallback:
+                # a segment-filter failure must be visible as a failed variant.
+                # Explicitly ineligible paths retain the old uncut retry below.
                 if exc is not None:
                     log.warning(
                         "silence_cut_apply_failed",
@@ -13719,6 +13772,13 @@ def _render_subtitled_variant(
                         "silence_cut_apply_failed",
                         {"variant_id": variant_id, "error": str(exc)[:200]},
                     )
+                    if strict_silence_cut:
+                        record_pipeline_event(
+                            "silence_cut",
+                            "silence_cut_required_failed",
+                            {"variant_id": variant_id, "reason": "apply_failed"},
+                        )
+                        raise RuntimeError("silence_cut_required: apply failed") from exc
                     sc_apply = False
                     sc_apply_failed = True
                     sc_plan = None
@@ -13824,13 +13884,7 @@ def _render_subtitled_variant(
             # filler token. Caption hygiene (15A): fillers never reach captions
             # even when they were NOT cut from the video (e.g. blocked by the
             # segment-signal guard or below MIN_CUT_S).
-            from app.pipeline.transcribe import Word  # noqa: PLC0415
-
-            caption_words = [
-                Word(text=w["text"], start_s=w["start_s"], end_s=w["end_s"], confidence=1.0)
-                for w in remap_words(sc_words, sc_plan)
-                if not is_filler_token(w["text"])
-            ]
+            caption_words = _cut_caption_words(sc_words, sc_plan)
             detected_lang = sc_language or (language or "en")
             cues = build_plain_cues(caption_words, attach_words=True)
         elif not smart_v2:
