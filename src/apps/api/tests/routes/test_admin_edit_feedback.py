@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from sqlalchemy import select
 
 import app.config as config_mod
 import app.routes.admin_edit_feedback as edit_feedback_route
@@ -18,6 +19,7 @@ from app.routes.admin_edit_feedback import (
     _current_annotations,
     _decode_cursor,
     _decode_stratified_cursor,
+    _filter_artifact_identity,
     _next_chronological_cursor,
     _playback,
     _review_state,
@@ -47,6 +49,24 @@ def client(monkeypatch):
 def test_admin_list_requires_backend_admin_token(client):
     response = client.get("/admin/edit-feedback")
     assert response.status_code in {401, 422}
+
+
+def test_product_item_identity_filters_are_exact():
+    from app.models import EditArtifact
+
+    plan_item_id = uuid.uuid4()
+    query = _filter_artifact_identity(
+        select(EditArtifact),
+        EditArtifact,
+        plan_item_id=plan_item_id,
+        variant_id="guided_story",
+    )
+    compiled = query.compile()
+
+    assert "edit_artifacts.plan_item_id" in str(compiled)
+    assert "edit_artifacts.variant_id" in str(compiled)
+    assert plan_item_id in compiled.params.values()
+    assert "guided_story" in compiled.params.values()
 
 
 def test_annotation_requires_rationale_for_substantive_rating():
