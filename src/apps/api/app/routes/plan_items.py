@@ -209,7 +209,26 @@ router = APIRouter()
 
 # Themed plan uploads land under the persistent `users/` prefix (NOT swept by the
 # 24h GCS delete rule). Allowlisted in admin_music._ALLOWED_CLIP_PREFIXES.
-_MAX_CLIPS_PER_ITEM = 20
+_MAX_CLIPS_PER_ITEM = 50
+
+
+def _capacity_error_detail(
+    *, code: str, resource: str, limit: int, current: int, requested: int
+) -> dict[str, int | str]:
+    remaining = max(0, limit - current)
+    return {
+        "code": code,
+        "message": (
+            f"This item is capped at {limit} {resource}. "
+            f"You currently have {current}; you can add {remaining} more."
+        ),
+        "limit": limit,
+        "current": current,
+        "requested": requested,
+        "remaining": remaining,
+    }
+
+
 _MAX_BYTES_PER_FILE = 4 * 1024 * 1024 * 1024  # 4GB
 _ALLOWED_CONTENT_TYPES = {"video/mp4", "video/quicktime"}
 _IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
@@ -1071,10 +1090,23 @@ async def create_upload_urls(
 ) -> UploadUrlsResponse:
     """Signed PUT URLs for themed clips, under the persistent users/ prefix."""
     item = await _load_owned_item(item_id, user.id, db)
-    if not body.files or len(body.files) > _MAX_CLIPS_PER_ITEM:
+    if not body.files:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Provide 1-{_MAX_CLIPS_PER_ITEM} files",
+        )
+    current_clip_count = len(item.clip_gcs_paths or [])
+    requested_clip_count = len(body.files)
+    if current_clip_count + requested_clip_count > _MAX_CLIPS_PER_ITEM:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_capacity_error_detail(
+                code="clip_upload_limit_exceeded",
+                resource="clips",
+                limit=_MAX_CLIPS_PER_ITEM,
+                current=current_clip_count,
+                requested=requested_clip_count,
+            ),
         )
     urls: list[UploadUrlItem] = []
     allowed_types = _allowed_item_upload_content_types(item)
@@ -1271,9 +1303,18 @@ async def attach_clips(
     try:
         set_item_clips(item, assignments)
     except ClipAssignmentError as exc:
+        detail: str | dict[str, int | str] = str(exc)
+        if len(assignments) > _MAX_CLIPS_PER_ITEM:
+            detail = _capacity_error_detail(
+                code="clip_upload_limit_exceeded",
+                resource="clips",
+                limit=_MAX_CLIPS_PER_ITEM,
+                current=len(assignments),
+                requested=0,
+            )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
+            detail=detail,
         ) from exc
 
     # D7: null conformance so the panel can never describe replaced footage.
@@ -5951,7 +5992,7 @@ async def transcript_recorded(
 # twin is NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED — keep Fly + Vercel in sync).
 # Objects land under the persistent users/{uid}/plan/{item_id}/pool/ prefix.
 
-_MAX_POOL_ASSETS = 20  # plan 005 finding 9: cap + dedupe keep analysis spend bounded
+_MAX_POOL_ASSETS = 50  # plan 005 finding 9: cap + dedupe keep analysis spend bounded
 _MAX_POOL_CONTEXT_CHARS = 500
 _POOL_RESERVATION_TTL = timedelta(minutes=15)
 _POOL_RESERVATION_CLEANUP_GRACE = timedelta(minutes=15)
@@ -6210,13 +6251,14 @@ async def create_pool_upload_urls(
     )
     new_count = sum(client_id not in existing_by_client for client_id in client_ids)
     if occupied + new_count > _MAX_POOL_ASSETS:
-        remaining = max(0, _MAX_POOL_ASSETS - occupied)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Your visuals pool is full. Remove a visual before adding another."
-                if remaining == 0
-                else f"Your visuals pool has room for {remaining} more. Select up to {remaining}."
+            detail=_capacity_error_detail(
+                code="visual_upload_limit_exceeded",
+                resource="visuals",
+                limit=_MAX_POOL_ASSETS,
+                current=occupied,
+                requested=new_count,
             ),
         )
     log.info(
@@ -6896,7 +6938,13 @@ async def register_pool_asset(
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Pool is capped at {_MAX_POOL_ASSETS} assets per item.",
+                detail=_capacity_error_detail(
+                    code="visual_upload_limit_exceeded",
+                    resource="visuals",
+                    limit=_MAX_POOL_ASSETS,
+                    current=count,
+                    requested=1,
+                ),
             )
     staging_cleanup: tuple[str, str] | None = None
     if reservation is not None and body.gcs_path.startswith(_staging_prefix):
@@ -7164,7 +7212,13 @@ async def upload_pool_asset(
         if count >= _MAX_POOL_ASSETS:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Pool is capped at {_MAX_POOL_ASSETS} assets per item.",
+                detail=_capacity_error_detail(
+                    code="visual_upload_limit_exceeded",
+                    resource="visuals",
+                    limit=_MAX_POOL_ASSETS,
+                    current=count,
+                    requested=1,
+                ),
             )
 
         reservation_id = uuid.uuid4()

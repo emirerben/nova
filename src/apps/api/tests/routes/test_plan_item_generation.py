@@ -140,6 +140,91 @@ def _db_for(item, plan, *, assignment=None) -> AsyncMock:
     return db
 
 
+def test_clip_upload_urls_rejects_batch_over_cap(client: TestClient) -> None:
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    response = client.post(
+        f"/plan-items/{item.id}/upload-urls",
+        json={
+            "files": [
+                {"filename": f"clip-{i}.mp4", "content_type": "video/mp4", "file_size_bytes": 1}
+                for i in range(51)
+            ]
+        },
+    )
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert detail == {
+        "code": "clip_upload_limit_exceeded",
+        "message": "This item is capped at 50 clips. You currently have 0; you can add 50 more.",
+        "limit": 50,
+        "current": 0,
+        "requested": 51,
+        "remaining": 50,
+    }
+
+
+def test_clip_upload_urls_counts_existing_clips_before_signing(client: TestClient) -> None:
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[f"existing-{i}" for i in range(49)])
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    response = client.post(
+        f"/plan-items/{item.id}/upload-urls",
+        json={
+            "files": [
+                {"filename": "a.mp4", "content_type": "video/mp4", "file_size_bytes": 1},
+                {"filename": "b.mp4", "content_type": "video/mp4", "file_size_bytes": 1},
+            ]
+        },
+    )
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert detail["code"] == "clip_upload_limit_exceeded"
+    assert detail["limit"] == 50
+    assert detail["current"] == 49
+    assert detail["requested"] == 2
+    assert detail["remaining"] == 1
+    assert detail["message"] == (
+        "This item is capped at 50 clips. You currently have 49; you can add 1 more."
+    )
+
+
+def test_attach_clips_returns_capacity_detail_when_final_state_exceeds_cap(
+    client: TestClient,
+) -> None:
+    user = _user()
+    item, plan = _owned_item(user.id)
+    item.clip_assignments = []
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    paths = [f"users/{user.id}/plan/{item.id}/clip-{i}.mp4" for i in range(51)]
+
+    response = client.post(
+        f"/plan-items/{item.id}/clips",
+        json={"clip_gcs_paths": paths},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["code"] == "clip_upload_limit_exceeded"
+    assert detail["limit"] == 50
+    assert detail["current"] == 51
+    assert detail["remaining"] == 0
+    assert detail["message"] == (
+        "This item is capped at 50 clips. You currently have 51; you can add 0 more."
+    )
+
+
 def test_generate_requires_clips(client: TestClient) -> None:
     user = _user()
     item, plan = _owned_item(user.id, clips=[])

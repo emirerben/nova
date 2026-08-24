@@ -228,11 +228,26 @@ const COLLAGE_MONTAGE_PRESETS = new Set<MontagePreset>(["masonry", "polaroid_wal
 
 
 const VIDEO_UPLOAD_ACCEPT = "video/mp4,video/quicktime";
+const MAX_CLIPS_PER_ITEM = 50;
 const AUDIO_UPLOAD_ACCEPT = "audio/*,.mp3,.m4a,.mp4,.wav,.webm,.ogg,.aac";
 const NARRATED_READY_UPLOAD_ACCEPT = `${VIDEO_UPLOAD_ACCEPT},${AUDIO_UPLOAD_ACCEPT}`;
 const MASONRY_UPLOAD_ACCEPT = `${VIDEO_UPLOAD_ACCEPT},image/jpeg,image/png,image/webp,image/heic,image/heif`;
 const AUDIO_UPLOAD_EXTENSIONS = new Set([".mp3", ".m4a", ".wav", ".webm", ".ogg", ".aac"]);
 const AUDIO_ONLY_PROBE_EXTENSIONS = new Set([".mp4", ".m4v", ".mov"]);
+
+function clipUploadErrorMessage(
+  error: unknown,
+  fallback = "We couldn't add this video. Try again.",
+): string {
+  if (typeof error !== "object" || error === null) return fallback;
+  const capacity = error as { code?: unknown; limit?: unknown; remaining?: unknown };
+  if (capacity.code !== "clip_upload_limit_exceeded") return fallback;
+  const limit = typeof capacity.limit === "number" ? capacity.limit : MAX_CLIPS_PER_ITEM;
+  const remaining = typeof capacity.remaining === "number" ? Math.max(0, capacity.remaining) : 0;
+  return remaining > 0
+    ? `You can add up to ${remaining} more clip(s).`
+    : `You've reached the clip limit (${limit}). Remove a clip to add more.`;
+}
 
 // Content-type resolution lives in plan-api's uploadContentTypeForFile — the
 // SAME function signs the URL and sets the PUT header, so the two can never
@@ -1156,7 +1171,7 @@ export default function PlanItemPage() {
             ? {
                 ...p,
                 status: "error" as const,
-                error: "We couldn't add this video. Try again.",
+                error: clipUploadErrorMessage(err),
               }
             : p,
         ),
@@ -1184,13 +1199,17 @@ export default function PlanItemPage() {
     );
     try {
       await scheduleAttachDrain();
-    } catch {
+    } catch (err) {
       // The bytes are already in GCS — keep the card as an error whose Retry
       // re-runs ONLY the attach (never a full re-upload of a large file).
       setPendingClipUploads((prev) =>
         prev.map((p) =>
           p.localId === local.localId
-            ? { ...p, status: "error" as const, error: "Couldn't save the clip" }
+            ? {
+                ...p,
+                status: "error" as const,
+                error: clipUploadErrorMessage(err, "Couldn't save the clip"),
+              }
             : p,
         ),
       );
@@ -1240,11 +1259,15 @@ export default function PlanItemPage() {
       });
       try {
         await scheduleAttachDrain();
-      } catch {
+      } catch (err) {
         setPendingClipUploads((prev) =>
           prev.map((p) =>
             p.localId === localId
-              ? { ...p, status: "error" as const, error: "Couldn't save the clip" }
+              ? {
+                  ...p,
+                  status: "error" as const,
+                  error: clipUploadErrorMessage(err, "Couldn't save the clip"),
+                }
               : p,
           ),
         );
@@ -4935,18 +4958,20 @@ function PoolUploadCard({
   onKeep: (a: ClipAssignment) => void;
   onRemove: (a: ClipAssignment) => void;
   onNoteChange: (a: ClipAssignment, note: string) => Promise<void>;
-  /** Hard cap on clip count (subtitled = 1). Undefined → unlimited (montage pool). */
+  /** Hard cap on clip count (subtitled = 1); montage pools use the shared 50 cap. */
   maxClips?: number;
   accept?: string;
   /** Per-format helper copy shown as the dropzone's subline while empty
    *  (e.g. "3 or more clips work best..."). Omit for no subline. */
   subline?: ReactNode;
 }) {
+  const clipLimit = maxClips ?? MAX_CLIPS_PER_ITEM;
   // In-flight cards count toward the cap so maxClips=1 can't double-pick.
-  const atCap = maxClips != null && clips.length + pending.length >= maxClips;
+  const remaining = Math.max(0, clipLimit - clips.length - pending.length);
+  const atCap = remaining === 0;
   const hasAny = clips.length > 0 || pending.length > 0;
   const dropzoneLabel =
-    maxClips === 1
+    clipLimit === 1
       ? "Drop a video here or choose a file"
       : hasAny
         ? "Add more videos"
@@ -5127,9 +5152,7 @@ function PoolUploadCard({
       {atCap ? (
         pending.length === 0 && (
           <p className="text-sm text-muted-foreground">
-            {maxClips === 1
-              ? "One clip added. Remove it above to swap in a different one."
-              : "You've reached the clip limit. Remove one above to add another."}
+            You&apos;ve reached the clip limit ({clipLimit}). Remove a clip to add more.
           </p>
         )
       ) : (
@@ -5137,21 +5160,26 @@ function PoolUploadCard({
         // save) — a concurrent handleFiles there would double-save the
         // voiceover. Clip TRANSFERS clear `uploading` first, so adding
         // more clips mid-batch stays possible.
-        <Dropzone
-          onFiles={onFiles}
-          accept={accept}
-          multiple={maxClips !== 1}
-          disabled={uploading}
-          compact={hasAny}
-          title={hasAny ? "Add more videos" : "Drop videos here or choose files"}
-          subline={
-            hasAny
-              ? undefined
-              : subline ?? "iCloud videos may take a moment to prepare before they appear here."
-          }
-          ariaLabel={dropzoneLabel}
-          inputAriaLabel="Drop videos here or choose files"
-        />
+        <>
+          <p className="mb-2 text-sm text-muted-foreground">
+            You can add up to {remaining} more clip(s).
+          </p>
+          <Dropzone
+            onFiles={onFiles}
+            accept={accept}
+            multiple={clipLimit !== 1}
+            disabled={uploading}
+            compact={hasAny}
+            title={hasAny ? "Add more videos" : "Drop videos here or choose files"}
+            subline={
+              hasAny
+                ? undefined
+                : subline ?? "iCloud videos may take a moment to prepare before they appear here."
+            }
+            ariaLabel={dropzoneLabel}
+            inputAriaLabel="Drop videos here or choose files"
+          />
+        </>
       )}
       {uploading && pending.length === 0 && (
         <p className="mt-3 text-sm text-lime-700">Uploading…</p>

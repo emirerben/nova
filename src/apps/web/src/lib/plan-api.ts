@@ -52,6 +52,10 @@ export class PlanApiError extends Error {
   readonly retryable: boolean;
   readonly requestId: string | null;
   readonly stage: string | null;
+  readonly limit: number | null;
+  readonly current: number | null;
+  readonly requested: number | null;
+  readonly remaining: number | null;
 
   constructor({
     message,
@@ -60,6 +64,10 @@ export class PlanApiError extends Error {
     retryable = false,
     requestId = null,
     stage = null,
+    limit = null,
+    current = null,
+    requested = null,
+    remaining = null,
   }: {
     message: string;
     status: number;
@@ -67,6 +75,10 @@ export class PlanApiError extends Error {
     retryable?: boolean;
     requestId?: string | null;
     stage?: string | null;
+    limit?: number | null;
+    current?: number | null;
+    requested?: number | null;
+    remaining?: number | null;
   }) {
     super(message);
     this.name = "PlanApiError";
@@ -75,6 +87,10 @@ export class PlanApiError extends Error {
     this.retryable = retryable;
     this.requestId = requestId;
     this.stage = stage;
+    this.limit = limit;
+    this.current = current;
+    this.requested = requested;
+    this.remaining = remaining;
   }
 }
 
@@ -479,6 +495,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     let retryable = res.status >= 500;
     let requestId: string | null = null;
     let stage: string | null = null;
+    let limit: number | null = null;
+    let current: number | null = null;
+    let requested: number | null = null;
+    let remaining: number | null = null;
     try {
       requestId = res.headers.get("x-request-id");
     } catch {
@@ -488,11 +508,25 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       const body = (await res.json()) as {
         detail?:
           | string
-          | { detail?: string; message?: string; code?: string; retryable?: boolean; stage?: string };
+          | {
+              detail?: string;
+              message?: string;
+              code?: string;
+              retryable?: boolean;
+              stage?: string;
+              limit?: number;
+              current?: number;
+              requested?: number;
+              remaining?: number;
+            };
         code?: string;
         retryable?: boolean;
         request_id?: string;
         stage?: string;
+        limit?: number;
+        current?: number;
+        requested?: number;
+        remaining?: number;
       };
       const nested = typeof body?.detail === "object" ? body.detail : null;
       if (typeof body?.detail === "string") detail = body.detail;
@@ -503,6 +537,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       }
       if (body?.request_id) requestId = body.request_id;
       if (body?.stage || nested?.stage) stage = body.stage ?? nested?.stage ?? null;
+      if (typeof (body?.limit ?? nested?.limit) === "number") limit = body?.limit ?? nested?.limit ?? null;
+      if (typeof (body?.current ?? nested?.current) === "number") current = body?.current ?? nested?.current ?? null;
+      if (typeof (body?.requested ?? nested?.requested) === "number") requested = body?.requested ?? nested?.requested ?? null;
+      if (typeof (body?.remaining ?? nested?.remaining) === "number") remaining = body?.remaining ?? nested?.remaining ?? null;
     } catch {
       // non-JSON error body; keep the generic message
     }
@@ -524,6 +562,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       retryable,
       requestId,
       stage,
+      limit,
+      current,
+      requested,
+      remaining,
     });
   }
   // Successful DELETE endpoints return no JSON body.

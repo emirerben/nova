@@ -161,10 +161,10 @@ def test_set_item_clips_derives_paths_shots_first() -> None:
 
 
 def test_set_item_clips_raises_on_cap() -> None:
-    # Cap was raised from 20 → 30 (multi-clip per shot: ~4 shots × 7 clips).
+    # Multi-clip per shot: ~7 shots × 7 clips reaches the 50-clip cap.
     item = MagicMock()
     with pytest.raises(ClipAssignmentError, match="Too many clips"):
-        set_item_clips(item, [ClipAssignment(gcs_path=f"p/{i}.mp4") for i in range(31)])
+        set_item_clips(item, [ClipAssignment(gcs_path=f"p/{i}.mp4") for i in range(51)])
 
 
 def test_set_item_clips_raises_on_dup_path() -> None:
@@ -308,7 +308,7 @@ def test_attach_clips_rejects_over_cap(client: TestClient) -> None:
     db = _db_for(item, plan)
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
-    paths = [f"users/{user.id}/plan/{item.id}/{i}.mp4" for i in range(31)]
+    paths = [f"users/{user.id}/plan/{item.id}/{i}.mp4" for i in range(51)]
     with patch("app.tasks.conformance_build.analyze_item_conformance") as mock_task:
         mock_task.delay = MagicMock()
         resp = client.post(
