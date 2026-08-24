@@ -20,18 +20,13 @@ from app.schemas.edit_proposal import (
     EditProposalSnapshot,
     FastMontageCut,
     MediaRef,
-    ProposalBrief,
     ProposalFailure,
     StoryBeat,
     canonical_media_digest,
     parse_edit_proposal,
 )
 from app.services.content_plan_persona import load_owned_plan_persona_sync
-from app.services.edit_proposals import (
-    infer_direction_guidance,
-    media_generations_match_sync,
-    save_proposal_draft,
-)
+from app.services.edit_proposals import media_generations_match_sync, save_proposal_draft
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -379,9 +374,6 @@ def _attempt_wants_auto_finalize(
             and current
             and current.generation_attempt_id == attempt_id
             and current.approval_mode == "auto"
-            and not (
-                current.guidance and current.guidance.state == "awaiting_direction_confirmation"
-            )
         )
 
 
@@ -445,8 +437,6 @@ def _dispatch_after_auto_design(
         current = parse_edit_proposal(item.edit_proposal) if item else None
         if item is None or current is None or current.generation_attempt_id != attempt_id:
             return  # superseded by a newer attempt — nothing to do
-        if current.guidance and current.guidance.state == "awaiting_direction_confirmation":
-            return
         if current.status == "approved":
             bypass = False
         elif current.status == "failed" and not current.design_fallback:
@@ -780,43 +770,6 @@ def _run_draft_attempt(
                 db.commit()
                 return
             item.clip_assignments = merged_assignments
-            from app.config import settings  # noqa: PLC0415
-
-            # Auto-design has enough analyzed evidence to make a useful first
-            # guess, but an unbriefed creator must confirm that guess before we
-            # spend the proposal-agent call or dispatch a render. Explicit
-            # creator briefs use the normal non-auto attempt and bypass this
-            # pause entirely.
-            if (
-                settings.guided_edit_direction_confirmation_enabled
-                and auto_finalize
-                and current.guidance is None
-                and not current.conversation
-                and not current.brief_ready
-            ):
-                guidance = infer_direction_guidance(
-                    item,
-                    media_digest=digest,
-                    duration_s=adapt_target_duration_s(15, feasible_duration_s),
-                )
-                paused = current.model_copy(
-                    update={
-                        "proposal_version": current.proposal_version + 1,
-                        "status": "briefing",
-                        "media_digest": digest,
-                        "brief": ProposalBrief(
-                            direction=guidance.hypothesis.direction,
-                            goal="Show the strongest visual moments quickly.",
-                            pace=guidance.hypothesis.pace,
-                            duration_s=guidance.hypothesis.duration_s,
-                        ),
-                        "guidance": guidance,
-                        "failure": None,
-                    }
-                )
-                item.edit_proposal = paused.model_dump(mode="json")
-                db.commit()
-                return
             drafting = current.model_copy(
                 update={
                     "proposal_version": current.proposal_version + 1,

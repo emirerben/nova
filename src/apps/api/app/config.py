@@ -720,26 +720,28 @@ class Settings(BaseSettings):
     guided_edit_direction_confirmation_enabled: bool = Field(
         default=False,
         description=(
-            "After media analysis, infer a concrete edit direction and pause for creator "
-            "confirmation before proposal planning or rendering. Explicit briefs bypass this "
-            "pause. Read by the API and worker; changing it requires API and worker restarts."
+            "Expose the optional planner's inferred-direction confirmation for compatibility. "
+            "The primary automatic Generate path never waits for this confirmation. Read by "
+            "the API and worker; changing it requires API and worker restarts."
         ),
     )
     guided_auto_design_enabled: bool = Field(
         default=True,
-        description="AI-designs-by-default: when enforcement would otherwise 409 Generate on a "
-        "missing/failed/unapproved guided-edit proposal and the item already has media, silently "
-        "reserve + draft + auto-approve a proposal (approval_mode='auto') and dispatch the render "
-        "instead of blocking the creator on an explicit review step — one-click Generate always "
-        "works when media exists. Kill switch: off restores strict enforcement (existing 409s) "
-        "for new Generate calls — NOT byte-identical to pre-auto-design rollback, since the "
-        "proposal_failed 409 mapping (services/edit_proposals.py) is unconditional regardless of "
-        "this flag, and proposals an earlier auto-design attempt already approved stay approved "
-        "(never retroactively un-approved) — see docs/runbooks/conversational-edit-rollback.md. "
-        "Only relevant when guided_edit_enforcement_enabled is on. Read by the API and sync "
-        "dispatch worker; changing it requires API and worker restarts. Fly: `fly secrets set "
-        "GUIDED_AUTO_DESIGN_ENABLED=false --app nova-video` + `fly machine restart <id>` for the "
-        "api and worker process groups.",
+        description=(
+            "AI-designs-by-default: when the guided capability is available and the item already "
+            "has media, silently reserve + draft + auto-approve a proposal (approval_mode='auto') "
+            "and dispatch the render instead of blocking the creator on an explicit review step — "
+            "one-click Generate always works when media exists. Kill switch: off restores strict "
+            "enforcement (existing 409s) for new Generate calls — NOT byte-identical to "
+            "pre-auto-design rollback, since the proposal_failed 409 mapping "
+            "(services/edit_proposals.py) "
+            "is unconditional regardless of this flag, and proposals an earlier auto-design "
+            "attempt already approved stay approved (never retroactively un-approved) — see "
+            "docs/runbooks/conversational-edit-rollback.md. Read by the API and sync dispatch "
+            "worker; changing it requires API and worker restarts. Fly: `fly secrets set "
+            "GUIDED_AUTO_DESIGN_ENABLED=false --app nova-video` + `fly machine restart <id>` "
+            "for the api and worker process groups."
+        ),
     )
     guided_render_recovery_enabled: bool = Field(
         default=True,

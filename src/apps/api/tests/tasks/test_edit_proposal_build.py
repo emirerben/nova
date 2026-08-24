@@ -154,7 +154,9 @@ def test_attempt_wants_auto_finalize_reads_approval_mode_off_the_row(monkeypatch
         },
         "fingerprint": "a" * 64,
     }
-    assert proposal_build._attempt_wants_auto_finalize(item_id, "attempt-1", 7) is False
+    # Legacy direction-review rows are still automatic attempts; the worker
+    # must be able to finish them after Generate resumes the state.
+    assert proposal_build._attempt_wants_auto_finalize(item_id, "attempt-1", 7) is True
 
 
 def test_pool_refs_rejects_asset_owned_by_another_user() -> None:
