@@ -227,6 +227,7 @@ def build_generative_job(
     montage_preset: str = DEFAULT_MONTAGE_PRESET,
     variant_policy: str | None = None,
     smart_captions: dict | None = None,
+    creator_strategy: dict | None = None,
 ) -> Job:
     """Construct (not persist) a generative Job after validating clip prefixes.
 
@@ -339,6 +340,15 @@ def build_generative_job(
         }
         if notes_ctx:
             all_candidates["clip_notes"] = notes_ctx
+    # Main Creator Agent: a user-confirmed, schema-bounded creative strategy.
+    # This is context, never an executable capability. Omitted for every legacy
+    # and non-creator render so the baseline remains byte-identical.
+    if creator_strategy:
+        from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+
+        all_candidates["creator_strategy"] = CreativeStrategy.model_validate(
+            creator_strategy
+        ).model_dump(mode="json", exclude_none=True)
     # Landscape-fit preference (plan-item editor). Only stash when "fit" so
     # public/legacy jobs keep byte-identical all_candidates shape — same omit-
     # when-default discipline used for persona / user_style / filming_guide above.

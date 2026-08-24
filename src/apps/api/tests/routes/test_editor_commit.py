@@ -2273,6 +2273,7 @@ def test_sfx_only_commit_persists_and_kicks_sfx_pass(monkeypatch):
         "song_text",
         _commit_req(sound_effects=sfx),
         user_id="u123",
+        plan_item_id="item",
     )
 
     v = job.assembly_plan["variants"][0]
@@ -2297,6 +2298,88 @@ def test_sfx_only_commit_persists_and_kicks_sfx_pass(monkeypatch):
     assert calls[0]["kwargs"]["sfx_override"][0]["src_gcs_path"] == (
         "users/u123/plan/item/sfx/pop.mp3"
     )
+
+
+def test_editor_commit_rejects_user_sfx_from_another_plan_item(monkeypatch):
+    _arm(monkeypatch)
+    job = _job()
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(
+                sound_effects=[
+                    {
+                        "id": "sfx-cross-item",
+                        "src_gcs_path": "users/u123/plan/other-item/sfx/pop.mp3",
+                        "at_s": 1.0,
+                    }
+                ]
+            ),
+            user_id="u123",
+            plan_item_id="item",
+        )
+
+    assert exc.value.status_code == 422
+    assert "users/u123/plan/item/" in str(exc.value.detail)
+    assert job.assembly_plan == before
+
+
+def test_editor_commit_preserves_curated_sfx_with_item_scope(monkeypatch):
+    _arm(monkeypatch)
+    job = _job()
+
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            sound_effects=[
+                {
+                    "id": "sfx-curated",
+                    "src_gcs_path": "sound-effects/pop.mp3",
+                    "at_s": 1.0,
+                }
+            ]
+        ),
+        user_id="u123",
+        plan_item_id="item",
+    )
+
+    assert job.assembly_plan["variants"][0]["sound_effects"][0]["src_gcs_path"] == (
+        "sound-effects/pop.mp3"
+    )
+
+
+def test_editor_commit_rejects_overlay_from_another_plan_item(monkeypatch):
+    _arm(monkeypatch)
+    job = _job()
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(
+                media_overlays=[
+                    {
+                        "id": "overlay-cross-item",
+                        "kind": "image",
+                        "src_gcs_path": "users/u123/plan/other-item/overlays/card.png",
+                        "position": "center",
+                        "start_s": 0.0,
+                        "end_s": 2.0,
+                    }
+                ]
+            ),
+            user_id="u123",
+            plan_item_id="item",
+        )
+
+    assert exc.value.status_code == 422
+    assert "users/u123/plan/item/" in str(exc.value.detail)
+    assert job.assembly_plan == before
 
 
 def test_overlay_only_commit_cascades_explicit_generated_effect_group(monkeypatch):
@@ -2577,6 +2660,7 @@ def test_overlay_only_commit_persists_and_kicks_overlay_pass(monkeypatch):
         "song_text",
         _commit_req(media_overlays=overlays),
         user_id="u123",
+        plan_item_id="item",
     )
 
     v = job.assembly_plan["variants"][0]
@@ -3722,6 +3806,36 @@ def test_endpoint_music_window_loads_current_track_and_enqueues_once(
     worker_kwargs = regen.apply_async.call_args.kwargs["kwargs"]
     assert "music_window_alignment" not in worker_kwargs
     assert worker_kwargs["force_full_render"] is True
+
+
+def test_endpoint_background_music_commit_does_not_use_removed_field(
+    client: TestClient, monkeypatch
+) -> None:
+    """The background-music payload has no legacy ``remove`` attribute."""
+    _arm(monkeypatch)
+    user = _user()
+    job = _job()
+    item, plan = _owned_item(user.id, job=job)
+    track = _music_track(id="t2", title="Bed Track", audio_gcs_path="music/t2.mp3")
+    db = _db([item, track], plan, job)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with patch(REGEN) as regen:
+        regen.apply_async = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/song_text/editor-commit",
+            json={
+                "background_music": {"track_id": "t2", "start_s": 0.0},
+                "base_generation": "2026-07-01T00:00:00Z",
+            },
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["sections"]["background_music"] is True
+    assert job.assembly_plan["variants"][0]["smart_music_treatment"]["track_id"] == "t2"
+    db.commit.assert_awaited_once()
+    regen.apply_async.assert_called_once()
 
 
 def test_endpoint_stale_baseline_409(client: TestClient, monkeypatch) -> None:

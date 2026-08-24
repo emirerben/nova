@@ -42,6 +42,7 @@ from app.agents.intro_writer import (
     IntroWriterOutput,
     slop_structural_failures,
 )
+from app.agents.main_creator import MainCreatorInput, MainCreatorOutput
 from app.agents.music_matcher import MusicMatcherInput, MusicMatcherOutput
 from app.agents.overlay_examples import load_overlay_examples
 from app.agents.overlay_format_matcher import (
@@ -2273,6 +2274,27 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_edit_copilot(output)
     if agent_name == "nova.edit.director":
         return check_edit_director(output, input)
+    if agent_name == "nova.creator.main":
+        if not isinstance(output, MainCreatorOutput) or not isinstance(input, MainCreatorInput):
+            return ["main creator input/output type mismatch"]
+        action = output.action
+        if getattr(action, "kind", None) != "propose_strategy":
+            return []
+        known = {media.media_id for media in input.capability_manifest.media}
+        selected = set(action.strategy.selected_media_ids)
+        failures: list[str] = []
+        if not selected <= known:
+            failures.append("strategy references media outside the manifest")
+        if (
+            action.strategy.render_program == "guided"
+            and not input.capability_manifest.capabilities["draft_guided_proposal"].available
+        ):
+            failures.append("strategy requests unavailable guided execution")
+        if action.strategy.audio_strategy in {"original_audio", "voiceover"} and (
+            action.strategy.render_program != "native"
+        ):
+            failures.append("audio-led strategy is not native")
+        return failures
     if agent_name == "nova.plan.conformance_feedback":
         return check_conformance_feedback(output)
     if agent_name == "nova.video.style_observation":

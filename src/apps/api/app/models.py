@@ -22,10 +22,23 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import BYTEA, JSONB, UUID
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, synonym
 from sqlalchemy.sql import func
 
 TIMESTAMPTZ = TIMESTAMP(timezone=True)
+
+CREATOR_AGENT_ACTIVE_STATUSES = (
+    "briefing",
+    "planning",
+    "awaiting_confirmation",
+    "executing",
+    "rendering",
+    "reviewing",
+    "awaiting_feedback",
+    "revising",
+)
+CREATOR_AGENT_TERMINAL_STATUSES = ("completed", "failed", "cancelled")
+CREATOR_AGENT_STATUSES = CREATOR_AGENT_ACTIVE_STATUSES + CREATOR_AGENT_TERMINAL_STATUSES
 
 
 class Base(DeclarativeBase):
@@ -84,6 +97,9 @@ class User(Base):
     )
     training_dataset_exports: Mapped[list["TrainingDatasetExport"]] = relationship(
         back_populates="requested_by_user", foreign_keys="TrainingDatasetExport.requested_by"
+    )
+    creator_agent_sessions: Mapped[list["CreatorAgentSession"]] = relationship(
+        back_populates="creator", cascade="all, delete-orphan"
     )
 
 
@@ -493,6 +509,9 @@ class Job(Base):
     # PlanItem.current_job is the matching forward link (not a back_populates inverse —
     # the two FKs are distinct columns, see PlanItem.current_job_id).
     content_plan_item: Mapped["PlanItem | None"] = relationship(foreign_keys=[content_plan_item_id])
+    creator_agent_sessions: Mapped[list["CreatorAgentSession"]] = relationship(
+        back_populates="target_job", foreign_keys="CreatorAgentSession.target_job_id"
+    )
 
     __table_args__ = (
         Index("idx_jobs_user_id", "user_id"),
@@ -688,12 +707,176 @@ class JobClip(Base):
     )
 
 
+class CreatorAgentSession(Base):
+    """Durable state for one Main Creator Agent edit session.
+
+    A session is scoped to one creator and plan item.  ``phase`` is the
+    controller's source of truth; terminal phases release the partial unique
+    index so a later session can be started for the same item.  Events and
+    executions are deliberately separate append-only/auditable records so
+    retries cannot be mistaken for state transitions.
+    """
+
+    __tablename__ = "creator_agent_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    plan_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_items.id", ondelete="CASCADE"), nullable=False
+    )
+    # briefing → planning → awaiting_confirmation → executing → rendering →
+    # reviewing → awaiting_feedback → revising → completed|failed|cancelled
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="briefing")
+    # ``phase`` is kept as an ORM alias for controller code that uses the
+    # state-machine terminology from the original design.
+    phase: Mapped[str] = synonym("status")
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    ownership_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    active_plan: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    manifest_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True
+    )
+    target_variant_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_generation_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pending_plan: Mapped[dict | None] = synonym("active_plan")
+    current_job_id: Mapped[uuid.UUID | None] = synonym("target_job_id")
+    max_render_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="2")
+    render_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    iteration_budget: Mapped[int] = mapped_column(Integer, nullable=False, server_default="2")
+    question_budget: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    agent_call_budget: Mapped[int] = mapped_column(Integer, nullable=False, server_default="8")
+    iteration_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    question_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    agent_call_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    last_review: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    last_good: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    last_error: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    creator: Mapped["User"] = relationship(back_populates="creator_agent_sessions")
+    plan_item: Mapped["PlanItem"] = relationship(back_populates="creator_agent_sessions")
+    target_job: Mapped["Job | None"] = relationship(
+        back_populates="creator_agent_sessions", foreign_keys=[target_job_id]
+    )
+    events: Mapped[list["CreatorAgentEvent"]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="CreatorAgentEvent.sequence",
+    )
+    executions: Mapped[list["CreatorAgentExecution"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan"
+    )
+    agent_runs: Mapped[list["AgentRun"]] = relationship(back_populates="creator_agent_session")
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('briefing','planning','awaiting_confirmation','executing','rendering',"
+            "'reviewing','awaiting_feedback','revising','completed','failed','cancelled')",
+            name="ck_creator_agent_sessions_status",
+        ),
+        CheckConstraint(
+            "revision >= 0 AND ownership_epoch >= 0 AND iteration_budget >= 0 "
+            "AND question_budget >= 0 AND agent_call_budget >= 0 "
+            "AND iteration_count >= 0 AND question_count >= 0 AND agent_call_count >= 0 "
+            "AND max_render_attempts >= 0 AND render_attempts >= 0",
+            name="ck_creator_agent_sessions_counters_nonnegative",
+        ),
+        Index(
+            "uq_creator_agent_sessions_active_item",
+            "creator_id",
+            "plan_item_id",
+            unique=True,
+            postgresql_where=text(
+                "status IN ('briefing','planning','awaiting_confirmation','executing',"
+                "'rendering','reviewing','awaiting_feedback','revising')"
+            ),
+        ),
+        Index("idx_creator_agent_sessions_item_updated", "plan_item_id", "updated_at"),
+        Index("idx_creator_agent_sessions_creator_id", "creator_id"),
+        Index("idx_creator_agent_sessions_target_job", "target_job_id"),
+    )
+
+
+class CreatorAgentEvent(Base):
+    """Append-only controller event; retries are idempotent by client ID."""
+
+    __tablename__ = "creator_agent_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_agent_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    client_event_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    role: Mapped[str] = mapped_column(Text, nullable=False, server_default="system")
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)
+    payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    session: Mapped["CreatorAgentSession"] = relationship(back_populates="events")
+
+    __table_args__ = (
+        CheckConstraint("sequence >= 0 AND revision >= 0", name="ck_creator_agent_events_counters"),
+        CheckConstraint(
+            "role IN ('user','assistant','system')", name="ck_creator_agent_events_role"
+        ),
+        UniqueConstraint("session_id", "sequence", name="uq_creator_agent_events_sequence"),
+        UniqueConstraint("session_id", "client_event_id", name="uq_creator_agent_events_client_id"),
+        Index("idx_creator_agent_events_session_created", "session_id", "created_at"),
+    )
+
+
+class CreatorAgentExecution(Base):
+    """Idempotent execution receipt for a controller action."""
+
+    __tablename__ = "creator_agent_executions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_agent_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    request_digest: Mapped[str] = mapped_column(Text, nullable=False)
+    expected_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    expected_manifest_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    error: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+
+    session: Mapped["CreatorAgentSession"] = relationship(back_populates="executions")
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','running','succeeded','failed','stale','duplicate')",
+            name="ck_creator_agent_executions_status",
+        ),
+        CheckConstraint("expected_revision >= 0", name="ck_creator_agent_executions_revision"),
+        UniqueConstraint(
+            "session_id", "idempotency_key", name="uq_creator_agent_executions_idempotency"
+        ),
+        Index("idx_creator_agent_executions_session_created", "session_id", "created_at"),
+    )
+
+
 class AgentRun(Base):
     """One row per agent invocation. Captures full input + raw LLM response +
     parsed output so the admin job-debug view can show exactly what each
     agent saw and produced for a given job. job_id is nullable so off-job
-    calls (track-level analysis, eval harness) can also be persisted without
-    inventing a fake job UUID.
+    calls (track-level analysis, eval harness, or a pre-render creator-agent
+    session) can also be persisted without inventing a fake job UUID.
     """
 
     __tablename__ = "agent_run"
@@ -717,6 +900,11 @@ class AgentRun(Base):
         ForeignKey("music_tracks.id", ondelete="CASCADE"),
         nullable=True,
     )
+    creator_agent_session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_agent_sessions.id", ondelete="CASCADE"),
+        nullable=True,
+    )
     segment_idx: Mapped[int | None] = mapped_column(Integer, nullable=True)
     agent_name: Mapped[str] = mapped_column(Text, nullable=False)
     prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
@@ -733,11 +921,25 @@ class AgentRun(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
 
+    creator_agent_session: Mapped["CreatorAgentSession | None"] = relationship(
+        back_populates="agent_runs", foreign_keys=[creator_agent_session_id]
+    )
+
     __table_args__ = (
+        CheckConstraint(
+            "(job_id IS NOT NULL) OR (template_id IS NOT NULL) "
+            "OR (music_track_id IS NOT NULL) OR (creator_agent_session_id IS NOT NULL)",
+            name="ck_agent_run_has_owner",
+        ),
         Index("idx_agent_run_job_id_created", "job_id", "created_at"),
         Index("idx_agent_run_agent_name", "agent_name"),
         Index("idx_agent_run_template_id_created", "template_id", "created_at"),
         Index("idx_agent_run_music_track_id_created", "music_track_id", "created_at"),
+        Index(
+            "idx_agent_run_creator_agent_session_created",
+            "creator_agent_session_id",
+            "created_at",
+        ),
         Index(
             "idx_agent_run_template_id_created_desc",
             "template_id",
@@ -1026,6 +1228,9 @@ class PlanItem(Base):
     content_plan: Mapped["ContentPlan"] = relationship(back_populates="items")
     # One-directional (not the inverse of Job.content_plan_item — distinct FK column).
     current_job: Mapped["Job | None"] = relationship(foreign_keys=[current_job_id])
+    creator_agent_sessions: Mapped[list["CreatorAgentSession"]] = relationship(
+        back_populates="plan_item", cascade="all, delete-orphan"
+    )
     edit_artifacts: Mapped[list["EditArtifact"]] = relationship(
         back_populates="plan_item", cascade="all, delete-orphan"
     )

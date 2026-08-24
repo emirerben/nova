@@ -25,6 +25,7 @@ from app.routes import (
     auth,
     clips,
     content_plans,
+    creator_agent,
     generative_jobs,
     landing,
     manual_drafts,
@@ -197,6 +198,7 @@ app.include_router(generative_jobs.router, prefix="/generative-jobs", tags=["gen
 app.include_router(personas.router, prefix="/personas", tags=["personas"])
 app.include_router(content_plans.router, prefix="/content-plans", tags=["content-plans"])
 app.include_router(plan_items.router, prefix="/plan-items", tags=["plan-items"])
+app.include_router(creator_agent.router, prefix="/plan-items", tags=["creator-agent"])
 app.include_router(manual_drafts.router, prefix="/plan-items", tags=["plan-items"])
 app.include_router(me.router, prefix="/me", tags=["me"])
 app.include_router(presigned.router, prefix="/presigned-urls", tags=["presigned"])

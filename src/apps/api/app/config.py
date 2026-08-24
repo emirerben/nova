@@ -766,6 +766,17 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Main Creator Agent. The four independent switches let us expose a
+    # read-only conversation/strategy preview before the agent is allowed to
+    # mutate a PlanItem or spend render capacity. Execution always requires an
+    # explicit user confirmation; automatic iteration remains a later-stage
+    # capability with its own kill switch.
+    main_creator_agent_enabled: bool = False
+    main_creator_agent_execution_enabled: bool = False
+    main_creator_agent_review_enabled: bool = False
+    main_creator_agent_auto_iteration_enabled: bool = False
+    main_creator_agent_rollout_percent: int = Field(default=0, ge=0, le=100)
+
     @model_validator(mode="after")
     def reject_guided_edit_before_strict_renderer(self) -> "Settings":
         """Make the guided-edit rollout sequence structurally impossible to skip."""
@@ -776,15 +787,20 @@ class Settings(BaseSettings):
             raise ValueError("guided edit conversation requires guided edit capability")
         if self.guided_edit_enforcement_enabled and not GUIDED_STORY_RENDERER_READY:
             raise ValueError("guided edit enforcement requires the strict story renderer")
+        if self.main_creator_agent_execution_enabled and not self.main_creator_agent_enabled:
+            raise ValueError("main creator execution requires the main creator agent")
+        if self.main_creator_agent_review_enabled and not self.main_creator_agent_enabled:
+            raise ValueError("main creator review requires the main creator agent")
+        if (
+            self.main_creator_agent_auto_iteration_enabled
+            and not self.main_creator_agent_review_enabled
+        ):
+            raise ValueError("main creator auto iteration requires review")
         return self
 
-    # agent_run retention (days). Rows with job_id IS NOT NULL and
-    # created_at older than this are deleted by the daily
-    # `tasks.cleanup_agent_runs` Beat task. Template- and track-scoped rows
-    # (job_id IS NULL) are kept indefinitely — they back the per-template
-    # debug view and aren't growth-bound to job volume. Default 30d keeps
-    # the job-debug "what did each agent see?" window meaningful while
-    # bounding table size. Set higher temporarily during incident triage.
+    # Agent/session retention (days). Job- and creator-session-scoped agent
+    # runs plus creator sessions/events/receipts older than this are deleted
+    # by `tasks.cleanup_agent_runs`. Template- and track-scoped rows remain.
     agent_run_retention_days: int = 30
 
     # Security
