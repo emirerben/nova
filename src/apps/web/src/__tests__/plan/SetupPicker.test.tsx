@@ -1,5 +1,6 @@
 import React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import "@testing-library/jest-dom";
 import SetupPicker from "@/app/plan/items/[id]/components/SetupPicker";
 import type { SetupPickerProps } from "@/app/plan/items/[id]/components/SetupPicker";
 
@@ -23,6 +24,14 @@ function renderPicker(overrides: Partial<SetupPickerProps> = {}) {
 const typeReceipt = () => screen.getByRole("button", { name: /^Type/ });
 
 describe("SetupPicker PATCH payloads", () => {
+  it("keeps setup picker cards on the rail layout by default", () => {
+    renderPicker();
+    expect(screen.getByRole("radio", { name: /Music montage/ })).toHaveAttribute(
+      "data-layout",
+      "rail",
+    );
+  });
+
   it("montage without a guide stamps the already-filmed default", async () => {
     const { onPatch } = renderPicker({
       resolvedFormat: "narrated_planned",

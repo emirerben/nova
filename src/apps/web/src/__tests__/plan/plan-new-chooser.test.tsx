@@ -97,6 +97,10 @@ describe("/plan/new chooser", () => {
       "aria-checked",
       "true",
     );
+    expect(screen.getByRole("radio", { name: /Classic/ })).toHaveAttribute(
+      "data-layout",
+      "rail",
+    );
     fireEvent.click(screen.getByRole("radio", { name: /Classic/ }));
     await waitFor(() =>
       expect(push).toHaveBeenCalledWith("/plan/items/item-1?setup=done"),
@@ -131,6 +135,10 @@ describe("/plan/new chooser", () => {
 
   it("Voiceover skips the style step and persists as narrated_ready", async () => {
     await ready();
+    expect(screen.getByRole("radio", { name: /Voiceover/ })).toHaveAttribute(
+      "data-layout",
+      "rail",
+    );
     fireEvent.click(screen.getByRole("radio", { name: /Voiceover/ }));
     expect(screen.queryByText("Choose a visual style")).not.toBeInTheDocument();
     await waitFor(() =>

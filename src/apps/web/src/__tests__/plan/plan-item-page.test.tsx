@@ -10,6 +10,8 @@
  */
 
 // @ts-nocheck
+import fs from "fs";
+import path from "path";
 import React from "react";
 
 Object.defineProperty(window, "matchMedia", {
@@ -48,6 +50,13 @@ jest.mock("@/hooks/usePolledJobStatus", () => ({
 }));
 import { usePolledJobStatus } from "@/hooks/usePolledJobStatus";
 const mockUsePolledJobStatus = usePolledJobStatus as jest.MockedFunction<typeof usePolledJobStatus>;
+
+const PAGE_SOURCE = path.join(
+  __dirname,
+  "..",
+  "..",
+  "app/plan/items/[id]/page.tsx",
+);
 
 // Mock plan-api
 jest.mock("@/lib/plan-api", () => ({
@@ -1759,6 +1768,21 @@ describe("PlanItemPage — per-type setup truth table (V2 redesign)", () => {
     expect(screen.queryByText("Advanced video style")).toBeNull();
     expect(screen.queryByRole("button", { name: "Change" })).toBeNull();
     expect(screen.queryByTestId("setup-picker")).toBeNull();
+  });
+
+  it("keeps the mobile Generate bar on the light pinned-action contract", () => {
+    const src = fs.readFileSync(PAGE_SOURCE, "utf8");
+    expect(src).toContain("-mx-5");
+    expect(src).toContain("border-t border-zinc-200");
+    expect(src).toContain("bg-[#ffffff]");
+    expect(src).toContain("pb-[max(16px,env(safe-area-inset-bottom))]");
+    expect(src).not.toContain("bg-background/95 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur");
+  });
+
+  it("does not render a dead mobile CardFooter when there is no Generate hint", () => {
+    const src = fs.readFileSync(PAGE_SOURCE, "utf8");
+    expect(src).toContain('generateHint ? "flex justify-between" : "hidden justify-end sm:flex"');
+    expect(src).toContain("{generateHint && (");
   });
 
   it("Lane J: Back returns to the chooser's style step for a montage item", async () => {

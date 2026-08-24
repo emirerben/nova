@@ -2156,8 +2156,14 @@ export default function PlanItemPage() {
                   </CardContent>
                 )}
                 {!isGenerating && (
-                  <CardFooter className="flex items-center justify-between gap-4 border-t pt-6">
-                    <p className="text-sm text-muted-foreground">{generateHint}</p>
+                  <CardFooter
+                    className={`items-center gap-4 border-t pt-6 ${
+                      generateHint ? "flex justify-between" : "hidden justify-end sm:flex"
+                    }`}
+                  >
+                    {generateHint && (
+                      <p className="text-sm text-muted-foreground">{generateHint}</p>
+                    )}
                     <Button
                       onClick={handleGenerate}
                       disabled={generateGated}
@@ -2235,7 +2241,7 @@ export default function PlanItemPage() {
                   itself is NOT repeated here — the CardFooter's copy sits
                   directly above this bar on every breakpoint. */}
               {!isGenerating && (
-                <div className="sticky bottom-0 z-20 -mx-4 mt-4 bg-background/95 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur sm:hidden">
+                <div className="sticky bottom-0 z-20 -mx-5 mt-4 border-t border-zinc-200 bg-[#ffffff] px-5 pb-[max(16px,env(safe-area-inset-bottom))] pt-4 sm:hidden md:mx-0 md:px-0">
                   <InkButton onClick={handleGenerate} disabled={generateGated}>
                     {generateLabel}
                   </InkButton>
