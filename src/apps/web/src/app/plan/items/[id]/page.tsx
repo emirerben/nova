@@ -1769,7 +1769,7 @@ export default function PlanItemPage() {
     (!data?.job?.started_at ? "queued" : null);
   // Variant re-renders deliberately leave the parent job/item ready while the
   // selected output is rendering. Treat that as live progress so text/song/
-  // style edits get the same compact theater beneath the existing preview.
+  // style edits get the same compact theater alongside the existing preview.
   const variantRenderInProgress = variants.some(
     (candidate) => candidate.render_status === "rendering",
   );
@@ -2458,14 +2458,12 @@ const EDITOR_TABS: { id: EditorTab; icon: string; label: string }[] = [
  * Owns the focused variant's edit session and renders the Hero + rail layout.
  *
  * Layout:
- *   HERO — large 9/16 video player (active variant). "Kria's pick" lime badge
- *   on variants[0]; text_mode label pill below the video.
+ *   MOBILE — identity, render progress (when active), 9/16 video preview with
+ *   variant picker, then the TikTok release desk.
  *
- *   RIGHT (desktop) / BELOW (mobile):
- *     Rationale blurb (1-2 sentences derived from text_mode + track_title)
- *     Alternates row — small thumbnails for the other ready variants
- *     Editor row — 4 icon+label buttons that reveal PlanVariantEditor inline
- *     Download button + feedback
+ *   DESKTOP — identity in column one, video preview in column two, and an
+ *   independent column-three stack with render progress above the release desk.
+ *   Without active render progress, the release desk starts at the top.
  *
  * DEFERRED-BURN model: for an instant-edit-eligible variant the session is the
  * draft store. Caption / Text size / Layout / Style controls mutate that draft
@@ -2552,11 +2550,11 @@ function FocusedResults({
 
   // Frozen-frame veil visibility — lifted from Hero (the only surface that
   // knows whether the stale video errored) so this component, the single
-  // owner of both Hero and the ProgressTheater (`renderProgress`) mount
-  // points, can enforce "the veil is the sole rendering voice while it's
-  // visible": theater renders below except in the exact window the veil
-  // covers the hero. See the `veilVisible` computation further down, once
-  // `instantEligible` (LiveEditPreview vs. Hero) is known.
+  // owner of both Hero and the ProgressTheater (`renderProgress`) mount, can
+  // enforce "the veil is the sole rendering voice while it's
+  // visible": the theater stays out of the result grid in the exact window
+  // the veil covers the hero. See the `veilVisible` computation further down,
+  // once `instantEligible` (LiveEditPreview vs. Hero) is known.
   const [playbackFailed, setPlaybackFailed] = useState(false);
 
   // ── Overlay-card state (lifted here so Hero can render the instant preview) ─
@@ -2894,10 +2892,11 @@ function FocusedResults({
     instantEligible && !!variant && (activeTab !== "timeline" || textLaneOpen);
   // Single source of truth for "the veil is covering the hero right now" —
   // matches the veil's own render gate in Hero (`rendering && output_url &&
-  // !playbackFailed`). ProgressTheater (`renderProgress`, below) is hidden
-  // exactly when this is true, per the "one rendering voice at a time"
-  // contract: elsewhere (no output yet, a non-focused variant rendering,
-  // or the stale video failing to play) the theater is the only indicator.
+  // !playbackFailed`). ProgressTheater (`renderProgress`, in the result grid)
+  // is hidden exactly when this is true, per the "one rendering voice at a
+  // time" contract: elsewhere (no output yet, a non-focused variant
+  // rendering, or the stale video failing to play) the theater is the only
+  // indicator.
   const veilVisible =
     !usingLiveEditPreview &&
     !!variant &&
@@ -3176,11 +3175,86 @@ function FocusedResults({
         learned_post_count: 0,
       }
     : tiktokConnection;
+  // Keep one live ProgressTheater instance while moving it responsively. All
+  // result regions remain direct children of this grid at every breakpoint,
+  // so a resize cannot remount the progress feed or release desk and reset
+  // their disclosure state. Mobile source/focus order is tracker, preview,
+  // release desk; desktop grid coordinates put tracker + desk in column three.
+  // A second breakpoint-hidden instance would duplicate timers, live-region
+  // announcements, and IDs.
+  const showRenderProgress = Boolean(renderProgress) && !veilVisible;
+  const progressRegion = showRenderProgress ? (
+    <section
+      key="render-progress"
+      aria-label="Render timing"
+      data-testid="result-render-progress"
+      className="order-2 min-w-0 lg:col-start-3 lg:row-start-1 lg:order-none lg:pt-3"
+    >
+      {renderProgress}
+    </section>
+  ) : null;
+  const releaseDesk = (
+    <div
+      key="release-desk"
+      data-testid="result-release-column"
+      className={`order-4 min-w-0 lg:col-start-3 lg:order-none ${
+        showRenderProgress
+          ? "lg:row-start-2"
+          : "lg:row-start-1 lg:row-end-3 lg:pt-3"
+      }`}
+    >
+      <TikTokReleaseRail
+        connection={releaseTikTokConnection}
+        publication={latestTikTokPublication}
+        publications={tiktokPublications}
+        comparisonPublications={allTikTokPublications}
+        receiptState={tiktokSimulation ? "ready" : tiktokReceiptState}
+        pollingStalled={tiktokPollStalled}
+        videoReady={Boolean(variant?.render_status === "ready" && variant.output_url)}
+        comparisonAvailable={tiktokComparisonAvailable}
+        canPublish={Boolean(
+          (tiktokSimulation || tiktokReceiptState === "ready") &&
+          (releaseTikTokConnection?.can_publish || releaseTikTokConnection?.can_upload_draft) &&
+          item.current_job_id &&
+          variant?.render_status === "ready" &&
+          variant.output_url,
+        )}
+        baking={baking}
+        editHref={editorHref}
+        durationSeconds={variant?.duration_s ?? null}
+        renderFinishedAt={variant?.render_finished_at ?? null}
+        variantLabel={releaseVariantLabel}
+        captionPreview={item.idea}
+        onPublish={handlePublish}
+        onDownload={handleDownload}
+        onConnect={() => void startTikTokOAuth(`${window.location.pathname}${window.location.search}`)}
+        onReceiptRetry={() => setTikTokReceiptRefresh((value) => value + 1)}
+        simulation={tiktokSimulation}
+      />
+
+      {failedOverlayCount > 0 && (
+        <p className="mt-4 text-sm text-[#3f3f46]">
+          {failedOverlayCount === 1
+            ? "One visual couldn't load. Refresh or remove it before exporting."
+            : `${failedOverlayCount} visuals couldn't load. Refresh or remove them before exporting.`}
+        </p>
+      )}
+      {((instantEligible && editSession.isDirty) || needsSfxBake) && !baking && (
+        <p className="mt-3 text-xs text-[#71717a]">Your next export will include these edits.</p>
+      )}
+    </div>
+  );
 
   return (
     <div className="mt-2 lg:-mt-4">
-      <div className="grid grid-cols-1 gap-y-6 lg:grid-cols-[minmax(210px,0.75fr)_minmax(320px,430px)_minmax(300px,0.95fr)] lg:items-start lg:gap-8 xl:gap-12">
-        <section className="order-1 lg:pt-3" aria-labelledby="release-item-title">
+      <div
+        className="grid grid-cols-1 gap-y-6 lg:grid-cols-[minmax(210px,0.75fr)_minmax(320px,430px)_minmax(300px,0.95fr)] lg:grid-rows-[auto_1fr] lg:items-start lg:gap-x-8 xl:gap-x-12"
+      >
+        <section
+          key="identity"
+          className="order-1 lg:col-start-1 lg:row-start-1 lg:row-end-3 lg:pt-3"
+          aria-labelledby="release-item-title"
+        >
           <Button variant="link" size="sm" asChild className="h-auto p-0 text-muted-foreground hover:text-foreground">
             <Link href="/plan">
               <ArrowLeft className="h-4 w-4" aria-hidden="true" />
@@ -3215,7 +3289,13 @@ function FocusedResults({
           )}
         </section>
 
-        <div className="order-2 w-full lg:mx-auto lg:max-w-[430px]">
+        {progressRegion}
+
+        <div
+          key="preview"
+          data-testid="result-preview-column"
+          className="order-3 w-full lg:col-start-2 lg:row-start-1 lg:row-end-3 lg:mx-auto lg:max-w-[430px]"
+        >
           <div className="relative" data-variant-preview={variant?.variant_id}>
             {instantEligible && variant && (activeTab !== "timeline" || textLaneOpen) ? (
               <LiveEditPreview
@@ -3264,54 +3344,9 @@ function FocusedResults({
               onSelect={onVariantSelect}
             />
           )}
-          {/* Veil-vs-theater dedup: while the frozen-frame veil covers the hero
-              (same-variant reburn, output already present, stale playback OK)
-              it is the sole rendering indicator — don't also show the theater
-              below it with different wording/ETA for the same event. */}
-          {renderProgress && !veilVisible && <div className="mt-6">{renderProgress}</div>}
         </div>
 
-        <div className="order-3 lg:pt-3">
-          <TikTokReleaseRail
-            connection={releaseTikTokConnection}
-            publication={latestTikTokPublication}
-            publications={tiktokPublications}
-            comparisonPublications={allTikTokPublications}
-            receiptState={tiktokSimulation ? "ready" : tiktokReceiptState}
-            pollingStalled={tiktokPollStalled}
-            videoReady={Boolean(variant?.render_status === "ready" && variant.output_url)}
-            comparisonAvailable={tiktokComparisonAvailable}
-            canPublish={Boolean(
-              (tiktokSimulation || tiktokReceiptState === "ready") &&
-              (releaseTikTokConnection?.can_publish || releaseTikTokConnection?.can_upload_draft) &&
-              item.current_job_id &&
-              variant?.render_status === "ready" &&
-              variant.output_url,
-            )}
-            baking={baking}
-            editHref={editorHref}
-            durationSeconds={variant?.duration_s ?? null}
-            renderFinishedAt={variant?.render_finished_at ?? null}
-            variantLabel={releaseVariantLabel}
-            captionPreview={item.idea}
-            onPublish={handlePublish}
-            onDownload={handleDownload}
-            onConnect={() => void startTikTokOAuth(`${window.location.pathname}${window.location.search}`)}
-            onReceiptRetry={() => setTikTokReceiptRefresh((value) => value + 1)}
-            simulation={tiktokSimulation}
-          />
-
-          {failedOverlayCount > 0 && (
-            <p className="mt-4 text-sm text-[#3f3f46]">
-              {failedOverlayCount === 1
-                ? "One visual couldn't load. Refresh or remove it before exporting."
-                : `${failedOverlayCount} visuals couldn't load. Refresh or remove them before exporting.`}
-            </p>
-          )}
-          {((instantEligible && editSession.isDirty) || needsSfxBake) && !baking && (
-            <p className="mt-3 text-xs text-[#71717a]">Your next export will include these edits.</p>
-          )}
-        </div>
+        {releaseDesk}
       </div>
 
       {item.current_job_id && variant && (
