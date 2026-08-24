@@ -15,6 +15,8 @@ export type AnnotationRating = "good" | "bad" | "mixed" | "not_applicable";
 export interface EditFeedbackListParams {
   cursor?: string;
   limit?: number;
+  plan_item_id?: string;
+  variant_id?: string;
   format?: string;
   language?: string;
   media_mix?: string;
