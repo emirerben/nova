@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.50.2.0] — 2026-08-24
+
+### Changed
+- **Render timing stays visible while editing.** On phones it appears above the video preview; on desktop it sits above the release controls so progress remains in view.
+
 ## [0.50.1.1] — 2026-08-24
 
 ### Changed
