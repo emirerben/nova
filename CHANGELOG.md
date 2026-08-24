@@ -2,10 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.50.0.1] — 2026-08-24
+## [0.50.1.1] — 2026-08-24
 
 ### Changed
 - **Visual pools now support up to 100 uploads per plan item.** Existing per-image size limits remain unchanged so original image quality is preserved.
+
+## [0.50.1.0] — 2026-08-24
+
+### Changed
+- **Clip creation is now one click.** Create video starts AI analysis and edit building immediately; the optional Kria planner remains available without blocking the primary path.
+- **Legacy direction checkpoints resume safely.** Existing paused attempts are resumed idempotently, with active progress states and a clip-only montage fallback when AI planning cannot complete.
 
 ## [0.50.0.0] — 2026-08-24
 

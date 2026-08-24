@@ -1155,6 +1155,7 @@ export function attachClips(
   itemId: string,
   clipGcsPaths: string[],
   assignments?: ClipAssignment[],
+  signal?: AbortSignal,
 ): Promise<PlanItem> {
   return request<PlanItem>(`/plan-items/${itemId}/clips`, {
     method: "POST",
@@ -1162,6 +1163,7 @@ export function attachClips(
       clip_gcs_paths: clipGcsPaths,
       ...(assignments !== undefined ? { assignments } : {}),
     }),
+    signal,
   });
 }
 

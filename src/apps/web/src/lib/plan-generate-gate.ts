@@ -24,6 +24,10 @@
 export interface GenerateGateInput {
   /** POST /generate is in flight (button just clicked). */
   generating: boolean;
+  /** Automatic AI design is already analyzing or drafting this item. */
+  designing: boolean;
+  /** Copy for the active AI design phase. */
+  designingHint: string;
   /** The item's derived status says a render is running. */
   isGenerating: boolean;
   /** A clip upload is still finishing. */
@@ -65,6 +69,8 @@ export const FINISHING_UPLOAD_HINT = "Finishing upload…";
 export function generateGate(input: GenerateGateInput): GenerateGateResult {
   const {
     generating,
+    designing,
+    designingHint,
     isGenerating,
     uploaderBusy,
     clipCount,
@@ -82,11 +88,13 @@ export function generateGate(input: GenerateGateInput): GenerateGateResult {
 
   const hasGenerateMedia = clipCount > 0 || hasApprovedGuidedMedia || hasReadyPoolMedia;
   const disabled =
-    generating || !hasGenerateMedia || isGenerating || uploaderBusy || voiceoverBlocked;
+    generating || designing || !hasGenerateMedia || isGenerating || uploaderBusy || voiceoverBlocked;
 
   let hint: string | null = null;
   if (uploaderBusy) {
     hint = FINISHING_UPLOAD_HINT;
+  } else if (designing) {
+    hint = designingHint;
   } else if (voiceoverBlocked) {
     hint = VOICEOVER_REQUIRED_HINT;
   } else if (!hasGenerateMedia) {

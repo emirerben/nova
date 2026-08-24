@@ -663,11 +663,7 @@ def _dispatch_item_render(
     )
 
     approved_proposal: dict | None = None
-    if (
-        bypass_guided_edit_gate
-        and guided_applicable
-        and not settings.guided_edit_direction_confirmation_enabled
-    ):
+    if bypass_guided_edit_gate and guided_applicable:
         # The caller's zero-registered-pool-assets invariant was checked in a
         # SEPARATE transaction — re-assert it under THIS lock (the item row is
         # already FOR-UPDATE-locked by dispatch_item_render_for) before

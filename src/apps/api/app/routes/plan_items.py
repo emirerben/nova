@@ -2464,17 +2464,6 @@ async def _maybe_auto_design_generate(
     locked = await _load_owned_item(item_id, owner_id, db, for_update=True)
     current = parse_edit_proposal(locked.edit_proposal)
 
-    if (
-        settings.guided_edit_direction_confirmation_enabled
-        and current
-        and current.guidance
-        and current.guidance.state == "awaiting_direction_confirmation"
-    ):
-        # The analysis task intentionally settled here. Do not reserve another
-        # attempt just because Generate was retried while the creator reviews
-        # the hypothesis.
-        return await _auto_design_idempotent_current(item_id, owner_id, db)
-
     attempt = current.conversation_attempt if current else None
     if attempt is not None:
         age_s = max(0.0, (datetime.now(UTC) - attempt.started_at).total_seconds())
@@ -2516,10 +2505,23 @@ async def _maybe_auto_design_generate(
     # failed/stale/briefing attempt) instead of resetting it to
     # ProposalBrief() defaults — begin_proposal_attempt already defaults to
     # ProposalBrief() when brief=None, so this is a no-op for a brand new item.
+    # Older workers could leave an automatic attempt at the direction-review
+    # checkpoint. Generate is now the one-click path, so resume that durable
+    # hypothesis as an automatic, confirmed attempt instead of returning an
+    # idle 200 that leaves the creator waiting for a button that should not be
+    # required. The fingerprint remains unchanged, preserving its media fence.
+    legacy_guidance = (
+        current.guidance.model_copy(update={"state": "confirmed"})
+        if current
+        and current.guidance
+        and current.guidance.state == "awaiting_direction_confirmation"
+        else None
+    )
     proposal = begin_proposal_attempt(
         locked,
         brief=current.brief if current else None,
         approval_mode="auto",
+        guidance=legacy_guidance,
     )
     await db.commit()
     try:
@@ -3276,23 +3278,24 @@ async def generate_item(
         )
 
     guided_applicable = _guided_edit_is_applicable(item)
-    # Direction confirmation is an independent rollout gate: it must make the
-    # proposal-analysis path reachable before strict guided-edit enforcement
-    # is enabled. Otherwise Generate falls through to the legacy renderer and
-    # spends the render before the creator ever sees Nova's inferred direction.
-    if (
-        settings.guided_edit_enforcement_enabled
-        or (
-            settings.guided_edit_capability_enabled
-            and settings.guided_edit_direction_confirmation_enabled
-        )
-    ) and guided_applicable:
+    # Automatic design owns the primary Generate path whenever the guided
+    # capability is available. Direction confirmation is an optional planner
+    # affordance, never a prerequisite for the creator's first render.
+    automatic_design_available = (
+        guided_applicable
+        and settings.guided_edit_capability_enabled
+        and settings.guided_auto_design_enabled
+    )
+    if guided_applicable and (
+        settings.guided_edit_enforcement_enabled or automatic_design_available
+    ):
         from app.services.edit_proposals import proposal_generate_error  # noqa: PLC0415
 
         if proposal_error := proposal_generate_error(item):
-            auto_response = await _maybe_auto_design_generate(item_id, item, plan, user, db)
-            if auto_response is not None:
-                return auto_response
+            if automatic_design_available:
+                auto_response = await _maybe_auto_design_generate(item_id, item, plan, user, db)
+                if auto_response is not None:
+                    return auto_response
             _raise_proposal_generate_conflict(proposal_error)
 
     approved_guided_media = False

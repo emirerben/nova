@@ -667,6 +667,45 @@ describe("PoolUploadCard — failure + retry", () => {
     expect(screen.queryByTestId("pending-clip-card")).toBeNull();
   });
 
+  it("turns a stalled attach into a retryable error instead of blocking Create video forever", async () => {
+    jest.useFakeTimers();
+    try {
+      setData(makeItem());
+      mockAttachClips.mockImplementationOnce(
+        (_itemId, _paths, _assignments, signal) =>
+          new Promise((_resolve, reject) => {
+            signal?.addEventListener("abort", () =>
+              reject(new DOMException("The operation was aborted", "AbortError")),
+            );
+          }),
+      );
+      await act(async () => {
+        render(<PlanItemPage />);
+      });
+
+      await act(async () => {
+        pickFiles([new File(["a"], "a.mp4", { type: "video/mp4" })]);
+      });
+      await flush();
+      await act(async () => {
+        capturedUploads[0].resolve();
+      });
+      await waitFor(() => expect(mockAttachClips).toHaveBeenCalledTimes(1));
+      expect(screen.getByText("Saving…")).toBeInTheDocument();
+
+      await act(async () => {
+        jest.advanceTimersByTime(30_000);
+      });
+
+      expect(
+        screen.getByText("Saving this clip is taking too long. Retry to continue."),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it("the attach queue survives a failed op: the next upload still attaches", async () => {
     setData(makeItem());
     await act(async () => {

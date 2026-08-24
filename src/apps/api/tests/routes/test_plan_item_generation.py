@@ -403,15 +403,10 @@ def test_generate_auto_designs_instead_of_409_when_flag_on_and_media_present(
     assert body["edit_proposal"]["approval_mode"] == "auto"
 
 
-def test_generate_direction_confirmation_starts_analysis_without_enforcement(
+def test_generate_auto_design_ignores_direction_confirmation_rollout_flag(
     monkeypatch, client: TestClient
 ) -> None:
-    """The confirmation rollout gate must reach inference on its own.
-
-    Production rollout enables direction confirmation before strict guided-edit
-    enforcement. Leaving enforcement off must not bypass analysis and dispatch
-    the legacy renderer before the creator can confirm Nova's inferred direction.
-    """
+    """The primary Generate path never pauses for an inferred direction."""
 
     from app.config import settings as app_settings
 
@@ -435,18 +430,14 @@ def test_generate_direction_confirmation_starts_analysis_without_enforcement(
         lambda **kw: apply_calls.append(kw),
     )
 
-    with patch(
-        "app.tasks.content_plan_build.dispatch_item_render_for",
-        side_effect=AssertionError("render must wait for direction confirmation"),
-    ) as dispatch:
-        response = client.post(f"/plan-items/{item.id}/generate")
+    response = client.post(f"/plan-items/{item.id}/generate")
 
     assert response.status_code == 200
     assert len(apply_calls) == 1
-    dispatch.assert_not_called()
     body = response.json()
     assert body["edit_proposal"]["status"] == "analyzing"
     assert body["edit_proposal"]["approval_mode"] == "auto"
+    assert body["edit_proposal"].get("guidance") is None
 
 
 def test_generate_confirmation_without_capability_fails_closed_without_unconfirmable_attempt(

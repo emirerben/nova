@@ -239,6 +239,9 @@ function clipUploadErrorMessage(
   error: unknown,
   fallback = "We couldn't add this video. Try again.",
 ): string {
+  if (error instanceof Error && error.name === "ClipAttachTimeoutError") {
+    return error.message;
+  }
   if (typeof error !== "object" || error === null) return fallback;
   const capacity = error as { code?: unknown; limit?: unknown; remaining?: unknown };
   if (capacity.code !== "clip_upload_limit_exceeded") return fallback;
@@ -284,6 +287,34 @@ type AttachAssignment = {
 };
 
 let poolUploadSeq = 0;
+
+// A committed upload must not leave the creation flow in an endless
+// "Saving…" state when the attach request is stalled by a sleeping API, a
+// dropped connection, or a proxy timeout. Retrying sends the complete current
+// assignment set, so a late/partially committed request remains idempotent.
+const CLIP_ATTACH_TIMEOUT_MS = 30_000;
+const CLIP_ATTACH_TIMEOUT_MESSAGE = "Saving this clip is taking too long. Retry to continue.";
+
+async function attachClipAssignments(
+  itemId: string,
+  clipGcsPaths: string[],
+  assignments: AttachAssignment[],
+): Promise<void> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CLIP_ATTACH_TIMEOUT_MS);
+  try {
+    await attachClips(itemId, clipGcsPaths, assignments, controller.signal);
+  } catch (error) {
+    if (controller.signal.aborted) {
+      const timeoutError = new Error(CLIP_ATTACH_TIMEOUT_MESSAGE);
+      timeoutError.name = "ClipAttachTimeoutError";
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 // At most 3 concurrent clip PUTs — mobile bandwidth/memory gate, same pattern
 // as MAX_DIRECT_UPLOADS in generative-api.ts (2 there; 3 here since plan
@@ -694,7 +725,11 @@ export default function PlanItemPage() {
         item.guided_edit_available === true &&
         item.edit_proposal?.guidance?.state === "awaiting_direction_confirmation"
       ) {
-        return true;
+        // A legacy automatic attempt can be paused at this checkpoint. On a
+        // reload there is no task to poll yet, so let Generate resume it. Once
+        // the user has clicked Generate, awaitingJobSince keeps polling until
+        // the compatibility bridge moves it into active design work.
+        return item.guided_edit_auto_design !== true || awaitingJobSince.current === null;
       }
 
       if (
@@ -702,6 +737,8 @@ export default function PlanItemPage() {
         item.guided_edit_available === true &&
         (item.edit_proposal?.status === "analyzing" ||
           item.edit_proposal?.status === "drafting" ||
+          (item.edit_proposal?.status === "briefing" &&
+            item.guided_edit_auto_design === true) ||
           item.edit_proposal?.conversation_in_progress === true)
       ) {
         return false;
@@ -1068,7 +1105,7 @@ export default function PlanItemPage() {
         // upload was cancelled while its attach sat queued) — skip the POST
         // and the refetch entirely.
         if (next === clipAssignmentsRef.current) return;
-        await attachClips(
+        await attachClipAssignments(
           itemId,
           next.map((a) => a.gcs_path),
           next,
@@ -1460,11 +1497,11 @@ export default function PlanItemPage() {
         await updatePlanItem(item.id, { edit_format: resolvedFormat });
       }
       const generated = await generatePlanItem(itemId);
+      // A legacy API may still return the persisted direction checkpoint. Keep
+      // the local creation lock held; the next poll observes the server-side
+      // resume instead of turning this into a dead-end review step.
       if (generated.edit_proposal?.guidance?.state === "awaiting_direction_confirmation") {
-        awaitingJobSince.current = null;
-        setGenerating(false);
-        refetch();
-        return;
+        awaitingJobSince.current = Date.now();
       }
       refetch();
     } catch {
@@ -1477,7 +1514,13 @@ export default function PlanItemPage() {
   // Release the Generate lock once the render registers (or the wait window
   // expires without a job — surface that instead of silently doing nothing).
   useEffect(() => {
-    if (item?.edit_proposal?.guidance?.state === "awaiting_direction_confirmation") {
+    const directionPending =
+      item?.edit_proposal?.guidance?.state === "awaiting_direction_confirmation";
+    const autoDesigning =
+      item?.guided_edit_auto_design === true &&
+      (item?.edit_proposal?.status === "analyzing" ||
+        item?.edit_proposal?.status === "drafting");
+    if (directionPending && !autoDesigning && !generating) {
       awaitingJobSince.current = null;
       setGenerating(false);
       setError((prev) => (prev === RENDER_REGISTER_ERROR ? null : prev));
@@ -1497,9 +1540,7 @@ export default function PlanItemPage() {
     // while designing so the watchdog only starts counting once design
     // settles and a render is actually expected to register (P3, 2026-08-18
     // adversarial review).
-    const designing =
-      item?.edit_proposal?.status === "analyzing" || item?.edit_proposal?.status === "drafting";
-    if (designing) {
+    if (autoDesigning) {
       awaitingJobSince.current = Date.now();
       return;
     }
@@ -1615,10 +1656,20 @@ export default function PlanItemPage() {
   // auto-design off/undefined keeps today's exact behavior (P2-5).
   const hasReadyPoolMedia =
     guidedEditAutoDesign && poolAssets.some((asset) => asset.status === "ready");
+  const guidedDesigning =
+    guidedEditActive &&
+    guidedEditAutoDesign &&
+    (item.edit_proposal?.status === "analyzing" ||
+      item.edit_proposal?.status === "drafting" ||
+      item.edit_proposal?.conversation_in_progress === true);
+  const designingHint =
+    item.edit_proposal?.status === "drafting" ? "Building your edit…" : "Analyzing your clips…";
   // Existing upload/format rules come from one decision; guided-edit approval
   // composes a second explicit gate immediately below.
   const gate = generateGate({
     generating,
+    designing: guidedDesigning,
+    designingHint,
     isGenerating,
     // Pool uploads keep the trigger enabled (per-file cards), so Generate must
     // gate on them explicitly — the old page-global `uploading` no longer
@@ -1636,12 +1687,14 @@ export default function PlanItemPage() {
   });
   const guidedEditHint =
     item.edit_proposal?.guidance?.state === "awaiting_direction_confirmation"
-      ? "Confirm Kria's direction guess before it builds the edit plan."
+      ? "Kria is analyzing your clips…"
       : item.edit_proposal?.status === "stale"
       ? "Your media changed — plan the edit again."
       : item.edit_proposal?.status === "analyzing" || item.edit_proposal?.status === "drafting"
         ? guidedEditAutoDesign
-          ? "Kria is designing your edit…"
+          ? item.edit_proposal?.status === "drafting"
+            ? "Kria is building your edit…"
+            : "Kria is analyzing your clips…"
           : "Kria is still planning this edit."
         : item.edit_proposal?.status === "draft"
           ? "Review and approve the edit plan first."
@@ -1649,7 +1702,9 @@ export default function PlanItemPage() {
             ? guidedEditAutoDesign
               ? "Kria couldn't finish planning this edit — it'll retry when you hit Generate."
               : "Kria couldn't finish planning this edit — open the planner to try again."
-            : "Plan this edit before generating.";
+            : guidedEditAutoDesign
+              ? "Kria will analyze your clips and build the edit automatically."
+              : "Plan this edit before generating.";
   // Compact status row under Tell Kria (PlanThreadPanel trigger) — replaces
   // the inline EditProposalCard morph (DESIGN.md §12). Badge label/variant +
   // one sentence + button label, all keyed off item.edit_proposal?.status.
@@ -1657,10 +1712,10 @@ export default function PlanItemPage() {
     const status = item.edit_proposal?.status;
     if (item.edit_proposal?.guidance?.state === "awaiting_direction_confirmation") {
       return {
-        badgeLabel: "Direction check",
+        badgeLabel: "AI planning",
         badgeVariant: "zinc" as const,
-        sentence: "Kria thinks this should be a fast, music-led montage with minimal text.",
-        buttonLabel: "Review direction",
+        sentence: "Kria is analyzing your clips…",
+        buttonLabel: "Plan with Kria",
       };
     }
     if (status === "draft") {
@@ -1691,12 +1746,14 @@ export default function PlanItemPage() {
       };
     }
     return {
-      badgeLabel: "Planning…",
+      badgeLabel: "AI planning",
       badgeVariant: "zinc" as const,
       sentence:
         status === "analyzing" || status === "drafting"
-          ? "Kria is thinking through your footage…"
-          : "Kria hasn't planned this edit yet.",
+          ? status === "drafting"
+            ? "Kria is building your edit…"
+            : "Kria is analyzing your clips…"
+          : "Kria will analyze your clips and build the edit automatically.",
       buttonLabel: "Plan with Kria",
     };
   })();
@@ -2008,11 +2065,11 @@ export default function PlanItemPage() {
   );
 
   const generateGated =
-    gate.disabled ||
-    (guidedEditActive && !guidedEditApproved && !guidedEditAutoDesign) ||
-    item.edit_proposal?.guidance?.state === "awaiting_direction_confirmation";
+    gate.disabled || (guidedEditActive && !guidedEditApproved && !guidedEditAutoDesign);
   const generateLabel = generating
-    ? "Starting…"
+    ? "Creating…"
+    : guidedDesigning
+      ? "Creating…"
     : uploaderBusy
       ? FINISHING_UPLOAD_HINT
       : "Create video";
@@ -2020,14 +2077,8 @@ export default function PlanItemPage() {
   // carries must-read gating copy (why the button is off / what drives the
   // edit) — DESIGN.md §8 keeps faint ink decorative-only.
   const generateHint =
-    guidedEditActive &&
-    !guidedEditApproved &&
-    // With auto-design on and no attempt yet, Generate just works — only show
-    // guided-specific copy once there's a real state to report
-    // (analyzing/drafting/failed/stale/draft).
-    (!guidedEditAutoDesign || item.edit_proposal?.status)
-      ? guidedEditHint
-      : gate.hint;
+    gate.hint ??
+    (guidedEditActive && !guidedEditApproved ? guidedEditHint : null);
 
   return (
     <LightShell size="wide">
