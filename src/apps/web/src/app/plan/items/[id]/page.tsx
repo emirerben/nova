@@ -239,6 +239,9 @@ function clipUploadErrorMessage(
   error: unknown,
   fallback = "We couldn't add this video. Try again.",
 ): string {
+  if (error instanceof Error && error.name === "ClipAttachTimeoutError") {
+    return error.message;
+  }
   if (typeof error !== "object" || error === null) return fallback;
   const capacity = error as { code?: unknown; limit?: unknown; remaining?: unknown };
   if (capacity.code !== "clip_upload_limit_exceeded") return fallback;
@@ -284,6 +287,34 @@ type AttachAssignment = {
 };
 
 let poolUploadSeq = 0;
+
+// A committed upload must not leave the creation flow in an endless
+// "Saving…" state when the attach request is stalled by a sleeping API, a
+// dropped connection, or a proxy timeout. Retrying sends the complete current
+// assignment set, so a late/partially committed request remains idempotent.
+const CLIP_ATTACH_TIMEOUT_MS = 30_000;
+const CLIP_ATTACH_TIMEOUT_MESSAGE = "Saving this clip is taking too long. Retry to continue.";
+
+async function attachClipAssignments(
+  itemId: string,
+  clipGcsPaths: string[],
+  assignments: AttachAssignment[],
+): Promise<void> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CLIP_ATTACH_TIMEOUT_MS);
+  try {
+    await attachClips(itemId, clipGcsPaths, assignments, controller.signal);
+  } catch (error) {
+    if (controller.signal.aborted) {
+      const timeoutError = new Error(CLIP_ATTACH_TIMEOUT_MESSAGE);
+      timeoutError.name = "ClipAttachTimeoutError";
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 // At most 3 concurrent clip PUTs — mobile bandwidth/memory gate, same pattern
 // as MAX_DIRECT_UPLOADS in generative-api.ts (2 there; 3 here since plan
@@ -1074,7 +1105,7 @@ export default function PlanItemPage() {
         // upload was cancelled while its attach sat queued) — skip the POST
         // and the refetch entirely.
         if (next === clipAssignmentsRef.current) return;
-        await attachClips(
+        await attachClipAssignments(
           itemId,
           next.map((a) => a.gcs_path),
           next,
