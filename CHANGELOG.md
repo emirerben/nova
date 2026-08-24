@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.50.0.1] — 2026-08-24
+
+### Changed
+- **Visual pools now support up to 100 uploads per plan item.** Existing per-image size limits remain unchanged so original image quality is preserved.
+
 ## [0.50.0.0] — 2026-08-24
 
 ### Changed
