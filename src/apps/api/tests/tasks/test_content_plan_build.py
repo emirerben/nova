@@ -98,6 +98,49 @@ def test_persona_forwarded_to_build_generative_job() -> None:
     assert kwargs["variant_policy"] == "content_plan_primary"
 
 
+def test_main_creator_native_selection_resolves_only_exact_owned_clip_ids() -> None:
+    from app.tasks.content_plan_build import _creator_selected_clip_paths
+
+    item = MagicMock()
+    item.clip_assignments = [
+        {"media_id": "media-a", "gcs_path": "users/u/plan/i/a.mp4"},
+        {"media_id": "media-b", "gcs_path": "users/u/plan/i/b.mp4"},
+    ]
+    selected = _creator_selected_clip_paths(
+        item,
+        ["users/u/plan/i/a.mp4", "users/u/plan/i/b.mp4"],
+        {
+            "edit_format": "montage",
+            "render_program": "native",
+            "selected_media_ids": ["media-b"],
+        },
+    )
+
+    assert selected == ["users/u/plan/i/b.mp4"]
+
+
+def test_main_creator_native_pool_only_selection_fails_closed_to_no_clips() -> None:
+    from app.tasks.content_plan_build import _creator_selected_clip_paths
+
+    item = MagicMock()
+    item.clip_assignments = [
+        {"media_id": "media-a", "gcs_path": "users/u/plan/i/a.mp4"},
+    ]
+
+    assert (
+        _creator_selected_clip_paths(
+            item,
+            ["users/u/plan/i/a.mp4"],
+            {
+                "edit_format": "montage",
+                "render_program": "native",
+                "selected_media_ids": ["asset-pool-only"],
+            },
+        )
+        == []
+    )
+
+
 def test_multi_clip_talking_head_forwarded_to_build_generative_job() -> None:
     item = MagicMock()
     item.id = uuid.uuid4()

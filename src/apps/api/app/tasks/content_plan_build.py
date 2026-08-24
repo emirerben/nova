@@ -609,6 +609,42 @@ def _narrative_clip_order(item: PlanItem, clip_paths: list[str]) -> tuple[list[s
     return ordered + pool, len(ordered)
 
 
+def _creator_selected_clip_paths(
+    item: PlanItem,
+    clip_paths: list[str],
+    creator_strategy: dict | None,
+) -> list[str]:
+    """Resolve opaque confirmed media IDs to exact item-owned native clip paths.
+
+    Guided execution delegates exact media choice to its approved proposal.
+    Native execution has no proposal layer, so it must honor the confirmed
+    subset here instead of silently rendering every attached clip. Pool assets
+    are not native clip inputs; selecting only those fails closed as no clips.
+    """
+
+    if not creator_strategy:
+        return clip_paths
+    from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+
+    strategy = CreativeStrategy.model_validate(creator_strategy)
+    selected = list(strategy.selected_media_ids)
+    if strategy.render_program != "native" or not selected:
+        return clip_paths
+    path_by_id: dict[str, str] = {}
+    assignments = [value for value in (item.clip_assignments or []) if isinstance(value, dict)]
+    for index, assignment in enumerate(assignments):
+        path = str(assignment.get("gcs_path") or "")
+        if not path or path not in clip_paths:
+            continue
+        media_id = str(assignment.get("media_id") or f"clip-{index + 1}")
+        path_by_id[media_id] = path
+    if not assignments:
+        path_by_id.update(
+            {f"legacy-clip-{index + 1}": path for index, path in enumerate(clip_paths)}
+        )
+    return [path_by_id[media_id] for media_id in selected if media_id in path_by_id]
+
+
 def _dispatch_item_render(
     session,  # noqa: ANN001
     item: PlanItem,
@@ -617,6 +653,8 @@ def _dispatch_item_render(
     *,
     ownership_epoch: int,
     bypass_guided_edit_gate: bool = False,
+    creator_strategy: dict | None = None,
+    creator_guided_attempt_id: str | None = None,
 ) -> DispatchResult:
     """Mint a generative Job for an item's clips, persist it, dispatch its render.
 
@@ -662,6 +700,30 @@ def _dispatch_item_render(
         has_voiceover=(audio_mode == "voiceover" and bool(item.voiceover_gcs_path)),
     )
 
+    creator_attempt_proposal = None
+    if creator_guided_attempt_id is not None:
+        from app.schemas.edit_proposal import parse_edit_proposal  # noqa: PLC0415
+
+        creator_attempt_proposal = parse_edit_proposal(item.edit_proposal)
+        exact_attempt = bool(
+            creator_attempt_proposal is not None
+            and creator_attempt_proposal.generation_attempt_id == creator_guided_attempt_id
+        )
+        expected_state = bool(
+            creator_attempt_proposal
+            and (
+                (not bypass_guided_edit_gate and creator_attempt_proposal.status == "approved")
+                or (
+                    bypass_guided_edit_gate
+                    and creator_attempt_proposal.status == "failed"
+                    and creator_attempt_proposal.design_fallback
+                    and creator_attempt_proposal.design_fallback != "creator_execution_expired"
+                )
+            )
+        )
+        if not exact_attempt or not expected_state:
+            return DispatchResult("proposal_stale")
+
     approved_proposal: dict | None = None
     if bypass_guided_edit_gate and guided_applicable:
         # The caller's zero-registered-pool-assets invariant was checked in a
@@ -685,6 +747,7 @@ def _dispatch_item_render(
         settings.guided_edit_capability_enabled
         or settings.guided_edit_enforcement_enabled
         or settings.guided_edit_direction_confirmation_enabled
+        or creator_guided_attempt_id is not None
     ):
         from app.services.edit_proposals import (  # noqa: PLC0415
             mark_edit_proposal_stale,
@@ -708,6 +771,7 @@ def _dispatch_item_render(
     content_plan_id = plan.id
     plan_item_id = item.id
     clip_paths = list(item.clip_gcs_paths or [])
+    clip_paths = _creator_selected_clip_paths(item, clip_paths, creator_strategy)
     if not clip_paths and approved_proposal is not None:
         # Asset-only guided stories are valid. build_generative_job still needs
         # one server-validated seed/raw path for its generic Job contract, but
@@ -808,14 +872,23 @@ def _dispatch_item_render(
                 else CONTENT_PLAN_PRIMARY_VARIANT_POLICY
             ),
             smart_captions=smart_context,
+            creator_strategy=creator_strategy,
         )
     except ValueError as exc:
         log.warning("plan_item_render.invalid_clips", plan_item_id=str(item.id), error=str(exc))
         return DispatchResult("invalid_clips")
     if approved_proposal is not None and guided_applicable:
         snapshot = dict(job.assembly_plan or {})
+        proposal_state = item.edit_proposal if isinstance(item.edit_proposal, dict) else {}
+        generation_attempt_id = proposal_state.get("generation_attempt_id")
+        if not isinstance(generation_attempt_id, str) or not generation_attempt_id:
+            # An approved proposal always belongs to a durable generation
+            # attempt. Fail closed rather than minting a Job that an
+            # orchestrator cannot correlate to the request that created it.
+            return DispatchResult("proposal_stale")
         snapshot["guided_edit"] = {
             "proposal_version": approved_proposal["proposal_version"],
+            "generation_attempt_id": generation_attempt_id,
             "media_digest": approved_proposal["media_digest"],
             "approved_proposal": approved_proposal["snapshot"],
             "media_identities": [
@@ -828,6 +901,14 @@ def _dispatch_item_render(
                 }
                 for ref in approved_proposal["snapshot"]["media"]
             ],
+        }
+        job.assembly_plan = snapshot
+    elif creator_guided_attempt_id is not None:
+        if not bypass_guided_edit_gate:
+            return DispatchResult("proposal_stale")
+        snapshot = dict(job.assembly_plan or {})
+        snapshot["creator_guided_fallback"] = {
+            "generation_attempt_id": creator_guided_attempt_id,
         }
         job.assembly_plan = snapshot
     # Caller holds Plan -> Persona -> PlanItem locks and has revalidated this
@@ -946,6 +1027,8 @@ def dispatch_item_render_for(
     expected_ownership_epoch: int | None = None,
     *,
     bypass_guided_edit_gate: bool = False,
+    creator_strategy: dict | None = None,
+    creator_guided_attempt_id: str | None = None,
 ) -> DispatchResult:
     """Load + lock a plan item, re-check for an active render, then dispatch.
 
@@ -1017,6 +1100,8 @@ def dispatch_item_render_for(
             persona_data,
             ownership_epoch=ownership_epoch,
             bypass_guided_edit_gate=bypass_guided_edit_gate,
+            creator_strategy=creator_strategy,
+            creator_guided_attempt_id=creator_guided_attempt_id,
         )
 
 

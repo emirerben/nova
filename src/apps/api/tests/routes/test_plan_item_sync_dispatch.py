@@ -34,6 +34,7 @@ from app.schemas.edit_proposal import (
     EditProposal,
     EditProposalSnapshot,
     MediaRef,
+    ProposalFailure,
     ProposalGuidance,
     ProposalRenderFailure,
     StoryBeat,
@@ -533,11 +534,115 @@ def test_bypass_guided_edit_gate_dispatches_when_pool_is_genuinely_empty() -> No
     """
 
     _user_id, item_id = _seed_item()
+    attempt_id = str(uuid.uuid4())
+    with sync_session() as session:
+        item = session.get(PlanItem, item_id)
+        item.edit_proposal = EditProposal(
+            proposal_version=2,
+            generation_attempt_id=attempt_id,
+            status="failed",
+            failure=ProposalFailure(code="guided_edit_infeasible", message="Try again."),
+            design_fallback="guided_edit_infeasible",
+        ).model_dump(mode="json")
+        session.commit()
     with patch(_ENQUEUE):
-        result = dispatch_item_render_for(str(item_id), bypass_guided_edit_gate=True)
+        result = dispatch_item_render_for(
+            str(item_id),
+            bypass_guided_edit_gate=True,
+            creator_guided_attempt_id=attempt_id,
+        )
 
     assert result.outcome == "dispatched"
-    assert len(_jobs_for(item_id)) == 1
+    jobs = _jobs_for(item_id)
+    assert len(jobs) == 1
+    assert jobs[0].assembly_plan["creator_guided_fallback"] == {"generation_attempt_id": attempt_id}
+
+
+def test_creator_fallback_rejects_a_superseded_attempt_under_dispatch_lock() -> None:
+    """A stale fallback caller cannot stamp its identity onto a newer plan."""
+
+    _user_id, item_id = _seed_item()
+    stale_attempt_id = str(uuid.uuid4())
+    with sync_session() as session:
+        item = session.get(PlanItem, item_id)
+        item.edit_proposal = EditProposal(
+            proposal_version=3,
+            generation_attempt_id=str(uuid.uuid4()),
+            status="briefing",
+        ).model_dump(mode="json")
+        session.commit()
+
+    with patch(_ENQUEUE) as enqueue:
+        result = dispatch_item_render_for(
+            str(item_id),
+            bypass_guided_edit_gate=True,
+            creator_guided_attempt_id=stale_attempt_id,
+        )
+
+    assert result.outcome == "proposal_stale"
+    enqueue.assert_not_called()
+    assert _jobs_for(item_id) == []
+
+
+def test_creator_fallback_rejects_an_attempt_cancelled_by_the_execution_lease() -> None:
+    """A delayed worker cannot dispatch after its creator session expires."""
+
+    _user_id, item_id = _seed_item()
+    attempt_id = str(uuid.uuid4())
+    with sync_session() as session:
+        item = session.get(PlanItem, item_id)
+        item.edit_proposal = EditProposal(
+            proposal_version=4,
+            generation_attempt_id=attempt_id,
+            status="failed",
+            failure=ProposalFailure(
+                code="creator_execution_expired",
+                message="The creator render did not start in time.",
+            ),
+            design_fallback="creator_execution_expired",
+        ).model_dump(mode="json")
+        session.commit()
+
+    with patch(_ENQUEUE) as enqueue:
+        result = dispatch_item_render_for(
+            str(item_id),
+            bypass_guided_edit_gate=True,
+            creator_guided_attempt_id=attempt_id,
+        )
+
+    assert result.outcome == "proposal_stale"
+    enqueue.assert_not_called()
+    assert _jobs_for(item_id) == []
+
+
+def test_creator_approved_dispatch_rejects_attempt_expired_in_the_lock_gap() -> None:
+    """Approved auto-design cannot render after reconciliation cancels it."""
+
+    _user_id, item_id = _seed_item()
+    attempt_id = str(uuid.uuid4())
+    with sync_session() as session:
+        item = session.get(PlanItem, item_id)
+        item.edit_proposal = EditProposal(
+            proposal_version=5,
+            generation_attempt_id=attempt_id,
+            status="failed",
+            failure=ProposalFailure(
+                code="creator_execution_expired",
+                message="The creator render did not start in time.",
+            ),
+            design_fallback="creator_execution_expired",
+        ).model_dump(mode="json")
+        session.commit()
+
+    with patch(_ENQUEUE) as enqueue:
+        result = dispatch_item_render_for(
+            str(item_id),
+            creator_guided_attempt_id=attempt_id,
+        )
+
+    assert result.outcome == "proposal_stale"
+    enqueue.assert_not_called()
+    assert _jobs_for(item_id) == []
 
 
 def test_clip_only_fallback_ignores_legacy_confirmation_flag(
@@ -578,6 +683,9 @@ def test_approved_proposal_exact_media_is_snapshotted_into_job(
         size=100,
         content_type="video/mp4",
     )
+    with sync_session() as s:
+        approved_item = s.get(PlanItem, item_id)
+        expected_attempt_id = approved_item.edit_proposal["generation_attempt_id"]
 
     with patch("app.storage.object_metadata", return_value=metadata), patch(_ENQUEUE):
         result = dispatch_item_render_for(str(item_id))
@@ -586,6 +694,7 @@ def test_approved_proposal_exact_media_is_snapshotted_into_job(
     job = _jobs_for(item_id)[0]
     guided = job.assembly_plan["guided_edit"]
     assert guided["proposal_version"] == 3
+    assert guided["generation_attempt_id"] == expected_attempt_id
     assert guided["approved_proposal"]["title"] == "What I noticed"
     assert guided["media_identities"] == [
         {

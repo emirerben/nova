@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.51.0.0] — 2026-08-24
+
+### Added
+- **Kria can now own one complete creative direction for a plan item behind dark rollout flags.** The new Main Creator Agent discusses the goal, proposes a capability-aware format, audio approach, story, pacing, captions, and opening concept, then waits for an explicit **Render this** confirmation.
+- **Creative execution is typed, durable, and auditable.** Server-built capability manifests, hash-pinned edit plans, revision and ownership fences, append-only session events, idempotent execution receipts, and exact render-generation reconciliation keep model output outside raw database, storage, and media-command surfaces.
+
+### Changed
+- **Existing render specialists remain the execution boundary.** Guided stories delegate through the approved proposal contract; audio-led formats use native rendering; licensed assets and exact-item media ownership are revalidated before dispatch.
+
+### Fixed
+- **Plan-item overlays and uploaded sound effects can no longer cross item ownership boundaries.** Curated licensed sound effects retain their separate catalog policy.
+- **Main Creator opening concepts are never burned verbatim.** The grounded intro writer remains the only native on-screen hook author, preventing analysis metadata from crossing into visible copy.
+
+## [0.50.2.0] — 2026-08-24
+
+### Changed
+- **Render timing stays visible while editing.** On phones it appears above the video preview; on desktop it sits above the release controls so progress remains in view.
+
 ## [0.50.1.1] — 2026-08-24
 
 ### Changed

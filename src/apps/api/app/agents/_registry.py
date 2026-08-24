@@ -96,6 +96,9 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
     # Edit Copilot v1: parse full-editor chat turns into draft edit ops.
     ("nova.edit.copilot", "app.agents.edit_copilot", "EditCopilotAgent"),
     ("nova.edit.director", "app.agents.edit_director", "EditDirectorAgent"),
+    # Main Creator Agent v1: strategy-only orchestrator. Execution is owned by
+    # the durable session controller and typed command gateway.
+    ("nova.creator.main", "app.agents.main_creator", "MainCreatorAgent"),
     # Creator Agent M4: conformance verdict at clip-attach time (best-effort, display-only).
     (
         "nova.plan.conformance_feedback",

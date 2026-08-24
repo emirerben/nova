@@ -9720,7 +9720,10 @@ def _run_text_agents(
     try:
         from app.agents._model_client import default_client  # noqa: PLC0415
         from app.agents._runtime import RefusalError, RunContext, TerminalError  # noqa: PLC0415
-        from app.agents.intro_writer import IntroTextWriterAgent, IntroWriterInput  # noqa: PLC0415
+        from app.agents.intro_writer import (  # noqa: PLC0415
+            IntroTextWriterAgent,
+            IntroWriterInput,
+        )
         from app.agents.overlay_examples import examples_by_id  # noqa: PLC0415
         from app.agents.overlay_format_matcher import (  # noqa: PLC0415
             OverlayFormatMatcherAgent,

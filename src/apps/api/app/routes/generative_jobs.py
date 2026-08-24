@@ -3051,15 +3051,24 @@ def validate_media_overlays_for_user(
     *,
     overlays_raw: list[dict],
     user_id: str,
+    plan_item_id: str | None = None,
     variant_context: dict | None = None,
 ) -> list[dict]:
-    """Validate a full media-overlay replacement list for one user's namespace."""
+    """Validate a full media-overlay replacement list for one user's namespace.
+
+    ``plan_item_id`` narrows user-uploaded assets to the exact item being
+    edited.  Callers that operate outside the item editor retain the broader
+    user namespace contract by omitting it.
+    """
     from app.agents._schemas.media_overlay import (  # noqa: PLC0415
         coerce_media_overlays,
         validate_overlay_gcs_path,
     )
 
     _user_prefix = f"users/{user_id}/"
+    _asset_prefix = (
+        f"{_user_prefix}plan/{plan_item_id}/" if plan_item_id is not None else _user_prefix
+    )
     validated: list[dict] = []
     if overlays_raw:
         # Fail loudly on schema-invalid cards (prod 2026-07-12): coerce is
@@ -3086,11 +3095,11 @@ def validate_media_overlays_for_user(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=f"Invalid overlay asset path: {exc}",
                 ) from exc
-            if not card.src_gcs_path.startswith(_user_prefix):
+            if not card.src_gcs_path.startswith(_asset_prefix):
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=(
-                        f"Overlay asset path must be under '{_user_prefix}': {card.src_gcs_path!r}"
+                        f"Overlay asset path must be under '{_asset_prefix}': {card.src_gcs_path!r}"
                     ),
                 )
             if card.preview_gcs_path:
@@ -3101,11 +3110,11 @@ def validate_media_overlays_for_user(
                         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                         detail=f"Invalid overlay preview path: {exc}",
                     ) from exc
-                if not card.preview_gcs_path.startswith(_user_prefix):
+                if not card.preview_gcs_path.startswith(_asset_prefix):
                     raise HTTPException(
                         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                         detail=(
-                            f"Overlay preview path must be under '{_user_prefix}': "
+                            f"Overlay preview path must be under '{_asset_prefix}': "
                             f"{card.preview_gcs_path!r}"
                         ),
                     )
@@ -3131,8 +3140,14 @@ def validate_media_overlays_for_user(
     return validated
 
 
-def validate_sound_effects_for_user(*, sfx_raw: list[dict], user_id: str) -> list[dict]:
-    """Validate a full sound-effect placement replacement list for one user."""
+def validate_sound_effects_for_user(
+    *, sfx_raw: list[dict], user_id: str, plan_item_id: str | None = None
+) -> list[dict]:
+    """Validate a full sound-effect placement replacement list for one user.
+
+    With ``plan_item_id``, user-uploaded effects are narrowed to that item's
+    asset prefix. Curated ``sound-effects/`` catalog paths remain valid.
+    """
     from app.agents._schemas.sound_effect import (  # noqa: PLC0415
         coerce_sound_effects,
         normalize_generated_sound_effects,
@@ -3140,6 +3155,9 @@ def validate_sound_effects_for_user(*, sfx_raw: list[dict], user_id: str) -> lis
     )
 
     _user_prefix = f"users/{user_id}/"
+    _asset_prefix = (
+        f"{_user_prefix}plan/{plan_item_id}/" if plan_item_id is not None else _user_prefix
+    )
     validated: list[dict] = []
     if sfx_raw:
         placements = coerce_sound_effects(sfx_raw) or []
@@ -3152,11 +3170,12 @@ def validate_sound_effects_for_user(*, sfx_raw: list[dict], user_id: str) -> lis
                     detail=f"Invalid SFX asset path: {exc}",
                 ) from exc
             is_user_path = placement.src_gcs_path.startswith("users/")
-            if is_user_path and not placement.src_gcs_path.startswith(_user_prefix):
+            if is_user_path and not placement.src_gcs_path.startswith(_asset_prefix):
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=(
-                        f"SFX asset path must be under '{_user_prefix}': {placement.src_gcs_path!r}"
+                        f"SFX asset path must be under '{_asset_prefix}': "
+                        f"{placement.src_gcs_path!r}"
                     ),
                 )
             validated.append(placement.model_dump())
@@ -7106,6 +7125,7 @@ def prepare_editor_commit(
     music_track: MusicTrack | None = None,
     music_track_generation: str | None = None,
     background_music_track: MusicTrack | None = None,
+    plan_item_id: str | None = None,
     visual_assets: dict[str, dict] | None = None,
 ) -> dict:
     """Validate ALL sections, compare the baseline, then stage ONE atomic write.
@@ -7546,6 +7566,7 @@ def prepare_editor_commit(
             validated_sfx = validate_sound_effects_for_user(
                 sfx_raw=payload.sound_effects,
                 user_id=user_id,
+                plan_item_id=plan_item_id,
             )
 
     validated_overlays: list[dict] | None = None
@@ -7576,6 +7597,7 @@ def prepare_editor_commit(
             validated_overlays = validate_media_overlays_for_user(
                 overlays_raw=payload.media_overlays,
                 user_id=user_id,
+                plan_item_id=plan_item_id,
                 variant_context=variant,
             )
 

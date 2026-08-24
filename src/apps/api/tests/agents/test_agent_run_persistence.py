@@ -149,6 +149,32 @@ def test_persist_skips_unparseable_job_id():
     engine.begin.assert_not_called()
 
 
+def test_persist_routes_creator_agent_session_without_job_id():
+    engine, captured = _fake_engine_capturing()
+    session_uuid = uuid.uuid4()
+    with patch("app.database.sync_engine", engine):
+        persist_agent_run(
+            job_id=None,
+            creator_agent_session_id=str(session_uuid),
+            segment_idx=None,
+            agent_name="nova.creator.main",
+            prompt_version="1",
+            model="m",
+            outcome="ok",
+            attempts=1,
+            tokens_in=0,
+            tokens_out=0,
+            cost_usd=0.0,
+            latency_ms=10,
+            input_dict={"a": 1},
+            output_dict={"b": 2},
+            raw_text="hi",
+        )
+    assert len(captured) == 1
+    assert captured[0]["job_id"] is None
+    assert captured[0]["creator_agent_session_id"] == str(session_uuid)
+
+
 def test_persist_routes_template_prefix_to_template_id():
     engine, captured = _fake_engine_capturing()
     tpl = uuid.uuid4()
@@ -325,6 +351,22 @@ def test_agent_run_triggers_persist_for_uuid_job(
     assert captured[0]["segment_idx"] == 2
     assert captured[0]["agent_name"] == "test.sample"
     assert captured[0]["outcome"] == "ok"
+
+
+def test_agent_run_threads_creator_agent_session_to_persistence():
+    engine, captured = _fake_engine_capturing()
+    session_uuid = uuid.uuid4()
+    mock_client = MockModelClient()
+    sample_agent = SampleAgent(mock_client)
+    mock_client.queue("gemini-2.5-flash", {"answer": "ok", "score": 50})
+    with patch("app.database.sync_engine", engine):
+        sample_agent.run(
+            SampleInput(topic="x"),
+            ctx=RunContext(creator_agent_session_id=str(session_uuid)),
+        )
+
+    assert len(captured) == 1
+    assert captured[0]["creator_agent_session_id"] == str(session_uuid)
 
 
 def test_agent_run_persists_track_context_to_music_track_id(

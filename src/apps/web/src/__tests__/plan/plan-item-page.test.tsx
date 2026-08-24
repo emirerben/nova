@@ -463,7 +463,7 @@ describe("PlanItemPage — ProgressTheater renders with phase data", () => {
     expect(mockGeneratePlanItem).toHaveBeenCalledWith("test-item-id");
   });
 
-  it("puts compact render progress after the preview and removes the duplicate duration note", async () => {
+  it("puts one compact render tracker above the mobile preview and desktop release desk", async () => {
     process.env.NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED = "true";
     const item = makeItem({
       status: "generating",
@@ -501,20 +501,79 @@ describe("PlanItemPage — ProgressTheater renders with phase data", () => {
       refetch: mockRefetch,
     });
 
+    let view: ReturnType<typeof render> | null = null;
     try {
       await act(async () => {
-        render(<PlanItemPage />);
+        view = render(<PlanItemPage />);
       });
 
-      const preview = document.querySelector("[data-variant-preview]");
+      const progress = screen.getByTestId("result-render-progress");
+      const preview = screen.getByTestId("result-preview-column");
+      const releaseDesk = screen.getByTestId("result-release-column");
       const disclosure = screen.getByRole("button", { name: "Show analysis steps" });
-      expect(preview).not.toBeNull();
+      expect(screen.getAllByRole("progressbar", { name: "Render progress" })).toHaveLength(1);
+
+      // Mobile source, focus, and visual order all agree: tracker, video, card.
+      expect(screen.queryByTestId("result-right-stack")).not.toBeInTheDocument();
+      expect(progress).toHaveClass("order-2");
+      expect(preview).toHaveClass("order-3");
+      expect(releaseDesk).toHaveClass("order-4");
       expect(
-        (preview?.compareDocumentPosition(disclosure) ?? 0) &
+        progress.compareDocumentPosition(preview) &
           Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
+      expect(
+        preview.compareDocumentPosition(releaseDesk) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(progress).toContainElement(disclosure);
+
+      // At lg, direct grid coordinates create the independent right stack:
+      // tracker in row one, release desk in row two, and the tall 9:16 preview
+      // spanning both. Every region keeps the same React parent and identity.
+      const resultsGrid = progress.parentElement;
+      expect(resultsGrid).toBe(preview.parentElement);
+      expect(resultsGrid).toBe(releaseDesk.parentElement);
+      expect(resultsGrid).toHaveClass("lg:grid-rows-[auto_1fr]", "lg:gap-x-8");
+      expect(progress).toHaveClass(
+        "lg:col-start-3",
+        "lg:row-start-1",
+        "lg:order-none",
+        "lg:pt-3",
+      );
+      expect(preview).toHaveClass(
+        "lg:col-start-2",
+        "lg:row-start-1",
+        "lg:row-end-3",
+      );
+      expect(releaseDesk).toHaveClass(
+        "lg:col-start-3",
+        "lg:row-start-2",
+        "lg:order-none",
+      );
+
+      fireEvent.click(disclosure);
+      expect(screen.getByRole("button", { name: "Hide analysis steps" })).toBeInTheDocument();
+
+      const progressBeforeRerender = progress;
+      const releaseDeskBeforeRerender = releaseDesk;
+      await act(async () => {
+        view?.rerender(<PlanItemPage />);
+      });
+
+      // Responsive placement is CSS-only. A parent render must neither remount
+      // these stateful subtrees nor collapse the open feed / replay steps.
+      expect(screen.getByTestId("result-render-progress")).toBe(progressBeforeRerender);
+      expect(screen.getByTestId("result-release-column")).toBe(releaseDeskBeforeRerender);
+      expect(screen.getByRole("button", { name: "Hide analysis steps" })).toBeInTheDocument();
+      expect(screen.getAllByRole("progressbar", { name: "Render progress" })).toHaveLength(1);
       expect(screen.queryByText(/Usually 2–3 minutes/i)).not.toBeInTheDocument();
     } finally {
+      if (view) {
+        await act(async () => {
+          view?.unmount();
+        });
+      }
       delete process.env.NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED;
     }
   });
@@ -717,6 +776,23 @@ describe("PlanItemPage — result cleanup", () => {
     expect(titleSection?.parentElement).toHaveClass(
       "lg:grid-cols-[minmax(210px,0.75fr)_minmax(320px,430px)_minmax(300px,0.95fr)]",
     );
+    const previewColumn = screen.getByTestId("result-preview-column");
+    const releaseDesk = screen.getByTestId("result-release-column");
+    expect(screen.queryByTestId("result-right-stack")).not.toBeInTheDocument();
+    expect(previewColumn).toHaveClass("order-3");
+    expect(releaseDesk).toHaveClass(
+      "order-4",
+      "lg:col-start-3",
+      "lg:row-start-1",
+      "lg:row-end-3",
+      "lg:pt-3",
+    );
+    expect(releaseDesk).not.toHaveClass("lg:row-start-2");
+    expect(
+      previewColumn.compareDocumentPosition(releaseDesk) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.queryByTestId("result-render-progress")).not.toBeInTheDocument();
   });
 
   it("labels a track-backed guided edit as music instead of original audio", async () => {

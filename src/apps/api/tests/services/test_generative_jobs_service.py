@@ -52,6 +52,30 @@ def test_public_generative_job_omits_variant_policy() -> None:
     assert "variant_policy" not in job.all_candidates
 
 
+def test_confirmed_creator_strategy_is_schema_bounded_and_persisted() -> None:
+    job = build_generative_job(
+        user_id=uuid.uuid4(),
+        clip_paths=["users/u/plan/i/a.mp4"],
+        creator_strategy={
+            "direction": "native",
+            "edit_format": "talking_head",
+            "audio_strategy": "original_audio",
+            "pacing": "fast",
+            "render_program": "native",
+            "selected_media_ids": ["clip-1"],
+            "intro_hook": "The one thing I learned",
+        },
+    )
+    assert job.all_candidates["creator_strategy"]["intro_hook"] == ("The one thing I learned")
+
+    with pytest.raises(ValueError):
+        build_generative_job(
+            user_id=uuid.uuid4(),
+            clip_paths=["users/u/plan/i/a.mp4"],
+            creator_strategy={"intro_hook": "hello", "gcs_path": "users/private.mp4"},
+        )
+
+
 def test_content_plan_original_audio_policy_is_persisted() -> None:
     job = build_generative_job(
         user_id=uuid.uuid4(),

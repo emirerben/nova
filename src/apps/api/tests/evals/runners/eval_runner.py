@@ -321,6 +321,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.edit_director import EditDirectorAgent
 
         return EditDirectorAgent
+    if agent_name == "nova.creator.main":
+        from app.agents.main_creator import MainCreatorAgent
+
+        return MainCreatorAgent
     if agent_name == "nova.plan.conformance_feedback":
         from app.agents.conformance_feedback import ConformanceFeedbackAgent
 

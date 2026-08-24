@@ -538,16 +538,15 @@ _AGENT_RUN_DELETE_MAX_BATCHES = 100
     time_limit=900,
 )
 def cleanup_agent_runs(self, retention_days: int | None = None) -> dict:
-    """Delete job-scoped agent_run rows older than the retention window.
+    """Delete render/session agent traces and expired creator sessions.
 
     Returns a dict {deleted, cutoff, batches} for observability.
 
-    Why job_id-scoped: template- and track-scoped agent_run rows (job_id
-    NULL) back the per-template / per-track debug views, are looked up
-    by parent fk, and are bounded by template/track count rather than
-    job volume. Pruning them would surprise admins reviewing template
-    history. The job-scoped rows are the ones that grow with traffic
-    and are useful for at most a few weeks.
+    Template- and track-scoped agent_run rows back their dedicated debug
+    views and are bounded by parent count. Job- and creator-session-scoped
+    rows grow with usage, so both use the configured retention window.
+    Expired creator sessions are deleted after the same window; their events,
+    execution receipts, and remaining session agent runs cascade with them.
 
     Why a batched DELETE: a single unbounded DELETE on a large table
     would hold its locks for the full duration. The batched form
@@ -572,7 +571,7 @@ def cleanup_agent_runs(self, retention_days: int | None = None) -> dict:
                     DELETE FROM agent_run
                      WHERE id IN (
                        SELECT id FROM agent_run
-                        WHERE job_id IS NOT NULL
+                        WHERE (job_id IS NOT NULL OR creator_agent_session_id IS NOT NULL)
                           AND created_at < :cutoff
                         LIMIT :batch
                      )
@@ -587,10 +586,34 @@ def cleanup_agent_runs(self, retention_days: int | None = None) -> dict:
             # Final batch: fewer rows than the limit means nothing left.
             break
 
-    if total_deleted:
+    session_deleted = 0
+    session_batches = 0
+    while session_batches < _AGENT_RUN_DELETE_MAX_BATCHES:
+        with sync_engine.begin() as conn:
+            res = conn.execute(
+                text(
+                    """
+                    DELETE FROM creator_agent_sessions
+                     WHERE id IN (
+                       SELECT id FROM creator_agent_sessions
+                        WHERE updated_at < :cutoff
+                        LIMIT :batch
+                     )
+                    """
+                ),
+                {"cutoff": cutoff, "batch": _AGENT_RUN_DELETE_BATCH},
+            )
+            deleted = res.rowcount or 0
+        session_deleted += deleted
+        session_batches += 1
+        if deleted < _AGENT_RUN_DELETE_BATCH:
+            break
+
+    if total_deleted or session_deleted:
         log.info(
             "cleanup_agent_runs_done",
             deleted=total_deleted,
+            creator_sessions_deleted=session_deleted,
             cutoff=cutoff.isoformat(),
             batches=batches,
             retention_days=days,
@@ -599,6 +622,8 @@ def cleanup_agent_runs(self, retention_days: int | None = None) -> dict:
         "deleted": total_deleted,
         "cutoff": cutoff.isoformat(),
         "batches": batches,
+        "creator_sessions_deleted": session_deleted,
+        "creator_session_batches": session_batches,
     }
 
 
