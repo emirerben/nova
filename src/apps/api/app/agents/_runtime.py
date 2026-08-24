@@ -127,6 +127,7 @@ class RunContext:
     """Per-call binding. Threaded into structlog events for cross-agent correlation."""
 
     job_id: str | None = None
+    creator_agent_session_id: str | None = None
     request_id: str | None = None
     segment_idx: int | None = None
     extra: dict[str, Any] = field(default_factory=dict)
@@ -649,6 +650,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
             "cost_usd": round(cost_usd, 6),
             "latency_ms": latency_ms,
             "job_id": ctx.job_id,
+            "creator_agent_session_id": ctx.creator_agent_session_id,
             "segment_idx": ctx.segment_idx,
             "request_id": ctx.request_id,
         }
@@ -676,6 +678,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
 
             persist_agent_run(
                 job_id=ctx.job_id,
+                creator_agent_session_id=ctx.creator_agent_session_id,
                 segment_idx=ctx.segment_idx,
                 agent_name=self.spec.name,
                 prompt_version=self.spec.prompt_version,

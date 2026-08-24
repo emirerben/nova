@@ -155,6 +155,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         "edit_director",
         "edit_proposal",
         "edit_guide",
+        "main_creator",
     ):
         fixture_paths.extend(discover_fixtures(agent_dir))
 

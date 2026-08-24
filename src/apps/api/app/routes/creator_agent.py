@@ -1,0 +1,953 @@
+"""Authenticated durable Main Creator Agent v1 routes.
+
+The model can only propose an inert strategy. This route owns revision fences,
+explicit confirmation, manifest revalidation, typed PlanItem mutations, and
+dispatch through the existing render entry point.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import uuid
+from datetime import UTC, datetime
+from typing import Annotated, Any
+
+import structlog
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.agents._model_client import default_client
+from app.agents._runtime import RunContext, TerminalError
+from app.agents._schemas.creator_agent import (
+    AskUser,
+    CreativeStrategy,
+    CreatorEditPlan,
+    ProposeStrategy,
+    ReviewDecision,
+    canonical_context_hash,
+)
+from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
+from app.auth import CurrentUser
+from app.config import settings
+from app.database import get_db
+from app.models import (
+    ContentPlan,
+    CreatorAgentEvent,
+    CreatorAgentExecution,
+    CreatorAgentSession,
+    Job,
+    Persona,
+    PlanItem,
+)
+from app.services.content_plan_persona import load_owned_plan_persona
+from app.services.creator_sessions import (
+    ACTIVE_CREATOR_PHASES,
+    append_event,
+    compile_active_plan,
+    creator_context,
+    reconcile_render_state,
+    resolve_item_creator_context,
+    rollout_eligible,
+    serialize_session,
+)
+from app.services.job_status import PLAN_ITEM_JOB_TERMINAL
+
+log = structlog.get_logger()
+router = APIRouter()
+
+
+class _StrictBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class StartBody(_StrictBody):
+    message: str = Field(min_length=1, max_length=2000)
+    client_event_id: str = Field(min_length=1, max_length=128)
+
+    @field_validator("message")
+    @classmethod
+    def _nonblank_message(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("message must not be blank")
+        return stripped
+
+
+class TurnBody(StartBody):
+    session_id: uuid.UUID
+    expected_revision: int = Field(ge=0)
+
+
+class ConfirmBody(_StrictBody):
+    session_id: uuid.UUID
+    expected_revision: int = Field(ge=0)
+    plan_version: int = Field(ge=1)
+    plan_hash: str = Field(min_length=64, max_length=64)
+    client_event_id: str = Field(min_length=1, max_length=128)
+
+
+class CancelBody(_StrictBody):
+    session_id: uuid.UUID
+    expected_revision: int = Field(ge=0)
+
+
+class CreatorSessionResponse(BaseModel):
+    id: str
+    status: str
+    revision: int
+    render_attempts: int
+    max_render_attempts: int
+    can_render: bool
+    pending_plan: dict | None
+    current_job_id: str | None
+    events: list[dict]
+    created_at: str
+    updated_at: str
+
+
+def _require_feature(user_id: uuid.UUID, *, execution: bool = False) -> None:
+    if not rollout_eligible(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Creator agent unavailable"
+        )
+    if execution and not settings.main_creator_agent_execution_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Creator agent rendering is not enabled yet",
+        )
+
+
+async def _owned_context(
+    db: AsyncSession,
+    item_id: str,
+    user_id: uuid.UUID,
+    *,
+    for_update: bool = False,
+) -> tuple[PlanItem, ContentPlan, Persona]:
+    try:
+        iid = uuid.UUID(item_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="bad id") from exc
+    item_ref = await db.get(PlanItem, iid)
+    if item_ref is None:
+        raise HTTPException(status_code=404, detail="Plan item not found")
+    plan = await db.get(
+        ContentPlan,
+        item_ref.content_plan_id,
+        populate_existing=for_update,
+        with_for_update=for_update,
+    )
+    if plan is None or plan.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Plan item not found")
+    persona = await load_owned_plan_persona(db, plan, for_update=for_update)
+    item = await db.get(
+        PlanItem,
+        iid,
+        populate_existing=for_update,
+        with_for_update=for_update,
+    )
+    if item is None or item.content_plan_id != plan.id:
+        raise HTTPException(status_code=404, detail="Plan item not found")
+    return item, plan, persona
+
+
+def _session_stmt(session_id: uuid.UUID, user_id: uuid.UUID, item_id: uuid.UUID):
+    return (
+        select(CreatorAgentSession)
+        .where(
+            CreatorAgentSession.id == session_id,
+            CreatorAgentSession.creator_id == user_id,
+            CreatorAgentSession.plan_item_id == item_id,
+        )
+        .options(selectinload(CreatorAgentSession.events))
+    )
+
+
+async def _load_session(
+    db: AsyncSession,
+    session_id: uuid.UUID,
+    user_id: uuid.UUID,
+    item_id: uuid.UUID,
+    *,
+    for_update: bool = False,
+) -> CreatorAgentSession:
+    stmt = _session_stmt(session_id, user_id, item_id)
+    if for_update:
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
+    session = (await db.execute(stmt)).scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Creator session not found")
+    return session
+
+
+async def _latest_session(
+    db: AsyncSession, user_id: uuid.UUID, item_id: uuid.UUID, *, active_only: bool = False
+) -> CreatorAgentSession | None:
+    stmt = (
+        select(CreatorAgentSession)
+        .where(
+            CreatorAgentSession.creator_id == user_id,
+            CreatorAgentSession.plan_item_id == item_id,
+        )
+        .order_by(CreatorAgentSession.updated_at.desc(), CreatorAgentSession.created_at.desc())
+        .limit(1)
+    )
+    if active_only:
+        stmt = stmt.where(CreatorAgentSession.status.in_(ACTIVE_CREATOR_PHASES))
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+
+async def _response(db: AsyncSession, session: CreatorAgentSession) -> CreatorSessionResponse:
+    await db.commit()
+    loaded = await _load_session(db, session.id, session.creator_id, session.plan_item_id)
+    return CreatorSessionResponse.model_validate(serialize_session(loaded))
+
+
+def _conversation(events: list[CreatorAgentEvent]) -> list[dict[str, str]]:
+    return [
+        {"role": event.role, "content": str((event.payload or {}).get("message") or "")[:1000]}
+        for event in sorted(events, key=lambda value: value.sequence)[-20:]
+        if (event.payload or {}).get("message")
+    ]
+
+
+def _fallback_strategy(manifest: Any) -> CreativeStrategy:
+    current_format = manifest.edit_format
+    current_available = manifest.capabilities.get(f"edit_format:{current_format}")
+    safe_format = current_format if current_available and current_available.available else "montage"
+    return CreativeStrategy(
+        direction="fast_montage" if manifest.render_program == "guided" else "native",
+        edit_format=safe_format,
+        audio_strategy="licensed_music",
+        pacing="balanced",
+        render_program=manifest.render_program,
+        selected_media_ids=[
+            media.media_id
+            for media in manifest.media
+            if manifest.render_program == "guided" or not media.media_id.startswith("asset-")
+        ],
+        rationale=(
+            "Build a clear opening, keep only the strongest moments, "
+            "and preserve a natural short-form rhythm."
+        ),
+    )
+
+
+def _reset_render_target(session: CreatorAgentSession) -> None:
+    """Fence a new creative plan from every prior render identity."""
+
+    session.active_plan = None
+    session.target_job_id = None
+    session.target_variant_id = None
+    session.target_generation_id = None
+    session.last_review = None
+
+
+def _job_matches_guided_attempt(job: Job | None, attempt_id: str | None) -> bool:
+    if job is None or not attempt_id:
+        return False
+    assembly = job.assembly_plan or {}
+    for key in ("guided_edit", "creator_guided_fallback"):
+        snapshot = assembly.get(key)
+        if isinstance(snapshot, dict) and snapshot.get("generation_attempt_id") == attempt_id:
+            return True
+    return False
+
+
+async def _run_planning_turn(
+    db: AsyncSession,
+    *,
+    item_id: str,
+    user: Any,
+    session_id: uuid.UUID,
+    expected_revision: int,
+    user_message: str,
+) -> CreatorSessionResponse:
+    item, _plan, persona = await _owned_context(db, item_id, user.id)
+    session = await _load_session(db, session_id, user.id, item.id)
+    manifest, media_context = await resolve_item_creator_context(db, item, persona=persona)
+    if not manifest.capabilities["dispatch_render"].available:
+        locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
+        if locked.revision != expected_revision:
+            raise HTTPException(status_code=409, detail="Creator session changed")
+        locked.status = "briefing"
+        await append_event(
+            db,
+            locked,
+            event_type="assistant_question",
+            role="assistant",
+            payload={
+                "message": "Add at least one clip first, then I can design the edit around it."
+            },
+        )
+        return await _response(db, locked)
+
+    creator_summary, item_summary = creator_context(persona, item)
+    agent_input = MainCreatorInput(
+        user_message=user_message,
+        creator_context=creator_summary,
+        item_context=item_summary,
+        media_context=media_context,
+        conversation=_conversation(session.events),
+        capability_manifest=manifest,
+    )
+    action: AskUser | ProposeStrategy | ReviewDecision
+    try:
+        output = await asyncio.to_thread(
+            MainCreatorAgent(default_client()).run,
+            agent_input,
+            ctx=RunContext(
+                creator_agent_session_id=str(session.id),
+                request_id=str(expected_revision),
+            ),
+        )
+        action = output.action
+    except TerminalError as exc:
+        log.warning(
+            "main_creator.planning_fallback", session_id=str(session.id), error=str(exc)[:300]
+        )
+        action = ProposeStrategy(
+            kind="propose_strategy",
+            strategy=_fallback_strategy(manifest),
+            summary="A focused, fast-moving edit built from your strongest footage.",
+        )
+
+    locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
+    if locked.revision != expected_revision or locked.status not in {"planning", "revising"}:
+        raise HTTPException(status_code=409, detail="Creator session changed while planning")
+    locked.agent_call_count += 1
+    if locked.agent_call_count > locked.agent_call_budget:
+        locked.status = "failed"
+        locked.last_error = {"code": "agent_budget_exhausted"}
+        await append_event(
+            db,
+            locked,
+            event_type="assistant_error",
+            payload={"message": "This edit needs a fresh creator session."},
+        )
+        return await _response(db, locked)
+
+    if isinstance(action, AskUser) and locked.question_count < locked.question_budget:
+        locked.status = "briefing"
+        locked.question_count += 1
+        await append_event(
+            db,
+            locked,
+            event_type="assistant_question",
+            payload={
+                "message": action.question,
+                "reason_code": action.reason_code,
+                "options": action.options,
+            },
+        )
+    elif isinstance(action, ReviewDecision):
+        if action.decision == "approve":
+            locked.status = "completed"
+        else:
+            locked.status = "briefing"
+        await append_event(
+            db,
+            locked,
+            event_type="assistant_review",
+            payload={
+                "message": action.summary,
+                "decision": action.decision,
+                "issues": action.issues,
+            },
+        )
+    else:
+        strategy = (
+            action.strategy if isinstance(action, ProposeStrategy) else _fallback_strategy(manifest)
+        )
+        summary = (
+            action.summary
+            if isinstance(action, ProposeStrategy)
+            else "A focused edit from your strongest footage."
+        )
+        try:
+            locked.active_plan = compile_active_plan(
+                locked, manifest=manifest, strategy=strategy, summary=summary
+            )
+        except ValueError as exc:
+            log.warning(
+                "main_creator.unsafe_strategy_dropped",
+                session_id=str(locked.id),
+                error=str(exc)[:300],
+            )
+            strategy = _fallback_strategy(manifest)
+            locked.active_plan = compile_active_plan(
+                locked,
+                manifest=manifest,
+                strategy=strategy,
+                summary="A safe, focused edit from your strongest footage.",
+            )
+        locked.manifest_hash = manifest.manifest_hash
+        locked.status = "awaiting_confirmation"
+        await append_event(
+            db,
+            locked,
+            event_type="assistant_strategy",
+            payload={
+                "message": locked.active_plan["summary"],
+                "plan_hash": locked.active_plan["plan_hash"],
+            },
+        )
+    return await _response(db, locked)
+
+
+@router.get("/{item_id}/creator-agent/session", response_model=CreatorSessionResponse | None)
+async def get_creator_session(
+    item_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> CreatorSessionResponse | None:
+    _require_feature(user.id)
+    # Reconciliation may expire an exact guided proposal, so acquire the
+    # canonical Plan -> Persona -> PlanItem lock order before the session row.
+    item, _plan, _persona = await _owned_context(db, item_id, user.id, for_update=True)
+    session = await _latest_session(db, user.id, item.id)
+    if session is None:
+        return None
+    # Reconciliation mutates the state machine and appends an event. Serialize
+    # concurrent pollers on the session row so MAX(sequence)+1 remains unique.
+    session = await _load_session(db, session.id, user.id, item.id, for_update=True)
+    if await reconcile_render_state(db, session):
+        return await _response(db, session)
+    return CreatorSessionResponse.model_validate(serialize_session(session))
+
+
+@router.post("/{item_id}/creator-agent/session", response_model=CreatorSessionResponse)
+async def start_creator_session(
+    item_id: str,
+    body: StartBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> CreatorSessionResponse:
+    _require_feature(user.id)
+    item, plan, _persona = await _owned_context(db, item_id, user.id)
+    session = await _latest_session(db, user.id, item.id, active_only=True)
+    if session is None:
+        session = CreatorAgentSession(
+            creator_id=user.id,
+            plan_item_id=item.id,
+            status="briefing",
+            ownership_epoch=int(plan.ownership_epoch or 0),
+            max_render_attempts=2,
+            iteration_budget=2,
+            events=[],
+        )
+        db.add(session)
+        try:
+            await db.flush()
+        except IntegrityError:
+            # The partial unique index is the final authority. A simultaneous
+            # start may win after our read; reload that durable active session.
+            await db.rollback()
+            item, _plan, _persona = await _owned_context(db, item_id, user.id)
+            session = await _latest_session(db, user.id, item.id, active_only=True)
+            if session is None:
+                raise
+    # Existing sessions must be locked before the duplicate check and event
+    # append. Otherwise parallel starts can both mint MAX(sequence)+1.
+    session = await _load_session(db, session.id, user.id, item.id, for_update=True)
+    duplicate = (
+        await db.execute(
+            select(CreatorAgentEvent).where(
+                CreatorAgentEvent.session_id == session.id,
+                CreatorAgentEvent.client_event_id == body.client_event_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if duplicate:
+        if str((duplicate.payload or {}).get("message") or "") != body.message.strip():
+            raise HTTPException(status_code=409, detail="Idempotency key reused")
+        return await _response(db, session)
+    if session.status not in {"briefing", "awaiting_confirmation", "awaiting_feedback"}:
+        raise HTTPException(status_code=409, detail="Creator session is busy")
+    session.status = "planning" if session.status != "awaiting_feedback" else "revising"
+    _reset_render_target(session)
+    await append_event(
+        db,
+        session,
+        event_type="user_message",
+        role="user",
+        payload={"message": body.message.strip()},
+        client_event_id=body.client_event_id,
+    )
+    expected_revision = session.revision
+    await db.commit()
+    return await _run_planning_turn(
+        db,
+        item_id=item_id,
+        user=user,
+        session_id=session.id,
+        expected_revision=expected_revision,
+        user_message=body.message.strip(),
+    )
+
+
+@router.post("/{item_id}/creator-agent/turn", response_model=CreatorSessionResponse)
+async def creator_session_turn(
+    item_id: str,
+    body: TurnBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> CreatorSessionResponse:
+    _require_feature(user.id)
+    item, _plan, _persona = await _owned_context(db, item_id, user.id)
+    session = await _load_session(db, body.session_id, user.id, item.id, for_update=True)
+    duplicate = (
+        await db.execute(
+            select(CreatorAgentEvent).where(
+                CreatorAgentEvent.session_id == session.id,
+                CreatorAgentEvent.client_event_id == body.client_event_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if duplicate:
+        if str((duplicate.payload or {}).get("message") or "") != body.message.strip():
+            raise HTTPException(status_code=409, detail="Idempotency key reused")
+        return await _response(db, session)
+    if session.revision != body.expected_revision:
+        raise HTTPException(status_code=409, detail="Creator session changed")
+    if session.status not in {"briefing", "awaiting_confirmation", "awaiting_feedback"}:
+        raise HTTPException(status_code=409, detail="Creator session is not accepting feedback")
+    session.status = "revising" if session.render_attempts else "planning"
+    _reset_render_target(session)
+    await append_event(
+        db,
+        session,
+        event_type="user_message",
+        role="user",
+        payload={"message": body.message.strip()},
+        client_event_id=body.client_event_id,
+    )
+    expected_revision = session.revision
+    await db.commit()
+    return await _run_planning_turn(
+        db,
+        item_id=item_id,
+        user=user,
+        session_id=session.id,
+        expected_revision=expected_revision,
+        user_message=body.message.strip(),
+    )
+
+
+def _apply_plan_intent(item: PlanItem, plan: CreatorEditPlan) -> None:
+    for command in plan.commands:
+        if command.command == "set_item_intent":
+            item.edit_format = command.edit_format
+    strategy = plan.strategy
+    audio = getattr(strategy, "audio_strategy", None)
+    if audio == "original_audio":
+        item.audio_mode = "original"
+    elif audio == "voiceover":
+        if not item.voiceover_gcs_path:
+            raise HTTPException(
+                status_code=409, detail="Record a voiceover before confirming this plan"
+            )
+        item.audio_mode = "voiceover"
+    elif audio == "licensed_music":
+        item.audio_mode = "kria"
+    caption = getattr(strategy, "caption_style", None)
+    # Translate the creative vocabulary into the renderer's existing typed
+    # sentence/word contract. "auto" preserves the creator's current choice;
+    # "none" clears a stale caption preference but does not bypass an
+    # archetype whose renderer requires captions.
+    caption_style = {
+        "clean": "sentence",
+        "editorial": "sentence",
+        "kinetic": "word",
+        "karaoke": "word",
+    }.get(caption)
+    if caption_style:
+        item.voiceover_caption_style = caption_style
+    elif caption == "none":
+        item.voiceover_caption_style = None
+    item.user_edited = True
+
+
+def _seed_guided_specialist_brief(
+    item: PlanItem,
+    plan: CreatorEditPlan,
+    *,
+    summary: str,
+) -> None:
+    """Delegate the confirmed strategy through the existing guided planner.
+
+    The Main Creator never authors story-beat storage itself. It converts its
+    high-level decision into the guided planner's typed brief; that specialist
+    then analyzes exact owned media and produces the approved renderer input.
+    """
+
+    from app.schemas.edit_proposal import ProposalBrief, parse_edit_proposal  # noqa: PLC0415
+    from app.services.edit_proposals import (  # noqa: PLC0415
+        mark_edit_proposal_stale,
+        save_edit_conversation_turn,
+    )
+
+    current = parse_edit_proposal(item.edit_proposal)
+    if current is not None:
+        mark_edit_proposal_stale(item)
+        current = parse_edit_proposal(item.edit_proposal)
+    expected_version = current.proposal_version if current else 0
+    direction = plan.strategy.direction
+    if direction not in {"guided_story", "fast_montage", "text_explainer"}:
+        direction = "guided_story"
+    story_goal = "; ".join(plan.strategy.story_structure)
+    goal = (story_goal or plan.strategy.rationale or summary)[:500]
+    save_edit_conversation_turn(
+        item,
+        expected_version=expected_version,
+        brief=ProposalBrief(
+            direction=direction,
+            goal=goal,
+            pace=plan.strategy.pacing,
+            duration_s=24,
+        ),
+        user_message="Use the confirmed Main Creator direction.",
+        agent_reply=summary or plan.strategy.rationale or "Build this direction.",
+        suggestions=[],
+        ready_to_plan=True,
+    )
+
+
+def _confirmed_edit_plan(active: dict[str, Any]) -> CreatorEditPlan:
+    raw_edit_plan = active.get("edit_plan")
+    if not isinstance(raw_edit_plan, dict):
+        raise HTTPException(status_code=409, detail="Creator plan changed")
+    try:
+        return CreatorEditPlan.model_validate(raw_edit_plan)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="Creator plan changed") from exc
+
+
+async def _concurrent_render_response(
+    db: AsyncSession,
+    *,
+    session: CreatorAgentSession,
+    item: PlanItem,
+    user_id: uuid.UUID,
+    receipt: CreatorAgentExecution,
+) -> CreatorSessionResponse:
+    conflicted = await _load_session(db, session.id, user_id, item.id, for_update=True)
+    conflicted.status = "briefing"
+    conflicted.render_attempts = max(0, conflicted.render_attempts - 1)
+    conflicted.iteration_count = conflicted.render_attempts
+    stale_receipt = await db.get(CreatorAgentExecution, receipt.id, with_for_update=True)
+    if stale_receipt:
+        stale_receipt.status = "stale"
+        stale_receipt.error = {"code": "concurrent_render"}
+        stale_receipt.completed_at = datetime.now(UTC)
+    await append_event(
+        db,
+        conflicted,
+        event_type="assistant_error",
+        payload={
+            "message": (
+                "Another render started first. Your direction is saved; "
+                "ask me to recheck it when that render finishes."
+            )
+        },
+    )
+    return await _response(db, conflicted)
+
+
+@router.post("/{item_id}/creator-agent/confirm", response_model=CreatorSessionResponse)
+async def confirm_creator_plan(
+    item_id: str,
+    body: ConfirmBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> CreatorSessionResponse:
+    _require_feature(user.id, execution=True)
+    item, plan_row, persona = await _owned_context(db, item_id, user.id, for_update=True)
+    session = await _load_session(db, body.session_id, user.id, item.id, for_update=True)
+    request_digest = canonical_context_hash(body.model_dump(mode="json"))
+    receipt = (
+        await db.execute(
+            select(CreatorAgentExecution).where(
+                CreatorAgentExecution.session_id == session.id,
+                CreatorAgentExecution.idempotency_key == body.client_event_id,
+            )
+        )
+    ).scalar_one_or_none()
+    active = session.active_plan or {}
+    resuming = receipt is not None
+    if receipt is not None:
+        if receipt.request_digest != request_digest:
+            raise HTTPException(status_code=409, detail="Idempotency key reused")
+        if receipt.status != "running":
+            return await _response(db, session)
+        if session.status not in {"executing", "rendering"}:
+            raise HTTPException(status_code=409, detail="Creator execution is not resumable")
+        edit_plan = _confirmed_edit_plan(active)
+    else:
+        if session.revision != body.expected_revision or session.status != "awaiting_confirmation":
+            raise HTTPException(status_code=409, detail="Creator plan changed")
+        if active.get("version") != body.plan_version or active.get("plan_hash") != body.plan_hash:
+            raise HTTPException(status_code=409, detail="Creator plan changed")
+        edit_plan = _confirmed_edit_plan(active)
+        if session.ownership_epoch != int(plan_row.ownership_epoch or 0):
+            raise HTTPException(status_code=409, detail="Creator ownership changed")
+        if session.render_attempts >= session.max_render_attempts:
+            raise HTTPException(status_code=409, detail="This session has used its render attempts")
+        if item.current_job_id:
+            current_job = await db.get(Job, item.current_job_id, with_for_update=True)
+            if current_job is not None and current_job.status not in PLAN_ITEM_JOB_TERMINAL:
+                raise HTTPException(
+                    status_code=409, detail="Wait for the current render before confirming"
+                )
+        manifest, _media_context = await resolve_item_creator_context(db, item, persona=persona)
+        if manifest.manifest_hash != session.manifest_hash:
+            raise HTTPException(
+                status_code=409, detail="Footage or capabilities changed; review the plan again"
+            )
+        receipt = CreatorAgentExecution(
+            session_id=session.id,
+            idempotency_key=body.client_event_id,
+            request_digest=request_digest,
+            expected_revision=body.expected_revision,
+            expected_manifest_hash=manifest.manifest_hash,
+            status="running",
+        )
+        db.add(receipt)
+        _apply_plan_intent(item, edit_plan)
+        if edit_plan.strategy.render_program == "guided":
+            _seed_guided_specialist_brief(
+                item,
+                edit_plan,
+                summary=str(active.get("summary") or ""),
+            )
+            # Mint the immutable guided execution identity before publishing
+            # any background work. A process crash after enqueue can then
+            # resume against the exact proposal attempt instead of a mutable
+            # proposal_version that advances during draft + approval.
+            session.active_plan = {
+                **active,
+                "guided_generation_attempt_id": str(uuid.uuid4()),
+            }
+        session.status = "executing"
+        session.render_attempts += 1
+        session.iteration_count = session.render_attempts
+        await append_event(
+            db,
+            session,
+            event_type="user_confirmation",
+            role="user",
+            payload={"message": "Render this direction", "plan_hash": body.plan_hash},
+            client_event_id=body.client_event_id,
+        )
+        await db.commit()
+
+    assert receipt is not None  # narrowed after new-or-resume handling
+
+    # Reuse the product's only PlanItem→Job dispatch boundary. Guided plans use
+    # the existing auto-design path so the strict guided renderer still receives
+    # an approved, media-pinned proposal; native plans dispatch directly.
+    guided = edit_plan.strategy.render_program == "guided"
+    job_id: uuid.UUID | None = None
+    guided_proposal_version: int | None = None
+    raw_guided_attempt = (session.active_plan or {}).get("guided_generation_attempt_id")
+    guided_generation_attempt_id = (
+        str(raw_guided_attempt)
+        if guided and isinstance(raw_guided_attempt, str) and raw_guided_attempt
+        else None
+    )
+    if resuming and item.current_job_id:
+        candidate = await db.get(Job, item.current_job_id)
+        expected_strategy = edit_plan.strategy.model_dump(mode="json", exclude_none=True)
+        candidate_strategy = (
+            (candidate.all_candidates or {}).get("creator_strategy") if candidate else None
+        )
+        created_after_receipt = bool(
+            candidate
+            and candidate.created_at
+            and receipt.created_at
+            and candidate.created_at >= receipt.created_at
+        )
+        exact_owner = bool(
+            candidate
+            and candidate.user_id == user.id
+            and candidate.content_plan_item_id == item.id
+            and candidate.content_plan_ownership_epoch == session.ownership_epoch
+        )
+        expected_guided_attempt = (session.active_plan or {}).get("guided_generation_attempt_id")
+        candidate_guided = (candidate.assembly_plan or {}).get("guided_edit") if candidate else None
+        guided_matches = guided and _job_matches_guided_attempt(candidate, expected_guided_attempt)
+        if (
+            created_after_receipt
+            and exact_owner
+            and (guided_matches or (not guided and candidate_strategy == expected_strategy))
+        ):
+            job_id = candidate.id
+            if guided:
+                guided_generation_attempt_id = str(expected_guided_attempt)
+                guided_proposal_version = (
+                    int(candidate_guided.get("proposal_version") or 0) or None
+                    if isinstance(candidate_guided, dict)
+                    else None
+                )
+    try:
+        if job_id is not None:
+            pass
+        elif guided:
+            if not settings.guided_auto_design_enabled:
+                raise RuntimeError("guided creator execution requires guided auto design")
+            from app.routes.plan_items import _maybe_auto_design_generate  # noqa: PLC0415
+
+            live_item, live_plan, _ = await _owned_context(db, item_id, user.id)
+            if live_item.current_job_id:
+                live_job = await db.get(Job, live_item.current_job_id)
+                if live_job is not None and live_job.status not in PLAN_ITEM_JOB_TERMINAL:
+                    return await _concurrent_render_response(
+                        db,
+                        session=session,
+                        item=item,
+                        user_id=user.id,
+                        receipt=receipt,
+                    )
+            if guided_generation_attempt_id is None:
+                raise RuntimeError("guided creator execution has no generation identity")
+            result = await _maybe_auto_design_generate(
+                item_id,
+                live_item,
+                live_plan,
+                user,
+                db,
+                generation_attempt_id=guided_generation_attempt_id,
+            )
+            if result is None:
+                raise RuntimeError("guided auto design was not applicable")
+            await db.rollback()
+            refreshed_item, _plan, _persona = await _owned_context(db, item_id, user.id)
+            proposal_state = (
+                refreshed_item.edit_proposal
+                if isinstance(refreshed_item.edit_proposal, dict)
+                else {}
+            )
+            raw_attempt_id = proposal_state.get("generation_attempt_id")
+            if raw_attempt_id != guided_generation_attempt_id:
+                raise RuntimeError("guided proposal identity changed during execution")
+            guided_proposal_version = int(proposal_state.get("proposal_version") or 0) or None
+            if guided_proposal_version is None:
+                raise RuntimeError("guided proposal reservation was not persisted")
+            if refreshed_item.current_job_id:
+                candidate = await db.get(Job, refreshed_item.current_job_id)
+                exact_guided_job = bool(
+                    candidate
+                    and candidate.created_at
+                    and receipt.created_at
+                    and candidate.created_at >= receipt.created_at
+                    and candidate.user_id == user.id
+                    and candidate.content_plan_item_id == item.id
+                    and candidate.content_plan_ownership_epoch == session.ownership_epoch
+                    and _job_matches_guided_attempt(candidate, guided_generation_attempt_id)
+                )
+                if exact_guided_job:
+                    job_id = candidate.id
+                elif candidate and candidate.status not in PLAN_ITEM_JOB_TERMINAL:
+                    return await _concurrent_render_response(
+                        db,
+                        session=session,
+                        item=item,
+                        user_id=user.id,
+                        receipt=receipt,
+                    )
+        else:
+            from app.tasks.content_plan_build import dispatch_item_render_for  # noqa: PLC0415
+
+            outcome = await asyncio.to_thread(
+                dispatch_item_render_for,
+                item_id,
+                int(plan_row.ownership_epoch or 0),
+                creator_strategy=edit_plan.strategy.model_dump(mode="json", exclude_none=True),
+            )
+            if outcome.outcome == "already_active":
+                return await _concurrent_render_response(
+                    db,
+                    session=session,
+                    item=item,
+                    user_id=user.id,
+                    receipt=receipt,
+                )
+            if outcome.outcome != "dispatched":
+                raise RuntimeError(f"render dispatch failed: {outcome.outcome}")
+            job_id = uuid.UUID(outcome.job_id) if outcome.job_id else None
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "main_creator.execution_failed", session_id=str(session.id), error=str(exc)[:300]
+        )
+        failed = await _load_session(db, session.id, user.id, item.id, for_update=True)
+        failed.status = "failed"
+        failed.last_error = {"code": "execution_failed", "message": str(exc)[:300]}
+        failed_receipt = await db.get(CreatorAgentExecution, receipt.id, with_for_update=True)
+        if failed_receipt:
+            failed_receipt.status = "failed"
+            failed_receipt.error = failed.last_error
+            failed_receipt.completed_at = datetime.now(UTC)
+        await append_event(
+            db,
+            failed,
+            event_type="assistant_error",
+            payload={"message": "I couldn't start that render. Your creative plan is still saved."},
+        )
+        return await _response(db, failed)
+
+    completed = await _load_session(db, session.id, user.id, item.id, for_update=True)
+    if guided_generation_attempt_id is not None:
+        completed.active_plan = {
+            **(completed.active_plan or {}),
+            "guided_generation_attempt_id": guided_generation_attempt_id,
+            "guided_proposal_version": guided_proposal_version,
+        }
+    completed.target_job_id = job_id
+    completed.status = "rendering" if job_id else "executing"
+    completed_receipt = await db.get(CreatorAgentExecution, receipt.id, with_for_update=True)
+    if completed_receipt:
+        completed_receipt.status = "succeeded"
+        completed_receipt.result = {"job_id": str(job_id) if job_id else None}
+        completed_receipt.completed_at = datetime.now(UTC)
+    await append_event(
+        db,
+        completed,
+        event_type="assistant_execution",
+        payload={
+            "message": (
+                "I started the confirmed edit. I'll review the exact rendered "
+                "version when it's ready."
+            )
+        },
+    )
+    return await _response(db, completed)
+
+
+@router.post("/{item_id}/creator-agent/cancel", response_model=CreatorSessionResponse)
+async def cancel_creator_session(
+    item_id: str,
+    body: CancelBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> CreatorSessionResponse:
+    _require_feature(user.id)
+    item, _plan, _persona = await _owned_context(db, item_id, user.id)
+    session = await _load_session(db, body.session_id, user.id, item.id, for_update=True)
+    if session.revision != body.expected_revision:
+        raise HTTPException(status_code=409, detail="Creator session changed")
+    if session.status in {"executing", "rendering", "reviewing"}:
+        raise HTTPException(status_code=409, detail="A running render cannot be cancelled here")
+    if session.status not in ACTIVE_CREATOR_PHASES:
+        return await _response(db, session)
+    session.status = "cancelled"
+    await append_event(
+        db,
+        session,
+        event_type="system_cancelled",
+        payload={"message": "Creator session cancelled."},
+    )
+    return await _response(db, session)

@@ -4250,6 +4250,41 @@ def test_run_text_agents_refusal_returns_safe_fallback(monkeypatch):
     assert form["effect"] == "fade-in"
 
 
+def test_run_text_agents_never_accepts_model_authored_hook_override(monkeypatch):
+    class _Form:
+        matched_example_ids: list[str] = []
+
+        def model_dump(self):
+            return {
+                "effect": "fade-in",
+                "layout": "linear",
+                "layout_source": "model",
+                "matched_example_ids": [],
+            }
+
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: object())
+    monkeypatch.setattr(
+        "app.agents.overlay_format_matcher.OverlayFormatMatcherAgent.run",
+        lambda self, input, ctx=None: _Form(),  # noqa: ARG005
+    )
+
+    class _Text:
+        text = "Grounded by the intro writer"
+
+    def _writer(*args, **kwargs):  # noqa: ANN002, ANN003, ARG001
+        return _Text()
+
+    monkeypatch.setattr("app.agents.intro_writer.IntroTextWriterAgent.run", _writer)
+
+    text, _form = gb._run_text_agents(
+        [_Meta("c1", 8.0, detected_subject="Golden canyon")],
+        _Meta("c1", 8.0, detected_subject="Golden canyon"),
+        job_id="job-main-creator-hook",
+    )
+
+    assert text.text == "Grounded by the intro writer"
+
+
 def test_run_text_agents_wrapped_refusal_returns_safe_fallback(monkeypatch):
     from app.agents._runtime import RefusalError, TerminalError
 

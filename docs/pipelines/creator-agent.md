@@ -4,6 +4,187 @@ Nova's long-term vision: a **personalized AI agent per creator** that knows thei
 style, plans their content, guides their filming, and renders every edit to their
 taste — while letting them override anything they want.
 
+## Main Creator Agent (V1 foundation, dark)
+
+The style milestones below personalize individual decisions, but they do not own
+an edit. Before V1, Nova's architecture had three concrete gaps:
+
+1. specialist agents could disagree because no durable controller owned the
+   creative thesis;
+2. product capabilities were inferred from prompts instead of resolved from live
+   flags, ownership, renderer compatibility, and limits;
+3. model output could jump directly to bespoke mutations, with no single typed,
+   revision-fenced confirmation boundary.
+
+The Main Creator Agent fixes those gaps. It is deliberately **not** a general
+ReAct loop. The model makes a semantic decision; deterministic product code owns
+state, validation, execution, and budgets.
+
+```mermaid
+flowchart LR
+    U["Creator conversation"] --> C["Durable creator session"]
+    C --> M["Server-resolved capability manifest"]
+    M --> A["Main Creator strategy agent"]
+    A --> P["Deterministic typed plan compiler"]
+    P --> X{"Explicit confirmation"}
+    X -->|confirmed| G["Typed execution gateway"]
+    X -->|feedback| A
+    G --> S["Existing specialist + render pipelines"]
+    S --> R["Exact job / variant / generation review receipt"]
+    R --> C
+```
+
+### V1 user experience
+
+On a plan item, the creator opens **Create with Kria** and describes the desired
+feeling or story. Kria sees the creator profile, item idea, owned footage summaries,
+current edit, and live product capabilities. It either asks one material question
+or presents one opinionated direction: format, audio, story beats, hook, captions,
+pacing, and available treatments. Nothing renders until **Render this** is clicked.
+
+After confirmation, the server re-resolves the manifest and rejects stale plans.
+For guided-compatible stories it translates the creative thesis into the existing
+guided planner's `ProposalBrief`; that specialist owns exact beat/media planning.
+Audio-led and voiceover formats always use the native renderer. The existing
+`dispatch_item_render_for` gateway mints the Job. V1 then follows that exact Job
+and records its selected ready variant and `render_generation_id`. The creator can
+give feedback and confirm at most one revision (two renders total).
+
+### Trust boundaries
+
+- The model receives opaque media/catalog IDs, never GCS paths, signed URLs,
+  credentials, database access, FFmpeg, or route callables.
+- `ResolvedCreatorManifest` is descriptive. It contains live availability reasons,
+  render compatibility, current-edit identity, and bounded limits.
+- `CreatorEditPlan` is inert and pins both `manifest_hash` and `context_hash`.
+- Confirmation is a CAS over session revision, plan version/hash, manifest hash,
+  creator ownership epoch, and an idempotency key.
+- Execution routes re-check feature flags and ownership. Uploaded overlays and
+  user SFX must belong to the exact PlanItem; curated licensed assets keep their
+  separate catalog policy.
+- AI analysis is marked as evidence-only in the footage context. The prompt
+  forbids copying filenames or AI metadata into visible text. Existing renderer
+  provenance guards remain authoritative.
+- The proposed `intro_hook` is an opening concept for approval, not trusted
+  render copy. Native execution still runs the existing grounded `intro_writer`;
+  Main Creator output is never burned verbatim onto the video.
+- V1 never performs automatic revisions. The `auto_iteration` flag exists but
+  cannot be enabled unless review is enabled, and no V1 controller consumes it.
+- Native plans resolve confirmed opaque media IDs back to that exact item's clip
+  assignments; an asset-only native selection fails closed instead of rendering
+  unrelated footage. Guided plans delegate exact media selection to the approved
+  proposal snapshot.
+- A running confirmation receipt is resumable after process death. Reconciliation
+  accepts only a Job for the same creator, PlanItem, ownership epoch, and a creation
+  time after the confirmation receipt; native Jobs must also carry the exact
+  confirmed strategy snapshot.
+
+### Persistence
+
+`creator_agent_sessions` stores one durable state machine per creator/item with
+revision, ownership epoch, pending plan, exact render target, question/agent/render
+budgets, last review, last good output, and stable failure details. A partial
+unique index permits only one active session per creator/item.
+
+`creator_agent_events` is an append-only conversation/controller log. Sequence
+and client-event uniqueness provide ordering and retry idempotency; a database
+trigger rejects updates. `creator_agent_executions` stores idempotent confirmation
+receipts and request digests. `agent_runs.creator_agent_session_id` connects every
+model invocation to the durable session without inventing a Job ID.
+
+### V1 API
+
+All routes are authenticated, item-owner-scoped, and live under `/plan-items/{id}`:
+
+| Route | Contract |
+|---|---|
+| `GET /creator-agent/session` | Poll latest session and reconcile exact Job state |
+| `POST /creator-agent/session` | Start/reuse active session and submit first message |
+| `POST /creator-agent/turn` | Revision-fenced feedback or clarification turn |
+| `POST /creator-agent/confirm` | Explicit, hash-pinned execution confirmation |
+| `POST /creator-agent/cancel` | Cancel a non-rendering active session |
+
+The public response contains conversation events, session status/revision, render
+budget, pending plan preview, and target Job ID. It never returns raw command
+capabilities or storage identities.
+
+### Delegation policy
+
+The Main Creator calls no specialist merely because one exists. V1 delegates only
+when a specialist owns a stronger typed contract:
+
+- guided-compatible story → `edit_proposal` via a confirmed `ProposalBrief`;
+- native render → existing format/audio dispatch, whose pipeline may invoke
+  `music_matcher`, `intro_writer`, caption, sequence, and treatment specialists;
+- render completion → structural exact-generation receipt; Director/video-quality
+  critique becomes the Stage 2 review implementation.
+
+Specialist failure never grants the Main Creator a broader capability. Guided
+planning fails to a saved, retryable session; it does not fabricate a story plan.
+Native music matching retains its existing original-audio fallback.
+
+### Good-enough and failure policy
+
+V1's automatic quality floor is structural: the confirmed Job reaches a ready
+state, a ready variant exists, and its immutable generation identity is recorded.
+It then asks the creator for the taste judgment. Stage 2 adds Director/visual/audio
+rubrics and can recommend one revision, but still requires confirmation.
+
+Failures are stable and bounded: missing media asks the creator to upload; a stale
+manifest returns 409 and requires re-planning; unavailable voiceover cannot be
+activated; an active render cannot be cancelled through this controller; dispatch
+failure saves the confirmed plan and a typed execution error; agent failure falls
+back to a conservative strategy; render failure preserves the plan for a fresh
+session. No branch generates raw media operations.
+
+### Rollout
+
+Backend switches default off:
+
+- `MAIN_CREATOR_AGENT_ENABLED`
+- `MAIN_CREATOR_AGENT_EXECUTION_ENABLED`
+- `MAIN_CREATOR_AGENT_REVIEW_ENABLED`
+- `MAIN_CREATOR_AGENT_AUTO_ITERATION_ENABLED`
+- `MAIN_CREATOR_AGENT_ROLLOUT_PERCENT` (stable user bucket, default `0`)
+
+Frontend exposure is separately gated by
+`NEXT_PUBLIC_MAIN_CREATOR_AGENT_ENABLED`. Rollout order is migration/API first,
+then conversation at 1%, then execution at internal-only/1%, then reviewed cohort
+expansion. Do not expose the frontend before the Fly capability and execution
+flags are live.
+
+### Stages 1–5
+
+1. **V1 — confirm one creative strategy (implemented dark):** one PlanItem,
+   opaque manifest, one question, typed plan, explicit initial render and revision
+   confirmation, two-render budget, structural exact-generation review.
+2. **Stage 2 — informed critic:** feed exact rendered video/audio into Director and
+   quality graders; produce evidence-linked issues and one proposed revision. User
+   confirmation remains mandatory.
+3. **Stage 3 — broader typed craft:** compile treatment commands for overlays,
+   licensed SFX, transitions, looks, silence/retake cuts, and caption styling. Each
+   command uses its existing safe product route and independent flag.
+4. **Stage 4 — bounded autonomy:** allow one automatic revise/render cycle only
+   when confidence, quality delta, render budget, and rollback receipt all pass;
+   never for taste-ambiguous changes, new media, voiceover, or publishing.
+5. **Stage 5 — creator workspace ownership:** accept freeform/off-plan uploads,
+   choose or create the PlanItem with user approval, learn durable preference
+   signals, and coordinate multiple deliverables. Publishing and external asset
+   acquisition remain separate consent boundaries.
+
+### Tests and evals
+
+- schema tests reject paths/URLs, unknown commands, stale hashes, unknown media,
+  unavailable treatments, and guided audio-led plans;
+- persistence tests pin constraints, append-only triggers, indexes, aliases, and
+  AgentRun correlation;
+- route/controller tests pin voiceover gating and specialist-brief delegation;
+- editor regressions pin exact PlanItem ownership for overlays/SFX and the music
+  commit crash repair;
+- frontend tests prove no confirmation call occurs before **Render this**;
+- `tests/evals/test_main_creator_evals.py` runs replay/live agent evaluation with a
+  rubric for decisiveness, grounding, capability compliance, and no invention.
+
 ## Why this document exists
 
 Today the pieces are disconnected:

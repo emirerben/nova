@@ -1,0 +1,45 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-08-24-v4",
+  "input": {
+    "user_message": "Make this feel energetic but still personal.",
+    "creator_context": "Travel creator; warm and direct.",
+    "item_context": "A day exploring Lisbon.",
+    "media_context": [
+      {"media_id": "clip-1", "kind": "video", "creator_note": "arrival"},
+      {"media_id": "clip-2", "kind": "video", "creator_note": "sunset"}
+    ],
+    "conversation": [],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-1",
+      "edit_format": "montage",
+      "render_program": "guided",
+      "has_voiceover": false,
+      "media": [
+        {"media_id": "clip-1", "kind": "video", "label": "arrival"},
+        {"media_id": "clip-2", "kind": "video", "label": "sunset"}
+      ],
+      "catalog": [],
+      "capabilities": {
+        "dispatch_render": {"available": true},
+        "draft_guided_proposal": {"available": true},
+        "media_overlays": {"available": false, "reason_code": "disabled_by_setting"},
+        "sound_effects": {"available": false, "reason_code": "disabled_by_setting"},
+        "transitions": {"available": true},
+        "wide_looks": {"available": false, "reason_code": "disabled_by_setting"}
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 60.0
+      },
+      "context_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  },
+  "raw_text": "{\"action\":{\"kind\":\"propose_strategy\",\"strategy\":{\"direction\":\"guided_story\",\"edit_format\":\"montage\",\"archetype\":\"montage\",\"audio_strategy\":\"licensed_music\",\"story_structure\":[\"Arrival hook\",\"Escalating city details\",\"Sunset payoff\"],\"caption_style\":\"clean\",\"intro_hook\":\"One day in Lisbon\",\"pacing\":\"fast\",\"render_program\":\"guided\",\"selected_media_ids\":[\"clip-1\",\"clip-2\"],\"optional_treatments\":[\"transitions\"],\"rationale\":\"Open with motion, build through details, and let the sunset resolve the story.\"},\"summary\":\"A quick Lisbon story that builds from arrival to sunset.\"}}",
+  "output": {},
+  "meta": {"source": "hand-authored-v1-safety"}
+}

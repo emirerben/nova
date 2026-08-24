@@ -151,6 +151,7 @@ import {
 import TextElementOverlayLayer from "./components/TextElementOverlayLayer";
 import EditProposalCard from "./components/EditProposalCard";
 import PlanThreadPanel from "./components/PlanThreadPanel";
+import MainCreatorAgentPanel from "./components/MainCreatorAgentPanel";
 import { TikTokPublishDialog } from "@/components/TikTokPublishDialog";
 import { TikTokReleaseRail } from "@/components/TikTokReleaseRail";
 import {
@@ -203,6 +204,8 @@ const SUBTITLED_ENABLED = _subtitledRaw.toLowerCase() === "true" || _subtitledRa
 // only controls whether the entry point is shown.
 const TIKTOK_EDITOR_ENABLED = process.env.NEXT_PUBLIC_TIKTOK_EDITOR_ENABLED === "true";
 const GUIDED_EDIT_ENABLED = process.env.NEXT_PUBLIC_GUIDED_EDIT_ENABLED === "true";
+const MAIN_CREATOR_AGENT_ENABLED =
+  process.env.NEXT_PUBLIC_MAIN_CREATOR_AGENT_ENABLED === "true";
 
 const RENDER_REGISTER_ERROR = "The render didn't register — give it another go.";
 const TIKTOK_POLL_MAX_FAILURES = 3;
@@ -2057,6 +2060,7 @@ export default function PlanItemPage() {
           />
         </TabsContent>
       )}
+      {MAIN_CREATOR_AGENT_ENABLED && <MainCreatorAgentPanel itemId={itemId} />}
       <Separator />
       {narratedVoiceoverSection}
       {tellKriaSection}

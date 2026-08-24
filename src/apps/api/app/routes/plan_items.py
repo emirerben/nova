@@ -2398,6 +2398,8 @@ async def _maybe_auto_design_generate(
     plan: ContentPlan,
     user: CurrentUser,
     db: AsyncSession,
+    *,
+    generation_attempt_id: str | None = None,
 ) -> PlanItemResponse | None:
     """GUIDED_AUTO_DESIGN_ENABLED: reserve+draft instead of 409ing Generate.
 
@@ -2463,6 +2465,22 @@ async def _maybe_auto_design_generate(
     ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
     locked = await _load_owned_item(item_id, owner_id, db, for_update=True)
     current = parse_edit_proposal(locked.edit_proposal)
+    if (
+        generation_attempt_id
+        and current is not None
+        and current.status in {"analyzing", "drafting", "draft", "approved"}
+        and current.generation_attempt_id != generation_attempt_id
+    ):
+        # A Main Creator execution may only resume/dispatch the attempt whose
+        # immutable identity it persisted before enqueue. Never adopt a
+        # proposal another tab created after confirmation.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "proposal_identity_changed",
+                "message": "The guided edit changed before it could start.",
+            },
+        )
 
     attempt = current.conversation_attempt if current else None
     if attempt is not None:
@@ -2522,6 +2540,7 @@ async def _maybe_auto_design_generate(
         brief=current.brief if current else None,
         approval_mode="auto",
         guidance=legacy_guidance,
+        generation_attempt_id=generation_attempt_id,
     )
     await db.commit()
     try:
@@ -5122,6 +5141,7 @@ async def editor_commit_item(
         resolved_sfx = await _resolve_sound_effect_placements(
             body.sound_effects,
             user_id=str(user.id),
+            plan_item_id=str(item.id),
             db=db,
         )
         commit_body = body.model_copy(update={"sound_effects": resolved_sfx})
@@ -5162,18 +5182,6 @@ async def editor_commit_item(
             ).scalar_one_or_none()
     if (
         commit_body.background_music is not None
-        and not commit_body.background_music.remove
-        and commit_body.background_music.track_id
-    ):
-        selected_background_music_track = (
-            await db.execute(
-                select(MusicTrack).where(MusicTrack.id == commit_body.background_music.track_id)
-            )
-        ).scalar_one_or_none()
-
-    selected_background_music_track = None
-    if (
-        commit_body.background_music is not None
         and commit_body.background_music.track_id is not None
     ):
         selected_background_music_track = (
@@ -5209,6 +5217,7 @@ async def editor_commit_item(
         music_track=selected_music_track,
         music_track_generation=selected_music_track_generation,
         background_music_track=selected_background_music_track,
+        plan_item_id=str(item.id),
         visual_assets=visual_assets,
     )
 
@@ -5449,6 +5458,7 @@ async def _resolve_sound_effect_placements(
     placements: list[dict],
     *,
     user_id: str,
+    plan_item_id: str | None = None,
     db: AsyncSession,
 ) -> list[dict]:
     """Resolve curated SFX IDs server-side, then validate the full placement list."""
@@ -5475,7 +5485,11 @@ async def _resolve_sound_effect_placements(
             placement["label"] = placement.get("label") or effect.name
             placement["duration_s"] = placement.get("duration_s") or effect.duration_s
         resolved_placements.append(placement)
-    return validate_sound_effects_for_user(sfx_raw=resolved_placements, user_id=user_id)
+    return validate_sound_effects_for_user(
+        sfx_raw=resolved_placements,
+        user_id=user_id,
+        plan_item_id=plan_item_id,
+    )
 
 
 @router.post("/{item_id}/sfx-upload-urls", response_model=SfxUploadUrlsResponse)
@@ -5560,6 +5574,7 @@ async def set_item_sound_effects(
     resolved_placements = await _resolve_sound_effect_placements(
         body.placements,
         user_id=str(user.id),
+        plan_item_id=str(item_id),
         db=db,
     )
 

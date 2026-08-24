@@ -460,7 +460,9 @@ def _dispatch_after_auto_design(
         else:
             return
 
-    result = dispatch_item_render_for(item_id, ownership_epoch, bypass_guided_edit_gate=bypass)
+    dispatch_kwargs = {"bypass_guided_edit_gate": bypass}
+    dispatch_kwargs["creator_guided_attempt_id"] = attempt_id
+    result = dispatch_item_render_for(item_id, ownership_epoch, **dispatch_kwargs)
     if result.outcome not in {"dispatched", "already_active"}:
         # The proposal is already committed (approved, or failed+design_fallback)
         # — leave it there. The next manual Generate click dispatches directly

@@ -21,6 +21,7 @@ from app.schemas.edit_proposal import (
     EditProposal,
     EditProposalSnapshot,
     ProposalBrief,
+    ProposalFailure,
     ProposalGuidance,
     ProposalRenderFailure,
     parse_edit_proposal,
@@ -299,6 +300,7 @@ def begin_proposal_attempt(
     brief: ProposalBrief | None = None,
     approval_mode: ApprovalMode | None = None,
     guidance: ProposalGuidance | None = None,
+    generation_attempt_id: str | None = None,
 ) -> EditProposal:
     """Reserve one analysis attempt.
 
@@ -311,7 +313,7 @@ def begin_proposal_attempt(
     current = parse_edit_proposal(item.edit_proposal)
     proposal = EditProposal(
         proposal_version=(current.proposal_version + 1 if current else 1),
-        generation_attempt_id=str(uuid.uuid4()),
+        generation_attempt_id=generation_attempt_id or str(uuid.uuid4()),
         # A confirmed direction remains bound to the analyzed media across a
         # retryable planning attempt. Fresh/manual attempts still recompute it.
         media_digest=current.media_digest if guidance is not None and current else None,
@@ -327,6 +329,35 @@ def begin_proposal_attempt(
     )
     item.edit_proposal = proposal.model_dump(mode="json")
     return proposal
+
+
+def expire_proposal_attempt(item: PlanItem, *, generation_attempt_id: str) -> bool:
+    """Atomically invalidate one exact async proposal attempt after its lease.
+
+    ``design_fallback`` is set deliberately: the delayed auto-finalize task
+    treats any failed proposal without that marker as eligible for a clip-only
+    fallback. Marking the expiry prevents a late worker from dispatching an
+    untracked render after the owning Main Creator session has terminated.
+    """
+
+    current = parse_edit_proposal(item.edit_proposal)
+    if current is None or current.generation_attempt_id != generation_attempt_id:
+        return False
+    expired = current.model_copy(
+        update={
+            "proposal_version": current.proposal_version + 1,
+            "status": "failed",
+            "failure": ProposalFailure(
+                code="creator_execution_expired",
+                message="The creator render did not start in time. Try again.",
+                retryable=True,
+            ),
+            "design_fallback": "creator_execution_expired",
+            "conversation_attempt": None,
+        }
+    )
+    item.edit_proposal = expired.model_dump(mode="json")
+    return True
 
 
 def direction_guidance_fingerprint(item: PlanItem, media_digest: str) -> str:

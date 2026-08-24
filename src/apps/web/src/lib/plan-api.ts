@@ -1205,6 +1205,115 @@ export function generatePlanItem(itemId: string): Promise<PlanItem> {
   return request<PlanItem>(`/plan-items/${itemId}/generate`, { method: "POST" });
 }
 
+export type CreatorAgentSessionStatus =
+  | "briefing"
+  | "planning"
+  | "awaiting_confirmation"
+  | "executing"
+  | "rendering"
+  | "reviewing"
+  | "awaiting_feedback"
+  | "revising"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface CreatorAgentEvent {
+  id: string;
+  role: "user" | "assistant" | "system";
+  event_type: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface CreatorAgentPlanPreview {
+  version: number;
+  plan_hash: string;
+  summary: string;
+  creative_rationale?: string;
+  edit_format?: string;
+  audio_strategy?: string;
+  story_structure?: string[];
+  caption_style?: string | null;
+  intro_hook?: string | null;
+}
+
+export interface CreatorAgentSession {
+  id: string;
+  status: CreatorAgentSessionStatus;
+  revision: number;
+  render_attempts: number;
+  max_render_attempts: number;
+  can_render: boolean;
+  pending_plan: CreatorAgentPlanPreview | null;
+  current_job_id: string | null;
+  events: CreatorAgentEvent[];
+  created_at: string;
+  updated_at: string;
+}
+
+export function getCreatorAgentSession(itemId: string): Promise<CreatorAgentSession | null> {
+  return request<CreatorAgentSession | null>(`/plan-items/${itemId}/creator-agent/session`);
+}
+
+export function startCreatorAgentSession(
+  itemId: string,
+  message: string,
+  clientEventId: string,
+): Promise<CreatorAgentSession> {
+  return request<CreatorAgentSession>(`/plan-items/${itemId}/creator-agent/session`, {
+    method: "POST",
+    body: JSON.stringify({ message, client_event_id: clientEventId }),
+  });
+}
+
+export function turnCreatorAgentSession(
+  itemId: string,
+  sessionId: string,
+  message: string,
+  expectedRevision: number,
+  clientEventId: string,
+): Promise<CreatorAgentSession> {
+  return request<CreatorAgentSession>(`/plan-items/${itemId}/creator-agent/turn`, {
+    method: "POST",
+    body: JSON.stringify({
+      session_id: sessionId,
+      message,
+      expected_revision: expectedRevision,
+      client_event_id: clientEventId,
+    }),
+  });
+}
+
+export function confirmCreatorAgentPlan(
+  itemId: string,
+  session: CreatorAgentSession,
+  clientEventId: string,
+): Promise<CreatorAgentSession> {
+  if (!session.pending_plan) throw new Error("No creator plan is ready to confirm");
+  return request<CreatorAgentSession>(`/plan-items/${itemId}/creator-agent/confirm`, {
+    method: "POST",
+    body: JSON.stringify({
+      session_id: session.id,
+      expected_revision: session.revision,
+      plan_version: session.pending_plan.version,
+      plan_hash: session.pending_plan.plan_hash,
+      client_event_id: clientEventId,
+    }),
+  });
+}
+
+export function cancelCreatorAgentSession(
+  itemId: string,
+  sessionId: string,
+  expectedRevision: number,
+): Promise<CreatorAgentSession> {
+  return request<CreatorAgentSession>(`/plan-items/${itemId}/creator-agent/cancel`, {
+    method: "POST",
+    body: JSON.stringify({ session_id: sessionId, expected_revision: expectedRevision }),
+  });
+}
+
 export function draftEditProposal(
   itemId: string,
   brief: {

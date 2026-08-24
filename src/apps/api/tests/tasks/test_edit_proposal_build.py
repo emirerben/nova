@@ -751,8 +751,16 @@ def test_auto_finalize_success_approves_auto_and_dispatches_after_commit(monkeyp
 
     dispatch_calls = []
 
-    def _fake_dispatch(item_id_arg, epoch, *, bypass_guided_edit_gate=False):
-        dispatch_calls.append((item_id_arg, epoch, bypass_guided_edit_gate))
+    def _fake_dispatch(
+        item_id_arg,
+        epoch,
+        *,
+        bypass_guided_edit_gate=False,
+        creator_guided_attempt_id=None,
+    ):
+        dispatch_calls.append(
+            (item_id_arg, epoch, bypass_guided_edit_gate, creator_guided_attempt_id)
+        )
         return SimpleNamespace(outcome="dispatched")
 
     monkeypatch.setattr("app.tasks.content_plan_build.dispatch_item_render_for", _fake_dispatch)
@@ -766,7 +774,7 @@ def test_auto_finalize_success_approves_auto_and_dispatches_after_commit(monkeyp
     assert persisted.last_approved is not None
     assert persisted.last_approved.approval_mode == "auto"
     assert persisted.design_fallback is None
-    assert dispatch_calls == [(str(item_id), 0, False)]
+    assert dispatch_calls == [(str(item_id), 0, False, "attempt-1")]
 
 
 def test_auto_finalize_dispatch_failure_leaves_approved_no_wedge(monkeypatch) -> None:
@@ -834,8 +842,16 @@ def test_auto_finalize_infeasible_footage_falls_back_to_montage_clip_only(monkey
 
     dispatch_calls = []
 
-    def _fake_dispatch(item_id_arg, epoch, *, bypass_guided_edit_gate=False):
-        dispatch_calls.append((item_id_arg, epoch, bypass_guided_edit_gate))
+    def _fake_dispatch(
+        item_id_arg,
+        epoch,
+        *,
+        bypass_guided_edit_gate=False,
+        creator_guided_attempt_id=None,
+    ):
+        dispatch_calls.append(
+            (item_id_arg, epoch, bypass_guided_edit_gate, creator_guided_attempt_id)
+        )
         return SimpleNamespace(outcome="dispatched")
 
     monkeypatch.setattr("app.tasks.content_plan_build.dispatch_item_render_for", _fake_dispatch)
@@ -848,7 +864,7 @@ def test_auto_finalize_infeasible_footage_falls_back_to_montage_clip_only(monkey
     assert persisted.failure is not None
     assert persisted.failure.code == "guided_edit_infeasible"
     assert persisted.design_fallback == "guided_edit_infeasible"
-    assert dispatch_calls == [(str(item_id), 0, True)]
+    assert dispatch_calls == [(str(item_id), 0, True, "attempt-1")]
 
 
 def test_auto_finalize_infeasible_footage_with_pool_assets_never_falls_back(

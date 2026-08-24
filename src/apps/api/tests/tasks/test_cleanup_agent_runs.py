@@ -4,8 +4,8 @@ Validates:
   - cutoff is derived from retention_days (default = settings)
   - the loop short-circuits when a batch returns fewer rows than the limit
   - the loop is hard-capped by _AGENT_RUN_DELETE_MAX_BATCHES
-  - the DELETE statement only targets job_id IS NOT NULL rows (template- /
-    track-scoped runs survive)
+  - trace cleanup targets job/session rows while template/track rows survive
+  - creator sessions and their cascade-owned audit rows use the same retention
 
 The task runs synchronous SQL through ``app.database.sync_engine``. We don't
 spin up a real Postgres here — we mock the engine's connection and assert
@@ -73,7 +73,7 @@ def test_cleanup_short_circuits_on_partial_batch():
 
     assert result["deleted"] == 3
     assert result["batches"] == 1
-    assert len(conn.calls) == 1
+    assert len(conn.calls) == 2
 
 
 def test_cleanup_keeps_looping_until_partial_batch_or_cap():
@@ -92,38 +92,40 @@ def test_cleanup_keeps_looping_until_partial_batch_or_cap():
 
     assert result["batches"] == 3
     assert result["deleted"] == 2 * _AGENT_RUN_DELETE_BATCH + 42
-    assert len(conn.calls) == 3
+    assert len(conn.calls) == 4
 
 
 def test_cleanup_respects_max_batches_safety_cap():
     """Even with infinite full batches the loop must stop at the cap.
     Provide more than the cap; only `_AGENT_RUN_DELETE_MAX_BATCHES` should run."""
-    conn = _patch_engine(rowcounts=[_AGENT_RUN_DELETE_BATCH] * (_AGENT_RUN_DELETE_MAX_BATCHES + 5))
+    conn = _patch_engine(rowcounts=[_AGENT_RUN_DELETE_BATCH] * _AGENT_RUN_DELETE_MAX_BATCHES)
     try:
         result = cleanup_agent_runs(retention_days=30)
     finally:
         patch.stopall()
 
     assert result["batches"] == _AGENT_RUN_DELETE_MAX_BATCHES
-    assert len(conn.calls) == _AGENT_RUN_DELETE_MAX_BATCHES
+    assert len(conn.calls) == _AGENT_RUN_DELETE_MAX_BATCHES + 1
 
 
-def test_cleanup_delete_filters_to_job_scoped_rows():
-    """Track- and template-scoped agent_run rows (job_id IS NULL) must NEVER
-    be touched by this task — they back per-template debug views and are
-    not growth-bound to job volume."""
+def test_cleanup_delete_filters_to_traffic_scoped_rows_and_prunes_sessions():
+    """Traffic-owned traces expire; template/track-only rows remain."""
     conn = _patch_engine(rowcounts=[0])
     try:
         cleanup_agent_runs(retention_days=30)
     finally:
         patch.stopall()
 
-    assert len(conn.calls) == 1
+    assert len(conn.calls) == 2
     sql, params = conn.calls[0]
     assert "delete from agent_run" in sql.lower()
-    assert "job_id is not null" in sql.lower()
+    assert "job_id is not null or creator_agent_session_id is not null" in sql.lower()
     assert "created_at < :cutoff" in sql.lower()
     assert params["batch"] == _AGENT_RUN_DELETE_BATCH
+    session_sql, session_params = conn.calls[1]
+    assert "delete from creator_agent_sessions" in session_sql.lower()
+    assert "updated_at < :cutoff" in session_sql.lower()
+    assert session_params == params
 
 
 def test_cleanup_cutoff_is_retention_days_in_the_past():
@@ -160,4 +162,4 @@ def test_cleanup_default_retention_comes_from_settings():
     expected = datetime.now(UTC) - timedelta(days=7)
     # Allow a small wall-clock skew between the call and the assertion.
     assert abs((cutoff - expected).total_seconds()) < 5
-    assert len(conn.calls) == 1
+    assert len(conn.calls) == 2
