@@ -874,6 +874,31 @@ describe("PoolUploadCard — Generate gate composition", () => {
 });
 
 describe("PoolUploadCard — touch targets + maxClips", () => {
+  it("shows remaining capacity and the explicit at-cap message", async () => {
+    setData(makeItem());
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+    expect(screen.getByText("You can add up to 50 more clip(s).")).toBeInTheDocument();
+
+    setData(
+      makeItem({
+        edit_format: "subtitled",
+        content_mode: "create_new",
+        clip_assignments: [c1],
+        clip_gcs_paths: [c1.gcs_path],
+      }),
+    );
+    await act(async () => {
+      // Re-rendering keeps this test focused on the card copy rather than the
+      // page's polling lifecycle.
+      render(<PlanItemPage />);
+    });
+    expect(
+      screen.getByText("You've reached the clip limit (1). Remove a clip to add more."),
+    ).toBeInTheDocument();
+  });
+
   it("delete, cancel, and retry controls meet the 44px mobile floor (with positive control)", async () => {
     setData(makeItem({ clip_assignments: [c1] }));
     await act(async () => {

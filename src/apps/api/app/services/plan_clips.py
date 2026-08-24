@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 from app.models import PlanItem
 
-_MAX_CLIPS_PER_ITEM = 30  # mirrors routes/plan_items.py; kept in sync, not imported (avoids circ)
+_MAX_CLIPS_PER_ITEM = 50  # mirrors routes/plan_items.py; kept in sync, not imported (avoids circ)
 
 
 @dataclass
@@ -74,7 +74,7 @@ def set_item_clips(item: PlanItem, assignments: list[ClipAssignment]) -> None:
     engine, which currently treats clips as an unordered pool.
 
     Validates (raises ClipAssignmentError on violation):
-      - Total count ≤ _MAX_CLIPS_PER_ITEM (30)
+      - Total count ≤ _MAX_CLIPS_PER_ITEM (50)
       - No duplicate gcs_path within the batch
 
     Does NOT validate GCS path prefixes — that is the caller's responsibility.

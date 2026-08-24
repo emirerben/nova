@@ -98,7 +98,13 @@ function publicUpload(upload: InternalUpload): PendingPoolUpload {
   };
 }
 
-function stageMessage(stage: FailedStage): string {
+function stageMessage(stage: FailedStage, error?: unknown): string {
+  if (error instanceof PlanApiError && error.code === "visual_upload_limit_exceeded") {
+    const remaining = Math.max(0, error.remaining ?? 0);
+    return remaining === 0
+      ? "Your visuals pool is full. Remove a visual before adding another."
+      : `Your pool has room for ${remaining} more ${remaining === 1 ? "visual" : "visuals"}. Select up to ${remaining}.`;
+  }
   if (stage === "preparing") return "Kria couldn’t start this upload. Retry in a moment.";
   if (stage === "uploading") return "Upload interrupted. Check your connection and retry.";
   return "The file uploaded, but Kria couldn’t add it to your visuals.";
@@ -247,7 +253,7 @@ export function usePoolAssetUploader({
       if (isUnavailable(err)) onUnavailable();
       upload.stage = "failed";
       upload.failedStage = stage;
-      upload.message = stageMessage(stage);
+      upload.message = stageMessage(stage, err);
       upload.retryable =
         err instanceof FeatureDisabledError
           ? false
