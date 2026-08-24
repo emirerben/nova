@@ -62,6 +62,8 @@ export interface VirtualTimeline {
   }>;
 }
 
+type VirtualTimelineSegment = NonNullable<VirtualTimeline["segmentProjection"]>[number];
+
 export interface VirtualTimeMapping {
   entry: VirtualEntry;
   entryIndex: number;
@@ -162,6 +164,60 @@ export interface VirtualCarouselSplice {
   transitionInDurationS?: number;
   transitionOut?: "crossfade" | "none";
   transitionOutDurationS?: number;
+}
+
+function inverseDraftTime(timeline: VirtualTimeline, draftTimeS: number): number {
+  const safe = Math.max(0, draftTimeS);
+  const segments = timeline.segmentProjection ?? [];
+  // Prefer the segment that starts at a shared boundary. This is the same
+  // right-biased convention used by mapVirtualTime and ensures a trimmed
+  // segment's collapsed tail maps to the following baseline segment rather
+  // than stopping at an arbitrary interior offset.
+  let strictMatch: VirtualTimelineSegment | undefined;
+  let inclusiveMatch: VirtualTimelineSegment | undefined;
+  for (const candidate of segments) {
+    if (
+      safe < candidate.draftStartS - EPSILON ||
+      safe > candidate.draftEndS + EPSILON
+    ) {
+      continue;
+    }
+    if (!inclusiveMatch || candidate.draftStartS > inclusiveMatch.draftStartS) {
+      inclusiveMatch = candidate;
+    }
+    if (
+      safe < candidate.draftEndS - EPSILON &&
+      (!strictMatch || candidate.draftStartS > strictMatch.draftStartS)
+    ) {
+      strictMatch = candidate;
+    }
+  }
+  const segment = strictMatch ?? inclusiveMatch;
+  return segment
+    ? segment.baseStartS +
+        Math.min(
+          segment.baseEndS - segment.baseStartS,
+          Math.max(0, safe - segment.draftStartS),
+        )
+    : safe;
+}
+
+function outputToDraftTime(timeline: VirtualTimeline, outputTimeS: number): number {
+  const safe = Math.max(0, outputTimeS);
+  const carousel = timeline.entries.find((entry) => entry.kind === "carousel");
+  const projection = timeline.carouselProjection;
+  if (!carousel || !projection) {
+    return safe;
+  }
+
+  const downstreamStartS = projection.baseInsertionS + projection.downstreamShiftS;
+  if (safe < carousel.startS - EPSILON) {
+    return safe;
+  }
+  if (safe < downstreamStartS - EPSILON) {
+    return projection.baseInsertionS;
+  }
+  return Math.max(0, safe - projection.downstreamShiftS);
 }
 
 export function buildVirtualTimeline(
@@ -357,30 +413,19 @@ export function projectBaseRange(
   timeline: VirtualTimeline,
   range: ProjectedTimeRange,
 ): ProjectedTimeRange {
-  return {
-    startS: projectBaseTime(timeline, range.startS, "after"),
-    endS: projectBaseTime(timeline, range.endS, "after"),
-  };
+  const startS = projectBaseTime(timeline, range.startS, "after");
+  const endS = projectBaseTime(timeline, range.endS, "after");
+  // Reordering makes the baseline -> draft map piecewise rather than
+  // monotonic. A UI range still needs an ordered envelope or it renders as a
+  // negative-width bar (`start_s > end_s`).
+  return startS <= endS ? { startS, endS } : { startS: endS, endS: startS };
 }
 
-/** Inverse used by editor gestures: output time inside the inserted block
- * resolves to the base insertion boundary; later output times subtract it. */
+/** Inverse used by editor gestures: first remove the output-only Carousel
+ * ripple, then map the draft clock back to the baseline clock. Output time
+ * inside the inserted block resolves to its draft insertion boundary. */
 export function unprojectOutputTime(timeline: VirtualTimeline, outputTimeS: number): number {
-  const carousel = timeline.entries.find((entry) => entry.kind === "carousel");
-  const projection = timeline.carouselProjection;
-  const safe = Math.max(0, outputTimeS);
-  const segments = timeline.segmentProjection ?? [];
-  const segment = segments.find(
-    (candidate) => safe >= candidate.draftStartS - EPSILON && safe <= candidate.draftEndS + EPSILON,
-  );
-  const inverseSegment = segment
-    ? segment.baseStartS + Math.min(segment.baseEndS - segment.baseStartS, Math.max(0, safe - segment.draftStartS))
-    : safe;
-  if (!carousel || !projection) return roundMillis(inverseSegment);
-  const downstreamStartS = projection.baseInsertionS + projection.downstreamShiftS;
-  if (safe < carousel.startS - EPSILON) return roundMillis(inverseSegment);
-  if (safe < downstreamStartS - EPSILON) return projection.baseInsertionS;
-  return roundMillis(Math.max(0, inverseSegment - projection.downstreamShiftS));
+  return roundMillis(inverseDraftTime(timeline, outputToDraftTime(timeline, outputTimeS)));
 }
 
 /** Invert an editor range without allowing a drag wholly inside the inserted
@@ -393,20 +438,22 @@ export function unprojectOutputRange(
   const startS = unprojectOutputTime(timeline, range.startS);
   const endS = unprojectOutputTime(timeline, range.endS);
   if (endS > startS + EPSILON) return { startS, endS };
+  if (startS > endS + EPSILON) return { startS: endS, endS: startS };
   const carousel = timeline.entries.find((entry) => entry.kind === "carousel");
   const projection = timeline.carouselProjection;
   const durationS = Math.max(0, range.endS - range.startS);
   if (!carousel || !projection || durationS <= EPSILON) return { startS, endS };
   const midpointS = (range.startS + range.endS) / 2;
   const carouselMidpointS = carousel.startS + carousel.durationS / 2;
+  const baseInsertionS = inverseDraftTime(timeline, projection.baseInsertionS);
   return midpointS < carouselMidpointS
     ? {
-        startS: roundMillis(Math.max(0, projection.baseInsertionS - durationS)),
-        endS: projection.baseInsertionS,
+        startS: roundMillis(Math.max(0, baseInsertionS - durationS)),
+        endS: baseInsertionS,
       }
     : {
-        startS: projection.baseInsertionS,
-        endS: roundMillis(projection.baseInsertionS + durationS),
+        startS: baseInsertionS,
+        endS: roundMillis(baseInsertionS + durationS),
       };
 }
 

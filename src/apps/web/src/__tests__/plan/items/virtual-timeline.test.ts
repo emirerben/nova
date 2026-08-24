@@ -247,6 +247,80 @@ describe("virtual timeline", () => {
     expect(unprojectOutputTime(timeline, 2.5)).toBe(4.5);
   });
 
+  it("keeps projected authored ranges ordered when clips are reordered", () => {
+    const baseline = [
+      slot({ key: "a", clipIndex: 0, durationS: 4 }),
+      slot({ key: "b", clipIndex: 1, durationS: 4 }),
+    ];
+    const draft = [
+      slot({ key: "b", clipIndex: 1, durationS: 4 }),
+      slot({ key: "a", clipIndex: 0, durationS: 4 }),
+    ];
+    const timeline = buildVirtualTimeline(draft, clips, [], null, baseline);
+
+    expect(projectBaseRange(timeline, { startS: 3.4, endS: 5.2 })).toEqual({
+      startS: 1.2,
+      endS: 7.4,
+    });
+  });
+
+  it("keeps inverse ranges ordered when clips are reordered", () => {
+    const baseline = [
+      slot({ key: "a", clipIndex: 0, durationS: 4 }),
+      slot({ key: "b", clipIndex: 1, durationS: 4 }),
+    ];
+    const draft = [
+      slot({ key: "b", clipIndex: 1, durationS: 4 }),
+      slot({ key: "a", clipIndex: 0, durationS: 4 }),
+    ];
+    const timeline = buildVirtualTimeline(draft, clips, [], null, baseline);
+
+    expect(unprojectOutputTime(timeline, 1)).toBe(5);
+    expect(unprojectOutputTime(timeline, 5)).toBe(1);
+    expect(unprojectOutputRange(timeline, { startS: 1, endS: 5 })).toEqual({
+      startS: 1,
+      endS: 5,
+    });
+  });
+
+  it("right-biases inverse mapping through a trimmed crossfade", () => {
+    const baseline = [
+      slot({ key: "a", clipIndex: 0, durationS: 4, transitionAfter: "crossfade" }),
+      slot({ key: "b", clipIndex: 1, durationS: 4 }),
+    ];
+    const draft = [
+      slot({ key: "a", clipIndex: 0, durationS: 2, transitionAfter: "crossfade" }),
+      slot({ key: "b", clipIndex: 1, durationS: 4 }),
+    ];
+    const timeline = buildVirtualTimeline(draft, clips, [], null, baseline);
+
+    expect(unprojectOutputTime(timeline, 1.8)).toBe(3.8);
+  });
+
+  it("removes carousel ripple before inverse-mapping a baseline segment", () => {
+    const baseline = [
+      slot({ key: "a", clipIndex: 0, durationS: 4 }),
+      slot({ key: "b", clipIndex: 1, durationS: 4 }),
+    ];
+    const draft = [
+      slot({ key: "a", clipIndex: 0, durationS: 2 }),
+      slot({ key: "b", clipIndex: 1, durationS: 4 }),
+    ];
+    const timeline = buildVirtualTimeline(
+      draft,
+      clips,
+      [],
+      { position: "middle", durationS: 3 },
+      baseline,
+    );
+
+    expect(unprojectOutputTime(timeline, 1)).toBe(1);
+    expect(unprojectOutputTime(timeline, 2)).toBe(4);
+    expect(unprojectOutputTime(timeline, 5)).toBe(4);
+    expect(unprojectOutputTime(timeline, 3)).toBe(4);
+    expect(unprojectOutputTime(timeline, 6.5)).toBe(5.5);
+  });
+
   it("clamps before the start and at the final frame", () => {
     const timeline = buildVirtualTimeline(
       [slot({ key: "a", clipIndex: 0, inS: 3, durationS: 2 })],
