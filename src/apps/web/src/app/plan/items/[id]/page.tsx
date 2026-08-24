@@ -1225,7 +1225,7 @@ export default function PlanItemPage() {
             ? current.filter((x) => x.gcs_path !== attachedPath)
             : current,
         );
-      } catch (err) {
+      } catch {
         // Removal is best-effort; the clip is deletable from its card.
       }
       setPendingClipUploads((prev) => prev.filter((p) => p.localId !== local.localId));
@@ -1259,7 +1259,7 @@ export default function PlanItemPage() {
       });
       try {
         await scheduleAttachDrain();
-      } catch {
+      } catch (err) {
         setPendingClipUploads((prev) =>
           prev.map((p) =>
             p.localId === localId
