@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.49.1.1] — 2026-08-24
+
+### Changed
+- **Edit feedback now starts from the normal production Kria link.** The `$review-edit` skill resolves the newest eligible render for the exact plan item and variant behind the scenes, accepts free-form critique, and asks for one compact confirmation without requiring the admin interface or an admin artifact URL.
+
 ## [0.49.1.0] — 2026-08-23
 
 ### Added

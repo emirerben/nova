@@ -438,10 +438,27 @@ def _artifact_out(
     )
 
 
+def _filter_artifact_identity(
+    query: Any,
+    artifact_model: Any,
+    *,
+    plan_item_id: uuid.UUID | None,
+    variant_id: str | None,
+) -> Any:
+    """Narrow a review lookup to the exact product item URL identity."""
+    if plan_item_id:
+        query = query.where(artifact_model.plan_item_id == plan_item_id)
+    if variant_id:
+        query = query.where(artifact_model.variant_id == variant_id)
+    return query
+
+
 @router.get("", response_model=ListArtifactsResponse, dependencies=[Depends(_require_admin)])
 def list_edit_feedback(
     cursor: str | None = None,
     limit: int = Query(30, ge=1, le=100),
+    plan_item_id: uuid.UUID | None = None,
+    variant_id: str | None = Query(default=None, min_length=1, max_length=100),
     format: str | None = None,
     language: str | None = None,
     media_mix: str | None = None,
@@ -468,6 +485,12 @@ def list_edit_feedback(
             select(EditArtifact, PlanItem.edit_format)
             .join(PlanItem, PlanItem.id == EditArtifact.plan_item_id)
             .where(EditArtifact.artifact_kind == "final_render")
+        )
+        query = _filter_artifact_identity(
+            query,
+            EditArtifact,
+            plan_item_id=plan_item_id,
+            variant_id=variant_id,
         )
         if format:
             query = query.where(PlanItem.edit_format == format)
