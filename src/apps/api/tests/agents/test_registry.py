@@ -51,6 +51,8 @@ _EXPECTED = {
     "nova.edit.copilot",
     # Proactive ranked editor suggestions
     "nova.edit.director",
+    # Main Creator Agent V1 — capability-aware creative orchestrator
+    "nova.creator.main",
 }
 
 
