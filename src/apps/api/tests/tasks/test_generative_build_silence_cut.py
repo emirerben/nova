@@ -7,15 +7,14 @@ Pins the `_render_subtitled_variant` wiring of the silence-cut stage:
   as test_generative_build_sequence's kill-switch pins
 - has_audio gate short-circuits BEFORE any ASR call (eng review 3A)
 - per-item `silence_cut_disabled` skips the stage entirely, retakes included
-- safety-rail bailout renders uncut + `silence_cut_bailout` event; a clip
-  below MIN_CLIP_S bails BEFORE any whisper/silencedetect spend (P3) and
-  captions fall back to the base-transcription path
+- unsafe safety-rail bailout fails an eligible variant; a clip below MIN_CLIP_S
+  bails BEFORE any whisper/silencedetect spend (P3) and captions fall back to
+  the base-transcription path
 - happy path: keep_segments + the KEEP_SEGMENTS_PUNCH_IN constant reach the
   reframe; captions come from remap_words minus filler tokens (15A), NO second
   transcription of the base; `silence_cut` persisted on the variant
-- cut-apply failure fails OPEN (R3a): uncut retry, `silence_cut_apply_failed`
-  event, no persisted summary; analysis failure is cached once (7A) and both
-  renders caption from the base path
+- eligible cut-apply and analysis failures fail the variant instead of shipping
+  an uncut output; analysis failure is still cached once (7A)
 - retake isolation: detector failure ⇒ zero retake cuts, silence cuts proceed;
   RETAKE_CUT_ENABLED off ⇒ detector never constructed
 - per-job cache (7A): one whisper + one silencedetect + one cut encode across
@@ -277,7 +276,7 @@ def test_flag_off_is_byte_identical_dispatch(monkeypatch, tmp_path):
     assert len(calls["transcribe"]) == 1
     assert calls["transcribe"][0]["path"].endswith("final_base.mp4")
     assert calls["transcribe"][0]["verbatim_prompt"] is None
-    # No silencedetect, no cut kwargs, no silence_cut key, no stage events.
+    # No silencedetect, no cut kwargs, no silence_cut key, and no trace write.
     assert calls["detect"] == []
     assert len(calls["reframe"]) == 1
     assert "keep_segments" not in calls["reframe"][0]
@@ -332,7 +331,7 @@ def test_subtitled_text_lane_flag_off_keeps_no_cue_base_upload_unchanged(monkeyp
     assert [path.rsplit("/", 1)[-1] for path in uploads] == ["variant_1_subtitled.mp4"]
 
 
-# ── Gates (all fail-open to today's flow) ────────────────────────────────────────
+# ── Gates (explicitly ineligible clips fail-open) ────────────────────────────────
 
 
 def test_has_audio_gate_short_circuits_before_asr(monkeypatch, tmp_path):
@@ -372,7 +371,7 @@ def test_per_item_disable_skips_stage_including_retakes(monkeypatch, tmp_path):
     assert res["silence_cut"] is None
 
 
-def test_bailout_renders_uncut_with_event(monkeypatch, tmp_path):
+def test_unsafe_bailout_fails_eligible_variant(monkeypatch, tmp_path):
     monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
     monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
     calls = _patch_pipeline(
@@ -384,19 +383,16 @@ def test_bailout_renders_uncut_with_event(monkeypatch, tmp_path):
 
     res = _render(monkeypatch, tmp_path)
 
-    assert res["ok"] is True
+    assert res["ok"] is False
+    assert "unsafe plan bailout" in res["error"]
     events = _events_named(calls, "silence_cut_bailout")
     assert events and events[0][2]["reason"] == "max_removal_exceeded"
-    # Video renders uncut …
-    assert "keep_segments" not in calls["reframe"][0]
-    # … but the verbatim transcript is NOT thrown away: captions come from it
-    # (one whisper call total, on the ORIGINAL clip — never a second base pass).
+    assert calls["reframe"] == []
+    # The verbatim analysis still ran once on the ORIGINAL clip.
     assert len(calls["transcribe"]) == 1
     assert calls["transcribe"][0]["path"].endswith("clip.mp4")
     assert calls["transcribe"][0]["verbatim_prompt"] == SILENCE_CUT_VERBATIM_PROMPT
-    assert [w.text for w in calls["cues"][0]] == ["hi", "there"]
-    # Bailouts are event-only — nothing persisted on the variant.
-    assert res["silence_cut"] is None
+    assert _events_named(calls, "silence_cut_required_failed")
 
 
 def test_short_clip_bails_before_any_asr_spend(monkeypatch, tmp_path):
@@ -425,10 +421,32 @@ def test_short_clip_bails_before_any_asr_spend(monkeypatch, tmp_path):
     assert res["silence_cut"] is None  # bailouts stay event-only
 
 
-def test_analysis_failure_fails_open_and_caches_failure_once(monkeypatch, tmp_path):
-    """Analysis blow-up (whisper 500) fails OPEN to the uncut flow, and the
-    failure is cached (7A): a sibling render never re-spends the failing call
-    — both variants caption from the base-transcription fallback."""
+def test_eligible_no_speech_clip_fails_open_without_cut(monkeypatch, tmp_path):
+    """An enabled real-audio clip with no recognized speech has nothing to cut.
+
+    It remains a valid uncut render and falls back to base transcription rather
+    than failing the variant or passing an empty caption timeline downstream.
+    """
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    calls = _patch_pipeline(monkeypatch, words=[], silences=[], duration=8.0)
+
+    res = _render(monkeypatch, tmp_path)
+
+    assert res["ok"] is True
+    events = _events_named(calls, "silence_cut_bailout")
+    assert events and events[0][2]["reason"] == "no_words"
+    assert len(calls["transcribe"]) == 2
+    assert calls["transcribe"][0]["path"].endswith("clip.mp4")
+    assert calls["transcribe"][0]["verbatim_prompt"] == SILENCE_CUT_VERBATIM_PROMPT
+    assert calls["transcribe"][1]["path"].endswith("final_base.mp4")
+    assert calls["transcribe"][1]["verbatim_prompt"] is None
+    assert "keep_segments" not in calls["reframe"][0]
+
+
+def test_analysis_failure_fails_variant_and_caches_failure_once(monkeypatch, tmp_path):
+    """Analysis blow-up fails an eligible variant, and the failure is cached
+    (7A) so a sibling render never re-spends the failing call."""
     import app.pipeline.transcribe as transcribe_mod
 
     monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
@@ -454,16 +472,16 @@ def test_analysis_failure_fails_open_and_caches_failure_once(monkeypatch, tmp_pa
     first = _render(monkeypatch, tmp_path, cache=cache)
     second = _render(monkeypatch, tmp_path, cache=cache, subdir="variant2")
 
-    assert first["ok"] is True and second["ok"] is True
-    assert first["silence_cut"] is None and second["silence_cut"] is None
+    assert first["ok"] is False and second["ok"] is False
+    assert "silence_cut_required" in first["error"]
+    assert "silence_cut_required" in second["error"]
     # The failing verbatim call was spent ONCE across both renders …
     assert verbatim_calls["n"] == 1
     assert len(_events_named(calls, "silence_cut_analysis_failed")) == 1
-    # … and each render captions from its own base pass, uncut.
+    # No uncut fallback transcription or reframe is allowed after the failure.
     base_calls = [c for c in calls["transcribe"] if c["verbatim_prompt"] is None]
-    assert len(base_calls) == 2
-    assert all(c["path"].endswith("final_base.mp4") for c in base_calls)
-    assert all("keep_segments" not in r for r in calls["reframe"])
+    assert base_calls == []
+    assert calls["reframe"] == []
 
 
 # ── Happy path ───────────────────────────────────────────────────────────────────
@@ -521,6 +539,35 @@ def test_happy_path_cuts_captions_and_persists(monkeypatch, tmp_path):
     assert res["caption_language"] == "en"
 
 
+def test_turkish_elongated_filler_is_cut_from_video_and_captions(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    words = [
+        Word(text="Herkese", start_s=0.5, end_s=0.9, confidence=1.0),
+        Word(text="ııııı", start_s=1.2, end_s=2.0, confidence=1.0),
+        Word(text="merhaba", start_s=2.2, end_s=2.8, confidence=1.0),
+        Word(text="bugün", start_s=3.0, end_s=3.6, confidence=1.0),
+        Word(text="ürün", start_s=4.0, end_s=4.5, confidence=1.0),
+        Word(text="tanıtacağız.", start_s=4.7, end_s=5.6, confidence=1.0),
+    ]
+    calls = _patch_pipeline(monkeypatch, words=words, silences=[], duration=8.0)
+
+    res = _render(monkeypatch, tmp_path)
+
+    assert res["ok"] is True
+    assert calls["reframe"][0]["keep_segments"] == pytest.approx(
+        [(0.0, 1.08), (2.12, 8.0)]
+    )
+    assert [word.text for word in calls["cues"][0]] == [
+        "Herkese",
+        "merhaba",
+        "bugün",
+        "ürün",
+        "tanıtacağız.",
+    ]
+    assert res["silence_cut"]["removed"][0]["reason"] == "filler_lexical"
+
+
 def test_zero_removal_plan_persists_empty_summary(monkeypatch, tmp_path):
     """A clean plan with NOTHING to cut is not a bailout: "nothing to cut" is
     information — persisted with removed=[] + the plan event (applied False),
@@ -551,11 +598,8 @@ def test_zero_removal_plan_persists_empty_summary(monkeypatch, tmp_path):
     assert not _events_named(calls, "silence_cut_bailout")
 
 
-def test_cut_apply_failure_falls_open_to_uncut(monkeypatch, tmp_path):
-    """R3a: a cut-applying reframe failure costs the CUTS, never the variant —
-    uncut retry (no keep_segments), `silence_cut_apply_failed` event, captions
-    from the base-transcription fallback, and NO persisted summary (a
-    removed[] blob on an uncut video lies to the admin viewer)."""
+def test_cut_apply_failure_fails_eligible_variant(monkeypatch, tmp_path):
+    """A cut-applying reframe failure must not publish an uncut variant."""
     import app.pipeline.reframe as reframe_mod
 
     monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
@@ -573,22 +617,18 @@ def test_cut_apply_failure_falls_open_to_uncut(monkeypatch, tmp_path):
 
     res = _render(monkeypatch, tmp_path)
 
-    assert res["ok"] is True  # fail-open: never a variant failure
-    # First attempt carried the plan; the retry is the plain uncut reframe.
-    assert len(calls["reframe"]) == 2
+    assert res["ok"] is False
+    assert "silence_cut_required" in res["error"]
+    # Only the cut attempt ran; no uncut retry is allowed.
+    assert len(calls["reframe"]) == 1
     assert "keep_segments" in calls["reframe"][0]
-    assert "keep_segments" not in calls["reframe"][1]
     events = _events_named(calls, "silence_cut_apply_failed")
     assert events and events[0][2]["variant_id"] == "subtitled"
     assert "blew up" in events[0][2]["error"]
-    # No summary, no plan event — the shipped video is uncut.
-    assert res["silence_cut"] is None
-    assert not _events_named(calls, "silence_cut_plan")
-    # Captions fall back to the base-transcription path (the remapped verbatim
-    # words describe a cut timeline that no longer exists).
+    assert _events_named(calls, "silence_cut_required_failed")
+    # The failed cut never falls back to a second base transcription.
     base_calls = [c for c in calls["transcribe"] if c["verbatim_prompt"] is None]
-    assert len(base_calls) == 1
-    assert base_calls[0]["path"].endswith("final_base.mp4")
+    assert base_calls == []
 
 
 # ── Retakes ──────────────────────────────────────────────────────────────────────
