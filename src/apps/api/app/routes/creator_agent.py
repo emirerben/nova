@@ -35,6 +35,7 @@ from app.agents._schemas.creator_agent import (
     SetLicensedSfxCommand,
     canonical_context_hash,
 )
+from app.agents._schemas.creator_policy import MAX_MAIN_CREATOR_SELECTED_MEDIA
 from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
 from app.auth import CurrentUser
 from app.config import settings
@@ -318,7 +319,7 @@ def _fallback_strategy(manifest: Any) -> CreativeStrategy:
                 media.media_id
                 for media in manifest.media
                 if not media.media_id.startswith("asset-")
-            ][:12]
+            ][:MAX_MAIN_CREATOR_SELECTED_MEDIA]
         ),
         rationale=(
             "Build a clear opening, keep only the strongest moments, "

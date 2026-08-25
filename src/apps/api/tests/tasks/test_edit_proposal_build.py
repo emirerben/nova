@@ -715,10 +715,13 @@ class _FakeAgentOutput:
         self.story_beats = [_FakeBeat(media_ids)]
 
 
-def test_main_creator_production_shape_repairs_agent_refs_and_persists_all_media(
+@pytest.mark.parametrize(("clip_count", "asset_count"), [(45, 58), (50, 100)])
+def test_main_creator_large_shape_repairs_agent_refs_and_persists_all_media(
     monkeypatch,
+    clip_count: int,
+    asset_count: int,
 ) -> None:
-    """The exact 45-clip + 58-visual failure shape reaches Kria intact."""
+    """The production failure and maximum accepted media shapes reach Kria intact."""
 
     item_id = uuid.uuid4()
     owner_id = uuid.uuid4()
@@ -727,7 +730,7 @@ def test_main_creator_production_shape_repairs_agent_refs_and_persists_all_media
             "media_id": f"clip-{index}",
             "gcs_path": f"users/u/plan/{item_id}/clips/{index}.mp4",
         }
-        for index in range(45)
+        for index in range(clip_count)
     ]
     item = _prod_item(item_id, clip_assignments=assignments, approval_mode="auto")
     clip_refs = [
@@ -749,7 +752,7 @@ def test_main_creator_production_shape_repairs_agent_refs_and_persists_all_media
             generation="1",
             kind="image",
         )
-        for index in range(58)
+        for index in range(asset_count)
     ]
     db = _Db(_Result(rows=[SimpleNamespace(user_id=owner_id, status="ready") for _ in pool_refs]))
 
@@ -814,8 +817,8 @@ def test_main_creator_production_shape_repairs_agent_refs_and_persists_all_media
     assert persisted is not None
     assert persisted.status == "approved"
     assert persisted.last_approved is not None
-    assert len(captured_media) == 103
-    assert len(persisted.last_approved.snapshot.media) == 103
+    assert len(captured_media) == clip_count + asset_count
+    assert len(persisted.last_approved.snapshot.media) == clip_count + asset_count
     selected = {
         media_id
         for beat in persisted.last_approved.snapshot.story_beats

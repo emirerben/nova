@@ -3,9 +3,10 @@ import json
 from app.agents._schemas.creator_agent import (
     CapabilityAvailability,
     CreatorMediaRef,
+    ProposeStrategy,
     ResolvedCreatorManifest,
 )
-from app.agents.main_creator import MainCreatorAgent, MainCreatorInput, ProposeStrategy
+from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
 
 
 def _manifest() -> ResolvedCreatorManifest:

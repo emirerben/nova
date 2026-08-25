@@ -174,7 +174,8 @@ def _resolve_model_media_references(
 
     _aliased, alias_to_id, id_to_alias = _prompt_media(input)
     candidates = list(id_to_alias)
-    media_by_id = {media.media_id: media for media in shortlist_edit_proposal_media(input)}
+    input_by_id = {media.media_id: media for media in input.media}
+    media_by_id = {media_id: input_by_id[media_id] for media_id in id_to_alias}
     candidate_cursor = 0
     repairs = 0
     unknown_story_reference_repaired = False
