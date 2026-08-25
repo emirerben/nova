@@ -145,7 +145,14 @@ def test_fast_montage_uses_analyzed_deterministic_fallback_on_terminal_schema(
     assert cuts[0].role == "hook"
     assert cuts[-1].role == "payoff"
     assert all(cut.transition == "none" for cut in cuts)
-    assert cuts[0].source_start_s == 2.5
+    assert cuts[0].source_start_s == 0
+    assert cuts[0].source_end_s == 1.2
+    strong_windows = sorted(
+        (cut.source_start_s, cut.source_end_s) for cut in cuts if cut.media_id == "strong"
+    )
+    assert all(
+        current[0] >= previous[1] for previous, current in zip(strong_windows, strong_windows[1:])
+    )
 
 
 def test_guided_replan_terminal_failure_builds_compiler_valid_mixed_media_fallback(
@@ -267,11 +274,10 @@ def _mixed_duration_source(duration_s: int) -> EditProposalSnapshot:
     )
 
 
-@pytest.mark.parametrize("duration_s", [14, 60])
-def test_fast_montage_fallback_allocates_short_source_once_without_shortening_long_cuts(
+def test_fast_montage_fallback_omits_unneeded_short_source_without_shortening_long_cuts(
     monkeypatch,
-    duration_s: int,
 ) -> None:
+    duration_s = 14
     monkeypatch.setattr(edit_direction_planner, "EditProposalAgent", FailingAgent)
     source = _mixed_duration_source(duration_s)
 
@@ -287,12 +293,27 @@ def test_fast_montage_fallback_allocates_short_source_once_without_shortening_lo
     short_cuts = [cut for cut in cuts if cut.media_id == "short"]
     long_cuts = [cut for cut in cuts if cut.media_id != "short"]
     assert len(cuts) <= 80
-    assert len(short_cuts) == 1
-    assert short_cuts[0].output_duration_s == 0.4
+    assert short_cuts == []
+    assert len({cut.media_id for cut in long_cuts}) >= 4
     assert all(0.8 <= cut.output_duration_s <= 1.2 for cut in long_cuts)
     assert sum(cut.output_duration_s for cut in cuts) == pytest.approx(duration_s)
     by_id = {ref.media_id: ref for ref in source.media}
     assert all(cut.source_end_s <= float(by_id[cut.media_id].duration_s or 0) for cut in cuts)
+
+
+def test_fast_montage_fallback_fails_when_non_overlapping_capacity_is_insufficient(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(edit_direction_planner, "EditProposalAgent", FailingAgent)
+
+    with pytest.raises(ValueError, match="distinct source windows safely"):
+        edit_direction_planner.plan_direction_snapshot(
+            _mixed_duration_source(60),
+            direction="fast_montage",
+            goal="Move through the strongest moments",
+            pace="fast",
+            duration_s=60,
+        )
 
 
 def test_fast_montage_fallback_respects_subsecond_source_specific_capacity(
@@ -314,9 +335,43 @@ def test_fast_montage_fallback_respects_subsecond_source_specific_capacity(
     cuts = snapshot.fast_cuts or []
     by_id = {ref.media_id: ref for ref in source.media}
     assert sum(cut.output_duration_s for cut in cuts) == pytest.approx(14)
-    assert len([cut for cut in cuts if cut.media_id == "short"]) == 1
+    assert not [cut for cut in cuts if cut.media_id == "short"]
     assert len([cut for cut in cuts if cut.media_id == "long-0"]) == 1
     assert all(cut.source_start_s >= 0 for cut in cuts)
     assert all(
         cut.source_end_s <= float(by_id[cut.media_id].duration_s or 0) + 0.001 for cut in cuts
     )
+
+
+def test_fast_montage_fallback_never_repeats_adjacent_or_overlaps_video_windows() -> None:
+    media = [
+        MediaRef(
+            lane="clip",
+            media_id="long",
+            gcs_path="users/test/long.mp4",
+            generation="1",
+            kind="video",
+            duration_s=10,
+        ),
+        *[
+            MediaRef(
+                lane="clip",
+                media_id=f"short-{index}",
+                gcs_path=f"users/test/short-{index}.mp4",
+                generation="1",
+                kind="video",
+                duration_s=0.8 + index * 0.04,
+            )
+            for index in range(6)
+        ],
+    ]
+
+    cuts = edit_direction_planner.deterministic_fast_cuts(media, 10)
+
+    assert all(left.media_id != right.media_id for left, right in zip(cuts, cuts[1:]))
+    windows_by_id: dict[str, list[tuple[float, float]]] = {}
+    for cut in cuts:
+        windows_by_id.setdefault(cut.media_id, []).append((cut.source_start_s, cut.source_end_s))
+    for windows in windows_by_id.values():
+        windows.sort()
+        assert all(current[0] >= previous[1] for previous, current in zip(windows, windows[1:]))

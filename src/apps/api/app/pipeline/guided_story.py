@@ -1197,6 +1197,31 @@ def compile_execution_plan(
 def validate_proposal_timing(snapshot: EditProposalSnapshot) -> None:
     """Reject an editorial revision that the strict renderer cannot allocate."""
 
+    if snapshot.fast_cuts:
+        media_by_id = {ref.media_id: ref for ref in snapshot.media}
+        previous_id: str | None = None
+        windows_by_media: dict[str, list[tuple[float, float]]] = {}
+        for cut in snapshot.fast_cuts:
+            if cut.media_id == previous_id:
+                raise GuidedStoryError(
+                    "guided_story_snapshot_invalid",
+                    "Fast montage cuts cannot repeat the same media adjacently.",
+                )
+            previous_id = cut.media_id
+            ref = media_by_id.get(cut.media_id)
+            if ref is not None and ref.kind == "video":
+                windows_by_media.setdefault(cut.media_id, []).append(
+                    (float(cut.source_start_s), float(cut.source_end_s))
+                )
+        for windows in windows_by_media.values():
+            windows.sort()
+            for previous, current in zip(windows, windows[1:]):
+                if current[0] < previous[1] - _DURATION_MATCH_TOLERANCE_S:
+                    raise GuidedStoryError(
+                        "guided_story_snapshot_invalid",
+                        "Fast montage cuts cannot reuse overlapping video footage.",
+                    )
+
     media_digest = canonical_media_digest(snapshot.media)
     compile_execution_plan(
         {

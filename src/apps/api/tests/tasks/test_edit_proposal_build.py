@@ -716,7 +716,7 @@ class _FakeAgentOutput:
 
 
 @pytest.mark.parametrize(("clip_count", "asset_count"), [(45, 58), (50, 100)])
-def test_main_creator_large_shape_repairs_agent_refs_and_persists_all_media(
+def test_main_creator_large_shape_rejects_unknown_refs_then_persists_safe_fallback_media(
     monkeypatch,
     clip_count: int,
     asset_count: int,
@@ -760,7 +760,7 @@ def test_main_creator_large_shape_repairs_agent_refs_and_persists_all_media(
     def _session():
         yield db
 
-    captured_media: list[object] = []
+    prompts: list[str] = []
     monkeypatch.setattr(proposal_build, "sync_session", _session)
     monkeypatch.setattr(proposal_build, "_locked_item", lambda *_a, **_kw: (item, owner_id))
     monkeypatch.setattr(proposal_build, "_attempt_is_active", lambda *_a, **_kw: True)
@@ -771,43 +771,44 @@ def test_main_creator_large_shape_repairs_agent_refs_and_persists_all_media(
         lambda clip_assignments, *_a, **_kw: list(zip(clip_assignments, clip_refs, strict=True)),
     )
     monkeypatch.setattr(proposal_build, "media_generations_match_sync", lambda _refs: True)
-    monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
-
-    def _run_agent(_self, input):  # noqa: ANN001, A002
-        captured_media[:] = input.media
-        from app.agents.edit_proposal import EditProposalAgent
-
-        return EditProposalAgent(None).parse(  # type: ignore[arg-type]
-            json.dumps(
+    raw_unknown_story = json.dumps(
+        {
+            "title": "A few moments",
+            "duration_s": 24,
+            "story_beats": [
                 {
-                    "title": "A few moments",
-                    "duration_s": 24,
-                    "story_beats": [
-                        {
-                            "topic": "Opening",
-                            "thought": "A clear opening sets the visual rhythm.",
-                            "media_ids": ["unknown-a"],
-                            "duration_s": 8,
-                        },
-                        {
-                            "topic": "Details",
-                            "thought": "Small details give the sequence texture.",
-                            "media_ids": ["unknown-b"],
-                            "duration_s": 8,
-                        },
-                        {
-                            "topic": "Closing",
-                            "thought": "A final frame gives the edit a finish.",
-                            "media_ids": ["unknown-c"],
-                            "duration_s": 8,
-                        },
-                    ],
-                }
-            ),
-            input,
-        )
+                    "topic": "Opening",
+                    "thought": "This semantic copy must never move to unrelated footage.",
+                    "media_ids": ["unknown-a"],
+                    "duration_s": 8,
+                },
+                {
+                    "topic": "Details",
+                    "thought": "Small details give the sequence texture.",
+                    "media_ids": ["unknown-b"],
+                    "duration_s": 8,
+                },
+                {
+                    "topic": "Closing",
+                    "thought": "A final frame gives the edit a finish.",
+                    "media_ids": ["unknown-c"],
+                    "duration_s": 8,
+                },
+            ],
+        }
+    )
 
-    monkeypatch.setattr("app.agents.edit_proposal.EditProposalAgent.run", _run_agent)
+    class _UnknownStoryClient:
+        def invoke(self, **kwargs):  # noqa: ANN003, ANN202
+            from app.agents._runtime import ModelInvocation
+
+            prompts.append(kwargs["prompt"])
+            return ModelInvocation(raw_text=raw_unknown_story)
+
+    monkeypatch.setattr(
+        "app.agents._model_client.default_client",
+        lambda: _UnknownStoryClient(),
+    )
 
     proposal_build._run_draft_attempt(
         SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, auto_finalize=True
@@ -817,7 +818,8 @@ def test_main_creator_large_shape_repairs_agent_refs_and_persists_all_media(
     assert persisted is not None
     assert persisted.status == "approved"
     assert persisted.last_approved is not None
-    assert len(captured_media) == clip_count + asset_count
+    assert len(prompts) == 2  # real Agent.run schema retry boundary
+    assert all(prompt.count('"media_id": "m') == 32 for prompt in prompts)
     assert len(persisted.last_approved.snapshot.media) == clip_count + asset_count
     selected = {
         media_id
@@ -826,6 +828,10 @@ def test_main_creator_large_shape_repairs_agent_refs_and_persists_all_media(
     }
     assert selected <= {ref.media_id for ref in persisted.last_approved.snapshot.media}
     assert len(selected) >= 7
+    assert all(
+        beat.thought != "This semantic copy must never move to unrelated footage."
+        for beat in persisted.last_approved.snapshot.story_beats
+    )
 
 
 def _prepare_terminal_agent_attempt(monkeypatch, *, direction: str = "guided_story"):

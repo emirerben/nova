@@ -181,8 +181,6 @@ def _resolve_model_media_references(
     media_by_id = {media_id: input_by_id[media_id] for media_id in id_to_alias}
     candidate_cursor = 0
     repairs = 0
-    unknown_story_reference_repaired = False
-    story_used_short_alias = False
 
     def next_candidate(*, excluded: set[str], source_end_s: float | None = None) -> str | None:
         nonlocal candidate_cursor
@@ -204,47 +202,23 @@ def _resolve_model_media_references(
 
     raw_beats = payload.get("story_beats")
     if isinstance(raw_beats, list):
-        used: set[str] = set()
         for raw_beat in raw_beats:
             if not isinstance(raw_beat, dict) or not isinstance(raw_beat.get("media_ids"), list):
                 continue
             resolved: list[str] = []
             for raw_id in raw_beat["media_ids"]:
                 media_id = alias_to_id.get(str(raw_id))
-                if media_id is not None:
-                    story_used_short_alias = True
                 if media_id is None and str(raw_id) in id_to_alias:
                     media_id = str(raw_id)
                 if media_id is None:
-                    media_id = next_candidate(excluded=set(resolved))
-                    repairs += 1
-                    unknown_story_reference_repaired = True
+                    # Story text is semantic. Rebinding it to an arbitrary
+                    # source can make a valid-looking proposal describe
+                    # unrelated footage. Let the agent retry, then let the
+                    # task's metadata-free guided fallback recover safely.
+                    raise SchemaError("edit_proposal: beat references unknown media")
                 if media_id is not None and media_id not in resolved:
                     resolved.append(media_id)
             raw_beat["media_ids"] = resolved
-            used.update(resolved)
-        minimum = minimum_required_sources(len(input.media))
-        if raw_beats and (unknown_story_reference_repaired or story_used_short_alias):
-            beat_index = 0
-            while len(used) < minimum:
-                raw_beat = raw_beats[beat_index % len(raw_beats)]
-                beat_index += 1
-                if not isinstance(raw_beat, dict) or not isinstance(
-                    raw_beat.get("media_ids"), list
-                ):
-                    if beat_index > len(raw_beats) * 4:
-                        break
-                    continue
-                if len(raw_beat["media_ids"]) >= 4:
-                    if beat_index > len(raw_beats) * 4:
-                        break
-                    continue
-                media_id = next_candidate(excluded=used | set(raw_beat["media_ids"]))
-                if media_id is None:
-                    break
-                raw_beat["media_ids"].append(media_id)
-                used.add(media_id)
-                repairs += 1
 
     raw_cuts = payload.get("fast_cuts")
     if isinstance(raw_cuts, list):

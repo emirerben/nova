@@ -300,7 +300,9 @@ def _production_shape_input(*, direction: str = "guided_story") -> EditProposalA
     )
 
 
-def test_production_45_plus_58_shape_uses_bounded_alias_prompt_and_repairs_unknown_refs() -> None:
+def test_production_45_plus_58_shape_uses_bounded_alias_prompt_and_rejects_unknown_story_refs() -> (
+    None
+):
     agent_input = _production_shape_input()
     agent = EditProposalAgent(None)  # type: ignore[arg-type]
 
@@ -309,46 +311,39 @@ def test_production_45_plus_58_shape_uses_bounded_alias_prompt_and_repairs_unkno
     assert agent_input.media[0].media_id not in prompt
     assert agent_input.media[-1].media_id not in prompt
 
-    output = agent.parse(
-        json.dumps(
-            {
-                "title": "A few moments",
-                "duration_s": 24,
-                "story_beats": [
-                    {
-                        "topic": "Opening",
-                        "thought": "A clear opening sets the visual rhythm.",
-                        "media_ids": ["unknown-a"],
-                        "layout": "fullscreen",
-                        "duration_s": 8,
-                    },
-                    {
-                        "topic": "Details",
-                        "thought": "Small details give the sequence texture.",
-                        "media_ids": ["unknown-b"],
-                        "layout": "fullscreen",
-                        "duration_s": 8,
-                    },
-                    {
-                        "topic": "Closing",
-                        "thought": "A final frame gives the edit a finish.",
-                        "media_ids": ["unknown-c"],
-                        "layout": "fullscreen",
-                        "duration_s": 8,
-                    },
-                ],
-            }
-        ),
-        agent_input,
-    )
-
-    selected = {media_id for beat in output.story_beats for media_id in beat.media_ids}
-    assert len(selected) >= 7
-    assert selected <= {media.media_id for media in agent_input.media}
-    assert {media.kind for media in agent_input.media if media.media_id in selected} == {
-        "image",
-        "video",
-    }
+    with pytest.raises(SchemaError, match="beat references unknown media"):
+        agent.parse(
+            json.dumps(
+                {
+                    "title": "A few moments",
+                    "duration_s": 24,
+                    "story_beats": [
+                        {
+                            "topic": "Opening",
+                            "thought": "This semantic copy must never move to unrelated footage.",
+                            "media_ids": ["unknown-a"],
+                            "layout": "fullscreen",
+                            "duration_s": 8,
+                        },
+                        {
+                            "topic": "Details",
+                            "thought": "Small details give the sequence texture.",
+                            "media_ids": ["unknown-b"],
+                            "layout": "fullscreen",
+                            "duration_s": 8,
+                        },
+                        {
+                            "topic": "Closing",
+                            "thought": "A final frame gives the edit a finish.",
+                            "media_ids": ["unknown-c"],
+                            "layout": "fullscreen",
+                            "duration_s": 8,
+                        },
+                    ],
+                }
+            ),
+            agent_input,
+        )
 
 
 def test_guided_short_aliases_resolve_to_exact_shortlisted_owned_media() -> None:
