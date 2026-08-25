@@ -48,6 +48,11 @@ guided planner's `ProposalBrief`; that specialist receives a deterministic,
 render-capable shortlist of at most 32 media sources under per-call aliases such
 as `m001`. The complete accepted media universe remains in the server-owned
 proposal snapshot and editor, so bounding the model call never drops uploads.
+The confirmed request can carry the typed `mixed_media_timing` profile: photos use
+0.5–0.8s holds, usable videos use 1.5–3.0s holds when source footage permits,
+and fast-montage boundaries are hard cuts. The profile is compiled through the
+proposal snapshot and deterministic fallback; absent the profile, legacy timing
+limits remain unchanged.
 Audio-led and voiceover formats always use the native renderer. The existing
 `dispatch_item_render_for` gateway mints the Job. V1 then follows that exact Job
 and records its selected ready variant and `render_generation_id`. The creator can
@@ -316,8 +321,9 @@ flags are live.
 - Stage 5 tests pin 0085/0086/0088/0089 state, idempotent proposal decisions, ownership
   re-fencing, distinct deliverables, stale receipts, and explicit-only preference
   writes;
-- large-media tests pin 45 clips plus 58 ready visuals, the 12-ID Main Creator
-  native bound, the 32-alias specialist prompt, exact alias resolution, and full
+- large-media tests pin 45 clips plus 58 ready visuals, incremental analysis
+  checkpoints and retry reuse, the 12-ID Main Creator native bound, the 32-alias
+  specialist prompt, exact alias resolution, typed mixed-media timing, and full
   snapshot/editor-universe preservation;
 - fallback tests pin non-overlapping fast cuts, renderer validation before guided
   auto-approval, and fail-closed `text_explainer` behavior;

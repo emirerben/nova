@@ -30,7 +30,10 @@ is an optional advanced tool for creators who want to shape the edit before buil
    which the parser resolves back to exact owned IDs; opaque storage identities never need to pass
    through the model. The agent proposes an ordered title and story beats. It must use every source
    when there are at most three, may leave one out when there are four to six, and must use at least
-   seven when more are available. It may not invent personal experiences. There is no artificial
+   seven when more are available. A confirmed quick-photo/long-video timing profile makes that
+   source floor target-capacity-aware, so a short target never requires more distinct sources than
+   its 0.5s photo and 1.5s usable-video minimums can fit; eligible photos and videos are still both
+   required when both kinds are available. It may not invent personal experiences. There is no artificial
    duration floor: `draft_edit_proposal`
    computes a feasible-duration estimate from the analyzed media (`feasible_guided_duration_s` —
    real video durations summed, plus a fixed per-image credit) and clamps the brief's requested
@@ -278,6 +281,12 @@ button even though the backend would happily design from pool media alone (P2-5)
 when `guided_edit_auto_design` is true, so a pool-only item with the flag off/undefined keeps today's
 exact gating.
 
+Large mixed-media planning has a 1,440s soft task limit and 1,500s hard limit. Clip analysis is
+checkpointed after each completed source with generation and attempt fences, so retries reuse ready
+analysis rather than restarting the complete upload set. The Creator execution receipt lease is
+1,650s, below the 1,900s broker visibility timeout; a still-valid proposal task is reconciled rather
+than expired while it remains within its task budget.
+
 The render-registration watchdog (`RENDER_REGISTER_TIMEOUT_MS`, 15 min) re-arms itself continuously
 while `edit_proposal.status` is `analyzing`/`drafting` — the design phase alone can legitimately run
 past 15 minutes under transient-analysis retries, and no render Job even exists yet to register. It
@@ -341,7 +350,11 @@ seconds per cut, minimal generated text, and optional beat alignment when analyz
 are available. A strong source may appear more than once, but its selected video windows may not
 overlap. Validation fits otherwise-valid cuts to the server-owned target duration with bounded
 tail-first adjustments and fails closed if the requested runtime cannot be reached without reusing
-source time. Source variety remains required. Legacy fast-montage snapshots without `fast_cuts`
+source time. Source variety remains required. When the typed `mixed_media_timing` profile is present,
+photos hold for 0.5–0.8s, usable videos hold for 1.5–3.0s when their source permits, boundaries are
+hard cuts, both eligible media kinds are included, and the total remains within 0.15s of the target.
+Without that profile, legacy fast-montage cuts remain capped at 1.2s and retain their previous timing
+behavior. Legacy fast-montage snapshots without `fast_cuts`
 remain readable and render through the older story-shaped contract.
 
 The renderer exact-generation downloads every source selected by a beat. Unselected catalog media
@@ -449,8 +462,9 @@ detail and proposal mutation responses carry the full review payload, keeping li
   `auto_finalize` state machine (approve+dispatch, dispatch failure, clip-only
   montage fallback, pool-assets-present no-fallback):
   `tests/tasks/test_edit_proposal_build.py`
-- Source-diversity, 32-source alias shortlisting/resolution, distinct-chapter,
-  non-overlapping fast-cut repair, and observation-only draft guards:
+- Source-diversity, target-capacity-aware mixed-media floors, 32-source alias
+  shortlisting/resolution, distinct-chapter, non-overlapping fast-cut repair,
+  unprobed-video kind handling, and observation-only draft guards:
   `tests/agents/test_edit_proposal_agent.py`
 - Direction confirmation CAS, explicit-direction bypass, and fast-montage proposal routes:
   `tests/routes/test_edit_proposal_routes.py`
