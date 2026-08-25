@@ -39,6 +39,10 @@ ConversationRole = Literal["user", "agent"]
 ConversationPhase = Literal["briefing", "review"]
 ConversationSuggestion = Annotated[str, Field(min_length=1, max_length=100)]
 EDIT_CONVERSATION_MAX_TURNS = 20
+# A plan item may contain up to 50 source clips and 100 visual-pool assets.
+# Guided-edit snapshots must preserve the complete deduplicated set so a
+# Main Creator-confirmed plan never fails after the product has accepted it.
+MAX_EDIT_PROPOSAL_MEDIA = 150
 MAIN_CREATOR_FAIL_CLOSED = "main_creator_fail_closed"
 # Who/what approved a proposal — "auto" for AI-designs-by-default
 # (GUIDED_AUTO_DESIGN_ENABLED); "user" for an explicit creator approval.
@@ -121,7 +125,7 @@ class EditProposalSnapshot(BaseModel):
     # No artificial floor — see ProposalBrief.duration_s.
     duration_s: int = Field(ge=3, le=60)
     title: str = Field(min_length=1, max_length=100)
-    media: list[MediaRef] = Field(min_length=1, max_length=60)
+    media: list[MediaRef] = Field(min_length=1, max_length=MAX_EDIT_PROPOSAL_MEDIA)
     story_beats: list[StoryBeat] = Field(min_length=1, max_length=20)
     fast_cuts: list[FastMontageCut] | None = Field(default=None, min_length=1, max_length=80)
     output_orientation: OutputOrientation | None = None
@@ -353,7 +357,7 @@ class MediaRefResponse(MediaRef):
 
 
 class EditProposalSnapshotResponse(EditProposalSnapshot):
-    media: list[MediaRefResponse] = Field(min_length=1, max_length=60)
+    media: list[MediaRefResponse] = Field(min_length=1, max_length=MAX_EDIT_PROPOSAL_MEDIA)
 
 
 class ApprovedProposalSnapshotResponse(ApprovedProposalSnapshot):

@@ -524,6 +524,42 @@ class Job(Base):
     )
 
 
+class JobStorageDeletion(Base):
+    """Durable manifest for storage owned by a deleted Job.
+
+    This row intentionally has no foreign key to ``jobs``: the Job is deleted
+    in the same transaction that creates this manifest, so the manifest is the
+    source of truth for cleanup after the request has returned.
+    """
+
+    __tablename__ = "job_storage_deletions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    object_paths: Mapped[list] = mapped_column(JSONB, nullable=False)
+    # pending → processing → completed. A failed processing attempt returns
+    # to pending with next_attempt_at set for the durable sweeper.
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    next_attempt_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("job_id", name="uq_job_storage_deletions_job_id"),
+        CheckConstraint(
+            "status IN ('pending','processing','completed')",
+            name="ck_job_storage_deletions_status",
+        ),
+        CheckConstraint("attempts >= 0", name="ck_job_storage_deletions_attempts_nonnegative"),
+        Index("idx_job_storage_deletions_due", "status", "next_attempt_at"),
+        Index("idx_job_storage_deletions_lease", "status", "lease_until"),
+        Index("idx_job_storage_deletions_completed", "completed_at"),
+    )
+
+
 class TikTokPublication(Base):
     """One user-consented TikTok delivery attempt.
 
@@ -1480,6 +1516,7 @@ class PlanItem(Base):
             "NOT smart_captions_enabled OR COALESCE(edit_format, '') = 'subtitled'",
             name="ck_plan_items_smart_captions_format",
         ),
+        Index("idx_plan_items_current_job_id", "current_job_id"),
         Index("idx_plan_items_content_plan_id_day", "content_plan_id", "day_index"),
         Index("idx_plan_items_content_plan_id_position", "content_plan_id", "position"),
     )

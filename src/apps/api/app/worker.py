@@ -73,6 +73,8 @@ MAINTENANCE_TASK_NAMES: tuple[str, ...] = (
     "tasks.cleanup_agent_runs",
     "tasks.send_daily_digest",
     "tasks.cleanup_cancelled_job",
+    "tasks.purge_job_storage",
+    "tasks.sweep_job_storage_deletions",
     "app.tasks.tiktok.poll_tiktok_publications",
     "app.tasks.tiktok.schedule_tiktok_account_syncs",
     "app.tasks.tiktok.cleanup_tiktok_publications",
@@ -145,6 +147,10 @@ celery_app.conf.update(
         "sweep-stale-jobs-every-5-min": {
             "task": "tasks.sweep_stale_jobs",
             "schedule": 300.0,  # seconds
+        },
+        "sweep-job-storage-deletions-every-5-min": {
+            "task": "tasks.sweep_job_storage_deletions",
+            "schedule": 300.0,
         },
         # Daily at 04:00 UTC (low-traffic window). Pruned rows = job-scoped
         # agent_run entries older than `agent_run_retention_days` (30d

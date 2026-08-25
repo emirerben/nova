@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.pipeline.prompt_loader import load_prompt
-from app.schemas.edit_proposal import FastMontageCut
+from app.schemas.edit_proposal import MAX_EDIT_PROPOSAL_MEDIA, FastMontageCut
 
 _SENSORY_CLAIM = re.compile(
     r"\b(?:delicious|tasty|flavorful|refreshing|favorite)\b",
@@ -84,7 +84,7 @@ class EditProposalAgentInput(BaseModel):
     # No artificial floor — the caller clamps this to what the uploaded
     # footage can actually support before invoking the agent.
     target_duration_s: int = Field(ge=3, le=60)
-    media: list[EditProposalMedia] = Field(min_length=1, max_length=60)
+    media: list[EditProposalMedia] = Field(min_length=1, max_length=MAX_EDIT_PROPOSAL_MEDIA)
 
 
 class DraftStoryBeat(BaseModel):

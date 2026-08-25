@@ -19,5 +19,9 @@
     ]
   },
   "raw_text": "{\"title\":\"Corfu by the water\",\"duration_s\":7,\"story_beats\":[],\"fast_cuts\":[{\"cut_id\":\"c1\",\"media_id\":\"b1\",\"source_start_s\":0,\"source_end_s\":1,\"output_duration_s\":1,\"role\":\"hook\",\"transition\":\"none\",\"beat_align\":true},{\"cut_id\":\"c2\",\"media_id\":\"b2\",\"source_start_s\":0,\"source_end_s\":1,\"output_duration_s\":1,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":true},{\"cut_id\":\"c3\",\"media_id\":\"b3\",\"source_start_s\":1,\"source_end_s\":2,\"output_duration_s\":1,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":true},{\"cut_id\":\"c4\",\"media_id\":\"b4\",\"source_start_s\":0,\"source_end_s\":1,\"output_duration_s\":1,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":true},{\"cut_id\":\"c5\",\"media_id\":\"b5\",\"source_start_s\":2,\"source_end_s\":3,\"output_duration_s\":1,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":true},{\"cut_id\":\"c6\",\"media_id\":\"b6\",\"source_start_s\":0,\"source_end_s\":1,\"output_duration_s\":1,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":true},{\"cut_id\":\"c7\",\"media_id\":\"b7\",\"source_start_s\":0,\"source_end_s\":1,\"output_duration_s\":1,\"role\":\"payoff\",\"transition\":\"none\",\"beat_align\":true}]}",
-  "meta": {"source":"hand_authored_golden","case":"source-aware fast montage cut program"}
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "source-aware fast montage cut program",
+    "contract": "proposal media accepts the complete 150-item guided-edit universe; this cassette remains a source-aware subset replay"
+  }
 }

@@ -11,13 +11,15 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.auth import get_current_user
 from app.database import get_db
 from app.main import app
+from app.routes.me import _delete_job_storage_after_commit, _job_storage_paths
 
 
 def _user() -> MagicMock:
@@ -180,6 +182,274 @@ def test_list_query_excludes_manual_drafts() -> None:
     assert resp.status_code == 200
     statement = db.execute.await_args_list[0].args[0]
     assert "draft" in statement.compile().params.values()
+
+
+def test_delete_job_removes_terminal_job_and_dispatches_exact_owned_paths(monkeypatch) -> None:
+    user = _user()
+    job_id = uuid.uuid4()
+    job = _job(
+        user_id=user.id,
+        status="template_ready",
+        content_plan_item_id=None,
+        all_candidates={
+            "clip_paths": [
+                f"{user.id}/{job_id}/first.mp4",
+                f"{user.id}/{job_id}/second.mp4",
+                "users/other-user/plan/keep.mp4",
+            ]
+        },
+    )
+    job.id = job_id
+    job.raw_storage_path = f"{user.id}/{job_id}/first.mp4"
+    job.assembly_plan = {"output_path": f"jobs/{job_id}/task-runs/run/output.mp4"}
+    clip = MagicMock(video_path=f"jobs/{job_id}/clip.mp4", thumbnail_path=None)
+    publication = MagicMock(
+        user_id=user.id,
+        source_object_path=f"jobs/{job_id}/task-runs/run/output.mp4",
+        snapshot_object_path=f"tiktok-publish/{uuid.uuid4()}.mp4",
+        processing_status="complete",
+        retryable=False,
+    )
+    db = _db(
+        [
+            _scalar(job),
+            _scalars([]),
+            _scalar(job),
+            _scalars([publication]),
+            _scalars([clip]),
+            MagicMock(),
+            MagicMock(),
+        ]
+    )
+    db.delete = AsyncMock()
+    _override(user, db)
+    cleanup = AsyncMock()
+    monkeypatch.setattr("app.routes.me._delete_job_storage_after_commit", cleanup)
+
+    resp = client.delete(f"/me/jobs/{job_id}")
+
+    assert resp.status_code == 204
+    assert job.content_plan_item_id is None
+    db.delete.assert_awaited_once_with(job)
+    db.commit.assert_awaited_once()
+    cleanup.assert_awaited_once()
+    deletion = db.add.call_args.args[0]
+    assert deletion.job_id == job_id
+    assert deletion.object_paths == [
+        f"jobs/{job_id}/clip.mp4",
+        f"jobs/{job_id}/task-runs/run/output.mp4",
+        f"{user.id}/{job_id}/first.mp4",
+        f"{user.id}/{job_id}/second.mp4",
+    ]
+    assert cleanup.call_args.args == (deletion.id,)
+    assert _job_storage_paths(job, [clip], [publication], user_id=user.id) == [
+        f"jobs/{job_id}/clip.mp4",
+        f"jobs/{job_id}/task-runs/run/output.mp4",
+        f"{user.id}/{job_id}/first.mp4",
+        f"{user.id}/{job_id}/second.mp4",
+    ]
+
+
+def test_delete_job_collects_direct_uploads_and_subject_matte_sidecar() -> None:
+    user = _user()
+    job_id = uuid.uuid4()
+    direct_clip = f"dev-user/{user.id}/generative/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/clip.mp4"
+    voiceover = f"voiceover-uploads/direct/{user.id}/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/voice.webm"
+    job = _job(
+        user_id=user.id,
+        status="done",
+        all_candidates={
+            "clip_paths": [direct_clip],
+            "voiceover_gcs_path": voiceover,
+        },
+        assembly_plan={
+            "variants": [
+                {
+                    "subject_matte_path": f"generative-jobs/{job_id}/subject-matte.mp4",
+                }
+            ]
+        },
+    )
+    job.id = job_id
+    job.raw_storage_path = direct_clip
+
+    assert _job_storage_paths(job, [], [], user_id=user.id) == [
+        f"generative-jobs/{job_id}/subject-matte.mp4",
+        f"generative-jobs/{job_id}/subject-matte.mp4.json",
+        direct_clip,
+        voiceover,
+    ]
+
+
+def test_delete_job_normalizes_legacy_signed_paths_and_persistent_caches(monkeypatch) -> None:
+    user = _user()
+    job = _job(user_id=user.id, status="done")
+    job_id = job.id
+    monkeypatch.setattr("app.routes.me.settings.storage_bucket", "test-bucket")
+    signed = (
+        f"https://storage.googleapis.com/test-bucket/jobs/{job_id}/task-runs/run/output.mp4"
+        "?X-Goog-Signature=redacted"
+    )
+    signed_source = (
+        f"https://storage.googleapis.com/test-bucket/{user.id}/{job_id}/source.mp4"
+        "?X-Goog-Signature=redacted"
+    )
+    job.raw_storage_path = signed_source
+    job.assembly_plan = {
+        "base_output_url": signed.replace("output.mp4", "template_base.mp4"),
+    }
+    job.all_candidates = {
+        "clip_paths": [f"generative-jobs/{job_id}/sources/000_source.mp4"],
+        "preprocessed_source_cache": {
+            "processed_clip_paths": [f"generative-jobs/{job_id}/preprocessed/000.mp4"]
+        },
+        "hdr_pretonemap_cache": {
+            "processed_by_clip_id": {"clip-1": f"generative-jobs/{job_id}/preprocessed/hdr_000.mp4"}
+        },
+    }
+    clip = MagicMock(video_path=signed, thumbnail_path=None)
+
+    paths = _job_storage_paths(job, [clip], [], user_id=user.id)
+
+    assert set(paths) == {
+        f"jobs/{job_id}/task-runs/run/output.mp4",
+        f"jobs/{job_id}/task-runs/run/template_base.mp4",
+        f"generative-jobs/{job_id}/sources/000_source.mp4",
+        f"generative-jobs/{job_id}/preprocessed/000.mp4",
+        f"generative-jobs/{job_id}/preprocessed/hdr_000.mp4",
+        f"{user.id}/{job_id}/source.mp4",
+    }
+
+
+def test_delete_job_rejects_invalid_id_without_touching_db() -> None:
+    user = _user()
+    db = _db([])
+    _override(user, db)
+
+    resp = client.delete("/me/jobs/not-a-uuid")
+
+    assert resp.status_code == 400
+    assert db.execute.await_count == 0
+    assert db.commit.await_count == 0
+
+
+def test_delete_job_returns_404_for_missing_or_foreign_job() -> None:
+    user = _user()
+    missing_db = _db([_scalar(None)])
+    _override(user, missing_db)
+
+    missing = client.delete(f"/me/jobs/{uuid.uuid4()}")
+
+    assert missing.status_code == 404
+    assert missing_db.commit.await_count == 0
+
+    foreign = _job(user_id=uuid.uuid4(), status="done")
+    foreign_db = _db([_scalar(_job(user_id=user.id)), _scalars([]), _scalar(foreign)])
+    _override(user, foreign_db)
+
+    response = client.delete(f"/me/jobs/{foreign.id}")
+
+    assert response.status_code == 404
+    assert foreign_db.commit.await_count == 0
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "jobs/{job_id}/../other.mp4",
+        "jobs/{other_job}/output.mp4",
+        "https://storage.example/jobs/{job_id}/output.mp4",
+        "users/another-user/private.mp4",
+        "voiceover-uploads/direct/another-user/clip/voice.webm",
+    ],
+)
+def test_delete_job_storage_paths_reject_untrusted_keys(path: str) -> None:
+    user = _user()
+    job = _job(user_id=user.id, status="done")
+    job_id = job.id
+    other_job = uuid.uuid4()
+    job.raw_storage_path = path.format(job_id=job_id, other_job=other_job)
+    job.assembly_plan = {
+        "output_path": path.format(job_id=job_id, other_job=other_job),
+    }
+
+    paths = _job_storage_paths(job, [], [], user_id=user.id)
+
+    assert paths == []
+
+
+async def test_delete_job_dispatch_failure_leaves_durable_outbox_for_sweeper() -> None:
+    outbox_id = uuid.uuid4()
+    with (
+        patch(
+            "app.tasks.account_lifecycle.purge_job_storage.apply_async",
+            side_effect=RuntimeError("broker unavailable"),
+        ),
+        patch("app.routes.me.log.error") as log_error,
+    ):
+        await _delete_job_storage_after_commit(outbox_id)
+
+    log_error.assert_any_call(
+        "purge_job_storage_dispatch_failed",
+        outbox_id=str(outbox_id),
+        error="broker unavailable",
+    )
+
+
+def test_delete_job_rejects_active_render_without_mutation() -> None:
+    user = _user()
+    job = _job(user_id=user.id, status="processing")
+    db = _db([_scalar(job), _scalars([]), _scalar(job)])
+    _override(user, db)
+
+    resp = client.delete(f"/me/jobs/{job.id}")
+
+    assert resp.status_code == 409
+    assert db.commit.await_count == 0
+
+
+def test_delete_job_rejects_retryable_tiktok_publication() -> None:
+    user = _user()
+    job = _job(user_id=user.id, status="done")
+    publication = MagicMock(processing_status="failed", retryable=True)
+    db = _db([_scalar(job), _scalars([]), _scalar(job), _scalars([publication])])
+    _override(user, db)
+
+    resp = client.delete(f"/me/jobs/{job.id}")
+
+    assert resp.status_code == 409
+    assert db.commit.await_count == 0
+
+
+def test_linked_job_storage_paths_never_include_plan_footage() -> None:
+    user = _user()
+    job_id = uuid.uuid4()
+    job = _job(
+        user_id=user.id,
+        content_plan_item_id=uuid.uuid4(),
+        all_candidates={"clip_paths": [f"{user.id}/{job_id}/source.mp4"]},
+    )
+    job.id = job_id
+    job.raw_storage_path = f"{user.id}/{job_id}/source.mp4"
+    job.assembly_plan = {"output_path": f"generative-jobs/{job_id}/final.mp4"}
+
+    assert _job_storage_paths(job, [], [], user_id=user.id) == [
+        f"generative-jobs/{job_id}/final.mp4"
+    ]
+
+
+def test_legacy_plan_link_override_also_preserves_source_footage() -> None:
+    user = _user()
+    job_id = uuid.uuid4()
+    job = _job(
+        user_id=user.id,
+        content_plan_item_id=None,
+        all_candidates={"clip_paths": [f"{user.id}/{job_id}/source.mp4"]},
+    )
+    job.id = job_id
+    job.raw_storage_path = f"{user.id}/{job_id}/source.mp4"
+
+    assert _job_storage_paths(job, [], [], user_id=user.id, linked_to_plan=True) == []
 
 
 def test_list_exposes_only_structured_failure_taxonomy() -> None:

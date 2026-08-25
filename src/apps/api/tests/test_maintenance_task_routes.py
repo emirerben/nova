@@ -33,6 +33,8 @@ _MAINTENANCE_PYTHON_IDENTIFIERS: tuple[str, ...] = (
     "cleanup_agent_runs",
     "send_daily_digest",
     "cleanup_cancelled_job",
+    "purge_job_storage",
+    "sweep_job_storage_deletions",
     "poll_tiktok_publications",
     "schedule_tiktok_account_syncs",
     "cleanup_tiktok_publications",

@@ -327,7 +327,7 @@ describe("AssetPool — upload flow (presigned direct-PUT, R1/C9+C14)", () => {
     expect(relayed).toBe(true);
   });
 
-  it("signs a batch once and never runs more than three direct transfers", async () => {
+  it("signs each file independently and never runs more than three upload pipelines", async () => {
     process.env[FLAG] = "true";
     let presignCalls = 0;
     let activePuts = 0;
@@ -345,17 +345,16 @@ describe("AssetPool — upload flow (presigned direct-PUT, R1/C9+C14)", () => {
         const body = JSON.parse(String(init?.body)) as {
           files: Array<{ filename: string; client_upload_id: string }>;
         };
-        expect(body.files).toHaveLength(4);
-        expect(new Set(body.files.map((file) => file.client_upload_id)).size).toBe(4);
-        expect(body.files.every((file) => file.client_upload_id.startsWith("file-"))).toBe(true);
+        expect(body.files).toHaveLength(1);
+        expect(body.files[0].client_upload_id.startsWith("file-")).toBe(true);
         return jsonResponse({
-          urls: body.files.map((file) =>
+          urls: [
             signedTarget(
-              `users/u1/plan/item-1/pool/${file.filename}`,
-              `https://storage.example/${file.filename}`,
-              file.client_upload_id,
+              `users/u1/plan/item-1/pool/${body.files[0].filename}`,
+              `https://storage.example/${body.files[0].filename}`,
+              body.files[0].client_upload_id,
             ),
-          ),
+          ],
         });
       }
       if (method === "PUT" && url.startsWith("https://storage.example/")) {
@@ -391,10 +390,11 @@ describe("AssetPool — upload flow (presigned direct-PUT, R1/C9+C14)", () => {
     });
 
     await waitFor(() => expect(releases).toHaveLength(3));
-    expect(presignCalls).toBe(1);
+    expect(presignCalls).toBe(3);
     expect(maxActivePuts).toBe(3);
     await act(async () => releases[0]());
     await waitFor(() => expect(releases).toHaveLength(4));
+    expect(presignCalls).toBe(4);
     await waitFor(() => expect(registerCalls).toBe(1));
     expect(maxActivePuts).toBe(3);
     await act(async () => releases.slice(1).forEach((release) => release()));
@@ -631,7 +631,7 @@ describe("AssetPool — upload flow (presigned direct-PUT, R1/C9+C14)", () => {
     expect(registerCalls).toBe(2);
   });
 
-  it("leaves registration failure actions before entering the serial retry lane", async () => {
+  it("leaves registration failure actions available for an independent retry", async () => {
     process.env[FLAG] = "true";
     let registerCalls = 0;
     let releaseSecond: (() => void) | null = null;
@@ -832,7 +832,7 @@ describe("AssetPool — upload flow (presigned direct-PUT, R1/C9+C14)", () => {
 
   it("limits a new batch against authoritative hidden reservations before networking", async () => {
     process.env[FLAG] = "true";
-    let requestedFiles = -1;
+    let requestedFiles = 0;
     mockFetch((method, url, init) => {
       if (method === "GET" && url === REGISTER_URL) {
         return jsonResponse({
@@ -847,7 +847,7 @@ describe("AssetPool — upload flow (presigned direct-PUT, R1/C9+C14)", () => {
       }
       if (method === "POST" && url === UPLOAD_URLS_URL) {
         const body = JSON.parse(String(init?.body)) as { files: unknown[] };
-        requestedFiles = body.files.length;
+        requestedFiles += body.files.length;
         return jsonResponse({ detail: "temporary" }, 503);
       }
       return undefined;
@@ -1049,18 +1049,7 @@ describe("AssetPool — upload flow (presigned direct-PUT, R1/C9+C14)", () => {
         return jsonResponse({ assets: [], max_assets: 20 });
       }
       if (method === "POST" && url === UPLOAD_URLS_URL) {
-        const body = JSON.parse(String(init?.body)) as {
-          files: Array<{ client_upload_id: string }>;
-        };
-        return jsonResponse({
-          urls: [
-            signedTarget(
-              "users/u1/plan/item-1/pool/one.png",
-              SIGNED_PUT,
-              body.files[0].client_upload_id,
-            ),
-          ],
-        });
+        return jsonResponse({ urls: [] });
       }
       if (method === "PUT") {
         putCalls += 1;
@@ -1082,7 +1071,7 @@ describe("AssetPool — upload flow (presigned direct-PUT, R1/C9+C14)", () => {
     expect(putCalls).toBe(0);
   });
 
-  it("serializes digest and registration work to one active lane", async () => {
+  it("runs independent registration work within the bounded upload pipelines", async () => {
     process.env[FLAG] = "true";
     let registerCalls = 0;
     let activeRegistrations = 0;
@@ -1134,12 +1123,12 @@ describe("AssetPool — upload flow (presigned direct-PUT, R1/C9+C14)", () => {
         ),
       },
     });
-    await waitFor(() => expect(registerCalls).toBe(1));
-    expect(maxActiveRegistrations).toBe(1);
+    await waitFor(() => expect(registerCalls).toBe(2));
+    expect(maxActiveRegistrations).toBe(2);
     await act(async () => releaseFirst?.());
     await waitFor(() => expect(screen.getByText("2 of 2 added.")).toBeInTheDocument());
     expect(registerCalls).toBe(2);
-    expect(maxActiveRegistrations).toBe(1);
+    expect(maxActiveRegistrations).toBe(2);
   });
 
   it("does not let stale initial hydration erase a newly registered asset", async () => {
