@@ -29,6 +29,7 @@ from app.models import (
     Persona,
     PlanItem,
     PlanItemAsset,
+    SoundEffect,
 )
 from app.services.creator_capabilities import resolve_creator_manifest
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
@@ -95,6 +96,50 @@ def _job_matches_guided_attempt(job: Job | None, attempt_id: str | None) -> bool
             assembly.get("creator_guided_fallback"),
         )
     )
+
+
+def _session_variant_target(
+    session: CreatorAgentSession, variants: list[object]
+) -> tuple[dict[str, Any] | None, str]:
+    """Resolve only the session's exact variant/generation once it is pinned."""
+
+    if session.target_variant_id:
+        if not session.target_generation_id:
+            return None, "stale"
+        exact = next(
+            (
+                variant
+                for variant in variants
+                if isinstance(variant, dict)
+                and variant.get("variant_id") == session.target_variant_id
+            ),
+            None,
+        )
+        if exact is None:
+            return None, "stale"
+        generation_id = str(exact.get("render_generation_id") or "") or None
+        if session.target_generation_id and generation_id != session.target_generation_id:
+            return None, "stale"
+        if exact.get("render_status") == "failed":
+            return None, "failed"
+        if exact.get("render_status") != "ready":
+            return None, "processing"
+        if generation_id is None:
+            return None, "stale"
+        return exact, "ready"
+
+    ready = next(
+        (
+            variant
+            for variant in variants
+            if isinstance(variant, dict)
+            and variant.get("render_status") == "ready"
+            and variant.get("variant_id")
+            and variant.get("render_generation_id")
+        ),
+        None,
+    )
+    return (ready, "ready") if ready is not None else (None, "stale")
 
 
 def creator_context(persona: Persona, item: PlanItem) -> tuple[str, str]:
@@ -226,6 +271,29 @@ async def resolve_item_creator_context(
         )
         for track in tracks
     ]
+    # The planner may propose a licensed SFX command only from this bounded,
+    # server-owned catalog.  Expose the effect's opaque primary key (the
+    # craft route resolves and revalidates it); never expose its storage path.
+    sound_effects = (
+        await db.execute(
+            select(SoundEffect)
+            .where(
+                SoundEffect.status == "ready",
+                SoundEffect.published_at.is_not(None),
+                SoundEffect.archived_at.is_(None),
+            )
+            .order_by(SoundEffect.published_at.desc(), SoundEffect.created_at.desc())
+            .limit(max(0, 50 - len(catalog)))
+        )
+    ).scalars()
+    catalog.extend(
+        CreatorCatalogRef(
+            catalog_id=str(effect.id),
+            kind="sound_effect",
+            label=_clean(effect.name, 160),
+        )
+        for effect in sound_effects
+    )
     has_ready_variant = False
     current_edit: CreatorEditSnapshot | None = None
     if item.current_job_id:
@@ -352,8 +420,20 @@ def compile_active_plan(
 async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession) -> bool:
     """Advance a rendering session against its exact target Job generation."""
 
-    if session.phase not in {"executing", "rendering", "reviewing"}:
+    raw_pending_review = getattr(session, "last_review", None)
+    pending_review = raw_pending_review if isinstance(raw_pending_review, dict) else {}
+    if session.phase not in {"executing", "rendering", "reviewing", "awaiting_feedback"}:
         return False
+    if session.phase == "awaiting_feedback" and pending_review.get("status") != "pending":
+        # A broker outage is the one transient review state that reconciliation
+        # may retry.  Disabled/failed/stale reviews remain terminal manual
+        # feedback receipts and must not be republished indefinitely.
+        retryable_review_enqueue = pending_review.get("status") == "unavailable" and (
+            pending_review.get("dispatch_status") == "failed"
+            or pending_review.get("error_code") == "review_enqueue_failed"
+        )
+        if not retryable_review_enqueue:
+            return False
     if not session.target_job_id:
         item = await db.get(
             PlanItem,
@@ -527,34 +607,75 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
         )
         return True
     if job.status in PLAN_ITEM_JOB_READY:
-        session.phase = "awaiting_feedback"
         variants = (job.assembly_plan or {}).get("variants") or []
-        ready_variant = next(
-            (
-                variant
-                for variant in variants
-                if isinstance(variant, dict)
-                and variant.get("render_status") == "ready"
-                and variant.get("variant_id")
-            ),
-            None,
-        )
-        if ready_variant:
-            session.target_variant_id = str(ready_variant["variant_id"])
-            session.target_generation_id = (
-                str(
-                    ready_variant.get("render_generation_id")
-                    or ready_variant.get("render_finished_at")
-                    or ""
-                )
-                or None
+        ready_variant, target_state = _session_variant_target(session, variants)
+        if target_state == "processing":
+            changed = session.phase != "rendering"
+            session.phase = "rendering"
+            return changed
+        if ready_variant is None:
+            session.phase = "failed"
+            session.last_error = {
+                "code": "render_target_failed"
+                if target_state == "failed"
+                else "render_identity_mismatch"
+            }
+            await append_event(
+                db,
+                session,
+                event_type="system_render_failed",
+                payload={"message": "The selected render changed. Start a new version."},
             )
+            return True
+        was_awaiting_feedback = session.phase == "awaiting_feedback"
+        session.phase = "awaiting_feedback"
+        session.target_variant_id = str(ready_variant["variant_id"])
+        session.target_generation_id = str(ready_variant["render_generation_id"])
         session.last_good = {
             "job_id": str(job.id),
             "plan_hash": (session.active_plan or {}).get("plan_hash"),
         }
         review_enabled = settings.main_creator_agent_review_enabled
-        if review_enabled:
+        quality_review_enabled = (
+            review_enabled and settings.main_creator_agent_quality_review_enabled
+        )
+        if quality_review_enabled and session.target_variant_id and session.target_generation_id:
+            from app.tasks.creator_quality_review import (  # noqa: PLC0415
+                queue_creator_quality_review,
+            )
+
+            queue_creator_quality_review(
+                session,
+                job_id=str(job.id),
+                variant_id=str(session.target_variant_id),
+                render_generation_id=str(session.target_generation_id),
+            )
+        elif quality_review_enabled:
+            session.last_review = {
+                "status": "unavailable",
+                "decision": "unavailable",
+                "error_code": "review_target_missing",
+                "error_message": "The ready render has no exact variant generation to review.",
+                "job_id": str(job.id),
+                "failed_at": datetime.now(UTC).isoformat(),
+            }
+        elif pending_review.get("status") in {"pending", "running"}:
+            # The kill switch may flip after a pending receipt commits but
+            # before the worker can close it. Poll-time reconciliation owns the
+            # same exact session/Job/variant/generation rows, so make the
+            # manual-feedback fallback terminal here instead of polling
+            # forever. A stale worker is still fenced by the review key.
+            session.last_review = {
+                **pending_review,
+                "status": "unavailable",
+                "decision": "unavailable",
+                "error_code": "review_disabled",
+                "error_message": (
+                    "Quality review is disabled; watch the render and give manual feedback."
+                ),
+                "failed_at": datetime.now(UTC).isoformat(),
+            }
+        elif review_enabled:
             session.last_review = {
                 "decision": "approve",
                 "mode": "structural_v1",
@@ -563,6 +684,8 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
                 "generation_id": session.target_generation_id,
                 "reviewed_at": datetime.now(UTC).isoformat(),
             }
+        if was_awaiting_feedback:
+            return True
         await append_event(
             db,
             session,
@@ -592,6 +715,109 @@ def serialize_session(session: CreatorAgentSession) -> dict[str, Any]:
             return "assistant"
         return "system"
 
+    raw_review = getattr(session, "last_review", None)
+    review: dict[str, Any] | None = None
+    if isinstance(raw_review, dict):
+        # Keep the public receipt bounded and omit any future provider/debug
+        # fields that might be added to the durable JSONB payload.
+        allowed = {
+            "status",
+            "review_key",
+            "creator_id",
+            "creator_session_id",
+            "plan_item_id",
+            "ownership_epoch",
+            "session_revision",
+            "job_id",
+            "variant_id",
+            "render_generation_id",
+            "generation_id",
+            "manifest_hash",
+            "context_hash",
+            "review_mode",
+            "mode",
+            "decision",
+            "reviewer",
+            "quality_score",
+            "confidence",
+            "reviewed_at",
+            "queued_at",
+            "started_at",
+            "failed_at",
+            "error_code",
+            "error_message",
+            "evidence",
+            "proposed_revision",
+            "objective_tag",
+            "expected_improvement",
+            "allowlist_action",
+            "automatic_revision_count",
+            "rollback_receipt",
+            "auto_iteration",
+        }
+        review = {key: raw_review[key] for key in allowed if key in raw_review}
+        evidence = review.get("evidence")
+        if isinstance(evidence, list):
+            review["evidence"] = [
+                {
+                    key: value
+                    for key in (
+                        "evidence_id",
+                        "kind",
+                        "severity",
+                        "start_s",
+                        "end_s",
+                        "observation",
+                    )
+                    if key in value
+                }
+                for value in evidence[:12]
+                if isinstance(value, dict)
+            ]
+        proposal = review.get("proposed_revision")
+        if isinstance(proposal, dict):
+            review["proposed_revision"] = {
+                key: proposal[key]
+                for key in ("revision_id", "summary", "rationale", "evidence_ids")
+                if key in proposal
+            }
+            if isinstance(review["proposed_revision"].get("evidence_ids"), list):
+                review["proposed_revision"]["evidence_ids"] = review["proposed_revision"][
+                    "evidence_ids"
+                ][:8]
+        auto_iteration = review.get("auto_iteration")
+        if isinstance(auto_iteration, dict):
+            bounded_auto = {
+                key: auto_iteration[key]
+                for key in (
+                    "status",
+                    "action",
+                    "session_id",
+                    "job_id",
+                    "variant_id",
+                    "previous_generation_id",
+                    "generation_id",
+                    "receipt_id",
+                    "request_expected_revision",
+                    "expected_revision",
+                    "ownership_epoch",
+                )
+                if key in auto_iteration
+            }
+            rollback = auto_iteration.get("rollback_receipt")
+            if isinstance(rollback, dict):
+                bounded_auto["rollback_receipt"] = {
+                    key: rollback[key]
+                    for key in (
+                        "job_id",
+                        "variant_id",
+                        "previous_generation_id",
+                        "craft_receipt_id",
+                    )
+                    if key in rollback
+                }
+            review["auto_iteration"] = bounded_auto
+
     return {
         "id": str(session.id),
         "status": _PHASE_TO_PUBLIC.get(session.phase, "failed"),
@@ -601,6 +827,20 @@ def serialize_session(session: CreatorAgentSession) -> dict[str, Any]:
         "can_render": settings.main_creator_agent_execution_enabled,
         "pending_plan": session.active_plan if session.phase == "awaiting_confirmation" else None,
         "current_job_id": str(session.target_job_id) if session.target_job_id else None,
+        "last_review": review,
+        "auto_iteration": (
+            {
+                "available": bool(
+                    settings.main_creator_agent_execution_enabled
+                    and settings.main_creator_agent_review_enabled
+                    and settings.main_creator_agent_quality_review_enabled
+                    and settings.main_creator_agent_auto_iteration_enabled
+                ),
+                "label": "One objective revision, if eligible",
+            }
+            if settings.main_creator_agent_auto_iteration_enabled
+            else None
+        ),
         "events": [
             {
                 "id": str(event.id),

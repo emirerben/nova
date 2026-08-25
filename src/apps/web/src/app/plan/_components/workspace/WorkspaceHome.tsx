@@ -12,7 +12,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import type { ContentPlan } from "@/lib/plan-api";
+import {
+  createCreatorWorkspaceRelevanceProposal,
+  creatorWorkspaceUploadContentTypeForFile,
+  requestCreatorWorkspaceUpload,
+  uploadToGcs,
+  type ContentPlan,
+  type CreatorWorkspaceRelevanceProposal,
+} from "@/lib/plan-api";
 import { listMyJobs, type LibraryJob } from "@/lib/me-api";
 import type { TikTokConnection } from "@/lib/tiktok-api";
 import LibraryTile from "@/components/library/LibraryTile";
@@ -20,6 +27,10 @@ import TikTokConnectionCard from "@/components/library/TikTokConnectionCard";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import SeedUploadCard from "../SeedUploadCard";
+import { CreatorWorkspacePanel } from "./CreatorWorkspacePanel";
+
+const CREATOR_WORKSPACE_UPLOADS_ENABLED =
+  process.env.NEXT_PUBLIC_MAIN_CREATOR_AGENT_FREEFORM_UPLOADS_ENABLED === "true";
 
 interface WorkspaceHomeProps {
   plan: ContentPlan;
@@ -37,6 +48,19 @@ export function WorkspaceHome({ plan, onRefresh, onError }: WorkspaceHomeProps) 
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [loadingMore, setLoadingMore] = useState(false);
   const [tiktokConnection, setTikTokConnection] = useState<TikTokConnection | null>(null);
+  const [relevanceProposal, setRelevanceProposal] =
+    useState<CreatorWorkspaceRelevanceProposal | null>(null);
+  const [workspaceFiles, setWorkspaceFiles] = useState<File[]>([]);
+  const [uploadingWorkspaceFootage, setUploadingWorkspaceFootage] = useState(false);
+  const [workspaceUploadError, setWorkspaceUploadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Do not let a proposal or retry from the previous plan leak into a newly
+    // selected workspace. The child panel also fences its own polling by plan.
+    setRelevanceProposal(null);
+    setWorkspaceFiles([]);
+    setWorkspaceUploadError(null);
+  }, [plan.id]);
 
   const load = useCallback(async () => {
     setLoadState("loading");
@@ -72,6 +96,72 @@ export function WorkspaceHome({ plan, onRefresh, onError }: WorkspaceHomeProps) 
     setJobs((current) => current.filter((job) => job.id !== jobId));
   }, []);
 
+  const handleWorkspaceUpload = useCallback(async (files: FileList | File[] | null) => {
+    if (!files || files.length === 0 || uploadingWorkspaceFootage) return;
+    const selectedFiles = Array.from(files);
+    if (selectedFiles.length > 10) {
+      setWorkspaceFiles([]);
+      setWorkspaceUploadError("Choose up to 10 video clips at a time.");
+      return;
+    }
+    if (selectedFiles.some((file) => !isWorkspaceVideoFile(file))) {
+      setWorkspaceFiles([]);
+      setWorkspaceUploadError("Choose MP4, MOV, or AVI video clips.");
+      return;
+    }
+    if (selectedFiles.some((file) => file.size > 4 * 1024 * 1024 * 1024)) {
+      setWorkspaceFiles([]);
+      setWorkspaceUploadError("Each clip must be 4 GB or smaller.");
+      return;
+    }
+    setWorkspaceFiles(selectedFiles);
+    setUploadingWorkspaceFootage(true);
+    setWorkspaceUploadError(null);
+    try {
+      const jobIds: string[] = [];
+      for (const file of selectedFiles) {
+        const metadata = await readWorkspaceVideoMetadata(file);
+        if (metadata.duration_s > 1800) {
+          throw new Error("Video exceeds 30-minute limit");
+        }
+        const contentType = creatorWorkspaceUploadContentTypeForFile(file);
+        const target = await requestCreatorWorkspaceUpload({
+          filename: file.name,
+          content_type: contentType,
+          file_size_bytes: file.size,
+          duration_s: metadata.duration_s,
+          aspect_ratio: metadata.aspect_ratio,
+        });
+        // /uploads/presigned currently signs video/quicktime as video/mp4.
+        // Pass the same header explicitly; generic uploadToGcs preserves the
+        // exact MIME contracts used by other signed-upload routes.
+        await uploadToGcs(target.upload_url, file, { "Content-Type": contentType });
+        jobIds.push(target.job_id);
+      }
+      if (jobIds.length === 0) return;
+      const proposal = await createCreatorWorkspaceRelevanceProposal(
+        plan.id,
+        jobIds,
+        workspaceUploadId(),
+      );
+      setRelevanceProposal(proposal);
+      setWorkspaceFiles([]);
+    } catch {
+      setWorkspaceUploadError(
+        "We couldn’t prepare that footage for review. Check the file type and try again.",
+      );
+    } finally {
+      setUploadingWorkspaceFootage(false);
+    }
+  }, [plan.id, uploadingWorkspaceFootage]);
+
+  const handleProposalChange = useCallback((next: CreatorWorkspaceRelevanceProposal) => {
+    if (next.plan_id !== plan.id) return;
+    setRelevanceProposal(next);
+  }, [plan.id]);
+
+  const currentProposal = relevanceProposal?.plan_id === plan.id ? relevanceProposal : null;
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div className="mx-auto flex max-w-[900px] flex-col gap-10 px-6 pb-24 pt-14">
@@ -99,6 +189,52 @@ export function WorkspaceHome({ plan, onRefresh, onError }: WorkspaceHomeProps) 
             </p>
           )}
         </section>
+
+        {CREATOR_WORKSPACE_UPLOADS_ENABLED && (
+          <section aria-labelledby="workspace-upload-heading" className="rounded-2xl border border-zinc-200 bg-white p-4 text-[#0c0c0e] shadow-sm">
+            <h2 id="workspace-upload-heading" className="text-sm font-semibold">Review footage against this plan</h2>
+            <p id="workspace-upload-help" className="mt-1 text-sm text-zinc-500">Upload video clips for a relevance proposal. Nothing is added to the plan until you approve it.</p>
+            <label className="mt-3 inline-flex min-h-11 cursor-pointer items-center rounded-md border border-zinc-300 bg-white px-3 text-sm font-medium text-[#0c0c0e] transition-colors hover:bg-zinc-50 focus-within:outline-none focus-within:ring-2 focus-within:ring-lime-500 focus-within:ring-offset-2">
+              {uploadingWorkspaceFootage ? "Uploading…" : workspaceFiles.length > 0 ? `${workspaceFiles.length} clips selected` : "Choose video clips"}
+              <input
+                className="sr-only"
+                type="file"
+                accept="video/mp4,video/quicktime,video/x-msvideo"
+                multiple
+                disabled={uploadingWorkspaceFootage}
+                aria-describedby="workspace-upload-help workspace-upload-status workspace-upload-error"
+                onChange={(event) => {
+                  void handleWorkspaceUpload(event.target.files);
+                  event.currentTarget.value = "";
+                }}
+              />
+            </label>
+            {uploadingWorkspaceFootage && (
+              <div id="workspace-upload-status" className="mt-3" role="status" aria-live="polite" aria-busy="true">
+                <p className="text-sm text-zinc-600">Uploading footage…</p>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-100" role="progressbar" aria-label="Uploading footage">
+                  <div className="h-full w-1/3 rounded-full bg-lime-600 motion-safe:animate-shimmer" />
+                </div>
+              </div>
+            )}
+            {workspaceUploadError && (
+              <div id="workspace-upload-error" className="mt-3 flex flex-wrap items-center gap-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700" role="alert">
+                <span>{workspaceUploadError}</span>
+                {workspaceFiles.length > 0 && (
+                  <Button type="button" size="sm" variant="outline" className="min-h-11" onClick={() => void handleWorkspaceUpload(workspaceFiles)} disabled={uploadingWorkspaceFootage}>
+                    Retry upload
+                  </Button>
+                )}
+              </div>
+            )}
+          </section>
+        )}
+
+        <CreatorWorkspacePanel
+          planId={plan.id}
+          proposal={currentProposal}
+          onProposalChange={handleProposalChange}
+        />
 
         {/* ---- Past edits ---- */}
         <section aria-labelledby="past-edits-heading">
@@ -172,6 +308,42 @@ export function WorkspaceHome({ plan, onRefresh, onError }: WorkspaceHomeProps) 
       </div>
     </div>
   );
+}
+
+async function readWorkspaceVideoMetadata(
+  file: File,
+): Promise<{ duration_s: number; aspect_ratio: "16:9" | "9:16" }> {
+  const url = URL.createObjectURL(file);
+  try {
+    const metadata = await new Promise<{ duration: number; width: number; height: number }>(
+      (resolve, reject) => {
+        const video = document.createElement("video");
+        video.preload = "metadata";
+        video.onloadedmetadata = () => resolve({ duration: video.duration, width: video.videoWidth, height: video.videoHeight });
+        video.onerror = () => reject(new Error("Unable to inspect video"));
+        video.src = url;
+      },
+    );
+    if (!Number.isFinite(metadata.duration) || metadata.duration <= 0 || metadata.width <= 0 || metadata.height <= 0) {
+      throw new Error("Invalid video metadata");
+    }
+    return {
+      duration_s: metadata.duration,
+      aspect_ratio: metadata.width >= metadata.height ? "16:9" : "9:16",
+    };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function workspaceUploadId(): string {
+  return `creator-workspace-upload-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`}`;
+}
+
+function isWorkspaceVideoFile(file: File): boolean {
+  const contentType = creatorWorkspaceUploadContentTypeForFile(file);
+  if (["video/mp4", "video/quicktime", "video/x-msvideo"].includes(contentType)) return true;
+  return /\.(mp4|mov|avi)$/i.test(file.name);
 }
 
 function SkeletonGrid() {

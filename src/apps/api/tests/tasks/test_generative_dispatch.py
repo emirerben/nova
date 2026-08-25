@@ -15,6 +15,7 @@ import pytest
 import app.services.clip_speech as clip_speech
 import app.services.pipeline_trace as pt
 import app.tasks.generative_build as gb
+from app.pipeline.agents.gemini_analyzer import build_recipe
 from app.pipeline.talking_head_assembler import SpineExtractionError, TalkingHeadAssemblyError
 
 
@@ -135,16 +136,186 @@ def test_resolve_montage_passthrough_no_fallback(monkeypatch):
     assert events == []  # montage is the default — no fallback noise
 
 
-def test_resolve_unimplemented_format_falls_back(monkeypatch):
+def test_resolve_day_vlog_flag_off_does_not_downgrade(monkeypatch):
     events = _trace_capture(monkeypatch)
     archetype, spine, _reason = gb._resolve_archetype(
         "day_vlog", [_Meta("c1")], {"c1": "/a.mp4"}, job_id="j"
     )
-    assert (archetype, spine) == ("montage", None)
-    assert any(
-        e[1] == "archetype_fallback" and e[2]["reason"] == "archetype_not_implemented"
-        for e in events
+    assert (archetype, spine) == ("day_vlog", None)
+    assert _reason == "flag_disabled"
+    assert events == []
+
+
+def test_resolve_day_vlog_enabled_requires_guide_media(monkeypatch):
+    monkeypatch.setattr(gb.settings, "edit_format_day_vlog_enabled", True, raising=False)
+    archetype, spine, reason = gb._resolve_archetype(
+        "day_vlog",
+        [_Meta("c1"), _Meta("c2")],
+        {"c1": "/a.mp4", "c2": "/b.mp4"},
+        job_id="j",
+        filming_guide=[{"what": "first"}],
     )
+    assert (archetype, spine, reason) == ("day_vlog", None, "insufficient_media")
+
+
+def test_resolve_day_vlog_enabled_selects_strict_archetype(monkeypatch):
+    monkeypatch.setattr(gb.settings, "edit_format_day_vlog_enabled", True, raising=False)
+    archetype, spine, reason = gb._resolve_archetype(
+        "day_vlog",
+        [_Meta("c1"), _Meta("c2")],
+        {"c1": "/a.mp4", "c2": "/b.mp4"},
+        job_id="j",
+        filming_guide=[{"what": "first"}, {"what": "last"}],
+    )
+    assert (archetype, spine, reason) == ("day_vlog", None, None)
+
+
+def test_day_vlog_ignores_generic_montage_variant_set(monkeypatch):
+    monkeypatch.setattr(gb.settings, "edit_format_day_vlog_enabled", True, raising=False)
+    specs = gb._specs_for_archetype("day_vlog", None)
+    assert len(specs) == 1
+    assert specs[0]["archetype"] == "day_vlog"
+    assert specs[0]["strict_day_vlog"] is True
+    assert specs[0]["day_vlog_renderer_version"] == gb.DAY_VLOG_RENDERER_VERSION
+
+
+def test_single_hero_selects_one_hero_and_never_downgrades(monkeypatch):
+    monkeypatch.setattr(gb.settings, "edit_format_single_hero_enabled", False, raising=False)
+    archetype, spine, reason = gb._resolve_archetype(
+        "single_hero", [_Meta("c1"), _Meta("c2")], {"c1": "/a.mp4", "c2": "/b.mp4"}, job_id="j"
+    )
+    assert (archetype, spine, reason) == ("single_hero", None, "flag_disabled")
+
+    monkeypatch.setattr(gb.settings, "edit_format_single_hero_enabled", True, raising=False)
+    specs = gb._specs_for_archetype("single_hero", None)
+    assert specs[0]["strict_single_hero"] is True
+    assert specs[0]["single_hero_renderer_version"] == 1
+    archetype, hero, reason = gb._resolve_archetype(
+        "single_hero", [_Meta("c1"), _Meta("c2")], {"c1": "/a.mp4", "c2": "/b.mp4"}, job_id="j"
+    )
+    assert (archetype, hero, reason) == ("single_hero", "c1", None)
+
+
+def test_single_hero_policy_pins_dominance_and_ownership():
+    recipe_dict = gb._build_single_hero_recipe(
+        ["hero", "cutaway"],
+        available_footage_s=12.0,
+        clip_durations_s={"hero": 8.0, "cutaway": 4.0},
+        max_duration_s=60.0,
+    )
+    # The real renderer sends this policy dict through the shared recipe
+    # constructor before matching. Pin that integration boundary so format-only
+    # metadata cannot make a production render fail after analysis.
+    recipe = build_recipe(recipe_dict)
+    assert recipe.slots[0]["slot_type"] == "hero"
+    assert recipe.slots[0]["target_duration_s"] / recipe.total_duration_s >= 0.60
+    steps = [
+        types.SimpleNamespace(clip_id="hero", slot=recipe.slots[0]),
+        types.SimpleNamespace(clip_id="cutaway", slot=recipe.slots[1]),
+    ]
+    gb._validate_single_hero_steps(steps, "hero", ["cutaway"], max_duration_s=60.0)
+    with pytest.raises(gb.SingleHeroPolicyError, match="hero"):
+        gb._validate_single_hero_steps(steps[::-1], "hero", ["cutaway"], max_duration_s=60.0)
+    assert gb._classify_error(gb.SingleHeroPolicyError("insufficient_media", "missing")) == (
+        "single_hero_insufficient_media"
+    )
+
+
+@pytest.mark.parametrize("duration", [0.0, -1.0, float("nan"), float("inf")])
+def test_single_hero_filters_non_positive_or_non_finite_support_durations(duration):
+    order = gb._single_hero_order(
+        [_Meta("hero"), _Meta("support")],
+        {"hero": "/hero.mp4", "support": "/support.mp4"},
+        {"hero": 5.0, "support": duration},
+    )
+    assert order == ["hero"]
+
+
+def test_single_hero_with_only_unusable_support_fails_deterministically():
+    order = gb._single_hero_order(
+        [_Meta("hero"), _Meta("support")],
+        {"hero": "/hero.mp4", "support": "/support.mp4"},
+        {"hero": 5.0, "support": 0.0},
+    )
+    with pytest.raises(gb.SingleHeroPolicyError, match="one usable hero.*cutaway"):
+        gb._build_single_hero_recipe(
+            order,
+            available_footage_s=5.0,
+            clip_durations_s={"hero": 5.0, "support": 0.0},
+            max_duration_s=60.0,
+        )
+
+
+def test_day_vlog_rerender_rejects_missing_or_mixed_renderer_version(tmp_path):
+    with pytest.raises(gb.DayVlogPolicyError, match="incompatible"):
+        gb._render_generative_variant(
+            job_id="job-1",
+            rank=1,
+            spec={
+                "variant_id": "day_vlog",
+                "text_mode": "agent_text",
+                "track": None,
+                "day_vlog_renderer_version": gb.DAY_VLOG_RENDERER_VERSION - 1,
+            },
+            clip_metas=[],
+            clip_id_to_local={},
+            clip_id_to_gcs={},
+            probe_map={},
+            available_footage_s=0.0,
+            agent_text=None,
+            agent_form={},
+            variant_dir=str(tmp_path),
+            narrative_order=["clip-1", "clip-2"],
+            strict_day_vlog=True,
+        )
+
+
+def test_day_vlog_chronology_kill_switch_fails_closed(monkeypatch):
+    monkeypatch.setattr(gb.settings, "NARRATIVE_CLIP_ORDER_ENABLED", False, raising=False)
+    with pytest.raises(gb.DayVlogPolicyError, match="chronology"):
+        gb._resolve_narrative_order(
+            2,
+            {"c1": "/a.mp4", "c2": "/b.mp4"},
+            job_id="j",
+            strict=True,
+        )
+
+
+def test_day_vlog_step_policy_pins_chronology_transitions_and_duration():
+    steps = [
+        types.SimpleNamespace(
+            clip_id="c1",
+            slot={"target_duration_s": 2.0, "transition_in": "cut", "transition_duration_s": 0},
+        ),
+        types.SimpleNamespace(
+            clip_id="c2",
+            slot={
+                "target_duration_s": 2.5,
+                "transition_in": "crossfade",
+                "transition_duration_s": 0.2,
+            },
+        ),
+    ]
+    gb._validate_day_vlog_steps(steps, ["c1", "c2"], max_duration_s=10)
+
+
+def test_day_vlog_step_policy_rejects_reordered_or_long_transition():
+    steps = [
+        types.SimpleNamespace(
+            clip_id="c2",
+            slot={"target_duration_s": 2.0, "transition_in": "cut", "transition_duration_s": 0},
+        ),
+        types.SimpleNamespace(
+            clip_id="c1",
+            slot={
+                "target_duration_s": 2.0,
+                "transition_in": "crossfade",
+                "transition_duration_s": 0.3,
+            },
+        ),
+    ]
+    with pytest.raises(gb.DayVlogPolicyError):
+        gb._validate_day_vlog_steps(steps, ["c1", "c2"], max_duration_s=10)
 
 
 def test_resolve_subtitled_flag_off_falls_back_to_montage(monkeypatch):

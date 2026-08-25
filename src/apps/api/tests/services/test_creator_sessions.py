@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
@@ -25,12 +25,96 @@ def _session(**overrides):
         "max_render_attempts": 2,
         "active_plan": None,
         "target_job_id": None,
+        "target_variant_id": None,
+        "target_generation_id": None,
         "events": [],
         "created_at": datetime(2026, 8, 24, tzinfo=UTC),
         "updated_at": datetime(2026, 8, 24, tzinfo=UTC),
     }
     values.update(overrides)
     return SimpleNamespace(**values)
+
+
+def test_session_variant_target_preserves_exact_nonfirst_variant() -> None:
+    session = _session(
+        target_variant_id="chosen",
+        target_generation_id="generation-chosen",
+    )
+    variants = [
+        {
+            "variant_id": "first",
+            "render_status": "ready",
+            "render_generation_id": "generation-first",
+        },
+        {
+            "variant_id": "chosen",
+            "render_status": "ready",
+            "render_generation_id": "generation-chosen",
+        },
+    ]
+
+    variant, state = creator_sessions._session_variant_target(session, variants)
+
+    assert state == "ready"
+    assert variant["variant_id"] == "chosen"
+
+
+@pytest.mark.parametrize(
+    ("variants", "expected_state"),
+    [
+        ([], "stale"),
+        (
+            [
+                {
+                    "variant_id": "chosen",
+                    "render_status": "ready",
+                    "render_generation_id": "new-generation",
+                }
+            ],
+            "stale",
+        ),
+        (
+            [
+                {
+                    "variant_id": "chosen",
+                    "render_status": "rendering",
+                    "render_generation_id": "generation-chosen",
+                }
+            ],
+            "processing",
+        ),
+    ],
+)
+def test_session_variant_target_never_falls_back_from_exact_target(
+    variants, expected_state
+) -> None:
+    session = _session(
+        target_variant_id="chosen",
+        target_generation_id="generation-chosen",
+    )
+
+    variant, state = creator_sessions._session_variant_target(session, variants)
+
+    assert variant is None
+    assert state == expected_state
+
+
+def test_session_variant_target_never_infers_missing_generation() -> None:
+    session = _session(target_variant_id="chosen", target_generation_id=None)
+
+    variant, state = creator_sessions._session_variant_target(
+        session,
+        [
+            {
+                "variant_id": "chosen",
+                "render_status": "ready",
+                "render_generation_id": "current-generation",
+            }
+        ],
+    )
+
+    assert variant is None
+    assert state == "stale"
 
 
 def test_rollout_eligibility_fails_closed_and_honors_full_rollout(monkeypatch) -> None:
@@ -54,6 +138,46 @@ def test_serialize_session_only_exposes_pending_plan_at_confirmation() -> None:
 
     assert creator_sessions.serialize_session(confirming)["pending_plan"] == plan
     assert creator_sessions.serialize_session(rendering)["pending_plan"] is None
+
+
+def test_serialize_session_exposes_only_bounded_review_receipt() -> None:
+    session = _session(
+        last_review={
+            "status": "complete",
+            "job_id": "job-1",
+            "variant_id": "variant-1",
+            "render_generation_id": "generation-1",
+            "provider_raw_response": "must not be public",
+            "evidence": [
+                {
+                    "evidence_id": f"e-{index}",
+                    "kind": "visual",
+                    "severity": "warning",
+                    "start_s": 0,
+                    "end_s": 1,
+                    "observation": "observation",
+                    "private_debug": "omit",
+                }
+                for index in range(20)
+            ],
+            "proposed_revision": {
+                "revision_id": "revision-1",
+                "summary": "Tighten the opening.",
+                "rationale": "The first beat is generic.",
+                "evidence_ids": [f"e-{index}" for index in range(20)],
+                "strategy": {"private": "omit"},
+            },
+        },
+    )
+
+    review = creator_sessions.serialize_session(session)["last_review"]
+
+    assert review["status"] == "complete"
+    assert "provider_raw_response" not in review
+    assert len(review["evidence"]) == 12
+    assert "private_debug" not in review["evidence"][0]
+    assert review["proposed_revision"]["evidence_ids"] == [f"e-{index}" for index in range(8)]
+    assert "strategy" not in review["proposed_revision"]
 
 
 def test_creator_context_is_bounded_before_agent_input() -> None:
@@ -100,6 +224,114 @@ async def test_reconcile_missing_exact_job_fails_stably(monkeypatch) -> None:
     assert session.phase == "failed"
     assert session.last_error["code"] == "target_job_missing"
     append.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_retries_only_transient_review_enqueue_failure(monkeypatch) -> None:
+    job_id = uuid.uuid4()
+    session = _session(
+        phase="awaiting_feedback",
+        target_job_id=job_id,
+        target_variant_id="variant-1",
+        target_generation_id="generation-1",
+        last_review={
+            "status": "unavailable",
+            "dispatch_status": "failed",
+            "error_code": "review_enqueue_failed",
+        },
+    )
+    item = SimpleNamespace(
+        id=session.plan_item_id,
+        content_plan_id=uuid.uuid4(),
+    )
+    plan = SimpleNamespace(
+        user_id=session.creator_id,
+        ownership_epoch=session.ownership_epoch,
+    )
+    job = SimpleNamespace(
+        id=job_id,
+        user_id=session.creator_id,
+        content_plan_item_id=session.plan_item_id,
+        content_plan_ownership_epoch=session.ownership_epoch,
+        status="variants_ready",
+        assembly_plan={"variants": []},
+    )
+    db = AsyncMock()
+    db.get.side_effect = [job, item, plan]
+    monkeypatch.setattr(
+        creator_sessions,
+        "_session_variant_target",
+        lambda *_args: (
+            {
+                "variant_id": "variant-1",
+                "render_status": "ready",
+                "render_generation_id": "generation-1",
+            },
+            "ready",
+        ),
+    )
+    monkeypatch.setattr(creator_sessions.settings, "main_creator_agent_review_enabled", True)
+    monkeypatch.setattr(
+        creator_sessions.settings, "main_creator_agent_quality_review_enabled", True
+    )
+    queue = Mock(return_value=True)
+    monkeypatch.setattr("app.tasks.creator_quality_review.queue_creator_quality_review", queue)
+
+    changed = await creator_sessions.reconcile_render_state(db, session)
+
+    assert changed is True
+    queue.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_closes_pending_review_when_quality_flag_turns_off(monkeypatch) -> None:
+    job_id = uuid.uuid4()
+    session = _session(
+        phase="awaiting_feedback",
+        target_job_id=job_id,
+        target_variant_id="variant-1",
+        target_generation_id="generation-1",
+        last_review={
+            "status": "pending",
+        },
+    )
+    item = SimpleNamespace(id=session.plan_item_id, content_plan_id=uuid.uuid4())
+    plan = SimpleNamespace(
+        user_id=session.creator_id,
+        ownership_epoch=session.ownership_epoch,
+    )
+    job = SimpleNamespace(
+        id=job_id,
+        user_id=session.creator_id,
+        content_plan_item_id=session.plan_item_id,
+        content_plan_ownership_epoch=session.ownership_epoch,
+        status="variants_ready",
+        assembly_plan={"variants": []},
+    )
+    db = AsyncMock()
+    db.get.side_effect = [job, item, plan]
+    monkeypatch.setattr(
+        creator_sessions,
+        "_session_variant_target",
+        lambda *_args: (
+            {
+                "variant_id": "variant-1",
+                "render_status": "ready",
+                "render_generation_id": "generation-1",
+            },
+            "ready",
+        ),
+    )
+    monkeypatch.setattr(creator_sessions.settings, "main_creator_agent_review_enabled", False)
+    monkeypatch.setattr(
+        creator_sessions.settings, "main_creator_agent_quality_review_enabled", False
+    )
+
+    changed = await creator_sessions.reconcile_render_state(db, session)
+
+    assert changed is True
+    assert session.last_review["status"] == "unavailable"
+    assert session.last_review["error_code"] == "review_disabled"
 
 
 @pytest.mark.asyncio
@@ -354,8 +586,10 @@ async def test_context_caps_combined_clips_and_assets_at_manifest_limit() -> Non
     asset_result.scalars.return_value = [asset]
     track_result = MagicMock()
     track_result.scalars.return_value = []
+    sfx_result = MagicMock()
+    sfx_result.scalars.return_value = []
     db = AsyncMock()
-    db.execute.side_effect = [asset_result, track_result]
+    db.execute.side_effect = [asset_result, track_result, sfx_result]
 
     manifest, media_context = await creator_sessions.resolve_item_creator_context(
         db, item, persona=persona
@@ -364,6 +598,35 @@ async def test_context_caps_combined_clips_and_assets_at_manifest_limit() -> Non
     assert len(manifest.media) == 50
     assert len(media_context) == 50
     assert all(not media.media_id.startswith("asset-") for media in manifest.media)
+
+
+@pytest.mark.asyncio
+async def test_context_exposes_only_ready_published_sound_effect_catalog_refs() -> None:
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        edit_format="montage",
+        audio_mode="kria",
+        voiceover_gcs_path=None,
+        current_job_id=None,
+        clip_gcs_paths=["users/u/clip.mp4"],
+        clip_assignments=[],
+    )
+    persona = SimpleNamespace(user_id=uuid.uuid4())
+    asset_result = MagicMock()
+    asset_result.scalars.return_value = []
+    track_result = MagicMock()
+    track_result.scalars.return_value = []
+    sfx = SimpleNamespace(id="catalog-pop", name="Soft pop")
+    sfx_result = MagicMock()
+    sfx_result.scalars.return_value = [sfx]
+    db = AsyncMock()
+    db.execute.side_effect = [asset_result, track_result, sfx_result]
+
+    manifest, _ = await creator_sessions.resolve_item_creator_context(db, item, persona=persona)
+
+    assert [ref.model_dump() for ref in manifest.catalog] == [
+        {"catalog_id": "catalog-pop", "kind": "sound_effect", "label": "Soft pop"}
+    ]
 
 
 @pytest.mark.asyncio

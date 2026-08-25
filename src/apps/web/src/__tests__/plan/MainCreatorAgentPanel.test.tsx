@@ -1,10 +1,11 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import MainCreatorAgentPanel from "@/app/plan/items/[id]/components/MainCreatorAgentPanel";
 import {
   confirmCreatorAgentPlan,
   getCreatorAgentSession,
   PlanApiError,
+  requestCreatorAutoIteration,
   startCreatorAgentSession,
 } from "@/lib/plan-api";
 
@@ -14,6 +15,7 @@ jest.mock("@/lib/plan-api", () => ({
   turnCreatorAgentSession: jest.fn(),
   confirmCreatorAgentPlan: jest.fn(),
   cancelCreatorAgentSession: jest.fn(),
+  requestCreatorAutoIteration: jest.fn(),
   PlanApiError: jest.requireActual("@/lib/plan-api").PlanApiError,
 }));
 
@@ -22,6 +24,9 @@ const startSession = startCreatorAgentSession as jest.MockedFunction<
   typeof startCreatorAgentSession
 >;
 const confirmPlan = confirmCreatorAgentPlan as jest.MockedFunction<typeof confirmCreatorAgentPlan>;
+const requestAuto = requestCreatorAutoIteration as jest.MockedFunction<
+  typeof requestCreatorAutoIteration
+>;
 
 const proposed = {
   id: "session-1",
@@ -106,4 +111,134 @@ it("shows a strategy preview without a dead render action during planning-only r
   expect(await screen.findByText("A fast arrival-to-sunset story.")).not.toBeNull();
   expect(screen.queryByRole("button", { name: "Render this" })).toBeNull();
   expect(screen.getByText("Rendering is not enabled for this preview yet.")).not.toBeNull();
+});
+
+it("shows bounded review evidence without mutating the confirmed render", async () => {
+  getSession.mockResolvedValue({
+    ...proposed,
+    status: "awaiting_feedback",
+    pending_plan: null,
+    last_review: {
+      status: "complete",
+      decision: "revise",
+      evidence: [
+        {
+          evidence_id: "evidence-1",
+          kind: "visual",
+          severity: "warning",
+          start_s: 4,
+          end_s: 5,
+          observation: "The opening loses momentum.",
+        },
+      ],
+      proposed_revision: {
+        revision_id: "revision-1",
+        summary: "Tighten the first beat.",
+        evidence_ids: ["evidence-1"],
+      },
+    },
+  });
+
+  render(<MainCreatorAgentPanel itemId="item-1" />);
+
+  expect(await screen.findByText("The opening loses momentum.")).not.toBeNull();
+  expect(screen.getByText(/Nothing changes without your confirmation/)).not.toBeNull();
+  expect(confirmPlan).not.toHaveBeenCalled();
+});
+
+it("shows a pending review as in progress and polls through awaiting feedback until it is terminal", async () => {
+  jest.useFakeTimers();
+  getSession
+    .mockResolvedValueOnce({
+      ...proposed,
+      status: "awaiting_feedback",
+      pending_plan: null,
+      last_review: { status: "pending" },
+    })
+    .mockResolvedValueOnce({
+      ...proposed,
+      status: "awaiting_feedback",
+      pending_plan: null,
+      last_review: { status: "running" },
+    })
+    .mockResolvedValueOnce({
+      ...proposed,
+      status: "awaiting_feedback",
+      pending_plan: null,
+      last_review: { status: "complete", quality_score: 4.2, evidence: [] },
+    });
+
+  try {
+    render(<MainCreatorAgentPanel itemId="item-1" />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Reviewing the exact render…")).not.toBeNull();
+    expect(getSession).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      jest.advanceTimersByTime(4_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(getSession).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("Reviewing the exact render…")).not.toBeNull();
+
+    await act(async () => {
+      jest.advanceTimersByTime(4_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(getSession).toHaveBeenCalledTimes(3);
+    expect(screen.getByText("No evidence-linked issues were found.")).not.toBeNull();
+
+    await act(async () => {
+      jest.advanceTimersByTime(12_000);
+      await Promise.resolve();
+    });
+    expect(getSession).toHaveBeenCalledTimes(3);
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+it("requires the explicit checkbox and button before requesting automatic iteration", async () => {
+  getSession.mockResolvedValue({
+    ...proposed,
+    status: "awaiting_feedback",
+    pending_plan: null,
+    auto_iteration: { available: true, label: "One objective revision, if eligible" },
+  });
+  requestAuto.mockResolvedValue({
+    ...proposed,
+    status: "rendering",
+    pending_plan: null,
+    auto_iteration: { available: true },
+  });
+
+  render(<MainCreatorAgentPanel itemId="item-1" />);
+
+  expect(screen.queryByRole("button", { name: "Confirm automatic revision" })).toBeNull();
+  fireEvent.click(await screen.findByRole("checkbox"));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm automatic revision" }));
+
+  await waitFor(() => expect(requestAuto).toHaveBeenCalledTimes(1));
+  expect(requestAuto.mock.calls[0][0]).toBe("item-1");
+  expect(requestAuto.mock.calls[0][1]).toMatchObject({ opt_in: true, session_id: "session-1" });
+});
+
+it("hides automatic iteration when the server does not advertise capability", async () => {
+  getSession.mockResolvedValue({
+    ...proposed,
+    status: "awaiting_feedback",
+    pending_plan: null,
+    auto_iteration: { available: false },
+  });
+
+  render(<MainCreatorAgentPanel itemId="item-1" />);
+
+  await screen.findByText("Create with Kria");
+  expect(screen.queryByRole("checkbox")).toBeNull();
+  expect(requestAuto).not.toHaveBeenCalled();
 });

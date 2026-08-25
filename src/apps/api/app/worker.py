@@ -46,6 +46,8 @@ celery_app = Celery(
         "app.tasks.account_lifecycle",
         "app.tasks.edit_training_exports",
         "app.tasks.edit_training_artifacts",
+        "app.tasks.creator_quality_review",
+        "app.tasks.creator_workspace",
     ],
 )
 

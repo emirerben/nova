@@ -37,6 +37,7 @@ from app.pipeline.reframe import ReframeError, reframe_and_export
 from app.pipeline.score import TOP_N, select_candidates
 from app.pipeline.thumbnail import select_thumbnail
 from app.pipeline.validator import validate_output
+from app.services.media_filenames import safe_media_basename
 from app.storage import download_to_file, upload_bytes_public_read, upload_public_read
 from app.tasks._job_cancel_fence import (
     active_job_for_update,
@@ -46,6 +47,19 @@ from app.tasks._job_cancel_fence import (
 from app.worker import celery_app
 
 log = structlog.get_logger()
+
+
+def _merge_probe_metadata(existing: object, probe: dict) -> dict:
+    """Keep safe upload metadata when adding measured probe fields."""
+
+    metadata = dict(existing) if isinstance(existing, dict) else {}
+    source_filename = safe_media_basename(metadata.get("source_filename"))
+    if source_filename is None:
+        source_filename = safe_media_basename(metadata.get("drive_filename"))
+    if source_filename is not None:
+        metadata["source_filename"] = source_filename
+    metadata.update(probe)
+    return metadata
 
 
 @celery_app.task(
@@ -102,17 +116,20 @@ def orchestrate_job(self, job_id: str) -> None:
                 )
                 if job is None:
                     return
-                job.probe_metadata = {
-                    "duration_s": video_probe.duration_s,
-                    "fps": video_probe.fps,
-                    "width": video_probe.width,
-                    "height": video_probe.height,
-                    "has_audio": video_probe.has_audio,
-                    "codec": video_probe.codec,
-                    "aspect_ratio": video_probe.aspect_ratio,
-                    "file_size_bytes": video_probe.file_size_bytes,
-                    "color_transfer": video_probe.color_transfer,
-                }
+                job.probe_metadata = _merge_probe_metadata(
+                    job.probe_metadata,
+                    {
+                        "duration_s": video_probe.duration_s,
+                        "fps": video_probe.fps,
+                        "width": video_probe.width,
+                        "height": video_probe.height,
+                        "has_audio": video_probe.has_audio,
+                        "codec": video_probe.codec,
+                        "aspect_ratio": video_probe.aspect_ratio,
+                        "file_size_bytes": video_probe.file_size_bytes,
+                        "color_transfer": video_probe.color_transfer,
+                    },
+                )
                 db.commit()
 
             # [2] Transcribe (Gemini primary when source_ref available, else Whisper)

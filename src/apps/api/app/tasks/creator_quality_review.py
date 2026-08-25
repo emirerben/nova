@@ -1,0 +1,835 @@
+"""Stage 2 creator-review coordinator.
+
+This module owns exact-generation fencing and review persistence.  The actual
+media grader is deliberately supplied by dependency injection; this keeps
+offline workers/tests from downloading or sending creator media anywhere.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import tempfile
+import uuid
+from collections.abc import Callable
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import structlog
+
+from app.worker import celery_app
+
+log = structlog.get_logger()
+QUALITY_REVIEW_AGENT_NAME = "nova.creator_quality_reviewer"
+QUALITY_REVIEW_PROMPT_VERSION = "2026-08-25.3"
+QUALITY_REVIEW_MODEL = "gemini-2.5-flash"
+READY_JOB_STATUSES = frozenset({"variants_ready", "variants_ready_partial"})
+OBJECTIVE_SCORE_THRESHOLD = 4.0
+
+# These names are the mechanical dimensions in ``final_video.md``.  Keep this
+# allowlist exact: a generic dimension such as ``text_quality`` or
+# ``text_concision`` is a taste/editorial observation and must never authorize a
+# caption mutation merely because it contains the word "text".
+_CAPTION_DIMENSIONS = frozenset({"text_legibility_and_timing"})
+_TRANSITION_DIMENSIONS = frozenset({"transition_continuity"})
+_OPTIONAL_TREATMENT_DIMENSIONS = frozenset({"optional_overlay_sfx_quality"})
+_SPEECH_CUT_DIMENSIONS = frozenset({"speech_cut_integrity"})
+
+
+def _objective_action_for_dimension(dimension: object) -> str | None:
+    name = str(dimension or "").strip().lower()
+    if name in _CAPTION_DIMENSIONS:
+        return "caption_legibility"
+    if name in _TRANSITION_DIMENSIONS:
+        return "transition_fallback"
+    if name in _OPTIONAL_TREATMENT_DIMENSIONS:
+        return "remove_optional_treatment"
+    if name in _SPEECH_CUT_DIMENSIONS:
+        return "speech_cut"
+    return None
+
+
+def review_key(session_id: str, job_id: str, variant_id: str, generation_id: str) -> str:
+    return ":".join((session_id, job_id, variant_id, generation_id))
+
+
+def _task_id(key: str) -> str:
+    return "creator-review-" + hashlib.sha256(key.encode()).hexdigest()
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _objective_action_for_scores(scores: dict[str, float]) -> tuple[str | None, str]:
+    """Classify only failing rubric dimensions as objective or taste-based.
+
+    The shared final-video rubric mixes mechanical observations (for example,
+    caption legibility) with taste judgments such as hook strength.  A low
+    taste score must never be relabelled objective merely because the rubric
+    also contains an unrelated caption dimension.
+    """
+
+    objective: list[tuple[float, str]] = []
+    taste_failure = False
+    for raw_dimension, raw_score in scores.items():
+        try:
+            score = float(raw_score)
+        except (TypeError, ValueError):
+            continue
+        if score >= OBJECTIVE_SCORE_THRESHOLD:
+            continue
+        action = _objective_action_for_dimension(raw_dimension)
+        if action is None:
+            taste_failure = True
+        else:
+            objective.append((score, action))
+
+    objective.sort(key=lambda value: (value[0], value[1]))
+    action = objective[0][1] if objective else None
+    if objective and not taste_failure:
+        return action, "objective"
+    if objective:
+        return action, "mixed"
+    return None, "taste"
+
+
+def _action_target(
+    action: str | None,
+    *,
+    grader_evidence: list[dict[str, Any]],
+    scores: dict[str, float],
+    variant: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Resolve an allowlisted command target from observed timecodes and exact state."""
+
+    dimensions = {
+        "caption_legibility": _CAPTION_DIMENSIONS,
+        "transition_fallback": _TRANSITION_DIMENSIONS,
+        "remove_optional_treatment": _OPTIONAL_TREATMENT_DIMENSIONS,
+        "speech_cut": _SPEECH_CUT_DIMENSIONS,
+    }.get(str(action), frozenset())
+    relevant = [
+        value
+        for value in grader_evidence
+        if str(value.get("dimension") or "").strip().lower() in dimensions
+        and float(scores.get(str(value.get("dimension") or ""), 5.0)) < OBJECTIVE_SCORE_THRESHOLD
+    ]
+    relevant.sort(key=lambda value: (float(value.get("start_s") or 0.0), str(value)))
+    if not relevant:
+        return None
+    if action == "caption_legibility":
+        return {}
+
+    if action == "transition_fallback":
+        slots = (
+            variant.get("user_timeline", {}).get("slots")
+            or variant.get("ai_timeline", {}).get("slots")
+            or []
+        )
+        boundaries: list[tuple[float, int]] = []
+        cursor = 0.0
+        for index, slot in enumerate(slots[:-1]):
+            try:
+                duration = float(slot.get("duration_s"))
+            except (AttributeError, TypeError, ValueError):
+                return None
+            if duration <= 0:
+                return None
+            cursor += duration
+            boundaries.append((cursor, index))
+        if not boundaries:
+            return None
+        focus = (float(relevant[0]["start_s"]) + float(relevant[0]["end_s"])) / 2.0
+        return {"boundary_index": min(boundaries, key=lambda value: abs(value[0] - focus))[1]}
+
+    if action == "remove_optional_treatment":
+        candidates: list[tuple[float, str, str]] = []
+        for observed in relevant:
+            focus = (float(observed["start_s"]) + float(observed["end_s"])) / 2.0
+            kind = str(observed.get("kind") or "")
+            if kind != "audio":
+                for overlay in variant.get("media_overlays") or []:
+                    if not isinstance(overlay, dict) or not overlay.get("id"):
+                        continue
+                    start_s = float(overlay.get("start_s") or 0.0)
+                    end_s = float(overlay.get("end_s") or start_s)
+                    if start_s <= focus <= end_s:
+                        candidates.append(
+                            (
+                                abs(((start_s + end_s) / 2.0) - focus),
+                                "media_overlay",
+                                str(overlay["id"]),
+                            )
+                        )
+            if kind in {"audio", "timing"}:
+                for effect in variant.get("sound_effects") or []:
+                    if not isinstance(effect, dict) or not effect.get("id"):
+                        continue
+                    at_s = float(effect.get("at_s") or 0.0)
+                    duration_s = max(0.0, float(effect.get("duration_s") or 0.0))
+                    if float(observed["start_s"]) <= at_s <= float(observed["end_s"]) + duration_s:
+                        candidates.append((abs(at_s - focus), "sfx", str(effect["id"])))
+        if not candidates:
+            return None
+        _, treatment, treatment_id = min(
+            candidates, key=lambda value: (value[0], value[1], value[2])
+        )
+        return {"treatment": treatment, "treatment_id": treatment_id}
+
+    if action == "speech_cut":
+        focus = (float(relevant[0]["start_s"]) + float(relevant[0]["end_s"])) / 2.0
+        candidates = []
+        for candidate in variant.get("speech_cut_candidates") or []:
+            if not isinstance(candidate, dict) or candidate.get("status") != "pending":
+                continue
+            if candidate.get("source") not in {
+                "retake_review",
+                "silence_review",
+                "filler_review",
+            }:
+                continue
+            start_s = float(candidate.get("start_s") or 0.0)
+            end_s = float(candidate.get("end_s") or start_s)
+            if start_s <= focus <= end_s and candidate.get("candidate_id"):
+                candidates.append((abs(((start_s + end_s) / 2.0) - focus), candidate))
+        if not candidates:
+            return None
+        candidate = min(candidates, key=lambda value: (value[0], str(value[1]["candidate_id"])))[1]
+        from app.pipeline.speech_cut_state import cut_revision  # noqa: PLC0415
+
+        return {
+            "candidate_id": str(candidate["candidate_id"]),
+            "expected_cut_revision": cut_revision(variant),
+        }
+    return None
+
+
+def queue_creator_quality_review(
+    session: Any, *, job_id: str, variant_id: str, render_generation_id: str
+) -> bool:
+    key = review_key(str(session.id), job_id, variant_id, render_generation_id)
+    current = session.last_review if isinstance(getattr(session, "last_review", None), dict) else {}
+    if current.get("review_key") == key:
+        # The marker is written only after apply_async returns.  It prevents
+        # GET-session reconciliation from republishing a task on every poll.
+        # There is an unavoidable crash window between broker publication and
+        # this JSONB write without a DB+broker outbox.  The stable task id plus
+        # claim_exact_review's row lock make a republished delivery harmless:
+        # only one delivery can own grader work, while a missing marker remains
+        # retryable rather than losing the review.
+        if current.get("dispatch_status") == "queued":
+            return False
+        # Keep broker failures visible to the creator, but allow the next
+        # reconciliation to retry the publication instead of permanently
+        # stranding the review in `unavailable`.
+        if (
+            current.get("status") not in {"pending", "unavailable"}
+            or getattr(session, "phase", None) != "awaiting_feedback"
+        ):
+            return False
+        try:
+            quality_review_creator_session.apply_async(
+                kwargs={
+                    "session_id": str(session.id),
+                    "job_id": job_id,
+                    "variant_id": variant_id,
+                    "render_generation_id": render_generation_id,
+                },
+                task_id=_task_id(key),
+            )
+        except Exception as exc:  # noqa: BLE001 - surface a durable failure
+            session.last_review = {
+                **current,
+                "status": "unavailable",
+                "decision": "unavailable",
+                "dispatch_status": "failed",
+                "error_code": "review_enqueue_failed",
+                "error_message": str(exc)[:240],
+                "failed_at": _now(),
+            }
+            log.warning("creator_quality_review_retry_failed", error_type=type(exc).__name__)
+            return False
+        session.last_review = {
+            **current,
+            "status": "pending",
+            "decision": None,
+            "dispatch_status": "queued",
+            "task_id": _task_id(key),
+            "enqueued_at": _now(),
+        }
+        return True
+    # A different review target supersedes any old receipt.  The new pending
+    # marker deliberately starts without dispatch_status until publication
+    # succeeds, preserving retryability if the broker is unavailable.
+    pending = {
+        "status": "pending",
+        "review_key": key,
+        "creator_id": str(session.creator_id),
+        "creator_session_id": str(session.id),
+        "plan_item_id": str(session.plan_item_id),
+        "ownership_epoch": int(session.ownership_epoch or 0),
+        "session_revision": int(session.revision or 0),
+        "job_id": job_id,
+        "variant_id": variant_id,
+        "render_generation_id": render_generation_id,
+        "review_mode": "objective",
+        "reviewer": "video_quality_grader",
+        "queued_at": _now(),
+        "dispatch_status": "publishing",
+    }
+    prior_auto = current.get("auto_iteration")
+    if isinstance(prior_auto, dict) and isinstance(prior_auto.get("rollback_receipt"), dict):
+        pending["rollback_receipt"] = prior_auto["rollback_receipt"]
+    session.last_review = pending
+    try:
+        quality_review_creator_session.apply_async(
+            kwargs={
+                "session_id": str(session.id),
+                "job_id": job_id,
+                "variant_id": variant_id,
+                "render_generation_id": render_generation_id,
+            },
+            task_id=_task_id(key),
+        )
+    except Exception as exc:  # noqa: BLE001 — fail-open to manual feedback
+        session.last_review = {
+            **pending,
+            "status": "unavailable",
+            "decision": "unavailable",
+            "dispatch_status": "failed",
+            "error_code": "review_enqueue_failed",
+            "error_message": str(exc)[:240],
+            "failed_at": _now(),
+        }
+        log.warning("creator_quality_review_enqueue_failed", error_type=type(exc).__name__)
+        return False
+    session.last_review = {
+        **pending,
+        "dispatch_status": "queued",
+        "task_id": _task_id(key),
+        "enqueued_at": _now(),
+    }
+    return True
+
+
+def build_review_payload(
+    session: Any,
+    *,
+    job_id: str,
+    variant_id: str,
+    generation_id: str,
+    verdict: Any,
+    variant: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Convert a mocked/DI grader verdict to the bounded persisted receipt."""
+
+    from app.agents._schemas.creator_agent import (  # noqa: PLC0415
+        CreatorReviewReceipt,
+    )
+
+    key = review_key(str(session.id), job_id, variant_id, generation_id)
+    evidence = []
+    grader_evidence = list(getattr(verdict, "evidence", None) or [])
+    if not grader_evidence:
+        raise ValueError("creator review requires timestamped grader evidence")
+    for index, observed in enumerate(grader_evidence[:12]):
+        dimension = str(observed.get("dimension") or "")
+        if dimension not in (verdict.scores or {}):
+            raise ValueError("creator review evidence references an unknown score dimension")
+        score = float(verdict.scores[dimension])
+        evidence.append(
+            {
+                "evidence_id": f"{key}-evidence-{index}",
+                "kind": observed.get("kind"),
+                "severity": "warning" if float(score) < 4 else "info",
+                "start_s": observed.get("start_s"),
+                "end_s": observed.get("end_s"),
+                "observation": str(observed.get("observation") or "")[:500],
+            }
+        )
+    evidence = evidence[:12]
+    decision = "approve" if verdict.band.value == "auto_pass" else "revise"
+    allowlist_action, review_mode = _objective_action_for_scores(verdict.scores or {})
+    action_target = _action_target(
+        allowlist_action,
+        grader_evidence=grader_evidence,
+        scores=verdict.scores or {},
+        variant=variant or {},
+    )
+    if allowlist_action and action_target is None:
+        allowlist_action = None
+        review_mode = "mixed"
+    expected_improvement = getattr(verdict, "expected_improvement", None)
+    if expected_improvement is None:
+        expected_improvement = max(0.0, min(5.0, 4.0 - float(verdict.avg)))
+    proposal = None
+    if decision == "revise":
+        proposal = {
+            "revision_id": f"{key}-revision",
+            "summary": "Strengthen the weakest scored moments before another render.",
+            "rationale": str(
+                verdict.reasoning or "The objective review found room for improvement."
+            )[:1000],
+            "evidence_ids": [
+                row["evidence_id"] for row in evidence if row["severity"] in {"warning", "critical"}
+            ][:8]
+            or [row["evidence_id"] for row in evidence[:8]],
+        }
+    active = session.active_plan if isinstance(session.active_plan, dict) else {}
+    manifest = getattr(session, "manifest_hash", None)
+    edit_plan = active.get("edit_plan") if isinstance(active.get("edit_plan"), dict) else {}
+    context = edit_plan.get("context_hash")
+    if not (
+        isinstance(manifest, str)
+        and len(manifest) == 64
+        and all(char in "0123456789abcdef" for char in manifest)
+    ):
+        raise ValueError("creator review is missing the exact manifest hash")
+    if not (
+        isinstance(context, str)
+        and len(context) == 64
+        and all(char in "0123456789abcdef" for char in context)
+    ):
+        raise ValueError("creator review is missing the exact context hash")
+    receipt = CreatorReviewReceipt(
+        creator_id=str(session.creator_id),
+        creator_session_id=str(session.id),
+        plan_item_id=str(session.plan_item_id),
+        ownership_epoch=int(session.ownership_epoch or 0),
+        session_revision=int(session.revision or 0),
+        job_id=job_id,
+        variant_id=variant_id,
+        render_generation_id=generation_id,
+        manifest_hash=manifest,
+        context_hash=context,
+        review_mode=review_mode,
+        decision=decision,
+        quality_score=float(verdict.avg),
+        confidence=float(verdict.confidence),
+        evidence=evidence,
+        proposed_revision=proposal,
+        reviewed_at=_now(),
+    )
+    prior_review = session.last_review if isinstance(session.last_review, dict) else {}
+    rollback_receipt = prior_review.get("rollback_receipt")
+    return {
+        "status": "complete",
+        **receipt.model_dump(mode="json"),
+        "expected_improvement": round(float(expected_improvement), 3),
+        "allowlist_action": allowlist_action,
+        **(action_target or {}),
+        **({"objective_tag": "objective_quality"} if review_mode == "objective" else {}),
+        **({"rollback_receipt": rollback_receipt} if isinstance(rollback_receipt, dict) else {}),
+    }
+
+
+def claim_exact_review(
+    db: Any,
+    *,
+    session_id: str,
+    job_id: str,
+    variant_id: str,
+    generation_id: str,
+    reclaim_running: bool = False,
+) -> tuple[Any, str, dict[str, Any]] | None:
+    """Claim a pending review only if the Job/variant/generation still match."""
+
+    from app.models import CreatorAgentSession, Job  # noqa: PLC0415
+
+    row = db.get(CreatorAgentSession, uuid.UUID(session_id), with_for_update=True)
+    current = row.last_review if row and isinstance(row.last_review, dict) else {}
+    key = review_key(session_id, job_id, variant_id, generation_id)
+    if row is None or current.get("review_key") != key:
+        return None
+    if current.get("status") != "pending" and not (
+        reclaim_running and current.get("status") == "running"
+    ):
+        return None
+    job = db.get(Job, uuid.UUID(job_id))
+    variants = (job.assembly_plan or {}).get("variants") if job else []
+    variant = next(
+        (
+            value
+            for value in variants
+            if isinstance(value, dict) and value.get("variant_id") == variant_id
+        ),
+        None,
+    )
+    if not (
+        job
+        and job.status in READY_JOB_STATUSES
+        and job.user_id == row.creator_id
+        and job.content_plan_item_id == row.plan_item_id
+        and int(job.content_plan_ownership_epoch or -1) == int(row.ownership_epoch)
+        and row.target_job_id == job.id
+        and row.target_variant_id == variant_id
+        and row.target_generation_id == generation_id
+        and variant
+        and variant.get("render_status") == "ready"
+        and variant.get("render_generation_id") == generation_id
+    ):
+        mark_review_unavailable(
+            db,
+            session_id=session_id,
+            job_id=job_id,
+            variant_id=variant_id,
+            generation_id=generation_id,
+            code="review_target_stale",
+            message="The rendered generation changed before review completed.",
+            allow_stale_target=True,
+        )
+        return None
+    row.last_review = {**current, "status": "running", "started_at": _now()}
+    db.commit()
+    return row, str(variant.get("video_path") or ""), dict(variant)
+
+
+def persist_review_if_current(
+    db: Any,
+    *,
+    session_id: str,
+    job_id: str,
+    variant_id: str,
+    generation_id: str,
+    payload: dict[str, Any],
+) -> bool:
+    """Persist only when the session still owns the exact review target."""
+
+    from app.models import CreatorAgentSession, Job  # noqa: PLC0415
+
+    row = db.get(CreatorAgentSession, uuid.UUID(session_id), with_for_update=True)
+    current = row.last_review if row and isinstance(row.last_review, dict) else {}
+    if row is None or current.get("review_key") != review_key(
+        session_id, job_id, variant_id, generation_id
+    ):
+        return False
+    if (
+        row.target_job_id != uuid.UUID(job_id)
+        or row.target_variant_id != variant_id
+        or row.target_generation_id != generation_id
+    ):
+        return False
+    job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+    variants = (job.assembly_plan or {}).get("variants") if job else []
+    variant = next(
+        (
+            value
+            for value in variants
+            if isinstance(value, dict) and value.get("variant_id") == variant_id
+        ),
+        None,
+    )
+    if not (
+        job
+        and job.status in READY_JOB_STATUSES
+        and job.user_id == row.creator_id
+        and job.content_plan_item_id == row.plan_item_id
+        and int(job.content_plan_ownership_epoch or -1) == int(row.ownership_epoch)
+        and variant
+        and variant.get("render_status") == "ready"
+        and variant.get("render_generation_id") == generation_id
+    ):
+        return False
+    row.last_review = payload
+    db.commit()
+    return True
+
+
+def run_quality_review(
+    *,
+    session_id: str,
+    job_id: str,
+    variant_id: str,
+    render_generation_id: str,
+    db_factory: Callable[[], Any],
+    reviewer: Callable[[str], Any] | None,
+    persist_run: Callable[..., None],
+    reclaim_running: bool = False,
+) -> bool:
+    """Run one injected review and persist both receipt and AgentRun.
+
+    ``reviewer`` is intentionally required from the caller.  This offline-safe
+    coordinator never chooses a network/media implementation itself; a future
+    rollout can inject the existing ``VideoQualityGrader`` adapter explicitly.
+    """
+
+    db = db_factory()
+    try:
+        target = claim_exact_review(
+            db,
+            session_id=session_id,
+            job_id=job_id,
+            variant_id=variant_id,
+            generation_id=render_generation_id,
+            reclaim_running=reclaim_running,
+        )
+    finally:
+        db.close()
+    if target is None:
+        return False
+    session, video_path, variant = target
+    if reviewer is None:
+        db = db_factory()
+        try:
+            mark_review_unavailable(
+                db,
+                session_id=session_id,
+                job_id=job_id,
+                variant_id=variant_id,
+                generation_id=render_generation_id,
+                code="reviewer_unavailable",
+                message="Quality review is unavailable; watch the render and give manual feedback.",
+            )
+        finally:
+            db.close()
+        persist_run(
+            job_id=job_id,
+            creator_agent_session_id=session_id,
+            segment_idx=None,
+            agent_name=QUALITY_REVIEW_AGENT_NAME,
+            prompt_version=QUALITY_REVIEW_PROMPT_VERSION,
+            model="offline",
+            outcome="failed",
+            attempts=1,
+            tokens_in=0,
+            tokens_out=0,
+            cost_usd=0.0,
+            latency_ms=0,
+            input_dict={"session_id": session_id, "job_id": job_id, "variant_id": variant_id},
+            output_dict=None,
+            raw_text=None,
+            error="reviewer_unavailable",
+        )
+        return True
+    try:
+        verdict = reviewer(video_path)
+        payload = build_review_payload(
+            session,
+            job_id=job_id,
+            variant_id=variant_id,
+            generation_id=render_generation_id,
+            verdict=verdict,
+            variant=variant,
+        )
+    except Exception as exc:  # noqa: BLE001 — critic failure is visible/fail-open
+        db = db_factory()
+        try:
+            mark_review_unavailable(
+                db,
+                session_id=session_id,
+                job_id=job_id,
+                variant_id=variant_id,
+                generation_id=render_generation_id,
+                code="review_failed",
+                message=str(exc),
+            )
+        finally:
+            db.close()
+        persist_run(
+            job_id=job_id,
+            creator_agent_session_id=session_id,
+            segment_idx=None,
+            agent_name=QUALITY_REVIEW_AGENT_NAME,
+            prompt_version=QUALITY_REVIEW_PROMPT_VERSION,
+            model=QUALITY_REVIEW_MODEL,
+            outcome="failed",
+            attempts=1,
+            tokens_in=0,
+            tokens_out=0,
+            cost_usd=0.0,
+            latency_ms=0,
+            input_dict={"session_id": session_id, "job_id": job_id, "variant_id": variant_id},
+            output_dict=None,
+            raw_text=None,
+            error=str(exc)[:500],
+        )
+        return True
+    db = db_factory()
+    try:
+        if not persist_review_if_current(
+            db,
+            session_id=session_id,
+            job_id=job_id,
+            variant_id=variant_id,
+            generation_id=render_generation_id,
+            payload=payload,
+        ):
+            return False
+    finally:
+        db.close()
+    persist_run(
+        job_id=job_id,
+        creator_agent_session_id=session_id,
+        segment_idx=None,
+        agent_name=QUALITY_REVIEW_AGENT_NAME,
+        prompt_version=QUALITY_REVIEW_PROMPT_VERSION,
+        model=QUALITY_REVIEW_MODEL,
+        outcome="ok",
+        attempts=1,
+        tokens_in=int(getattr(verdict, "tokens_in", 0) or 0),
+        tokens_out=int(getattr(verdict, "tokens_out", 0) or 0),
+        cost_usd=0.0,
+        latency_ms=0,
+        input_dict={"session_id": session_id, "job_id": job_id, "variant_id": variant_id},
+        output_dict=payload,
+        raw_text=getattr(verdict, "raw_response", None),
+        error=None,
+    )
+    return True
+
+
+def review_with_video_quality_grader(video_gcs_path: str) -> Any:
+    """Download and grade the exact render claimed by the fenced worker.
+
+    Reaching this adapter requires both Creator review flags plus the exact
+    creator/item/Job/variant/generation checks. Importing this module never
+    transfers media, and tests replace the adapter with an offline callable.
+    """
+
+    from app.services.video_grader import VideoQualityGrader  # noqa: PLC0415
+    from app.storage import download_to_file  # noqa: PLC0415
+    from app.tasks.grade_final_video import RUBRIC_PATH  # noqa: PLC0415
+
+    with tempfile.TemporaryDirectory(prefix="creator-review-") as tmpdir:
+        local_path = str(Path(tmpdir) / "render.mp4")
+        download_to_file(video_gcs_path, local_path)
+        return VideoQualityGrader(
+            RUBRIC_PATH,
+            model=QUALITY_REVIEW_MODEL,
+            require_evidence=True,
+        ).grade(local_path)
+
+
+def mark_review_unavailable(
+    db: Any,
+    *,
+    session_id: str,
+    job_id: str,
+    variant_id: str,
+    generation_id: str,
+    code: str,
+    message: str,
+    allow_stale_target: bool = False,
+) -> bool:
+    from app.models import CreatorAgentSession, Job  # noqa: PLC0415
+
+    row = db.get(CreatorAgentSession, uuid.UUID(session_id), with_for_update=True)
+    current = row.last_review if row and isinstance(row.last_review, dict) else {}
+    if row is None or current.get("review_key") != review_key(
+        session_id, job_id, variant_id, generation_id
+    ):
+        return False
+    # Always lock the referenced Job while closing a receipt.  Even the
+    # stale-target/manual-feedback path needs the same row-level fence as the
+    # successful path so a flag-off worker cannot race a new generation.
+    job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+    if not allow_stale_target:
+        variants = (job.assembly_plan or {}).get("variants") if job else []
+        variant = next(
+            (
+                value
+                for value in variants
+                if isinstance(value, dict) and value.get("variant_id") == variant_id
+            ),
+            None,
+        )
+        if not (
+            job
+            and job.status in READY_JOB_STATUSES
+            and job.user_id == row.creator_id
+            and job.content_plan_item_id == row.plan_item_id
+            and int(job.content_plan_ownership_epoch or -1) == int(row.ownership_epoch)
+            and variant
+            and variant.get("render_status") == "ready"
+            and variant.get("render_generation_id") == generation_id
+        ):
+            return False
+    row.last_review = {
+        **current,
+        "status": "unavailable",
+        "decision": "unavailable",
+        "error_code": code,
+        "error_message": message[:240],
+        "failed_at": _now(),
+    }
+    db.commit()
+    return True
+
+
+@celery_app.task(
+    name="tasks.creator_quality_review",
+    bind=True,
+    max_retries=3,
+    soft_time_limit=240,
+    time_limit=300,
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
+def quality_review_creator_session(
+    self,
+    *,
+    session_id: str,
+    job_id: str,
+    variant_id: str,
+    render_generation_id: str,
+) -> None:
+    """Offline-safe worker entry point; a reviewer adapter is rollout-owned."""
+
+    from app.agents._persistence import persist_agent_run  # noqa: PLC0415
+    from app.config import settings  # noqa: PLC0415
+    from app.database import sync_session  # noqa: PLC0415
+    from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
+
+    if not (
+        settings.main_creator_agent_review_enabled
+        and settings.main_creator_agent_quality_review_enabled
+    ):
+        # A flag can be disabled after reconciliation has committed a pending
+        # receipt.  Do not leave that receipt pending forever: fence the exact
+        # Job/variant/generation under row locks and expose a manual-feedback
+        # outcome.  ``mark_review_unavailable`` validates the full identity
+        # before writing, so a stale delivery cannot mutate a newer render.
+        with sync_session() as db:
+            mark_review_unavailable(
+                db,
+                session_id=session_id,
+                job_id=job_id,
+                variant_id=variant_id,
+                generation_id=render_generation_id,
+                code="review_disabled",
+                message="Quality review is disabled; watch the render and give manual feedback.",
+                allow_stale_target=True,
+            )
+        return
+
+    # Reconciliation queues this task in the same request that commits the
+    # pending receipt. A fast worker can observe the pre-commit session row;
+    # bounded retry makes that ordering safe without making review polling an
+    # implicit outbox.
+    with pipeline_trace_for(job_id):
+        did_run = run_quality_review(
+            session_id=session_id,
+            job_id=job_id,
+            variant_id=variant_id,
+            render_generation_id=render_generation_id,
+            db_factory=sync_session,
+            reviewer=review_with_video_quality_grader,
+            persist_run=persist_agent_run,
+            reclaim_running=bool(self.request.delivery_info.get("redelivered")),
+        )
+    if not did_run and self.request.retries < self.max_retries:
+        raise self.retry(countdown=1)
+
+
+__all__ = [
+    "build_review_payload",
+    "claim_exact_review",
+    "mark_review_unavailable",
+    "persist_review_if_current",
+    "quality_review_creator_session",
+    "queue_creator_quality_review",
+    "review_key",
+    "review_with_video_quality_grader",
+    "run_quality_review",
+]

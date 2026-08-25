@@ -40,6 +40,8 @@ CAPABILITY_NATIVE_RENDER = "native_render"
 CAPABILITY_DRAFT_GUIDED_PROPOSAL = "draft_guided_proposal"
 CAPABILITY_DISPATCH_RENDER = "dispatch_render"
 CAPABILITY_SELECT_READY_VARIANT = "select_ready_variant"
+CAPABILITY_CAPTION_STYLE = "caption_style"
+CAPABILITY_AUTOMATIC_CUT = "automatic_cut"
 
 _FEATURE_SETTINGS = {
     "main_creator_agent": "main_creator_agent_enabled",
@@ -69,6 +71,36 @@ def _unavailable(code: str, detail: str) -> CapabilityAvailability:
 def _format_availability(edit_format: str, *, has_voiceover: bool) -> CapabilityAvailability:
     """Resolve real assembler availability; fallback-in-worker is not a capability."""
 
+    if edit_format == "day_vlog":
+        if not settings.edit_format_day_vlog_enabled:
+            return _unavailable(
+                "disabled_by_setting",
+                "day_vlog is disabled by the server (EDIT_FORMAT_DAY_VLOG_ENABLED)",
+            )
+        if not settings.NARRATIVE_CLIP_ORDER_ENABLED:
+            return _unavailable(
+                "chronology_disabled",
+                "day_vlog requires chronological filming-guide ordering "
+                "(NARRATIVE_CLIP_ORDER_ENABLED)",
+            )
+        if has_voiceover:
+            return _unavailable(
+                "native_render_required",
+                "day_vlog uses the guided renderer and cannot carry a voiceover",
+            )
+        return _available()
+    if edit_format == "single_hero":
+        if not settings.edit_format_single_hero_enabled:
+            return _unavailable(
+                "disabled_by_setting",
+                "single_hero is disabled by the server (EDIT_FORMAT_SINGLE_HERO_ENABLED)",
+            )
+        if has_voiceover:
+            return _unavailable(
+                "native_render_required",
+                "single_hero uses the guided renderer and cannot carry a voiceover",
+            )
+        return _available()
     if edit_format == "montage":
         return _available()
     if edit_format == "talking_head" and settings.edit_format_talking_head_enabled:
@@ -186,6 +218,24 @@ def resolve_creator_manifest(
             _available()
             if ready_variant
             else _unavailable("no_ready_variant", "a ready variant is required before selection")
+        ),
+        # Caption style has no separate rollout switch; it is available only
+        # when the authenticated Creator execution gateway is enabled.
+        CAPABILITY_CAPTION_STYLE: (
+            _available()
+            if settings.main_creator_agent_execution_enabled
+            else _unavailable("disabled_by_setting", "caption styling is disabled by the server")
+        ),
+        # Reviewable speech-cut candidates are produced independently by the
+        # silence/filler and retake detectors.  Execution validates the exact
+        # pending candidate and its detector-specific switch again.
+        CAPABILITY_AUTOMATIC_CUT: (
+            _available()
+            if settings.silence_cut_enabled or settings.retake_cut_enabled
+            else _unavailable(
+                "disabled_by_setting",
+                "automatic speech cuts are disabled by the server",
+            )
         ),
     }
 
@@ -362,6 +412,7 @@ build_creator_manifest = resolve_creator_manifest
 
 __all__ = [
     "CAPABILITY_DISPATCH_RENDER",
+    "CAPABILITY_CAPTION_STYLE",
     "CAPABILITY_DRAFT_GUIDED_PROPOSAL",
     "CAPABILITY_GUIDED_STORY",
     "CAPABILITY_NATIVE_RENDER",

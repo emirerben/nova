@@ -10,25 +10,62 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlalchemy.exc import MissingGreenlet
+from starlette.requests import Request
 
-from app.agents._schemas.creator_agent import CreativeStrategy, canonical_context_hash
+from app.agents._schemas.creator_agent import (
+    CreativeStrategy,
+    CreatorCraftBundle,
+    canonical_context_hash,
+)
 from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
 from app.auth import get_current_user
 from app.config import Settings, settings
 from app.database import get_db
+from app.limiter import limiter
 from app.main import app
-from app.models import CreatorAgentExecution, Job
+from app.models import CreatorAgentExecution, CreatorAgentSession, Job
 from app.routes import creator_agent as creator_routes
 from app.routes import plan_items as plan_item_routes
 from app.routes.creator_agent import (
+    AutoIterationBody,
     ConfirmBody,
     StartBody,
     TurnBody,
     _apply_plan_intent,
+    _auto_iteration_already_finalized,
+    _creator_speech_cut_source_enabled,
     _reset_render_target,
     _seed_guided_specialist_brief,
+    _strict_creator_format,
 )
-from app.services.creator_capabilities import compile_strategy_to_plan, resolve_creator_manifest
+from app.services.creator_capabilities import (
+    compile_strategy_to_plan,
+    resolve_creator_manifest,
+)
+
+
+def _craft_bundle(
+    *,
+    session_id: uuid.UUID,
+    job_id: uuid.UUID,
+    generation_id: str,
+    idempotency_key: str = "craft-1",
+) -> CreatorCraftBundle:
+    pins = {
+        "expected_manifest_hash": "a" * 64,
+        "expected_context_hash": "b" * 64,
+        "expected_job_id": str(job_id),
+        "expected_variant_id": "variant-1",
+        "expected_generation_id": generation_id,
+        "expected_revision": 3,
+        "expected_ownership_epoch": 4,
+    }
+    return CreatorCraftBundle(
+        session_id=str(session_id),
+        idempotency_key=idempotency_key,
+        commands=[{**pins, "command": "set_caption_style", "caption_style": "word"}],
+        **pins,
+    )
 
 
 @pytest.fixture()
@@ -59,6 +96,500 @@ def _manifest(monkeypatch, *, has_voiceover: bool = False):
         has_voiceover=has_voiceover,
         media=[{"media_id": "clip-1", "kind": "video"}],
     )
+
+
+def test_creator_speech_cut_uses_candidate_specific_kill_switch(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "silence_cut_enabled", False)
+    monkeypatch.setattr(settings, "retake_cut_enabled", True)
+    assert _creator_speech_cut_source_enabled("retake_review") is True
+    assert _creator_speech_cut_source_enabled("silence_review") is False
+
+    monkeypatch.setattr(settings, "silence_cut_enabled", True)
+    monkeypatch.setattr(settings, "retake_cut_enabled", False)
+    assert _creator_speech_cut_source_enabled("retake_review") is False
+    assert _creator_speech_cut_source_enabled("filler_review") is True
+    assert _creator_speech_cut_source_enabled("untrusted_source") is False
+
+
+@pytest.mark.parametrize(
+    ("count", "status", "expected"),
+    [
+        (0, "running", False),
+        (1, "running", True),
+        (0, "queued", True),
+        (0, "complete", True),
+    ],
+)
+def test_auto_iteration_finalization_is_one_cycle_idempotent(
+    count: int, status: str, expected: bool
+) -> None:
+    session = SimpleNamespace(
+        automatic_revision_count=count,
+        last_review={"auto_iteration": {"status": status}},
+    )
+
+    assert _auto_iteration_already_finalized(session) is expected
+
+
+@pytest.mark.asyncio
+async def test_auto_iteration_keeps_ready_phase_until_craft_succeeds(monkeypatch) -> None:
+    """The craft gateway must see the ready phase on first dispatch and retry."""
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    item_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    session = SimpleNamespace(
+        id=session_id,
+        creator_id=user.id,
+        plan_item_id=item_id,
+        status="awaiting_feedback",
+        revision=11,
+        ownership_epoch=7,
+        auto_iteration_opt_in=False,
+        max_render_attempts=2,
+        render_attempts=1,
+        automatic_revision_count=0,
+        target_job_id=job_id,
+        target_variant_id="variant-1",
+        target_generation_id="generation-1",
+        last_review={
+            "status": "complete",
+            "review_mode": "objective",
+            "render_generation_id": "generation-1",
+            "confidence": 0.9,
+            "quality_score": 3.0,
+            "expected_improvement": 0.5,
+            "objective_tag": "objective_quality",
+            "allowlist_action": "caption_legibility",
+            "proposed_revision": {"revision_id": "revision-1", "summary": "Fix captions"},
+        },
+    )
+    item = SimpleNamespace(id=item_id)
+    plan = SimpleNamespace(ownership_epoch=7)
+    job = SimpleNamespace(
+        id=job_id,
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "variant-1",
+                    "render_generation_id": "generation-1",
+                    "render_status": "ready",
+                }
+            ]
+        },
+    )
+    manifest = SimpleNamespace(manifest_hash="a" * 64, context_hash="b" * 64)
+    db = AsyncMock()
+    query_result = MagicMock()
+    query_result.scalar_one_or_none.return_value = None
+    db.execute.return_value = query_result
+    db.get.return_value = job
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, plan, SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(side_effect=[session, session]))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+
+    async def append_event(*_args, **_kwargs):
+        session.revision += 1
+
+    monkeypatch.setattr(creator_routes, "append_event", append_event)
+    monkeypatch.setattr(
+        creator_routes,
+        "evaluate_auto_iteration",
+        lambda *_args, **_kwargs: SimpleNamespace(decision="eligible"),
+    )
+    captured: dict = {}
+
+    def build_bundle(**kwargs):
+        captured["pin"] = kwargs["pin"]
+        return SimpleNamespace(model_dump=lambda mode: {"bounded": True})
+
+    monkeypatch.setattr(creator_routes, "build_auto_bundle", build_bundle)
+
+    async def craft(*_args, **_kwargs):
+        captured["status_at_craft"] = session.status
+        return SimpleNamespace(generation="generation-2", receipt_id="craft-receipt-1")
+
+    monkeypatch.setattr(creator_routes, "execute_creator_craft", craft)
+    monkeypatch.setattr(
+        creator_routes,
+        "_response",
+        AsyncMock(return_value=SimpleNamespace(status="rendering")),
+    )
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_execution_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_review_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_quality_review_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_auto_iteration_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_rollout_percent", 100)
+
+    result = await creator_routes.request_creator_auto_iteration(
+        str(item_id),
+        AutoIterationBody(
+            session_id=session_id,
+            expected_revision=11,
+            opt_in=True,
+            client_event_id="auto-event-1",
+        ),
+        user,
+        db,
+    )
+
+    assert result.status == "rendering"
+    assert captured["status_at_craft"] == "awaiting_feedback"
+    assert captured["pin"]["expected_revision"] == 12
+
+
+def test_strict_creator_formats_never_use_montage_fallback() -> None:
+    assert _strict_creator_format("day_vlog") is True
+    assert _strict_creator_format("single_hero") is True
+    assert _strict_creator_format("montage") is False
+
+
+def _craft_route_context(*, user_id: uuid.UUID, job_id: uuid.UUID, session_id: uuid.UUID):
+    item_id = uuid.uuid4()
+    item = SimpleNamespace(id=item_id, current_job_id=job_id)
+    plan = SimpleNamespace(ownership_epoch=4)
+    session = SimpleNamespace(
+        id=session_id,
+        creator_id=user_id,
+        plan_item_id=item_id,
+        status="awaiting_feedback",
+        revision=3,
+        ownership_epoch=4,
+    )
+    job = SimpleNamespace(
+        id=job_id,
+        user_id=user_id,
+        content_plan_item_id=item_id,
+        content_plan_ownership_epoch=4,
+        status="variants_ready",
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "variant-1",
+                    "render_generation_id": "generation-2",
+                    "render_status": "ready",
+                }
+            ]
+        },
+    )
+    manifest = SimpleNamespace(
+        manifest_hash="a" * 64,
+        context_hash="b" * 64,
+        capabilities={"caption_style": SimpleNamespace(available=True)},
+    )
+    return item, plan, session, job, manifest
+
+
+@pytest.mark.asyncio
+async def test_creator_craft_rejects_stale_exact_generation_pin(monkeypatch) -> None:
+    user_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    item, plan, session, job, manifest = _craft_route_context(
+        user_id=user_id, job_id=job_id, session_id=session_id
+    )
+    db = AsyncMock()
+    receipt_result = MagicMock()
+    receipt_result.scalar_one_or_none.return_value = None
+    db.execute.return_value = receipt_result
+    db.get.return_value = job
+    monkeypatch.setattr(creator_routes, "_require_feature", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, plan, SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+
+    with pytest.raises(HTTPException) as caught:
+        await creator_routes.execute_creator_craft(
+            str(item.id),
+            _craft_bundle(
+                session_id=session_id,
+                job_id=job_id,
+                generation_id="generation-1",
+            ),
+            SimpleNamespace(id=user_id),
+            db,
+        )
+
+    assert caught.value.status_code == 409
+    assert caught.value.detail == "Creator render generation changed"
+    db.add.assert_not_called()
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_creator_craft_replays_succeeded_receipt_without_reenqueue(monkeypatch) -> None:
+    user_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    item, plan, session, job, manifest = _craft_route_context(
+        user_id=user_id, job_id=job_id, session_id=session_id
+    )
+    body = _craft_bundle(
+        session_id=session_id,
+        job_id=job_id,
+        generation_id="generation-2",
+    )
+    receipt = SimpleNamespace(
+        id=uuid.uuid4(),
+        request_digest=canonical_context_hash(body.model_dump(mode="json")),
+        status="succeeded",
+        result={
+            "generation": "generation-2",
+            "prepared": {"generation": "generation-2", "sections": {"caption_meta": True}},
+            "preview": {"caption_style": "word"},
+        },
+    )
+    # The first direct craft commit advanced the controller revision before
+    # publishing. An exact idempotent replay still carries the original pin.
+    session.revision = body.expected_revision + 1
+    db = AsyncMock()
+    receipt_result = MagicMock()
+    receipt_result.scalar_one_or_none.return_value = receipt
+    db.execute.return_value = receipt_result
+    db.get.return_value = job
+    enqueue = MagicMock()
+    monkeypatch.setattr(creator_routes, "enqueue_editor_commit_render", enqueue)
+    monkeypatch.setattr(creator_routes, "_require_feature", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, plan, SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+
+    response = await creator_routes.execute_creator_craft(
+        str(item.id), body, SimpleNamespace(id=user_id), db
+    )
+
+    assert response.status == "succeeded"
+    assert response.generation == "generation-2"
+    assert response.preview == {"caption_style": "word"}
+    enqueue.assert_not_called()
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_creator_craft_enqueue_failure_restores_plan_and_fails_receipt(monkeypatch) -> None:
+    user_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    item, plan, session, job, manifest = _craft_route_context(
+        user_id=user_id, job_id=job_id, session_id=session_id
+    )
+    body = _craft_bundle(
+        session_id=session_id,
+        job_id=job_id,
+        generation_id="generation-2",
+    )
+    job.assembly_plan = {
+        "variants": [
+            {
+                "variant_id": "variant-1",
+                "render_generation_id": "generation-2",
+                "render_status": "ready",
+                "caption_meta": {"style": "sentence"},
+            },
+            {"variant_id": "sibling", "render_generation_id": "sibling-1", "rank": 2},
+        ],
+        "unrelated_state": "before",
+    }
+    previous_assembly_plan = job.assembly_plan.copy()
+    receipt_id = uuid.uuid4()
+    failed_receipt = SimpleNamespace(id=receipt_id, status="running", error=None)
+    db = AsyncMock()
+    receipt_result = MagicMock()
+    receipt_result.scalar_one_or_none.return_value = None
+    db.execute.return_value = receipt_result
+    db.get.side_effect = [job, session, job, failed_receipt]
+
+    def add(value):
+        if isinstance(value, CreatorAgentExecution):
+            value.id = receipt_id
+
+    db.add = MagicMock(side_effect=add)
+    editor_commit = SimpleNamespace(
+        caption_meta=SimpleNamespace(style="word"),
+        timeline_slots=None,
+        sound_effects=None,
+        media_overlays=None,
+    )
+
+    def prepare(*_args, **_kwargs):
+        job.assembly_plan = {
+            "variants": [
+                {
+                    "variant_id": "variant-1",
+                    "render_generation_id": "generation-3",
+                    "render_status": "rendering",
+                },
+                {"variant_id": "sibling", "render_generation_id": "sibling-2", "rank": 3},
+            ],
+            "unrelated_state": "concurrent-update",
+        }
+        return {"generation": "generation-3", "sections": {"caption_meta": True}}
+
+    monkeypatch.setattr(creator_routes, "_require_feature", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, plan, SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(
+        creator_routes,
+        "build_core_craft_editor_commit",
+        lambda *_args, **_kwargs: editor_commit,
+    )
+    monkeypatch.setattr(creator_routes, "prepare_editor_commit", prepare)
+    monkeypatch.setattr(creator_routes, "craft_preview", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(creator_routes, "_stable_manifest_fingerprint", lambda _manifest: "stable")
+    monkeypatch.setattr(
+        creator_routes,
+        "enqueue_editor_commit_render",
+        MagicMock(side_effect=RuntimeError("broker unavailable")),
+    )
+
+    with pytest.raises(HTTPException) as caught:
+        await creator_routes.execute_creator_craft(
+            str(item.id), body, SimpleNamespace(id=user_id), db
+        )
+
+    assert caught.value.status_code == 503
+    assert job.assembly_plan["variants"][0] == previous_assembly_plan["variants"][0]
+    assert job.assembly_plan["variants"][1]["render_generation_id"] == "sibling-2"
+    assert job.assembly_plan["unrelated_state"] == "concurrent-update"
+    assert failed_receipt.status == "failed"
+    assert failed_receipt.error["code"] == "craft_enqueue_failed"
+    assert failed_receipt.error["rolled_back"] is True
+    # The route advances the controller revision together with the staged
+    # generation; broker publication failure restores that exact session state.
+    assert session.revision == 3
+    db.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_creator_craft_rollback_restores_speech_owned_state_only() -> None:
+    job_id = uuid.uuid4()
+    receipt_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    started_at = datetime.now(UTC)
+    previous_plan = {
+        "variants": [
+            {"variant_id": "target", "render_generation_id": "old", "render_status": "ready"}
+        ],
+        "silence_cut_disabled": True,
+        "speech_cut_control": {"operation_id": "old-op"},
+        "speech_cut_previous_variant": {"variant_id": "target", "render_status": "ready"},
+        "speech_cut_previous_variants": [{"variant_id": "target"}],
+        "speech_cut_last_error": "old-error",
+    }
+    job = SimpleNamespace(
+        id=job_id,
+        status="processing",
+        started_at=datetime.now(UTC),
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "target",
+                    "render_generation_id": "new",
+                    "render_status": "rendering",
+                },
+                {"variant_id": "sibling", "render_generation_id": "sibling-new"},
+            ],
+            "silence_cut_disabled": False,
+            "speech_cut_control": {"operation_id": "new-op"},
+            "speech_cut_previous_variant": {"variant_id": "target", "render_status": "rendering"},
+            "speech_cut_previous_variants": [{"variant_id": "sibling"}],
+            "speech_cut_last_error": None,
+            "unrelated": "concurrent-update",
+        },
+    )
+    session = SimpleNamespace(
+        id=session_id,
+        status="rendering",
+        target_job_id=job_id,
+        target_variant_id="target",
+        target_generation_id="new",
+        render_attempts=2,
+        iteration_count=2,
+        revision=4,
+    )
+    failed_receipt = SimpleNamespace(id=receipt_id, status="running", error=None)
+    db = AsyncMock()
+    db.get.side_effect = [session, job, failed_receipt]
+
+    await creator_routes._rollback_craft_commit(
+        db,
+        receipt_id=receipt_id,
+        session_id=session_id,
+        job_id=job_id,
+        previous_assembly_plan=previous_plan,
+        variant_id="target",
+        generation="new",
+        error=RuntimeError("broker unavailable"),
+        previous_job_state={"status": "variants_ready", "started_at": started_at.isoformat()},
+        previous_session_state={
+            "status": "awaiting_feedback",
+            "target_job_id": str(job_id),
+            "target_variant_id": "target",
+            "target_generation_id": "old",
+            "render_attempts": 1,
+            "iteration_count": 1,
+            "revision": 3,
+        },
+    )
+
+    assert job.status == "variants_ready"
+    assert job.started_at == started_at
+    assert job.assembly_plan["variants"][0] == previous_plan["variants"][0]
+    assert job.assembly_plan["variants"][1]["render_generation_id"] == "sibling-new"
+    assert job.assembly_plan["unrelated"] == "concurrent-update"
+    for key in (
+        "silence_cut_disabled",
+        "speech_cut_control",
+        "speech_cut_previous_variant",
+        "speech_cut_previous_variants",
+        "speech_cut_last_error",
+    ):
+        assert job.assembly_plan[key] == previous_plan[key]
+    assert failed_receipt.status == "failed"
+    assert session.status == "awaiting_feedback"
+    assert session.target_generation_id == "old"
+    assert session.render_attempts == 1
+    assert session.revision == 3
+    assert [call.args[0] for call in db.get.await_args_list] == [
+        CreatorAgentSession,
+        Job,
+        CreatorAgentExecution,
+    ]
 
 
 class _ExpiringNamespace:
@@ -174,6 +705,22 @@ def test_rollout_flags_fail_closed_when_dependencies_are_missing() -> None:
             main_creator_agent_enabled=True,
             main_creator_agent_auto_iteration_enabled=True,
         )
+    with pytest.raises(ValidationError, match="auto iteration requires quality review"):
+        Settings(
+            **base,
+            main_creator_agent_enabled=True,
+            main_creator_agent_execution_enabled=True,
+            main_creator_agent_review_enabled=True,
+            main_creator_agent_auto_iteration_enabled=True,
+        )
+    with pytest.raises(ValidationError, match="auto iteration requires execution"):
+        Settings(
+            **base,
+            main_creator_agent_enabled=True,
+            main_creator_agent_review_enabled=True,
+            main_creator_agent_quality_review_enabled=True,
+            main_creator_agent_auto_iteration_enabled=True,
+        )
 
 
 def test_replan_clears_every_prior_render_identity() -> None:
@@ -238,6 +785,108 @@ def test_creator_route_rollout_gate_is_hidden_as_404(client: TestClient) -> None
     assert response.json()["detail"] == "Creator agent unavailable"
 
 
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        (
+            "/plan-items/11111111-1111-1111-1111-111111111111/creator-agent/session",
+            {"message": "Make it fast", "client_event_id": "rate-start"},
+        ),
+        (
+            "/plan-items/11111111-1111-1111-1111-111111111111/creator-agent/turn",
+            {
+                "session_id": "22222222-2222-2222-2222-222222222222",
+                "expected_revision": 0,
+                "message": "Make it fast",
+                "client_event_id": "rate-turn",
+            },
+        ),
+    ],
+)
+def test_creator_mutations_are_rate_limited_before_model_call(
+    client: TestClient, monkeypatch, path: str, payload: dict
+) -> None:
+    limiter._storage.reset()
+    model_call = MagicMock()
+    monkeypatch.setattr(MainCreatorAgent, "run", model_call)
+    try:
+        responses = [client.post(path, json=payload) for _ in range(13)]
+    finally:
+        limiter._storage.reset()
+
+    assert [response.status_code for response in responses[:12]] == [404] * 12
+    assert responses[-1].status_code == 429
+    model_call.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_start_replays_terminal_session_for_persisted_start_event(monkeypatch) -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4())
+    plan = SimpleNamespace(ownership_epoch=4)
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        plan_item_id=item.id,
+        status="completed",
+        revision=2,
+        events=[
+            SimpleNamespace(
+                client_event_id="terminal-event",
+                sequence=0,
+                payload={"message": "Make it personal"},
+            )
+        ],
+    )
+    db = AsyncMock()
+    prior_result = MagicMock()
+    prior_result.scalar_one_or_none.return_value = session
+    db.execute.return_value = prior_result
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/",
+            "headers": [],
+            "client": ("test", 1),
+            "scheme": "http",
+            "server": ("test", 80),
+            "query_string": b"",
+        }
+    )
+
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, plan, SimpleNamespace())),
+    )
+    load_session = AsyncMock(return_value=session)
+    monkeypatch.setattr(creator_routes, "_load_session", load_session)
+    latest_session = AsyncMock()
+    monkeypatch.setattr(creator_routes, "_latest_session", latest_session)
+    planning = AsyncMock()
+    monkeypatch.setattr(creator_routes, "_run_planning_turn", planning)
+    response = SimpleNamespace(status="completed")
+    response_for = AsyncMock(return_value=response)
+    monkeypatch.setattr(creator_routes, "_response", response_for)
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_rollout_percent", 100)
+
+    result = await creator_routes.start_creator_session(
+        request,
+        str(item.id),
+        StartBody(message="Make it personal", client_event_id="terminal-event"),
+        user,
+        db,
+    )
+
+    assert result is response
+    latest_session.assert_not_awaited()
+    planning.assert_not_awaited()
+    load_session.assert_awaited_once_with(db, session.id, user.id, item.id, for_update=True)
+    response_for.assert_awaited_once_with(db, session)
+
+
 @pytest.mark.asyncio
 async def test_start_locks_an_existing_session_before_appending(monkeypatch) -> None:
     user = SimpleNamespace(id=uuid.uuid4())
@@ -271,6 +920,18 @@ async def test_start_locks_an_existing_session_before_appending(monkeypatch) -> 
     monkeypatch.setattr(creator_routes, "_run_planning_turn", planning)
 
     await creator_routes.start_creator_session(
+        Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/",
+                "headers": [],
+                "client": ("test", 1),
+                "scheme": "http",
+                "server": ("test", 80),
+                "query_string": b"",
+            }
+        ),
         str(item.id),
         StartBody(message="Make it personal", client_event_id="event-1"),
         user,

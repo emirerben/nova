@@ -782,7 +782,36 @@ class Settings(BaseSettings):
     main_creator_agent_enabled: bool = False
     main_creator_agent_execution_enabled: bool = False
     main_creator_agent_review_enabled: bool = False
+    # Quality-review child gate.  This stays separate from the existing editor
+    # Director flag: the Creator review consumes an exact rendered generation and
+    # has its own cost/latency rollout.
+    main_creator_agent_quality_review_enabled: bool = False
     main_creator_agent_auto_iteration_enabled: bool = False
+    # Future format and workspace gates.  These are intentionally independent of
+    # the Main Creator conversation gate so capability manifests fail closed
+    # until their render/ownership contracts are live.
+    edit_format_day_vlog_enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable the strict day_vlog guided renderer. It requires a multi-shot "
+            "filming guide, preserves first-appearance chronology, caps transitions "
+            "at 0.2s, and fails visibly when media is insufficient; it never silently "
+            "downgrades to montage. Read by API capability resolution and workers, so "
+            "flip Fly + restart both API and worker processes."
+        ),
+    )
+    edit_format_single_hero_enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable the strict single_hero guided renderer. It requires one "
+            "dominant source clip plus bounded supporting cutaways, enforces the "
+            "duration/hero-share policy, and fails visibly when media is insufficient; "
+            "it never silently downgrades to montage. Read by API and workers, so "
+            "flip Fly + restart both API and worker processes."
+        ),
+    )
+    main_creator_agent_freeform_uploads_enabled: bool = False
+    main_creator_agent_workspace_enabled: bool = False
     main_creator_agent_rollout_percent: int = Field(default=0, ge=0, le=100)
 
     @model_validator(mode="after")
@@ -800,10 +829,25 @@ class Settings(BaseSettings):
         if self.main_creator_agent_review_enabled and not self.main_creator_agent_enabled:
             raise ValueError("main creator review requires the main creator agent")
         if (
+            self.main_creator_agent_quality_review_enabled
+            and not self.main_creator_agent_review_enabled
+        ):
+            raise ValueError("main creator quality review requires review")
+        if (
             self.main_creator_agent_auto_iteration_enabled
             and not self.main_creator_agent_review_enabled
         ):
             raise ValueError("main creator auto iteration requires review")
+        if (
+            self.main_creator_agent_auto_iteration_enabled
+            and not self.main_creator_agent_quality_review_enabled
+        ):
+            raise ValueError("main creator auto iteration requires quality review")
+        if (
+            self.main_creator_agent_auto_iteration_enabled
+            and not self.main_creator_agent_execution_enabled
+        ):
+            raise ValueError("main creator auto iteration requires execution")
         return self
 
     # Agent/session retention (days). Job- and creator-session-scoped agent

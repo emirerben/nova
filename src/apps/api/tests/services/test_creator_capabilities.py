@@ -67,6 +67,84 @@ def test_manifest_reports_setting_and_state_reasons(monkeypatch) -> None:
     assert ready.capabilities[capabilities.CAPABILITY_SELECT_READY_VARIANT].available is True
 
 
+def test_manifest_reports_caption_style_from_live_creator_execution_flag(monkeypatch) -> None:
+    monkeypatch.setattr(capabilities.settings, "main_creator_agent_execution_enabled", False)
+    disabled = capabilities.resolve_creator_manifest(item_id="item-1")
+    assert disabled.capabilities[capabilities.CAPABILITY_CAPTION_STYLE].reason_code == (
+        "disabled_by_setting"
+    )
+
+    monkeypatch.setattr(capabilities.settings, "main_creator_agent_execution_enabled", True)
+    enabled = capabilities.resolve_creator_manifest(item_id="item-1")
+    assert enabled.capabilities[capabilities.CAPABILITY_CAPTION_STYLE].available is True
+
+
+def test_manifest_reports_automatic_cut_when_either_detector_is_enabled(monkeypatch) -> None:
+    monkeypatch.setattr(capabilities.settings, "silence_cut_enabled", False)
+    monkeypatch.setattr(capabilities.settings, "retake_cut_enabled", False)
+    disabled = capabilities.resolve_creator_manifest(item_id="item-1")
+    assert disabled.capabilities[capabilities.CAPABILITY_AUTOMATIC_CUT].reason_code == (
+        "disabled_by_setting"
+    )
+
+    monkeypatch.setattr(capabilities.settings, "retake_cut_enabled", True)
+    enabled = capabilities.resolve_creator_manifest(item_id="item-1")
+    assert enabled.capabilities[capabilities.CAPABILITY_AUTOMATIC_CUT].available is True
+
+
+def test_day_vlog_manifest_is_explicitly_unavailable_while_flag_off(monkeypatch) -> None:
+    monkeypatch.setattr(capabilities.settings, "edit_format_day_vlog_enabled", False)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="day_vlog",
+        media=[{"media_id": "clip-1", "kind": "video"}],
+    )
+    capability = manifest.capabilities["edit_format:day_vlog"]
+    assert capability.available is False
+    assert capability.reason_code == "disabled_by_setting"
+    assert "EDIT_FORMAT_DAY_VLOG_ENABLED" in (capability.reason or "")
+
+
+def test_day_vlog_manifest_can_advertise_guided_renderer_when_enabled(monkeypatch) -> None:
+    monkeypatch.setattr(capabilities.settings, "edit_format_day_vlog_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "NARRATIVE_CLIP_ORDER_ENABLED", True)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="day_vlog",
+        media=[{"media_id": "clip-1", "kind": "video"}],
+    )
+    assert manifest.capabilities["edit_format:day_vlog"].available is True
+
+
+def test_day_vlog_manifest_fails_closed_when_chronology_is_disabled(monkeypatch) -> None:
+    monkeypatch.setattr(capabilities.settings, "edit_format_day_vlog_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "NARRATIVE_CLIP_ORDER_ENABLED", False)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="day_vlog",
+        media=[{"media_id": "clip-1", "kind": "video"}],
+    )
+    capability = manifest.capabilities["edit_format:day_vlog"]
+    assert capability.available is False
+    assert capability.reason_code == "chronology_disabled"
+
+
+def test_single_hero_manifest_explains_flag_and_advertises_when_enabled(monkeypatch) -> None:
+    monkeypatch.setattr(capabilities.settings, "edit_format_single_hero_enabled", False)
+    unavailable = capabilities.resolve_creator_manifest(
+        item_id="item-1", edit_format="single_hero", media=[{"media_id": "clip-1", "kind": "video"}]
+    )
+    capability = unavailable.capabilities["edit_format:single_hero"]
+    assert capability.reason_code == "disabled_by_setting"
+    assert "EDIT_FORMAT_SINGLE_HERO_ENABLED" in (capability.reason or "")
+
+    monkeypatch.setattr(capabilities.settings, "edit_format_single_hero_enabled", True)
+    available = capabilities.resolve_creator_manifest(
+        item_id="item-1", edit_format="single_hero", media=[{"media_id": "clip-1", "kind": "video"}]
+    )
+    assert available.capabilities["edit_format:single_hero"].available is True
+
+
 def test_compile_strategy_uses_only_available_commands_and_never_guided_for_voiceover(
     monkeypatch,
 ) -> None:

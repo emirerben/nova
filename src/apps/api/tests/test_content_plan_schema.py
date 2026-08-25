@@ -70,6 +70,16 @@ _EXPECTED_CHAIN = {
     "0077": "0076",
     "0078": "0077",
     "0079": "0078",
+    "0080": "0079",
+    "0081": "0080",
+    "0082": "0081",
+    "0083": "0082",
+    "0084": "0083",
+    "0085": "0084",
+    "0086": "0085",
+    "0087": "0086",
+    "0088": "0087",
+    "0089": "0088",
 }
 
 
@@ -81,7 +91,7 @@ def script_dir() -> ScriptDirectory:
 
 def test_single_alembic_head(script_dir: ScriptDirectory) -> None:
     heads = script_dir.get_heads()
-    assert heads == ["0084"], f"expected a single head 0084, got {heads}"
+    assert heads == ["0089"], f"expected a single head 0089, got {heads}"
 
 
 def test_migration_chain_is_linear(script_dir: ScriptDirectory) -> None:
@@ -93,9 +103,9 @@ def test_migration_chain_is_linear(script_dir: ScriptDirectory) -> None:
             "— the circular-FK ordering depends on this exact chain"
         )
 
-    script = script_dir.get_revision("0081")
+    script = script_dir.get_revision("0089")
     assert script is not None
-    assert script.down_revision == "0080"
+    assert script.down_revision == "0088"
 
     for revision, expected_down in (("0082", "0081"), ("0083", "0082"), ("0084", "0083")):
         script = script_dir.get_revision(revision)
@@ -109,6 +119,14 @@ def test_new_tables_registered() -> None:
     assert "content_plans" in tables
     assert "plan_items" in tables
     assert "creator_style_assignments" in tables
+    assert "creator_workspace_proposals" in tables
+    assert "creator_workspace_receipts" in tables
+    assert "creator_workspace_deliverables" in tables
+    assert "creator_workspace_preference_signals" in tables
+    assert {
+        "auto_iteration_opt_in",
+        "automatic_revision_count",
+    } <= set(tables["creator_agent_sessions"].columns.keys())
 
     persona_cols = set(tables["personas"].columns.keys())
     assert {

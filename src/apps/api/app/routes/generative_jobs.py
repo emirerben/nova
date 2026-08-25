@@ -8235,7 +8235,13 @@ def prepare_editor_commit(
     }
 
 
-def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> None:
+def enqueue_editor_commit_render(
+    job_id: str,
+    variant_id: str,
+    prep: dict,
+    *,
+    task_id: str | None = None,
+) -> None:
     """Kick exactly ONE render for a committed editor Save (call AFTER db.commit).
 
     Text-only commits ride the overlay-jobs queue (they take the fast-reburn
@@ -8256,6 +8262,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
                 "render_gen_id": prep["generation"],
                 "force_full_render": True,
             },
+            **({"task_id": task_id} if task_id else {}),
         )
         return
     if prep["sections"].get("caption_cues") is True or prep["sections"].get("caption_meta") is True:
@@ -8269,6 +8276,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
             args=[job_id, variant_id],
             kwargs={"render_gen_id": prep["generation"]},
             queue="overlay-jobs",
+            **({"task_id": task_id} if task_id else {}),
         )
         return
     # R2 (plan 010 review): caption archetypes must reburn when a lane-only Save
@@ -8288,6 +8296,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
             args=[job_id, variant_id],
             kwargs={"render_gen_id": prep["generation"]},
             queue="overlay-jobs",
+            **({"task_id": task_id} if task_id else {}),
         )
         return
     if (
@@ -8301,6 +8310,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
             args=[job_id, variant_id],
             kwargs={"render_gen_id": prep["generation"]},
             queue="overlay-jobs",
+            **({"task_id": task_id} if task_id else {}),
         )
         return
     lane_only_commit = (
@@ -8342,6 +8352,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
             args=[job_id, variant_id],
             kwargs={"render_gen_id": prep["generation"]},
             queue="overlay-jobs",
+            **({"task_id": task_id} if task_id else {}),
         )
         return
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
@@ -8424,6 +8435,8 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
     if is_reburn_only:
         # Overlay-jobs queue: solo worker — avoids macOS prefork CLIP fork crash.
         apply_kwargs["queue"] = "overlay-jobs"
+    if task_id:
+        apply_kwargs["task_id"] = task_id
     regenerate_generative_variant.apply_async(**apply_kwargs)
 
 
