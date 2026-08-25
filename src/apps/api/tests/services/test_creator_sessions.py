@@ -56,6 +56,46 @@ def test_serialize_session_only_exposes_pending_plan_at_confirmation() -> None:
     assert creator_sessions.serialize_session(rendering)["pending_plan"] is None
 
 
+def test_serialize_session_exposes_only_bounded_review_receipt() -> None:
+    session = _session(
+        last_review={
+            "status": "complete",
+            "job_id": "job-1",
+            "variant_id": "variant-1",
+            "render_generation_id": "generation-1",
+            "provider_raw_response": "must not be public",
+            "evidence": [
+                {
+                    "evidence_id": f"e-{index}",
+                    "kind": "visual",
+                    "severity": "warning",
+                    "start_s": 0,
+                    "end_s": 1,
+                    "observation": "observation",
+                    "private_debug": "omit",
+                }
+                for index in range(20)
+            ],
+            "proposed_revision": {
+                "revision_id": "revision-1",
+                "summary": "Tighten the opening.",
+                "rationale": "The first beat is generic.",
+                "evidence_ids": [f"e-{index}" for index in range(20)],
+                "strategy": {"private": "omit"},
+            },
+        },
+    )
+
+    review = creator_sessions.serialize_session(session)["last_review"]
+
+    assert review["status"] == "complete"
+    assert "provider_raw_response" not in review
+    assert len(review["evidence"]) == 12
+    assert "private_debug" not in review["evidence"][0]
+    assert review["proposed_revision"]["evidence_ids"] == [f"e-{index}" for index in range(8)]
+    assert "strategy" not in review["proposed_revision"]
+
+
 def test_creator_context_is_bounded_before_agent_input() -> None:
     persona = SimpleNamespace(
         persona={"summary": "creator", "content_pillars": []},

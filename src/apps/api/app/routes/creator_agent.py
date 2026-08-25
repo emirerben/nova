@@ -104,6 +104,7 @@ class CreatorSessionResponse(BaseModel):
     can_render: bool
     pending_plan: dict | None
     current_job_id: str | None
+    last_review: dict | None
     events: list[dict]
     created_at: str
     updated_at: str

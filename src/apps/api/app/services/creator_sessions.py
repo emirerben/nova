@@ -592,6 +592,69 @@ def serialize_session(session: CreatorAgentSession) -> dict[str, Any]:
             return "assistant"
         return "system"
 
+    raw_review = getattr(session, "last_review", None)
+    review: dict[str, Any] | None = None
+    if isinstance(raw_review, dict):
+        # Keep the public receipt bounded and omit any future provider/debug
+        # fields that might be added to the durable JSONB payload.
+        allowed = {
+            "status",
+            "review_key",
+            "creator_id",
+            "creator_session_id",
+            "plan_item_id",
+            "ownership_epoch",
+            "session_revision",
+            "job_id",
+            "variant_id",
+            "render_generation_id",
+            "manifest_hash",
+            "context_hash",
+            "review_mode",
+            "decision",
+            "reviewer",
+            "quality_score",
+            "confidence",
+            "reviewed_at",
+            "queued_at",
+            "started_at",
+            "failed_at",
+            "error_code",
+            "error_message",
+            "evidence",
+            "proposed_revision",
+        }
+        review = {key: raw_review[key] for key in allowed if key in raw_review}
+        evidence = review.get("evidence")
+        if isinstance(evidence, list):
+            review["evidence"] = [
+                {
+                    key: value
+                    for key in (
+                        "evidence_id",
+                        "kind",
+                        "severity",
+                        "start_s",
+                        "end_s",
+                        "observation",
+                    )
+                    if key in value
+                }
+                for value in evidence[:12]
+                if isinstance(value, dict)
+            ]
+        proposal = review.get("proposed_revision")
+        if isinstance(proposal, dict):
+            review["proposed_revision"] = {
+                key: proposal[key]
+                for key in ("revision_id", "summary", "rationale", "evidence_ids")
+                if key in proposal
+            }
+            if isinstance(review["proposed_revision"].get("evidence_ids"), list):
+                review["proposed_revision"]["evidence_ids"] = review["proposed_revision"][
+                    "evidence_ids"
+                ][:8]
+
     return {
         "id": str(session.id),
         "status": _PHASE_TO_PUBLIC.get(session.phase, "failed"),
@@ -601,6 +664,7 @@ def serialize_session(session: CreatorAgentSession) -> dict[str, Any]:
         "can_render": settings.main_creator_agent_execution_enabled,
         "pending_plan": session.active_plan if session.phase == "awaiting_confirmation" else None,
         "current_job_id": str(session.target_job_id) if session.target_job_id else None,
+        "last_review": review,
         "events": [
             {
                 "id": str(event.id),
