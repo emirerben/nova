@@ -50,8 +50,8 @@ Audio-led and voiceover formats always use the native renderer. The existing
 and records its selected ready variant and `render_generation_id`. The creator can
 give feedback and confirm at most one revision (two renders total). When Stage 2
 review is enabled, the exact ready generation is queued for the objective
-`video_quality_grader`; the resulting evidence and inert revision proposal are
-shown as feedback, never applied automatically.
+`video_quality_grader`; the resulting evidence and confirmation-gated revision
+proposal are shown as feedback, never applied automatically by V1 or Stage 2.
 
 ### Trust boundaries
 
@@ -59,7 +59,8 @@ shown as feedback, never applied automatically.
   credentials, database access, FFmpeg, or route callables.
 - `ResolvedCreatorManifest` is descriptive. It contains live availability reasons,
   render compatibility, current-edit identity, and bounded limits.
-- `CreatorEditPlan` is inert and pins both `manifest_hash` and `context_hash`.
+- `CreatorEditPlan` is non-executable and pins both `manifest_hash` and
+  `context_hash`.
 - Confirmation is a CAS over session revision, plan version/hash, manifest hash,
   creator ownership epoch, and an idempotency key.
 - Execution routes re-check feature flags and ownership. Uploaded overlays and
@@ -71,10 +72,11 @@ shown as feedback, never applied automatically.
 - The proposed `intro_hook` is an opening concept for approval, not trusted
   render copy. Native execution still runs the existing grounded `intro_writer`;
   Main Creator output is never burned verbatim onto the video.
-- V1 and the implemented Stage 2/3 slices never perform automatic revisions. The
-  `auto_iteration` flag exists but cannot be enabled unless review is enabled, and
-  no controller currently consumes it; the bounded Stage 4 contract below is
-  planned, not a shipped autonomy loop.
+- V1 and the implemented Stage 2/3 slices remain confirmation-gated. Stage 4 is
+  an implemented, default-off automatic revision route. It requires explicit
+  per-session opt-in and re-evaluates every objective-quality, budget, allowlist,
+  pin, and one-cycle guard server-side before compiling one existing craft
+  command. Turning on the flag does not opt a session in.
 - Native plans resolve confirmed opaque media IDs back to that exact item's clip
   assignments; an asset-only native selection fails closed instead of rendering
   unrelated footage. Guided plans delegate exact media selection to the approved
@@ -104,6 +106,11 @@ revision proposal. Review claims and writes are exact-generation fenced; a stale
 target or grader failure becomes a visible unavailable/failed review and leaves
 the render untouched.
 
+Stage 4 stores `auto_iteration_opt_in` and `automatic_revision_count` on the
+session. Migration `0084_creator_auto_iteration` adds both columns and constrains
+the automatic count to `0..1`; the default is opt-out and the count is a durable
+one-cycle cap.
+
 ### V1 API
 
 All routes are authenticated, item-owner-scoped, and live under `/plan-items/{id}`:
@@ -115,6 +122,7 @@ All routes are authenticated, item-owner-scoped, and live under `/plan-items/{id
 | `POST /creator-agent/turn` | Revision-fenced feedback or clarification turn |
 | `POST /creator-agent/confirm` | Explicit, hash-pinned execution confirmation |
 | `POST /creator-agent/craft` | Exact-generation, idempotent Stage 3 craft bundle |
+| `POST /creator-agent/auto-iteration` | Explicitly opted-in, one-cycle Stage 4 objective revision |
 | `POST /creator-agent/cancel` | Cancel a non-rendering active session |
 
 The public response contains conversation events, session status/revision, render
@@ -134,7 +142,8 @@ observations, and at most one revision proposal linked to evidence IDs.
 
 Review is fail-open for creator delivery: stale targets, enqueue failures, missing
 review targets, and grader errors become explicit unavailable/failed receipts and
-manual feedback remains available. A `revise` result is an inert recommendation;
+manual feedback remains available. A `revise` result is a confirmation-gated
+recommendation;
 the creator must still confirm the next render. There is no claim here that a
 Director pass or automatic taste judgment is implemented by this slice.
 
@@ -161,6 +170,41 @@ automatic speech cuts are never enabled merely because the Creator Agent is on.
 Media overlays cannot be combined with core commands in one bundle. Craft is a
 separate post-render operation; it does not create a new Main Creator strategy
 or bypass the confirmation boundary.
+
+### Stage 4 — bounded automatic iteration (implemented dark, default off)
+
+`POST /plan-items/{id}/creator-agent/auto-iteration` is the explicit opt-in
+entry point. The caller supplies `session_id`, `expected_revision`, `opt_in=true`,
+and a `client_event_id`; `opt_in=false` is rejected. The route requires the
+master rollout and execution gates plus
+`MAIN_CREATOR_AGENT_REVIEW_ENABLED`,
+`MAIN_CREATOR_AGENT_QUALITY_REVIEW_ENABLED`, and
+`MAIN_CREATOR_AGENT_AUTO_ITERATION_ENABLED`. Enabling the flag alone does not
+enroll sessions.
+
+The server evaluates the exact completed objective review and proceeds only if
+all of these gates pass: `confidence >= 0.85`, `quality_score < 4.0`,
+`expected_improvement >= 0.5`, remaining render budget is positive,
+`automatic_revision_count < 1`, and `objective_tag == "objective_quality"`.
+The proposed action must be exactly one of the allowlisted actions:
+`transition_fallback`, `caption_legibility`, `remove_optional_treatment`, or
+`speech_cut`. These compile to existing typed commands only: a no-transition
+fallback, sentence captions, removal of one existing `media_overlay` or `sfx`,
+or an already pending speech-cut candidate from an approved review source.
+New media, voiceover, publishing, external assets, training enrollment, and
+taste-ambiguous changes are excluded. Render budget is only a positive
+remaining-budget gate; `objective_tag` remains exactly `objective_quality` and
+is not user-controlled.
+
+Every command carries exact creator/session/PlanItem/job/variant/generation,
+manifest/context, revision, and ownership-epoch pins. The stable key
+`creator-auto:{session_id}:{target_generation_id}` makes retries idempotent;
+an existing prepared craft receipt is recovered through the normal craft path,
+and duplicate client events return the existing result. A successful cycle
+increments `automatic_revision_count` and records a `last_good` rollback receipt
+containing the prior generation and assembly plan. Craft or render failure is
+fail-open: the current video remains unchanged, the session is available for
+manual feedback, and the stored receipt is the recovery point.
 
 ### Delegation policy
 
@@ -226,13 +270,17 @@ flags are live.
    licensed SFX, owner-scoped media-overlay, and speech-cut commands into the
    existing safe editor/candidate routes. Each command has an independent live
    capability gate and exact-generation receipt.
-4. **Stage 4 — bounded autonomy (planned; not implemented):** the schema-level
-   `CreatorAutomationDecision` describes at most one automatic revise/render cycle
-   when confidence, expected quality delta, remaining budget, explicit opt-in, and
-   a rollback receipt pass. No route or worker currently consumes this decision or
-   `MAIN_CREATOR_AGENT_AUTO_ITERATION_ENABLED`; details remain dependent on the
-   future controller implementation. The intended exclusions are taste-ambiguous
-   changes, new media, voiceover, and publishing.
+4. **Stage 4 — bounded autonomy (implemented dark, default off):** the explicit
+   auto-iteration route requires per-session opt-in, completed objective review,
+   `confidence >= 0.85`, `quality_score < 4.0`, `expected_improvement >= 0.5`, a
+   positive remaining budget, the `objective_quality` tag, and one exact action
+   from the four-action allowlist. It compiles at most one exact-pinned command,
+   uses the stable generation idempotency key, recovers prepared receipts, and
+   records the prior generation as a rollback receipt. The schema and route are
+   implemented behind `MAIN_CREATOR_AGENT_AUTO_ITERATION_ENABLED=false` by
+   default. The exclusions are taste-ambiguous changes, new media, voiceover,
+   publishing, external asset acquisition, training enrollment, and inferred
+   preferences.
 5. **Stage 5 — creator workspace ownership (implemented dark, independently gated):**
    approval-gated off-plan relevance proposals, plan-level multi-deliverable
    receipts, and explicit preference signals/style edits. Publishing, external asset
@@ -252,6 +300,9 @@ flags are live.
   pins, owner-scoped overlays/SFX, atomic editor commits, and enqueue rollback;
 - M6 tests pin renderer-version markers, strict day-vlog chronology/transitions/
   duration, and single-hero ownership/dominance/duration policies;
+- Stage 4 tests pin objective thresholds, explicit opt-in, exact allowlist,
+  one-cycle recovery, command pins, idempotency, and prior-generation rollback
+  receipts;
 - Stage 5 tests pin 0082/0083 tables, idempotent proposal decisions, ownership
   re-fencing, distinct deliverables, stale receipts, and explicit-only preference
   writes;
@@ -301,6 +352,10 @@ creator workspace (Stage 5)
   ├── creator_workspace_receipts           (plan-level coordination, migration 0083)
   ├── creator_workspace_deliverables       (one exact session/Job target per item)
   └── creator_workspace_preference_signals (creator-authored notes/style edits)
+
+creator-agent session autonomy (Stage 4, migration 0084)
+  ├── auto_iteration_opt_in                (explicit per-session opt-in)
+  └── automatic_revision_count             (durable 0..1 cycle cap)
 ```
 
 **Per-job snapshot:** at job mint time the caller copies the persona/style/plan
@@ -537,6 +592,7 @@ from app.tasks.style_build import derive_user_style
 | `tests/evals/rubrics/style_derivation.md` | LLM judge rubric |
 | `app/services/creator_capabilities.py` | Live manifest and format/treatment gates |
 | `app/services/creator_craft.py` | Deterministic Stage 3 bundle compiler |
+| `app/services/creator_autonomy.py` | Stage 4 objective gates, allowlist, and pinned command compiler |
 | `app/tasks/creator_quality_review.py` | Exact-generation Stage 2 critic coordinator |
 | `app/routes/creator_agent.py` | V1 session, craft, and receipt-fenced execution routes |
 | `app/routes/creator_workspace.py` | Stage 5 proposal, receipt, and preference routes |
@@ -545,7 +601,9 @@ from app.tasks.style_build import derive_user_style
 | `app/migrations/versions/0081_creator_agent_sessions.py` | V1 session/event/execution persistence |
 | `app/migrations/versions/0082_creator_workspace_proposals.py` | Off-plan proposal persistence |
 | `app/migrations/versions/0083_creator_workspace_receipts.py` | Workspace receipts/deliverables/preferences |
+| `app/migrations/versions/0084_creator_auto_iteration.py` | Explicit opt-in and one-cycle auto-iteration state |
 | `tests/tasks/test_creator_quality_review.py` | Stage 2 exact-target/fail-open tests |
 | `tests/services/test_creator_craft.py` | Stage 3 compiler tests |
+| `tests/services/test_creator_autonomy.py` | Stage 4 thresholds, allowlist, pins, idempotency, and recovery tests |
 | `tests/routes/test_creator_workspace.py` | Stage 5 approval/explicit preference tests |
 | `tests/tasks/test_generative_dispatch.py` | M6 strict policy tests |
