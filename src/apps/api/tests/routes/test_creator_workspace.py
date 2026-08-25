@@ -9,6 +9,8 @@ from app.agents.detect_plan_relevance import DetectPlanRelevanceAgent
 from app.routes.creator_workspace import (
     WorkspaceCreateBody,
     WorkspaceDecisionBody,
+    WorkspacePreferenceSignalBody,
+    WorkspaceReceiptCreateBody,
     _request_digest,
 )
 
@@ -57,3 +59,29 @@ def test_relevance_classifier_does_not_infer_preference_or_mutate_plan() -> None
     )
     assert fresh.relevance == "new_topic"
     assert fresh.topic == "New footage"
+
+
+def test_workspace_receipt_pins_distinct_deliverables_and_rejects_duplicate_items() -> None:
+    receipt = WorkspaceReceiptCreateBody(
+        plan_item_ids=["item-1", "item-2"], idempotency_key="receipt-1"
+    )
+    assert receipt.plan_item_ids == ["item-1", "item-2"]
+    with pytest.raises(ValidationError):
+        WorkspaceReceiptCreateBody(plan_item_ids=["item-1", "item-1"], idempotency_key="receipt-1")
+    with pytest.raises(ValidationError):
+        WorkspaceReceiptCreateBody(
+            plan_item_ids=["https://example.test/item"], idempotency_key="receipt-1"
+        )
+
+
+def test_workspace_preference_signal_is_creator_text_only() -> None:
+    signal = WorkspacePreferenceSignalBody(
+        note="  Please use a calmer text style.  ", client_event_id="event-1"
+    )
+    assert signal.note == "Please use a calmer text style."
+    with pytest.raises(ValidationError):
+        WorkspacePreferenceSignalBody(note="   ", client_event_id="event-2")
+    with pytest.raises(ValidationError):
+        WorkspacePreferenceSignalBody(
+            note="Use a calmer style", client_event_id="event-3", inferred=True
+        )
