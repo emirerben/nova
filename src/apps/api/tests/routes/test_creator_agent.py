@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlalchemy.exc import MissingGreenlet
+from starlette.requests import Request
 
 from app.agents._schemas.creator_agent import (
     CreativeStrategy,
@@ -20,6 +21,7 @@ from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
 from app.auth import get_current_user
 from app.config import Settings, settings
 from app.database import get_db
+from app.limiter import limiter
 from app.main import app
 from app.models import CreatorAgentExecution, Job
 from app.routes import creator_agent as creator_routes
@@ -660,6 +662,108 @@ def test_creator_route_rollout_gate_is_hidden_as_404(client: TestClient) -> None
     assert response.json()["detail"] == "Creator agent unavailable"
 
 
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        (
+            "/plan-items/11111111-1111-1111-1111-111111111111/creator-agent/session",
+            {"message": "Make it fast", "client_event_id": "rate-start"},
+        ),
+        (
+            "/plan-items/11111111-1111-1111-1111-111111111111/creator-agent/turn",
+            {
+                "session_id": "22222222-2222-2222-2222-222222222222",
+                "expected_revision": 0,
+                "message": "Make it fast",
+                "client_event_id": "rate-turn",
+            },
+        ),
+    ],
+)
+def test_creator_mutations_are_rate_limited_before_model_call(
+    client: TestClient, monkeypatch, path: str, payload: dict
+) -> None:
+    limiter._storage.reset()
+    model_call = MagicMock()
+    monkeypatch.setattr(MainCreatorAgent, "run", model_call)
+    try:
+        responses = [client.post(path, json=payload) for _ in range(13)]
+    finally:
+        limiter._storage.reset()
+
+    assert [response.status_code for response in responses[:12]] == [404] * 12
+    assert responses[-1].status_code == 429
+    model_call.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_start_replays_terminal_session_for_persisted_start_event(monkeypatch) -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4())
+    plan = SimpleNamespace(ownership_epoch=4)
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        plan_item_id=item.id,
+        status="completed",
+        revision=2,
+        events=[
+            SimpleNamespace(
+                client_event_id="terminal-event",
+                sequence=0,
+                payload={"message": "Make it personal"},
+            )
+        ],
+    )
+    db = AsyncMock()
+    prior_result = MagicMock()
+    prior_result.scalar_one_or_none.return_value = session
+    db.execute.return_value = prior_result
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/",
+            "headers": [],
+            "client": ("test", 1),
+            "scheme": "http",
+            "server": ("test", 80),
+            "query_string": b"",
+        }
+    )
+
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, plan, SimpleNamespace())),
+    )
+    load_session = AsyncMock(return_value=session)
+    monkeypatch.setattr(creator_routes, "_load_session", load_session)
+    latest_session = AsyncMock()
+    monkeypatch.setattr(creator_routes, "_latest_session", latest_session)
+    planning = AsyncMock()
+    monkeypatch.setattr(creator_routes, "_run_planning_turn", planning)
+    response = SimpleNamespace(status="completed")
+    response_for = AsyncMock(return_value=response)
+    monkeypatch.setattr(creator_routes, "_response", response_for)
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_rollout_percent", 100)
+
+    result = await creator_routes.start_creator_session(
+        request,
+        str(item.id),
+        StartBody(message="Make it personal", client_event_id="terminal-event"),
+        user,
+        db,
+    )
+
+    assert result is response
+    latest_session.assert_not_awaited()
+    planning.assert_not_awaited()
+    load_session.assert_awaited_once_with(db, session.id, user.id, item.id, for_update=True)
+    response_for.assert_awaited_once_with(db, session)
+
+
 @pytest.mark.asyncio
 async def test_start_locks_an_existing_session_before_appending(monkeypatch) -> None:
     user = SimpleNamespace(id=uuid.uuid4())
@@ -693,6 +797,18 @@ async def test_start_locks_an_existing_session_before_appending(monkeypatch) -> 
     monkeypatch.setattr(creator_routes, "_run_planning_turn", planning)
 
     await creator_routes.start_creator_session(
+        Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/",
+                "headers": [],
+                "client": ("test", 1),
+                "scheme": "http",
+                "server": ("test", 80),
+                "query_string": b"",
+            }
+        ),
         str(item.id),
         StartBody(message="Make it personal", client_event_id="event-1"),
         user,

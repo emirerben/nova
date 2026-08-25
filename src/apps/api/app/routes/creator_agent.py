@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -38,6 +38,7 @@ from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
 from app.auth import CurrentUser
 from app.config import settings
 from app.database import get_db
+from app.limiter import limiter
 from app.models import (
     ContentPlan,
     CreatorAgentEvent,
@@ -82,6 +83,11 @@ from app.services.job_status import PLAN_ITEM_JOB_READY, PLAN_ITEM_JOB_TERMINAL
 
 log = structlog.get_logger()
 router = APIRouter()
+
+# Planning turns can invoke a paid model call.  Keep this bounded independently
+# of the read/poll and explicit-confirmation routes; the latter are cheap and
+# must remain usable while a client is recovering from a retry storm.
+CREATOR_AGENT_MUTATION_RATE_LIMIT = "12/minute"
 
 
 class _StrictBody(BaseModel):
@@ -238,6 +244,42 @@ async def _latest_session(
     )
     if active_only:
         stmt = stmt.where(CreatorAgentSession.status.in_(ACTIVE_CREATOR_PHASES))
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+
+async def _session_for_start_event(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    item_id: uuid.UUID,
+    client_event_id: str,
+) -> CreatorAgentSession | None:
+    """Find a prior start receipt, including sessions that are now terminal.
+
+    The event id is only meaningful inside the creator/item scope.  Keep the
+    query bounded and filter on the indexed event identity before loading the
+    session's events; the message comparison remains in Python because the
+    payload is JSONB and the persisted event is the authoritative receipt.
+    """
+
+    stmt = (
+        select(CreatorAgentSession)
+        .join(CreatorAgentEvent, CreatorAgentEvent.session_id == CreatorAgentSession.id)
+        .where(
+            CreatorAgentSession.creator_id == user_id,
+            CreatorAgentSession.plan_item_id == item_id,
+            CreatorAgentEvent.client_event_id == client_event_id,
+            CreatorAgentEvent.event_type == "user_message",
+            CreatorAgentEvent.role == "user",
+            # A start receipt is the first user event in a session.  Turn
+            # events use the same event type, so this fence prevents a turn's
+            # id from being accepted as a new-session idempotency key.
+            CreatorAgentEvent.sequence == 0,
+        )
+        .options(selectinload(CreatorAgentSession.events))
+        .order_by(CreatorAgentEvent.created_at.desc())
+        .limit(1)
+    )
     return (await db.execute(stmt)).scalar_one_or_none()
 
 
@@ -499,14 +541,44 @@ async def get_creator_session(
 
 
 @router.post("/{item_id}/creator-agent/session", response_model=CreatorSessionResponse)
+@limiter.limit(CREATOR_AGENT_MUTATION_RATE_LIMIT)
 async def start_creator_session(
+    request: Request,
     item_id: str,
     body: StartBody,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CreatorSessionResponse:
+    _ = request
     _require_feature(user.id)
     item, plan, _persona = await _owned_context(db, item_id, user.id)
+
+    # Idempotency is a receipt of the original start event, not a property of
+    # the currently-active state machine row.  Check terminal sessions before
+    # selecting/creating an active row so a retry after completion cannot
+    # accidentally start a second model conversation.
+    prior = await _session_for_start_event(
+        db,
+        user_id=user.id,
+        item_id=item.id,
+        client_event_id=body.client_event_id,
+    )
+    if prior is not None:
+        session = await _load_session(db, prior.id, user.id, item.id, for_update=True)
+        duplicate_message = str(
+            next(
+                (
+                    (event.payload or {}).get("message")
+                    for event in session.events
+                    if event.client_event_id == body.client_event_id
+                ),
+                "",
+            )
+        )
+        if duplicate_message != body.message.strip():
+            raise HTTPException(status_code=409, detail="Idempotency key reused")
+        return await _response(db, session)
+
     session = await _latest_session(db, user.id, item.id, active_only=True)
     if session is None:
         session = CreatorAgentSession(
@@ -569,12 +641,15 @@ async def start_creator_session(
 
 
 @router.post("/{item_id}/creator-agent/turn", response_model=CreatorSessionResponse)
+@limiter.limit(CREATOR_AGENT_MUTATION_RATE_LIMIT)
 async def creator_session_turn(
+    request: Request,
     item_id: str,
     body: TurnBody,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CreatorSessionResponse:
+    _ = request
     _require_feature(user.id)
     item, _plan, _persona = await _owned_context(db, item_id, user.id)
     session = await _load_session(db, body.session_id, user.id, item.id, for_update=True)

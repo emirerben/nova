@@ -7,9 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy.dialects import postgresql
 
 from app.agents.detect_plan_relevance import DetectPlanRelevanceAgent, DetectPlanRelevanceOutput
 from app.config import settings
+from app.models import CreatorWorkspacePreferenceSignal, VideoFeedback
 from app.routes import creator_workspace as workspace_routes
 from app.routes.creator_workspace import (
     WorkspaceCreateBody,
@@ -190,6 +192,25 @@ def test_workspace_rejects_cross_item_media_reuse() -> None:
     )
 
 
+@pytest.mark.asyncio
+async def test_workspace_media_reuse_uses_unbounded_jsonb_exists_query() -> None:
+    db = AsyncMock()
+    db.scalar.return_value = False
+    await workspace_routes._media_paths_already_attached_db(
+        db,
+        creator_id=uuid.uuid4(),
+        excluded_item_id=uuid.uuid4(),
+        paths={"users/creator/job/raw.mp4"},
+    )
+
+    query = db.scalar.call_args.args[0]
+    sql = str(query.compile(dialect=postgresql.dialect()))
+    assert "EXISTS" in sql
+    assert "clip_gcs_paths @>" in sql
+    assert "clip_assignments @>" in sql
+    assert " LIMIT " not in sql.upper()
+
+
 @pytest.mark.parametrize(
     ("render_status", "generation", "expected"),
     [
@@ -364,6 +385,43 @@ def test_relevance_task_fails_closed_on_stale_ownership(monkeypatch) -> None:
     assert row.error_code == "stale_ownership_epoch"
 
 
+def test_relevance_task_fails_closed_when_plan_context_exceeds_bound(monkeypatch) -> None:
+    creator_id = uuid.uuid4()
+    plan_id = uuid.uuid4()
+    row = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=creator_id,
+        plan_id=plan_id,
+        ownership_epoch=4,
+        status="pending",
+        media_ids=["media-1"],
+        media_snapshot=[{"media_id": "media-1", "label": "market"}],
+        error_code=None,
+    )
+    plan = SimpleNamespace(id=plan_id, user_id=creator_id, ownership_epoch=4)
+    db = _RelevanceDb(
+        row,
+        plan,
+        [
+            SimpleNamespace(id=uuid.uuid4(), theme="market", idea="walk")
+            for _ in range(relevance_task.MAX_RELEVANCE_PLAN_ITEMS + 1)
+        ],
+    )
+    agent = Mock()
+    monkeypatch.setattr(
+        relevance_task,
+        "DetectPlanRelevanceAgent",
+        lambda: SimpleNamespace(run=agent),
+    )
+
+    _run_relevance_task(monkeypatch, db, redelivered=False)
+
+    agent.assert_not_called()
+    assert row.status == "failed"
+    assert row.error_code == "plan_context_too_large"
+    assert db.commits == 1
+
+
 @pytest.mark.asyncio
 async def test_workspace_create_rejects_foreign_plan(monkeypatch) -> None:
     user = SimpleNamespace(id=uuid.uuid4())
@@ -425,6 +483,69 @@ async def test_workspace_create_snapshots_safe_job_filename(monkeypatch) -> None
 
     proposal = db.add.call_args.args[0]
     assert proposal.media_snapshot[0]["source_filename"] == "market walk.mp4"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("case", "jobs", "expected_status"),
+    [
+        ("missing", [], 404),
+        (
+            "foreign",
+            [
+                SimpleNamespace(
+                    id=uuid.UUID("d7f3c86c-9888-4b72-b9d6-86bf8bb7edb5"),
+                    user_id=uuid.uuid4(),
+                    raw_storage_path="other-user/raw.mp4",
+                    probe_metadata={},
+                )
+            ],
+            409,
+        ),
+        (
+            "empty-storage-path",
+            [
+                SimpleNamespace(
+                    id=uuid.UUID("d7f3c86c-9888-4b72-b9d6-86bf8bb7edb5"),
+                    user_id=uuid.uuid4(),
+                    raw_storage_path="",
+                    probe_metadata={},
+                )
+            ],
+            409,
+        ),
+    ],
+)
+async def test_workspace_create_rejects_missing_or_unattachable_uploads_without_side_effects(
+    monkeypatch, case: str, jobs: list[SimpleNamespace], expected_status: int
+) -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    plan = SimpleNamespace(id=uuid.uuid4(), ownership_epoch=2)
+    media_id = jobs[0].id if jobs else uuid.uuid4()
+    existing_result = MagicMock()
+    existing_result.scalar_one_or_none.return_value = None
+    jobs_result = MagicMock()
+    jobs_result.scalars.return_value.all.return_value = jobs
+    db = AsyncMock()
+    db.add = Mock()
+    db.execute.side_effect = [existing_result, jobs_result]
+    enqueue = AsyncMock()
+    monkeypatch.setattr(settings, "main_creator_agent_freeform_uploads_enabled", True)
+    monkeypatch.setattr(workspace_routes, "_owned_plan", AsyncMock(return_value=plan))
+    monkeypatch.setattr(workspace_routes, "_enqueue_relevance_or_mark_failed", enqueue)
+
+    with pytest.raises(workspace_routes.HTTPException) as caught:
+        await workspace_routes.create_relevance_proposal(
+            str(plan.id),
+            WorkspaceCreateBody(media_ids=[str(media_id)], idempotency_key=f"reject-{case}"),
+            user,
+            db,
+        )
+
+    assert caught.value.status_code == expected_status
+    db.add.assert_not_called()
+    db.commit.assert_not_awaited()
+    enqueue.assert_not_awaited()
 
 
 def test_orchestrator_probe_merge_preserves_only_safe_filename_metadata() -> None:
@@ -616,6 +737,393 @@ async def test_workspace_decision_locks_source_jobs_in_deterministic_order(monke
     assert source_stmt._for_update_arg is not None
     assert len(source_stmt._order_by_clauses) == 1
     assert response.status == "rejected"
+
+
+def _scalar_result(value):
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = value
+    return result
+
+
+def _rows_result(rows):
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = rows
+    return result
+
+
+def _workspace_media_snapshot(job_id: uuid.UUID, path: str) -> list[dict[str, str | None]]:
+    return [
+        {
+            "media_id": str(job_id),
+            "source_job_id": str(job_id),
+            "gcs_path": path,
+            "gcs_generation": None,
+            "kind": "video",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_workspace_decision_accept_existing_attaches_clips_and_commits_atomically(
+    monkeypatch,
+) -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    plan = SimpleNamespace(id=uuid.uuid4(), ownership_epoch=3)
+    target_id = uuid.uuid4()
+    source_id = uuid.uuid4()
+    source_path = f"{user.id}/{source_id}/raw.mp4"
+    row = _decision_row(status="ready", epoch=3)
+    row.relevance = "existing_item"
+    row.target_plan_item_id = target_id
+    row.media_snapshot = _workspace_media_snapshot(source_id, source_path)
+    target = SimpleNamespace(
+        id=target_id,
+        clip_assignments=[],
+        clip_gcs_paths=[],
+        conformance={"status": "approved"},
+        edit_proposal=None,
+    )
+    source_job = SimpleNamespace(
+        id=source_id,
+        user_id=user.id,
+        raw_storage_path=source_path,
+    )
+    db = AsyncMock()
+    db.add = Mock()
+    db.scalar.return_value = False
+    db.execute.side_effect = [
+        _scalar_result(row),
+        _rows_result([source_job]),
+        _scalar_result(target),
+        _rows_result([]),
+    ]
+    monkeypatch.setattr(settings, "main_creator_agent_freeform_uploads_enabled", True)
+    monkeypatch.setattr(workspace_routes, "_owned_plan", AsyncMock(return_value=plan))
+
+    response = await workspace_routes.decide_relevance_proposal(
+        str(plan.id),
+        str(row.id),
+        WorkspaceDecisionBody(
+            expected_proposal_hash="a" * 64,
+            decision="accept_existing",
+            client_event_id="accept-existing-1",
+        ),
+        user,
+        db,
+    )
+
+    assert response.status == "approved"
+    assert response.decision == "accept_existing"
+    assert response.result_plan_item_id == str(target_id)
+    assert target.clip_gcs_paths == [source_path]
+    assert target.clip_assignments[0]["media_id"] == str(source_id)
+    assert target.conformance is None
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_workspace_decision_accept_new_topic_creates_item_attaches_clips_and_commits(
+    monkeypatch,
+) -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    plan = SimpleNamespace(id=uuid.uuid4(), ownership_epoch=3)
+    source_id = uuid.uuid4()
+    source_path = f"{user.id}/{source_id}/raw.mp4"
+    row = _decision_row(status="ready", epoch=3)
+    row.relevance = "new_topic"
+    row.topic = "A new walk"
+    row.media_snapshot = _workspace_media_snapshot(source_id, source_path)
+    source_job = SimpleNamespace(
+        id=source_id,
+        user_id=user.id,
+        raw_storage_path=source_path,
+    )
+    max_position = MagicMock()
+    max_position.scalar_one.return_value = 4
+    db = AsyncMock()
+    db.add = Mock()
+    db.scalar.return_value = False
+    db.execute.side_effect = [
+        _scalar_result(row),
+        _rows_result([source_job]),
+        max_position,
+        _rows_result([]),
+    ]
+    monkeypatch.setattr(settings, "main_creator_agent_freeform_uploads_enabled", True)
+    monkeypatch.setattr(workspace_routes, "_owned_plan", AsyncMock(return_value=plan))
+
+    response = await workspace_routes.decide_relevance_proposal(
+        str(plan.id),
+        str(row.id),
+        WorkspaceDecisionBody(
+            expected_proposal_hash="a" * 64,
+            decision="accept_new_topic",
+            client_event_id="accept-new-1",
+        ),
+        user,
+        db,
+    )
+
+    created = db.add.call_args.args[0]
+    assert created.content_plan_id == plan.id
+    assert created.idea == "A new walk"
+    assert created.position == 5
+    assert created.item_status == "awaiting_clips"
+    assert created.clip_gcs_paths == [source_path]
+    assert created.clip_assignments[0]["media_id"] == str(source_id)
+    assert created.conformance is None
+    assert response.status == "approved"
+    db.flush.assert_awaited_once()
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_workspace_decision_rejects_cross_item_media_reuse_before_commit(monkeypatch) -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    plan = SimpleNamespace(id=uuid.uuid4(), ownership_epoch=3)
+    target_id = uuid.uuid4()
+    source_id = uuid.uuid4()
+    source_path = f"{user.id}/{source_id}/raw.mp4"
+    row = _decision_row(status="ready", epoch=3)
+    row.relevance = "existing_item"
+    row.target_plan_item_id = target_id
+    row.media_snapshot = _workspace_media_snapshot(source_id, source_path)
+    target = SimpleNamespace(
+        id=target_id,
+        clip_assignments=[],
+        clip_gcs_paths=[],
+        conformance={"status": "approved"},
+        edit_proposal=None,
+    )
+    other = SimpleNamespace(clip_gcs_paths=[source_path], clip_assignments=[])
+    source_job = SimpleNamespace(
+        id=source_id,
+        user_id=user.id,
+        raw_storage_path=source_path,
+    )
+    db = AsyncMock()
+    db.add = Mock()
+    db.scalar.return_value = True
+    db.execute.side_effect = [
+        _scalar_result(row),
+        _rows_result([source_job]),
+        _scalar_result(target),
+        _rows_result([other]),
+    ]
+    monkeypatch.setattr(settings, "main_creator_agent_freeform_uploads_enabled", True)
+    monkeypatch.setattr(workspace_routes, "_owned_plan", AsyncMock(return_value=plan))
+
+    with pytest.raises(workspace_routes.HTTPException) as caught:
+        await workspace_routes.decide_relevance_proposal(
+            str(plan.id),
+            str(row.id),
+            WorkspaceDecisionBody(
+                expected_proposal_hash="a" * 64,
+                decision="accept_existing",
+                client_event_id="reuse-1",
+            ),
+            user,
+            db,
+        )
+
+    assert caught.value.status_code == 409
+    assert caught.value.detail == "Proposal media is already attached to another plan item"
+    assert target.clip_gcs_paths == []
+    assert target.conformance == {"status": "approved"}
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_workspace_preference_signal_rejects_stale_receipt_epoch_without_writes(
+    monkeypatch,
+) -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    plan = SimpleNamespace(id=uuid.uuid4(), ownership_epoch=4, preference_summary=None)
+    receipt = SimpleNamespace(id=uuid.uuid4(), ownership_epoch=3)
+    db = AsyncMock()
+    db.add = Mock()
+    db.execute.side_effect = [
+        _scalar_result(None),  # idempotency lookup
+        _scalar_result(receipt),
+    ]
+    monkeypatch.setattr(settings, "main_creator_agent_workspace_enabled", True)
+    monkeypatch.setattr(workspace_routes, "_owned_plan", AsyncMock(return_value=plan))
+
+    with pytest.raises(workspace_routes.HTTPException) as caught:
+        await workspace_routes.record_workspace_preference_signal(
+            str(plan.id),
+            WorkspacePreferenceSignalBody(
+                note="Use calmer captions",
+                client_event_id="stale-receipt-1",
+                receipt_id=str(receipt.id),
+            ),
+            user,
+            db,
+        )
+
+    assert caught.value.status_code == 409
+    assert caught.value.detail == "Workspace receipt ownership epoch is stale"
+    db.add.assert_not_called()
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_workspace_preference_signal_replays_same_event_and_rejects_digest_conflict(
+    monkeypatch,
+) -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    plan = SimpleNamespace(id=uuid.uuid4(), ownership_epoch=4, preference_summary="calm")
+    existing = SimpleNamespace(
+        id=uuid.uuid4(),
+        ownership_epoch=4,
+        request_digest=workspace_routes._preference_request_digest(
+            plan.id, 4, "Use calmer captions", None
+        ),
+        note="Use calmer captions",
+    )
+    persona = SimpleNamespace(style={"style_set_id": "default", "status": "edited"})
+    db = AsyncMock()
+    db.execute.side_effect = [
+        _scalar_result(existing),
+        _scalar_result(persona),
+    ]
+    monkeypatch.setattr(settings, "main_creator_agent_workspace_enabled", True)
+    monkeypatch.setattr(workspace_routes, "_owned_plan", AsyncMock(return_value=plan))
+
+    replay = await workspace_routes.record_workspace_preference_signal(
+        str(plan.id),
+        WorkspacePreferenceSignalBody(
+            note="Use calmer captions",
+            client_event_id="same-event-1",
+        ),
+        user,
+        db,
+    )
+    assert replay.signal_id == str(existing.id)
+    assert replay.preference_summary == "calm"
+    db.commit.assert_not_awaited()
+
+    conflict_db = AsyncMock()
+    conflict_db.execute.return_value = _scalar_result(existing)
+    with pytest.raises(workspace_routes.HTTPException) as caught:
+        await workspace_routes.record_workspace_preference_signal(
+            str(plan.id),
+            WorkspacePreferenceSignalBody(
+                note="Use louder captions",
+                client_event_id="same-event-1",
+            ),
+            user,
+            conflict_db,
+        )
+    assert caught.value.status_code == 409
+    assert caught.value.detail == "Preference event reused with different content"
+    conflict_db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("persona_present", [False, True])
+async def test_workspace_preference_signal_style_path_requires_flag_and_persona(
+    monkeypatch, persona_present: bool
+) -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    plan = SimpleNamespace(id=uuid.uuid4(), ownership_epoch=4, preference_summary=None)
+    db = AsyncMock()
+    db.add = Mock()
+    db.execute.side_effect = [
+        _scalar_result(None),
+        _scalar_result(None),  # persona is absent when the flag is enabled too
+    ]
+    monkeypatch.setattr(settings, "main_creator_agent_workspace_enabled", True)
+    monkeypatch.setattr(settings, "user_style_enabled", persona_present)
+    monkeypatch.setattr(workspace_routes, "_owned_plan", AsyncMock(return_value=plan))
+
+    with pytest.raises(workspace_routes.HTTPException) as caught:
+        await workspace_routes.record_workspace_preference_signal(
+            str(plan.id),
+            WorkspacePreferenceSignalBody(
+                note="Use a large title",
+                client_event_id=f"style-path-{persona_present}",
+                style_edit={"instruction_level": "light"},
+            ),
+            user,
+            db,
+        )
+
+    if persona_present:
+        # The feature flag is on but no Persona row exists in this branch.
+        assert caught.value.status_code == 404
+        assert caught.value.detail == "Persona not found"
+    else:
+        # The route checks the kill switch before reading Persona.
+        assert caught.value.status_code == 404
+        assert caught.value.detail == "style_not_enabled"
+    db.add.assert_not_called()
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_workspace_preference_signal_persists_signal_feedback_style_and_summary(
+    monkeypatch,
+) -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    plan = SimpleNamespace(id=uuid.uuid4(), ownership_epoch=4, preference_summary=None)
+    persona = SimpleNamespace(
+        style={
+            "style_set_id": "default",
+            "knobs": {"text_anchor": "center"},
+            "instruction_level": "full",
+            "status": "ready",
+        }
+    )
+    counts = MagicMock()
+    counts.all.return_value = [("note", 2)]
+    notes = MagicMock()
+    notes.scalars.return_value.all.return_value = ["Prefer calm captions"]
+    db = AsyncMock()
+    db.add = Mock()
+    db.execute.side_effect = [
+        _scalar_result(None),  # idempotency lookup
+        _scalar_result(persona),  # persona for explicit style edit
+        counts,  # summary signal counts
+        notes,  # summary recent notes
+    ]
+    monkeypatch.setattr(settings, "main_creator_agent_workspace_enabled", True)
+    monkeypatch.setattr(settings, "user_style_enabled", True)
+    monkeypatch.setattr(workspace_routes, "_owned_plan", AsyncMock(return_value=plan))
+
+    response = await workspace_routes.record_workspace_preference_signal(
+        str(plan.id),
+        WorkspacePreferenceSignalBody(
+            note="Prefer calm captions",
+            client_event_id="persisted-signal-1",
+            style_edit={
+                "knobs": {"text_anchor": "left"},
+                "instruction_level": "light",
+            },
+        ),
+        user,
+        db,
+    )
+
+    assert response.source == "creator_explicit"
+    assert response.note == "Prefer calm captions"
+    assert response.style["instruction_level"] == "light"
+    assert response.style["style_set_id"] == "default"
+    assert response.style["knobs"]["text_anchor"] == "left"
+    assert response.style["status"] == "edited"
+    assert response.preference_summary
+    assert plan.preference_summary == response.preference_summary
+    assert len(db.add.call_args_list) == 2
+    signal, feedback = (call.args[0] for call in db.add.call_args_list)
+    assert isinstance(signal, CreatorWorkspacePreferenceSignal)
+    assert signal.source == "creator_explicit"
+    assert signal.signal == "note"
+    assert signal.ownership_epoch == 4
+    assert isinstance(feedback, VideoFeedback)
+    assert feedback.content_plan_id == plan.id
+    assert feedback.signal == "note"
+    assert feedback.note == "Prefer calm captions"
+    db.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio

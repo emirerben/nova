@@ -35,7 +35,10 @@ log = structlog.get_logger()
 # _model_client.GeminiClient.invoke), so this is the family selector, not a pin.
 DEFAULT_VIDEO_MODEL = "gemini-2.5-flash"
 DEFAULT_PASS_THRESHOLD = 3.5
-DEFAULT_MAX_TOKENS = 800
+# Seven dimensions plus bounded timecoded evidence can exceed the legacy
+# four-score response budget. Keep enough headroom for a complete JSON object;
+# a truncated judge response must fail open rather than look like a bad video.
+DEFAULT_MAX_TOKENS = 2048
 
 # ── 3-band verdict thresholds (avg is on the 1-5 rubric scale) ───────────────
 #
@@ -307,6 +310,9 @@ class VideoQualityGrader:
                 media_mime=getattr(media, "mime_type", None) or "video/mp4",
                 response_json=True,
                 max_output_tokens=self.max_tokens,
+                # The evidence JSON is the output budget. Dynamic Flash
+                # thinking can consume most of it and truncate the object.
+                thinking_budget=0,
             )
         except Exception as exc:  # noqa: BLE001 — Gemini timeout / transient / terminal
             raise VideoGraderError(f"grader invocation failed: {exc}") from exc

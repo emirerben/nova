@@ -50,8 +50,12 @@ beforeEach(() => {
 it("does not save a preference until the creator confirms it", async () => {
   render(<CreatorWorkspacePanel planId="plan-1" />);
   await screen.findByText("Workspace progress");
+  expect(screen.getByText("Deliverable 1")).not.toBeNull();
+  expect(screen.getByText("Deliverable 1").parentElement?.parentElement?.textContent).toContain("Ready");
+  expect(screen.getByText(/In progress/)).not.toBeNull();
 
   fireEvent.change(screen.getByLabelText("Preference note"), { target: { value: "Keep openings quiet" } });
+  expect(screen.getByRole("button", { name: "Review" }).className).toContain("bg-secondary");
   fireEvent.click(screen.getByRole("button", { name: "Review" }));
 
   expect(screen.getByText(/Keep openings quiet/)).not.toBeNull();
@@ -94,4 +98,38 @@ it("stays absent when workspace coordination is not advertised", async () => {
   pollReceipt.mockRejectedValue(new PlanApiError({ message: "off", status: 404 }));
   const { container } = render(<CreatorWorkspacePanel planId="plan-1" />);
   await waitFor(() => expect(container.innerHTML).toBe(""));
+});
+
+it("surfaces non-404 workspace polling failures even when capability is unavailable", async () => {
+  pollReceipt.mockRejectedValue(new PlanApiError({ message: "temporarily unavailable", status: 503 }));
+  render(<CreatorWorkspacePanel planId="plan-1" />);
+
+  expect((await screen.findByRole("status")).textContent).toContain("Workspace progress is temporarily unavailable.");
+  expect(screen.getByRole("button", { name: "Retry" })).not.toBeNull();
+});
+
+it("retries a quiet workspace error and restores progress", async () => {
+  pollReceipt.mockReset();
+  // Keep both responses explicit so this test verifies the user action,
+  // rather than relying on the default configured in beforeEach.
+  pollReceipt
+    .mockRejectedValueOnce(new PlanApiError({ message: "temporarily unavailable", status: 503 }))
+    .mockResolvedValueOnce({
+      receipt_id: "receipt-1",
+      creator_id: "creator-1",
+      plan_id: "plan-1",
+      ownership_epoch: 1,
+      idempotency_key: "key-1",
+      request_digest: "digest-1",
+      status: "ready",
+      deliverables: [],
+      preference_summary: null,
+      style: null,
+    });
+  render(<CreatorWorkspacePanel planId="plan-1" />);
+  await screen.findByRole("button", { name: "Retry" });
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(screen.getByText("Workspace progress")).not.toBeNull());
+  expect(screen.getByText(/Ready/)).not.toBeNull();
+  expect(pollReceipt).toHaveBeenCalledTimes(2);
 });

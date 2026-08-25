@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, Sparkles, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import {
   cancelCreatorAgentSession,
@@ -31,6 +32,12 @@ function eventId(): string {
 }
 
 const ACTIVE_STATES = new Set(["executing", "rendering", "reviewing"]);
+const ACTIVE_REVIEW_STATES = new Set(["pending", "queued", "running"]);
+
+function shouldPoll(session: CreatorAgentSession): boolean {
+  if (ACTIVE_STATES.has(session.status)) return true;
+  return session.status === "awaiting_feedback" && ACTIVE_REVIEW_STATES.has(session.last_review?.status ?? "");
+}
 
 export default function MainCreatorAgentPanel({ itemId }: { itemId: string }) {
   const [session, setSession] = useState<CreatorAgentSession | null>(null);
@@ -73,7 +80,7 @@ export default function MainCreatorAgentPanel({ itemId }: { itemId: string }) {
   }, [refresh]);
 
   useEffect(() => {
-    if (!session || !ACTIVE_STATES.has(session.status)) return;
+    if (!session || !shouldPoll(session)) return;
     let stopped = false;
     let timer: number | undefined;
     const poll = async () => {
@@ -309,18 +316,18 @@ export default function MainCreatorAgentPanel({ itemId }: { itemId: string }) {
 
       {session?.auto_iteration?.available && session.status === "awaiting_feedback" && (
         <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-3">
-          <label className="flex items-start gap-2 text-sm text-zinc-700">
-            <input
-              type="checkbox"
-              className="mt-0.5 accent-lime-600"
+          <div className="flex min-h-11 items-start gap-3 text-sm text-zinc-700">
+            <Checkbox
+              id="creator-auto-iteration-opt-in"
+              className="mt-1 h-5 w-5"
               checked={autoOptIn}
-              onChange={(event) => setAutoOptIn(event.target.checked)}
+              onCheckedChange={(checked) => setAutoOptIn(checked === true)}
             />
-            <span>
+            <label htmlFor="creator-auto-iteration-opt-in" className="cursor-pointer leading-5">
               Allow one automatic revision if the review finds an objective issue.
               <span className="mt-1 block text-xs text-zinc-500">You can still review the result before publishing.</span>
-            </span>
-          </label>
+            </label>
+          </div>
           {autoOptIn && (
             <Button type="button" size="sm" className="mt-3" disabled={autoSending} onClick={() => void optIntoAutoIteration()}>
               {autoSending ? "Saving…" : "Confirm automatic revision"}
@@ -354,7 +361,7 @@ function TreatmentPreview({ plan }: { plan: NonNullable<CreatorAgentSession["pen
 }
 
 function CreatorReviewReceipt({ review }: { review: CreatorAgentReview }) {
-  if (review.status === "queued" || review.status === "running") {
+  if (review.status === "pending" || review.status === "queued" || review.status === "running") {
     return <p className="mt-4 text-sm text-zinc-600" role="status">Reviewing the exact render…</p>;
   }
   if (review.status === "failed" || review.status === "unavailable" || review.error_message) {

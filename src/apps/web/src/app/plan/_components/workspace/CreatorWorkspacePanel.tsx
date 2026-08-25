@@ -34,6 +34,7 @@ export function CreatorWorkspacePanel({
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
+    setError(null);
     try {
       const next = await pollLatestCreatorWorkspaceReceipt(planId);
       setReceipt(next);
@@ -87,7 +88,9 @@ export function CreatorWorkspacePanel({
     }
   }
 
-  if (!available && !proposal) return null;
+  // Preserve the rollout-gated empty state for 404s, but keep operational
+  // failures visible even when the capability was never advertised.
+  if (!available && !proposal && !error) return null;
   const deliverables = receipt?.deliverables ?? [];
   const done = deliverables.filter((item) => item.status === "ready").length;
 
@@ -103,9 +106,9 @@ export function CreatorWorkspacePanel({
           </div>
           {deliverables.length > 0 && (
             <ul className="mt-3 grid gap-2 sm:grid-cols-2">
-              {deliverables.map((item) => (
+              {deliverables.map((item, index) => (
                 <li key={item.deliverable_id} className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-600">
-                  <span className="font-medium text-zinc-900">Deliverable</span> · {statusLabel(item.status)}
+                  <span className="font-medium text-zinc-900">{deliverableLabel(item, index)}</span> · {statusLabel(item.status)}
                 </li>
               ))}
             </ul>
@@ -123,19 +126,26 @@ export function CreatorWorkspacePanel({
             <div className="mt-3 rounded-md border border-lime-200 bg-lime-50 p-3">
               <p className="text-sm text-zinc-900">“{pendingNote}”</p>
               <div className="mt-2 flex gap-2">
-                <Button size="sm" disabled={savingNote} onClick={() => void confirmPreference()}>{savingNote ? "Saving…" : "Confirm preference"}</Button>
-                <Button size="sm" variant="outline" disabled={savingNote} onClick={() => setPendingNote(null)}>Keep editing</Button>
+                <Button size="sm" variant="secondary" className="min-h-11" disabled={savingNote} onClick={() => void confirmPreference()}>{savingNote ? "Saving…" : "Confirm preference"}</Button>
+                <Button size="sm" variant="outline" className="min-h-11" disabled={savingNote} onClick={() => setPendingNote(null)}>Keep editing</Button>
               </div>
             </div>
           ) : (
             <form className="mt-3 flex gap-2" onSubmit={(event) => { event.preventDefault(); if (note.trim()) setPendingNote(note.trim()); }}>
-              <Input aria-label="Preference note" value={note} onChange={(event) => setNote(event.target.value)} className="min-w-0 flex-1" placeholder="More quiet openings, please…" />
-              <Button type="submit" size="sm" disabled={!note.trim()}>Review</Button>
+              <Input aria-label="Preference note" value={note} onChange={(event) => setNote(event.target.value)} className="min-h-11 min-w-0 flex-1" placeholder="More quiet openings, please…" />
+              <Button type="submit" size="sm" variant="secondary" className="min-h-11" disabled={!note.trim()}>Review</Button>
             </form>
           )}
         </div>
       )}
-      {error && <p className="mt-3 text-sm text-zinc-700" role="alert">{error}</p>}
+      {error && (
+        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-600" role="status">
+          <span>{error}</span>
+          <Button type="button" size="sm" variant="outline" className="min-h-11" onClick={() => void refresh()}>
+            Retry
+          </Button>
+        </div>
+      )}
     </section>
   );
 }
@@ -164,13 +174,20 @@ function RelevanceDecision({
       {proposal.rationale && <p className="mt-1 text-sm text-zinc-600">{proposal.rationale}</p>}
       {!pendingDecision ? (
         <div className="mt-3 flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => setPendingDecision(decision)}>Review suggested choice</Button>
-          <Button size="sm" variant="outline" onClick={() => setPendingDecision("reject")}>Keep out of plan</Button>
+          <Button size="sm" variant="secondary" className="min-h-11" onClick={() => setPendingDecision(decision)}>Review suggested choice</Button>
+          <Button size="sm" variant="outline" className="min-h-11" onClick={() => setPendingDecision("reject")}>Keep out of plan</Button>
         </div>
       ) : (
         <div className="mt-3 rounded-md border border-lime-200 bg-lime-50 p-3">
           <p className="text-sm text-zinc-700">Confirm: {pendingDecision === "reject" ? "keep this footage out of the plan" : "use this footage in the workspace"}?</p>
-          <div className="mt-2 flex gap-2"><Button size="sm" disabled={deciding} onClick={onConfirm}>{deciding ? "Saving…" : "Confirm decision"}</Button><Button size="sm" variant="outline" disabled={deciding} onClick={() => setPendingDecision(null)}>Cancel</Button></div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button size="sm" variant="secondary" className="min-h-11" disabled={deciding} onClick={onConfirm}>
+              {deciding ? "Saving…" : "Confirm decision"}
+            </Button>
+            <Button size="sm" variant="outline" className="min-h-11" disabled={deciding} onClick={() => setPendingDecision(null)}>
+              Cancel
+            </Button>
+          </div>
         </div>
       )}
     </div>
@@ -178,7 +195,20 @@ function RelevanceDecision({
 }
 
 function statusLabel(status: string): string {
-  return status.replace(/_/g, " ");
+  return {
+    pending: "Waiting to start",
+    processing: "In progress",
+    ready: "Ready",
+    failed: "Needs attention",
+    stale: "Outdated",
+  }[status] ?? "Status unavailable";
+}
+
+function deliverableLabel(
+  _item: CreatorWorkspaceReceipt["deliverables"][number],
+  index: number,
+): string {
+  return `Deliverable ${index + 1}`;
 }
 
 function eventId(): string {

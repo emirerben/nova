@@ -72,9 +72,11 @@ def test_queue_is_idempotent_and_uses_stable_task_id(monkeypatch):
     apply_async.assert_called_once()
     assert apply_async.call_args.kwargs["task_id"].startswith("creator-review-")
     assert session.last_review["status"] == "pending"
+    assert session.last_review["dispatch_status"] == "queued"
+    assert session.last_review["task_id"] == apply_async.call_args.kwargs["task_id"]
 
 
-def test_pending_review_can_be_republished_after_commit(monkeypatch):
+def test_pending_review_is_not_republished_after_commit(monkeypatch):
     session = _session(phase="awaiting_feedback")
     apply_async = Mock()
     monkeypatch.setattr(cqr.quality_review_creator_session, "apply_async", apply_async)
@@ -83,10 +85,30 @@ def test_pending_review_can_be_republished_after_commit(monkeypatch):
         session, job_id="job-1", variant_id="variant-1", render_generation_id="generation-1"
     )
     apply_async.reset_mock()
+    assert not cqr.queue_creator_quality_review(
+        session, job_id="job-1", variant_id="variant-1", render_generation_id="generation-1"
+    )
+    apply_async.assert_not_called()
+
+
+def test_publish_failure_remains_retryable(monkeypatch):
+    session = _session(phase="awaiting_feedback")
+    apply_async = Mock(side_effect=[RuntimeError("broker down"), None])
+    monkeypatch.setattr(cqr.quality_review_creator_session, "apply_async", apply_async)
+
+    assert not cqr.queue_creator_quality_review(
+        session, job_id="job-1", variant_id="variant-1", render_generation_id="generation-1"
+    )
+    assert session.last_review["status"] == "unavailable"
+    assert session.last_review["dispatch_status"] == "failed"
+    assert session.last_review["error_code"] == "review_enqueue_failed"
+
     assert cqr.queue_creator_quality_review(
         session, job_id="job-1", variant_id="variant-1", render_generation_id="generation-1"
     )
-    apply_async.assert_called_once()
+    assert session.last_review["status"] == "pending"
+    assert session.last_review["dispatch_status"] == "queued"
+    assert apply_async.call_count == 2
 
 
 def test_review_payload_has_timestamped_evidence_and_one_inert_revision():
@@ -337,6 +359,191 @@ def test_stale_target_never_persists_review_or_agent_run(monkeypatch):
     )
 
     persist_run.assert_not_called()
+
+
+class _ClaimDb:
+    """Tiny synchronous DB double that exercises the real claim fencing."""
+
+    def __init__(self, session, job):
+        self.session = session
+        self.job = job
+        self.commits = 0
+        self.closed = False
+
+    def get(self, model, _identifier, **_kwargs):
+        if model.__name__ == "CreatorAgentSession":
+            return self.session
+        if model.__name__ == "Job":
+            return self.job
+        return None
+
+    def commit(self):
+        self.commits += 1
+
+    def close(self):
+        self.closed = True
+
+
+def _claim_fixture(**job_overrides):
+    session_id = uuid.uuid4()
+    creator_id = uuid.uuid4()
+    plan_item_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    variant_id = "variant-1"
+    generation_id = "generation-1"
+    session = _session(
+        id=session_id,
+        creator_id=creator_id,
+        plan_item_id=plan_item_id,
+        target_job_id=job_id,
+        target_variant_id=variant_id,
+        target_generation_id=generation_id,
+        last_review={
+            "status": "pending",
+            "review_key": cqr.review_key(str(session_id), str(job_id), variant_id, generation_id),
+        },
+    )
+    job_values = {
+        "id": job_id,
+        "user_id": creator_id,
+        "content_plan_item_id": plan_item_id,
+        "content_plan_ownership_epoch": session.ownership_epoch,
+        "status": "variants_ready",
+        "assembly_plan": {
+            "variants": [
+                {
+                    "variant_id": variant_id,
+                    "render_status": "ready",
+                    "render_generation_id": generation_id,
+                    "video_path": "creator-review/video.mp4",
+                }
+            ]
+        },
+    }
+    job_values.update(job_overrides)
+    job = SimpleNamespace(**job_values)
+    return (
+        session,
+        job,
+        {
+            "session_id": str(session_id),
+            "job_id": str(job_id),
+            "variant_id": variant_id,
+            "generation_id": generation_id,
+        },
+    )
+
+
+def test_claim_exact_review_claims_the_exact_ready_generation():
+    session, job, target = _claim_fixture()
+    db = _ClaimDb(session, job)
+
+    claimed = cqr.claim_exact_review(db, **target)
+
+    assert claimed is not None
+    claimed_session, video_path, variant = claimed
+    assert claimed_session is session
+    assert video_path == "creator-review/video.mp4"
+    assert variant["variant_id"] == target["variant_id"]
+    assert session.last_review["status"] == "running"
+    assert db.commits == 1
+
+
+@pytest.mark.parametrize(
+    ("label", "job_overrides", "session_overrides", "target_overrides"),
+    [
+        ("foreign_creator", {"user_id": uuid.uuid4()}, {}, {}),
+        ("wrong_plan_item", {"content_plan_item_id": uuid.uuid4()}, {}, {}),
+        ("stale_ownership_epoch", {"content_plan_ownership_epoch": 99}, {}, {}),
+        ("wrong_variant", {}, {"target_variant_id": "variant-2"}, {}),
+        ("wrong_generation", {}, {"target_generation_id": "generation-2"}, {}),
+        (
+            "non_ready_variant",
+            {
+                "assembly_plan": {
+                    "variants": [
+                        {
+                            "variant_id": "variant-1",
+                            "render_status": "processing",
+                            "render_generation_id": "generation-1",
+                            "video_path": "creator-review/video.mp4",
+                        }
+                    ]
+                }
+            },
+            {},
+            {},
+        ),
+        ("non_ready_job_status", {"status": "processing"}, {}, {}),
+    ],
+    ids=lambda values: values if isinstance(values, str) else None,
+)
+def test_claim_exact_review_rejects_stale_or_mismatched_targets(
+    label, job_overrides, session_overrides, target_overrides
+):
+    assert label
+    session, job, target = _claim_fixture(**job_overrides)
+    for key, value in session_overrides.items():
+        setattr(session, key, value)
+    target.update(target_overrides)
+    db = _ClaimDb(session, job)
+
+    assert cqr.claim_exact_review(db, **target) is None
+    assert session.last_review["status"] == "unavailable"
+    assert session.last_review["error_code"] == "review_target_stale"
+    assert db.commits == 1
+
+
+@pytest.mark.parametrize(
+    "job_overrides,session_overrides,target_overrides",
+    [
+        ({"user_id": uuid.uuid4()}, {}, {}),
+        ({"content_plan_item_id": uuid.uuid4()}, {}, {}),
+        ({"content_plan_ownership_epoch": 99}, {}, {}),
+        ({}, {"target_variant_id": "variant-2"}, {}),
+        ({}, {"target_generation_id": "generation-2"}, {}),
+        (
+            {
+                "assembly_plan": {
+                    "variants": [
+                        {
+                            "variant_id": "variant-1",
+                            "render_status": "processing",
+                            "render_generation_id": "generation-1",
+                            "video_path": "creator-review/video.mp4",
+                        }
+                    ]
+                }
+            },
+            {},
+            {},
+        ),
+        ({"status": "processing"}, {}, {}),
+    ],
+)
+def test_mismatched_target_never_runs_reviewer_or_persists_agent_run(
+    job_overrides, session_overrides, target_overrides
+):
+    session, job, target = _claim_fixture(**job_overrides)
+    for key, value in session_overrides.items():
+        setattr(session, key, value)
+    target.update(target_overrides)
+    db = _ClaimDb(session, job)
+    reviewer = Mock()
+    persist_run = Mock()
+
+    assert not cqr.run_quality_review(
+        session_id=target["session_id"],
+        job_id=target["job_id"],
+        variant_id=target["variant_id"],
+        render_generation_id=target["generation_id"],
+        db_factory=lambda: db,
+        reviewer=reviewer,
+        persist_run=persist_run,
+    )
+    reviewer.assert_not_called()
+    persist_run.assert_not_called()
+    assert db.closed
 
 
 def test_persist_rechecks_current_job_generation_before_writing():

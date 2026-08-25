@@ -167,6 +167,8 @@ def test_happy_path_auto_pass(video_file: str) -> None:
     assert client.invoke_calls[0]["media_uri"] == "files/fake-123"
     assert client.invoke_calls[0]["media_mime"] == "video/mp4"
     assert client.invoke_calls[0]["model"] == DEFAULT_VIDEO_MODEL
+    assert client.invoke_calls[0]["max_output_tokens"] == 2048
+    assert client.invoke_calls[0]["thinking_budget"] == 0
     # One-line card for the phone/admin surface.
     assert "auto_pass" in verdict.summary_line
     assert "strong hook" in verdict.summary_line

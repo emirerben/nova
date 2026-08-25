@@ -20,8 +20,10 @@ inferred preferences. Keep those consent boundaries separate.
   `0085_creator_workspace_receipts` add Stage 5 persistence. Migration
   `0086_creator_auto_iteration` adds the Stage 4 opt-in and 0..1 automatic
   revision count. Migration `0087_creator_workspace_proposal_processing` adds
-  durable relevance claims and retries. Apply all five before enabling any
-  Creator Agent capability.
+  durable relevance claims and retries. Migration
+  `0088_creator_workspace_query_indexes` bounds workspace lookups and adds the
+  child-side foreign-key indexes used by proposal and receipt polling. Apply
+  the full chain before enabling any Creator Agent capability.
 
 ## Flag matrix and dependencies
 
@@ -62,9 +64,10 @@ make a backend route safe.
    (cd src/apps/api && alembic upgrade head)
    ```
 
-   The expected Creator Agent head is `0087`. Do not downgrade `0084`, `0085`,
-   `0086`, or `0087` during a feature rollback; proposals, processing claims,
-   receipts, opt-in state, and rollback evidence must remain readable.
+   The expected Creator Agent head is `0088`. Do not downgrade `0084` through
+   `0088` during a feature rollback; proposals, processing claims, receipts,
+   opt-in state, rollback evidence, and the query/index contract must remain
+   readable.
 
 2. **Deploy and restart dark.** Deploy API and worker code with every flag above
    at its default. Restart both process groups, then smoke the health endpoint
@@ -215,7 +218,7 @@ paths for every row. A green unit suite is not a substitute for the human rows.
 
 | Check | Required evidence | Status / owner / timestamp |
 |---|---|---|
-| Migration | `alembic current` and `alembic heads` show `0087`; schema test sees 0084 proposal, 0085 receipt, 0086 opt-in/count state, and 0087 processing claims | |
+| Migration | `alembic current` and `alembic heads` show `0088`; schema test sees 0084 proposal, 0085 receipt, 0086 opt-in/count state, 0087 processing claims, and 0088 bounded-query indexes | |
 | Replay evals | Focused Creator Agent/schema/capability/session/workspace tests pass | |
 | Live eval | `test_main_creator_evals.py --eval-mode=live --with-judge` passes with approved credentials | |
 | Stage 2 exact render | Ready Job/variant/generation receipt; review evidence and stale-target case | |

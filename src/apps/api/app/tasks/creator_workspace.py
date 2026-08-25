@@ -16,6 +16,11 @@ from app.worker import celery_app
 
 log = structlog.get_logger()
 
+# The relevance agent's input schema accepts at most 200 plan items.  Fetch one
+# extra row so an oversized plan fails visibly instead of silently truncating
+# the classifier context.
+MAX_RELEVANCE_PLAN_ITEMS = 200
+
 
 def proposal_hash(payload: dict) -> str:
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
@@ -73,15 +78,17 @@ def detect_plan_relevance(self, proposal_id: str) -> None:
                 row.error_code = "stale_ownership_epoch"
                 db.commit()
                 return
-            item_rows = (
-                db.execute(
-                    select(PlanItem)
-                    .where(PlanItem.content_plan_id == plan.id)
-                    .order_by(PlanItem.position, PlanItem.id)
-                )
-                .scalars()
-                .all()
-            )
+            item_rows = db.execute(
+                select(PlanItem.id, PlanItem.theme, PlanItem.idea)
+                .where(PlanItem.content_plan_id == plan.id)
+                .order_by(PlanItem.position, PlanItem.id)
+                .limit(MAX_RELEVANCE_PLAN_ITEMS + 1)
+            ).all()
+            if len(item_rows) > MAX_RELEVANCE_PLAN_ITEMS:
+                row.status = "failed"
+                row.error_code = "plan_context_too_large"
+                db.commit()
+                return
             media = list(row.media_snapshot or [])
             items = [
                 {"id": str(item.id), "theme": item.theme or "", "idea": item.idea or ""}

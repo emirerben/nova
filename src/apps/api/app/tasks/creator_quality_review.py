@@ -198,36 +198,57 @@ def queue_creator_quality_review(
     key = review_key(str(session.id), job_id, variant_id, render_generation_id)
     current = session.last_review if isinstance(getattr(session, "last_review", None), dict) else {}
     if current.get("review_key") == key:
-        # A prior request may have committed the pending receipt after its
-        # broker publish raced a pre-commit worker.  Poll-time reconciliation
-        # may safely publish the same deterministic task again; the running
-        # claim still prevents duplicate grader work.
-        if current.get("status") == "pending" and getattr(session, "phase", None) == (
-            "awaiting_feedback"
+        # The marker is written only after apply_async returns.  It prevents
+        # GET-session reconciliation from republishing a task on every poll.
+        # There is an unavoidable crash window between broker publication and
+        # this JSONB write without a DB+broker outbox.  The stable task id plus
+        # claim_exact_review's row lock make a republished delivery harmless:
+        # only one delivery can own grader work, while a missing marker remains
+        # retryable rather than losing the review.
+        if current.get("dispatch_status") == "queued":
+            return False
+        # Keep broker failures visible to the creator, but allow the next
+        # reconciliation to retry the publication instead of permanently
+        # stranding the review in `unavailable`.
+        if (
+            current.get("status") not in {"pending", "unavailable"}
+            or getattr(session, "phase", None) != "awaiting_feedback"
         ):
-            try:
-                quality_review_creator_session.apply_async(
-                    kwargs={
-                        "session_id": str(session.id),
-                        "job_id": job_id,
-                        "variant_id": variant_id,
-                        "render_generation_id": render_generation_id,
-                    },
-                    task_id=_task_id(key),
-                )
-            except Exception as exc:  # noqa: BLE001 - surface a durable failure
-                session.last_review = {
-                    **current,
-                    "status": "unavailable",
-                    "decision": "unavailable",
-                    "error_code": "review_enqueue_failed",
-                    "error_message": str(exc)[:240],
-                    "failed_at": _now(),
-                }
-                log.warning("creator_quality_review_retry_failed", error_type=type(exc).__name__)
-                return False
-            return True
-        return False
+            return False
+        try:
+            quality_review_creator_session.apply_async(
+                kwargs={
+                    "session_id": str(session.id),
+                    "job_id": job_id,
+                    "variant_id": variant_id,
+                    "render_generation_id": render_generation_id,
+                },
+                task_id=_task_id(key),
+            )
+        except Exception as exc:  # noqa: BLE001 - surface a durable failure
+            session.last_review = {
+                **current,
+                "status": "unavailable",
+                "decision": "unavailable",
+                "dispatch_status": "failed",
+                "error_code": "review_enqueue_failed",
+                "error_message": str(exc)[:240],
+                "failed_at": _now(),
+            }
+            log.warning("creator_quality_review_retry_failed", error_type=type(exc).__name__)
+            return False
+        session.last_review = {
+            **current,
+            "status": "pending",
+            "decision": None,
+            "dispatch_status": "queued",
+            "task_id": _task_id(key),
+            "enqueued_at": _now(),
+        }
+        return True
+    # A different review target supersedes any old receipt.  The new pending
+    # marker deliberately starts without dispatch_status until publication
+    # succeeds, preserving retryability if the broker is unavailable.
     pending = {
         "status": "pending",
         "review_key": key,
@@ -242,6 +263,7 @@ def queue_creator_quality_review(
         "review_mode": "objective",
         "reviewer": "video_quality_grader",
         "queued_at": _now(),
+        "dispatch_status": "publishing",
     }
     prior_auto = current.get("auto_iteration")
     if isinstance(prior_auto, dict) and isinstance(prior_auto.get("rollback_receipt"), dict):
@@ -262,12 +284,19 @@ def queue_creator_quality_review(
             **pending,
             "status": "unavailable",
             "decision": "unavailable",
+            "dispatch_status": "failed",
             "error_code": "review_enqueue_failed",
             "error_message": str(exc)[:240],
             "failed_at": _now(),
         }
         log.warning("creator_quality_review_enqueue_failed", error_type=type(exc).__name__)
         return False
+    session.last_review = {
+        **pending,
+        "dispatch_status": "queued",
+        "task_id": _task_id(key),
+        "enqueued_at": _now(),
+    }
     return True
 
 

@@ -303,7 +303,7 @@ flags are live.
 - Stage 4 tests pin objective thresholds, explicit opt-in, exact allowlist,
   one-cycle recovery, command pins, idempotency, and prior-generation rollback
   receipts;
-- Stage 5 tests pin 0084/0085/0087 state, idempotent proposal decisions, ownership
+- Stage 5 tests pin 0084/0085/0087/0088 state, idempotent proposal decisions, ownership
   re-fencing, distinct deliverables, stale receipts, and explicit-only preference
   writes;
 - editor regressions pin exact PlanItem ownership for overlays/SFX and the music
@@ -534,6 +534,13 @@ attached to another plan item. Legacy upload Jobs do not persist a GCS object
 generation, so those proposals remain path- and ownership-pinned; existing
 `PlanItemAsset` generation pinning is unchanged.
 
+Migration `0088` adds the partial/latest-session and child-side foreign-key
+indexes used by workspace polling. Relevance context is capped at 200 plan items
+and fails visibly when the plan exceeds that agent contract; receipt creation
+selects only the newest complete session per requested item, and cross-item media
+reuse is checked with an indexed database existence query rather than loading plan
+history into API memory.
+
 The receipt endpoints are:
 
 | Route | Contract |
@@ -610,6 +617,7 @@ from app.tasks.style_build import derive_user_style
 | `app/migrations/versions/0085_creator_workspace_receipts.py` | Workspace receipts/deliverables/preferences |
 | `app/migrations/versions/0086_creator_auto_iteration.py` | Explicit opt-in and one-cycle auto-iteration state |
 | `app/migrations/versions/0087_creator_workspace_proposal_processing.py` | Durable relevance-processing claim and retry state |
+| `app/migrations/versions/0088_creator_workspace_query_indexes.py` | Bounded workspace lookup and child-side foreign-key indexes |
 | `tests/tasks/test_creator_quality_review.py` | Stage 2 exact-target/fail-open tests |
 | `tests/services/test_creator_craft.py` | Stage 3 compiler tests |
 | `tests/services/test_creator_autonomy.py` | Stage 4 thresholds, allowlist, pins, idempotency, and recovery tests |

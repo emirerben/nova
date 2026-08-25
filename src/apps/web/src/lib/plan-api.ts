@@ -1262,7 +1262,7 @@ export interface CreatorReviewRevision {
 
 /** Bounded Stage 2 receipt. Optional so V1 responses render unchanged. */
 export interface CreatorAgentReview {
-  status?: "queued" | "running" | "complete" | "failed" | "unavailable";
+  status?: "pending" | "queued" | "running" | "complete" | "failed" | "unavailable";
   decision?: "approve" | "revise" | "reject" | "unavailable";
   review_mode?: "objective" | "taste" | "mixed";
   quality_score?: number | null;

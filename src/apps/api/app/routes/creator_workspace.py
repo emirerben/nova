@@ -9,8 +9,9 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.agents._schemas.user_style import UserStyle
 from app.agents.music_matcher import _sanitize_text
@@ -259,6 +260,44 @@ async def _enqueue_relevance_or_mark_failed(
         row.status = "failed"
         row.error_code = "relevance_dispatch_failed"
         await db.commit()
+
+
+async def _media_paths_already_attached_db(
+    db: AsyncSession,
+    *,
+    creator_id: uuid.UUID,
+    excluded_item_id: uuid.UUID,
+    paths: set[str],
+) -> bool:
+    """Check every owned PlanItem without materializing users' history.
+
+    Both legacy ``clip_gcs_paths`` and structured ``clip_assignments`` are
+    queried in PostgreSQL.  The ``EXISTS`` query is deliberately not bounded by
+    a row limit: missing an older attachment would allow duplicate media to be
+    approved.  ``paths`` is capped by ``WorkspaceCreateBody`` at 50 values.
+    """
+
+    if not paths:
+        return False
+    path_predicates = [
+        or_(
+            PlanItem.clip_gcs_paths.contains([path]),
+            PlanItem.clip_assignments.contains([{"gcs_path": path}]),
+        )
+        for path in sorted(paths)
+    ]
+    inner = (
+        select(1)
+        .select_from(PlanItem)
+        .join(ContentPlan, ContentPlan.id == PlanItem.content_plan_id)
+        .where(
+            PlanItem.id != excluded_item_id,
+            ContentPlan.user_id == creator_id,
+            or_(*path_predicates),
+        )
+    )
+    query = select(exists(inner))
+    return bool(await db.scalar(query))
 
 
 def _require_workspace_enabled() -> None:
@@ -545,22 +584,11 @@ async def decide_relevance_proposal(
         await db.flush()
         result_item_id = item.id
     if body.decision != "reject":
-        other_items = (
-            (
-                await db.execute(
-                    select(PlanItem)
-                    .join(ContentPlan, ContentPlan.id == PlanItem.content_plan_id)
-                    .where(
-                        ContentPlan.user_id == user.id,
-                        PlanItem.id != item.id,
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        if _media_paths_already_attached(
-            other_items, {str(media["gcs_path"]) for media in snapshots}
+        if await _media_paths_already_attached_db(
+            db,
+            creator_id=user.id,
+            excluded_item_id=item.id,
+            paths={str(media["gcs_path"]) for media in snapshots},
         ):
             raise HTTPException(
                 status_code=409,
@@ -869,19 +897,32 @@ async def create_workspace_receipt(
     )
     if len(items) != len(item_ids):
         raise HTTPException(status_code=404, detail="One or more plan items were not found")
-    sessions = (
-        (
-            await db.execute(
-                select(CreatorAgentSession)
-                .where(
-                    CreatorAgentSession.creator_id == user.id,
-                    CreatorAgentSession.plan_item_id.in_(item_ids),
-                )
-                .order_by(
-                    CreatorAgentSession.updated_at.desc(), CreatorAgentSession.created_at.desc()
-                )
-            )
+    session_rank = (
+        func.row_number()
+        .over(
+            partition_by=CreatorAgentSession.plan_item_id,
+            order_by=(
+                CreatorAgentSession.updated_at.desc(),
+                CreatorAgentSession.created_at.desc(),
+                CreatorAgentSession.id.desc(),
+            ),
         )
+        .label("session_rank")
+    )
+    complete_sessions = (
+        select(CreatorAgentSession, session_rank)
+        .where(
+            CreatorAgentSession.creator_id == user.id,
+            CreatorAgentSession.plan_item_id.in_(item_ids),
+            CreatorAgentSession.target_job_id.is_not(None),
+            CreatorAgentSession.target_variant_id.is_not(None),
+            CreatorAgentSession.target_generation_id.is_not(None),
+        )
+        .subquery()
+    )
+    session_alias = aliased(CreatorAgentSession, complete_sessions)
+    sessions = (
+        (await db.execute(select(session_alias).where(complete_sessions.c.session_rank == 1)))
         .scalars()
         .all()
     )
