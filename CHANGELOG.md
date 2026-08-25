@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.51.4.0] — 2026-08-25
+
+### Fixed
+- **Creators can place their first photo or video sequence directly from the playhead.** A pre-existing visual layer is no longer required, while selecting a visual still anchors the new sequence precisely after it.
+- **Sequences no longer stack hidden photos at the end of the timeline.** Placement stops when space runs out, explains partial results, and keeps unplaced media selected so it can be retried.
+
+### Changed
+- **The Visuals drawer now explains its media controls without clutter.** Photo and video layers use accurate full-screen or overlay labels, optional guidance lives in the standard info popover, and the sequence action states when it will use a selected anchor.
+
 ## [0.51.3.0] — 2026-08-25
 
 ### Fixed
