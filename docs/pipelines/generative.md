@@ -577,6 +577,13 @@ order is clean base → structured visual blocks → media blocks → authored t
 - Editor saves include blocks and linked text in one `editor-commit` baseline.
   Auto pacing uses the non-persisting `retime-visual-block` endpoint and returns
   normalized shot boundaries; any direct timing edit switches to manual.
+- In the Visuals drawer, selecting one or more ready photos/videos and choosing
+  **Place selected in sequence** starts an adjacent fullscreen sequence at the
+  playhead when no visual layer is selected. Selecting an existing visual layer
+  changes the action to **Place sequence after selected** and anchors the first
+  new block at that layer's end. Placement stops at the timeline boundary;
+  successfully placed assets are cleared from the selection while unplaced
+  assets remain selected for retry.
 - `visual_treatment_planner` classifies transcript purpose and proposes
   transcript-backed cards or asset-backed montages under density guardrails.
   Extracted source frames become ordinary persistent `PlanItemAsset` rows with
