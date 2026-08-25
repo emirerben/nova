@@ -307,16 +307,22 @@ def test_fast_montage_prompt_states_absolute_timing_contract() -> None:
     assert "For this 14s target, emit at least 12 cuts" in prompt
 
 
-def test_fast_montage_rejects_declared_duration_that_disagrees_with_cuts() -> None:
+def test_fast_montage_uses_valid_cut_total_over_provider_declared_arithmetic() -> None:
     payload = _fractional_fast_payload()
     payload["fast_cuts"][-1]["output_duration_s"] = 1.0
     payload["fast_cuts"][-1]["source_end_s"] = 14.0
 
-    with pytest.raises(SchemaError, match="do not fit the declared duration"):
-        EditProposalAgent(None).parse(  # type: ignore[arg-type]
-            json.dumps(payload),
-            _fractional_fast_input(),
-        )
+    output = EditProposalAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(payload),
+        _fractional_fast_input(),
+    )
+
+    cuts = output.fast_cuts or []
+    assert output.duration_s == 14
+    assert sum(cut.output_duration_s for cut in cuts) == pytest.approx(14)
+    assert cuts[-1].output_duration_s == 1.0
+    assert cuts[-1].source_end_s == 14.0
+    assert cuts[-1].beat_align is True
 
 
 def test_fast_montage_rejects_material_duration_drift() -> None:
@@ -335,7 +341,7 @@ def test_fast_montage_rejects_unreconcilable_duration_drift() -> None:
             kind="video",
             duration_s=1.16,
         )
-        for index in range(3)
+        for index in range(10)
     ]
     agent_input = EditProposalAgentInput(
         direction="fast_montage",
@@ -346,7 +352,7 @@ def test_fast_montage_rejects_unreconcilable_duration_drift() -> None:
     cuts = [
         {
             "cut_id": f"cut-{index + 1}",
-            "media_id": f"media-{index % 3}",
+            "media_id": f"media-{index}",
             "source_start_s": 0,
             "source_end_s": 1.16,
             "output_duration_s": 1.16,
@@ -360,13 +366,110 @@ def test_fast_montage_rejects_unreconcilable_duration_drift() -> None:
             json.dumps(
                 {
                     "title": "A quick cut",
-                    "duration_s": 11.6,
+                    # The declaration matches the server target, but the ten
+                    # source-pinned cuts total only 11.6s and cannot extend.
+                    # Removing the declaration-vs-cuts check must not make this
+                    # unsafe schedule acceptable.
+                    "duration_s": 12,
                     "story_beats": [],
                     "fast_cuts": cuts,
                 }
             ),
             agent_input,
         )
+
+
+def test_fast_montage_duration_repair_never_reuses_source_footage() -> None:
+    agent_input = EditProposalAgentInput(
+        direction="fast_montage",
+        pace="fast",
+        target_duration_s=4,
+        media=[
+            EditProposalMedia(media_id="a", lane="clip", kind="video", duration_s=1.6),
+            EditProposalMedia(media_id="b", lane="clip", kind="video", duration_s=0.8),
+            EditProposalMedia(media_id="c", lane="clip", kind="video", duration_s=0.8),
+        ],
+    )
+    cuts = [
+        ("cut-a-1", "a", 0.0, 0.8),
+        ("cut-c", "c", 0.0, 0.8),
+        ("cut-b", "b", 0.0, 0.8),
+        ("cut-a-2", "a", 0.8, 1.6),
+    ]
+    payload = {
+        "title": "No repeated source footage",
+        "duration_s": 4,
+        "story_beats": [],
+        "fast_cuts": [
+            {
+                "cut_id": cut_id,
+                "media_id": media_id,
+                "source_start_s": source_start_s,
+                "source_end_s": source_end_s,
+                "output_duration_s": source_end_s - source_start_s,
+                "role": "hook" if index == 0 else "payoff" if index == 3 else "build",
+            }
+            for index, (cut_id, media_id, source_start_s, source_end_s) in enumerate(cuts)
+        ],
+    }
+
+    with pytest.raises(SchemaError, match="cannot fit the server target"):
+        EditProposalAgent(None).parse(json.dumps(payload), agent_input)  # type: ignore[arg-type]
+
+
+def test_fast_montage_rejects_existing_overlapping_source_footage() -> None:
+    agent_input = EditProposalAgentInput(
+        direction="fast_montage",
+        pace="fast",
+        target_duration_s=4,
+        media=[
+            EditProposalMedia(media_id="a", lane="clip", kind="video", duration_s=2.0),
+            EditProposalMedia(media_id="b", lane="clip", kind="video", duration_s=1.0),
+            EditProposalMedia(media_id="c", lane="clip", kind="video", duration_s=1.0),
+        ],
+    )
+    payload = {
+        "title": "No overlapping source footage",
+        "duration_s": 4,
+        "story_beats": [],
+        "fast_cuts": [
+            {
+                "cut_id": "cut-a-1",
+                "media_id": "a",
+                "source_start_s": 0.0,
+                "source_end_s": 1.0,
+                "output_duration_s": 1.0,
+                "role": "hook",
+            },
+            {
+                "cut_id": "cut-b",
+                "media_id": "b",
+                "source_start_s": 0.0,
+                "source_end_s": 1.0,
+                "output_duration_s": 1.0,
+                "role": "build",
+            },
+            {
+                "cut_id": "cut-c",
+                "media_id": "c",
+                "source_start_s": 0.0,
+                "source_end_s": 1.0,
+                "output_duration_s": 1.0,
+                "role": "build",
+            },
+            {
+                "cut_id": "cut-a-2",
+                "media_id": "a",
+                "source_start_s": 0.8,
+                "source_end_s": 1.8,
+                "output_duration_s": 1.0,
+                "role": "payoff",
+            },
+        ],
+    }
+
+    with pytest.raises(SchemaError, match="reuses overlapping source footage"):
+        EditProposalAgent(None).parse(json.dumps(payload), agent_input)  # type: ignore[arg-type]
 
 
 def test_guided_story_fractional_duration_remains_invalid() -> None:

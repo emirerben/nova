@@ -215,6 +215,11 @@ uses the automatic design path instead of requiring a proposal review:
    failure), **after** the approval commit and outside the PlanItem row lock — dispatch never
    publishes while holding it:
    - `approved` → dispatch normally through `dispatch_item_render_for`.
+   - `failed` with `design_fallback="main_creator_fail_closed"` → **no fallback**, even when the
+     item has clips and no pool assets. Main Creator persists this sentinel before enqueue so old
+     and new workers in a rolling deploy both preserve the confirmed creative direction. The next
+     Creator session poll reconciles that exact generation attempt to the matching failed execution
+     receipt instead of waiting for the dispatch lease to expire.
    - `failed`, zero registered pool assets, `clip_gcs_paths` non-empty → dispatch anyway with
      `bypass_guided_edit_gate=True` (a new escape hatch on `_dispatch_item_render` /
      `dispatch_item_render_for`, used **only** by this caller) to route around the very enforcement
@@ -323,9 +328,11 @@ New fast-montage proposals use `fast_cuts` as their authoritative planning contr
 story chapters. Each cut pins the analyzed source window, output duration, hook/build/payoff role,
 and a hard-cut transition. The planner defaults to the strongest visual first, roughly 0.8–1.2
 seconds per cut, minimal generated text, and optional beat alignment when analyzed beat timestamps
-are available. A strong source may appear more than once, while validation still requires source
-variety. Legacy fast-montage snapshots without `fast_cuts` remain readable and render through the
-older story-shaped contract.
+are available. A strong source may appear more than once, but its selected video windows may not
+overlap. Validation fits otherwise-valid cuts to the server-owned target duration with bounded
+tail-first adjustments and fails closed if the requested runtime cannot be reached without reusing
+source time. Source variety remains required. Legacy fast-montage snapshots without `fast_cuts`
+remain readable and render through the older story-shaped contract.
 
 The renderer exact-generation downloads every source selected by a beat. Unselected catalog media
 remains authorized but is not required in the output. Photos and videos become sequential full-screen

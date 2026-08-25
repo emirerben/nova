@@ -180,6 +180,58 @@ async def test_reconcile_expires_the_exact_failed_guided_attempt(monkeypatch) ->
 
 
 @pytest.mark.asyncio
+async def test_reconcile_exact_main_creator_failure_without_waiting_for_lease(
+    monkeypatch,
+) -> None:
+    attempt_id = str(uuid.uuid4())
+    session = _session(
+        phase="executing",
+        active_plan={
+            "guided_generation_attempt_id": attempt_id,
+            "edit_plan": {"strategy": {"render_program": "guided"}},
+        },
+    )
+    item = SimpleNamespace(
+        id=session.plan_item_id,
+        current_job_id=None,
+        edit_proposal=EditProposal(
+            proposal_version=3,
+            generation_attempt_id=attempt_id,
+            status="failed",
+            approval_mode="auto",
+            failure=ProposalFailure(
+                code="proposal_generation_failed",
+                message="Kria couldn't plan this edit. Try again.",
+            ),
+            design_fallback="main_creator_fail_closed",
+        ).model_dump(mode="json"),
+    )
+    receipt = SimpleNamespace(
+        status="succeeded",
+        created_at=datetime.now(UTC),
+        error=None,
+        completed_at=datetime.now(UTC),
+    )
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = receipt
+    db = AsyncMock()
+    db.get.return_value = item
+    db.execute.return_value = result
+    append = AsyncMock()
+    monkeypatch.setattr(creator_sessions, "append_event", append)
+
+    changed = await creator_sessions.reconcile_render_state(db, session)
+
+    assert changed is True
+    assert session.phase == "failed"
+    assert session.last_error["code"] == "proposal_generation_failed"
+    assert receipt.status == "failed"
+    assert receipt.error == {"code": "proposal_generation_failed"}
+    assert item.edit_proposal["design_fallback"] == "main_creator_fail_closed"
+    append.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_reconcile_expires_a_succeeded_but_stalled_guided_attempt(monkeypatch) -> None:
     attempt_id = str(uuid.uuid4())
     session = _session(

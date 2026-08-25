@@ -129,6 +129,22 @@ describe("AssetPool — flag gating", () => {
     expect(screen.getByRole("button", { name: /add visuals/i })).toBeInTheDocument();
     expect(screen.queryByText(/nothing here/i)).toBeNull();
   });
+
+  it("shows a durable saved receipt in the embedded Visuals tab", async () => {
+    process.env[FLAG] = "true";
+    mockFetch(
+      listRoute([
+        makeAsset({ id: "photo-1", kind: "image", source_filename: "photo.png" }),
+        makeAsset({ id: "video-1", kind: "video", source_filename: "support.mov" }),
+      ]),
+    );
+    await renderPool({ embedded: true });
+
+    expect(screen.getByText("Photos and supporting videos")).toBeInTheDocument();
+    expect(screen.getByTestId("visuals-saved-receipt")).toHaveTextContent(
+      "2 visuals saved (1 photo, 1 video)",
+    );
+  });
 });
 
 describe("AssetPool — upload flow (presigned direct-PUT, R1/C9+C14)", () => {
@@ -214,6 +230,45 @@ describe("AssetPool — upload flow (presigned direct-PUT, R1/C9+C14)", () => {
     expect(registerBody!.content_type).toBe("image/png");
     expect(registerBody!.source_filename).toBe("shot.png");
     expect(typeof registerBody!.content_hash).toBe("string");
+  });
+
+  it("updates the embedded saved receipt only after registration succeeds", async () => {
+    process.env[FLAG] = "true";
+    const registered = makeAsset({ source_filename: "saved.png", subject: "saved photo" });
+    mockFetch((method, url, init) => {
+      if (method === "GET" && url === REGISTER_URL) {
+        return jsonResponse({ assets: [], max_assets: 20 });
+      }
+      if (method === "POST" && url === UPLOAD_URLS_URL) {
+        const body = JSON.parse(String(init?.body)) as {
+          files: Array<{ client_upload_id: string }>;
+        };
+        return jsonResponse({
+          urls: [
+            signedTarget(
+              "users/u1/plan/item-1/pool/saved.png",
+              SIGNED_PUT,
+              body.files[0].client_upload_id,
+            ),
+          ],
+        });
+      }
+      if (method === "PUT" && url === SIGNED_PUT) return jsonResponse({}, 200);
+      if (method === "POST" && url === REGISTER_URL) return jsonResponse(registered);
+      return undefined;
+    });
+    await renderPool({ embedded: true });
+    expect(screen.getByTestId("visuals-saved-receipt")).toHaveTextContent("No visuals saved");
+
+    fireEvent.change(screen.getByLabelText("Add visuals to your pool (embedded)"), {
+      target: { files: [new File(["png"], "saved.png", { type: "image/png" })] },
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("visuals-saved-receipt")).toHaveTextContent(
+        "1 visual saved",
+      ),
+    );
   });
 
   it("relays the signed PUT through /uploads/relay on a CORS TypeError (localhost)", async () => {

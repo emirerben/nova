@@ -319,6 +319,26 @@ class TestPinnedClipReuse:
             "Pinned clip leaked into a non-pinned slot when an alternative was available"
         )
 
+    def test_pinned_scene_seeds_semantic_coverage(self):
+        """The coverage pass must count the pinned opener's visual subject."""
+        recipe = _make_recipe([_slot(1, 5.0), _slot(2, 5.0), _slot(3, 5.0)])
+        face = _make_clip("face", [_moment(0.0, 5.0)])
+        volleyball = _make_clip("volleyball", [_moment(0.0, 5.0)])
+        coffee = _make_clip("coffee", [_moment(0.0, 5.0)])
+        concert = _make_clip("concert", [_moment(0.0, 5.0)])
+        face.detected_subject = "people playing beach volleyball"
+        volleyball.detected_subject = "friends playing volleyball on the beach"
+        coffee.detected_subject = "making coffee in a kitchen"
+        concert.detected_subject = "live concert crowd"
+
+        plan = match(
+            recipe,
+            [face, volleyball, coffee, concert],
+            pinned_assignments={1: "face"},
+        )
+
+        assert [step.clip_id for step in plan.steps] == ["face", "coffee", "concert"]
+
     def test_three_slots_one_clip_pinned(self):
         """1 clip, 3 unlocked slots, slot 1 pinned. All three filled, all
         from the same clip, with max_uses=ceil(3/1)=3 honored."""
@@ -780,6 +800,48 @@ class TestMinimumCoveragePass:
         assert len(pre) == 4
         used_clip_ids = {meta.clip_id for meta, _ in pre.values()}
         assert len(used_clip_ids) == 4
+
+    def test_more_clips_than_slots_prefers_semantically_distinct_scenes(self):
+        """File-unique clips of one event must not crowd out other scenes."""
+        slots = [_slot(i + 1, 5.0) for i in range(4)]
+        clips = [
+            _make_clip("volleyball_1", [_moment(0.0, 5.0)]),
+            _make_clip("volleyball_2", [_moment(0.0, 5.0)]),
+            _make_clip("volleyball_3", [_moment(0.0, 5.0)]),
+            _make_clip("coffee", [_moment(0.0, 5.0)]),
+            _make_clip("concert", [_moment(0.0, 5.0)]),
+            _make_clip("cooking", [_moment(0.0, 5.0)]),
+        ]
+        subjects = [
+            "people playing beach volleyball",
+            "beach volleyball court",
+            "friends playing volleyball on the beach",
+            "making coffee in a kitchen",
+            "live concert crowd",
+            "cooking dinner at home",
+        ]
+        for clip, subject in zip(clips, subjects, strict=True):
+            clip.detected_subject = subject
+
+        plan = match(_make_recipe(slots), clips)
+
+        selected = {step.clip_id for step in plan.steps}
+        assert selected == {"volleyball_1", "coffee", "concert", "cooking"}
+
+    def test_semantic_diversity_preserves_duration_constraint_priority(self):
+        """A repeated scene still wins when it is the only fit for a slot."""
+        slots = [_slot(1, 5.0), _slot(2, 15.0)]
+        short = _make_clip("short", [_moment(0.0, 5.0)])
+        long_1 = _make_clip("long_1", [_moment(0.0, 15.0)])
+        long_2 = _make_clip("long_2", [_moment(0.0, 15.0)])
+        short.detected_subject = "people playing beach volleyball"
+        long_1.detected_subject = "beach volleyball court"
+        long_2.detected_subject = "friends playing volleyball on the beach"
+
+        pre = _minimum_coverage_pass(slots, [short, long_1, long_2])
+
+        assert pre[1][0].clip_id == "short"
+        assert pre[2][0].clip_id == "long_1"
 
     def test_clip_no_valid_moments_skipped(self):
         """A clip with no duration-compatible moments is gracefully skipped."""
@@ -1411,6 +1473,29 @@ class TestNarrativeOrder:
         assert plan.steps[0].clip_id == "face"
         rest = [s.clip_id for s in plan.steps[1:]]
         assert rest == ["g1", "g2"]
+
+    def test_narrative_pool_avoids_pinned_scene_without_reordering_guide(self):
+        """Narrative eligibility stays hard while pool choices avoid repeats."""
+        recipe = _make_recipe([_slot(i, 5.0) for i in range(1, 5)])
+        face = _make_clip("face", [_moment(0, 5, energy=5.0)])
+        guide = _make_clip("g1", [_moment(0, 5, energy=5.0)])
+        volleyball = _make_clip("volleyball", [_moment(0, 5, energy=5.0)])
+        concert = _make_clip("concert", [_moment(0, 5, energy=1.0)])
+        face.detected_subject = "people playing beach volleyball"
+        guide.detected_subject = "opening ceremony torch"
+        volleyball.detected_subject = "friends playing volleyball on the beach"
+        concert.detected_subject = "live concert crowd"
+
+        plan = match(
+            recipe,
+            [face, guide, volleyball, concert],
+            pinned_assignments={1: "face"},
+            narrative_order=["g1"],
+        )
+
+        clip_ids = [step.clip_id for step in plan.steps]
+        assert clip_ids[:2] == ["face", "g1"]
+        assert clip_ids[2] == "concert"
 
     def test_none_param_identical_to_omitted(self):
         recipe = _make_recipe([_slot(i, 5.0, priority=11 - i) for i in range(1, 6)])

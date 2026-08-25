@@ -306,6 +306,8 @@ export default function AssetPool({
   if (!enabled) return null;
 
   const count = assets.length;
+  const imageCount = assets.filter((asset) => asset.kind === "image").length;
+  const videoCount = count - imageCount;
   const atCap = count + uploader.reservedSlots >= maxAssets;
   const releasingSlots = Math.max(0, uploader.reservedSlots - pending.length);
   const isEmpty = count === 0 && pending.length === 0;
@@ -323,6 +325,31 @@ export default function AssetPool({
               {count} of {maxAssets}
             </p>
           )}
+        </div>
+      )}
+
+      {embedded && !unavailable && (
+        <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+          <div>
+            <p className="text-sm font-medium text-[#0c0c0e]">Photos and supporting videos</p>
+            <p className="text-xs text-muted-foreground">
+              Add photos here, not in Clips. Kria can use saved visuals when it builds your edit.
+            </p>
+          </div>
+          <p
+            className="shrink-0 text-xs font-medium text-lime-700"
+            role="status"
+            aria-live="polite"
+            data-testid="visuals-saved-receipt"
+          >
+            {count === 0
+              ? "No visuals saved"
+              : `${count} ${count === 1 ? "visual" : "visuals"} saved${
+                  imageCount > 0 && videoCount > 0
+                    ? ` (${imageCount} ${imageCount === 1 ? "photo" : "photos"}, ${videoCount} ${videoCount === 1 ? "video" : "videos"})`
+                    : ""
+                }`}
+          </p>
         </div>
       )}
 
@@ -360,8 +387,8 @@ export default function AssetPool({
                   accept={POOL_ASSET_MIME_TYPES.join(",")}
                   multiple
                   disabled={atCap}
-                  title="Drop screenshots or screen recordings"
-                  subline="Kria places them on your video"
+                  title="Drop photos or supporting videos"
+                  subline="They are saved to Visuals when they appear below"
                   ariaLabel="Add visuals"
                   inputAriaLabel="Add visuals to your pool (embedded)"
                 />

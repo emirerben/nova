@@ -224,8 +224,10 @@ def _normalize_fast_montage_duration(
     """Reconcile harmless provider decimal drift to the server-owned target.
 
     Fast cuts are render-critical, so this validates their original shape and
-    total before making a small, deterministic tail-first adjustment. Story
-    directions deliberately keep the legacy strict-integer output contract.
+    then fits their total to the server-owned target with bounded, deterministic
+    tail-first adjustments. The provider's declared duration is only an intent
+    check: LLM arithmetic may disagree with the valid cut windows it emitted.
+    Story directions deliberately keep the legacy strict-integer contract.
     """
 
     declared_duration = payload.get("duration_s")
@@ -247,14 +249,32 @@ def _normalize_fast_montage_duration(
         return payload, set()
     cuts, repaired_cut_ids, raw_total_s = _compile_fast_cuts(raw_cuts)
 
-    if abs(raw_total_s - declared_duration_s) > _FAST_CUT_TOTAL_TOLERANCE_S:
-        raise SchemaError("edit_proposal: fast cut durations do not fit the declared duration")
-
-    # Reconcile against the actual cut total, after verifying the model's own
-    # declaration. This also absorbs sub-tolerance summation/rounding drift.
+    # Reconcile against the actual cut total. Do not reject a fixable provider
+    # arithmetic error merely because its declared total disagrees: each cut is
+    # still constrained by the strict source window and 0.4-1.2s render bounds,
+    # and the loop fails closed when those windows cannot reach the target.
     remaining_s = target_duration_s - raw_total_s
     media_by_id = {media.media_id: media for media in input.media}
     normalized_cuts = list(cuts)
+
+    def assert_video_windows_do_not_overlap() -> None:
+        windows_by_media: dict[str, list[tuple[float, float]]] = {}
+        for candidate in normalized_cuts:
+            media = media_by_id.get(candidate.media_id)
+            if media is None or media.kind != "video":
+                continue
+            windows_by_media.setdefault(candidate.media_id, []).append(
+                (candidate.source_start_s, candidate.source_end_s)
+            )
+        for windows in windows_by_media.values():
+            windows.sort()
+            for previous, current in zip(windows, windows[1:]):
+                if current[0] < previous[1] - _FAST_DURATION_EPSILON_S:
+                    raise SchemaError(
+                        "edit_proposal: fast montage reuses overlapping source footage"
+                    )
+
+    assert_video_windows_do_not_overlap()
     for index in range(len(normalized_cuts) - 1, -1, -1):
         if abs(remaining_s) <= _FAST_DURATION_EPSILON_S:
             break
@@ -272,6 +292,21 @@ def _normalize_fast_montage_duration(
             capacity_s = 1.2 - cut.output_duration_s
             if media.kind == "video":
                 source_capacity_s = float(media.duration_s or 0.0) - cut.source_end_s
+                next_source_start_s = min(
+                    (
+                        candidate.source_start_s
+                        for candidate_index, candidate in enumerate(normalized_cuts)
+                        if candidate_index != index
+                        and candidate.media_id == cut.media_id
+                        and candidate.source_start_s >= cut.source_end_s
+                    ),
+                    default=None,
+                )
+                if next_source_start_s is not None:
+                    source_capacity_s = min(
+                        source_capacity_s,
+                        next_source_start_s - cut.source_end_s,
+                    )
                 capacity_s = min(capacity_s, max(0.0, source_capacity_s))
             adjustment_s = min(remaining_s, max(0.0, capacity_s))
         if abs(adjustment_s) <= _FAST_DURATION_EPSILON_S:
@@ -296,6 +331,8 @@ def _normalize_fast_montage_duration(
 
     if abs(remaining_s) > _FAST_DURATION_EPSILON_S:
         raise SchemaError("edit_proposal: fast montage duration cannot fit the server target")
+
+    assert_video_windows_do_not_overlap()
 
     return (
         {

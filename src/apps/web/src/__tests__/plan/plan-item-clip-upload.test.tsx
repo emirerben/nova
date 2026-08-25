@@ -267,6 +267,7 @@ async function deliverPoll(view: { rerender: (el: React.ReactElement) => void },
 
 beforeEach(() => {
   jest.clearAllMocks();
+  process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED = "true";
   capturedUploads.length = 0;
   installUploadCapture();
   mockAttachClips.mockResolvedValue({});
@@ -356,6 +357,84 @@ describe("PoolUploadCard — montage clip uploader visibility (regression, PR #8
     });
 
     expect(screen.getByRole("button", { name: "Drop videos here or choose files" })).toBeInTheDocument();
+  });
+
+  it("makes the photo lane explicit before selection", async () => {
+    setData(makeItem());
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.getByText("Clips are videos only.")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Add photos and screenshots in Visuals/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add photos to Visuals" })).toBeEnabled();
+  });
+
+  it("hides Visuals entry points when the underlying feature is disabled", async () => {
+    delete process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED;
+    delete process.env.NEXT_PUBLIC_GUIDED_EDIT_ENABLED;
+    setData(makeItem());
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.queryByRole("tab", { name: /Visuals/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add photos to Visuals" })).toBeNull();
+
+    await act(async () => {
+      pickFiles([new File(["image"], "memory.png", { type: "image/png" })]);
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Classic only accepts videos. Choose Collage or Photo wall to use photos.",
+    );
+    expect(screen.queryByRole("button", { name: /Open Visuals/i })).toBeNull();
+  });
+
+  it("rejects each photo dropped on Clips and links to Visuals without starting an upload", async () => {
+    setData(makeItem());
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    await act(async () => {
+      pickFiles([
+        new File(["one"], "finish-line.jpg", { type: "image/jpeg" }),
+        new File(["two"], "podium.heic", { type: "image/heic" }),
+      ]);
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent("2 photos weren’t added to Clips.");
+    expect(screen.getByRole("alert")).toHaveTextContent("finish-line.jpg");
+    expect(screen.getByRole("alert")).toHaveTextContent("podium.heic");
+    expect(mockRequestUploadUrls).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open Visuals and select them again" }),
+    );
+    expect(screen.getByTestId("asset-pool")).toBeInTheDocument();
+  });
+
+  it("keeps valid videos from a mixed drop while rejecting the named photo", async () => {
+    setData(makeItem());
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    await act(async () => {
+      pickFiles([
+        new File(["image"], "memory.png", { type: "image/png" }),
+        new File(["video"], "race.mp4", { type: "video/mp4" }),
+      ]);
+    });
+    await flush();
+
+    expect(screen.getByRole("alert")).toHaveTextContent("memory.png");
+    expect(mockRequestUploadUrls).toHaveBeenCalledTimes(1);
+    expect(mockRequestUploadUrls.mock.calls[0][1]).toEqual([
+      expect.objectContaining({ filename: "race.mp4", content_type: "video/mp4" }),
+    ]);
   });
 });
 

@@ -407,6 +407,41 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
             and candidate.content_plan_ownership_epoch == session.ownership_epoch
             and exact_plan
         )
+        raw_proposal_state = getattr(item, "edit_proposal", None)
+        proposal_state = raw_proposal_state if isinstance(raw_proposal_state, dict) else {}
+        failure = proposal_state.get("failure")
+        proposal_code = failure.get("code") if isinstance(failure, dict) else None
+        from app.schemas.edit_proposal import MAIN_CREATOR_FAIL_CLOSED  # noqa: PLC0415
+
+        exact_failed_creator_attempt = bool(
+            receipt is not None
+            and expected_guided_attempt
+            and proposal_state.get("generation_attempt_id") == expected_guided_attempt
+            and proposal_state.get("status") == "failed"
+            and proposal_state.get("design_fallback") == MAIN_CREATOR_FAIL_CLOSED
+        )
+        if exact_failed_creator_attempt:
+            # The planner has already committed the terminal proposal failure.
+            # Reconcile the matching controller + receipt in this transaction
+            # on the next poll, without waiting for the 10-minute dispatch
+            # lease. The stable attempt identity prevents a stale failure from
+            # terminating a newer Creator execution.
+            failure_code = proposal_code or "proposal_generation_failed"
+            receipt.status = "failed"
+            receipt.error = {"code": failure_code}
+            receipt.completed_at = datetime.now(UTC)
+            session.phase = "failed"
+            session.last_error = {
+                "code": failure_code,
+                "message": "Kria couldn't plan this direction. Try it again.",
+            }
+            await append_event(
+                db,
+                session,
+                event_type="assistant_render_failed",
+                payload={"message": "I couldn't plan that direction. Try it again."},
+            )
+            return True
         if not exact_job:
             lease_expired = bool(
                 receipt is not None
@@ -421,10 +456,6 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
             ):
                 return False
 
-            raw_proposal_state = getattr(item, "edit_proposal", None)
-            proposal_state = raw_proposal_state if isinstance(raw_proposal_state, dict) else {}
-            failure = proposal_state.get("failure")
-            proposal_code = failure.get("code") if isinstance(failure, dict) else None
             if expected_guided_attempt:
                 from app.services.edit_proposals import (  # noqa: PLC0415
                     expire_proposal_attempt,
