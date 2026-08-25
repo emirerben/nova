@@ -261,12 +261,13 @@ def _build_single_hero_recipe(
         "sync_style": "freeform",
         "pacing_style": "medium",
         "color_grade": "none",
+        "copy_tone": "creator-led",
+        "caption_style": "none",
         "transition_style": "cut",
         "creative_direction": "single hero with supporting cutaways",
         "interstitials": [],
         "required_clips_min": len(slots),
         "required_clips_max": len(slots),
-        "single_hero_order": order[: len(slots)],
     }
 
 

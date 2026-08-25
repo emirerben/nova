@@ -15,6 +15,7 @@ import pytest
 import app.services.clip_speech as clip_speech
 import app.services.pipeline_trace as pt
 import app.tasks.generative_build as gb
+from app.pipeline.agents.gemini_analyzer import build_recipe
 from app.pipeline.talking_head_assembler import SpineExtractionError, TalkingHeadAssemblyError
 
 
@@ -195,17 +196,21 @@ def test_single_hero_selects_one_hero_and_never_downgrades(monkeypatch):
 
 
 def test_single_hero_policy_pins_dominance_and_ownership():
-    recipe = gb._build_single_hero_recipe(
+    recipe_dict = gb._build_single_hero_recipe(
         ["hero", "cutaway"],
         available_footage_s=12.0,
         clip_durations_s={"hero": 8.0, "cutaway": 4.0},
         max_duration_s=60.0,
     )
-    assert recipe["slots"][0]["slot_type"] == "hero"
-    assert recipe["slots"][0]["target_duration_s"] / recipe["total_duration_s"] >= 0.60
+    # The real renderer sends this policy dict through the shared recipe
+    # constructor before matching. Pin that integration boundary so format-only
+    # metadata cannot make a production render fail after analysis.
+    recipe = build_recipe(recipe_dict)
+    assert recipe.slots[0]["slot_type"] == "hero"
+    assert recipe.slots[0]["target_duration_s"] / recipe.total_duration_s >= 0.60
     steps = [
-        types.SimpleNamespace(clip_id="hero", slot=recipe["slots"][0]),
-        types.SimpleNamespace(clip_id="cutaway", slot=recipe["slots"][1]),
+        types.SimpleNamespace(clip_id="hero", slot=recipe.slots[0]),
+        types.SimpleNamespace(clip_id="cutaway", slot=recipe.slots[1]),
     ]
     gb._validate_single_hero_steps(steps, "hero", ["cutaway"], max_duration_s=60.0)
     with pytest.raises(gb.SingleHeroPolicyError, match="hero"):
