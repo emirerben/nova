@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.52.0.2] — 2026-08-25
+
+### Changed
+- **Creators can now choose reliable speech cleanup behavior for new renders.** Explicit On and Off contracts survive queue and worker boundaries, while historical jobs keep their original compatibility behavior.
+
+### Fixed
+- **Talking-to-camera and subtitled renders no longer silently publish uncut video after an opted-in cleanup failure.** Required cleanup failures now surface typed reasons, and benign short/no-speech/no-change cases remain valid no-ops with regression coverage.
+- **Speech cleanup dispatch and render recovery now agree on the same live rollout modes.** Disabled rollout settings fail closed instead of restoring legacy automatic cuts.
+
 ## [0.52.0.1] — 2026-08-25
 
 ### Fixed
