@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.52.0.1] — 2026-08-25
+
+### Fixed
+- **Kria can now finish planning large mixed-media edits without copying long upload IDs through the creative agents.** The complete set of accepted clips and visuals remains available in the editor, while model prompts and outputs stay bounded through deterministic short aliases.
+- **Malformed media references now recover safely instead of terminating the render flow or attaching copy to unrelated footage.** Guided stories fall back to neutral server-owned structure, and fast montages use distinct, non-overlapping source windows or fail closed when the footage cannot support the requested duration.
+
 ## [0.52.0.0] — 2026-08-25
 
 ### Added
