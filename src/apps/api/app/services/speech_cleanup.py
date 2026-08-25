@@ -13,7 +13,9 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Literal
 
-SpeechCleanupMode = Literal["legacy_auto", "opt_in", "disabled"]
+# Live dispatch has completed the opt-in cutover. ``legacy_auto`` remains a
+# historical job contract below so already-enqueued jobs can still render.
+SpeechCleanupMode = Literal["opt_in", "disabled"]
 SpeechCleanupContract = Literal["legacy_auto", "required_v1", "off_v1"]
 
 _SUPPORTED_FORMATS = {"subtitled", "talking_head", "narrated", "narrated_planned", "narrated_ready"}
@@ -102,8 +104,8 @@ def capability_for_item(
 ) -> SpeechCleanupCapability:
     """Resolve capability without querying the database or rendering anything."""
 
-    if mode == "legacy_auto":
-        return SpeechCleanupCapability(False, "rollout_disabled")
+    if mode not in {"opt_in", "disabled"}:
+        raise ValueError(f"unsupported_speech_cleanup_mode:{mode}")
     if mode == "disabled":
         return SpeechCleanupCapability(False, "rollout_disabled")
     if not main_footage_identity(item):
@@ -152,12 +154,12 @@ def contract_for_item(
 ) -> SpeechCleanupContract | None:
     """Map a PlanItem preference to an immutable job contract.
 
-    ``legacy_auto`` deliberately preserves pre-feature behavior. Their legacy
-    worker path remains byte-compatible during a mixed deploy.
+    New dispatches can only stamp explicit ``required_v1`` or ``off_v1``
+    contracts. Historical ``legacy_auto`` jobs remain accepted by renderers.
     """
 
-    if mode == "legacy_auto":
-        return "legacy_auto"
+    if mode not in {"opt_in", "disabled"}:
+        raise ValueError(f"unsupported_speech_cleanup_mode:{mode}")
     if mode == "disabled":
         # A stored On preference is durable user intent.  Do not silently turn
         # it off when the rollout is paused; dispatch must reject it so the UI

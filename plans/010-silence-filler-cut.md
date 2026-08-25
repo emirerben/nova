@@ -405,6 +405,14 @@ geometry shifts.
 
 ## Failure modes
 
+> **Superseded contract note (2026-08-25):** The original table below still
+> defines historical `legacy_auto` behavior: analysis, safety-rail, and apply
+> failures render the source uncut. New jobs use explicit contracts instead.
+> `off_v1` skips cleanup entirely; `required_v1` makes analysis, unsafe-plan,
+> and cut-apply failures visible as typed `speech_cleanup_failed` results. The
+> 40% removal rail itself is unchanged. See
+> `plans/019-speech-cleanup-render-contract-fix.md` for the cutover contract.
+
 | Failure | Handling | User sees |
 |---|---|---|
 | whisper down/timeout | detection skipped → no-op plan + pipeline event | uncut video (today's behavior) |
@@ -415,8 +423,9 @@ geometry shifts.
 | ffmpeg cut failure | catch → fall back to original clip + event | uncut video |
 | A/V drift | single-filtergraph select+aselect on same ranges; frame-accurate re-encode | none (by construction) |
 
-Every fallback is fail-open to today's behavior — the feature can only make
-the video shorter, never fail the job.
+For historical `legacy_auto` jobs every fallback is fail-open to the original
+timing. Explicit `required_v1` jobs fail visibly instead of violating an On
+request; `off_v1` never enters the stage.
 
 ## NOT in scope (deferred, with rationale)
 
