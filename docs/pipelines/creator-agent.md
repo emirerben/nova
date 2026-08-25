@@ -4,7 +4,7 @@ Nova's long-term vision: a **personalized AI agent per creator** that knows thei
 style, plans their content, guides their filming, and renders every edit to their
 taste — while letting them override anything they want.
 
-## Main Creator Agent (V1 foundation, dark)
+## Main Creator Agent (V1 foundation plus dark staged slices)
 
 The style milestones below personalize individual decisions, but they do not own
 an edit. Before V1, Nova's architecture had three concrete gaps:
@@ -48,7 +48,10 @@ guided planner's `ProposalBrief`; that specialist owns exact beat/media planning
 Audio-led and voiceover formats always use the native renderer. The existing
 `dispatch_item_render_for` gateway mints the Job. V1 then follows that exact Job
 and records its selected ready variant and `render_generation_id`. The creator can
-give feedback and confirm at most one revision (two renders total).
+give feedback and confirm at most one revision (two renders total). When Stage 2
+review is enabled, the exact ready generation is queued for the objective
+`video_quality_grader`; the resulting evidence and inert revision proposal are
+shown as feedback, never applied automatically.
 
 ### Trust boundaries
 
@@ -68,8 +71,10 @@ give feedback and confirm at most one revision (two renders total).
 - The proposed `intro_hook` is an opening concept for approval, not trusted
   render copy. Native execution still runs the existing grounded `intro_writer`;
   Main Creator output is never burned verbatim onto the video.
-- V1 never performs automatic revisions. The `auto_iteration` flag exists but
-  cannot be enabled unless review is enabled, and no V1 controller consumes it.
+- V1 and the implemented Stage 2/3 slices never perform automatic revisions. The
+  `auto_iteration` flag exists but cannot be enabled unless review is enabled, and
+  no controller currently consumes it; the bounded Stage 4 contract below is
+  planned, not a shipped autonomy loop.
 - Native plans resolve confirmed opaque media IDs back to that exact item's clip
   assignments; an asset-only native selection fails closed instead of rendering
   unrelated footage. Guided plans delegate exact media selection to the approved
@@ -92,6 +97,13 @@ trigger rejects updates. `creator_agent_executions` stores idempotent confirmati
 receipts and request digests. `agent_runs.creator_agent_session_id` connects every
 model invocation to the durable session without inventing a Job ID.
 
+Stage 2 stores its review receipt in the session's `last_review` envelope. The
+receipt pins creator, PlanItem, ownership epoch, Job, variant, and
+`render_generation_id`, plus bounded timestamped evidence and (when needed) one
+revision proposal. Review claims and writes are exact-generation fenced; a stale
+target or grader failure becomes a visible unavailable/failed review and leaves
+the render untouched.
+
 ### V1 API
 
 All routes are authenticated, item-owner-scoped, and live under `/plan-items/{id}`:
@@ -102,11 +114,53 @@ All routes are authenticated, item-owner-scoped, and live under `/plan-items/{id
 | `POST /creator-agent/session` | Start/reuse active session and submit first message |
 | `POST /creator-agent/turn` | Revision-fenced feedback or clarification turn |
 | `POST /creator-agent/confirm` | Explicit, hash-pinned execution confirmation |
+| `POST /creator-agent/craft` | Exact-generation, idempotent Stage 3 craft bundle |
 | `POST /creator-agent/cancel` | Cancel a non-rendering active session |
 
 The public response contains conversation events, session status/revision, render
-budget, pending plan preview, and target Job ID. It never returns raw command
-capabilities or storage identities.
+budget, pending plan preview, target Job ID, and a bounded Stage 2 review envelope.
+It never returns raw command capabilities or storage identities.
+
+### Stage 2 — evidence critic (implemented dark)
+
+When `MAIN_CREATOR_AGENT_REVIEW_ENABLED` and its child gate
+`MAIN_CREATOR_AGENT_QUALITY_REVIEW_ENABLED` are both enabled, a successful exact
+render queues `tasks.creator_quality_review` once per
+`session:job:variant:generation` key. The worker downloads only the fenced ready
+generation and calls the existing `video_quality_grader` adapter (Gemini
+2.5 Flash, prompt version `2026-08-25`). It persists an objective receipt with
+quality/confidence, up to 12 timestamped visual/audio/timing/caption/structure
+observations, and at most one revision proposal linked to evidence IDs.
+
+Review is fail-open for creator delivery: stale targets, enqueue failures, missing
+review targets, and grader errors become explicit unavailable/failed receipts and
+manual feedback remains available. A `revise` result is an inert recommendation;
+the creator must still confirm the next render. There is no claim here that a
+Director pass or automatic taste judgment is implemented by this slice.
+
+### Stage 3 — typed craft (implemented dark)
+
+`POST /plan-items/{id}/creator-agent/craft` accepts one bounded, hash-pinned
+`CreatorCraftBundle` against the exact Job/variant/generation and routes it through
+the existing transactional editor commit or speech-cut candidate state machine.
+The supported commands are:
+
+- `set_caption_style` (`sentence` or `word`);
+- `set_transition` (hard cut, crossfade, dip-to-black, or flash; wipe is rejected
+  by the current timeline editor);
+- `set_look_preset` (the existing safe look vocabulary);
+- `set_media_overlay` (owner-checked PlanItem asset, overlay-only bundle);
+- `set_licensed_sfx` (server-resolved catalog item); and
+- `apply_speech_cut` (an existing silence/retake candidate with its cut revision).
+
+The route re-checks creator/session/ownership/manifest/generation pins, accepts no
+paths or URLs, uses an idempotency receipt, and rolls back a committed editor state
+if queue publication fails. Treatment availability is resolved from its existing
+independent flag: transitions, looks, media overlays, sound effects, and
+automatic speech cuts are never enabled merely because the Creator Agent is on.
+Media overlays cannot be combined with core commands in one bundle. Craft is a
+separate post-render operation; it does not create a new Main Creator strategy
+or bypass the confirmation boundary.
 
 ### Delegation policy
 
@@ -116,8 +170,10 @@ when a specialist owns a stronger typed contract:
 - guided-compatible story → `edit_proposal` via a confirmed `ProposalBrief`;
 - native render → existing format/audio dispatch, whose pipeline may invoke
   `music_matcher`, `intro_writer`, caption, sequence, and treatment specialists;
-- render completion → structural exact-generation receipt; Director/video-quality
-  critique becomes the Stage 2 review implementation.
+- render completion → structural exact-generation receipt; the Stage 2
+  `video_quality_grader` review is queued only for the exact ready generation.
+- post-render taste changes → Stage 3's existing editor commit/speech-cut gateways;
+  the Main Creator compiles commands but never receives renderer capabilities.
 
 Specialist failure never grants the Main Creator a broader capability. Guided
 planning fails to a saved, retryable session; it does not fabricate a story plan.
@@ -144,7 +200,12 @@ Backend switches default off:
 - `MAIN_CREATOR_AGENT_ENABLED`
 - `MAIN_CREATOR_AGENT_EXECUTION_ENABLED`
 - `MAIN_CREATOR_AGENT_REVIEW_ENABLED`
+- `MAIN_CREATOR_AGENT_QUALITY_REVIEW_ENABLED` (requires review)
 - `MAIN_CREATOR_AGENT_AUTO_ITERATION_ENABLED`
+- `EDIT_FORMAT_DAY_VLOG_ENABLED`
+- `EDIT_FORMAT_SINGLE_HERO_ENABLED`
+- `MAIN_CREATOR_AGENT_FREEFORM_UPLOADS_ENABLED`
+- `MAIN_CREATOR_AGENT_WORKSPACE_ENABLED`
 - `MAIN_CREATOR_AGENT_ROLLOUT_PERCENT` (stable user bucket, default `0`)
 
 Frontend exposure is separately gated by
@@ -158,19 +219,25 @@ flags are live.
 1. **V1 — confirm one creative strategy (implemented dark):** one PlanItem,
    opaque manifest, one question, typed plan, explicit initial render and revision
    confirmation, two-render budget, structural exact-generation review.
-2. **Stage 2 — informed critic:** feed exact rendered video/audio into Director and
-   quality graders; produce evidence-linked issues and one proposed revision. User
-   confirmation remains mandatory.
-3. **Stage 3 — broader typed craft:** compile treatment commands for overlays,
-   licensed SFX, transitions, looks, silence/retake cuts, and caption styling. Each
-   command uses its existing safe product route and independent flag.
-4. **Stage 4 — bounded autonomy:** allow one automatic revise/render cycle only
-   when confidence, quality delta, render budget, and rollback receipt all pass;
-   never for taste-ambiguous changes, new media, voiceover, or publishing.
-5. **Stage 5 — creator workspace ownership:** accept freeform/off-plan uploads,
-   choose or create the PlanItem with user approval, learn durable preference
-   signals, and coordinate multiple deliverables. Publishing and external asset
-   acquisition remain separate consent boundaries.
+2. **Stage 2 — evidence critic (implemented dark):** review the exact ready
+   generation with `video_quality_grader`, persist bounded evidence, and offer one
+   evidence-linked revision proposal. User confirmation remains mandatory.
+3. **Stage 3 — typed craft (implemented dark):** compile caption, transition, look,
+   licensed SFX, owner-scoped media-overlay, and speech-cut commands into the
+   existing safe editor/candidate routes. Each command has an independent live
+   capability gate and exact-generation receipt.
+4. **Stage 4 — bounded autonomy (planned; not implemented):** the schema-level
+   `CreatorAutomationDecision` describes at most one automatic revise/render cycle
+   when confidence, expected quality delta, remaining budget, explicit opt-in, and
+   a rollback receipt pass. No route or worker currently consumes this decision or
+   `MAIN_CREATOR_AGENT_AUTO_ITERATION_ENABLED`; details remain dependent on the
+   future controller implementation. The intended exclusions are taste-ambiguous
+   changes, new media, voiceover, and publishing.
+5. **Stage 5 — creator workspace ownership (implemented dark, independently gated):**
+   approval-gated off-plan relevance proposals, plan-level multi-deliverable
+   receipts, and explicit preference signals/style edits. Publishing, external asset
+   acquisition, training enrollment, and implicit preference inference remain out
+   of scope.
 
 ### Tests and evals
 
@@ -179,6 +246,15 @@ flags are live.
 - persistence tests pin constraints, append-only triggers, indexes, aliases, and
   AgentRun correlation;
 - route/controller tests pin voiceover gating and specialist-brief delegation;
+- Stage 2 tests pin stable review task IDs, exact-generation claims, bounded
+  evidence, stale-target rejection, and fail-open grader errors;
+- Stage 3 tests pin command schemas, independent capability gates, exact target
+  pins, owner-scoped overlays/SFX, atomic editor commits, and enqueue rollback;
+- M6 tests pin renderer-version markers, strict day-vlog chronology/transitions/
+  duration, and single-hero ownership/dominance/duration policies;
+- Stage 5 tests pin 0082/0083 tables, idempotent proposal decisions, ownership
+  re-fencing, distinct deliverables, stale receipts, and explicit-only preference
+  writes;
 - editor regressions pin exact PlanItem ownership for overlays/SFX and the music
   commit crash repair;
 - frontend tests prove no confirmation call occurs before **Render this**;
@@ -219,6 +295,12 @@ content_plans
         ├── theme / idea / filming_guide
         ├── edit_format
         └── current_job_id (→ jobs)
+
+creator workspace (Stage 5)
+  ├── creator_workspace_proposals          (off-plan relevance, migration 0082)
+  ├── creator_workspace_receipts           (plan-level coordination, migration 0083)
+  ├── creator_workspace_deliverables       (one exact session/Job target per item)
+  └── creator_workspace_preference_signals (creator-authored notes/style edits)
 ```
 
 **Per-job snapshot:** at job mint time the caller copies the persona/style/plan
@@ -328,17 +410,26 @@ Remaining open items (post-flag-flip):
 
 ### M5 — Freeform / off-plan uploads
 
-- User uploads a video not tied to any plan item
-- `detect_plan_relevance` agent: does this match an existing plan item? a new topic?
-- If match: fulfil + close the item
-- If new topic: propose a new plan category; user approves → add to plan
-- Editing follows the user's style regardless
+- `POST /content-plans/{plan_id}/workspace/relevance-proposals` accepts opaque
+  authenticated upload Job IDs, owner-checks them, and snapshots their identities.
+  `tasks.detect_plan_relevance` classifies the snapshot against the plan without
+  mutating a plan, item, or render.
+- A `ready` proposal is one of `existing_item`, `new_topic`, or `unmatched`. The
+  creator must explicitly choose `accept_existing`, `accept_new_topic`, or
+  `reject` through the hash- and client-event-fenced decision route. Acceptance
+  re-checks ownership/epoch and the live upload paths before attaching footage or
+  creating a new montage PlanItem; it never auto-fulfils or silently closes an item.
+- Proposal creation and decisions are idempotent. Stale ownership, changed
+  proposal hashes, deleted uploads, or mismatched targets fail closed with a
+  visible conflict. The relevance agent does not infer preferences or acquire
+  external media. Editing the resulting item still follows the normal style and
+  render gates.
 
 ### M6 — `day_vlog` and `single_hero` assemblers
 
-Full format support for the two planned-but-unimplemented edit formats in the
-`edit_format` contract. Gated behind `EDIT_FORMAT_DAY_VLOG_ENABLED` /
-`EDIT_FORMAT_SINGLE_HERO_ENABLED` kill switches (same pattern as talking_head).
+Full format support for the two strict guided renderers in the `edit_format`
+contract. They are independently gated behind `EDIT_FORMAT_DAY_VLOG_ENABLED` /
+`EDIT_FORMAT_SINGLE_HERO_ENABLED` (default off).
 
 `day_vlog` is now implemented behind `EDIT_FORMAT_DAY_VLOG_ENABLED` (default
 off). Its worker path is strict: it requires at least two usable filming-guide
@@ -350,9 +441,64 @@ incompatible. The capability manifest reports `disabled_by_setting` while the
 flag is off. Production parity still needs `make local-render` with representative
 multi-shot day-vlog footage; no local-render artifact is claimed by unit tests.
 
+`single_hero` is implemented behind `EDIT_FORMAT_SINGLE_HERO_ENABLED`. It needs
+one usable hero and at least one usable cutaway (at least two clips total), picks
+the deterministic highest-hook-score hero, allows at most three supporting
+cutaways, opens with the hero, uses each supporting clip once, and requires the
+hero to occupy at least 60% of the output (with a 3s minimum hero source window).
+The output is bounded by available footage and the product maximum. A policy
+failure is typed (`insufficient_media`, `hero_ownership_violation`,
+`hero_dominance_violation`, or `duration_out_of_bounds`) and never downgrades to
+montage. API jobs pin `single_hero_renderer_version=1`; workers reject a missing
+or incompatible marker and re-check the kill switch. Its capability manifest
+reports `disabled_by_setting` while off. Both formats require representative
+production-image local renders before a rollout; unit tests do not substitute for
+that evidence.
+
+The strict worker boundary also rejects a voiceover contract for either format.
+The frontend must not advertise either format until the backend capability and
+renderer flags are live. `NARRATIVE_CLIP_ORDER_ENABLED` is a dependency for the
+day-vlog chronology policy; disabling it makes strict day-vlog fail closed.
+
+### Stage 5 workspace coordination and explicit preferences
+
+`MAIN_CREATOR_AGENT_FREEFORM_UPLOADS_ENABLED` gates off-plan proposals;
+`MAIN_CREATOR_AGENT_WORKSPACE_ENABLED` gates coordination receipts and preference
+signals separately. A proposal stores ownership epoch, idempotency/request digest,
+opaque media IDs, and an owner-checked media snapshot in `creator_workspace_proposals`
+(migration `0082`). A workspace receipt stores one distinct Creator session per
+PlanItem, position, ownership epoch, and exact Job/variant/generation receipt in
+`creator_workspace_receipts` and `creator_workspace_deliverables` (migration
+`0083`). Polling marks a receipt `stale` if the plan/session/Job ownership epoch
+or exact target no longer matches; it never guesses a replacement deliverable.
+
+The receipt endpoints are:
+
+| Route | Contract |
+|---|---|
+| `POST /content-plans/{id}/workspace/receipts` | Create/reuse an idempotent plan-level coordination receipt |
+| `GET /content-plans/{id}/workspace` | Poll the latest receipt |
+| `GET /content-plans/{id}/workspace/receipts/{receipt_id}` | Poll one receipt |
+| `POST /content-plans/{id}/workspace/preference-signals` | Record an explicit creator note and optional style edit |
+
+The proposal endpoints are `POST/GET /content-plans/{id}/workspace/relevance-proposals`
+and `POST .../{proposal_id}/decision`. Preference signals are always
+`source=creator_explicit`; notes are sanitized creator text and feed the bounded
+plan preference summary. An optional `style_edit` is accepted only when
+`USER_STYLE_ENABLED` is on, is merged into the UserStyle row with `status="edited"`,
+and remains explicit creator input. No model output, relevance classification,
+render outcome, or browsing behavior may become an inferred preference. These
+routes do not publish, acquire external assets, enroll training, or silently
+promote a proposal.
+
 ---
 
 ## Enabling in production
+
+The staged Creator Agent rollout, mixed-worker precautions, migrations, kill
+switches, canary checks, and verification ledger live in
+[the Creator Agent rollout runbook](../runbooks/creator-agent-rollout.md). Keep
+all backend flags off until migrations and both API/worker code are live.
 
 ```bash
 # After live-eval validation of StyleDerivationAgent output quality:
@@ -380,7 +526,7 @@ from app.tasks.style_build import derive_user_style
 |---|---|
 | `app/agents/_schemas/user_style.py` | `StyleKnobs` + `UserStyle` + coerce helpers |
 | `app/agents/style_derivation.py` | `StyleDerivationAgent` |
-| `app/prompts/derive_user_style.txt` | Agent prompt template |
+| `src/apps/api/prompts/derive_user_style.txt` | Agent prompt template |
 | `app/tasks/style_build.py` | `derive_user_style` Celery task |
 | `app/migrations/versions/0050_persona_style.py` | `personas.style` column |
 | `app/routes/personas.py` | Style API routes (GET/PATCH/rederive) |
@@ -389,3 +535,17 @@ from app.tasks.style_build import derive_user_style
 | `tests/test_user_style_schema.py` | Parity-safe guard + byte-identity contract |
 | `tests/evals/test_style_derivation_evals.py` | Style derivation eval harness |
 | `tests/evals/rubrics/style_derivation.md` | LLM judge rubric |
+| `app/services/creator_capabilities.py` | Live manifest and format/treatment gates |
+| `app/services/creator_craft.py` | Deterministic Stage 3 bundle compiler |
+| `app/tasks/creator_quality_review.py` | Exact-generation Stage 2 critic coordinator |
+| `app/routes/creator_agent.py` | V1 session, craft, and receipt-fenced execution routes |
+| `app/routes/creator_workspace.py` | Stage 5 proposal, receipt, and preference routes |
+| `app/tasks/creator_workspace.py` | Crash-resumable off-plan relevance task |
+| `app/tasks/generative_build.py` | Strict day-vlog/single-hero policies and worker fences |
+| `app/migrations/versions/0081_creator_agent_sessions.py` | V1 session/event/execution persistence |
+| `app/migrations/versions/0082_creator_workspace_proposals.py` | Off-plan proposal persistence |
+| `app/migrations/versions/0083_creator_workspace_receipts.py` | Workspace receipts/deliverables/preferences |
+| `tests/tasks/test_creator_quality_review.py` | Stage 2 exact-target/fail-open tests |
+| `tests/services/test_creator_craft.py` | Stage 3 compiler tests |
+| `tests/routes/test_creator_workspace.py` | Stage 5 approval/explicit preference tests |
+| `tests/tasks/test_generative_dispatch.py` | M6 strict policy tests |
