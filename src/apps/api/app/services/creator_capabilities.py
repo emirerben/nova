@@ -69,6 +69,18 @@ def _unavailable(code: str, detail: str) -> CapabilityAvailability:
 def _format_availability(edit_format: str, *, has_voiceover: bool) -> CapabilityAvailability:
     """Resolve real assembler availability; fallback-in-worker is not a capability."""
 
+    if edit_format == "day_vlog":
+        if not settings.edit_format_day_vlog_enabled:
+            return _unavailable(
+                "disabled_by_setting",
+                "day_vlog is disabled by the server (EDIT_FORMAT_DAY_VLOG_ENABLED)",
+            )
+        if has_voiceover:
+            return _unavailable(
+                "native_render_required",
+                "day_vlog uses the guided renderer and cannot carry a voiceover",
+            )
+        return _available()
     if edit_format == "montage":
         return _available()
     if edit_format == "talking_head" and settings.edit_format_talking_head_enabled:

@@ -67,6 +67,29 @@ def test_manifest_reports_setting_and_state_reasons(monkeypatch) -> None:
     assert ready.capabilities[capabilities.CAPABILITY_SELECT_READY_VARIANT].available is True
 
 
+def test_day_vlog_manifest_is_explicitly_unavailable_while_flag_off(monkeypatch) -> None:
+    monkeypatch.setattr(capabilities.settings, "edit_format_day_vlog_enabled", False)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="day_vlog",
+        media=[{"media_id": "clip-1", "kind": "video"}],
+    )
+    capability = manifest.capabilities["edit_format:day_vlog"]
+    assert capability.available is False
+    assert capability.reason_code == "disabled_by_setting"
+    assert "EDIT_FORMAT_DAY_VLOG_ENABLED" in (capability.reason or "")
+
+
+def test_day_vlog_manifest_can_advertise_guided_renderer_when_enabled(monkeypatch) -> None:
+    monkeypatch.setattr(capabilities.settings, "edit_format_day_vlog_enabled", True)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="day_vlog",
+        media=[{"media_id": "clip-1", "kind": "video"}],
+    )
+    assert manifest.capabilities["edit_format:day_vlog"].available is True
+
+
 def test_compile_strategy_uses_only_available_commands_and_never_guided_for_voiceover(
     monkeypatch,
 ) -> None:
