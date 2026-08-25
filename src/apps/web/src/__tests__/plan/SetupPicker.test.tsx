@@ -24,6 +24,15 @@ function renderPicker(overrides: Partial<SetupPickerProps> = {}) {
 const typeReceipt = () => screen.getByRole("button", { name: /^Type/ });
 
 describe("SetupPicker PATCH payloads", () => {
+  it("states which montage styles accept photos before selection", () => {
+    renderPicker();
+    fireEvent.click(screen.getByRole("button", { name: /^Style/ }));
+
+    expect(screen.getByText("Full-screen video cuts in sequence")).toBeInTheDocument();
+    expect(screen.getByText("Photos and videos arranged on a white wall")).toBeInTheDocument();
+    expect(screen.getByText("Photos arranged as oversized cards on a wall")).toBeInTheDocument();
+  });
+
   it("keeps setup picker cards on the rail layout by default", () => {
     renderPicker();
     expect(screen.getByRole("radio", { name: /Music montage/ })).toHaveAttribute(

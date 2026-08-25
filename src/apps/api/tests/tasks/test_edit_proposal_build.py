@@ -867,6 +867,45 @@ def test_auto_finalize_infeasible_footage_falls_back_to_montage_clip_only(monkey
     assert dispatch_calls == [(str(item_id), 0, True, "attempt-1")]
 
 
+def test_main_creator_fail_closed_sentinel_blocks_generic_fallback(monkeypatch) -> None:
+    """A confirmed Main Creator direction must fail closed across deploy skew.
+
+    Rolling old workers only understand the pre-existing design_fallback
+    truthiness check. The sentinel must therefore remain non-null and prevent
+    the ordinary clip-only fallback without relying on a new task argument.
+    """
+
+    item_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    short = dict(_PROD_CLIP_ASSIGNMENT)
+    short["duration_s"] = 1.0
+    item = _prod_item(item_id, clip_assignments=[short], approval_mode="auto")
+    proposal = parse_edit_proposal(item.edit_proposal)
+    assert proposal is not None
+    item.edit_proposal = proposal.model_copy(
+        update={"design_fallback": "main_creator_fail_closed"}
+    ).model_dump(mode="json")
+    db = _Db(_Result(rows=[]))
+
+    @contextmanager
+    def _session():
+        yield db
+
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    _auto_finalize_common_mocks(monkeypatch, item, owner_id)
+    monkeypatch.setattr(
+        "app.tasks.content_plan_build.dispatch_item_render_for",
+        lambda *_a, **_kw: pytest.fail("generic fallback must not dispatch"),
+    )
+
+    proposal_build.draft_edit_proposal.run(str(item_id), "attempt-1", 0)
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None
+    assert persisted.status == "failed"
+    assert persisted.design_fallback == "main_creator_fail_closed"
+
+
 def test_auto_finalize_infeasible_footage_with_pool_assets_never_falls_back(
     monkeypatch,
 ) -> None:

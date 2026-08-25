@@ -26,6 +26,7 @@ Raises TemplateMismatchError when:
 
 import dataclasses
 import math
+import re
 from collections import defaultdict
 
 import structlog
@@ -403,10 +404,71 @@ def consolidate_slots(
 # ── Coverage pass ────────────────────────────────────────────────────────────
 
 
+_SCENE_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "at",
+        "in",
+        "of",
+        "on",
+        "person",
+        "people",
+        "someone",
+        "the",
+        "with",
+    }
+)
+
+
+def _scene_tokens(meta: ClipMeta, moment: dict | None = None) -> frozenset[str]:
+    """Return a deterministic scene fingerprint from existing analysis.
+
+    ``detected_subject`` is the clip-level signal meant to identify the main
+    visual subject. Degraded analyses may not have it, so the selected moment
+    description remains a fail-open fallback.
+    """
+    text = (meta.detected_subject or "").strip()
+    if not text and isinstance(moment, dict):
+        text = str(moment.get("description") or "").strip()
+    if not text:
+        return frozenset()
+    return frozenset(
+        token
+        for token in re.findall(r"[\w]+", text.casefold(), flags=re.UNICODE)
+        if token not in _SCENE_STOPWORDS and len(token) > 1
+    )
+
+
+def _same_semantic_scene(left: frozenset[str], right: frozenset[str]) -> bool:
+    """Best-effort equivalence for short subject phrases; empty data is unique."""
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    overlap = len(left & right)
+    if overlap < 2:
+        return False
+    containment = overlap / min(len(left), len(right))
+    jaccard = overlap / len(left | right)
+    return containment >= 0.75 or jaccard >= 0.5
+
+
+def _scene_repeat_count(
+    tokens: frozenset[str],
+    selected_scenes: list[frozenset[str]],
+) -> int:
+    if not tokens:
+        return 0
+    return sum(_same_semantic_scene(tokens, prior) for prior in selected_scenes)
+
+
 def _minimum_coverage_pass(
     slots: list[dict],
     clip_metas: list[ClipMeta],
     apply_ball_bonus: bool = False,
+    prior_scenes: list[frozenset[str]] | None = None,
 ) -> dict[int, tuple[ClipMeta, dict]]:
     """Pre-assign clips to slots to maximize clip coverage (variety).
 
@@ -445,23 +507,45 @@ def _minimum_coverage_pass(
             valid.append((slot, best))
         clip_valid_slots[meta.clip_id] = valid
 
-    # Sort clips by constraint degree ascending — most constrained placed first
-    sorted_clips = sorted(
-        clip_metas,
-        key=lambda m: len(clip_valid_slots.get(m.clip_id, [])),
-    )
-
     assigned_positions: set[int] = set()
     used_clips: set[str] = set()
     pre_assigned: dict[int, tuple[ClipMeta, dict]] = {}
+    selected_scenes = list(prior_scenes or [])
 
-    for meta in sorted_clips:
-        if meta.clip_id in used_clips:
-            continue
-        valid = clip_valid_slots.get(meta.clip_id, [])
-        if not valid:
-            log.warning("coverage_skip_no_valid_slots", clip_id=meta.clip_id)
-            continue
+    # Choose dynamically instead of taking the input prefix. Constraint degree
+    # remains the primary key, preserving scarce duration fits. Among equally
+    # compatible clips, prefer a subject not yet represented in the edit.
+    indexed_metas = list(enumerate(clip_metas))
+    while len(assigned_positions) < len(unlocked_slots):
+        selectable: list[tuple[int, int, int, ClipMeta, list[tuple[dict, dict]]]] = []
+        for input_index, meta in indexed_metas:
+            if meta.clip_id in used_clips:
+                continue
+            available = [
+                (slot, moment)
+                for slot, moment in clip_valid_slots.get(meta.clip_id, [])
+                if slot.get("position", 0) not in assigned_positions
+            ]
+            if not available:
+                continue
+            tokens = _scene_tokens(meta, available[0][1])
+            selectable.append(
+                (
+                    len(available),
+                    _scene_repeat_count(tokens, selected_scenes),
+                    input_index,
+                    meta,
+                    available,
+                )
+            )
+
+        if not selectable:
+            break
+
+        _constraint_count, _repeat_count, _input_index, meta, valid = min(
+            selectable,
+            key=lambda candidate: candidate[:3],
+        )
 
         # Find best available slot (not yet pre-assigned)
         best_slot = None
@@ -487,6 +571,11 @@ def _minimum_coverage_pass(
             assigned_positions.add(pos)
             used_clips.add(meta.clip_id)
             pre_assigned[pos] = (meta, best_moment)
+            selected_scenes.append(_scene_tokens(meta, best_moment))
+
+    for meta in clip_metas:
+        if meta.clip_id not in used_clips and not clip_valid_slots.get(meta.clip_id, []):
+            log.warning("coverage_skip_no_valid_slots", clip_id=meta.clip_id)
 
     log.info(
         "coverage_pass_done",
@@ -603,21 +692,25 @@ def _candidate_score(
     slot_energy: float,
     clip_use_count: dict[str, int],
     used_moments: set[tuple[str, float, float]],
+    selected_scenes: list[frozenset[str]],
     apply_ball_bonus: bool,
 ) -> tuple:
     """Scoring tuple (highest wins), shared by greedy + narrative passes:
     (1) ball-action bonus (when filter_hint is football) — ball moments outrank vague,
-    (2) variety penalty — moments already used in another slot rank lower,
-    (3) least-used clips first (round-robin ensures all clips featured),
-    (4) closest energy match to slot's musical intensity,
-    (5) highest absolute energy as final tiebreaker.
+    (2) semantic variety — scenes already represented in the edit rank lower,
+    (3) moment variety — moments already used in another slot rank lower,
+    (4) least-used clips first (round-robin ensures all clips featured),
+    (5) closest energy match to slot's musical intensity,
+    (6) highest absolute energy as final tiebreaker.
     """
     meta, moment = pair
     ball = _ball_bonus(moment) if apply_ball_bonus else 0.0
+    semantic_variety = -_scene_repeat_count(_scene_tokens(meta, moment), selected_scenes)
     mkey = (meta.clip_id, float(moment.get("start_s", 0.0)), float(moment.get("end_s", 0.0)))
     variety = -1.0 if mkey in used_moments else 0.0
     return (
         ball,
+        semantic_variety,
         variety,
         -clip_use_count[meta.clip_id],
         -abs(moment.get("energy", 5.0) - slot_energy),
@@ -634,6 +727,7 @@ def _narrative_pass(
     pinned_clip_ids: set[str],
     clip_use_count: dict[str, int],
     used_moments: set[tuple[str, float, float]],
+    selected_scenes: list[frozenset[str]],
     max_uses: int,
     apply_ball_bonus: bool,
 ) -> list[AssemblyStep]:
@@ -719,6 +813,7 @@ def _narrative_pass(
                         slot_energy=float(slot.get("energy", 5.0)),
                         clip_use_count=clip_use_count,
                         used_moments=used_moments,
+                        selected_scenes=selected_scenes,
                         apply_ball_bonus=apply_ball_bonus,
                     ),
                 )
@@ -758,6 +853,7 @@ def _narrative_pass(
                     slot_energy=float(slot.get("energy", 5.0)),
                     clip_use_count=clip_use_count,
                     used_moments=used_moments,
+                    selected_scenes=selected_scenes,
                     apply_ball_bonus=apply_ball_bonus,
                 ),
             )
@@ -770,6 +866,7 @@ def _narrative_pass(
                 float(best_moment.get("end_s", 0.0)),
             )
         )
+        selected_scenes.append(_scene_tokens(best_meta, best_moment))
         clip_use_count[best_meta.clip_id] += 1
         steps.append(AssemblyStep(slot=slot, clip_id=best_meta.clip_id, moment=best_moment))
 
@@ -906,6 +1003,7 @@ def match(
     pre_assigned_positions: set[int] = set()
     pinned_clip_ids: set[str] = set()
     used_moments: set[tuple[str, float, float]] = set()  # variety: dedup moments across slots
+    selected_scenes: list[frozenset[str]] = []
 
     # ── Phase 0: pinned assignments — non-negotiable, processed first ─────
     for pos, clip_id in pinned_assignments.items():
@@ -921,6 +1019,7 @@ def match(
         pinned_clip_ids.add(clip_id)
         pre_assigned_positions.add(pos)
         plan.append(AssemblyStep(slot=slot, clip_id=clip_id, moment=moment))
+        selected_scenes.append(_scene_tokens(meta, moment))
         log.info(
             "slot_pinned", position=pos, clip_id=clip_id, target_dur=slot.get("target_duration_s")
         )
@@ -940,6 +1039,7 @@ def match(
                 pinned_clip_ids=pinned_clip_ids,
                 clip_use_count=clip_use_count,
                 used_moments=used_moments,
+                selected_scenes=selected_scenes,
                 max_uses=max_uses,
                 apply_ball_bonus=apply_ball_bonus,
             )
@@ -957,7 +1057,12 @@ def match(
     ]
     coverage_metas = [m for m in clip_metas if m.clip_id not in pinned_clip_ids]
     pre_assigned = (
-        _minimum_coverage_pass(coverage_slots, coverage_metas, apply_ball_bonus=apply_ball_bonus)
+        _minimum_coverage_pass(
+            coverage_slots,
+            coverage_metas,
+            apply_ball_bonus=apply_ball_bonus,
+            prior_scenes=selected_scenes,
+        )
         if coverage_metas
         else {}
     )
@@ -967,6 +1072,7 @@ def match(
         used_moments.add(
             (_meta.clip_id, float(_mom.get("start_s", 0.0)), float(_mom.get("end_s", 0.0)))
         )
+        selected_scenes.append(_scene_tokens(_meta, _mom))
 
     # Seed plan + use counts from pre-assigned slots
     for pos, (meta, moment) in pre_assigned.items():
@@ -1033,6 +1139,7 @@ def match(
                 slot_energy=slot_energy,
                 clip_use_count=clip_use_count,
                 used_moments=used_moments,
+                selected_scenes=selected_scenes,
                 apply_ball_bonus=apply_ball_bonus,
             ),
         )
@@ -1043,6 +1150,7 @@ def match(
                 float(best_moment.get("end_s", 0.0)),
             )
         )
+        selected_scenes.append(_scene_tokens(best_meta, best_moment))
 
         clip_use_count[best_meta.clip_id] += 1
         plan.append(AssemblyStep(slot=slot, clip_id=best_meta.clip_id, moment=best_moment))

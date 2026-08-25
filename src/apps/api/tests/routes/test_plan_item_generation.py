@@ -403,6 +403,36 @@ def test_generate_auto_designs_instead_of_409_when_flag_on_and_media_present(
     assert body["edit_proposal"]["approval_mode"] == "auto"
 
 
+@pytest.mark.asyncio
+async def test_main_creator_auto_design_attempt_is_marked_fail_closed(monkeypatch) -> None:
+    from app.config import settings as app_settings
+    from app.routes.plan_items import _maybe_auto_design_generate
+
+    monkeypatch.setattr(app_settings, "guided_auto_design_enabled", True)
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[f"users/{user.id}/plan/0/a.mp4"])
+    item.edit_proposal = None
+    item.clip_assignments = [{"gcs_path": item.clip_gcs_paths[0], "shot_id": None, "user_note": ""}]
+    db = _db_for(item, plan)
+    monkeypatch.setattr(
+        "app.tasks.edit_proposal_build.draft_edit_proposal.apply_async",
+        lambda **_kw: None,
+    )
+
+    await _maybe_auto_design_generate(
+        str(item.id),
+        item,
+        plan,
+        user,
+        db,
+        generation_attempt_id="creator-attempt-1",
+    )
+
+    proposal = EditProposal.model_validate(item.edit_proposal)
+    assert proposal.generation_attempt_id == "creator-attempt-1"
+    assert proposal.design_fallback == "main_creator_fail_closed"
+
+
 def test_generate_auto_design_ignores_direction_confirmation_rollout_flag(
     monkeypatch, client: TestClient
 ) -> None:

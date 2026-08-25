@@ -39,6 +39,7 @@ ConversationRole = Literal["user", "agent"]
 ConversationPhase = Literal["briefing", "review"]
 ConversationSuggestion = Annotated[str, Field(min_length=1, max_length=100)]
 EDIT_CONVERSATION_MAX_TURNS = 20
+MAIN_CREATOR_FAIL_CLOSED = "main_creator_fail_closed"
 # Who/what approved a proposal — "auto" for AI-designs-by-default
 # (GUIDED_AUTO_DESIGN_ENABLED); "user" for an explicit creator approval.
 ApprovalMode = Literal["user", "auto"]
@@ -333,11 +334,10 @@ class EditProposal(BaseModel):
     draft: EditProposalSnapshot | None = None
     last_approved: ApprovedProposalSnapshot | None = None
     failure: ProposalFailure | None = None
-    # GUIDED_AUTO_DESIGN_ENABLED clip-only fallback: set to the failure code
-    # that triggered a legacy montage render instead of a guided story (e.g.
-    # "guided_edit_infeasible"). None everywhere else, including a normal
-    # failure with pool assets present (never silently dropped — see
-    # draft_edit_proposal's auto_finalize fallback).
+    # GUIDED_AUTO_DESIGN_ENABLED fallback disposition. Normally set after a
+    # failure to the code that triggered a legacy montage. Main Creator sets
+    # MAIN_CREATOR_FAIL_CLOSED before enqueue so both current and rolling old
+    # workers see a non-null value and refuse the generic fallback.
     design_fallback: str | None = Field(default=None, max_length=100)
     # Set when an APPROVED proposal's strict render fails inside guided_story.py
     # (GuidedStoryError). Scoped to last_approved.proposal_version so a new

@@ -238,6 +238,18 @@ const MASONRY_UPLOAD_ACCEPT = `${VIDEO_UPLOAD_ACCEPT},image/jpeg,image/png,image
 const AUDIO_UPLOAD_EXTENSIONS = new Set([".mp3", ".m4a", ".wav", ".webm", ".ogg", ".aac"]);
 const AUDIO_ONLY_PROBE_EXTENSIONS = new Set([".mp4", ".m4v", ".mov"]);
 
+type RejectedMainFootage = {
+  filename: string;
+  reason: string;
+};
+
+function isPhotoFile(file: File): boolean {
+  return (
+    uploadContentTypeForFile(file).startsWith("image/") ||
+    /\.(jpe?g|png|webp|heic|heif)$/i.test(file.name)
+  );
+}
+
 function clipUploadErrorMessage(
   error: unknown,
   fallback = "We couldn't add this video. Try again.",
@@ -510,6 +522,8 @@ export default function PlanItemPage() {
   const [needsAuth, setNeedsAuth] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [setupTab, setSetupTab] = useState<"clips" | "visuals">("clips");
+  const [rejectedMainFootage, setRejectedMainFootage] = useState<RejectedMainFootage[]>([]);
   // Pool uploads in flight: one optimistic card each. Page-level because only
   // ONE PoolUploadCard renders at a time (the call sites are mutually
   // exclusive branches of a single conditional).
@@ -1071,7 +1085,12 @@ export default function PlanItemPage() {
     !isSubtitled &&
     !isTalkingHead &&
     !isNarratedReady;
-  const showVisualPools = !isCollagePreset;
+  // Keep every Visuals entry point aligned with AssetPool's own feature gate.
+  // Otherwise the tab/CTA opens an empty panel when both flags are off.
+  const visualPoolEnabled =
+    process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED === "true" ||
+    process.env.NEXT_PUBLIC_GUIDED_EDIT_ENABLED === "true";
+  const showVisualPools = visualPoolEnabled && !isCollagePreset;
 
   // Per-type setup identity (design: Paper "V2 — Item setup per type").
   const { untitled: isUntitledTypeLabel, receipt: setupReceiptLabel } = item
@@ -1333,12 +1352,28 @@ export default function PlanItemPage() {
   // voiceover routing); per-file state lives on the cards.
   async function handleFiles(files: FileList | null) {
     if (!files || files.length === 0 || isInstructed) return;
+    let selected = Array.from(files);
+    if (isMontage && !isCollagePreset) {
+      const photos = selected.filter(isPhotoFile);
+      setRejectedMainFootage(
+        photos.map((file) => ({
+          filename: file.name,
+          reason: showVisualPools
+            ? "Photo files belong in Visuals for this edit style."
+            : "Classic only accepts videos. Choose Collage or Photo wall to use photos.",
+        })),
+      );
+      selected = selected.filter((file) => !isPhotoFile(file));
+      if (selected.length === 0) return;
+    } else {
+      setRejectedMainFootage([]);
+    }
     setUploading(true);
     setError(null);
     conformancePolls.current = 0;
     let list: File[];
     try {
-      list = Array.from(files);
+      list = selected;
       if (isNarratedReady) {
         const { voiceoverFiles, clipFiles } = await splitNarratedReadyUploads(list);
         if (voiceoverFiles.length > 1) {
@@ -1949,6 +1984,9 @@ export default function PlanItemPage() {
             ? "3 or more clips work best. Kria cuts them to the beat of a matched song."
             : undefined
       }
+      photosBelongInVisuals={isMontage && showVisualPools}
+      rejectedFiles={rejectedMainFootage}
+      onOpenVisuals={showVisualPools ? () => setSetupTab("visuals") : undefined}
     />
   );
 
@@ -2137,14 +2175,17 @@ export default function PlanItemPage() {
                   the old stack of bordered blocks. */}
               <Card>
                 {showVisualPools ? (
-                  <Tabs defaultValue="clips">
+                  <Tabs
+                    value={setupTab}
+                    onValueChange={(value) => setSetupTab(value as "clips" | "visuals")}
+                  >
                     <CardHeader className="pb-0">
                       <TabsList>
                         <TabsTrigger value="clips">
                           Clips{clipCount > 0 ? ` (${clipCount})` : ""}
                         </TabsTrigger>
                         <TabsTrigger value="visuals">
-                          Visuals{visualsCount > 0 ? ` (${visualsCount})` : ""}
+                          Visuals{visualsCount > 0 ? ` · ${visualsCount} saved` : ""}
                         </TabsTrigger>
                       </TabsList>
                     </CardHeader>
@@ -5044,6 +5085,9 @@ function PoolUploadCard({
   maxClips,
   accept = VIDEO_UPLOAD_ACCEPT,
   subline,
+  photosBelongInVisuals = false,
+  rejectedFiles = [],
+  onOpenVisuals,
 }: {
   clips: ClipAssignment[];
   pending: PendingClipUpload[];
@@ -5060,6 +5104,11 @@ function PoolUploadCard({
   /** Per-format helper copy shown as the dropzone's subline while empty
    *  (e.g. "3 or more clips work best..."). Omit for no subline. */
   subline?: ReactNode;
+  /** Classic montage treats photos as supporting visuals, never main clips. */
+  photosBelongInVisuals?: boolean;
+  /** Files rejected before upload, kept visible until the next selection. */
+  rejectedFiles?: RejectedMainFootage[];
+  onOpenVisuals?: () => void;
 }) {
   const clipLimit = maxClips ?? MAX_CLIPS_PER_ITEM;
   // In-flight cards count toward the cap so maxClips=1 can't double-pick.
@@ -5074,6 +5123,54 @@ function PoolUploadCard({
         : "Drop videos here or choose files";
   return (
     <div>
+      {photosBelongInVisuals && (
+        <div className="mb-4 flex flex-col gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-[#3f3f46]">
+            <span className="font-medium text-[#0c0c0e]">Clips are videos only.</span>{" "}
+            Add photos and screenshots in Visuals so Kria can use them in this edit.
+          </p>
+          {onOpenVisuals && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onOpenVisuals}
+              className="shrink-0"
+            >
+              Add photos to Visuals
+            </Button>
+          )}
+        </div>
+      )}
+      {rejectedFiles.length > 0 && (
+        <div
+          className="mb-4 rounded-lg border border-zinc-200 bg-white px-3 py-3 text-sm text-[#3f3f46]"
+          role="alert"
+        >
+          <p className="font-medium text-[#0c0c0e]">
+            {rejectedFiles.length === 1
+              ? "1 photo wasn’t added to Clips."
+              : `${rejectedFiles.length} photos weren’t added to Clips.`}
+          </p>
+          <ul className="mt-1 space-y-1">
+            {rejectedFiles.map((file) => (
+              <li key={`${file.filename}-${file.reason}`} className="break-all text-xs">
+                <span className="font-medium">{file.filename}</span> — {file.reason}
+              </li>
+            ))}
+          </ul>
+          {onOpenVisuals && (
+            <Button
+              type="button"
+              variant="link"
+              onClick={onOpenVisuals}
+              className="mt-1 h-auto min-h-9 p-0 text-lime-700"
+            >
+              Open Visuals and select {rejectedFiles.length === 1 ? "it" : "them"} again
+            </Button>
+          )}
+        </div>
+      )}
       {hasAny && (
         <ul
           className="mb-4 flex gap-3 overflow-x-auto pb-2"

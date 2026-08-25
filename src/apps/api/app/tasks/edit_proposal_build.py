@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from app.database import sync_session
 from app.models import ContentPlan, PlanItem, PlanItemAsset
 from app.schemas.edit_proposal import (
+    MAIN_CREATOR_FAIL_CLOSED,
     EditProposal,
     EditProposalSnapshot,
     FastMontageCut,
@@ -419,6 +420,8 @@ def _dispatch_after_auto_design(
     return statement above:
 
       approved                              -> dispatch normally (bypass=False)
+      failed, Main Creator-owned attempt     -> fail closed; its confirmed
+                                                 strategy must not be discarded
       failed, zero pool assets, has clips    -> dispatch anyway (bypass=True),
                                                  mark design_fallback (legacy
                                                  montage render — never for an
@@ -439,6 +442,14 @@ def _dispatch_after_auto_design(
             return  # superseded by a newer attempt — nothing to do
         if current.status == "approved":
             bypass = False
+        elif current.status == "failed" and current.design_fallback == MAIN_CREATOR_FAIL_CLOSED:
+            log.warning(
+                "edit_proposal.main_creator_fallback_refused",
+                item_id=item_id,
+                attempt_id=attempt_id,
+                failure_code=current.failure.code if current.failure else "unknown",
+            )
+            return
         elif current.status == "failed" and not current.design_fallback:
             pool_count = db.execute(
                 select(func.count())

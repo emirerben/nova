@@ -2513,7 +2513,10 @@ async def _maybe_auto_design_generate(
             item_id, owner_id, locked, ownership_epoch, current, db
         )
 
-    from app.schemas.edit_proposal import ProposalFailure  # noqa: PLC0415
+    from app.schemas.edit_proposal import (  # noqa: PLC0415
+        MAIN_CREATOR_FAIL_CLOSED,
+        ProposalFailure,
+    )
     from app.services.edit_proposals import begin_proposal_attempt  # noqa: PLC0415
     from app.services.plan_clips import ensure_clip_media_ids  # noqa: PLC0415
     from app.tasks.edit_proposal_build import draft_edit_proposal  # noqa: PLC0415
@@ -2542,6 +2545,13 @@ async def _maybe_auto_design_generate(
         guidance=legacy_guidance,
         generation_attempt_id=generation_attempt_id,
     )
+    if generation_attempt_id:
+        # Deploy-skew fence: old workers already treat any non-null
+        # design_fallback as "do not dispatch the generic fallback". Persist
+        # the sentinel before enqueue instead of relying on a new task kwarg or
+        # schema field an old worker would ignore.
+        proposal = proposal.model_copy(update={"design_fallback": MAIN_CREATOR_FAIL_CLOSED})
+        locked.edit_proposal = proposal.model_dump(mode="json")
     await db.commit()
     try:
         # No auto_finalize kwarg: draft_edit_proposal reads approval_mode
