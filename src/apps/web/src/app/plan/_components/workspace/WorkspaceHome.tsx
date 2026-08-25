@@ -20,6 +20,7 @@ import TikTokConnectionCard from "@/components/library/TikTokConnectionCard";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import SeedUploadCard from "../SeedUploadCard";
+import { CreatorWorkspacePanel } from "./CreatorWorkspacePanel";
 
 interface WorkspaceHomeProps {
   plan: ContentPlan;
@@ -95,6 +96,8 @@ export function WorkspaceHome({ plan, onRefresh, onError }: WorkspaceHomeProps) 
             </p>
           )}
         </section>
+
+        <CreatorWorkspacePanel planId={plan.id} />
 
         {/* ---- Past edits ---- */}
         <section aria-labelledby="past-edits-heading">
