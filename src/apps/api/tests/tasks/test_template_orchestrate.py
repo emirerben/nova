@@ -6,6 +6,7 @@ import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
+from httpx import RemoteProtocolError
 
 from app.models import VideoTemplate
 from app.pipeline.agents.gemini_analyzer import (
@@ -194,6 +195,26 @@ class TestOrchestratePipelineHelpers:
             side_effect=fake_upload,
         ):
             result = _upload_clips_parallel(["/tmp/fast.mp4", "/tmp/slow.mp4"])
+
+        assert result[0] is good_ref
+        assert result[1] is None
+
+    def test_upload_clips_parallel_tolerates_transport_disconnect(self):
+        """Gemini SDK transport disconnects follow the same per-clip fallback contract."""
+        from app.tasks.template_orchestrate import _upload_clips_parallel
+
+        good_ref = MagicMock(name="files/good")
+
+        def fake_upload(path):
+            if path == "/tmp/disconnected.mp4":
+                raise RemoteProtocolError("server disconnected")
+            return good_ref
+
+        with patch(
+            "app.tasks.template_orchestrate.gemini_upload_and_wait",
+            side_effect=fake_upload,
+        ):
+            result = _upload_clips_parallel(["/tmp/fast.mp4", "/tmp/disconnected.mp4"])
 
         assert result[0] is good_ref
         assert result[1] is None

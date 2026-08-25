@@ -77,6 +77,12 @@ def _format_availability(edit_format: str, *, has_voiceover: bool) -> Capability
                 "disabled_by_setting",
                 "day_vlog is disabled by the server (EDIT_FORMAT_DAY_VLOG_ENABLED)",
             )
+        if not settings.NARRATIVE_CLIP_ORDER_ENABLED:
+            return _unavailable(
+                "chronology_disabled",
+                "day_vlog requires chronological filming-guide ordering "
+                "(NARRATIVE_CLIP_ORDER_ENABLED)",
+            )
         if has_voiceover:
             return _unavailable(
                 "native_render_required",

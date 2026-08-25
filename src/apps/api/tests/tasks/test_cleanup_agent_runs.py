@@ -125,6 +125,9 @@ def test_cleanup_delete_filters_to_traffic_scoped_rows_and_prunes_sessions():
     session_sql, session_params = conn.calls[1]
     assert "delete from creator_agent_sessions" in session_sql.lower()
     assert "updated_at < :cutoff" in session_sql.lower()
+    assert "not exists" in session_sql.lower()
+    assert "creator_workspace_deliverables" in session_sql.lower()
+    assert "creator_session_id" in session_sql.lower()
     assert session_params == params
 
 

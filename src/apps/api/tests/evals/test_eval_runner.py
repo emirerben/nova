@@ -210,6 +210,11 @@ def test_rubric_path_for_strips_namespace(tmp_path: Path):
     assert p == tmp_path / "template_recipe.md"
 
 
+def test_rubric_path_for_main_creator_uses_named_rubric(tmp_path: Path):
+    p = rubric_path_for("nova.creator.main", rubric_dir=tmp_path)
+    assert p == tmp_path / "main_creator.md"
+
+
 def test_discover_fixtures_empty_when_dir_missing(tmp_path: Path, monkeypatch):
     from .runners import eval_runner as er
 

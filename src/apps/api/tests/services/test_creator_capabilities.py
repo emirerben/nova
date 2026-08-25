@@ -107,12 +107,26 @@ def test_day_vlog_manifest_is_explicitly_unavailable_while_flag_off(monkeypatch)
 
 def test_day_vlog_manifest_can_advertise_guided_renderer_when_enabled(monkeypatch) -> None:
     monkeypatch.setattr(capabilities.settings, "edit_format_day_vlog_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "NARRATIVE_CLIP_ORDER_ENABLED", True)
     manifest = capabilities.resolve_creator_manifest(
         item_id="item-1",
         edit_format="day_vlog",
         media=[{"media_id": "clip-1", "kind": "video"}],
     )
     assert manifest.capabilities["edit_format:day_vlog"].available is True
+
+
+def test_day_vlog_manifest_fails_closed_when_chronology_is_disabled(monkeypatch) -> None:
+    monkeypatch.setattr(capabilities.settings, "edit_format_day_vlog_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "NARRATIVE_CLIP_ORDER_ENABLED", False)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="day_vlog",
+        media=[{"media_id": "clip-1", "kind": "video"}],
+    )
+    capability = manifest.capabilities["edit_format:day_vlog"]
+    assert capability.available is False
+    assert capability.reason_code == "chronology_disabled"
 
 
 def test_single_hero_manifest_explains_flag_and_advertises_when_enabled(monkeypatch) -> None:

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import MainCreatorAgentPanel from "@/app/plan/items/[id]/components/MainCreatorAgentPanel";
 import {
@@ -144,6 +144,63 @@ it("shows bounded review evidence without mutating the confirmed render", async 
   expect(await screen.findByText("The opening loses momentum.")).not.toBeNull();
   expect(screen.getByText(/Nothing changes without your confirmation/)).not.toBeNull();
   expect(confirmPlan).not.toHaveBeenCalled();
+});
+
+it("shows a pending review as in progress and polls through awaiting feedback until it is terminal", async () => {
+  jest.useFakeTimers();
+  getSession
+    .mockResolvedValueOnce({
+      ...proposed,
+      status: "awaiting_feedback",
+      pending_plan: null,
+      last_review: { status: "pending" },
+    })
+    .mockResolvedValueOnce({
+      ...proposed,
+      status: "awaiting_feedback",
+      pending_plan: null,
+      last_review: { status: "running" },
+    })
+    .mockResolvedValueOnce({
+      ...proposed,
+      status: "awaiting_feedback",
+      pending_plan: null,
+      last_review: { status: "complete", quality_score: 4.2, evidence: [] },
+    });
+
+  try {
+    render(<MainCreatorAgentPanel itemId="item-1" />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Reviewing the exact render…")).not.toBeNull();
+    expect(getSession).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      jest.advanceTimersByTime(4_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(getSession).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("Reviewing the exact render…")).not.toBeNull();
+
+    await act(async () => {
+      jest.advanceTimersByTime(4_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(getSession).toHaveBeenCalledTimes(3);
+    expect(screen.getByText("No evidence-linked issues were found.")).not.toBeNull();
+
+    await act(async () => {
+      jest.advanceTimersByTime(12_000);
+      await Promise.resolve();
+    });
+    expect(getSession).toHaveBeenCalledTimes(3);
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 it("requires the explicit checkbox and button before requesting automatic iteration", async () => {

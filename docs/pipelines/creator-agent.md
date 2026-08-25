@@ -107,7 +107,7 @@ target or grader failure becomes a visible unavailable/failed review and leaves
 the render untouched.
 
 Stage 4 stores `auto_iteration_opt_in` and `automatic_revision_count` on the
-session. Migration `0084_creator_auto_iteration` adds both columns and constrains
+session. Migration `0087_creator_auto_iteration` adds both columns and constrains
 the automatic count to `0..1`; the default is opt-out and the count is a durable
 one-cycle cap.
 
@@ -303,7 +303,7 @@ flags are live.
 - Stage 4 tests pin objective thresholds, explicit opt-in, exact allowlist,
   one-cycle recovery, command pins, idempotency, and prior-generation rollback
   receipts;
-- Stage 5 tests pin 0082/0083 tables, idempotent proposal decisions, ownership
+- Stage 5 tests pin 0085/0086/0088/0089 state, idempotent proposal decisions, ownership
   re-fencing, distinct deliverables, stale receipts, and explicit-only preference
   writes;
 - editor regressions pin exact PlanItem ownership for overlays/SFX and the music
@@ -348,12 +348,12 @@ content_plans
         └── current_job_id (→ jobs)
 
 creator workspace (Stage 5)
-  ├── creator_workspace_proposals          (off-plan relevance, migration 0082)
-  ├── creator_workspace_receipts           (plan-level coordination, migration 0083)
+  ├── creator_workspace_proposals          (off-plan relevance, migration 0085)
+  ├── creator_workspace_receipts           (plan-level coordination, migration 0086)
   ├── creator_workspace_deliverables       (one exact session/Job target per item)
   └── creator_workspace_preference_signals (creator-authored notes/style edits)
 
-creator-agent session autonomy (Stage 4, migration 0084)
+creator-agent session autonomy (Stage 4, migration 0087)
   ├── auto_iteration_opt_in                (explicit per-session opt-in)
   └── automatic_revision_count             (durable 0..1 cycle cap)
 ```
@@ -519,13 +519,30 @@ day-vlog chronology policy; disabling it makes strict day-vlog fail closed.
 
 `MAIN_CREATOR_AGENT_FREEFORM_UPLOADS_ENABLED` gates off-plan proposals;
 `MAIN_CREATOR_AGENT_WORKSPACE_ENABLED` gates coordination receipts and preference
-signals separately. A proposal stores ownership epoch, idempotency/request digest,
+signals separately. Its build-time frontend twin,
+`NEXT_PUBLIC_MAIN_CREATOR_AGENT_WORKSPACE_ENABLED`, exposes explicit preference
+controls before a coordination receipt exists; enable the Fly flag before the
+Vercel twin. A proposal stores ownership epoch, idempotency/request digest,
 opaque media IDs, and an owner-checked media snapshot in `creator_workspace_proposals`
-(migration `0082`). A workspace receipt stores one distinct Creator session per
+(migration `0085`). A workspace receipt stores one distinct Creator session per
 PlanItem, position, ownership epoch, and exact Job/variant/generation receipt in
 `creator_workspace_receipts` and `creator_workspace_deliverables` (migration
-`0083`). Polling marks a receipt `stale` if the plan/session/Job ownership epoch
+`0086`). Polling marks a receipt `stale` if the plan/session/Job ownership epoch
 or exact target no longer matches; it never guesses a replacement deliverable.
+
+Migration `0088` adds a durable `processing` claim for relevance classification.
+A failed publish is visible and retryable; redelivery claims the same proposal
+instead of running a second classifier, and approval rejects a source path already
+attached to another plan item. Legacy upload Jobs do not persist a GCS object
+generation, so those proposals remain path- and ownership-pinned; existing
+`PlanItemAsset` generation pinning is unchanged.
+
+Migration `0089` adds the partial/latest-session and child-side foreign-key
+indexes used by workspace polling. Relevance context is capped at 200 plan items
+and fails visibly when the plan exceeds that agent contract; receipt creation
+selects only the newest complete session per requested item, and cross-item media
+reuse is checked with an indexed database existence query rather than loading plan
+history into API memory.
 
 The receipt endpoints are:
 
@@ -599,9 +616,11 @@ from app.tasks.style_build import derive_user_style
 | `app/tasks/creator_workspace.py` | Crash-resumable off-plan relevance task |
 | `app/tasks/generative_build.py` | Strict day-vlog/single-hero policies and worker fences |
 | `app/migrations/versions/0081_creator_agent_sessions.py` | V1 session/event/execution persistence |
-| `app/migrations/versions/0082_creator_workspace_proposals.py` | Off-plan proposal persistence |
-| `app/migrations/versions/0083_creator_workspace_receipts.py` | Workspace receipts/deliverables/preferences |
-| `app/migrations/versions/0084_creator_auto_iteration.py` | Explicit opt-in and one-cycle auto-iteration state |
+| `app/migrations/versions/0085_creator_workspace_proposals.py` | Off-plan proposal persistence |
+| `app/migrations/versions/0086_creator_workspace_receipts.py` | Workspace receipts/deliverables/preferences |
+| `app/migrations/versions/0087_creator_auto_iteration.py` | Explicit opt-in and one-cycle auto-iteration state |
+| `app/migrations/versions/0088_creator_workspace_proposal_processing.py` | Durable relevance-processing claim and retry state |
+| `app/migrations/versions/0089_creator_workspace_query_indexes.py` | Bounded workspace lookup and child-side foreign-key indexes |
 | `tests/tasks/test_creator_quality_review.py` | Stage 2 exact-target/fail-open tests |
 | `tests/services/test_creator_craft.py` | Stage 3 compiler tests |
 | `tests/services/test_creator_autonomy.py` | Stage 4 thresholds, allowlist, pins, idempotency, and recovery tests |
