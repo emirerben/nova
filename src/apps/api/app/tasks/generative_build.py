@@ -51,6 +51,7 @@ from sqlalchemy.exc import OperationalError
 from app.agents._schemas.edit_format import (
     DAY_VLOG_RENDERER_VERSION,
     NARRATED_EDIT_FORMATS,
+    SINGLE_HERO_RENDERER_VERSION,
     coerce_edit_format,
     guided_edit_applicable,
 )
@@ -143,6 +144,14 @@ _MIN_TALKING_HEAD_SPINE_WITH_BROLL_S = 2.0
 _SMART_MUSIC_CANDIDATE_LIMIT = 80
 _DAY_VLOG_MAX_TRANSITION_S = 0.2
 _DAY_VLOG_MIN_SHOTS = 2
+# Single-hero is intentionally a small, strict composition: one owned hero
+# clip plus at most three supporting cutaways.  The hero must occupy at least
+# 60% of the planned timeline; the explicit duration cap is the same product
+# ceiling used by the rest of the generative renderer.
+_SINGLE_HERO_MIN_CLIPS = 2
+_SINGLE_HERO_MAX_SUPPORTING_CLIPS = 3
+_SINGLE_HERO_MIN_HERO_RATIO = 0.60
+_SINGLE_HERO_MIN_HERO_DURATION_S = 3.0
 
 
 class DayVlogPolicyError(RuntimeError):
@@ -151,6 +160,157 @@ class DayVlogPolicyError(RuntimeError):
     def __init__(self, reason: str, message: str):
         self.reason = reason
         super().__init__(message)
+
+
+class SingleHeroPolicyError(RuntimeError):
+    """A single-hero contract failure that must never downgrade to montage."""
+
+    def __init__(self, reason: str, message: str):
+        self.reason = reason
+        super().__init__(message)
+
+
+def _single_hero_order(clip_metas: list, clip_id_to_local: dict[str, str]) -> list[str]:
+    """Return one deterministic hero followed by bounded supporting clips."""
+
+    available = [
+        meta for meta in clip_metas if str(getattr(meta, "clip_id", "") or "") in clip_id_to_local
+    ]
+    ranked = sorted(
+        enumerate(available),
+        key=lambda pair: (-float(getattr(pair[1], "hook_score", 0.0) or 0.0), pair[0]),
+    )
+    return [
+        str(meta.clip_id)
+        for _, meta in ranked[: 1 + _SINGLE_HERO_MAX_SUPPORTING_CLIPS]
+        if str(getattr(meta, "clip_id", "") or "")
+    ]
+
+
+def _build_single_hero_recipe(
+    order: list[str],
+    *,
+    available_footage_s: float,
+    clip_durations_s: dict[str, float] | None = None,
+    max_duration_s: float,
+) -> dict:
+    """Build the strict one-hero/short-cutaway slot policy.
+
+    The hero is capped by the source duration and the overall duration is
+    reduced when necessary to preserve the 60% dominance invariant.  This
+    makes the policy explicit and prevents ``allow_slowdown_fill=False`` from
+    accidentally turning a short hero into a supporting clip at render time.
+    """
+
+    if len(order) < _SINGLE_HERO_MIN_CLIPS:
+        raise SingleHeroPolicyError(
+            "insufficient_media",
+            "single_hero requires one usable hero clip and at least one cutaway.",
+        )
+    durations = clip_durations_s or {}
+    hero_id = order[0]
+    hero_source_s = float(durations.get(hero_id, 0.0) or 0.0)
+    if hero_source_s < _SINGLE_HERO_MIN_HERO_DURATION_S:
+        raise SingleHeroPolicyError(
+            "insufficient_media",
+            "single_hero hero clip is too short for the minimum dominant duration.",
+        )
+    support_ids = order[1 : 1 + _SINGLE_HERO_MAX_SUPPORTING_CLIPS]
+    support_source_s = sum(max(0.0, float(durations.get(cid, 0.0) or 0.0)) for cid in support_ids)
+    if support_source_s <= 0:
+        raise SingleHeroPolicyError(
+            "insufficient_media",
+            "single_hero requires at least one usable supporting cutaway.",
+        )
+    target_total = min(float(available_footage_s), float(max_duration_s))
+    # A hero cannot dominate beyond its source; shrink the overall target to
+    # preserve hero dominance rather than stretching or silently downgrading.
+    target_total = min(target_total, hero_source_s / _SINGLE_HERO_MIN_HERO_RATIO)
+    if target_total <= 0:
+        raise SingleHeroPolicyError("insufficient_media", "single_hero has no usable duration.")
+    hero_duration = min(hero_source_s, max(_SINGLE_HERO_MIN_HERO_DURATION_S, target_total * 0.70))
+    support_total = target_total - hero_duration
+    if support_total <= 0 or hero_duration / target_total < _SINGLE_HERO_MIN_HERO_RATIO:
+        raise SingleHeroPolicyError(
+            "duration_out_of_bounds",
+            "single_hero could not preserve hero dominance.",
+        )
+    per_support = support_total / len(support_ids)
+    slots = []
+    for index, clip_id in enumerate(order[: 1 + _SINGLE_HERO_MAX_SUPPORTING_CLIPS]):
+        duration = hero_duration if index == 0 else per_support
+        slots.append(
+            {
+                "position": index + 1,
+                "target_duration_s": round(duration, 3),
+                "slot_type": "hero" if index == 0 else "cutaway",
+                "energy": 7.0 if index == 0 else 5.0,
+                "priority": 10 if index == 0 else 4,
+                "text_overlays": [],
+                "transition_in": "cut",
+                "transition_duration_s": 0.0,
+                "speed_factor": 1.0,
+            }
+        )
+    return {
+        "shot_count": len(slots),
+        "total_duration_s": round(sum(slot["target_duration_s"] for slot in slots), 3),
+        "hook_duration_s": round(hero_duration, 3),
+        "slots": slots,
+        "beat_timestamps_s": [],
+        "sync_style": "freeform",
+        "pacing_style": "medium",
+        "color_grade": "none",
+        "transition_style": "cut",
+        "creative_direction": "single hero with supporting cutaways",
+        "interstitials": [],
+        "required_clips_min": len(slots),
+        "required_clips_max": len(slots),
+        "single_hero_order": order[: len(slots)],
+    }
+
+
+def _validate_single_hero_steps(
+    steps: list,
+    hero_id: str,
+    supporting_ids: list[str],
+    *,
+    max_duration_s: float,
+) -> None:
+    """Fail closed if matching ever changes the strict hero composition."""
+
+    if not steps or str(steps[0].clip_id) != hero_id:
+        raise SingleHeroPolicyError(
+            "hero_ownership_violation", "single_hero must open with its hero clip."
+        )
+    if any(str(step.clip_id) not in {hero_id, *supporting_ids} for step in steps):
+        raise SingleHeroPolicyError(
+            "hero_ownership_violation", "single_hero contains an unowned clip."
+        )
+    hero_steps = [step for step in steps if str(step.clip_id) == hero_id]
+    if len(hero_steps) != 1:
+        raise SingleHeroPolicyError(
+            "hero_ownership_violation", "single_hero requires exactly one hero slot."
+        )
+    seen_supports = [str(step.clip_id) for step in steps[1:]]
+    if len(seen_supports) != len(set(seen_supports)) or set(seen_supports) != set(supporting_ids):
+        raise SingleHeroPolicyError(
+            "insufficient_media", "single_hero requires each supporting cutaway once."
+        )
+    durations = [
+        float(step.slot.get("target_duration_s", step.slot.get("target_duration", 0.0)) or 0.0)
+        for step in steps
+    ]
+    total = sum(durations)
+    hero_duration = durations[0]
+    if total <= 0 or total > max_duration_s + 0.05:
+        raise SingleHeroPolicyError(
+            "duration_out_of_bounds", "single_hero output exceeds the product duration limit."
+        )
+    if hero_duration / total < _SINGLE_HERO_MIN_HERO_RATIO:
+        raise SingleHeroPolicyError(
+            "hero_dominance_violation", "single_hero hero clip must dominate the timeline."
+        )
 
 
 def _validate_day_vlog_steps(
@@ -919,9 +1079,12 @@ def orchestrate_generative_job(self, job_id: str) -> None:
         except _GuidedStoryAttemptBusy:
             log.info("guided_story_duplicate_delivery_busy", job_id=job_id)
             return
-        except DayVlogPolicyError as exc:
+        except (DayVlogPolicyError, SingleHeroPolicyError) as exc:
+            rejected_format = (
+                "single_hero" if isinstance(exc, SingleHeroPolicyError) else "day_vlog"
+            )
             log.warning(
-                "day_vlog_job_rejected",
+                "guided_format_job_rejected",
                 job_id=job_id,
                 failure_reason=exc.reason,
             )
@@ -930,14 +1093,14 @@ def orchestrate_generative_job(self, job_id: str) -> None:
 
                 record_pipeline_event(
                     "assembly",
-                    "day_vlog_rejected",
+                    f"{rejected_format}_rejected",
                     {"reason": exc.reason},
                 )
             except Exception:  # noqa: BLE001 - diagnostics never mask failure
                 pass
             mark_failed_phase(job_id)
-            _persist_archetype_fallback(job_id, "day_vlog", exc.reason)
-            _fail_job(job_id, str(exc), failure_reason=f"day_vlog_{exc.reason}")
+            _persist_archetype_fallback(job_id, rejected_format, exc.reason)
+            _fail_job(job_id, str(exc), failure_reason=f"{rejected_format}_{exc.reason}")
             return
         except AudioLedGuidedConflict as exc:
             log.warning(
@@ -1238,6 +1401,17 @@ def _run_generative_job_impl(
                 raise DayVlogPolicyError(
                     "flag_disabled",
                     "day_vlog is disabled by EDIT_FORMAT_DAY_VLOG_ENABLED.",
+                )
+        if render_intent_value == "single_hero":
+            if all_candidates.get("single_hero_renderer_version") != SINGLE_HERO_RENDERER_VERSION:
+                raise SingleHeroPolicyError(
+                    "renderer_version_mismatch",
+                    "This single-hero job was created by an incompatible API worker; retry it.",
+                )
+            if not settings.edit_format_single_hero_enabled:
+                raise SingleHeroPolicyError(
+                    "flag_disabled",
+                    "single_hero is disabled by EDIT_FORMAT_SINGLE_HERO_ENABLED.",
                 )
         # Optional user-supplied voiceover (audio-only). When present it becomes the
         # narration bed and the job renders voiceover variants instead of song/original
@@ -1782,6 +1956,29 @@ def _run_generative_job_impl(
                         landscape_fit=landscape_fit,
                         montage_preset=montage_preset,
                         strict_day_vlog=True,
+                    )
+                elif spec.get("archetype") == "single_hero":
+                    result = _render_generative_variant(
+                        job_id=job_id,
+                        rank=rank,
+                        spec=spec,
+                        clip_metas=clip_metas,
+                        clip_id_to_local=clip_id_to_local,
+                        clip_id_to_gcs=clip_id_to_gcs,
+                        probe_map=probe_map,
+                        available_footage_s=available_footage_s,
+                        agent_text=agent_text,
+                        agent_form=agent_form,
+                        variant_dir=variant_dir,
+                        style_set_id=style_set_id,
+                        user_style_knobs=user_style_knobs,
+                        narrative_order=None,
+                        filming_guide=None,
+                        allow_sequence=False,
+                        language=language,
+                        landscape_fit=landscape_fit,
+                        montage_preset=montage_preset,
+                        strict_single_hero=True,
                     )
                 else:
                     result = _render_generative_variant(
@@ -8876,6 +9073,12 @@ def _run_regenerate_variant(
             "music_start_s": existing_music_start_s,
             "music_window_video_duration_s": existing_music_window_duration_s,
             "storage_generation": render_gen_id,
+            "strict_single_hero": existing.get("resolved_archetype") == "single_hero",
+            "single_hero_renderer_version": (
+                SINGLE_HERO_RENDERER_VERSION
+                if existing.get("resolved_archetype") == "single_hero"
+                else None
+            ),
             # Carry an authored carousel moment forward across retext/swap-song/
             # restyle re-renders — same lifecycle as music_start_s /
             # user_style_knobs above. The persisted cfg's own "seed" keeps the
@@ -8957,6 +9160,7 @@ def _run_regenerate_variant(
                 lyric_line_overrides=inherited_lyric_line_overrides,
                 orientation=effective_orientation,
                 strict_day_vlog=existing.get("resolved_archetype") == "day_vlog",
+                strict_single_hero=existing.get("resolved_archetype") == "single_hero",
             )
 
     # E1: the token check covers BOTH terminal branches (ready and failed) —
@@ -9613,6 +9817,30 @@ def _resolve_archetype(
         log.info("generative_archetype_selected", job_id=job_id, archetype="day_vlog")
         return "day_vlog", None, None
 
+    if edit_format == "single_hero":
+        if not settings.edit_format_single_hero_enabled:
+            return "single_hero", None, "flag_disabled"
+        order = _single_hero_order(clip_metas, clip_id_to_local)
+        if len(order) < _SINGLE_HERO_MIN_CLIPS:
+            return "single_hero", None, "insufficient_media"
+        record_pipeline_event(
+            "assembly",
+            "archetype_selected",
+            {
+                "archetype": "single_hero",
+                "hero_clip_id": order[0],
+                "supporting_clip_ids": order[1:],
+            },
+        )
+        log.info(
+            "generative_archetype_selected",
+            job_id=job_id,
+            archetype="single_hero",
+            hero_clip_id=order[0],
+            supporting_clip_ids=order[1:],
+        )
+        return "single_hero", order[0], None
+
     if edit_format == "montage":
         # B3 soft bias: when the user's style says "talking_head", attempt the
         # talking_head path only when the flag is on AND speech actually exists.
@@ -9683,7 +9911,7 @@ def _resolve_archetype(
         return "montage", None, None
 
     if edit_format != "talking_head":
-        # day_vlog / single_hero declared but no assembler exists yet.
+        # Unknown future formats never enter a renderer.
         return _fallback("archetype_not_implemented")
     if not settings.edit_format_talking_head_enabled:
         return _fallback("flag_disabled")
@@ -9850,6 +10078,17 @@ def _specs_for_archetype(
                 "track": best_track,
                 "archetype": "day_vlog",
                 "strict_day_vlog": True,
+            }
+        ]
+    if archetype == "single_hero":
+        return [
+            {
+                "variant_id": "single_hero",
+                "text_mode": "agent_text",
+                "track": best_track,
+                "archetype": "single_hero",
+                "strict_single_hero": True,
+                "single_hero_renderer_version": SINGLE_HERO_RENDERER_VERSION,
             }
         ]
     if variant_policy == CONTENT_PLAN_ORIGINAL_VARIANT_POLICY:
@@ -10569,6 +10808,10 @@ def _classify_error(exc: BaseException) -> str:
 
     if isinstance(exc, SoftTimeLimitExceeded):
         return "timeout"
+    if isinstance(exc, SingleHeroPolicyError):
+        return f"single_hero_{exc.reason}"
+    if isinstance(exc, DayVlogPolicyError):
+        return f"day_vlog_{exc.reason}"
     name = type(exc).__name__.lower()
     msg = str(exc).lower()
     if "ffmpeg" in name or "encoder" in name or "ffmpeg" in msg or "codec" in msg:
@@ -10775,6 +11018,7 @@ def _render_generative_variant(
     lyric_line_overrides: dict | None = None,
     orientation: str | None = None,
     strict_day_vlog: bool = False,
+    strict_single_hero: bool = False,
 ) -> dict[str, Any]:
     """Render one variant. Never raises — failures become a failure record.
 
@@ -10886,7 +11130,9 @@ def _render_generative_variant(
         "variant_id": variant_id,
         "rank": rank,
         "text_mode": text_mode,
-        "resolved_archetype": "day_vlog" if strict_day_vlog else None,
+        "resolved_archetype": (
+            "single_hero" if strict_single_hero else ("day_vlog" if strict_day_vlog else None)
+        ),
         "music_track_id": track_id,
         # Seed from the committed selection so a renderer failure cannot erase
         # the user's saved song window. Successful resolution overwrites this
@@ -11021,7 +11267,37 @@ def _render_generative_variant(
         # Slot-count floor: shot-assigned clips each get a guaranteed slot; for
         # pool-only jobs (no narrative_order) use total analyzed clip count so
         # that all uploaded footage is represented in the edit.
-        min_slots = len(narrative_order) if narrative_order else len(clip_metas)
+        min_slots = (
+            1 + _SINGLE_HERO_MAX_SUPPORTING_CLIPS
+            if strict_single_hero
+            else (len(narrative_order) if narrative_order else len(clip_metas))
+        )
+        single_hero_order: list[str] | None = None
+        if strict_single_hero:
+            if spec.get("single_hero_renderer_version") != SINGLE_HERO_RENDERER_VERSION:
+                raise SingleHeroPolicyError(
+                    "renderer_version_mismatch",
+                    "This single-hero variant was created by an incompatible worker; retry it.",
+                )
+            single_hero_order = _single_hero_order(clip_metas, clip_id_to_local)
+            durations = {
+                cid: float(getattr(probe_map.get(path), "duration_s", 0.0) or 0.0)
+                for cid, path in clip_id_to_local.items()
+            }
+            single_hero_recipe = _build_single_hero_recipe(
+                single_hero_order,
+                available_footage_s=available_footage_s,
+                clip_durations_s=durations,
+                max_duration_s=float(settings.output_max_duration_s),
+            )
+            min_slots = len(single_hero_recipe["slots"])
+            base["hero_clip_id"] = single_hero_order[0]
+            base["supporting_clip_ids"] = single_hero_order[1:]
+            base["hero_dominance_ratio"] = round(
+                float(single_hero_recipe["hook_duration_s"])
+                / float(single_hero_recipe["total_duration_s"]),
+                3,
+            )
         if min_slots > _NARRATIVE_FLOOR_WARN_THRESHOLD:
             log.warning(
                 "narrative_floor_high",
@@ -11106,6 +11382,11 @@ def _render_generative_variant(
                 filming_guide=filming_guide,
                 min_slots=min_slots,
             )
+
+        if strict_single_hero:
+            # A matched track may still provide the audio bed, but it must never
+            # decide the visual slot count or ownership of this guided format.
+            recipe_dict = single_hero_recipe
 
         if strict_day_vlog:
             # The generic matcher may choose a transition style from a recipe;
@@ -11249,7 +11530,19 @@ def _render_generative_variant(
         else:
             try:
                 recipe = consolidate_slots(recipe, clip_metas)
-                assembly_plan = match(recipe, clip_metas, narrative_order=narrative_order)
+                assembly_plan = match(
+                    recipe,
+                    clip_metas,
+                    narrative_order=narrative_order,
+                    pinned_assignments=(
+                        {
+                            slot["position"]: clip_id
+                            for slot, clip_id in zip(recipe_dict["slots"], single_hero_order or [])
+                        }
+                        if strict_single_hero and single_hero_order
+                        else None
+                    ),
+                )
             except TemplateMismatchError as exc:
                 raise ValueError(f"{exc.code}: {exc.message}") from exc
             steps = assembly_plan.steps
@@ -11278,6 +11571,17 @@ def _render_generative_variant(
             _validate_day_vlog_steps(
                 steps,
                 narrative_order,
+                max_duration_s=float(settings.output_max_duration_s),
+            )
+        if strict_single_hero:
+            if not single_hero_order:
+                raise SingleHeroPolicyError(
+                    "insufficient_media", "single_hero has no usable clip order."
+                )
+            _validate_single_hero_steps(
+                steps,
+                single_hero_order[0],
+                single_hero_order[1:],
                 max_duration_s=float(settings.output_max_duration_s),
             )
         _record_render_subphase(
@@ -11582,18 +11886,22 @@ def _render_generative_variant(
 
         if not os.path.exists(audio_mixed_path) or os.path.getsize(audio_mixed_path) == 0:
             raise RuntimeError(f"variant {variant_id} produced empty audio-mixed output")
-        if strict_day_vlog:
+        if strict_day_vlog or strict_single_hero:
             try:
                 actual_duration_s = float(_probe_duration(audio_mixed_path))
             except Exception as exc:  # noqa: BLE001 - strict policy must fail closed
-                raise DayVlogPolicyError(
+                error_type = SingleHeroPolicyError if strict_single_hero else DayVlogPolicyError
+                strict_name = "single_hero" if strict_single_hero else "day_vlog"
+                raise error_type(
                     "duration_unreadable",
-                    "day_vlog output duration could not be verified.",
+                    f"{strict_name} output duration could not be verified.",
                 ) from exc
             if not 0.1 <= actual_duration_s <= settings.output_max_duration_s + 0.05:
-                raise DayVlogPolicyError(
+                error_type = SingleHeroPolicyError if strict_single_hero else DayVlogPolicyError
+                strict_name = "single_hero" if strict_single_hero else "day_vlog"
+                raise error_type(
                     "duration_out_of_bounds",
-                    "day_vlog output duration is outside the product bounds.",
+                    f"{strict_name} output duration is outside the product bounds.",
                 )
 
         # For agent_text variants: upload the text-free base for fast-reburn, then

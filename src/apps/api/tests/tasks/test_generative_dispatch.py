@@ -177,6 +177,44 @@ def test_day_vlog_ignores_generic_montage_variant_set(monkeypatch):
     assert specs[0]["strict_day_vlog"] is True
 
 
+def test_single_hero_selects_one_hero_and_never_downgrades(monkeypatch):
+    monkeypatch.setattr(gb.settings, "edit_format_single_hero_enabled", False, raising=False)
+    archetype, spine, reason = gb._resolve_archetype(
+        "single_hero", [_Meta("c1"), _Meta("c2")], {"c1": "/a.mp4", "c2": "/b.mp4"}, job_id="j"
+    )
+    assert (archetype, spine, reason) == ("single_hero", None, "flag_disabled")
+
+    monkeypatch.setattr(gb.settings, "edit_format_single_hero_enabled", True, raising=False)
+    specs = gb._specs_for_archetype("single_hero", None)
+    assert specs[0]["strict_single_hero"] is True
+    assert specs[0]["single_hero_renderer_version"] == 1
+    archetype, hero, reason = gb._resolve_archetype(
+        "single_hero", [_Meta("c1"), _Meta("c2")], {"c1": "/a.mp4", "c2": "/b.mp4"}, job_id="j"
+    )
+    assert (archetype, hero, reason) == ("single_hero", "c1", None)
+
+
+def test_single_hero_policy_pins_dominance_and_ownership():
+    recipe = gb._build_single_hero_recipe(
+        ["hero", "cutaway"],
+        available_footage_s=12.0,
+        clip_durations_s={"hero": 8.0, "cutaway": 4.0},
+        max_duration_s=60.0,
+    )
+    assert recipe["slots"][0]["slot_type"] == "hero"
+    assert recipe["slots"][0]["target_duration_s"] / recipe["total_duration_s"] >= 0.60
+    steps = [
+        types.SimpleNamespace(clip_id="hero", slot=recipe["slots"][0]),
+        types.SimpleNamespace(clip_id="cutaway", slot=recipe["slots"][1]),
+    ]
+    gb._validate_single_hero_steps(steps, "hero", ["cutaway"], max_duration_s=60.0)
+    with pytest.raises(gb.SingleHeroPolicyError, match="hero"):
+        gb._validate_single_hero_steps(steps[::-1], "hero", ["cutaway"], max_duration_s=60.0)
+    assert gb._classify_error(gb.SingleHeroPolicyError("insufficient_media", "missing")) == (
+        "single_hero_insufficient_media"
+    )
+
+
 def test_day_vlog_chronology_kill_switch_fails_closed(monkeypatch):
     monkeypatch.setattr(gb.settings, "NARRATIVE_CLIP_ORDER_ENABLED", False, raising=False)
     with pytest.raises(gb.DayVlogPolicyError, match="chronology"):

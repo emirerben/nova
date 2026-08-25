@@ -41,6 +41,10 @@ DEFAULT_EDIT_FORMAT: EditFormat = "montage"
 # with the vocabulary so API/worker mixed-version jobs can fail closed instead
 # of treating a newly-known token as the legacy montage default.
 DAY_VLOG_RENDERER_VERSION = 1
+# Worker boundary fence for the single-hero guided renderer.  Keep this
+# independent from day-vlog so either format can roll out or roll back without
+# accepting a queued job authored by a different renderer contract.
+SINGLE_HERO_RENDERER_VERSION = 1
 
 EDIT_FORMATS: tuple[str, ...] = get_args(EditFormat)
 

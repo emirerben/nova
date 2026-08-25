@@ -90,6 +90,22 @@ def test_day_vlog_manifest_can_advertise_guided_renderer_when_enabled(monkeypatc
     assert manifest.capabilities["edit_format:day_vlog"].available is True
 
 
+def test_single_hero_manifest_explains_flag_and_advertises_when_enabled(monkeypatch) -> None:
+    monkeypatch.setattr(capabilities.settings, "edit_format_single_hero_enabled", False)
+    unavailable = capabilities.resolve_creator_manifest(
+        item_id="item-1", edit_format="single_hero", media=[{"media_id": "clip-1", "kind": "video"}]
+    )
+    capability = unavailable.capabilities["edit_format:single_hero"]
+    assert capability.reason_code == "disabled_by_setting"
+    assert "EDIT_FORMAT_SINGLE_HERO_ENABLED" in (capability.reason or "")
+
+    monkeypatch.setattr(capabilities.settings, "edit_format_single_hero_enabled", True)
+    available = capabilities.resolve_creator_manifest(
+        item_id="item-1", edit_format="single_hero", media=[{"media_id": "clip-1", "kind": "video"}]
+    )
+    assert available.capabilities["edit_format:single_hero"].available is True
+
+
 def test_compile_strategy_uses_only_available_commands_and_never_guided_for_voiceover(
     monkeypatch,
 ) -> None:
