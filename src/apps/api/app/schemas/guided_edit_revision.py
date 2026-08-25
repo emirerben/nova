@@ -15,6 +15,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.pipeline.look_presets import normalize_look_adjustments, normalize_look_preset
+from app.schemas.edit_proposal import MAX_EDIT_PROPOSAL_MEDIA
 
 MAX_GUIDED_EDITOR_SEGMENTS = 60
 MAX_GUIDED_EDITOR_DURATION_S = 60.0
@@ -111,7 +112,7 @@ class GuidedEditorRevision(BaseModel):
     effect_schema_version: str = "custom-effects-v1"
     base_generation: str = ""
     orientation: Literal["portrait", "landscape"] = "portrait"
-    sources: list[GuidedEditorSource] = Field(min_length=1, max_length=60)
+    sources: list[GuidedEditorSource] = Field(min_length=1, max_length=MAX_EDIT_PROPOSAL_MEDIA)
     segments: list[GuidedEditorSegment] = Field(min_length=1, max_length=MAX_GUIDED_EDITOR_SEGMENTS)
     audio: GuidedEditorAudio = Field(default_factory=GuidedEditorAudio)
     text_elements: list[dict[str, Any]] = Field(default_factory=list, max_length=50)
