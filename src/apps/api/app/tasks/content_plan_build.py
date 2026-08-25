@@ -540,6 +540,8 @@ DispatchOutcome = Literal[
     # services/edit_proposals.guided_render_is_blocked); Generate is refused
     # until the user revises it in the planner.
     "proposal_render_blocked",
+    "speech_cleanup_unavailable",
+    "speech_cleanup_recovery_conflict",
 ]
 
 
@@ -655,6 +657,7 @@ def _dispatch_item_render(
     bypass_guided_edit_gate: bool = False,
     creator_strategy: dict | None = None,
     creator_guided_attempt_id: str | None = None,
+    speech_cleanup_contract: str | None = None,
 ) -> DispatchResult:
     """Mint a generative Job for an item's clips, persist it, dispatch its render.
 
@@ -689,6 +692,10 @@ def _dispatch_item_render(
     from app.services.job_dispatch import enqueue_orchestrator_sync  # noqa: PLC0415
     from app.services.smart_captions import (  # noqa: PLC0415
         resolve_smart_captions_context_sync,
+    )
+    from app.services.speech_cleanup import (  # noqa: PLC0415
+        contract_for_item,
+        renderer_enabled_for_item,
     )
     from app.tasks.generative_build import orchestrate_generative_job  # noqa: PLC0415
 
@@ -793,6 +800,26 @@ def _dispatch_item_render(
     if not clip_paths:
         log.warning("plan_item_render.no_clips", plan_item_id=str(item.id))
         return DispatchResult("invalid_clips")
+    if speech_cleanup_contract is None:
+        try:
+            speech_cleanup_contract = contract_for_item(
+                item,
+                mode=settings.speech_cleanup_mode,
+                engine_enabled=settings.silence_cut_enabled,
+                renderer_enabled=renderer_enabled_for_item(
+                    item,
+                    subtitled_enabled=settings.subtitled_archetype_enabled,
+                    talking_head_enabled=settings.edit_format_talking_head_enabled,
+                    narrated_self_narration_enabled=settings.narrated_self_narration_enabled,
+                ),
+            )
+        except ValueError as exc:
+            log.info(
+                "plan_item_render.speech_cleanup_unavailable",
+                plan_item_id=str(item.id),
+                reason=str(exc),
+            )
+            return DispatchResult("speech_cleanup_unavailable")
     # Narrative clip order (filming-guide alignment): reorder clip_paths so the
     # guide's shot clips come first IN GUIDE ORDER (clip_assignments stores them
     # in attach-request order, which is client-controlled and not the guide
@@ -911,6 +938,21 @@ def _dispatch_item_render(
             "generation_attempt_id": creator_guided_attempt_id,
         }
         job.assembly_plan = snapshot
+    # Immutable policy snapshot.  Worker behavior is selected from this value,
+    # never from mutable PlanItem state or a later feature-flag change.
+    snapshot = dict(job.assembly_plan or {})
+    # Audit the user's explicit preference independently from the resolved
+    # renderer contract. This remains useful when a rollout/engine outage
+    # blocks dispatch or when a recovery action intentionally turns it off.
+    snapshot["speech_cleanup_requested"] = bool(getattr(item, "speech_cleanup_enabled", False))
+    if speech_cleanup_contract is not None:
+        snapshot["speech_cleanup_contract"] = speech_cleanup_contract
+    if settings.speech_cleanup_mode == "opt_in":
+        # Keep the legacy support field truthful for admin/debug consumers while
+        # the worker follows the immutable contract above. New contracts never
+        # consult this mutable flag during normal execution.
+        snapshot["silence_cut_disabled"] = speech_cleanup_contract == "off_v1"
+    job.assembly_plan = snapshot
     # Caller holds Plan -> Persona -> PlanItem locks and has revalidated this
     # exact epoch. Job is last in the global lock/write order.
     if _plan_epoch(plan) != ownership_epoch:
@@ -1029,6 +1071,9 @@ def dispatch_item_render_for(
     bypass_guided_edit_gate: bool = False,
     creator_strategy: dict | None = None,
     creator_guided_attempt_id: str | None = None,
+    speech_cleanup_contract: str | None = None,
+    speech_cleanup_action: str | None = None,
+    expected_job_id: str | None = None,
 ) -> DispatchResult:
     """Load + lock a plan item, re-check for an active render, then dispatch.
 
@@ -1045,6 +1090,12 @@ def dispatch_item_render_for(
     This remains a task-side trust boundary even when a route already checked
     ownership: delayed deliveries and direct Celery calls must fail closed too.
     """
+    from app.config import settings  # noqa: PLC0415
+    from app.services.speech_cleanup import (  # noqa: PLC0415
+        capability_for_item,
+        renderer_enabled_for_item,
+    )
+
     with sync_session() as session:
         try:
             item_uuid = uuid.UUID(str(plan_item_id))
@@ -1083,10 +1134,53 @@ def dispatch_item_render_for(
         if item is None or item.content_plan_id != plan.id:
             log.warning("plan_item_videos.missing_item", plan_item_id=plan_item_id)
             return DispatchResult("missing_row")
+        if speech_cleanup_action is not None and item.current_job_id is None:
+            return DispatchResult("speech_cleanup_recovery_conflict")
         if item.current_job_id is not None:
             current = session.get(
                 Job, item.current_job_id, with_for_update=True, populate_existing=True
             )
+            if speech_cleanup_action is not None:
+                expected = str(expected_job_id or "")
+                failed_cleanup = bool(
+                    current is not None
+                    and current.id
+                    and str(current.id) == expected
+                    and current.status
+                    in {"processing_failed", "variants_failed", "variants_ready_partial"}
+                    and (
+                        current.failure_reason == "speech_cleanup_failed"
+                        or any(
+                            isinstance(v, dict) and v.get("error_class") == "speech_cleanup_failed"
+                            for v in ((current.assembly_plan or {}).get("variants") or [])
+                        )
+                    )
+                )
+                if not failed_cleanup:
+                    return DispatchResult("speech_cleanup_recovery_conflict")
+                if speech_cleanup_action == "retry_required":
+                    if not bool(getattr(item, "speech_cleanup_enabled", False)):
+                        return DispatchResult("speech_cleanup_recovery_conflict")
+                    capability = capability_for_item(
+                        item,
+                        mode=settings.speech_cleanup_mode,
+                        engine_enabled=settings.silence_cut_enabled,
+                        renderer_enabled=renderer_enabled_for_item(
+                            item,
+                            subtitled_enabled=settings.subtitled_archetype_enabled,
+                            talking_head_enabled=settings.edit_format_talking_head_enabled,
+                            narrated_self_narration_enabled=settings.narrated_self_narration_enabled,
+                        ),
+                    )
+                    if not capability.available:
+                        return DispatchResult("speech_cleanup_unavailable")
+                    speech_cleanup_contract = "required_v1"
+                elif speech_cleanup_action == "disable_and_create":
+                    item.speech_cleanup_enabled = False
+                    item.speech_cleanup_notice = None
+                    speech_cleanup_contract = "off_v1"
+                else:
+                    return DispatchResult("speech_cleanup_recovery_conflict")
             if current is not None and current.status not in PLAN_ITEM_JOB_TERMINAL:
                 return DispatchResult("already_active", job_id=str(current.id))
         if not persona_row.persona:
@@ -1102,6 +1196,7 @@ def dispatch_item_render_for(
             bypass_guided_edit_gate=bypass_guided_edit_gate,
             creator_strategy=creator_strategy,
             creator_guided_attempt_id=creator_guided_attempt_id,
+            speech_cleanup_contract=speech_cleanup_contract,
         )
 
 
@@ -1778,6 +1873,12 @@ def reroll_plan_item(
         item = session.get(PlanItem, iid, with_for_update=True)
         if item is None or item.content_plan_id != content_plan_id:
             return
+        from app.services.speech_cleanup import (  # noqa: PLC0415
+            cleanup_inputs,
+            reconcile_item_policy_change,
+        )
+
+        previous_speech_inputs = cleanup_inputs(item)
 
         if not replacements:
             # Generator returned nothing usable — silently keep old idea.
@@ -1816,11 +1917,15 @@ def reroll_plan_item(
                 shot_id=None,
                 user_note=str(a.get("user_note") or ""),
                 machine_matched=bool(a.get("machine_matched")),
+                media_id=str(a.get("media_id")) if a.get("media_id") else None,
             )
             for a in existing_assignments
             if isinstance(a, dict) and a.get("gcs_path")
         ]
         set_item_clips(item, demoted)
+        # set_item_clips handles footage identity changes; this shared writer
+        # reconciliation also covers the reroll's newly selected edit format.
+        reconcile_item_policy_change(item, previous_speech_inputs)
 
         session.commit()
 

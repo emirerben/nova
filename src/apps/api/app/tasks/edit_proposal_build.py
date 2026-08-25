@@ -854,7 +854,14 @@ def _run_draft_attempt(
                 )
                 db.commit()
                 return
+            from app.services.speech_cleanup import (  # noqa: PLC0415
+                cleanup_inputs,
+                reconcile_item_policy_change,
+            )
+
+            previous_speech_inputs = cleanup_inputs(item)
             item.clip_assignments = merged_assignments
+            reconcile_item_policy_change(item, previous_speech_inputs)
             drafting = current.model_copy(
                 update={
                     "proposal_version": current.proposal_version + 1,

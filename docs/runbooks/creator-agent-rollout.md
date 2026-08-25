@@ -16,12 +16,12 @@ inferred preferences. Keep those consent boundaries separate.
   The frontend helper only submits an explicit opt-in request; enabling the
   backend flag does not enroll a session.
 - Migration `0081_creator_agent_sessions` is the V1 state foundation.
-  Migrations `0084_creator_workspace_proposals` and
-  `0085_creator_workspace_receipts` add Stage 5 persistence. Migration
-  `0086_creator_auto_iteration` adds the Stage 4 opt-in and 0..1 automatic
-  revision count. Migration `0087_creator_workspace_proposal_processing` adds
+  Migrations `0085_creator_workspace_proposals` and
+  `0086_creator_workspace_receipts` add Stage 5 persistence. Migration
+  `0087_creator_auto_iteration` adds the Stage 4 opt-in and 0..1 automatic
+  revision count. Migration `0088_creator_workspace_proposal_processing` adds
   durable relevance claims and retries. Migration
-  `0088_creator_workspace_query_indexes` bounds workspace lookups and adds the
+  `0089_creator_workspace_query_indexes` bounds workspace lookups and adds the
   child-side foreign-key indexes used by proposal and receipt polling. Apply
   the full chain before enabling any Creator Agent capability.
 
@@ -39,7 +39,7 @@ inferred preferences. Keep those consent boundaries separate.
 | `EDIT_FORMAT_SINGLE_HERO_ENABLED` | `false` | Requires representative local-render evidence; worker rejects missing/version-mismatched jobs. |
 | `MAIN_CREATOR_AGENT_FREEFORM_UPLOADS_ENABLED` | `false` | Enables only proposal intake/classification; approval is still required. |
 | `NEXT_PUBLIC_MAIN_CREATOR_AGENT_FREEFORM_UPLOADS_ENABLED` | `false` | Shows off-plan upload intake; enable only after the Fly freeform-upload flag. |
-| `MAIN_CREATOR_AGENT_WORKSPACE_ENABLED` | `false` | Enables coordination receipts and explicit preference signals; requires `0085`. |
+| `MAIN_CREATOR_AGENT_WORKSPACE_ENABLED` | `false` | Enables coordination receipts and explicit preference signals; requires `0086`. |
 | `NEXT_PUBLIC_MAIN_CREATOR_AGENT_WORKSPACE_ENABLED` | `false` | Shows explicit preference controls before a receipt exists; enable only after the Fly workspace flag. |
 | `USER_STYLE_ENABLED` | `false` | Needed only for an explicit workspace `style_edit`; never infer style from proposals or outcomes. |
 | `EDIT_TRANSITIONS_ENABLED` | `false` | Independent Stage 3 transition capability. |
@@ -66,8 +66,8 @@ make a backend route safe.
    (cd src/apps/api && alembic upgrade head)
    ```
 
-   The expected Creator Agent head is `0088`. Do not downgrade `0084` through
-   `0088` during a feature rollback; proposals, processing claims, receipts,
+   The expected Creator Agent head is `0089`. Do not downgrade `0085` through
+   `0089` during a feature rollback; proposals, processing claims, receipts,
    opt-in state, rollback evidence, and the query/index contract must remain
    readable.
 
@@ -148,10 +148,10 @@ make a backend route safe.
    montage fallback.
 
 10. **Stage 5 intake, then coordination.** Enable
-   `MAIN_CREATOR_AGENT_FREEFORM_UPLOADS_ENABLED` only after migration 0084 and
+   `MAIN_CREATOR_AGENT_FREEFORM_UPLOADS_ENABLED` only after migration 0085 and
    the proposal browser flow is verified. Test ready `existing_item`, `new_topic`,
    and `unmatched` proposals; every decision must be explicit and hash-fenced.
-   Then enable `MAIN_CREATOR_AGENT_WORKSPACE_ENABLED` after 0085 and verify a
+   Then enable `MAIN_CREATOR_AGENT_WORKSPACE_ENABLED` after 0086 and verify a
    multi-item receipt, exact generation identities, stale ownership, and polling.
    Only after those backend checks, enable the corresponding Vercel twins
    `NEXT_PUBLIC_MAIN_CREATOR_AGENT_FREEFORM_UPLOADS_ENABLED` and
@@ -177,7 +177,7 @@ make a backend route safe.
 - Stage 2 claims and persists only the exact creator/session/PlanItem/Job/variant/
   generation tuple. A newer render must make the old review stale.
 - Stage 4 claims the same exact tuple plus manifest/context hashes, session
-  revision, ownership epoch, and generation idempotency key. The 0086 columns
+  revision, ownership epoch, and generation idempotency key. The 0087 columns
   default to opt-out and zero, so old workers ignore the new state safely while
   the migration is applied. A prepared craft receipt is recovered idempotently;
   a successful cycle records the prior generation and assembly plan in the
@@ -223,7 +223,7 @@ paths for every row. A green unit suite is not a substitute for the human rows.
 
 | Check | Required evidence | Status / owner / timestamp |
 |---|---|---|
-| Migration | `alembic current` and `alembic heads` show `0088`; schema test sees 0084 proposal, 0085 receipt, 0086 opt-in/count state, 0087 processing claims, and 0088 bounded-query indexes | |
+| Migration | `alembic current` and `alembic heads` show `0089`; schema test sees 0085 proposal, 0086 receipt, 0087 opt-in/count state, 0088 processing claims, and 0089 bounded-query indexes | |
 | Replay evals | Focused Creator Agent/schema/capability/session/workspace tests pass | |
 | Live eval | `test_main_creator_evals.py --eval-mode=live --with-judge` passes with approved credentials | |
 | Stage 2 exact render | Ready Job/variant/generation receipt; review evidence and stale-target case | |

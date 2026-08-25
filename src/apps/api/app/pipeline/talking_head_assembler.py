@@ -234,6 +234,7 @@ def _spine_silence_cut_plan(
     tmpdir: str,
     silence_cut_fn: Callable[..., dict[str, Any]],
     job_id: str | None,
+    strict_required: bool = False,
 ) -> tuple[Any, float, int, list[dict[str, Any]]]:
     """Spine silence-cut ANALYSIS (plans/010 T6): gates → pre-cap → shared analysis.
 
@@ -250,6 +251,10 @@ def _spine_silence_cut_plan(
             has_audio = bool(probe_video(spine_path).has_audio)
         except Exception as exc:  # noqa: BLE001 — probe failure ⇒ skip the stage, render uncut
             log.warning("talking_head_spine_cut_probe_failed", job_id=job_id, error=str(exc))
+            if strict_required:
+                from app.services.speech_cleanup import SpeechCleanupFailure  # noqa: PLC0415
+
+                raise SpeechCleanupFailure("probe_failed") from exc
             return None, spine_dur, 0, []
     if not has_audio:
         record_pipeline_event(
@@ -285,6 +290,10 @@ def _spine_silence_cut_plan(
             record_pipeline_event(
                 "silence_cut", "silence_cut_analysis_failed", {"error": str(exc)[:200]}
             )
+            if strict_required:
+                from app.services.speech_cleanup import SpeechCleanupFailure  # noqa: PLC0415
+
+                raise SpeechCleanupFailure("analysis_prepare_failed") from exc
             return None, spine_dur, 0, []
 
     entry = silence_cut_fn(
@@ -294,7 +303,26 @@ def _spine_silence_cut_plan(
         source_fingerprint=source_fingerprint,
     )
     if not isinstance(entry, dict) or entry.get("failed") or entry.get("plan") is None:
+        if strict_required and (
+            not isinstance(entry, dict) or entry.get("failed") or entry.get("plan") is None
+        ):
+            from app.services.speech_cleanup import SpeechCleanupFailure  # noqa: PLC0415
+
+            reason = (
+                "analysis_failed"
+                if isinstance(entry, dict) and entry.get("failed")
+                else "analysis_no_plan"
+            )
+            raise SpeechCleanupFailure(reason)
         return None, analysis_dur, 0, []
+    if strict_required and getattr(entry["plan"], "bailout_reason", None) not in {
+        None,
+        "no_words",
+        "clip_too_short",
+    }:
+        from app.services.speech_cleanup import SpeechCleanupFailure  # noqa: PLC0415
+
+        raise SpeechCleanupFailure("unsafe_plan")
     return (
         entry["plan"],
         analysis_dur,
@@ -449,6 +477,7 @@ def assemble_talking_head(
     landscape_fit: str = "fill",
     silence_cut_fn: Callable[..., dict[str, Any]] | None = None,
     silence_cut_out: dict[str, Any] | None = None,
+    strict_speech_cleanup: bool = False,
 ) -> str:
     """Render a talking-head edit: spine audio under B-roll cutaways.
 
@@ -518,6 +547,12 @@ def assemble_talking_head(
     sc_review_candidates: list[dict[str, Any]] = []
     sc_apply_error: str | None = None
     if silence_cut_fn is not None:
+        if silence_cut_out is not None:
+            probe_for_audio = (probe_map or {}).get(spine_path) or (probe_map or {}).get(
+                selection.spine_clip_id
+            )
+            if getattr(probe_for_audio, "has_audio", None) is False:
+                silence_cut_out["outcome"] = "insufficient_source_speech"
         sc_plan, sc_analysis_dur, sc_retake_count, sc_review_candidates = _spine_silence_cut_plan(
             spine_path=spine_path,
             source_fingerprint=selection.spine_clip_id,
@@ -530,6 +565,7 @@ def assemble_talking_head(
             tmpdir=tmpdir,
             silence_cut_fn=silence_cut_fn,
             job_id=job_id,
+            strict_required=strict_speech_cleanup,
         )
     sc_apply = (
         sc_plan is not None
@@ -537,6 +573,9 @@ def assemble_talking_head(
         and bool(sc_plan.removed)
         and bool(sc_plan.keep_segments)
     )
+    if strict_speech_cleanup and silence_cut_out is not None and sc_plan is not None:
+        if getattr(sc_plan, "bailout_reason", None) in {"no_words", "clip_too_short"}:
+            silence_cut_out["outcome"] = "insufficient_source_speech"
 
     spine_reframed = f"{tmpdir}/spine_{_safe_stem(selection.spine_clip_id)}.mp4"
     # probe_map is keyed by local file path (from _probe_clips), not by clip_id.
@@ -569,6 +608,10 @@ def assemble_talking_head(
         else:
             _reframe_spine(spine_dur, {})
     except Exception as exc:  # noqa: BLE001 — ReframeError or any probe/IO failure degrades
+        if strict_speech_cleanup and sc_apply:
+            from app.services.speech_cleanup import SpeechCleanupFailure  # noqa: PLC0415
+
+            raise SpeechCleanupFailure("apply_failed") from exc
         if not sc_apply:
             raise SpineExtractionError(
                 f"failed to reframe spine clip {selection.spine_clip_id}: {exc}"
@@ -627,7 +670,10 @@ def assemble_talking_head(
             ),
         )
         if sc_apply_error is None and silence_cut_out is not None:
-            silence_cut_out["summary"] = plan_summary(sc_plan, original_duration_s=sc_analysis_dur)
+            summary = plan_summary(sc_plan, original_duration_s=sc_analysis_dur)
+            if strict_speech_cleanup:
+                summary["outcome"] = "applied" if sc_apply else "no_change"
+            silence_cut_out["summary"] = summary
             silence_cut_out["review_candidates"] = sc_review_candidates
 
     # ── B-roll: reframe each; a failure drops that clip (best-effort). ──

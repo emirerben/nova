@@ -440,6 +440,9 @@ class GenerativeVariant(BaseModel):
     speech_cut_in_flight: dict | None = None
     speech_cut_last_receipt: dict | None = None
     speech_cut_last_error: dict | None = None
+    silence_cut: dict | None = None
+    silence_cut_outcome: str | None = None
+    speech_cleanup_failure_reason: str | None = None
     text_mode: str | None = None
     style_set_id: str | None = None
     rank: int | None = None
@@ -551,6 +554,7 @@ class GenerativeJobStatusResponse(BaseModel):
     # owners need this to distinguish strict-story verification failures from
     # a generic render error without exposing internal exception details.
     failure_reason: str | None = None
+    speech_cleanup_failure_reason: str | None = None
     created_at: datetime
     updated_at: datetime
     # The plan-declared edit format (montage default). Per-variant `resolved_archetype`
@@ -2703,6 +2707,14 @@ def _speech_timing_rerender_thunk(job_id: str, operation_id: str) -> Callable[[]
     return _enqueue
 
 
+def _legacy_silence_flag_for_operation(plan: dict, desired: bool) -> bool:
+    """Keep the mutable silence flag only for pre-contract legacy jobs."""
+
+    if plan.get("speech_cleanup_contract") in {"required_v1", "off_v1"}:
+        return bool(plan.get("silence_cut_disabled"))
+    return bool(desired)
+
+
 def dispatch_apply_speech_cut_candidate(
     job: Job,
     variant_id: str,
@@ -2756,10 +2768,12 @@ def dispatch_apply_speech_cut_candidate(
         "finalizer_claim": None,
         "revision": request["revision"],
         "in_flight": updated["speech_cut_in_flight"],
+        "execution_contract": "reviewed_cut_v1",
     }
+    plan = job.assembly_plan or {}
     job.assembly_plan = {
-        **(job.assembly_plan or {}),
-        "silence_cut_disabled": False,
+        **plan,
+        "silence_cut_disabled": _legacy_silence_flag_for_operation(plan, False),
         "speech_cut_control": control,
         "speech_cut_previous_variant": variant,
         "speech_cut_previous_variants": list((job.assembly_plan or {}).get("variants") or []),
@@ -2804,9 +2818,10 @@ def dispatch_restore_original_timing(
         updated if v.get("variant_id") == variant_id else v
         for v in (job.assembly_plan or {}).get("variants") or []
     ]
+    plan = job.assembly_plan or {}
     job.assembly_plan = {
-        **(job.assembly_plan or {}),
-        "silence_cut_disabled": True,
+        **plan,
+        "silence_cut_disabled": _legacy_silence_flag_for_operation(plan, True),
         "speech_cut_control": {
             "variant_id": variant_id,
             "forced_removals": [],
@@ -2817,6 +2832,7 @@ def dispatch_restore_original_timing(
             "finalizer_claim": None,
             "revision": request["revision"],
             "in_flight": updated["speech_cut_in_flight"],
+            "execution_contract": "restore_original_v1",
         },
         "speech_cut_previous_variant": variant,
         "speech_cut_previous_variants": list((job.assembly_plan or {}).get("variants") or []),
@@ -8784,6 +8800,11 @@ async def get_generative_job_status(
         error_detail=None if job.status == "cancelled" else job.error_detail,
         failure_reason=(
             None if job.status == "cancelled" else getattr(job, "failure_reason", None)
+        ),
+        speech_cleanup_failure_reason=(
+            None
+            if job.status == "cancelled"
+            else (job.assembly_plan or {}).get("speech_cleanup_failure_reason")
         ),
         created_at=job.created_at,
         updated_at=job.updated_at,

@@ -155,6 +155,13 @@ from app.services.media_overlay_preview import (
     is_heif_overlay,
     nonblank_str,
 )
+from app.services.speech_cleanup import (
+    acknowledge_notice,
+    capability_for_item,
+    cleanup_inputs,
+    reconcile_item_policy_change,
+    renderer_enabled_for_item,
+)
 
 
 async def _load_plan_persona_or_409(
@@ -501,6 +508,10 @@ class PlanItemResponse(BaseModel):
     smart_sound_design_enabled: bool = True
     smart_captions_available: bool | None = None
     smart_captions_unavailable_reason: str | None = None
+    speech_cleanup_enabled: bool = False
+    speech_cleanup_available: bool = False
+    speech_cleanup_unavailable_reason: str | None = None
+    speech_cleanup_notice: dict[str, str] | None = None
     # Montage visual preset. "classic" preserves today's sequential montage;
     # collage presets opt into the collage-wall assembler.
     montage_preset: MontagePreset = "classic"
@@ -568,6 +579,28 @@ def plan_item_response(
     ]
 
     guided_applicable = _guided_edit_is_applicable(item)
+    speech_capability = capability_for_item(
+        item,
+        mode=settings.speech_cleanup_mode,
+        engine_enabled=settings.silence_cut_enabled,
+        renderer_enabled=renderer_enabled_for_item(
+            item,
+            subtitled_enabled=settings.subtitled_archetype_enabled,
+            talking_head_enabled=settings.edit_format_talking_head_enabled,
+            narrated_self_narration_enabled=settings.narrated_self_narration_enabled,
+        ),
+    )
+    raw_speech_notice = getattr(item, "speech_cleanup_notice", None)
+    speech_notice = (
+        {
+            "id": str(raw_speech_notice.get("id")),
+            "reason": str(raw_speech_notice.get("reason")),
+        }
+        if isinstance(raw_speech_notice, dict)
+        and raw_speech_notice.get("id")
+        and raw_speech_notice.get("reason")
+        else None
+    )
     return PlanItemResponse(
         id=str(item.id),
         day_index=item.day_index,
@@ -602,6 +635,10 @@ def plan_item_response(
         smart_sound_design_enabled=(getattr(item, "smart_sound_design_enabled", None) is not False),
         smart_captions_available=smart_captions_available,
         smart_captions_unavailable_reason=smart_captions_unavailable_reason,
+        speech_cleanup_enabled=bool(getattr(item, "speech_cleanup_enabled", False)),
+        speech_cleanup_available=speech_capability.available,
+        speech_cleanup_unavailable_reason=speech_capability.reason,
+        speech_cleanup_notice=speech_notice,
         montage_preset=coerce_montage_preset(getattr(item, "montage_preset", None)),
         voiceover_gcs_path=item.voiceover_gcs_path,
         audio_mode=(
@@ -720,6 +757,13 @@ class PlanItemEdit(BaseModel):
     # When set, supersedes the persona-level content_mode for this item only.
     # "create_new" = "Planning to film"; "existing_footage" = "I already have footage".
     content_mode: Literal["existing_footage", "create_new", "mixed"] | None = None
+    speech_cleanup_enabled: bool | None = None
+    speech_cleanup_notice_ack_id: str | None = None
+
+
+class GenerateItemBody(BaseModel):
+    speech_cleanup_action: Literal["retry_required", "disable_and_create"] | None = None
+    expected_job_id: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 def _stamp_missing_filming_shot_ids(shots: list[dict]) -> list[dict]:
@@ -738,6 +782,7 @@ async def edit_plan_item(
     from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
 
     item = await _load_owned_item(item_id, user.id, db, for_update=True)
+    previous_speech_inputs = cleanup_inputs(item)
 
     updates = edit.model_dump(exclude_none=True)
     smart_capability = None
@@ -791,6 +836,33 @@ async def edit_plan_item(
         item.audio_mode = updates["audio_mode"]  # Pydantic Literal already validates
     if "content_mode" in updates and updates["content_mode"] is not None:
         item.content_mode = updates["content_mode"]  # Pydantic Literal already validates
+    # Every PlanItem writer must reconcile stored consent after changing the
+    # content inputs. Operational outages are intentionally not part of this
+    # helper, so an explicit On preference survives a temporary unavailability.
+    reconcile_item_policy_change(item, previous_speech_inputs)
+    if updates.get("speech_cleanup_enabled") is True:
+        capability = capability_for_item(
+            item,
+            mode=settings.speech_cleanup_mode,
+            engine_enabled=settings.silence_cut_enabled,
+            renderer_enabled=renderer_enabled_for_item(
+                item,
+                subtitled_enabled=settings.subtitled_archetype_enabled,
+                talking_head_enabled=settings.edit_format_talking_head_enabled,
+                narrated_self_narration_enabled=settings.narrated_self_narration_enabled,
+            ),
+        )
+        if not capability.available:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"speech_cleanup_unavailable:{capability.reason}",
+            )
+        item.speech_cleanup_enabled = True
+    elif updates.get("speech_cleanup_enabled") is False:
+        item.speech_cleanup_enabled = False
+    if "speech_cleanup_notice_ack_id" in updates:
+        acknowledge_notice(item, updates.get("speech_cleanup_notice_ack_id"))
+        flag_modified(item, "speech_cleanup_notice")
     if updates:
         item.user_edited = True
     await db.commit()
@@ -1726,7 +1798,13 @@ async def set_item_voiceover(
     voiceover_path = body.voiceover_gcs_path
     if voiceover_path is None:
         item = await _load_owned_item(item_id, owner_id, db, for_update=True)
+        previous_speech_inputs = cleanup_inputs(item)
         item.voiceover_gcs_path = None
+        if getattr(item, "audio_mode", None) == "voiceover":
+            # Clearing the only voiceover source must not leave a stale audio
+            # mode that permanently makes Speech cleanup look ineligible.
+            item.audio_mode = "kria"
+        reconcile_item_policy_change(item, previous_speech_inputs)
     else:
         # Establish item ownership before touching storage, but do not hold the
         # plan/persona/item lock chain across the external metadata call.
@@ -1787,8 +1865,10 @@ async def set_item_voiceover(
                 detail="Voiceover recording must be audio",
             )
         item = await _load_owned_item(item_id, owner_id, db, for_update=True)
+        previous_speech_inputs = cleanup_inputs(item)
         item.voiceover_gcs_path = voiceover_path
         item.audio_mode = "voiceover"
+        reconcile_item_policy_change(item, previous_speech_inputs)
     await db.commit()
     reloaded = await _load_owned_item(item_id, owner_id, db)
     instruction_level = await _get_instruction_level(reloaded, db)
@@ -2290,6 +2370,19 @@ async def _respond_to_dispatch_result(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Your clips couldn't be validated — re-upload them and try again",
+        )
+    if result.outcome == "speech_cleanup_unavailable":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="speech_cleanup_unavailable:Speech cleanup is unavailable for this item",
+        )
+    if result.outcome == "speech_cleanup_recovery_conflict":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "speech_cleanup_recovery_conflict: The failed cleanup render changed; "
+                "refresh and try again"
+            ),
         )
     if result.outcome == "publish_failed":
         raise HTTPException(
@@ -3261,6 +3354,7 @@ async def generate_item(
     item_id: str,
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
+    body: GenerateItemBody | None = Body(default=None),
 ) -> PlanItemResponse:
     """Enqueue a render from attached clips or an approved guided story."""
     item, plan, _ = await _load_owned_item_context(item_id, user.id, db)
@@ -3350,6 +3444,16 @@ async def generate_item(
         generate_plan_item_videos,
     )
 
+    if body is not None and body.speech_cleanup_action and not settings.PLAN_SYNC_DISPATCH_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Speech cleanup recovery is unavailable while synchronous dispatch is disabled",
+        )
+    if body is not None and bool(body.speech_cleanup_action) != bool(body.expected_job_id):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Speech cleanup recovery requires both an action and expected_job_id",
+        )
     if not settings.PLAN_SYNC_DISPATCH_ENABLED:
         # Kill-switch fallback (plans/014) — byte-identical legacy contract:
         # 409 off derived status, Job minted asynchronously by the task, the
@@ -3383,11 +3487,22 @@ async def generate_item(
     # the async handler → MissingGreenlet 500 on every successful generate
     # (review 2026-08-04, performance P1).
     owner_id = user.id
-    result = await to_thread.run_sync(
-        dispatch_item_render_for,
-        str(item.id),
-        ownership_epoch,
-    )
+    # anyio.to_thread.run_sync accepts positional arguments only. Keep the
+    # legacy no-body call shape intact (a few integrations monkeypatch the
+    # dispatcher with the original two-argument signature), and bind recovery
+    # options only when this request actually carries them.
+    dispatch_args = (str(item.id), ownership_epoch)
+    if body is not None and (body.speech_cleanup_action or body.expected_job_id):
+        from functools import partial  # noqa: PLC0415
+
+        dispatch = partial(
+            dispatch_item_render_for,
+            speech_cleanup_action=body.speech_cleanup_action,
+            expected_job_id=body.expected_job_id,
+        )
+    else:
+        dispatch = dispatch_item_render_for
+    result = await to_thread.run_sync(dispatch, *dispatch_args)
     return await _respond_to_dispatch_result(result, item_id, owner_id, db)
 
 

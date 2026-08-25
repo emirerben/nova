@@ -882,7 +882,14 @@ async def confirm_creator_plan(
             status="running",
         )
         db.add(receipt)
+        from app.services.speech_cleanup import (  # noqa: PLC0415
+            cleanup_inputs,
+            reconcile_item_policy_change,
+        )
+
+        previous_speech_inputs = cleanup_inputs(item)
         _apply_plan_intent(item, edit_plan)
+        reconcile_item_policy_change(item, previous_speech_inputs)
         if edit_plan.strategy.render_program == "guided":
             _seed_guided_specialist_brief(
                 item,
