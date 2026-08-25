@@ -8,9 +8,12 @@ offline workers/tests from downloading or sending creator media anywhere.
 from __future__ import annotations
 
 import hashlib
+import tempfile
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, Callable
+from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -371,6 +374,24 @@ def run_quality_review(
     )
 
 
+def review_with_video_quality_grader(video_gcs_path: str) -> Any:
+    """Download and grade the exact render claimed by the fenced worker.
+
+    Reaching this adapter requires both Creator review flags plus the exact
+    creator/item/Job/variant/generation checks. Importing this module never
+    transfers media, and tests replace the adapter with an offline callable.
+    """
+
+    from app.services.video_grader import VideoQualityGrader  # noqa: PLC0415
+    from app.storage import download_to_file  # noqa: PLC0415
+    from app.tasks.grade_final_video import RUBRIC_PATH  # noqa: PLC0415
+
+    with tempfile.TemporaryDirectory(prefix="creator-review-") as tmpdir:
+        local_path = str(Path(tmpdir) / "render.mp4")
+        download_to_file(video_gcs_path, local_path)
+        return VideoQualityGrader(RUBRIC_PATH, model=QUALITY_REVIEW_MODEL).grade(local_path)
+
+
 def mark_review_unavailable(
     db: Any,
     *,
@@ -419,7 +440,14 @@ def quality_review_creator_session(
     """Offline-safe worker entry point; a reviewer adapter is rollout-owned."""
 
     from app.agents._persistence import persist_agent_run  # noqa: PLC0415
+    from app.config import settings  # noqa: PLC0415
     from app.database import sync_session  # noqa: PLC0415
+
+    if not (
+        settings.main_creator_agent_review_enabled
+        and settings.main_creator_agent_quality_review_enabled
+    ):
+        return
 
     run_quality_review(
         session_id=session_id,
@@ -427,7 +455,7 @@ def quality_review_creator_session(
         variant_id=variant_id,
         render_generation_id=render_generation_id,
         db_factory=sync_session,
-        reviewer=None,
+        reviewer=review_with_video_quality_grader,
         persist_run=persist_agent_run,
     )
 
@@ -440,5 +468,6 @@ __all__ = [
     "quality_review_creator_session",
     "queue_creator_quality_review",
     "review_key",
+    "review_with_video_quality_grader",
     "run_quality_review",
 ]
