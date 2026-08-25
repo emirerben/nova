@@ -1236,6 +1236,48 @@ export interface CreatorAgentPlanPreview {
   story_structure?: string[];
   caption_style?: string | null;
   intro_hook?: string | null;
+  /** Optional on newer creator-agent responses. Older APIs omit this block. */
+  edit_plan?: {
+    strategy?: {
+      optional_treatments?: Array<"overlays" | "sfx" | "transitions" | "looks">;
+    };
+  } | null;
+}
+
+export interface CreatorReviewEvidence {
+  evidence_id: string;
+  kind: "visual" | "audio" | "timing" | "caption" | "structure";
+  severity: "info" | "warning" | "critical";
+  start_s: number;
+  end_s: number;
+  observation: string;
+}
+
+export interface CreatorReviewRevision {
+  revision_id: string;
+  summary: string;
+  rationale?: string;
+  evidence_ids: string[];
+}
+
+/** Bounded Stage 2 receipt. Optional so V1 responses render unchanged. */
+export interface CreatorAgentReview {
+  status?: "queued" | "running" | "complete" | "failed" | "unavailable";
+  decision?: "approve" | "revise" | "reject" | "unavailable";
+  review_mode?: "objective" | "taste" | "mixed";
+  quality_score?: number | null;
+  confidence?: number | null;
+  reviewed_at?: string | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  evidence?: CreatorReviewEvidence[];
+  proposed_revision?: CreatorReviewRevision | null;
+}
+
+export interface CreatorAutoIterationCapability {
+  /** Only advertised when the server has a live autonomy route. */
+  available: boolean;
+  label?: string;
 }
 
 export interface CreatorAgentSession {
@@ -1247,6 +1289,8 @@ export interface CreatorAgentSession {
   can_render: boolean;
   pending_plan: CreatorAgentPlanPreview | null;
   current_job_id: string | null;
+  last_review?: CreatorAgentReview | null;
+  auto_iteration?: CreatorAutoIterationCapability | null;
   events: CreatorAgentEvent[];
   created_at: string;
   updated_at: string;
@@ -1311,6 +1355,21 @@ export function cancelCreatorAgentSession(
   return request<CreatorAgentSession>(`/plan-items/${itemId}/creator-agent/cancel`, {
     method: "POST",
     body: JSON.stringify({ session_id: sessionId, expected_revision: expectedRevision }),
+  });
+}
+
+/**
+ * Future autonomy boundary. The control is intentionally hidden unless the
+ * server advertises `session.auto_iteration.available`; V1 never guesses an
+ * endpoint or mutates a plan from a checkbox.
+ */
+export function requestCreatorAutoIteration(
+  itemId: string,
+  body: { session_id: string; expected_revision: number; opt_in: true; client_event_id: string },
+): Promise<CreatorAgentSession> {
+  return request<CreatorAgentSession>(`/plan-items/${itemId}/creator-agent/auto-iteration`, {
+    method: "POST",
+    body: JSON.stringify(body),
   });
 }
 
@@ -1401,6 +1460,66 @@ export interface WorkspacePreferenceSignalResponse {
   note: string;
   style: Record<string, unknown> | null;
   preference_summary: string | null;
+}
+
+export interface CreatorWorkspaceRelevanceProposal {
+  id: string;
+  proposal_id: string;
+  creator_id: string;
+  plan_id: string;
+  ownership_epoch: number;
+  idempotency_key: string;
+  request_digest: string;
+  media_ids: string[];
+  status: "pending" | "ready" | "failed" | "approved" | "rejected";
+  relevance: "existing_item" | "new_topic" | "unmatched" | null;
+  target_plan_item_id: string | null;
+  topic: string | null;
+  rationale: string | null;
+  confidence: number | null;
+  proposal_hash: string | null;
+  error_code: string | null;
+  decision: "accept_existing" | "accept_new_topic" | "reject" | null;
+  result_plan_item_id: string | null;
+}
+
+export function createCreatorWorkspaceRelevanceProposal(
+  planId: string,
+  mediaIds: string[],
+  idempotencyKey: string,
+): Promise<CreatorWorkspaceRelevanceProposal> {
+  return request<CreatorWorkspaceRelevanceProposal>(
+    `/content-plans/${planId}/workspace/relevance-proposals`,
+    {
+      method: "POST",
+      body: JSON.stringify({ media_ids: mediaIds, idempotency_key: idempotencyKey }),
+    },
+  );
+}
+
+export function getCreatorWorkspaceRelevanceProposal(
+  planId: string,
+  proposalId: string,
+): Promise<CreatorWorkspaceRelevanceProposal> {
+  return request<CreatorWorkspaceRelevanceProposal>(
+    `/content-plans/${planId}/workspace/relevance-proposals/${proposalId}`,
+    { cache: "no-store" },
+  );
+}
+
+export function decideCreatorWorkspaceRelevanceProposal(
+  planId: string,
+  proposalId: string,
+  body: {
+    expected_proposal_hash: string;
+    decision: "accept_existing" | "accept_new_topic" | "reject";
+    client_event_id: string;
+  },
+): Promise<CreatorWorkspaceRelevanceProposal> {
+  return request<CreatorWorkspaceRelevanceProposal>(
+    `/content-plans/${planId}/workspace/relevance-proposals/${proposalId}/decision`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
 }
 
 export function draftEditProposal(
