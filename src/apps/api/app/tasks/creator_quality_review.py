@@ -606,6 +606,7 @@ def quality_review_creator_session(
     from app.agents._persistence import persist_agent_run  # noqa: PLC0415
     from app.config import settings  # noqa: PLC0415
     from app.database import sync_session  # noqa: PLC0415
+    from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
     if not (
         settings.main_creator_agent_review_enabled
@@ -617,16 +618,17 @@ def quality_review_creator_session(
     # pending receipt. A fast worker can observe the pre-commit session row;
     # bounded retry makes that ordering safe without making review polling an
     # implicit outbox.
-    did_run = run_quality_review(
-        session_id=session_id,
-        job_id=job_id,
-        variant_id=variant_id,
-        render_generation_id=render_generation_id,
-        db_factory=sync_session,
-        reviewer=review_with_video_quality_grader,
-        persist_run=persist_agent_run,
-        reclaim_running=bool(self.request.delivery_info.get("redelivered")),
-    )
+    with pipeline_trace_for(job_id):
+        did_run = run_quality_review(
+            session_id=session_id,
+            job_id=job_id,
+            variant_id=variant_id,
+            render_generation_id=render_generation_id,
+            db_factory=sync_session,
+            reviewer=review_with_video_quality_grader,
+            persist_run=persist_agent_run,
+            reclaim_running=bool(self.request.delivery_info.get("redelivered")),
+        )
     if not did_run and self.request.retries < self.max_retries:
         raise self.retry(countdown=1)
 
