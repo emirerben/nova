@@ -5,6 +5,7 @@ import {
   confirmCreatorAgentPlan,
   getCreatorAgentSession,
   PlanApiError,
+  requestCreatorAutoIteration,
   startCreatorAgentSession,
 } from "@/lib/plan-api";
 
@@ -14,6 +15,7 @@ jest.mock("@/lib/plan-api", () => ({
   turnCreatorAgentSession: jest.fn(),
   confirmCreatorAgentPlan: jest.fn(),
   cancelCreatorAgentSession: jest.fn(),
+  requestCreatorAutoIteration: jest.fn(),
   PlanApiError: jest.requireActual("@/lib/plan-api").PlanApiError,
 }));
 
@@ -22,6 +24,9 @@ const startSession = startCreatorAgentSession as jest.MockedFunction<
   typeof startCreatorAgentSession
 >;
 const confirmPlan = confirmCreatorAgentPlan as jest.MockedFunction<typeof confirmCreatorAgentPlan>;
+const requestAuto = requestCreatorAutoIteration as jest.MockedFunction<
+  typeof requestCreatorAutoIteration
+>;
 
 const proposed = {
   id: "session-1",
@@ -139,4 +144,44 @@ it("shows bounded review evidence without mutating the confirmed render", async 
   expect(await screen.findByText("The opening loses momentum.")).not.toBeNull();
   expect(screen.getByText(/Nothing changes without your confirmation/)).not.toBeNull();
   expect(confirmPlan).not.toHaveBeenCalled();
+});
+
+it("requires the explicit checkbox and button before requesting automatic iteration", async () => {
+  getSession.mockResolvedValue({
+    ...proposed,
+    status: "awaiting_feedback",
+    pending_plan: null,
+    auto_iteration: { available: true, label: "One objective revision, if eligible" },
+  });
+  requestAuto.mockResolvedValue({
+    ...proposed,
+    status: "rendering",
+    pending_plan: null,
+    auto_iteration: { available: true },
+  });
+
+  render(<MainCreatorAgentPanel itemId="item-1" />);
+
+  expect(screen.queryByRole("button", { name: "Confirm automatic revision" })).toBeNull();
+  fireEvent.click(await screen.findByRole("checkbox"));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm automatic revision" }));
+
+  await waitFor(() => expect(requestAuto).toHaveBeenCalledTimes(1));
+  expect(requestAuto.mock.calls[0][0]).toBe("item-1");
+  expect(requestAuto.mock.calls[0][1]).toMatchObject({ opt_in: true, session_id: "session-1" });
+});
+
+it("hides automatic iteration when the server does not advertise capability", async () => {
+  getSession.mockResolvedValue({
+    ...proposed,
+    status: "awaiting_feedback",
+    pending_plan: null,
+    auto_iteration: { available: false },
+  });
+
+  render(<MainCreatorAgentPanel itemId="item-1" />);
+
+  await screen.findByText("Create with Kria");
+  expect(screen.queryByRole("checkbox")).toBeNull();
+  expect(requestAuto).not.toHaveBeenCalled();
 });

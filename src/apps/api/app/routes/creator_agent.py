@@ -56,7 +56,11 @@ from app.routes.generative_jobs import (
     visual_block_variant_duration,
 )
 from app.services.content_plan_persona import load_owned_plan_persona
-from app.services.creator_autonomy import build_auto_command, evaluate_auto_iteration
+from app.services.creator_autonomy import (
+    build_auto_bundle,
+    evaluate_auto_iteration,
+    recover_auto_bundle,
+)
 from app.services.creator_craft import (
     CreatorCraftValidationError,
     build_core_craft_editor_commit,
@@ -1614,9 +1618,16 @@ async def request_creator_auto_iteration(
             )
         )
     ).scalar_one_or_none()
-    if duplicate and auto_marker.get("status") != "running":
+    duplicate_running = duplicate is not None and auto_marker.get("status") == "running"
+    if duplicate and not duplicate_running:
         return await _response(db, session)
-    if session.revision != body.expected_revision:
+    request_expected_revision = auto_marker.get("request_expected_revision")
+    exact_duplicate_revision = (
+        duplicate_running
+        and isinstance(request_expected_revision, int)
+        and body.expected_revision == request_expected_revision
+    )
+    if session.revision != body.expected_revision and not exact_duplicate_revision:
         raise HTTPException(status_code=409, detail="Creator session changed")
     session.auto_iteration_opt_in = True
     budget = max(0, int(session.max_render_attempts or 0) - int(session.render_attempts or 0))
@@ -1643,11 +1654,12 @@ async def request_creator_auto_iteration(
         raise HTTPException(
             status_code=409, detail="Creator render is not ready for automatic revision"
         )
-    if not (
-        session.target_job_id and session.target_variant_id and session.target_generation_id
-    ):
+    if not (session.target_job_id and session.target_variant_id and session.target_generation_id):
         raise HTTPException(status_code=409, detail="Creator render target is incomplete")
-    auto_idempotency_key = f"creator-auto:{session.id}:{session.target_generation_id}"
+    auto_idempotency_key = str(
+        auto_marker.get("idempotency_key")
+        or f"creator-auto:{session.id}:{session.target_generation_id}"
+    )
     auto_receipt = (
         await db.execute(
             select(CreatorAgentExecution).where(
@@ -1658,7 +1670,7 @@ async def request_creator_auto_iteration(
     ).scalar_one_or_none()
     prepared_recovery = bool(
         auto_receipt
-        and auto_receipt.status == "running"
+        and auto_receipt.status in {"running", "succeeded"}
         and isinstance(auto_receipt.result, dict)
         and auto_receipt.result.get("prepared")
     )
@@ -1686,64 +1698,82 @@ async def request_creator_auto_iteration(
     ):
         raise HTTPException(status_code=409, detail="Creator render generation changed")
     manifest, _media_context = await resolve_item_creator_context(db, item, persona=persona)
-    pin = {
-        "expected_manifest_hash": manifest.manifest_hash,
-        "expected_context_hash": manifest.context_hash,
-        "expected_job_id": str(job.id),
-        "expected_variant_id": str(session.target_variant_id),
-        "expected_generation_id": str(session.target_generation_id),
-        "expected_revision": session.revision,
-        "expected_ownership_epoch": int(plan_row.ownership_epoch or 0),
-    }
-    try:
-        command = build_auto_command(
-            str(marker.get("allowlist_action")), pin=pin, review=marker, variant=variant
-        )
-    except ValueError as exc:
-        await append_event(
-            db,
-            session,
-            event_type="system_auto_iteration_skipped",
-            payload={
-                "message": "No safe automatic revision was available.",
-                "reason_code": str(exc),
+    raw_bundle = auto_marker.get("bundle")
+    if prepared_recovery or duplicate_running:
+        try:
+            bundle = recover_auto_bundle(
+                raw_bundle,
+                session_id=str(session.id),
+                idempotency_key=auto_idempotency_key,
+                job_id=str(job.id),
+                variant_id=str(session.target_variant_id),
+                generation_id=str(session.target_generation_id),
+                ownership_epoch=int(plan_row.ownership_epoch or 0),
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=409, detail="Creator automatic revision is stale"
+            ) from exc
+    else:
+        if not duplicate:
+            await append_event(
+                db,
+                session,
+                event_type="user_auto_iteration_opt_in",
+                role="user",
+                payload={"message": "Allow one automatic objective revision."},
+                client_event_id=body.client_event_id,
+            )
+        pin = {
+            "expected_manifest_hash": manifest.manifest_hash,
+            "expected_context_hash": manifest.context_hash,
+            "expected_job_id": str(job.id),
+            "expected_variant_id": str(session.target_variant_id),
+            "expected_generation_id": str(session.target_generation_id),
+            "expected_revision": session.revision,
+            "expected_ownership_epoch": int(plan_row.ownership_epoch or 0),
+        }
+        try:
+            bundle = build_auto_bundle(
+                session_id=str(session.id),
+                idempotency_key=auto_idempotency_key,
+                pin=pin,
+                action=str(marker.get("allowlist_action")),
+                review=marker,
+                variant=variant,
+            )
+        except ValueError as exc:
+            await append_event(
+                db,
+                session,
+                event_type="system_auto_iteration_skipped",
+                payload={
+                    "message": "No safe automatic revision was available.",
+                    "reason_code": str(exc),
+                },
+            )
+            await db.commit()
+            return await _response(db, session)
+        session.last_review = {
+            **marker,
+            "auto_iteration": {
+                "status": "running",
+                "action": str(marker.get("allowlist_action")),
+                "session_id": str(session.id),
+                "job_id": str(job.id),
+                "variant_id": str(session.target_variant_id),
+                "previous_generation_id": str(session.target_generation_id),
+                "request_expected_revision": request_expected_revision
+                if isinstance(request_expected_revision, int)
+                else body.expected_revision,
+                "expected_revision": session.revision,
+                "ownership_epoch": int(plan_row.ownership_epoch or 0),
+                "idempotency_key": auto_idempotency_key,
+                "bundle": bundle.model_dump(mode="json"),
             },
-            client_event_id=body.client_event_id,
-        )
+        }
+        session.status = "rendering"
         await db.commit()
-        return await _response(db, session)
-
-    previous_assembly_plan = copy.deepcopy(job.assembly_plan)
-    if not duplicate:
-        await append_event(
-            db,
-            session,
-            event_type="user_auto_iteration_opt_in",
-            role="user",
-            payload={"message": "Allow one automatic objective revision."},
-            client_event_id=body.client_event_id,
-        )
-    session.last_review = {
-        **marker,
-        "auto_iteration": {
-            "status": "running",
-            "action": str(marker.get("allowlist_action")),
-            "session_id": str(session.id),
-            "job_id": str(job.id),
-            "variant_id": str(session.target_variant_id),
-            "previous_generation_id": str(session.target_generation_id),
-            "revision": session.revision,
-            "ownership_epoch": int(plan_row.ownership_epoch or 0),
-        },
-    }
-    session.status = "rendering"
-    await db.commit()
-    bundle = CreatorCraftBundle(
-        session_id=str(session.id),
-        idempotency_key=auto_idempotency_key,
-        commands=[command],
-        **pin,
-    )
     try:
         craft_response = await execute_creator_craft(item_id, bundle, user, db)
     except HTTPException as exc:
@@ -1780,7 +1810,6 @@ async def request_creator_auto_iteration(
         "variant_id": str(session.target_variant_id),
         "generation_id": str(session.target_generation_id),
         "rollback_receipt_id": craft_response.receipt_id,
-        "previous_assembly_plan": previous_assembly_plan,
     }
     refreshed.last_review = {
         **(refreshed.last_review if isinstance(refreshed.last_review, dict) else marker),
@@ -1794,7 +1823,12 @@ async def request_creator_auto_iteration(
             "status": "queued",
             "receipt_id": craft_response.receipt_id,
             "generation_id": craft_response.generation,
-            "rollback_receipt": refreshed.last_good,
+            "rollback_receipt": {
+                "job_id": str(job.id),
+                "variant_id": str(session.target_variant_id),
+                "previous_generation_id": str(session.target_generation_id),
+                "craft_receipt_id": craft_response.receipt_id,
+            },
         },
     }
     await append_event(
