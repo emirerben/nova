@@ -8,12 +8,15 @@ the resulting timeline/caption sections remains owned by
 
 from __future__ import annotations
 
+import uuid
+from collections.abc import Mapping
 from typing import Any
 
 from app.agents._schemas.creator_agent import (
     CreatorCraftBundle,
     SetCaptionStyleCommand,
     SetLookPresetCommand,
+    SetMediaOverlayCommand,
     SetTransitionCommand,
 )
 from app.pipeline.look_presets import normalize_look_adjustments, normalize_look_preset
@@ -133,10 +136,73 @@ def build_core_craft_editor_commit(
     )
 
 
+def build_media_overlay_craft_editor_commit(
+    bundle: CreatorCraftBundle,
+    *,
+    variant: dict[str, Any],
+    asset: dict[str, Any] | None = None,
+    assets: Mapping[str, dict[str, Any]] | None = None,
+) -> EditorCommitRequest:
+    """Compile one opaque asset reference into the existing overlay Save.
+
+    ``asset`` is a server-resolved, owner-checked snapshot.  The model never
+    supplies a storage path or URL; this helper is intentionally the only
+    place where that snapshot becomes a renderer card.  The full replacement
+    list is staged in one editor commit so invalid input cannot partially add
+    a card.
+    """
+
+    commands = [
+        command for command in bundle.commands if isinstance(command, SetMediaOverlayCommand)
+    ]
+    if len(commands) != len(bundle.commands):
+        raise CreatorCraftValidationError("media overlay craft must be the only command")
+    resolved_assets = dict(assets or {})
+    if asset is not None and len(commands) == 1:
+        resolved_assets.setdefault(commands[0].asset_id, asset)
+    cards: list[dict[str, Any]] = []
+    for command in commands:
+        resolved = resolved_assets.get(command.asset_id)
+        if not isinstance(resolved, dict):
+            raise CreatorCraftValidationError("The selected overlay asset is not ready")
+        kind = resolved.get("kind")
+        src_gcs_path = resolved.get("gcs_path")
+        if kind not in {"image", "video"} or not isinstance(src_gcs_path, str) or not src_gcs_path:
+            raise CreatorCraftValidationError("The selected overlay asset is not ready")
+        card: dict[str, Any] = {
+            "id": uuid.uuid4().hex,
+            "kind": kind,
+            "src_gcs_path": src_gcs_path,
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.35,
+            "start_s": float(command.start_s),
+            "end_s": float(command.end_s),
+            "z": 0,
+            "source": "creator_agent",
+        }
+        preview_path = resolved.get("preview_gcs_path")
+        if isinstance(preview_path, str) and preview_path:
+            card["preview_gcs_path"] = preview_path
+        duration_s = resolved.get("duration_s")
+        if kind == "video" and duration_s is not None:
+            card["clip_duration_s"] = float(duration_s)
+        cards.append(card)
+
+    existing = [
+        dict(value) for value in (variant.get("media_overlays") or []) if isinstance(value, dict)
+    ]
+    return EditorCommitRequest(
+        media_overlays=[*existing, *cards],
+        base_generation=bundle.expected_generation_id,
+    )
+
+
 def craft_preview(bundle: CreatorCraftBundle, *, generation: str, sections: dict) -> dict[str, Any]:
     """Return bounded, non-capability preview data for the API response."""
 
-    return {
+    preview = {
         "generation": generation,
         "commands": [command.command for command in bundle.commands],
         "sections": dict(sections),
@@ -163,10 +229,23 @@ def craft_preview(bundle: CreatorCraftBundle, *, generation: str, sections: dict
             if isinstance(command, SetLookPresetCommand)
         ],
     }
+    overlay_preview = [
+        {
+            "asset_id": command.asset_id,
+            "start_s": command.start_s,
+            "end_s": command.end_s,
+        }
+        for command in bundle.commands
+        if isinstance(command, SetMediaOverlayCommand)
+    ]
+    if overlay_preview:
+        preview["media_overlays"] = overlay_preview
+    return preview
 
 
 __all__ = [
     "CreatorCraftValidationError",
     "build_core_craft_editor_commit",
+    "build_media_overlay_craft_editor_commit",
     "craft_preview",
 ]
