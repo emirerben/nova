@@ -38,7 +38,9 @@ inferred preferences. Keep those consent boundaries separate.
 | `EDIT_FORMAT_DAY_VLOG_ENABLED` | `false` | Requires representative local-render evidence; strict chronology depends on `NARRATIVE_CLIP_ORDER_ENABLED=true`. |
 | `EDIT_FORMAT_SINGLE_HERO_ENABLED` | `false` | Requires representative local-render evidence; worker rejects missing/version-mismatched jobs. |
 | `MAIN_CREATOR_AGENT_FREEFORM_UPLOADS_ENABLED` | `false` | Enables only proposal intake/classification; approval is still required. |
+| `NEXT_PUBLIC_MAIN_CREATOR_AGENT_FREEFORM_UPLOADS_ENABLED` | `false` | Shows off-plan upload intake; enable only after the Fly freeform-upload flag. |
 | `MAIN_CREATOR_AGENT_WORKSPACE_ENABLED` | `false` | Enables coordination receipts and explicit preference signals; requires `0085`. |
+| `NEXT_PUBLIC_MAIN_CREATOR_AGENT_WORKSPACE_ENABLED` | `false` | Shows explicit preference controls before a receipt exists; enable only after the Fly workspace flag. |
 | `USER_STYLE_ENABLED` | `false` | Needed only for an explicit workspace `style_edit`; never infer style from proposals or outcomes. |
 | `EDIT_TRANSITIONS_ENABLED` | `false` | Independent Stage 3 transition capability. |
 | `EDIT_WIDE_LOOKS_ENABLED` | `false` | Independent Stage 3 look capability. |
@@ -151,6 +153,9 @@ make a backend route safe.
    and `unmatched` proposals; every decision must be explicit and hash-fenced.
    Then enable `MAIN_CREATOR_AGENT_WORKSPACE_ENABLED` after 0085 and verify a
    multi-item receipt, exact generation identities, stale ownership, and polling.
+   Only after those backend checks, enable the corresponding Vercel twins
+   `NEXT_PUBLIC_MAIN_CREATOR_AGENT_FREEFORM_UPLOADS_ENABLED` and
+   `NEXT_PUBLIC_MAIN_CREATOR_AGENT_WORKSPACE_ENABLED`, then rebuild the web app.
    Enable `USER_STYLE_ENABLED` only if testing an explicit `style_edit`; the note
    and style edit must be visibly creator-authored and idempotent.
 

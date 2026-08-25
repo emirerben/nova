@@ -23,7 +23,7 @@ from app.config import Settings, settings
 from app.database import get_db
 from app.limiter import limiter
 from app.main import app
-from app.models import CreatorAgentExecution, Job
+from app.models import CreatorAgentExecution, CreatorAgentSession, Job
 from app.routes import creator_agent as creator_routes
 from app.routes import plan_items as plan_item_routes
 from app.routes.creator_agent import (
@@ -423,7 +423,7 @@ async def test_creator_craft_enqueue_failure_restores_plan_and_fails_receipt(mon
     receipt_result = MagicMock()
     receipt_result.scalar_one_or_none.return_value = None
     db.execute.return_value = receipt_result
-    db.get.side_effect = [job, job, session, failed_receipt]
+    db.get.side_effect = [job, session, job, failed_receipt]
 
     def add(value):
         if isinstance(value, CreatorAgentExecution):
@@ -544,7 +544,7 @@ async def test_creator_craft_rollback_restores_speech_owned_state_only() -> None
     )
     failed_receipt = SimpleNamespace(id=receipt_id, status="running", error=None)
     db = AsyncMock()
-    db.get.side_effect = [job, session, failed_receipt]
+    db.get.side_effect = [session, job, failed_receipt]
 
     await creator_routes._rollback_craft_commit(
         db,
@@ -585,6 +585,11 @@ async def test_creator_craft_rollback_restores_speech_owned_state_only() -> None
     assert session.target_generation_id == "old"
     assert session.render_attempts == 1
     assert session.revision == 3
+    assert [call.args[0] for call in db.get.await_args_list] == [
+        CreatorAgentSession,
+        Job,
+        CreatorAgentExecution,
+    ]
 
 
 class _ExpiringNamespace:

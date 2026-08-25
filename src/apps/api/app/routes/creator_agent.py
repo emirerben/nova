@@ -1162,7 +1162,19 @@ async def _rollback_craft_commit(
     )
 
     await db.rollback()
+    # Match the route-wide lock order: CreatorAgentSession -> Job -> receipt.
+    # Reversing the first two creates a PostgreSQL deadlock when a fresh craft
+    # request overlaps broker-failure rollback for the same session and Job.
+    locked_session = None
+    if previous_session_state:
+        locked_session = await db.get(
+            CreatorAgentSession,
+            session_id,
+            populate_existing=True,
+            with_for_update=True,
+        )
     locked_job = await db.get(Job, job_id, populate_existing=True, with_for_update=True)
+    generation_still_owned = False
     if locked_job is not None:
         variants = list((locked_job.assembly_plan or {}).get("variants") or [])
         current_index = next(
@@ -1175,6 +1187,7 @@ async def _rollback_craft_commit(
             None,
         )
         if current_index is not None:
+            generation_still_owned = True
             previous_variants = list((previous_assembly_plan or {}).get("variants") or [])
             previous_variant = next(
                 (
@@ -1213,14 +1226,9 @@ async def _rollback_craft_commit(
                     datetime.fromisoformat(started_at) if isinstance(started_at, str) else None
                 )
     if previous_session_state:
-        locked_session = await db.get(
-            CreatorAgentSession,
-            session_id,
-            populate_existing=True,
-            with_for_update=True,
-        )
         if (
             locked_session is not None
+            and generation_still_owned
             and str(locked_session.target_generation_id or "") == generation
         ):
             locked_session.status = previous_session_state.get("status")

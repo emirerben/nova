@@ -170,6 +170,37 @@ it("stops polling when the parent advances the proposal to a terminal status", a
   jest.useRealTimers();
 });
 
+it("stops on a terminal proposal fetch error and retries only on explicit action", async () => {
+  const proposal = {
+    id: "proposal-1",
+    proposal_id: "proposal-1",
+    creator_id: "creator-1",
+    plan_id: "plan-1",
+    ownership_epoch: 1,
+    idempotency_key: "key-2",
+    request_digest: "digest-2",
+    media_ids: ["upload-1"],
+    status: "processing" as const,
+    relevance: null,
+    target_plan_item_id: null,
+    topic: null,
+    rationale: null,
+    confidence: null,
+    proposal_hash: null,
+    error_code: null,
+    decision: null,
+    result_plan_item_id: null,
+  };
+  getProposal.mockRejectedValueOnce(new PlanApiError({ message: "gone", status: 404 }));
+  render(<CreatorWorkspacePanel planId="plan-1" proposal={proposal} onProposalChange={jest.fn()} />);
+
+  expect((await screen.findByRole("alert")).textContent).toContain("no longer available");
+  expect(screen.queryByText("Checking where this footage belongs…")).toBeNull();
+  getProposal.mockResolvedValueOnce({ ...proposal, status: "ready", relevance: "unmatched" });
+  fireEvent.click(screen.getByRole("button", { name: "Retry check" }));
+  await waitFor(() => expect(getProposal).toHaveBeenCalledTimes(2));
+});
+
 it("does not poll or render a proposal from another plan", async () => {
   const foreignProposal = {
     id: "proposal-1",
@@ -202,6 +233,14 @@ it("stays absent when workspace coordination is not advertised", async () => {
   pollReceipt.mockRejectedValue(new PlanApiError({ message: "off", status: 404 }));
   const { container } = render(<CreatorWorkspacePanel planId="plan-1" />);
   await waitFor(() => expect(container.innerHTML).toBe(""));
+});
+
+it("shows explicit preference controls before the first receipt when the UI flag is on", async () => {
+  pollReceipt.mockRejectedValue(new PlanApiError({ message: "none yet", status: 404 }));
+  render(<CreatorWorkspacePanel planId="plan-1" preferencesEnabled />);
+
+  expect(await screen.findByText("Teach Kria one thing about your taste")).not.toBeNull();
+  expect(screen.getByRole("textbox", { name: "Preference note" })).not.toBeNull();
 });
 
 it("surfaces non-404 workspace polling failures even when capability is unavailable", async () => {

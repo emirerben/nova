@@ -13,17 +13,23 @@ import {
 } from "@/lib/plan-api";
 import { PlanApiError } from "@/lib/plan-api";
 
+const CREATOR_WORKSPACE_PREFERENCES_ENABLED =
+  process.env.NEXT_PUBLIC_MAIN_CREATOR_AGENT_WORKSPACE_ENABLED === "true";
+
 interface CreatorWorkspacePanelProps {
   planId: string;
   /** Optional proposal supplied by an upload flow; absent on V1 workspaces. */
   proposal?: CreatorWorkspaceRelevanceProposal | null;
   onProposalChange?: (proposal: CreatorWorkspaceRelevanceProposal) => void;
+  /** Test seam; production defaults to the build-time workspace UI flag. */
+  preferencesEnabled?: boolean;
 }
 
 export function CreatorWorkspacePanel({
   planId,
   proposal,
   onProposalChange,
+  preferencesEnabled = CREATOR_WORKSPACE_PREFERENCES_ENABLED,
 }: CreatorWorkspacePanelProps) {
   const [receipt, setReceipt] = useState<CreatorWorkspaceReceipt | null>(null);
   const [available, setAvailable] = useState(false);
@@ -33,6 +39,11 @@ export function CreatorWorkspacePanel({
   const [pendingDecision, setPendingDecision] = useState<"accept_existing" | "accept_new_topic" | "reject" | null>(null);
   const [deciding, setDeciding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [proposalPollError, setProposalPollError] = useState<{
+    message: string;
+    terminal: boolean;
+  } | null>(null);
+  const [proposalPollAttempt, setProposalPollAttempt] = useState(0);
   const activeProposal = proposal?.plan_id === planId ? proposal : null;
   const activeReceipt = receipt?.plan_id === planId ? receipt : null;
 
@@ -64,6 +75,7 @@ export function CreatorWorkspacePanel({
       return;
     }
     let cancelled = false;
+    let timer: number | undefined;
     const poll = async () => {
       try {
         const next = await getCreatorWorkspaceRelevanceProposal(
@@ -75,19 +87,29 @@ export function CreatorWorkspacePanel({
           next.plan_id === planId &&
           next.proposal_id === activeProposal.proposal_id
         ) {
+          setProposalPollError(null);
           onProposalChange(next);
         }
-      } catch {
-        // The next interval retries; the existing proposal remains visible.
+      } catch (reason) {
+        if (cancelled) return;
+        const terminal =
+          reason instanceof PlanApiError && [404, 409].includes(reason.status);
+        setProposalPollError({
+          terminal,
+          message: terminal
+            ? "That footage proposal is no longer available."
+            : "We’re having trouble checking that footage. We’ll keep trying.",
+        });
+        if (terminal && timer !== undefined) window.clearInterval(timer);
       }
     };
-    const timer = window.setInterval(() => void poll(), 2000);
+    timer = window.setInterval(() => void poll(), 2000);
     void poll();
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      if (timer !== undefined) window.clearInterval(timer);
     };
-  }, [activeProposal, onProposalChange, planId]);
+  }, [activeProposal, onProposalChange, planId, proposalPollAttempt]);
 
   async function confirmPreference() {
     if (!pendingNote || savingNote) return;
@@ -126,7 +148,7 @@ export function CreatorWorkspacePanel({
 
   // Preserve the rollout-gated empty state for 404s, but keep operational
   // failures visible even when the capability was never advertised.
-  if (!available && !activeProposal && !error) return null;
+  if (!available && !activeProposal && !error && !preferencesEnabled) return null;
   const deliverables = activeReceipt?.deliverables ?? [];
   const done = deliverables.filter((item) => item.status === "ready").length;
 
@@ -152,9 +174,19 @@ export function CreatorWorkspacePanel({
         </>
       )}
 
-      {activeProposal && <RelevanceDecision proposal={activeProposal} pendingDecision={pendingDecision} setPendingDecision={setPendingDecision} onConfirm={() => void confirmDecision()} deciding={deciding} />}
+      {activeProposal && !proposalPollError?.terminal && <RelevanceDecision proposal={activeProposal} pendingDecision={pendingDecision} setPendingDecision={setPendingDecision} onConfirm={() => void confirmDecision()} deciding={deciding} />}
+      {activeProposal && proposalPollError && (
+        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700" role={proposalPollError.terminal ? "alert" : "status"}>
+          <span>{proposalPollError.message}</span>
+          {proposalPollError.terminal && (
+            <Button type="button" size="sm" variant="outline" className="min-h-11" onClick={() => { setProposalPollError(null); setProposalPollAttempt((value) => value + 1); }}>
+              Retry check
+            </Button>
+          )}
+        </div>
+      )}
 
-      {available && (
+      {(available || preferencesEnabled) && (
         <div className="mt-4 border-t border-zinc-200 pt-4">
           <p className="text-sm font-medium">Teach Kria one thing about your taste</p>
           <p className="mt-1 text-sm text-zinc-500">Only a note you explicitly confirm becomes a preference signal.</p>

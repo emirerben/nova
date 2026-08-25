@@ -519,7 +519,10 @@ day-vlog chronology policy; disabling it makes strict day-vlog fail closed.
 
 `MAIN_CREATOR_AGENT_FREEFORM_UPLOADS_ENABLED` gates off-plan proposals;
 `MAIN_CREATOR_AGENT_WORKSPACE_ENABLED` gates coordination receipts and preference
-signals separately. A proposal stores ownership epoch, idempotency/request digest,
+signals separately. Its build-time frontend twin,
+`NEXT_PUBLIC_MAIN_CREATOR_AGENT_WORKSPACE_ENABLED`, exposes explicit preference
+controls before a coordination receipt exists; enable the Fly flag before the
+Vercel twin. A proposal stores ownership epoch, idempotency/request digest,
 opaque media IDs, and an owner-checked media snapshot in `creator_workspace_proposals`
 (migration `0084`). A workspace receipt stores one distinct Creator session per
 PlanItem, position, ownership epoch, and exact Job/variant/generation receipt in
