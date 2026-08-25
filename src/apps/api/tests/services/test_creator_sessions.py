@@ -99,6 +99,24 @@ def test_session_variant_target_never_falls_back_from_exact_target(
     assert state == expected_state
 
 
+def test_session_variant_target_never_infers_missing_generation() -> None:
+    session = _session(target_variant_id="chosen", target_generation_id=None)
+
+    variant, state = creator_sessions._session_variant_target(
+        session,
+        [
+            {
+                "variant_id": "chosen",
+                "render_status": "ready",
+                "render_generation_id": "current-generation",
+            }
+        ],
+    )
+
+    assert variant is None
+    assert state == "stale"
+
+
 def test_rollout_eligibility_fails_closed_and_honors_full_rollout(monkeypatch) -> None:
     user_id = uuid.uuid4()
     monkeypatch.setattr(creator_sessions.settings, "main_creator_agent_enabled", False)

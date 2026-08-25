@@ -103,6 +103,8 @@ def _session_variant_target(
     """Resolve only the session's exact variant/generation once it is pinned."""
 
     if session.target_variant_id:
+        if not session.target_generation_id:
+            return None, "stale"
         exact = next(
             (
                 variant
