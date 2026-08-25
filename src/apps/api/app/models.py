@@ -1150,6 +1150,14 @@ class PlanItem(Base):
     smart_sound_design_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("true")
     )
+    # Explicit creator consent for the opt-in Speech cleanup pass.  The worker
+    # reads the immutable snapshot stamped onto Job.assembly_plan at dispatch.
+    speech_cleanup_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    # One-time acknowledgement shown when content invalidates consent.
+    # {id: string, reason: string} | NULL.
+    speech_cleanup_notice: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # Themed uploads land here (users/{user_id}/plan/{plan_item_id}/...).
     clip_gcs_paths: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     # Structured shot list generated at plan time: 2–4 shots, each {what, how, duration_s}.
