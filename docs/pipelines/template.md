@@ -67,7 +67,10 @@ First-slot labels get timing overrides (prefix@2s, subject@3s).
 ### Clip rotation
 
 `_minimum_coverage_pass()` in `template_matcher.py` pre-assigns most-constrained clips
-first to maximize variety before the greedy quality pass.
+first to maximize variety before the greedy quality pass. Within equally constrained
+choices, the coverage, pinned, narrative, and greedy passes prefer a scene whose analyzed
+subject is not already represented. Empty or degraded subject metadata fails open to the
+existing duration, energy, and clip-usage ordering rather than excluding footage.
 
 ### Timing internals
 
