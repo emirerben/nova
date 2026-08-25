@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.51.3.0] — 2026-08-25
+
+### Fixed
+- **Main Creator renders now fail clearly instead of silently producing the wrong edit.** Failed guided plans stay on their exact execution receipt, skip the generic clip-only fallback even during rolling deploys, and surface the failure on the next status poll.
+- **Fast montage timing repair no longer reuses overlapping source footage.** Duration reconciliation respects every occupied source interval and fails closed when the requested runtime cannot be reached safely.
+- **Montages now choose visually distinct scenes when enough footage is available.** Pinned openers, narrative shot order, and hard duration constraints remain intact while repeated semantic scenes yield to unused moments.
+- **Photos dropped into the video-only Classic Clips lane no longer disappear silently.** Kria names rejected photos, preserves valid videos from mixed drops, and points creators to a photo-capable style or the enabled Visuals surface.
+
+### Changed
+- **Uploaded Visuals now show a durable saved count.** The item page reflects server-backed photo and video assets so creators can confirm their media is attached before rendering.
+
 ## [0.51.2.0] — 2026-08-24
 
 ### Fixed
