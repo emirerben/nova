@@ -794,7 +794,16 @@ class Settings(BaseSettings):
             "flip Fly + restart both API and worker processes."
         ),
     )
-    edit_format_single_hero_enabled: bool = False
+    edit_format_single_hero_enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable the strict single_hero guided renderer. It requires one "
+            "dominant source clip plus bounded supporting cutaways, enforces the "
+            "duration/hero-share policy, and fails visibly when media is insufficient; "
+            "it never silently downgrades to montage. Read by API and workers, so "
+            "flip Fly + restart both API and worker processes."
+        ),
+    )
     main_creator_agent_freeform_uploads_enabled: bool = False
     main_creator_agent_workspace_enabled: bool = False
     main_creator_agent_rollout_percent: int = Field(default=0, ge=0, le=100)
