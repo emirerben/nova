@@ -313,6 +313,22 @@ def test_rollout_flags_fail_closed_when_dependencies_are_missing() -> None:
             main_creator_agent_enabled=True,
             main_creator_agent_auto_iteration_enabled=True,
         )
+    with pytest.raises(ValidationError, match="auto iteration requires quality review"):
+        Settings(
+            **base,
+            main_creator_agent_enabled=True,
+            main_creator_agent_execution_enabled=True,
+            main_creator_agent_review_enabled=True,
+            main_creator_agent_auto_iteration_enabled=True,
+        )
+    with pytest.raises(ValidationError, match="auto iteration requires execution"):
+        Settings(
+            **base,
+            main_creator_agent_enabled=True,
+            main_creator_agent_review_enabled=True,
+            main_creator_agent_quality_review_enabled=True,
+            main_creator_agent_auto_iteration_enabled=True,
+        )
 
 
 def test_replan_clears_every_prior_render_identity() -> None:

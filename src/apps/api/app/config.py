@@ -832,6 +832,16 @@ class Settings(BaseSettings):
             and not self.main_creator_agent_review_enabled
         ):
             raise ValueError("main creator auto iteration requires review")
+        if (
+            self.main_creator_agent_auto_iteration_enabled
+            and not self.main_creator_agent_quality_review_enabled
+        ):
+            raise ValueError("main creator auto iteration requires quality review")
+        if (
+            self.main_creator_agent_auto_iteration_enabled
+            and not self.main_creator_agent_execution_enabled
+        ):
+            raise ValueError("main creator auto iteration requires execution")
         return self
 
     # Agent/session retention (days). Job- and creator-session-scoped agent

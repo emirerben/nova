@@ -733,7 +733,8 @@ def serialize_session(session: CreatorAgentSession) -> dict[str, Any]:
         "auto_iteration": (
             {
                 "available": bool(
-                    settings.main_creator_agent_review_enabled
+                    settings.main_creator_agent_execution_enabled
+                    and settings.main_creator_agent_review_enabled
                     and settings.main_creator_agent_quality_review_enabled
                     and settings.main_creator_agent_auto_iteration_enabled
                 ),
