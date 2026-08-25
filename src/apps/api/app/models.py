@@ -871,6 +871,81 @@ class CreatorAgentExecution(Base):
     )
 
 
+class CreatorWorkspaceProposal(Base):
+    """A creator-owned, approval-gated relevance proposal for off-plan media.
+
+    ``media_snapshot`` is deliberately captured when the proposal is created.
+    It binds the opaque upload IDs to the exact owner-checked object path (and
+    generation when available) that approval may attach later.  No worker or
+    route is allowed to resolve a mutable path from an ID after approval.
+    """
+
+    __tablename__ = "creator_workspace_proposals"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    plan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("content_plans.id", ondelete="CASCADE"), nullable=False
+    )
+    ownership_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    request_digest: Mapped[str] = mapped_column(Text, nullable=False)
+    # The client-visible opaque identities, in the exact order submitted.
+    media_ids: Mapped[list] = mapped_column(JSONB, nullable=False)
+    # Server-owned snapshot: [{media_id, gcs_path, gcs_generation, kind, label}].
+    media_snapshot: Mapped[list] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    relevance: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_plan_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_items.id", ondelete="SET NULL"), nullable=True
+    )
+    result_plan_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_items.id", ondelete="SET NULL"), nullable=True
+    )
+    topic: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    proposal_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decision: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decision_client_event_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','ready','failed','approved','rejected')",
+            name="ck_creator_workspace_proposals_status",
+        ),
+        CheckConstraint(
+            "relevance IS NULL OR relevance IN ('existing_item','new_topic','unmatched')",
+            name="ck_creator_workspace_proposals_relevance",
+        ),
+        CheckConstraint(
+            "decision IS NULL OR decision IN ('accept_existing','accept_new_topic','reject')",
+            name="ck_creator_workspace_proposals_decision",
+        ),
+        CheckConstraint("ownership_epoch >= 0", name="ck_creator_workspace_proposals_epoch"),
+        UniqueConstraint(
+            "creator_id", "idempotency_key", name="uq_creator_workspace_proposals_idempotency"
+        ),
+        Index(
+            "idx_creator_workspace_proposals_plan_created",
+            "plan_id",
+            "created_at",
+        ),
+        Index(
+            "idx_creator_workspace_proposals_creator_status",
+            "creator_id",
+            "status",
+        ),
+    )
+
+
 class AgentRun(Base):
     """One row per agent invocation. Captures full input + raw LLM response +
     parsed output so the admin job-debug view can show exactly what each
