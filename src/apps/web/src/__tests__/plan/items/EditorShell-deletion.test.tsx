@@ -684,6 +684,35 @@ describe("EditorShell visuals upload lifecycle", () => {
     };
   }
 
+  function mockPoolAssets(assets: PoolAsset[]) {
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "GET" && url.endsWith("/assets")) {
+        return jsonResponse({ assets, max_assets: 20 });
+      }
+      throw new Error(`Unmocked fetch: ${method} ${url}`);
+    }) as unknown as typeof fetch;
+  }
+
+  async function renderVisualsAt(
+    variant: PlanItemVariant,
+    duration: number,
+    currentTime: number,
+  ) {
+    await renderShell(variant);
+    const video = document.querySelector("video");
+    expect(video).not.toBeNull();
+    Object.defineProperty(video, "duration", { configurable: true, value: duration });
+    fireEvent.loadedMetadata(video as HTMLVideoElement);
+    Object.defineProperty(video, "currentTime", {
+      configurable: true,
+      value: currentTime,
+      writable: true,
+    });
+    fireEvent.timeUpdate(video as HTMLVideoElement);
+  }
+
   it("places the first selected photos contiguously from the playhead", async () => {
     const first = poolAsset({
       id: "asset-first",
@@ -695,26 +724,8 @@ describe("EditorShell visuals upload lifecycle", () => {
       source_filename: "second.png",
       gcs_path: "users/u/plan/item-1/pool/second.png",
     });
-    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = (init?.method ?? "GET").toUpperCase();
-      if (method === "GET" && url.endsWith("/assets")) {
-        return jsonResponse({ assets: [first, second], max_assets: 20 });
-      }
-      throw new Error(`Unmocked fetch: ${method} ${url}`);
-    }) as unknown as typeof fetch;
-
-    await renderShell(makeVariant([], [], { duration_s: 8 }));
-    const video = document.querySelector("video");
-    expect(video).not.toBeNull();
-    Object.defineProperty(video, "duration", { configurable: true, value: 8 });
-    fireEvent.loadedMetadata(video as HTMLVideoElement);
-    Object.defineProperty(video, "currentTime", {
-      configurable: true,
-      value: 1,
-      writable: true,
-    });
-    fireEvent.timeUpdate(video as HTMLVideoElement);
+    mockPoolAssets([first, second]);
+    await renderVisualsAt(makeVariant([], [], { duration_s: 8 }), 8, 1);
     fireEvent.click(screen.getByRole("button", { name: "Visuals tool" }));
     fireEvent.click(await screen.findByRole("button", { name: "Select first.png" }));
     fireEvent.click(screen.getByRole("button", { name: "Select second.png" }));
@@ -754,26 +765,8 @@ describe("EditorShell visuals upload lifecycle", () => {
       scale: 0.35,
       z: 0,
     };
-    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = (init?.method ?? "GET").toUpperCase();
-      if (method === "GET" && url.endsWith("/assets")) {
-        return jsonResponse({ assets: [asset], max_assets: 20 });
-      }
-      throw new Error(`Unmocked fetch: ${method} ${url}`);
-    }) as unknown as typeof fetch;
-
-    await renderShell(makeVariant([], [existing], { duration_s: 8 }));
-    const video = document.querySelector("video");
-    expect(video).not.toBeNull();
-    Object.defineProperty(video, "duration", { configurable: true, value: 8 });
-    fireEvent.loadedMetadata(video as HTMLVideoElement);
-    Object.defineProperty(video, "currentTime", {
-      configurable: true,
-      value: 1,
-      writable: true,
-    });
-    fireEvent.timeUpdate(video as HTMLVideoElement);
+    mockPoolAssets([asset]);
+    await renderVisualsAt(makeVariant([], [existing], { duration_s: 8 }), 8, 1);
     fireEvent.click(screen.getByRole("button", { name: "Media, 0:02–0:04" }));
     fireEvent.click(
       await screen.findByRole("button", { name: "Select after-selected.png" }),
@@ -789,26 +782,8 @@ describe("EditorShell visuals upload lifecycle", () => {
       source_filename: "no-space.png",
       gcs_path: "users/u/plan/item-1/pool/no-space.png",
     });
-    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = (init?.method ?? "GET").toUpperCase();
-      if (method === "GET" && url.endsWith("/assets")) {
-        return jsonResponse({ assets: [asset], max_assets: 20 });
-      }
-      throw new Error(`Unmocked fetch: ${method} ${url}`);
-    }) as unknown as typeof fetch;
-
-    await renderShell(makeVariant([], [], { duration_s: 8 }));
-    const video = document.querySelector("video");
-    expect(video).not.toBeNull();
-    Object.defineProperty(video, "duration", { configurable: true, value: 8 });
-    fireEvent.loadedMetadata(video as HTMLVideoElement);
-    Object.defineProperty(video, "currentTime", {
-      configurable: true,
-      value: 8,
-      writable: true,
-    });
-    fireEvent.timeUpdate(video as HTMLVideoElement);
+    mockPoolAssets([asset]);
+    await renderVisualsAt(makeVariant([], [], { duration_s: 8 }), 8, 8);
     fireEvent.click(screen.getByRole("button", { name: "Visuals tool" }));
     fireEvent.click(await screen.findByRole("button", { name: "Select no-space.png" }));
     fireEvent.click(screen.getByRole("button", { name: "Place selected in sequence" }));
@@ -828,26 +803,8 @@ describe("EditorShell visuals upload lifecycle", () => {
         gcs_path: `users/u/plan/item-1/pool/${name}.png`,
       }),
     );
-    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = (init?.method ?? "GET").toUpperCase();
-      if (method === "GET" && url.endsWith("/assets")) {
-        return jsonResponse({ assets, max_assets: 20 });
-      }
-      throw new Error(`Unmocked fetch: ${method} ${url}`);
-    }) as unknown as typeof fetch;
-
-    await renderShell(makeVariant([], [], { duration_s: 8 }));
-    const video = document.querySelector("video");
-    expect(video).not.toBeNull();
-    Object.defineProperty(video, "duration", { configurable: true, value: 8 });
-    fireEvent.loadedMetadata(video as HTMLVideoElement);
-    Object.defineProperty(video, "currentTime", {
-      configurable: true,
-      value: 7,
-      writable: true,
-    });
-    fireEvent.timeUpdate(video as HTMLVideoElement);
+    mockPoolAssets(assets);
+    await renderVisualsAt(makeVariant([], [], { duration_s: 8 }), 8, 7);
     fireEvent.click(screen.getByRole("button", { name: "Visuals tool" }));
     for (const asset of assets) {
       fireEvent.click(
