@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [0.53.0.0] — 2026-08-25
 
 ### Added
-- **Creators can ask for fast photo cuts and longer video moments in mixed-media edits.** The confirmation preview shows the normalized pacing, photos hold for 0.5–0.8 seconds, usable video moments hold for 1.5–3 seconds, and boundaries use hard cuts while the editor selects the strongest subset of the uploaded media.
+- **Creators can ask for fast photo cuts and longer video moments in mixed-media edits.** The confirmation preview shows the normalized pacing, photos hold for 0.5–0.8 seconds, usable video moments hold for 1.5–3 seconds when source footage permits, and boundaries use hard cuts while the editor selects the strongest subset of the uploaded media.
 
 ### Changed
 - **Large Creator plans can finish analyzing extensive uploads without restarting completed work.** Proposal tasks and execution leases now cover long mixed-media sessions, completed clip analyses checkpoint incrementally, and retries reuse safe cached results while preserving generation and ownership fences.

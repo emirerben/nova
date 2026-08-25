@@ -146,7 +146,7 @@ When `MAIN_CREATOR_AGENT_REVIEW_ENABLED` and its child gate
 render queues `tasks.creator_quality_review` once per
 `session:job:variant:generation` key. The worker downloads only the fenced ready
 generation and calls the existing `video_quality_grader` adapter (Gemini
-2.5 Flash, prompt version `2026-08-25`). It persists an objective receipt with
+2.5 Flash, prompt version `2026-08-25.3`). It persists an objective receipt with
 quality/confidence, up to 12 timestamped visual/audio/timing/caption/structure
 observations, and at most one revision proposal linked to evidence IDs.
 

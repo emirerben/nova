@@ -69,6 +69,8 @@ is an optional advanced tool for creators who want to shape the edit before buil
 
 - `proposal_version`: increments on every user-visible state mutation.
 - `generation_attempt_id`: prevents an older analysis task from overwriting a newer attempt.
+- `planning_started_at`: records when heavy analysis actually begins so Creator reconciliation
+  does not expire a queued or still-within-budget proposal attempt.
 - `media_digest`: SHA-256 of canonical lane, stable ID, object path, storage generation, kind,
   and content hash. Editorial ordering is intentionally excluded.
 - `status`: `briefing`, `analyzing`, `drafting`, `draft`, `approved`, `stale`, or `failed`.
@@ -82,7 +84,8 @@ is an optional advanced tool for creators who want to shape the edit before buil
   so it survives a later reservation overwriting the envelope. See "AI-designs-by-default" below.
 - `design_fallback`: set to the failure code that triggered a clip-only legacy-montage fallback
   (auto-design only); `null` otherwise, including a normal failure with pool assets present.
-- `brief`: requested direction, goal, pace, and duration.
+- `brief`: requested direction, goal, pace, duration, confirmed `creator_request`, and optional
+  typed `mixed_media_timing` profile.
 - `conversation`: up to ten durable creator/Kria exchanges, including reply suggestions. The
   thread survives reloads and proposal-generation retries.
 - `brief_ready`: Kria's signal that it has enough direction to plan. **Build this edit plan** is
@@ -286,6 +289,10 @@ checkpointed after each completed source with generation and attempt fences, so 
 analysis rather than restarting the complete upload set. The Creator execution receipt lease is
 1,650s, below the 1,900s broker visibility timeout; a still-valid proposal task is reconciled rather
 than expired while it remains within its task budget.
+
+Typed mixed-media attempts run on the `creator-guided-jobs` Celery queue. Production's worker and
+both local development worker commands must drain that queue alongside the existing queues; this
+keeps long Creator planning available during rolling deploys without competing with unrelated jobs.
 
 The render-registration watchdog (`RENDER_REGISTER_TIMEOUT_MS`, 15 min) re-arms itself continuously
 while `edit_proposal.status` is `analyzing`/`drafting` — the design phase alone can legitimately run
