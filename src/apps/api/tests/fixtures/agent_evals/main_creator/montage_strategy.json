@@ -1,6 +1,6 @@
 {
   "agent": "nova.creator.main",
-  "prompt_version": "2026-08-24-v4",
+  "prompt_version": "2026-08-25-v5",
   "input": {
     "user_message": "Make this feel energetic but still personal.",
     "creator_context": "Travel creator; warm and direct.",
@@ -41,5 +41,8 @@
   },
   "raw_text": "{\"action\":{\"kind\":\"propose_strategy\",\"strategy\":{\"direction\":\"guided_story\",\"edit_format\":\"montage\",\"archetype\":\"montage\",\"audio_strategy\":\"licensed_music\",\"story_structure\":[\"Arrival hook\",\"Escalating city details\",\"Sunset payoff\"],\"caption_style\":\"clean\",\"intro_hook\":\"One day in Lisbon\",\"pacing\":\"fast\",\"render_program\":\"guided\",\"selected_media_ids\":[\"clip-1\",\"clip-2\"],\"optional_treatments\":[\"transitions\"],\"rationale\":\"Open with motion, build through details, and let the sunset resolve the story.\"},\"summary\":\"A quick Lisbon story that builds from arrival to sunset.\"}}",
   "output": {},
-  "meta": {"source": "hand-authored-v1-safety"}
+  "meta": {
+    "source": "hand-authored-v1-safety",
+    "contract": "guided strategies are normalized without opaque selected_media_ids so the specialist receives a bounded alias shortlist"
+  }
 }

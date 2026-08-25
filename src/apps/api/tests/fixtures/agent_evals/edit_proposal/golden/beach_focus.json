@@ -1,6 +1,6 @@
 {
   "agent": "nova.plan.edit_proposal",
-  "prompt_version": "1.3.0",
+  "prompt_version": "1.4.0",
   "input": {
     "idea": "Corfu coast",
     "theme": "A day by the water",
@@ -22,6 +22,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "source-aware fast montage cut program",
-    "contract": "proposal media accepts the complete 150-item guided-edit universe; this cassette remains a source-aware subset replay"
+    "contract": "the specialist emits prompt-visible aliases that resolve to owned media; source-aware fast cuts remain bounded, non-adjacent, and renderable within the complete 150-item guided-edit universe"
   }
 }
