@@ -724,6 +724,65 @@ describe("EditorShell visuals upload lifecycle", () => {
     expect(screen.getByRole("button", { name: "Media, 0:03–0:05" })).toBeInTheDocument();
   });
 
+  it("places a sequence after the selected visual instead of the playhead", async () => {
+    const asset = poolAsset({
+      id: "asset-after-selected",
+      source_filename: "after-selected.png",
+      gcs_path: "users/u/plan/item-1/pool/after-selected.png",
+    });
+    const existing: VisualBlock = {
+      version: 1,
+      id: "existing-media",
+      kind: "media",
+      start_s: 2,
+      end_s: 4,
+      timing_mode: "manual",
+      origin: "user",
+      transition_in: "cut",
+      transition_out: "cut",
+      audio_policy: { base: "continue", sfx: "continue" },
+      asset_id: "existing-asset",
+      src_gcs_path: "users/u/plan/item-1/pool/existing.png",
+      media_kind: "image",
+      source_duration_s: null,
+      trim_start_s: null,
+      trim_end_s: null,
+      display_mode: "fullscreen",
+      transform: { fit_mode: "contain", focal_x: 0.5, focal_y: 0.5, zoom: 1 },
+      x_frac: 0.5,
+      y_frac: 0.5,
+      scale: 0.35,
+      z: 0,
+    };
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "GET" && url.endsWith("/assets")) {
+        return jsonResponse({ assets: [asset], max_assets: 20 });
+      }
+      throw new Error(`Unmocked fetch: ${method} ${url}`);
+    }) as unknown as typeof fetch;
+
+    await renderShell(makeVariant([], [existing], { duration_s: 8 }));
+    const video = document.querySelector("video");
+    expect(video).not.toBeNull();
+    Object.defineProperty(video, "duration", { configurable: true, value: 8 });
+    fireEvent.loadedMetadata(video as HTMLVideoElement);
+    Object.defineProperty(video, "currentTime", {
+      configurable: true,
+      value: 1,
+      writable: true,
+    });
+    fireEvent.timeUpdate(video as HTMLVideoElement);
+    fireEvent.click(screen.getByRole("button", { name: "Media, 0:02–0:04" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Select after-selected.png" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Place sequence after selected" }));
+
+    expect(screen.getByRole("button", { name: "Media, 0:04–0:06" })).toBeInTheDocument();
+  });
+
   it("keeps the timeline unchanged when a first sequence has no remaining space", async () => {
     const asset = poolAsset({
       id: "asset-no-space",
