@@ -1,11 +1,13 @@
 """Offline Stage 2 creator-review coordinator tests."""
 
 import uuid
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
+from app.config import settings
 from app.services.video_grader import GradeBand, GradeVerdict
 from app.tasks import creator_quality_review as cqr
 
@@ -186,6 +188,37 @@ def test_review_payload_never_labels_a_taste_only_failure_objective():
                 "start_s": 3.0,
                 "end_s": 4.5,
                 "observation": "The repeated crop and hold feel formulaic.",
+            }
+        ],
+    )
+
+    payload = cqr.build_review_payload(
+        _session(),
+        job_id="job-1",
+        variant_id="variant-1",
+        generation_id="generation-1",
+        verdict=verdict,
+    )
+
+    assert payload["review_mode"] == "taste"
+    assert payload["allowlist_action"] is None
+    assert "objective_tag" not in payload
+
+
+def test_generic_text_dimensions_never_authorize_caption_iteration():
+    verdict = GradeVerdict(
+        band=GradeBand.ESCALATE,
+        scores={"text_quality": 2, "text_concision": 2},
+        avg=2.0,
+        confidence=0.95,
+        reasoning="The wording feels generic.",
+        evidence=[
+            {
+                "dimension": "text_quality",
+                "kind": "visual",
+                "start_s": 0.0,
+                "end_s": 1.0,
+                "observation": "The text is generic rather than mechanically illegible.",
             }
         ],
     )
@@ -446,6 +479,31 @@ def test_claim_exact_review_claims_the_exact_ready_generation():
     assert video_path == "creator-review/video.mp4"
     assert variant["variant_id"] == target["variant_id"]
     assert session.last_review["status"] == "running"
+    assert db.commits == 1
+
+
+def test_disabled_review_fences_pending_exact_target_to_manual_feedback(monkeypatch):
+    session, job, target = _claim_fixture()
+    db = _ClaimDb(session, job)
+
+    @contextmanager
+    def _session_context():
+        yield db
+
+    monkeypatch.setattr("app.database.sync_session", _session_context)
+    monkeypatch.setattr(settings, "main_creator_agent_review_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_quality_review_enabled", False)
+
+    cqr.quality_review_creator_session.run(
+        session_id=target["session_id"],
+        job_id=target["job_id"],
+        variant_id=target["variant_id"],
+        render_generation_id=target["generation_id"],
+    )
+
+    assert session.last_review["status"] == "unavailable"
+    assert session.last_review["decision"] == "unavailable"
+    assert session.last_review["error_code"] == "review_disabled"
     assert db.commits == 1
 
 

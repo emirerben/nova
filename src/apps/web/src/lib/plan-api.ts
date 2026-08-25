@@ -896,6 +896,40 @@ interface UploadUrl {
   gcs_path: string;
 }
 
+export interface CreatorWorkspaceUploadTarget extends UploadUrl {
+  /** Authenticated source Job identity accepted by workspace proposals. */
+  job_id: string;
+}
+
+/** Mint one authenticated source upload for off-plan workspace intake. */
+export function requestCreatorWorkspaceUpload(
+  file: { filename: string; content_type: string; file_size_bytes: number; duration_s: number; aspect_ratio: "16:9" | "9:16" },
+): Promise<CreatorWorkspaceUploadTarget> {
+  return request<CreatorWorkspaceUploadTarget>("/uploads/presigned", {
+    method: "POST",
+    body: JSON.stringify({
+      ...file,
+      // /uploads/presigned normalises QuickTime to MP4 before signing. Keep
+      // the request body aligned with the header used by the workspace PUT.
+      content_type: normaliseCreatorWorkspaceUploadContentType(file.content_type),
+      platforms: ["instagram"],
+    }),
+  });
+}
+
+/**
+ * The authenticated workspace intake shares /uploads/presigned with the
+ * legacy upload flow, which signs QuickTime as MP4. This is scoped to that
+ * endpoint; other signed-upload routes preserve their exact MIME contracts.
+ */
+export function normaliseCreatorWorkspaceUploadContentType(contentType: string): string {
+  return contentType === "video/quicktime" ? "video/mp4" : contentType;
+}
+
+export function creatorWorkspaceUploadContentTypeForFile(file: File): string {
+  return normaliseCreatorWorkspaceUploadContentType(uploadContentTypeForFile(file));
+}
+
 // Single source of truth for the declared upload content type. The signing
 // request (requestUploadUrls) and the PUT header MUST both go through this
 // function — a divergence becomes a GCS 403 SignatureDoesNotMatch that Safari

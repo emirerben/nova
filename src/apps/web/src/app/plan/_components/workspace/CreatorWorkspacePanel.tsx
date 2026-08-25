@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   decideCreatorWorkspaceRelevanceProposal,
+  getCreatorWorkspaceRelevanceProposal,
   pollLatestCreatorWorkspaceReceipt,
   recordCreatorWorkspacePreferenceSignal,
   type CreatorWorkspaceRelevanceProposal,
@@ -32,6 +33,8 @@ export function CreatorWorkspacePanel({
   const [pendingDecision, setPendingDecision] = useState<"accept_existing" | "accept_new_topic" | "reject" | null>(null);
   const [deciding, setDeciding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const activeProposal = proposal?.plan_id === planId ? proposal : null;
+  const activeReceipt = receipt?.plan_id === planId ? receipt : null;
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -53,12 +56,45 @@ export function CreatorWorkspacePanel({
     void refresh();
   }, [refresh]);
 
+  // The upload flow hands us the durable proposal identity. Poll that exact
+  // row until the classifier reaches a terminal state; never infer relevance
+  // in the browser and never attach footage during polling.
+  useEffect(() => {
+    if (!onProposalChange || !activeProposal || !["pending", "processing"].includes(activeProposal.status)) {
+      return;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const next = await getCreatorWorkspaceRelevanceProposal(
+          planId,
+          activeProposal.proposal_id,
+        );
+        if (
+          !cancelled &&
+          next.plan_id === planId &&
+          next.proposal_id === activeProposal.proposal_id
+        ) {
+          onProposalChange(next);
+        }
+      } catch {
+        // The next interval retries; the existing proposal remains visible.
+      }
+    };
+    const timer = window.setInterval(() => void poll(), 2000);
+    void poll();
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeProposal, onProposalChange, planId]);
+
   async function confirmPreference() {
     if (!pendingNote || savingNote) return;
     setSavingNote(true);
     setError(null);
     try {
-      await recordCreatorWorkspacePreferenceSignal(planId, pendingNote, eventId(), undefined, receipt?.receipt_id);
+      await recordCreatorWorkspacePreferenceSignal(planId, pendingNote, eventId(), undefined, activeReceipt?.receipt_id);
       setPendingNote(null);
       setNote("");
       await refresh();
@@ -70,12 +106,12 @@ export function CreatorWorkspacePanel({
   }
 
   async function confirmDecision() {
-    if (!proposal || !pendingDecision || !proposal.proposal_hash || deciding) return;
+    if (!activeProposal || !pendingDecision || !activeProposal.proposal_hash || deciding) return;
     setDeciding(true);
     setError(null);
     try {
-      const next = await decideCreatorWorkspaceRelevanceProposal(planId, proposal.proposal_id, {
-        expected_proposal_hash: proposal.proposal_hash,
+      const next = await decideCreatorWorkspaceRelevanceProposal(planId, activeProposal.proposal_id, {
+        expected_proposal_hash: activeProposal.proposal_hash,
         decision: pendingDecision,
         client_event_id: eventId(),
       });
@@ -90,18 +126,18 @@ export function CreatorWorkspacePanel({
 
   // Preserve the rollout-gated empty state for 404s, but keep operational
   // failures visible even when the capability was never advertised.
-  if (!available && !proposal && !error) return null;
-  const deliverables = receipt?.deliverables ?? [];
+  if (!available && !activeProposal && !error) return null;
+  const deliverables = activeReceipt?.deliverables ?? [];
   const done = deliverables.filter((item) => item.status === "ready").length;
 
   return (
     <section aria-label="Creator workspace" className="rounded-2xl border border-zinc-200 bg-white p-4 text-[#0c0c0e] shadow-sm">
-      {available && receipt && (
+      {available && activeReceipt && (
         <>
           <div className="flex items-baseline justify-between gap-3">
             <div>
               <p className="text-sm font-semibold">Workspace progress</p>
-              <p className="mt-1 text-sm text-zinc-500">{done} of {deliverables.length} deliverables ready · {statusLabel(receipt.status)}</p>
+              <p className="mt-1 text-sm text-zinc-500">{done} of {deliverables.length} deliverables ready · {statusLabel(activeReceipt.status)}</p>
             </div>
           </div>
           {deliverables.length > 0 && (
@@ -116,7 +152,7 @@ export function CreatorWorkspacePanel({
         </>
       )}
 
-      {proposal && <RelevanceDecision proposal={proposal} pendingDecision={pendingDecision} setPendingDecision={setPendingDecision} onConfirm={() => void confirmDecision()} deciding={deciding} />}
+      {activeProposal && <RelevanceDecision proposal={activeProposal} pendingDecision={pendingDecision} setPendingDecision={setPendingDecision} onConfirm={() => void confirmDecision()} deciding={deciding} />}
 
       {available && (
         <div className="mt-4 border-t border-zinc-200 pt-4">

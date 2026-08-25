@@ -434,7 +434,10 @@ class CreatorCraftBundle(_CreatorModel):
         command_names = {command.command for command in self.commands}
         if "set_media_overlay" in command_names and len(command_names) != 1:
             raise ValueError("media overlay craft must be the only command in a bundle")
-        if "remove_optional_treatment" in command_names and len(command_names) != 1:
+        if "remove_optional_treatment" in command_names and (
+            len(command_names) != 1
+            or sum(command == "remove_optional_treatment" for command in self.commands) != 1
+        ):
             raise ValueError("optional treatment removal must be the only command in a bundle")
         for command in self.commands:
             for field_name in (

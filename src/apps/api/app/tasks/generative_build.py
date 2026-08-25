@@ -37,7 +37,7 @@ import tempfile
 import threading
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, is_dataclass, replace
 from datetime import datetime, timedelta
 from functools import wraps
@@ -170,11 +170,35 @@ class SingleHeroPolicyError(RuntimeError):
         super().__init__(message)
 
 
-def _single_hero_order(clip_metas: list, clip_id_to_local: dict[str, str]) -> list[str]:
-    """Return one deterministic hero followed by bounded supporting clips."""
+def _single_hero_order(
+    clip_metas: list,
+    clip_id_to_local: dict[str, str],
+    clip_durations_s: dict[str, float] | None = None,
+) -> list[str]:
+    """Return a deterministic hero plus only positively-probed support clips.
 
+    Production callers pass the ingest probe map.  A missing, non-finite, or
+    non-positive duration is not usable footage for a strict single-hero
+    composition and is filtered before ranking, so the policy fails with the
+    stable ``insufficient_media`` reason instead of producing a zero-length
+    support slot.
+    """
+
+    durations = clip_durations_s
     available = [
-        meta for meta in clip_metas if str(getattr(meta, "clip_id", "") or "") in clip_id_to_local
+        meta
+        for meta in clip_metas
+        if (
+            (clip_id := str(getattr(meta, "clip_id", "") or "")) in clip_id_to_local
+            and (
+                durations is None
+                or (
+                    isinstance(durations.get(clip_id), (int, float))
+                    and math.isfinite(float(durations[clip_id]))
+                    and float(durations[clip_id]) > 0.0
+                )
+            )
+        )
     ]
     ranked = sorted(
         enumerate(available),
@@ -460,6 +484,12 @@ _GUIDED_TASK_ATTEMPT_ID: contextvars.ContextVar[str | None] = contextvars.Contex
 )
 _GUIDED_RENDER_LEASE_S = 45
 _GUIDED_RENDER_HEARTBEAT_S = 10
+_CREATOR_CRAFT_TASK_PREFIX = "creator-craft-"
+# The craft render tasks have a hard limit of 1800s and the broker visibility
+# timeout is 1900s.  Keep the durable claim alive for the whole task, but let a
+# broker redelivery reclaim it after a worker is hard-killed.
+_CREATOR_CRAFT_CLAIM_LEASE_S = 1810.0
+_CREATOR_CRAFT_CLAIM_HEARTBEAT_S = 30.0
 
 
 class _GuidedStoryAttemptBusy(RuntimeError):
@@ -476,6 +506,188 @@ class AudioLedGuidedConflict(RuntimeError):
             "This queued edit contains an outdated guided snapshot without real clip input. "
             "Generate again to render the selected audio-led edit safely."
         )
+
+
+def _creator_craft_claim_live(claim: dict[str, Any], now_epoch_s: float) -> bool:
+    """Return whether a creator craft worker still owns its generation claim."""
+
+    try:
+        heartbeat_epoch_s = float(
+            claim.get("heartbeat_at_epoch_s") or claim.get("claimed_at_epoch_s")
+        )
+    except (TypeError, ValueError):
+        return False
+    return now_epoch_s - heartbeat_epoch_s < _CREATOR_CRAFT_CLAIM_LEASE_S
+
+
+def _claim_creator_craft_generation(
+    job_id: str,
+    variant_id: str,
+    generation: str | None,
+    *,
+    task_id: str | None,
+) -> str:
+    """Atomically claim one creator craft generation before expensive rendering.
+
+    Celery task ids are metadata, not a delivery de-duplication primitive.  The
+    claim lives in the Job JSONB row and is installed under ``FOR UPDATE``.  A
+    duplicate delivery therefore observes ``busy`` before it can enter FFmpeg.
+    The heartbeat-backed lease is intentionally just shorter than broker
+    visibility: a hard-killed worker can be resumed, while a live render cannot
+    be stolen by a redelivery.
+
+    Non-creator task ids keep the legacy dispatch path unchanged.  A creator
+    task with a stale generation or missing variant is rejected rather than
+    rendering against mutable state.
+    """
+
+    if not task_id or not task_id.startswith(_CREATOR_CRAFT_TASK_PREFIX) or not generation:
+        return "legacy"
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    now_epoch_s = time.time()
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        if job is None or _cancelled_job_write_rejected(
+            job, operation="claim_creator_craft_generation", db=db
+        ):
+            return "rejected"
+        plan = dict(job.assembly_plan or {})
+        variants = list(plan.get("variants") or [])
+        index = next(
+            (i for i, value in enumerate(variants) if value.get("variant_id") == variant_id),
+            None,
+        )
+        if index is None:
+            return "rejected"
+        current = dict(variants[index])
+        if str(current.get("render_generation_id") or "") != str(generation):
+            return "rejected"
+        if current.get("render_status") not in {"pending", "rendering"}:
+            # A duplicate that arrived after the winner published a terminal
+            # result must not re-run a costly render or overwrite last-good.
+            return "complete"
+        claim = current.get("creator_craft_claim") or {}
+        if claim.get("generation_id") == generation and _creator_craft_claim_live(
+            claim, now_epoch_s
+        ):
+            return "busy"
+        current["creator_craft_claim"] = {
+            "generation_id": generation,
+            "task_id": task_id,
+            "claimed_at_epoch_s": now_epoch_s,
+            "heartbeat_at_epoch_s": now_epoch_s,
+        }
+        variants[index] = current
+        job.assembly_plan = {**plan, "variants": variants}
+        flag_modified(job, "assembly_plan")
+        db.commit()
+    return "claimed"
+
+
+def _heartbeat_creator_craft_generation(
+    job_id: str, variant_id: str, generation: str, *, task_id: str
+) -> bool:
+    """Refresh only the still-owned creator craft generation claim."""
+
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        if job is None:
+            return False
+        plan = dict(job.assembly_plan or {})
+        variants = list(plan.get("variants") or [])
+        index = next(
+            (i for i, value in enumerate(variants) if value.get("variant_id") == variant_id),
+            None,
+        )
+        if index is None:
+            return False
+        current = dict(variants[index])
+        claim = current.get("creator_craft_claim") or {}
+        if (
+            current.get("render_generation_id") != generation
+            or claim.get("generation_id") != generation
+            or claim.get("task_id") != task_id
+            or current.get("render_status") not in {"pending", "rendering"}
+        ):
+            return False
+        claim["heartbeat_at_epoch_s"] = time.time()
+        current["creator_craft_claim"] = claim
+        variants[index] = current
+        job.assembly_plan = {**plan, "variants": variants}
+        flag_modified(job, "assembly_plan")
+        db.commit()
+    return True
+
+
+def _release_creator_craft_generation_claim(
+    job_id: str, variant_id: str, generation: str, *, task_id: str
+) -> bool:
+    """Release a claim only for a transient DB error so Celery can retry."""
+
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        if job is None:
+            return False
+        plan = dict(job.assembly_plan or {})
+        variants = list(plan.get("variants") or [])
+        index = next(
+            (i for i, value in enumerate(variants) if value.get("variant_id") == variant_id),
+            None,
+        )
+        if index is None:
+            return False
+        current = dict(variants[index])
+        claim = current.get("creator_craft_claim") or {}
+        if (
+            current.get("render_generation_id") != generation
+            or claim.get("generation_id") != generation
+            or claim.get("task_id") != task_id
+        ):
+            return False
+        current.pop("creator_craft_claim", None)
+        variants[index] = current
+        job.assembly_plan = {**plan, "variants": variants}
+        flag_modified(job, "assembly_plan")
+        db.commit()
+    return True
+
+
+@contextmanager
+def _creator_craft_generation_heartbeat(
+    job_id: str, variant_id: str, generation: str, *, task_id: str
+):
+    """Keep the durable claim live while the creator render owns the variant."""
+
+    stopped = threading.Event()
+
+    def beat() -> None:
+        while not stopped.wait(_CREATOR_CRAFT_CLAIM_HEARTBEAT_S):
+            try:
+                if not _heartbeat_creator_craft_generation(
+                    job_id, variant_id, generation, task_id=task_id
+                ):
+                    return
+            except Exception as exc:  # noqa: BLE001 - liveness is best effort
+                log.warning(
+                    "creator_craft_claim_heartbeat_failed",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    generation=generation,
+                    error=str(exc),
+                )
+
+    thread = threading.Thread(target=beat, name="creator-craft-claim-heartbeat", daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stopped.set()
+        thread.join(timeout=1)
 
 
 def _narrated_voiceover_prework_enabled(
@@ -3348,6 +3560,22 @@ def regenerate_generative_variant(
     `_merge_carousel_moment_override` inside `_run_regenerate_variant`.
 
     """
+    task_id = str(getattr(self.request, "id", "") or "")
+    claim_state = _claim_creator_craft_generation(
+        job_id,
+        variant_id,
+        render_gen_id,
+        task_id=task_id,
+    )
+    if claim_state not in {"claimed", "legacy"}:
+        log.info(
+            "creator_craft_duplicate_delivery_skipped",
+            job_id=job_id,
+            variant_id=variant_id,
+            generation=render_gen_id,
+            claim_state=claim_state,
+        )
+        return
     log.info(
         "generative_regenerate_start",
         job_id=job_id,
@@ -3365,38 +3593,56 @@ def regenerate_generative_variant(
 
     with pipeline_trace_for(job_id):
         try:
-            _run_regenerate_variant(
-                job_id,
-                variant_id,
-                new_track_id,
-                override_text,
-                remove_text,
-                style_set_id,
-                size_override_px,
-                mix_override,
-                layout_override,
-                timeline_override=timeline_override,
-                font_family_override=font_family_override,
-                effect_override=effect_override,
-                text_color_override=text_color_override,
-                cluster_hero_font_override=cluster_hero_font_override,
-                cluster_body_font_override=cluster_body_font_override,
-                cluster_accent_font_override=cluster_accent_font_override,
-                cluster_hero_size_px_override=cluster_hero_size_px_override,
-                cluster_body_size_px_override=cluster_body_size_px_override,
-                cluster_accent_size_px_override=cluster_accent_size_px_override,
-                media_overlays_override=media_overlays_override,
-                sfx_override=sfx_override,
-                render_gen_id=render_gen_id,
-                intro_start_s_override=intro_start_s_override,
-                intro_end_s_override=intro_end_s_override,
-                text_behind_subject=text_behind_subject,
-                orientation_override=orientation_override,
-                force_full_render=force_full_render,
-                carousel_moment_override=carousel_moment_override,
-                guided_revision=guided_revision,
+            heartbeat = (
+                _creator_craft_generation_heartbeat(
+                    job_id,
+                    variant_id,
+                    str(render_gen_id),
+                    task_id=task_id,
+                )
+                if claim_state == "claimed" and render_gen_id
+                else nullcontext()
             )
+            with heartbeat:
+                _run_regenerate_variant(
+                    job_id,
+                    variant_id,
+                    new_track_id,
+                    override_text,
+                    remove_text,
+                    style_set_id,
+                    size_override_px,
+                    mix_override,
+                    layout_override,
+                    timeline_override=timeline_override,
+                    font_family_override=font_family_override,
+                    effect_override=effect_override,
+                    text_color_override=text_color_override,
+                    cluster_hero_font_override=cluster_hero_font_override,
+                    cluster_body_font_override=cluster_body_font_override,
+                    cluster_accent_font_override=cluster_accent_font_override,
+                    cluster_hero_size_px_override=cluster_hero_size_px_override,
+                    cluster_body_size_px_override=cluster_body_size_px_override,
+                    cluster_accent_size_px_override=cluster_accent_size_px_override,
+                    media_overlays_override=media_overlays_override,
+                    sfx_override=sfx_override,
+                    render_gen_id=render_gen_id,
+                    intro_start_s_override=intro_start_s_override,
+                    intro_end_s_override=intro_end_s_override,
+                    text_behind_subject=text_behind_subject,
+                    orientation_override=orientation_override,
+                    force_full_render=force_full_render,
+                    carousel_moment_override=carousel_moment_override,
+                    guided_revision=guided_revision,
+                )
         except OperationalError:
+            if claim_state == "claimed" and render_gen_id:
+                _release_creator_craft_generation_claim(
+                    job_id,
+                    variant_id,
+                    str(render_gen_id),
+                    task_id=task_id,
+                )
             raise
         except Exception as exc:
             log.error(
@@ -9074,6 +9320,12 @@ def _run_regenerate_variant(
             "music_start_s": existing_music_start_s,
             "music_window_video_duration_s": existing_music_window_duration_s,
             "storage_generation": render_gen_id,
+            "strict_day_vlog": existing.get("resolved_archetype") == "day_vlog",
+            "day_vlog_renderer_version": (
+                existing.get("day_vlog_renderer_version")
+                if existing.get("resolved_archetype") == "day_vlog"
+                else None
+            ),
             "strict_single_hero": existing.get("resolved_archetype") == "single_hero",
             "single_hero_renderer_version": (
                 SINGLE_HERO_RENDERER_VERSION
@@ -9821,7 +10073,7 @@ def _resolve_archetype(
     if edit_format == "single_hero":
         if not settings.edit_format_single_hero_enabled:
             return "single_hero", None, "flag_disabled"
-        order = _single_hero_order(clip_metas, clip_id_to_local)
+        order = _single_hero_order(clip_metas, clip_id_to_local, clip_durations_s)
         if len(order) < _SINGLE_HERO_MIN_CLIPS:
             return "single_hero", None, "insufficient_media"
         record_pipeline_event(
@@ -10079,6 +10331,7 @@ def _specs_for_archetype(
                 "track": best_track,
                 "archetype": "day_vlog",
                 "strict_day_vlog": True,
+                "day_vlog_renderer_version": DAY_VLOG_RENDERER_VERSION,
             }
         ]
     if archetype == "single_hero":
@@ -11087,6 +11340,11 @@ def _render_generative_variant(
     text_mode = spec["text_mode"]
     track: MusicTrack | None = spec["track"]
     if strict_day_vlog:
+        if spec.get("day_vlog_renderer_version") != DAY_VLOG_RENDERER_VERSION:
+            raise DayVlogPolicyError(
+                "renderer_version_mismatch",
+                "This day-vlog variant was created by an incompatible worker; retry it.",
+            )
         if not settings.edit_format_day_vlog_enabled:
             raise DayVlogPolicyError(
                 "flag_disabled",
@@ -11236,6 +11494,8 @@ def _render_generative_variant(
         "lyric_line_overrides": lyric_line_overrides or None,
         "lyric_overlay_snapshot": None,
     }
+    if strict_day_vlog:
+        base["day_vlog_renderer_version"] = spec.get("day_vlog_renderer_version")
     if spec.get("music_window_video_duration_s") is not None:
         base["music_window_video_duration_s"] = spec["music_window_video_duration_s"]
     if resolved_montage_preset != DEFAULT_MONTAGE_PRESET:
@@ -11280,7 +11540,14 @@ def _render_generative_variant(
                     "renderer_version_mismatch",
                     "This single-hero variant was created by an incompatible worker; retry it.",
                 )
-            single_hero_order = _single_hero_order(clip_metas, clip_id_to_local)
+            single_hero_order = _single_hero_order(
+                clip_metas,
+                clip_id_to_local,
+                {
+                    cid: float(getattr(probe_map.get(path), "duration_s", 0.0) or 0.0)
+                    for cid, path in clip_id_to_local.items()
+                },
+            )
             durations = {
                 cid: float(getattr(probe_map.get(path), "duration_s", 0.0) or 0.0)
                 for cid, path in clip_id_to_local.items()
@@ -15192,15 +15459,49 @@ def reburn_narrated_captions(
     persisted SFX/overlay lanes on top (plan 010). A failure reverts the variant
     to `ready` keeping its last-good video.
     """
+    task_id = str(getattr(self.request, "id", "") or "")
+    claim_state = _claim_creator_craft_generation(
+        job_id,
+        variant_id,
+        render_gen_id,
+        task_id=task_id,
+    )
+    if claim_state not in {"claimed", "legacy"}:
+        log.info(
+            "creator_craft_duplicate_delivery_skipped",
+            job_id=job_id,
+            variant_id=variant_id,
+            generation=render_gen_id,
+            claim_state=claim_state,
+        )
+        return
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
     with pipeline_trace_for(job_id):
         terminal_state = {"accepted": False}
         try:
-            _run_reburn_narrated_captions(
-                job_id, variant_id, render_gen_id=render_gen_id, terminal_state=terminal_state
+            heartbeat = (
+                _creator_craft_generation_heartbeat(
+                    job_id,
+                    variant_id,
+                    str(render_gen_id),
+                    task_id=task_id,
+                )
+                if claim_state == "claimed" and render_gen_id
+                else nullcontext()
             )
+            with heartbeat:
+                _run_reburn_narrated_captions(
+                    job_id, variant_id, render_gen_id=render_gen_id, terminal_state=terminal_state
+                )
         except OperationalError:
+            if claim_state == "claimed" and render_gen_id:
+                _release_creator_craft_generation_claim(
+                    job_id,
+                    variant_id,
+                    str(render_gen_id),
+                    task_id=task_id,
+                )
             raise
         except Exception as exc:
             log.error(
@@ -15248,18 +15549,52 @@ def rerender_caption_camera_effects(
     self, job_id: str, variant_id: str, render_gen_id: str | None = None
 ) -> None:
     """Rebuild a caption variant's clean base after editable camera-effect changes."""
+    task_id = str(getattr(self.request, "id", "") or "")
+    claim_state = _claim_creator_craft_generation(
+        job_id,
+        variant_id,
+        render_gen_id,
+        task_id=task_id,
+    )
+    if claim_state not in {"claimed", "legacy"}:
+        log.info(
+            "creator_craft_duplicate_delivery_skipped",
+            job_id=job_id,
+            variant_id=variant_id,
+            generation=render_gen_id,
+            claim_state=claim_state,
+        )
+        return
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
     terminal_state = {"accepted": False}
     with pipeline_trace_for(job_id):
         try:
-            _run_rerender_caption_camera_effects(
-                job_id,
-                variant_id,
-                render_gen_id=render_gen_id,
-                terminal_state=terminal_state,
+            heartbeat = (
+                _creator_craft_generation_heartbeat(
+                    job_id,
+                    variant_id,
+                    str(render_gen_id),
+                    task_id=task_id,
+                )
+                if claim_state == "claimed" and render_gen_id
+                else nullcontext()
             )
+            with heartbeat:
+                _run_rerender_caption_camera_effects(
+                    job_id,
+                    variant_id,
+                    render_gen_id=render_gen_id,
+                    terminal_state=terminal_state,
+                )
         except OperationalError:
+            if claim_state == "claimed" and render_gen_id:
+                _release_creator_craft_generation_claim(
+                    job_id,
+                    variant_id,
+                    str(render_gen_id),
+                    task_id=task_id,
+                )
             raise
         except Exception as exc:
             log.error(

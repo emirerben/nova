@@ -26,6 +26,28 @@ QUALITY_REVIEW_MODEL = "gemini-2.5-flash"
 READY_JOB_STATUSES = frozenset({"variants_ready", "variants_ready_partial"})
 OBJECTIVE_SCORE_THRESHOLD = 4.0
 
+# These names are the mechanical dimensions in ``final_video.md``.  Keep this
+# allowlist exact: a generic dimension such as ``text_quality`` or
+# ``text_concision`` is a taste/editorial observation and must never authorize a
+# caption mutation merely because it contains the word "text".
+_CAPTION_DIMENSIONS = frozenset({"text_legibility_and_timing"})
+_TRANSITION_DIMENSIONS = frozenset({"transition_continuity"})
+_OPTIONAL_TREATMENT_DIMENSIONS = frozenset({"optional_overlay_sfx_quality"})
+_SPEECH_CUT_DIMENSIONS = frozenset({"speech_cut_integrity"})
+
+
+def _objective_action_for_dimension(dimension: object) -> str | None:
+    name = str(dimension or "").strip().lower()
+    if name in _CAPTION_DIMENSIONS:
+        return "caption_legibility"
+    if name in _TRANSITION_DIMENSIONS:
+        return "transition_fallback"
+    if name in _OPTIONAL_TREATMENT_DIMENSIONS:
+        return "remove_optional_treatment"
+    if name in _SPEECH_CUT_DIMENSIONS:
+        return "speech_cut"
+    return None
+
 
 def review_key(session_id: str, job_id: str, variant_id: str, generation_id: str) -> str:
     return ":".join((session_id, job_id, variant_id, generation_id))
@@ -57,19 +79,10 @@ def _objective_action_for_scores(scores: dict[str, float]) -> tuple[str | None, 
             continue
         if score >= OBJECTIVE_SCORE_THRESHOLD:
             continue
-        dimension = str(raw_dimension).lower()
-        action: str | None = None
-        if any(token in dimension for token in ("caption", "legib", "text")):
-            action = "caption_legibility"
-        elif "transition" in dimension:
-            action = "transition_fallback"
-        elif any(token in dimension for token in ("speech", "silence", "filler", "retake")):
-            action = "speech_cut"
-        elif any(token in dimension for token in ("overlay", "sfx", "sound_effect")):
-            action = "remove_optional_treatment"
-        else:
+        action = _objective_action_for_dimension(raw_dimension)
+        if action is None:
             taste_failure = True
-        if action is not None:
+        else:
             objective.append((score, action))
 
     objective.sort(key=lambda value: (value[0], value[1]))
@@ -90,16 +103,16 @@ def _action_target(
 ) -> dict[str, Any] | None:
     """Resolve an allowlisted command target from observed timecodes and exact state."""
 
-    tokens = {
-        "caption_legibility": ("caption", "legib", "text"),
-        "transition_fallback": ("transition",),
-        "remove_optional_treatment": ("overlay", "sfx", "sound_effect"),
-        "speech_cut": ("speech", "silence", "filler", "retake"),
-    }.get(str(action), ())
+    dimensions = {
+        "caption_legibility": _CAPTION_DIMENSIONS,
+        "transition_fallback": _TRANSITION_DIMENSIONS,
+        "remove_optional_treatment": _OPTIONAL_TREATMENT_DIMENSIONS,
+        "speech_cut": _SPEECH_CUT_DIMENSIONS,
+    }.get(str(action), frozenset())
     relevant = [
         value
         for value in grader_evidence
-        if any(token in str(value.get("dimension") or "").lower() for token in tokens)
+        if str(value.get("dimension") or "").strip().lower() in dimensions
         and float(scores.get(str(value.get("dimension") or ""), 5.0)) < OBJECTIVE_SCORE_THRESHOLD
     ]
     relevant.sort(key=lambda value: (float(value.get("start_s") or 0.0), str(value)))
@@ -707,8 +720,11 @@ def mark_review_unavailable(
         session_id, job_id, variant_id, generation_id
     ):
         return False
+    # Always lock the referenced Job while closing a receipt.  Even the
+    # stale-target/manual-feedback path needs the same row-level fence as the
+    # successful path so a flag-off worker cannot race a new generation.
+    job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
     if not allow_stale_target:
-        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         variants = (job.assembly_plan or {}).get("variants") if job else []
         variant = next(
             (
@@ -769,6 +785,22 @@ def quality_review_creator_session(
         settings.main_creator_agent_review_enabled
         and settings.main_creator_agent_quality_review_enabled
     ):
+        # A flag can be disabled after reconciliation has committed a pending
+        # receipt.  Do not leave that receipt pending forever: fence the exact
+        # Job/variant/generation under row locks and expose a manual-feedback
+        # outcome.  ``mark_review_unavailable`` validates the full identity
+        # before writing, so a stale delivery cannot mutate a newer render.
+        with sync_session() as db:
+            mark_review_unavailable(
+                db,
+                session_id=session_id,
+                job_id=job_id,
+                variant_id=variant_id,
+                generation_id=render_generation_id,
+                code="review_disabled",
+                message="Quality review is disabled; watch the render and give manual feedback.",
+                allow_stale_target=True,
+            )
         return
 
     # Reconciliation queues this task in the same request that commits the

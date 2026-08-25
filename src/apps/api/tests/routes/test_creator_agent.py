@@ -351,8 +351,15 @@ async def test_creator_craft_replays_succeeded_receipt_without_reenqueue(monkeyp
         id=uuid.uuid4(),
         request_digest=canonical_context_hash(body.model_dump(mode="json")),
         status="succeeded",
-        result={"generation": "generation-2", "preview": {"caption_style": "word"}},
+        result={
+            "generation": "generation-2",
+            "prepared": {"generation": "generation-2", "sections": {"caption_meta": True}},
+            "preview": {"caption_style": "word"},
+        },
     )
+    # The first direct craft commit advanced the controller revision before
+    # publishing. An exact idempotent replay still carries the original pin.
+    session.revision = body.expected_revision + 1
     db = AsyncMock()
     receipt_result = MagicMock()
     receipt_result.scalar_one_or_none.return_value = receipt
@@ -397,6 +404,18 @@ async def test_creator_craft_enqueue_failure_restores_plan_and_fails_receipt(mon
         job_id=job_id,
         generation_id="generation-2",
     )
+    job.assembly_plan = {
+        "variants": [
+            {
+                "variant_id": "variant-1",
+                "render_generation_id": "generation-2",
+                "render_status": "ready",
+                "caption_meta": {"style": "sentence"},
+            },
+            {"variant_id": "sibling", "render_generation_id": "sibling-1", "rank": 2},
+        ],
+        "unrelated_state": "before",
+    }
     previous_assembly_plan = job.assembly_plan.copy()
     receipt_id = uuid.uuid4()
     failed_receipt = SimpleNamespace(id=receipt_id, status="running", error=None)
@@ -404,7 +423,7 @@ async def test_creator_craft_enqueue_failure_restores_plan_and_fails_receipt(mon
     receipt_result = MagicMock()
     receipt_result.scalar_one_or_none.return_value = None
     db.execute.return_value = receipt_result
-    db.get.side_effect = [job, job, failed_receipt]
+    db.get.side_effect = [job, job, session, failed_receipt]
 
     def add(value):
         if isinstance(value, CreatorAgentExecution):
@@ -423,12 +442,14 @@ async def test_creator_craft_enqueue_failure_restores_plan_and_fails_receipt(mon
             "variants": [
                 {
                     "variant_id": "variant-1",
-                    "render_generation_id": "generation-2",
+                    "render_generation_id": "generation-3",
                     "render_status": "rendering",
-                }
-            ]
+                },
+                {"variant_id": "sibling", "render_generation_id": "sibling-2", "rank": 3},
+            ],
+            "unrelated_state": "concurrent-update",
         }
-        return {"generation": "generation-2", "sections": {"caption_meta": True}}
+        return {"generation": "generation-3", "sections": {"caption_meta": True}}
 
     monkeypatch.setattr(creator_routes, "_require_feature", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
@@ -462,11 +483,108 @@ async def test_creator_craft_enqueue_failure_restores_plan_and_fails_receipt(mon
         )
 
     assert caught.value.status_code == 503
-    assert job.assembly_plan == previous_assembly_plan
+    assert job.assembly_plan["variants"][0] == previous_assembly_plan["variants"][0]
+    assert job.assembly_plan["variants"][1]["render_generation_id"] == "sibling-2"
+    assert job.assembly_plan["unrelated_state"] == "concurrent-update"
     assert failed_receipt.status == "failed"
     assert failed_receipt.error["code"] == "craft_enqueue_failed"
     assert failed_receipt.error["rolled_back"] is True
+    # The route advances the controller revision together with the staged
+    # generation; broker publication failure restores that exact session state.
+    assert session.revision == 3
     db.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_creator_craft_rollback_restores_speech_owned_state_only() -> None:
+    job_id = uuid.uuid4()
+    receipt_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    started_at = datetime.now(UTC)
+    previous_plan = {
+        "variants": [
+            {"variant_id": "target", "render_generation_id": "old", "render_status": "ready"}
+        ],
+        "silence_cut_disabled": True,
+        "speech_cut_control": {"operation_id": "old-op"},
+        "speech_cut_previous_variant": {"variant_id": "target", "render_status": "ready"},
+        "speech_cut_previous_variants": [{"variant_id": "target"}],
+        "speech_cut_last_error": "old-error",
+    }
+    job = SimpleNamespace(
+        id=job_id,
+        status="processing",
+        started_at=datetime.now(UTC),
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "target",
+                    "render_generation_id": "new",
+                    "render_status": "rendering",
+                },
+                {"variant_id": "sibling", "render_generation_id": "sibling-new"},
+            ],
+            "silence_cut_disabled": False,
+            "speech_cut_control": {"operation_id": "new-op"},
+            "speech_cut_previous_variant": {"variant_id": "target", "render_status": "rendering"},
+            "speech_cut_previous_variants": [{"variant_id": "sibling"}],
+            "speech_cut_last_error": None,
+            "unrelated": "concurrent-update",
+        },
+    )
+    session = SimpleNamespace(
+        id=session_id,
+        status="rendering",
+        target_job_id=job_id,
+        target_variant_id="target",
+        target_generation_id="new",
+        render_attempts=2,
+        iteration_count=2,
+        revision=4,
+    )
+    failed_receipt = SimpleNamespace(id=receipt_id, status="running", error=None)
+    db = AsyncMock()
+    db.get.side_effect = [job, session, failed_receipt]
+
+    await creator_routes._rollback_craft_commit(
+        db,
+        receipt_id=receipt_id,
+        session_id=session_id,
+        job_id=job_id,
+        previous_assembly_plan=previous_plan,
+        variant_id="target",
+        generation="new",
+        error=RuntimeError("broker unavailable"),
+        previous_job_state={"status": "variants_ready", "started_at": started_at.isoformat()},
+        previous_session_state={
+            "status": "awaiting_feedback",
+            "target_job_id": str(job_id),
+            "target_variant_id": "target",
+            "target_generation_id": "old",
+            "render_attempts": 1,
+            "iteration_count": 1,
+            "revision": 3,
+        },
+    )
+
+    assert job.status == "variants_ready"
+    assert job.started_at == started_at
+    assert job.assembly_plan["variants"][0] == previous_plan["variants"][0]
+    assert job.assembly_plan["variants"][1]["render_generation_id"] == "sibling-new"
+    assert job.assembly_plan["unrelated"] == "concurrent-update"
+    for key in (
+        "silence_cut_disabled",
+        "speech_cut_control",
+        "speech_cut_previous_variant",
+        "speech_cut_previous_variants",
+        "speech_cut_last_error",
+    ):
+        assert job.assembly_plan[key] == previous_plan[key]
+    assert failed_receipt.status == "failed"
+    assert session.status == "awaiting_feedback"
+    assert session.target_generation_id == "old"
+    assert session.render_attempts == 1
+    assert session.revision == 3
 
 
 class _ExpiringNamespace:

@@ -29,6 +29,7 @@ from app.models import (
     Persona,
     PlanItem,
     PlanItemAsset,
+    SoundEffect,
 )
 from app.services.creator_capabilities import resolve_creator_manifest
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
@@ -270,6 +271,29 @@ async def resolve_item_creator_context(
         )
         for track in tracks
     ]
+    # The planner may propose a licensed SFX command only from this bounded,
+    # server-owned catalog.  Expose the effect's opaque primary key (the
+    # craft route resolves and revalidates it); never expose its storage path.
+    sound_effects = (
+        await db.execute(
+            select(SoundEffect)
+            .where(
+                SoundEffect.status == "ready",
+                SoundEffect.published_at.is_not(None),
+                SoundEffect.archived_at.is_(None),
+            )
+            .order_by(SoundEffect.published_at.desc(), SoundEffect.created_at.desc())
+            .limit(max(0, 50 - len(catalog)))
+        )
+    ).scalars()
+    catalog.extend(
+        CreatorCatalogRef(
+            catalog_id=str(effect.id),
+            kind="sound_effect",
+            label=_clean(effect.name, 160),
+        )
+        for effect in sound_effects
+    )
     has_ready_variant = False
     current_edit: CreatorEditSnapshot | None = None
     if item.current_job_id:
@@ -401,7 +425,15 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
     if session.phase not in {"executing", "rendering", "reviewing", "awaiting_feedback"}:
         return False
     if session.phase == "awaiting_feedback" and pending_review.get("status") != "pending":
-        return False
+        # A broker outage is the one transient review state that reconciliation
+        # may retry.  Disabled/failed/stale reviews remain terminal manual
+        # feedback receipts and must not be republished indefinitely.
+        retryable_review_enqueue = pending_review.get("status") == "unavailable" and (
+            pending_review.get("dispatch_status") == "failed"
+            or pending_review.get("error_code") == "review_enqueue_failed"
+        )
+        if not retryable_review_enqueue:
+            return False
     if not session.target_job_id:
         item = await db.get(
             PlanItem,
@@ -625,6 +657,22 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
                 "error_code": "review_target_missing",
                 "error_message": "The ready render has no exact variant generation to review.",
                 "job_id": str(job.id),
+                "failed_at": datetime.now(UTC).isoformat(),
+            }
+        elif pending_review.get("status") in {"pending", "running"}:
+            # The kill switch may flip after a pending receipt commits but
+            # before the worker can close it. Poll-time reconciliation owns the
+            # same exact session/Job/variant/generation rows, so make the
+            # manual-feedback fallback terminal here instead of polling
+            # forever. A stale worker is still fenced by the review key.
+            session.last_review = {
+                **pending_review,
+                "status": "unavailable",
+                "decision": "unavailable",
+                "error_code": "review_disabled",
+                "error_message": (
+                    "Quality review is disabled; watch the render and give manual feedback."
+                ),
                 "failed_at": datetime.now(UTC).isoformat(),
             }
         elif review_enabled:

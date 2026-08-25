@@ -176,6 +176,7 @@ def test_day_vlog_ignores_generic_montage_variant_set(monkeypatch):
     assert len(specs) == 1
     assert specs[0]["archetype"] == "day_vlog"
     assert specs[0]["strict_day_vlog"] is True
+    assert specs[0]["day_vlog_renderer_version"] == gb.DAY_VLOG_RENDERER_VERSION
 
 
 def test_single_hero_selects_one_hero_and_never_downgrades(monkeypatch):
@@ -218,6 +219,55 @@ def test_single_hero_policy_pins_dominance_and_ownership():
     assert gb._classify_error(gb.SingleHeroPolicyError("insufficient_media", "missing")) == (
         "single_hero_insufficient_media"
     )
+
+
+@pytest.mark.parametrize("duration", [0.0, -1.0, float("nan"), float("inf")])
+def test_single_hero_filters_non_positive_or_non_finite_support_durations(duration):
+    order = gb._single_hero_order(
+        [_Meta("hero"), _Meta("support")],
+        {"hero": "/hero.mp4", "support": "/support.mp4"},
+        {"hero": 5.0, "support": duration},
+    )
+    assert order == ["hero"]
+
+
+def test_single_hero_with_only_unusable_support_fails_deterministically():
+    order = gb._single_hero_order(
+        [_Meta("hero"), _Meta("support")],
+        {"hero": "/hero.mp4", "support": "/support.mp4"},
+        {"hero": 5.0, "support": 0.0},
+    )
+    with pytest.raises(gb.SingleHeroPolicyError, match="one usable hero.*cutaway"):
+        gb._build_single_hero_recipe(
+            order,
+            available_footage_s=5.0,
+            clip_durations_s={"hero": 5.0, "support": 0.0},
+            max_duration_s=60.0,
+        )
+
+
+def test_day_vlog_rerender_rejects_missing_or_mixed_renderer_version(tmp_path):
+    with pytest.raises(gb.DayVlogPolicyError, match="incompatible"):
+        gb._render_generative_variant(
+            job_id="job-1",
+            rank=1,
+            spec={
+                "variant_id": "day_vlog",
+                "text_mode": "agent_text",
+                "track": None,
+                "day_vlog_renderer_version": gb.DAY_VLOG_RENDERER_VERSION - 1,
+            },
+            clip_metas=[],
+            clip_id_to_local={},
+            clip_id_to_gcs={},
+            probe_map={},
+            available_footage_s=0.0,
+            agent_text=None,
+            agent_form={},
+            variant_dir=str(tmp_path),
+            narrative_order=["clip-1", "clip-2"],
+            strict_day_vlog=True,
+        )
 
 
 def test_day_vlog_chronology_kill_switch_fails_closed(monkeypatch):

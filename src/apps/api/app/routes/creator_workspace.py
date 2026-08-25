@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
+from sqlalchemy.orm import aliased, selectinload
 
 from app.agents._schemas.user_style import UserStyle
 from app.agents.music_matcher import _sanitize_text
@@ -828,9 +828,13 @@ async def _workspace_response(
 async def _latest_workspace_receipt(
     plan: ContentPlan, user: CurrentUser, db: AsyncSession, receipt_id: str | None = None
 ) -> WorkspaceReceiptResponse:
-    stmt = select(CreatorWorkspaceReceipt).where(
-        CreatorWorkspaceReceipt.plan_id == plan.id,
-        CreatorWorkspaceReceipt.creator_id == user.id,
+    stmt = (
+        select(CreatorWorkspaceReceipt)
+        .where(
+            CreatorWorkspaceReceipt.plan_id == plan.id,
+            CreatorWorkspaceReceipt.creator_id == user.id,
+        )
+        .options(selectinload(CreatorWorkspaceReceipt.deliverables))
     )
     if receipt_id is not None:
         try:
@@ -864,7 +868,9 @@ async def create_workspace_receipt(
     digest = _workspace_request_digest(plan.id, int(plan.ownership_epoch or 0), body.plan_item_ids)
     existing = (
         await db.execute(
-            select(CreatorWorkspaceReceipt).where(
+            select(CreatorWorkspaceReceipt)
+            .options(selectinload(CreatorWorkspaceReceipt.deliverables))
+            .where(
                 CreatorWorkspaceReceipt.creator_id == user.id,
                 CreatorWorkspaceReceipt.plan_id == plan.id,
                 CreatorWorkspaceReceipt.idempotency_key == body.idempotency_key,
@@ -1029,7 +1035,10 @@ async def create_workspace_receipt(
             )
         )
     await db.commit()
-    await db.refresh(receipt)
+    # Refresh the relationship explicitly: a plain parent refresh expires
+    # relationship state under AsyncSession and `_workspace_response` must not
+    # trigger implicit lazy IO while projecting immutable deliverables.
+    await db.refresh(receipt, attribute_names=["deliverables"])
     return await _workspace_response(db, receipt, plan)
 
 

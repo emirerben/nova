@@ -9,6 +9,7 @@ from app.agents._schemas.creator_agent import (
     AskUser,
     CreativeStrategy,
     CreatorAutomationDecision,
+    CreatorCraftBundle,
     CreatorEditPlan,
     CreatorReviewEvidence,
     CreatorReviewReceipt,
@@ -144,6 +145,19 @@ def _target_kwargs() -> dict[str, str | int]:
         "expected_revision": 2,
         "expected_ownership_epoch": 4,
     }
+
+
+def test_craft_bundle_rejects_duplicate_optional_treatment_removals() -> None:
+    with pytest.raises(ValidationError, match="optional treatment removal"):
+        CreatorCraftBundle(
+            **_target_kwargs(),
+            session_id="session-1",
+            idempotency_key="craft-1",
+            commands=[
+                {**_target_kwargs(), "command": "remove_optional_treatment", "treatment": "sfx"},
+                {**_target_kwargs(), "command": "remove_optional_treatment", "treatment": "sfx"},
+            ],
+        )
 
 
 @pytest.mark.parametrize(

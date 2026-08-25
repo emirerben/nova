@@ -8,6 +8,7 @@ dispatch through the existing render entry point.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import copy
 import uuid
 from datetime import UTC, datetime
@@ -88,6 +89,9 @@ router = APIRouter()
 # of the read/poll and explicit-confirmation routes; the latter are cheap and
 # must remain usable while a client is recovering from a retry storm.
 CREATOR_AGENT_MUTATION_RATE_LIMIT = "12/minute"
+_MANAGE_CRAFT_SESSION_STATE: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "manage_creator_craft_session_state", default=True
+)
 
 
 class _StrictBody(BaseModel):
@@ -1132,23 +1136,106 @@ async def _rollback_craft_commit(
     db: AsyncSession,
     *,
     receipt_id: uuid.UUID,
+    session_id: uuid.UUID,
     job_id: uuid.UUID,
     previous_assembly_plan: dict | None,
+    variant_id: str,
     generation: str,
     error: Exception,
+    previous_job_state: dict[str, Any] | None = None,
+    previous_session_state: dict[str, Any] | None = None,
 ) -> None:
-    """Undo only this craft generation when broker publication fails."""
+    """Undo only this craft generation when broker publication fails.
+
+    The target generation is the compare-and-swap guard.  Restore the exact
+    target variant and speech-cut fields owned by this craft, while retaining
+    sibling variants and unrelated assembly-plan keys committed during broker
+    publication.
+    """
+
+    creator_owned_keys = (
+        "silence_cut_disabled",
+        "speech_cut_control",
+        "speech_cut_previous_variant",
+        "speech_cut_previous_variants",
+        "speech_cut_last_error",
+    )
 
     await db.rollback()
     locked_job = await db.get(Job, job_id, populate_existing=True, with_for_update=True)
     if locked_job is not None:
         variants = list((locked_job.assembly_plan or {}).get("variants") or [])
-        current = next(
-            (value for value in variants if value.get("render_generation_id") == generation),
+        current_index = next(
+            (
+                index
+                for index, value in enumerate(variants)
+                if value.get("variant_id") == variant_id
+                and value.get("render_generation_id") == generation
+            ),
             None,
         )
-        if current is not None:
-            locked_job.assembly_plan = copy.deepcopy(previous_assembly_plan)
+        if current_index is not None:
+            previous_variants = list((previous_assembly_plan or {}).get("variants") or [])
+            previous_variant = next(
+                (
+                    value
+                    for value in previous_variants
+                    if isinstance(value, dict) and value.get("variant_id") == variant_id
+                ),
+                None,
+            )
+            if previous_variant is None:
+                variants.pop(current_index)
+            else:
+                variants[current_index] = copy.deepcopy(previous_variant)
+            # Restore only this target variant. Sibling variants and unrelated
+            # top-level assembly state may have been committed while the
+            # broker call was in flight and must survive the rollback.
+            current_assembly = copy.deepcopy(locked_job.assembly_plan or {})
+            current_assembly["variants"] = variants
+            previous_owned = (previous_assembly_plan or {}).get("_creator_craft_owned")
+            if not isinstance(previous_owned, dict):
+                previous_owned = {
+                    key: (previous_assembly_plan or {})[key]
+                    for key in creator_owned_keys
+                    if key in (previous_assembly_plan or {})
+                }
+            for key in creator_owned_keys:
+                if key in previous_owned:
+                    current_assembly[key] = copy.deepcopy(previous_owned[key])
+                else:
+                    current_assembly.pop(key, None)
+            locked_job.assembly_plan = current_assembly
+            if previous_job_state:
+                locked_job.status = previous_job_state.get("status")
+                started_at = previous_job_state.get("started_at")
+                locked_job.started_at = (
+                    datetime.fromisoformat(started_at) if isinstance(started_at, str) else None
+                )
+    if previous_session_state:
+        locked_session = await db.get(
+            CreatorAgentSession,
+            session_id,
+            populate_existing=True,
+            with_for_update=True,
+        )
+        if (
+            locked_session is not None
+            and str(locked_session.target_generation_id or "") == generation
+        ):
+            locked_session.status = previous_session_state.get("status")
+            previous_target_job_id = previous_session_state.get("target_job_id")
+            locked_session.target_job_id = (
+                uuid.UUID(previous_target_job_id) if previous_target_job_id else None
+            )
+            for field in (
+                "target_variant_id",
+                "target_generation_id",
+                "render_attempts",
+                "iteration_count",
+                "revision",
+            ):
+                setattr(locked_session, field, previous_session_state.get(field))
     failed_receipt = await db.get(CreatorAgentExecution, receipt_id, with_for_update=True)
     if failed_receipt is not None:
         failed_receipt.status = "failed"
@@ -1355,15 +1442,13 @@ def _stage_creator_speech_cut(
     return request, operation_id, variant
 
 
-@router.post(
-    "/{item_id}/creator-agent/craft",
-    response_model=CreatorCraftResponse,
-)
-async def execute_creator_craft(
+async def _execute_creator_craft(
     item_id: str,
     body: CreatorCraftBundle,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    *,
+    manage_session_state: bool,
 ) -> CreatorCraftResponse:
     """Execute one exact-generation craft bundle atomically.
 
@@ -1381,6 +1466,16 @@ async def execute_creator_craft(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail="Creator session changed") from exc
     session = await _load_session(db, session_id, user.id, item.id, for_update=True)
+    prior_target_job_id = getattr(session, "target_job_id", None)
+    previous_session_state = {
+        "status": session.status,
+        "target_job_id": str(prior_target_job_id) if prior_target_job_id else None,
+        "target_variant_id": getattr(session, "target_variant_id", None),
+        "target_generation_id": getattr(session, "target_generation_id", None),
+        "render_attempts": getattr(session, "render_attempts", 0),
+        "iteration_count": getattr(session, "iteration_count", 0),
+        "revision": session.revision,
+    }
     request_digest = canonical_context_hash(body.model_dump(mode="json"))
     receipt = (
         await db.execute(
@@ -1397,15 +1492,6 @@ async def execute_creator_craft(
             raise HTTPException(status_code=409, detail="Creator craft execution is not resumable")
     elif session.status not in {"reviewing", "awaiting_feedback", "revising", "completed"}:
         raise HTTPException(status_code=409, detail="Creator render is not ready for craft")
-
-    if session.revision != body.expected_revision:
-        raise HTTPException(status_code=409, detail="Creator session changed")
-    if session.ownership_epoch != int(plan_row.ownership_epoch or 0):
-        raise HTTPException(status_code=409, detail="Creator ownership changed")
-    if body.expected_ownership_epoch != int(plan_row.ownership_epoch or 0):
-        raise HTTPException(status_code=409, detail="Creator ownership changed")
-
-    manifest, _media_context = await resolve_item_creator_context(db, item, persona=persona)
     existing_result = receipt.result if receipt is not None else None
     recovering_prepared = bool(
         receipt is not None
@@ -1413,12 +1499,26 @@ async def execute_creator_craft(
         and isinstance(existing_result, dict)
         and existing_result.get("prepared")
     )
+
+    # A direct craft commit advances the controller revision before broker
+    # publication.  Only the exact idempotency receipt (same digest/session)
+    # may replay across that intentional revision bump; every fresh stale
+    # request still fails closed.
+    if session.revision != body.expected_revision and not recovering_prepared:
+        raise HTTPException(status_code=409, detail="Creator session changed")
+    if session.ownership_epoch != int(plan_row.ownership_epoch or 0):
+        raise HTTPException(status_code=409, detail="Creator ownership changed")
+    if body.expected_ownership_epoch != int(plan_row.ownership_epoch or 0):
+        raise HTTPException(status_code=409, detail="Creator ownership changed")
+
+    manifest, _media_context = await resolve_item_creator_context(db, item, persona=persona)
     full_manifest_match = (
         body.expected_manifest_hash == manifest.manifest_hash
         and body.expected_context_hash == manifest.context_hash
     )
     stable_manifest_match = bool(
-        recovering_prepared
+        not full_manifest_match
+        and recovering_prepared
         and existing_result.get("stable_manifest_fingerprint")
         == _stable_manifest_fingerprint(manifest)
     )
@@ -1442,6 +1542,10 @@ async def execute_creator_craft(
         )
     ):
         raise HTTPException(status_code=409, detail="Creator render target changed")
+    previous_job_state = {
+        "status": job.status,
+        "started_at": (job.started_at.isoformat() if getattr(job, "started_at", None) else None),
+    }
     variants = list((job.assembly_plan or {}).get("variants") or [])
     variant = next(
         (value for value in variants if value.get("variant_id") == body.expected_variant_id),
@@ -1480,8 +1584,17 @@ async def execute_creator_craft(
                 raise HTTPException(status_code=409, detail="Creator craft execution is stale")
         preview = existing_result.get("preview") or {}
         previous_assembly_plan = existing_result.get("previous_assembly_plan")
+        if isinstance(existing_result.get("previous_job_state"), dict):
+            previous_job_state = existing_result["previous_job_state"]
+        if isinstance(existing_result.get("previous_session_state"), dict):
+            previous_session_state = existing_result["previous_session_state"]
         speech_operation_id = existing_result.get("speech_cut_operation_id")
     else:
+        if manage_session_state:
+            attempts = int(getattr(session, "render_attempts", 0) or 0)
+            max_attempts = int(getattr(session, "max_render_attempts", 2) or 0)
+            if attempts >= max_attempts:
+                raise HTTPException(status_code=409, detail="Creator render budget exhausted")
         if current_generation != body.expected_generation_id:
             raise HTTPException(status_code=409, detail="Creator render generation changed")
         if variant.get("render_status") not in (None, "ready"):
@@ -1518,7 +1631,24 @@ async def execute_creator_craft(
                     user_id=user.id,
                     asset_id=command.asset_id,
                 )
-        previous_assembly_plan = copy.deepcopy(job.assembly_plan)
+        current_assembly_plan = job.assembly_plan or {}
+        previous_assembly_plan = {
+            # Keep the receipt's rollback material bounded to the one target
+            # variant.  Sibling variants and unrelated top-level state may be
+            # changed by another request while the broker call is in flight.
+            "variants": [copy.deepcopy(variant)],
+            "_creator_craft_owned": {
+                key: copy.deepcopy(current_assembly_plan[key])
+                for key in (
+                    "silence_cut_disabled",
+                    "speech_cut_control",
+                    "speech_cut_previous_variant",
+                    "speech_cut_previous_variants",
+                    "speech_cut_last_error",
+                )
+                if key in current_assembly_plan
+            },
+        }
         speech_operation_id: str | None = None
         resolved_sfx: dict[str, Any] | None = None
         try:
@@ -1634,6 +1764,8 @@ async def execute_creator_craft(
             "prepared": prepared,
             "preview": preview,
             "previous_assembly_plan": previous_assembly_plan,
+            "previous_job_state": previous_job_state,
+            "previous_session_state": previous_session_state,
             "speech_cut_operation_id": speech_operation_id,
             "stable_manifest_fingerprint": _stable_manifest_fingerprint(manifest),
             "pins": {
@@ -1646,6 +1778,18 @@ async def execute_creator_craft(
                 "ownership_epoch": body.expected_ownership_epoch,
             },
         }
+        if manage_session_state:
+            # The craft route is a second render path, not merely an editor
+            # receipt.  Advance the controller while the same session/job
+            # locks are held so reconciliation cannot observe a new Job
+            # generation paired with the old target or render budget.
+            session.status = "rendering"
+            session.target_job_id = job.id
+            session.target_variant_id = body.expected_variant_id
+            session.target_generation_id = generation
+            session.render_attempts = int(getattr(session, "render_attempts", 0) or 0) + 1
+            session.iteration_count = session.render_attempts
+            session.revision = int(getattr(session, "revision", 0) or 0) + 1
         await db.flush()
         receipt_id = receipt.id
         await db.commit()
@@ -1655,23 +1799,35 @@ async def execute_creator_craft(
         raise HTTPException(status_code=409, detail="Creator craft receipt is unavailable")
     receipt_id = receipt.id
     try:
+        craft_task_id = f"creator-craft-{receipt_id}-{generation}"
         if speech_operation_id:
             from app.tasks.generative_build import rerender_speech_timing
 
             rerender_speech_timing.apply_async(
-                args=[str(expected_job_id), str(speech_operation_id)], queue="plan-jobs"
+                args=[str(expected_job_id), str(speech_operation_id)],
+                queue="plan-jobs",
+                task_id=craft_task_id,
             )
         else:
-            enqueue_editor_commit_render(str(expected_job_id), body.expected_variant_id, prepared)
+            enqueue_editor_commit_render(
+                str(expected_job_id),
+                body.expected_variant_id,
+                prepared,
+                task_id=craft_task_id,
+            )
     except Exception as exc:  # noqa: BLE001 — committed state must be rolled back
         if previous_assembly_plan is not None:
             await _rollback_craft_commit(
                 db,
                 receipt_id=receipt_id,
+                session_id=session.id,
                 job_id=expected_job_id,
                 previous_assembly_plan=previous_assembly_plan,
+                variant_id=body.expected_variant_id,
                 generation=generation,
                 error=exc,
+                previous_job_state=previous_job_state,
+                previous_session_state=(previous_session_state if manage_session_state else None),
             )
         else:
             await db.rollback()
@@ -1694,6 +1850,25 @@ async def execute_creator_craft(
     response = _craft_response(receipt)
     await db.commit()
     return response
+
+
+@router.post(
+    "/{item_id}/creator-agent/craft",
+    response_model=CreatorCraftResponse,
+)
+async def execute_creator_craft(
+    item_id: str,
+    body: CreatorCraftBundle,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> CreatorCraftResponse:
+    return await _execute_creator_craft(
+        item_id,
+        body,
+        user,
+        db,
+        manage_session_state=_MANAGE_CRAFT_SESSION_STATE.get(),
+    )
 
 
 @router.post("/{item_id}/creator-agent/auto-iteration", response_model=CreatorSessionResponse)
@@ -1887,7 +2062,11 @@ async def request_creator_auto_iteration(
         }
         await db.commit()
     try:
-        craft_response = await execute_creator_craft(item_id, bundle, user, db)
+        craft_state_token = _MANAGE_CRAFT_SESSION_STATE.set(False)
+        try:
+            craft_response = await execute_creator_craft(item_id, bundle, user, db)
+        finally:
+            _MANAGE_CRAFT_SESSION_STATE.reset(craft_state_token)
     except HTTPException as exc:
         refreshed = await _load_session(db, session.id, user.id, item.id, for_update=True)
         refreshed.status = "awaiting_feedback"
