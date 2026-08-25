@@ -21,7 +21,7 @@ from app.worker import celery_app
 
 log = structlog.get_logger()
 QUALITY_REVIEW_AGENT_NAME = "nova.creator_quality_reviewer"
-QUALITY_REVIEW_PROMPT_VERSION = "2026-08-25.2"
+QUALITY_REVIEW_PROMPT_VERSION = "2026-08-25.3"
 QUALITY_REVIEW_MODEL = "gemini-2.5-flash"
 READY_JOB_STATUSES = frozenset({"variants_ready", "variants_ready_partial"})
 OBJECTIVE_SCORE_THRESHOLD = 4.0
@@ -79,6 +79,117 @@ def _objective_action_for_scores(scores: dict[str, float]) -> tuple[str | None, 
     if objective:
         return action, "mixed"
     return None, "taste"
+
+
+def _action_target(
+    action: str | None,
+    *,
+    grader_evidence: list[dict[str, Any]],
+    scores: dict[str, float],
+    variant: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Resolve an allowlisted command target from observed timecodes and exact state."""
+
+    tokens = {
+        "caption_legibility": ("caption", "legib", "text"),
+        "transition_fallback": ("transition",),
+        "remove_optional_treatment": ("overlay", "sfx", "sound_effect"),
+        "speech_cut": ("speech", "silence", "filler", "retake"),
+    }.get(str(action), ())
+    relevant = [
+        value
+        for value in grader_evidence
+        if any(token in str(value.get("dimension") or "").lower() for token in tokens)
+        and float(scores.get(str(value.get("dimension") or ""), 5.0)) < OBJECTIVE_SCORE_THRESHOLD
+    ]
+    relevant.sort(key=lambda value: (float(value.get("start_s") or 0.0), str(value)))
+    if not relevant:
+        return None
+    if action == "caption_legibility":
+        return {}
+
+    if action == "transition_fallback":
+        slots = (
+            variant.get("user_timeline", {}).get("slots")
+            or variant.get("ai_timeline", {}).get("slots")
+            or []
+        )
+        boundaries: list[tuple[float, int]] = []
+        cursor = 0.0
+        for index, slot in enumerate(slots[:-1]):
+            try:
+                duration = float(slot.get("duration_s"))
+            except (AttributeError, TypeError, ValueError):
+                return None
+            if duration <= 0:
+                return None
+            cursor += duration
+            boundaries.append((cursor, index))
+        if not boundaries:
+            return None
+        focus = (float(relevant[0]["start_s"]) + float(relevant[0]["end_s"])) / 2.0
+        return {"boundary_index": min(boundaries, key=lambda value: abs(value[0] - focus))[1]}
+
+    if action == "remove_optional_treatment":
+        candidates: list[tuple[float, str, str]] = []
+        for observed in relevant:
+            focus = (float(observed["start_s"]) + float(observed["end_s"])) / 2.0
+            kind = str(observed.get("kind") or "")
+            if kind != "audio":
+                for overlay in variant.get("media_overlays") or []:
+                    if not isinstance(overlay, dict) or not overlay.get("id"):
+                        continue
+                    start_s = float(overlay.get("start_s") or 0.0)
+                    end_s = float(overlay.get("end_s") or start_s)
+                    if start_s <= focus <= end_s:
+                        candidates.append(
+                            (
+                                abs(((start_s + end_s) / 2.0) - focus),
+                                "media_overlay",
+                                str(overlay["id"]),
+                            )
+                        )
+            if kind in {"audio", "timing"}:
+                for effect in variant.get("sound_effects") or []:
+                    if not isinstance(effect, dict) or not effect.get("id"):
+                        continue
+                    at_s = float(effect.get("at_s") or 0.0)
+                    duration_s = max(0.0, float(effect.get("duration_s") or 0.0))
+                    if float(observed["start_s"]) <= at_s <= float(observed["end_s"]) + duration_s:
+                        candidates.append((abs(at_s - focus), "sfx", str(effect["id"])))
+        if not candidates:
+            return None
+        _, treatment, treatment_id = min(
+            candidates, key=lambda value: (value[0], value[1], value[2])
+        )
+        return {"treatment": treatment, "treatment_id": treatment_id}
+
+    if action == "speech_cut":
+        focus = (float(relevant[0]["start_s"]) + float(relevant[0]["end_s"])) / 2.0
+        candidates = []
+        for candidate in variant.get("speech_cut_candidates") or []:
+            if not isinstance(candidate, dict) or candidate.get("status") != "pending":
+                continue
+            if candidate.get("source") not in {
+                "retake_review",
+                "silence_review",
+                "filler_review",
+            }:
+                continue
+            start_s = float(candidate.get("start_s") or 0.0)
+            end_s = float(candidate.get("end_s") or start_s)
+            if start_s <= focus <= end_s and candidate.get("candidate_id"):
+                candidates.append((abs(((start_s + end_s) / 2.0) - focus), candidate))
+        if not candidates:
+            return None
+        candidate = min(candidates, key=lambda value: (value[0], str(value[1]["candidate_id"])))[1]
+        from app.pipeline.speech_cut_state import cut_revision  # noqa: PLC0415
+
+        return {
+            "candidate_id": str(candidate["candidate_id"]),
+            "expected_cut_revision": cut_revision(variant),
+        }
+    return None
 
 
 def queue_creator_quality_review(
@@ -161,7 +272,13 @@ def queue_creator_quality_review(
 
 
 def build_review_payload(
-    session: Any, *, job_id: str, variant_id: str, generation_id: str, verdict: Any
+    session: Any,
+    *,
+    job_id: str,
+    variant_id: str,
+    generation_id: str,
+    verdict: Any,
+    variant: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Convert a mocked/DI grader verdict to the bounded persisted receipt."""
 
@@ -192,6 +309,15 @@ def build_review_payload(
     evidence = evidence[:12]
     decision = "approve" if verdict.band.value == "auto_pass" else "revise"
     allowlist_action, review_mode = _objective_action_for_scores(verdict.scores or {})
+    action_target = _action_target(
+        allowlist_action,
+        grader_evidence=grader_evidence,
+        scores=verdict.scores or {},
+        variant=variant or {},
+    )
+    if allowlist_action and action_target is None:
+        allowlist_action = None
+        review_mode = "mixed"
     expected_improvement = getattr(verdict, "expected_improvement", None)
     if expected_improvement is None:
         expected_improvement = max(0.0, min(5.0, 4.0 - float(verdict.avg)))
@@ -250,6 +376,7 @@ def build_review_payload(
         **receipt.model_dump(mode="json"),
         "expected_improvement": round(float(expected_improvement), 3),
         "allowlist_action": allowlist_action,
+        **(action_target or {}),
         **({"objective_tag": "objective_quality"} if review_mode == "objective" else {}),
         **({"rollback_receipt": rollback_receipt} if isinstance(rollback_receipt, dict) else {}),
     }
@@ -263,7 +390,7 @@ def claim_exact_review(
     variant_id: str,
     generation_id: str,
     reclaim_running: bool = False,
-) -> tuple[Any, str] | None:
+) -> tuple[Any, str, dict[str, Any]] | None:
     """Claim a pending review only if the Job/variant/generation still match."""
 
     from app.models import CreatorAgentSession, Job  # noqa: PLC0415
@@ -313,7 +440,7 @@ def claim_exact_review(
         return None
     row.last_review = {**current, "status": "running", "started_at": _now()}
     db.commit()
-    return row, str(variant.get("video_path") or "")
+    return row, str(variant.get("video_path") or ""), dict(variant)
 
 
 def persist_review_if_current(
@@ -399,7 +526,7 @@ def run_quality_review(
         db.close()
     if target is None:
         return False
-    session, video_path = target
+    session, video_path, variant = target
     if reviewer is None:
         db = db_factory()
         try:
@@ -441,6 +568,7 @@ def run_quality_review(
             variant_id=variant_id,
             generation_id=render_generation_id,
             verdict=verdict,
+            variant=variant,
         )
     except Exception as exc:  # noqa: BLE001 — critic failure is visible/fail-open
         db = db_factory()

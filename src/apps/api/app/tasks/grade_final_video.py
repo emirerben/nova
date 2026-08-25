@@ -36,7 +36,7 @@ log = structlog.get_logger()
 # agent_name for the persisted AgentRun rows — the SoT key for both the
 # calibration dataset and the admin job-debug filter.
 GRADER_AGENT_NAME = "nova.final_video_grader"
-GRADER_PROMPT_VERSION = "2026-08-25.2"
+GRADER_PROMPT_VERSION = "2026-08-25.3"
 
 # Gemini 2.5 Flash pricing (matches the house constants on every agent spec:
 # input ~$0.075/M, output ~$0.30/M). Used to compute the per-grade cost_usd we

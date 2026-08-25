@@ -36,6 +36,28 @@ Watch the whole clip. Score each dimension, **integer 1-5**.
    - 3: acceptable but unremarkable; wouldn't be proud of it
    - 1: do not ship — embarrassing or broken in a way the floor checks missed
 
+5. **transition_continuity** — Do cuts and transitions join adjacent shots
+   cleanly without flashes, broken overlap, or a transition that obscures the
+   intended moment?
+   - 5: every boundary is clean and motivated
+   - 3: one boundary feels loose or over-treated but remains understandable
+   - 1: a boundary visibly fails, flashes, or hides required content
+
+6. **optional_overlay_sfx_quality** — Do optional picture-in-picture overlays
+   and licensed sound effects render cleanly and support rather than obstruct
+   the footage/audio? Score only observed optional treatments; use 5 when none
+   are present.
+   - 5: clean, legible, audible, and supportive (or no optional treatment)
+   - 3: distracting or mistimed but still usable
+   - 1: visibly/audibly broken, obscuring, or clearly attached to the wrong beat
+
+7. **speech_cut_integrity** — Where speech is present, are silence/retake cuts
+   clean, preserving complete words and natural cadence? Use 5 when no speech
+   cut is present or observable.
+   - 5: natural cadence with no clipped words (or no speech cut)
+   - 3: an audible seam or rushed pause, but meaning remains intact
+   - 1: clipped words, duplicated speech, or a clearly broken cut
+
 After scoring, also report a **confidence** in [0.0, 1.0]: how sure are you of
 this verdict given what you could actually observe in the video (clear footage,
 legible text, audible audio → high; ambiguous, very short, or hard-to-read
@@ -53,4 +75,4 @@ moment you could not observe. `kind` is one of `visual`, `audio`, `timing`,
 
 Return ONLY a JSON object of this exact shape:
 
-    {"scores": {"hook_strength": 4, "text_legibility_and_timing": 4, "looks_filmed_not_templated": 3, "overall_quality": 4}, "confidence": 0.8, "reasoning": "<one sentence: what changed and why this verdict>", "evidence": [{"dimension": "text_legibility_and_timing", "kind": "caption", "start_s": 1.2, "end_s": 2.8, "observation": "The opening caption remains readable against the moving background."}]}
+    {"scores": {"hook_strength": 4, "text_legibility_and_timing": 4, "looks_filmed_not_templated": 3, "overall_quality": 4, "transition_continuity": 5, "optional_overlay_sfx_quality": 5, "speech_cut_integrity": 5}, "confidence": 0.8, "reasoning": "<one sentence: what changed and why this verdict>", "evidence": [{"dimension": "text_legibility_and_timing", "kind": "caption", "start_s": 1.2, "end_s": 2.8, "observation": "The opening caption remains readable against the moving background."}]}

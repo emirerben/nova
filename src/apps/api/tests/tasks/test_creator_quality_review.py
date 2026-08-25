@@ -181,6 +181,117 @@ def test_review_payload_never_labels_a_taste_only_failure_objective():
     assert "objective_tag" not in payload
 
 
+def test_review_payload_pins_evidence_backed_transition_boundary():
+    verdict = GradeVerdict(
+        band=GradeBand.ESCALATE,
+        scores={"transition_continuity": 2},
+        avg=2.0,
+        confidence=0.95,
+        reasoning="The second cut flashes.",
+        evidence=[
+            {
+                "dimension": "transition_continuity",
+                "kind": "timing",
+                "start_s": 2.8,
+                "end_s": 3.2,
+                "observation": "A visible flash appears at the second shot boundary.",
+            }
+        ],
+    )
+
+    payload = cqr.build_review_payload(
+        _session(),
+        job_id="job-1",
+        variant_id="variant-1",
+        generation_id="generation-1",
+        verdict=verdict,
+        variant={
+            "ai_timeline": {
+                "slots": [{"duration_s": 1.0}, {"duration_s": 2.0}, {"duration_s": 2.0}]
+            }
+        },
+    )
+
+    assert payload["allowlist_action"] == "transition_fallback"
+    assert payload["boundary_index"] == 1
+    assert payload["objective_tag"] == "objective_quality"
+
+
+def test_review_payload_pins_only_treatment_active_at_evidence_time():
+    verdict = GradeVerdict(
+        band=GradeBand.ESCALATE,
+        scores={"optional_overlay_sfx_quality": 2},
+        avg=2.0,
+        confidence=0.95,
+        reasoning="The effect fires late.",
+        evidence=[
+            {
+                "dimension": "optional_overlay_sfx_quality",
+                "kind": "audio",
+                "start_s": 4.0,
+                "end_s": 4.8,
+                "observation": "A sound effect lands after the visible action.",
+            }
+        ],
+    )
+
+    payload = cqr.build_review_payload(
+        _session(),
+        job_id="job-1",
+        variant_id="variant-1",
+        generation_id="generation-1",
+        verdict=verdict,
+        variant={"sound_effects": [{"id": "sfx-4", "at_s": 4.4, "duration_s": 0.2}]},
+    )
+
+    assert payload["allowlist_action"] == "remove_optional_treatment"
+    assert payload["treatment"] == "sfx"
+    assert payload["treatment_id"] == "sfx-4"
+
+
+def test_review_payload_pins_already_validated_speech_candidate():
+    verdict = GradeVerdict(
+        band=GradeBand.ESCALATE,
+        scores={"speech_cut_integrity": 2},
+        avg=2.0,
+        confidence=0.95,
+        reasoning="A repeated phrase remains.",
+        evidence=[
+            {
+                "dimension": "speech_cut_integrity",
+                "kind": "audio",
+                "start_s": 5.0,
+                "end_s": 6.0,
+                "observation": "The speaker restarts the same phrase.",
+            }
+        ],
+    )
+    variant = {
+        "speech_cut_candidates": [
+            {
+                "candidate_id": "cut-1",
+                "start_s": 5.1,
+                "end_s": 5.9,
+                "status": "pending",
+                "source": "retake_review",
+            }
+        ]
+    }
+
+    payload = cqr.build_review_payload(
+        _session(),
+        job_id="job-1",
+        variant_id="variant-1",
+        generation_id="generation-1",
+        verdict=verdict,
+        variant=variant,
+    )
+
+    assert payload["allowlist_action"] == "speech_cut"
+    assert payload["candidate_id"] == "cut-1"
+    assert payload["expected_cut_revision"]
+
+
 def test_review_payload_fails_closed_when_context_pin_is_missing():
     session = _session(active_plan={"plan_hash": "a" * 64})
     with pytest.raises(ValueError, match="context hash"):
@@ -293,7 +404,7 @@ def test_grader_failure_is_visible_and_fail_open(monkeypatch):
     monkeypatch.setattr(
         cqr,
         "claim_exact_review",
-        lambda *args, **kwargs: (session, "opaque-video-path"),
+        lambda *args, **kwargs: (session, "opaque-video-path", {}),
     )
     monkeypatch.setattr(cqr, "mark_review_unavailable", mark_unavailable)
 
