@@ -1481,7 +1481,7 @@ export interface CreatorWorkspaceRelevanceProposal {
   idempotency_key: string;
   request_digest: string;
   media_ids: string[];
-  status: "pending" | "ready" | "failed" | "approved" | "rejected";
+  status: "pending" | "processing" | "ready" | "failed" | "approved" | "rejected";
   relevance: "existing_item" | "new_topic" | "unmatched" | null;
   target_plan_item_id: string | null;
   topic: string | null;

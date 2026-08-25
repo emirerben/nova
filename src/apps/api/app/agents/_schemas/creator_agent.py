@@ -562,7 +562,7 @@ class CreatorWorkspaceRelevanceProposal(_CreatorModel):
     ownership_epoch: int = Field(ge=0)
     idempotency_key: str = Field(min_length=1, max_length=160)
     media_ids: list[str] = Field(min_length=1, max_length=MAX_CREATOR_WORKSPACE_MEDIA_IDS)
-    status: Literal["pending", "ready", "failed", "approved", "rejected"] = "pending"
+    status: Literal["pending", "processing", "ready", "failed", "approved", "rejected"] = "pending"
     relevance: Literal["existing_item", "new_topic", "unmatched"]
     target_plan_item_id: str | None = Field(default=None, max_length=160)
     topic: str | None = Field(default=None, max_length=500)

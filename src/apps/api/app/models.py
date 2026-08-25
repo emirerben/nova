@@ -925,7 +925,7 @@ class CreatorWorkspaceProposal(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('pending','ready','failed','approved','rejected')",
+            "status IN ('pending','processing','ready','failed','approved','rejected')",
             name="ck_creator_workspace_proposals_status",
         ),
         CheckConstraint(

@@ -223,6 +223,42 @@ def _request_digest(plan_id: uuid.UUID, epoch: int, media_ids: list[str]) -> str
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _media_paths_already_attached(items: list[PlanItem], paths: set[str]) -> bool:
+    """Return whether any source path is already owned by another item."""
+
+    for item in items:
+        attached = {str(path) for path in (item.clip_gcs_paths or []) if path}
+        attached.update(
+            str(assignment["gcs_path"])
+            for assignment in (item.clip_assignments or [])
+            if isinstance(assignment, dict) and assignment.get("gcs_path")
+        )
+        if paths & attached:
+            return True
+    return False
+
+
+async def _enqueue_relevance_or_mark_failed(
+    db: AsyncSession, row: CreatorWorkspaceProposal
+) -> None:
+    """Publish one deterministic analysis task, making broker failure visible.
+
+    The proposal row is durable before this function is called. A retry of the
+    same idempotency key can therefore safely publish the task again; the
+    worker's processing claim prevents duplicate classifier work.
+    """
+
+    try:
+        detect_plan_relevance.apply_async(
+            args=[str(row.id)],
+            task_id=f"creator-relevance-{row.id}",
+        )
+    except Exception:  # noqa: BLE001 - expose queue failure through the proposal
+        row.status = "failed"
+        row.error_code = "relevance_dispatch_failed"
+        await db.commit()
+
+
 def _require_workspace_enabled() -> None:
     if not settings.main_creator_agent_freeform_uploads_enabled:
         raise HTTPException(
@@ -297,6 +333,15 @@ async def create_relevance_proposal(
                 status_code=409,
                 detail="Idempotency key reused with different media",
             )
+        if existing.status == "failed" and existing.error_code == "relevance_dispatch_failed":
+            existing.status = "pending"
+            existing.error_code = None
+            await db.commit()
+            await _enqueue_relevance_or_mark_failed(db, existing)
+        elif existing.status == "pending":
+            # This covers a process crash after the proposal commit and before
+            # broker publication. Processing claims make this retry safe.
+            await _enqueue_relevance_or_mark_failed(db, existing)
         return _response(existing)
 
     ids: list[uuid.UUID] = []
@@ -341,7 +386,7 @@ async def create_relevance_proposal(
     db.add(row)
     await db.commit()
     await db.refresh(row)
-    detect_plan_relevance.delay(str(row.id))
+    await _enqueue_relevance_or_mark_failed(db, row)
     return _response(row)
 
 
@@ -478,6 +523,25 @@ async def decide_relevance_proposal(
         await db.flush()
         result_item_id = item.id
     if body.decision != "reject":
+        other_items = (
+            (
+                await db.execute(
+                    select(PlanItem).where(
+                        PlanItem.content_plan_id == plan.id,
+                        PlanItem.id != item.id,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if _media_paths_already_attached(
+            other_items, {str(media["gcs_path"]) for media in snapshots}
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Proposal media is already attached to another plan item",
+            )
         try:
             existing_assignments = [
                 ClipAssignment(

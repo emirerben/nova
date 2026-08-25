@@ -352,7 +352,11 @@ def compile_active_plan(
 async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession) -> bool:
     """Advance a rendering session against its exact target Job generation."""
 
-    if session.phase not in {"executing", "rendering", "reviewing"}:
+    raw_pending_review = getattr(session, "last_review", None)
+    pending_review = raw_pending_review if isinstance(raw_pending_review, dict) else {}
+    if session.phase not in {"executing", "rendering", "reviewing", "awaiting_feedback"}:
+        return False
+    if session.phase == "awaiting_feedback" and pending_review.get("status") != "pending":
         return False
     if not session.target_job_id:
         item = await db.get(
@@ -527,6 +531,7 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
         )
         return True
     if job.status in PLAN_ITEM_JOB_READY:
+        was_awaiting_feedback = session.phase == "awaiting_feedback"
         session.phase = "awaiting_feedback"
         variants = (job.assembly_plan or {}).get("variants") or []
         ready_variant = next(
@@ -581,6 +586,8 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
                 "generation_id": session.target_generation_id,
                 "reviewed_at": datetime.now(UTC).isoformat(),
             }
+        if was_awaiting_feedback:
+            return True
         await append_event(
             db,
             session,

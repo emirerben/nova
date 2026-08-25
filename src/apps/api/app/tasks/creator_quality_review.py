@@ -44,6 +44,35 @@ def queue_creator_quality_review(
     key = review_key(str(session.id), job_id, variant_id, render_generation_id)
     current = session.last_review if isinstance(getattr(session, "last_review", None), dict) else {}
     if current.get("review_key") == key:
+        # A prior request may have committed the pending receipt after its
+        # broker publish raced a pre-commit worker.  Poll-time reconciliation
+        # may safely publish the same deterministic task again; the running
+        # claim still prevents duplicate grader work.
+        if current.get("status") == "pending" and getattr(session, "phase", None) == (
+            "awaiting_feedback"
+        ):
+            try:
+                quality_review_creator_session.apply_async(
+                    kwargs={
+                        "session_id": str(session.id),
+                        "job_id": job_id,
+                        "variant_id": variant_id,
+                        "render_generation_id": render_generation_id,
+                    },
+                    task_id=_task_id(key),
+                )
+            except Exception as exc:  # noqa: BLE001 - surface a durable failure
+                session.last_review = {
+                    **current,
+                    "status": "unavailable",
+                    "decision": "unavailable",
+                    "error_code": "review_enqueue_failed",
+                    "error_message": str(exc)[:240],
+                    "failed_at": _now(),
+                }
+                log.warning("creator_quality_review_retry_failed", error_type=type(exc).__name__)
+                return False
+            return True
         return False
     pending = {
         "status": "pending",
@@ -95,7 +124,6 @@ def build_review_payload(
 
     from app.agents._schemas.creator_agent import (  # noqa: PLC0415
         CreatorReviewReceipt,
-        canonical_context_hash,
     )
 
     key = review_key(str(session.id), job_id, variant_id, generation_id)
@@ -141,7 +169,20 @@ def build_review_payload(
         }
     active = session.active_plan if isinstance(session.active_plan, dict) else {}
     manifest = getattr(session, "manifest_hash", None)
-    context = active.get("plan_hash")
+    edit_plan = active.get("edit_plan") if isinstance(active.get("edit_plan"), dict) else {}
+    context = edit_plan.get("context_hash")
+    if not (
+        isinstance(manifest, str)
+        and len(manifest) == 64
+        and all(char in "0123456789abcdef" for char in manifest)
+    ):
+        raise ValueError("creator review is missing the exact manifest hash")
+    if not (
+        isinstance(context, str)
+        and len(context) == 64
+        and all(char in "0123456789abcdef" for char in context)
+    ):
+        raise ValueError("creator review is missing the exact context hash")
     receipt = CreatorReviewReceipt(
         creator_id=str(session.creator_id),
         creator_session_id=str(session.id),
@@ -151,16 +192,8 @@ def build_review_payload(
         job_id=job_id,
         variant_id=variant_id,
         render_generation_id=generation_id,
-        manifest_hash=(
-            manifest
-            if isinstance(manifest, str) and len(manifest) == 64
-            else canonical_context_hash({"session": str(session.id)})
-        ),
-        context_hash=(
-            context
-            if isinstance(context, str) and len(context) == 64
-            else canonical_context_hash({"job": job_id, "generation": generation_id})
-        ),
+        manifest_hash=manifest,
+        context_hash=context,
         review_mode="objective",
         decision=decision,
         quality_score=float(verdict.avg),
@@ -186,7 +219,13 @@ def build_review_payload(
 
 
 def claim_exact_review(
-    db: Any, *, session_id: str, job_id: str, variant_id: str, generation_id: str
+    db: Any,
+    *,
+    session_id: str,
+    job_id: str,
+    variant_id: str,
+    generation_id: str,
+    reclaim_running: bool = False,
 ) -> tuple[Any, str] | None:
     """Claim a pending review only if the Job/variant/generation still match."""
 
@@ -195,7 +234,11 @@ def claim_exact_review(
     row = db.get(CreatorAgentSession, uuid.UUID(session_id), with_for_update=True)
     current = row.last_review if row and isinstance(row.last_review, dict) else {}
     key = review_key(session_id, job_id, variant_id, generation_id)
-    if row is None or current.get("review_key") != key or current.get("status") != "pending":
+    if row is None or current.get("review_key") != key:
+        return None
+    if current.get("status") != "pending" and not (
+        reclaim_running and current.get("status") == "running"
+    ):
         return None
     job = db.get(Job, uuid.UUID(job_id))
     variants = (job.assembly_plan or {}).get("variants") if job else []
@@ -212,6 +255,7 @@ def claim_exact_review(
         and job.status in READY_JOB_STATUSES
         and job.user_id == row.creator_id
         and job.content_plan_item_id == row.plan_item_id
+        and int(job.content_plan_ownership_epoch or -1) == int(row.ownership_epoch)
         and row.target_job_id == job.id
         and row.target_variant_id == variant_id
         and row.target_generation_id == generation_id
@@ -227,6 +271,7 @@ def claim_exact_review(
             generation_id=generation_id,
             code="review_target_stale",
             message="The rendered generation changed before review completed.",
+            allow_stale_target=True,
         )
         return None
     row.last_review = {**current, "status": "running", "started_at": _now()}
@@ -245,7 +290,7 @@ def persist_review_if_current(
 ) -> bool:
     """Persist only when the session still owns the exact review target."""
 
-    from app.models import CreatorAgentSession  # noqa: PLC0415
+    from app.models import CreatorAgentSession, Job  # noqa: PLC0415
 
     row = db.get(CreatorAgentSession, uuid.UUID(session_id), with_for_update=True)
     current = row.last_review if row and isinstance(row.last_review, dict) else {}
@@ -257,6 +302,27 @@ def persist_review_if_current(
         row.target_job_id != uuid.UUID(job_id)
         or row.target_variant_id != variant_id
         or row.target_generation_id != generation_id
+    ):
+        return False
+    job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+    variants = (job.assembly_plan or {}).get("variants") if job else []
+    variant = next(
+        (
+            value
+            for value in variants
+            if isinstance(value, dict) and value.get("variant_id") == variant_id
+        ),
+        None,
+    )
+    if not (
+        job
+        and job.status in READY_JOB_STATUSES
+        and job.user_id == row.creator_id
+        and job.content_plan_item_id == row.plan_item_id
+        and int(job.content_plan_ownership_epoch or -1) == int(row.ownership_epoch)
+        and variant
+        and variant.get("render_status") == "ready"
+        and variant.get("render_generation_id") == generation_id
     ):
         return False
     row.last_review = payload
@@ -273,7 +339,8 @@ def run_quality_review(
     db_factory: Callable[[], Any],
     reviewer: Callable[[str], Any] | None,
     persist_run: Callable[..., None],
-) -> None:
+    reclaim_running: bool = False,
+) -> bool:
     """Run one injected review and persist both receipt and AgentRun.
 
     ``reviewer`` is intentionally required from the caller.  This offline-safe
@@ -289,11 +356,12 @@ def run_quality_review(
             job_id=job_id,
             variant_id=variant_id,
             generation_id=render_generation_id,
+            reclaim_running=reclaim_running,
         )
     finally:
         db.close()
     if target is None:
-        return
+        return False
     session, video_path = target
     if reviewer is None:
         db = db_factory()
@@ -327,7 +395,7 @@ def run_quality_review(
             raw_text=None,
             error="reviewer_unavailable",
         )
-        return
+        return True
     try:
         verdict = reviewer(video_path)
         payload = build_review_payload(
@@ -369,7 +437,7 @@ def run_quality_review(
             raw_text=None,
             error=str(exc)[:500],
         )
-        return
+        return True
     db = db_factory()
     try:
         if not persist_review_if_current(
@@ -380,7 +448,7 @@ def run_quality_review(
             generation_id=render_generation_id,
             payload=payload,
         ):
-            return
+            return False
     finally:
         db.close()
     persist_run(
@@ -401,6 +469,7 @@ def run_quality_review(
         raw_text=getattr(verdict, "raw_response", None),
         error=None,
     )
+    return True
 
 
 def review_with_video_quality_grader(video_gcs_path: str) -> Any:
@@ -430,8 +499,9 @@ def mark_review_unavailable(
     generation_id: str,
     code: str,
     message: str,
+    allow_stale_target: bool = False,
 ) -> bool:
-    from app.models import CreatorAgentSession  # noqa: PLC0415
+    from app.models import CreatorAgentSession, Job  # noqa: PLC0415
 
     row = db.get(CreatorAgentSession, uuid.UUID(session_id), with_for_update=True)
     current = row.last_review if row and isinstance(row.last_review, dict) else {}
@@ -439,6 +509,28 @@ def mark_review_unavailable(
         session_id, job_id, variant_id, generation_id
     ):
         return False
+    if not allow_stale_target:
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        variants = (job.assembly_plan or {}).get("variants") if job else []
+        variant = next(
+            (
+                value
+                for value in variants
+                if isinstance(value, dict) and value.get("variant_id") == variant_id
+            ),
+            None,
+        )
+        if not (
+            job
+            and job.status in READY_JOB_STATUSES
+            and job.user_id == row.creator_id
+            and job.content_plan_item_id == row.plan_item_id
+            and int(job.content_plan_ownership_epoch or -1) == int(row.ownership_epoch)
+            and variant
+            and variant.get("render_status") == "ready"
+            and variant.get("render_generation_id") == generation_id
+        ):
+            return False
     row.last_review = {
         **current,
         "status": "unavailable",
@@ -454,9 +546,11 @@ def mark_review_unavailable(
 @celery_app.task(
     name="tasks.creator_quality_review",
     bind=True,
-    max_retries=0,
+    max_retries=3,
     soft_time_limit=240,
     time_limit=300,
+    acks_late=True,
+    reject_on_worker_lost=True,
 )
 def quality_review_creator_session(
     self,
@@ -478,7 +572,11 @@ def quality_review_creator_session(
     ):
         return
 
-    run_quality_review(
+    # Reconciliation queues this task in the same request that commits the
+    # pending receipt. A fast worker can observe the pre-commit session row;
+    # bounded retry makes that ordering safe without making review polling an
+    # implicit outbox.
+    did_run = run_quality_review(
         session_id=session_id,
         job_id=job_id,
         variant_id=variant_id,
@@ -486,7 +584,10 @@ def quality_review_creator_session(
         db_factory=sync_session,
         reviewer=review_with_video_quality_grader,
         persist_run=persist_agent_run,
+        reclaim_running=bool(self.request.delivery_info.get("redelivered")),
     )
+    if not did_run and self.request.retries < self.max_retries:
+        raise self.retry(countdown=1)
 
 
 __all__ = [

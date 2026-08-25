@@ -75,6 +75,7 @@ _EXPECTED_CHAIN = {
     "0082": "0081",
     "0083": "0082",
     "0084": "0083",
+    "0085": "0084",
 }
 
 
@@ -86,7 +87,7 @@ def script_dir() -> ScriptDirectory:
 
 def test_single_alembic_head(script_dir: ScriptDirectory) -> None:
     heads = script_dir.get_heads()
-    assert heads == ["0084"], f"expected a single head 0084, got {heads}"
+    assert heads == ["0085"], f"expected a single head 0085, got {heads}"
 
 
 def test_migration_chain_is_linear(script_dir: ScriptDirectory) -> None:
@@ -98,9 +99,9 @@ def test_migration_chain_is_linear(script_dir: ScriptDirectory) -> None:
             "— the circular-FK ordering depends on this exact chain"
         )
 
-    script = script_dir.get_revision("0084")
+    script = script_dir.get_revision("0085")
     assert script is not None
-    assert script.down_revision == "0083"
+    assert script.down_revision == "0084"
 
 
 def test_new_tables_registered() -> None:

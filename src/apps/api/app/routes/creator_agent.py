@@ -277,6 +277,12 @@ def _fallback_strategy(manifest: Any) -> CreativeStrategy:
     )
 
 
+def _strict_creator_format(edit_format: str) -> bool:
+    """Formats that must fail visibly instead of falling back to montage."""
+
+    return edit_format in {"day_vlog", "single_hero"}
+
+
 def _reset_render_target(session: CreatorAgentSession) -> None:
     """Fence a new creative plan from every prior render identity."""
 
@@ -418,6 +424,27 @@ async def _run_planning_turn(
                 session_id=str(locked.id),
                 error=str(exc)[:300],
             )
+            if _strict_creator_format(strategy.edit_format):
+                locked.status = "failed"
+                locked.last_error = {
+                    "code": "edit_format_unavailable",
+                    "edit_format": strategy.edit_format,
+                    "message": str(exc)[:300],
+                }
+                await append_event(
+                    db,
+                    locked,
+                    event_type="assistant_error",
+                    payload={
+                        "message": (
+                            f"{strategy.edit_format} is not available for this Creator rollout. "
+                            "No fallback edit was rendered."
+                        ),
+                        "code": "edit_format_unavailable",
+                        "edit_format": strategy.edit_format,
+                    },
+                )
+                return await _response(db, locked)
             strategy = _fallback_strategy(manifest)
             locked.active_plan = compile_active_plan(
                 locked,

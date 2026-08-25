@@ -29,6 +29,7 @@ from app.routes.creator_agent import (
     _creator_speech_cut_source_enabled,
     _reset_render_target,
     _seed_guided_specialist_brief,
+    _strict_creator_format,
 )
 from app.services.creator_capabilities import compile_strategy_to_plan, resolve_creator_manifest
 
@@ -191,6 +192,12 @@ async def test_auto_iteration_keeps_ready_phase_until_craft_succeeds(monkeypatch
     assert result.status == "rendering"
     assert captured["status_at_craft"] == "awaiting_feedback"
     assert captured["pin"]["expected_revision"] == 12
+
+
+def test_strict_creator_formats_never_use_montage_fallback() -> None:
+    assert _strict_creator_format("day_vlog") is True
+    assert _strict_creator_format("single_hero") is True
+    assert _strict_creator_format("montage") is False
 
 
 class _ExpiringNamespace:

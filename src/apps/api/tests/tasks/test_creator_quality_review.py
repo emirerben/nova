@@ -1,7 +1,10 @@
 """Offline Stage 2 creator-review coordinator tests."""
 
+import uuid
 from types import SimpleNamespace
 from unittest.mock import Mock
+
+import pytest
 
 from app.services.video_grader import GradeBand, GradeVerdict
 from app.tasks import creator_quality_review as cqr
@@ -15,7 +18,10 @@ def _session(**values):
         "ownership_epoch": 3,
         "revision": 7,
         "last_review": None,
-        "active_plan": {"plan_hash": "a" * 64},
+        "active_plan": {
+            "plan_hash": "a" * 64,
+            "edit_plan": {"context_hash": "c" * 64},
+        },
         "manifest_hash": "b" * 64,
         "target_job_id": "job-1",
         "target_variant_id": "variant-1",
@@ -52,6 +58,21 @@ def test_queue_is_idempotent_and_uses_stable_task_id(monkeypatch):
     assert session.last_review["status"] == "pending"
 
 
+def test_pending_review_can_be_republished_after_commit(monkeypatch):
+    session = _session(phase="awaiting_feedback")
+    apply_async = Mock()
+    monkeypatch.setattr(cqr.quality_review_creator_session, "apply_async", apply_async)
+
+    assert cqr.queue_creator_quality_review(
+        session, job_id="job-1", variant_id="variant-1", render_generation_id="generation-1"
+    )
+    apply_async.reset_mock()
+    assert cqr.queue_creator_quality_review(
+        session, job_id="job-1", variant_id="variant-1", render_generation_id="generation-1"
+    )
+    apply_async.assert_called_once()
+
+
 def test_review_payload_has_timestamped_evidence_and_one_inert_revision():
     payload = cqr.build_review_payload(
         _session(),
@@ -67,6 +88,19 @@ def test_review_payload_has_timestamped_evidence_and_one_inert_revision():
     assert payload["proposed_revision"]["evidence_ids"] == [
         row["evidence_id"] for row in payload["evidence"]
     ]
+    assert payload["context_hash"] == "c" * 64
+
+
+def test_review_payload_fails_closed_when_context_pin_is_missing():
+    session = _session(active_plan={"plan_hash": "a" * 64})
+    with pytest.raises(ValueError, match="context hash"):
+        cqr.build_review_payload(
+            session,
+            job_id="job-1",
+            variant_id="variant-1",
+            generation_id="generation-1",
+            verdict=_verdict(),
+        )
 
 
 def test_stale_target_never_persists_review_or_agent_run(monkeypatch):
@@ -78,7 +112,7 @@ def test_stale_target_never_persists_review_or_agent_run(monkeypatch):
     )
     db = Mock()
 
-    cqr.run_quality_review(
+    assert not cqr.run_quality_review(
         session_id="session-1",
         job_id="job-1",
         variant_id="variant-1",
@@ -89,6 +123,64 @@ def test_stale_target_never_persists_review_or_agent_run(monkeypatch):
     )
 
     persist_run.assert_not_called()
+
+
+def test_persist_rechecks_current_job_generation_before_writing():
+    session_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    session = _session(
+        id=session_id,
+        creator_id=uuid.uuid4(),
+        plan_item_id=uuid.uuid4(),
+        target_job_id=job_id,
+        target_variant_id="variant-1",
+        target_generation_id="generation-1",
+    )
+    session.last_review = {
+        "status": "running",
+        "review_key": cqr.review_key(str(session_id), str(job_id), "variant-1", "generation-1"),
+    }
+    job = SimpleNamespace(
+        id=job_id,
+        user_id=session.creator_id,
+        content_plan_item_id=session.plan_item_id,
+        content_plan_ownership_epoch=session.ownership_epoch,
+        status="variants_ready",
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "variant-1",
+                    "render_status": "ready",
+                    "render_generation_id": "generation-2",
+                }
+            ]
+        },
+    )
+
+    class FakeDb:
+        def __init__(self):
+            self.committed = False
+
+        def get(self, model, identifier, with_for_update=False):
+            if model.__name__ == "CreatorAgentSession":
+                return session
+            if model.__name__ == "Job":
+                return job
+            return None
+
+        def commit(self):
+            self.committed = True
+
+    db = FakeDb()
+    assert not cqr.persist_review_if_current(
+        db,
+        session_id=str(session_id),
+        job_id=str(job_id),
+        variant_id="variant-1",
+        generation_id="generation-1",
+        payload={"status": "pass"},
+    )
+    assert not db.committed
 
 
 def test_grader_failure_is_visible_and_fail_open(monkeypatch):

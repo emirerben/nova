@@ -1,6 +1,8 @@
 """Contract guards for approval-gated off-plan intake."""
 
 import uuid
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from pydantic import ValidationError
@@ -11,6 +13,8 @@ from app.routes.creator_workspace import (
     WorkspaceDecisionBody,
     WorkspacePreferenceSignalBody,
     WorkspaceReceiptCreateBody,
+    _enqueue_relevance_or_mark_failed,
+    _media_paths_already_attached,
     _request_digest,
 )
 
@@ -85,3 +89,28 @@ def test_workspace_preference_signal_is_creator_text_only() -> None:
         WorkspacePreferenceSignalBody(
             note="Use a calmer style", client_event_id="event-3", inferred=True
         )
+
+
+def test_workspace_rejects_cross_item_media_reuse() -> None:
+    assert _media_paths_already_attached(
+        [SimpleNamespace(clip_gcs_paths=["user/job-1/raw.mp4"], clip_assignments=[])],
+        {"user/job-1/raw.mp4"},
+    )
+    assert not _media_paths_already_attached(
+        [SimpleNamespace(clip_gcs_paths=["user/job-2/raw.mp4"], clip_assignments=[])],
+        {"user/job-1/raw.mp4"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_workspace_queue_failure_is_visible(monkeypatch) -> None:
+    row = SimpleNamespace(id=uuid.uuid4(), status="pending", error_code=None)
+    db = SimpleNamespace(commit=AsyncMock())
+    publish = Mock(side_effect=RuntimeError("broker unavailable"))
+    monkeypatch.setattr("app.routes.creator_workspace.detect_plan_relevance.apply_async", publish)
+
+    await _enqueue_relevance_or_mark_failed(db, row)
+
+    assert row.status == "failed"
+    assert row.error_code == "relevance_dispatch_failed"
+    db.commit.assert_awaited_once()
