@@ -843,6 +843,18 @@ class CreatorAgentSession(Base):
         Index("idx_creator_agent_sessions_item_updated", "plan_item_id", "updated_at"),
         Index("idx_creator_agent_sessions_creator_id", "creator_id"),
         Index("idx_creator_agent_sessions_target_job", "target_job_id"),
+        Index(
+            "idx_creator_agent_sessions_complete_latest",
+            "creator_id",
+            "plan_item_id",
+            "updated_at",
+            "created_at",
+            "id",
+            postgresql_where=text(
+                "target_job_id IS NOT NULL AND target_variant_id IS NOT NULL "
+                "AND target_generation_id IS NOT NULL"
+            ),
+        ),
     )
 
 
@@ -961,7 +973,7 @@ class CreatorWorkspaceProposal(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('pending','ready','failed','approved','rejected')",
+            "status IN ('pending','processing','ready','failed','approved','rejected')",
             name="ck_creator_workspace_proposals_status",
         ),
         CheckConstraint(
@@ -986,6 +998,8 @@ class CreatorWorkspaceProposal(Base):
             "creator_id",
             "status",
         ),
+        Index("idx_creator_workspace_proposals_target_item", "target_plan_item_id"),
+        Index("idx_creator_workspace_proposals_result_item", "result_plan_item_id"),
     )
 
 
@@ -1093,6 +1107,10 @@ class CreatorWorkspaceDeliverable(Base):
         UniqueConstraint("receipt_id", "plan_item_id", name="uq_creator_workspace_receipt_item"),
         UniqueConstraint("receipt_id", "position", name="uq_creator_workspace_receipt_position"),
         Index("idx_creator_workspace_deliverables_item", "plan_item_id", "created_at"),
+        Index("idx_creator_workspace_deliverables_creator", "creator_id"),
+        Index("idx_creator_workspace_deliverables_plan", "plan_id"),
+        Index("idx_creator_workspace_deliverables_session", "creator_session_id"),
+        Index("idx_creator_workspace_deliverables_job", "job_id"),
     )
 
 
@@ -1138,6 +1156,7 @@ class CreatorWorkspacePreferenceSignal(Base):
             name="uq_creator_workspace_pref_idempotency",
         ),
         Index("idx_creator_workspace_pref_plan_created", "plan_id", "created_at"),
+        Index("idx_creator_workspace_pref_receipt", "receipt_id"),
     )
 
 
@@ -1420,6 +1439,14 @@ class PlanItem(Base):
     smart_sound_design_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("true")
     )
+    # Explicit creator consent for the opt-in Speech cleanup pass.  The worker
+    # reads the immutable snapshot stamped onto Job.assembly_plan at dispatch.
+    speech_cleanup_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    # One-time acknowledgement shown when content invalidates consent.
+    # {id: string, reason: string} | NULL.
+    speech_cleanup_notice: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # Themed uploads land here (users/{user_id}/plan/{plan_item_id}/...).
     clip_gcs_paths: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     # Structured shot list generated at plan time: 2–4 shots, each {what, how, duration_s}.

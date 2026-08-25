@@ -16,6 +16,11 @@ from app.worker import celery_app
 
 log = structlog.get_logger()
 
+# The relevance agent's input schema accepts at most 200 plan items.  Fetch one
+# extra row so an oversized plan fails visibly instead of silently truncating
+# the classifier context.
+MAX_RELEVANCE_PLAN_ITEMS = 200
+
 
 def proposal_hash(payload: dict) -> str:
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
@@ -25,7 +30,7 @@ def proposal_hash(payload: dict) -> str:
 def _fail(proposal_id: str, code: str) -> None:
     with sync_session() as db:
         row = db.get(CreatorWorkspaceProposal, uuid.UUID(proposal_id), with_for_update=True)
-        if row is not None and row.status == "pending":
+        if row is not None and row.status in {"pending", "processing"}:
             row.status = "failed"
             row.error_code = code
             db.commit()
@@ -33,17 +38,19 @@ def _fail(proposal_id: str, code: str) -> None:
 
 @celery_app.task(
     name="tasks.detect_plan_relevance",
+    bind=True,
     soft_time_limit=120,
     time_limit=150,
     acks_late=True,
     reject_on_worker_lost=True,
 )
-def detect_plan_relevance(proposal_id: str) -> None:
+def detect_plan_relevance(self, proposal_id: str) -> None:
     """Analyze one proposal without mutating plans, items, or render state.
 
-    A worker crash leaves the row ``pending`` and Celery requeues it.  A retry
-    after a successful commit is a no-op because terminal rows are immutable to
-    this task.
+    The row is claimed as ``processing`` before model work begins. This prevents
+    an idempotency retry from running the classifier twice. A worker crash is
+    re-delivered by Celery (``acks_late``); only that redelivered delivery may
+    reclaim a processing row.
     """
 
     try:
@@ -53,7 +60,12 @@ def detect_plan_relevance(proposal_id: str) -> None:
                 uuid.UUID(proposal_id),
                 with_for_update=True,
             )
-            if row is None or row.status != "pending":
+            redelivered = bool(self.request.delivery_info.get("redelivered"))
+            if row is None or row.status in {"ready", "approved", "rejected", "failed"}:
+                return
+            if row.status == "processing" and not redelivered:
+                return
+            if row.status not in {"pending", "processing"}:
                 return
             plan = db.get(ContentPlan, row.plan_id, with_for_update=True)
             if plan is None or plan.user_id != row.creator_id:
@@ -66,20 +78,25 @@ def detect_plan_relevance(proposal_id: str) -> None:
                 row.error_code = "stale_ownership_epoch"
                 db.commit()
                 return
-            item_rows = (
-                db.execute(
-                    select(PlanItem)
-                    .where(PlanItem.content_plan_id == plan.id)
-                    .order_by(PlanItem.position, PlanItem.id)
-                )
-                .scalars()
-                .all()
-            )
+            item_rows = db.execute(
+                select(PlanItem.id, PlanItem.theme, PlanItem.idea)
+                .where(PlanItem.content_plan_id == plan.id)
+                .order_by(PlanItem.position, PlanItem.id)
+                .limit(MAX_RELEVANCE_PLAN_ITEMS + 1)
+            ).all()
+            if len(item_rows) > MAX_RELEVANCE_PLAN_ITEMS:
+                row.status = "failed"
+                row.error_code = "plan_context_too_large"
+                db.commit()
+                return
             media = list(row.media_snapshot or [])
             items = [
                 {"id": str(item.id), "theme": item.theme or "", "idea": item.idea or ""}
                 for item in item_rows
             ]
+            row.status = "processing"
+            row.error_code = None
+            db.commit()
 
         # Do not hold a DB lock while classification runs.  Exact upload
         # identities remain in the proposal snapshot and are re-fenced at
@@ -92,7 +109,7 @@ def detect_plan_relevance(proposal_id: str) -> None:
                 uuid.UUID(proposal_id),
                 with_for_update=True,
             )
-            if row is None or row.status != "pending":
+            if row is None or row.status != "processing":
                 return
             plan = db.get(ContentPlan, row.plan_id, with_for_update=True)
             if plan is None or plan.user_id != row.creator_id:

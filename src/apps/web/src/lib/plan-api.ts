@@ -724,6 +724,18 @@ export interface PlanItem {
   /** Null/absent on aggregate responses that do not enrich creator capability. */
   smart_captions_available?: boolean | null;
   smart_captions_unavailable_reason?: string | null;
+  speech_cleanup_enabled?: boolean;
+  speech_cleanup_available?: boolean;
+  speech_cleanup_unavailable_reason?:
+    | "no_committed_clip"
+    | "unsupported_format"
+    | "replacement_voiceover"
+    | "renderer_disabled"
+    | "engine_disabled"
+    | "rollout_disabled"
+    | string
+    | null;
+  speech_cleanup_notice?: { id: string; reason: string } | null;
   /** Montage visual preset. "classic" keeps the sequential montage; collage presets render a visual wall. */
   montage_preset?: MontagePreset;
   /** Per-item/persona content-mode resolved by the API for upload flow selection. */
@@ -866,14 +878,18 @@ export function updatePlanItem(
     montage_preset?: MontagePreset;
     filming_guide?: FilmingShot[];
     landscape_fit?: "fit" | "fill";
+    speech_cleanup_enabled?: boolean;
+    speech_cleanup_notice_ack_id?: string;
     /** Per-item content_mode override (montage plan-vs-have toggle, 0058+). */
     content_mode?: "existing_footage" | "create_new" | "mixed";
     audio_mode?: "kria" | "original" | "voiceover";
   },
+  options?: { signal?: AbortSignal },
 ): Promise<PlanItem> {
   return request<PlanItem>(`/plan-items/${id}`, {
     method: "PATCH",
     body: JSON.stringify(edit),
+    signal: options?.signal,
   });
 }
 
@@ -894,6 +910,40 @@ export function getPlanItemFresh(id: string): Promise<PlanItem> {
 interface UploadUrl {
   upload_url: string;
   gcs_path: string;
+}
+
+export interface CreatorWorkspaceUploadTarget extends UploadUrl {
+  /** Authenticated source Job identity accepted by workspace proposals. */
+  job_id: string;
+}
+
+/** Mint one authenticated source upload for off-plan workspace intake. */
+export function requestCreatorWorkspaceUpload(
+  file: { filename: string; content_type: string; file_size_bytes: number; duration_s: number; aspect_ratio: "16:9" | "9:16" },
+): Promise<CreatorWorkspaceUploadTarget> {
+  return request<CreatorWorkspaceUploadTarget>("/uploads/presigned", {
+    method: "POST",
+    body: JSON.stringify({
+      ...file,
+      // /uploads/presigned normalises QuickTime to MP4 before signing. Keep
+      // the request body aligned with the header used by the workspace PUT.
+      content_type: normaliseCreatorWorkspaceUploadContentType(file.content_type),
+      platforms: ["instagram"],
+    }),
+  });
+}
+
+/**
+ * The authenticated workspace intake shares /uploads/presigned with the
+ * legacy upload flow, which signs QuickTime as MP4. This is scoped to that
+ * endpoint; other signed-upload routes preserve their exact MIME contracts.
+ */
+export function normaliseCreatorWorkspaceUploadContentType(contentType: string): string {
+  return contentType === "video/quicktime" ? "video/mp4" : contentType;
+}
+
+export function creatorWorkspaceUploadContentTypeForFile(file: File): string {
+  return normaliseCreatorWorkspaceUploadContentType(uploadContentTypeForFile(file));
 }
 
 // Single source of truth for the declared upload content type. The signing
@@ -1201,8 +1251,14 @@ export function initializeManualDraft(
   });
 }
 
-export function generatePlanItem(itemId: string): Promise<PlanItem> {
-  return request<PlanItem>(`/plan-items/${itemId}/generate`, { method: "POST" });
+export function generatePlanItem(
+  itemId: string,
+  input?: { speech_cleanup_action?: "retry_required" | "disable_and_create"; expected_job_id?: string },
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/generate`, {
+    method: "POST",
+    ...(input ? { body: JSON.stringify(input) } : {}),
+  });
 }
 
 export type CreatorAgentSessionStatus =
@@ -1262,7 +1318,7 @@ export interface CreatorReviewRevision {
 
 /** Bounded Stage 2 receipt. Optional so V1 responses render unchanged. */
 export interface CreatorAgentReview {
-  status?: "queued" | "running" | "complete" | "failed" | "unavailable";
+  status?: "pending" | "queued" | "running" | "complete" | "failed" | "unavailable";
   decision?: "approve" | "revise" | "reject" | "unavailable";
   review_mode?: "objective" | "taste" | "mixed";
   quality_score?: number | null;
@@ -1481,7 +1537,7 @@ export interface CreatorWorkspaceRelevanceProposal {
   idempotency_key: string;
   request_digest: string;
   media_ids: string[];
-  status: "pending" | "ready" | "failed" | "approved" | "rejected";
+  status: "pending" | "processing" | "ready" | "failed" | "approved" | "rejected";
   relevance: "existing_item" | "new_topic" | "unmatched" | null;
   target_plan_item_id: string | null;
   topic: string | null;
@@ -2277,7 +2333,13 @@ export interface PlanItemVariant {
     operation_id?: string | null;
     message: string;
   } | null;
-  silence_cut?: { removed?: Array<{ start_s: number; end_s: number; reason: string }> } | null;
+  silence_cut?: {
+    removed?: Array<{ start_s: number; end_s: number; reason: string }>;
+    time_saved_s?: number;
+    outcome?: "applied" | "no_change" | "insufficient_source_speech";
+  } | null;
+  silence_cut_outcome?: "applied" | "no_change" | "insufficient_source_speech" | null;
+  speech_cleanup_failure_reason?: string | null;
   // Advisory SFX placements from the auto sound-design pass (dark-flagged).
   // null = freshness unverifiable right now (hold prior state); [] = verified,
   // none fresh. Distinct on purpose.
@@ -2970,6 +3032,7 @@ export interface PlanItemJobStatus {
   status: string | null;
   variants: PlanItemVariant[];
   failure_reason?: string | null;
+  speech_cleanup_failure_reason?: string | null;
   current_phase?: string | null;
   phase_log?: Array<{ name: string; ts: string; elapsed_ms?: number }> | null;
   started_at?: string | null;

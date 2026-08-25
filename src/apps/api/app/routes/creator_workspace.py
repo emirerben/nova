@@ -9,8 +9,9 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased, selectinload
 
 from app.agents._schemas.user_style import UserStyle
 from app.agents.music_matcher import _sanitize_text
@@ -31,6 +32,8 @@ from app.models import (
 )
 from app.routes.personas import StyleEdit
 from app.services.feedback_summary import MAX_NOTES_IN_SUMMARY, build_preference_summary
+from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
+from app.services.media_filenames import safe_media_basename
 from app.services.plan_clips import ClipAssignment, ClipAssignmentError, set_item_clips
 from app.tasks.creator_workspace import detect_plan_relevance
 
@@ -223,6 +226,80 @@ def _request_digest(plan_id: uuid.UUID, epoch: int, media_ids: list[str]) -> str
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _media_paths_already_attached(items: list[PlanItem], paths: set[str]) -> bool:
+    """Return whether any source path is already owned by another item."""
+
+    for item in items:
+        attached = {str(path) for path in (item.clip_gcs_paths or []) if path}
+        attached.update(
+            str(assignment["gcs_path"])
+            for assignment in (item.clip_assignments or [])
+            if isinstance(assignment, dict) and assignment.get("gcs_path")
+        )
+        if paths & attached:
+            return True
+    return False
+
+
+async def _enqueue_relevance_or_mark_failed(
+    db: AsyncSession, row: CreatorWorkspaceProposal
+) -> None:
+    """Publish one deterministic analysis task, making broker failure visible.
+
+    The proposal row is durable before this function is called. A retry of the
+    same idempotency key can therefore safely publish the task again; the
+    worker's processing claim prevents duplicate classifier work.
+    """
+
+    try:
+        detect_plan_relevance.apply_async(
+            args=[str(row.id)],
+            task_id=f"creator-relevance-{row.id}",
+        )
+    except Exception:  # noqa: BLE001 - expose queue failure through the proposal
+        row.status = "failed"
+        row.error_code = "relevance_dispatch_failed"
+        await db.commit()
+
+
+async def _media_paths_already_attached_db(
+    db: AsyncSession,
+    *,
+    creator_id: uuid.UUID,
+    excluded_item_id: uuid.UUID,
+    paths: set[str],
+) -> bool:
+    """Check every owned PlanItem without materializing users' history.
+
+    Both legacy ``clip_gcs_paths`` and structured ``clip_assignments`` are
+    queried in PostgreSQL.  The ``EXISTS`` query is deliberately not bounded by
+    a row limit: missing an older attachment would allow duplicate media to be
+    approved.  ``paths`` is capped by ``WorkspaceCreateBody`` at 50 values.
+    """
+
+    if not paths:
+        return False
+    path_predicates = [
+        or_(
+            PlanItem.clip_gcs_paths.contains([path]),
+            PlanItem.clip_assignments.contains([{"gcs_path": path}]),
+        )
+        for path in sorted(paths)
+    ]
+    inner = (
+        select(1)
+        .select_from(PlanItem)
+        .join(ContentPlan, ContentPlan.id == PlanItem.content_plan_id)
+        .where(
+            PlanItem.id != excluded_item_id,
+            ContentPlan.user_id == creator_id,
+            or_(*path_predicates),
+        )
+    )
+    query = select(exists(inner))
+    return bool(await db.scalar(query))
+
+
 def _require_workspace_enabled() -> None:
     if not settings.main_creator_agent_freeform_uploads_enabled:
         raise HTTPException(
@@ -297,6 +374,15 @@ async def create_relevance_proposal(
                 status_code=409,
                 detail="Idempotency key reused with different media",
             )
+        if existing.status == "failed" and existing.error_code == "relevance_dispatch_failed":
+            existing.status = "pending"
+            existing.error_code = None
+            await db.commit()
+            await _enqueue_relevance_or_mark_failed(db, existing)
+        elif existing.status == "pending":
+            # This covers a process crash after the proposal commit and before
+            # broker publication. Processing claims make this retry safe.
+            await _enqueue_relevance_or_mark_failed(db, existing)
         return _response(existing)
 
     ids: list[uuid.UUID] = []
@@ -325,7 +411,16 @@ async def create_relevance_proposal(
             "gcs_path": by_id[media_id].raw_storage_path,
             "gcs_generation": None,
             "kind": "video",
-            "source_filename": None,
+            "source_filename": safe_media_basename(
+                (by_id[media_id].probe_metadata or {}).get("source_filename")
+                if isinstance(by_id[media_id].probe_metadata, dict)
+                else None
+            )
+            or safe_media_basename(
+                (by_id[media_id].probe_metadata or {}).get("drive_filename")
+                if isinstance(by_id[media_id].probe_metadata, dict)
+                else None
+            ),
         }
         for media_id in body.media_ids
     ]
@@ -341,7 +436,7 @@ async def create_relevance_proposal(
     db.add(row)
     await db.commit()
     await db.refresh(row)
-    detect_plan_relevance.delay(str(row.id))
+    await _enqueue_relevance_or_mark_failed(db, row)
     return _response(row)
 
 
@@ -433,8 +528,19 @@ async def decide_relevance_proposal(
         source_ids = [uuid.UUID(str(media["source_job_id"])) for media in snapshots]
     except (KeyError, ValueError, TypeError) as exc:
         raise HTTPException(status_code=409, detail="Proposal media identity is invalid") from exc
+    # Source Jobs are the shared serialization point across plans. Locking them
+    # in deterministic UUID order prevents concurrent approvals from both
+    # passing the cross-item path scan before either attachment commits.
+    source_ids = sorted(set(source_ids), key=str)
     live_jobs = (
-        (await db.execute(select(Job).where(Job.id.in_(source_ids), Job.user_id == user.id)))
+        (
+            await db.execute(
+                select(Job)
+                .where(Job.id.in_(source_ids), Job.user_id == user.id)
+                .order_by(Job.id)
+                .with_for_update()
+            )
+        )
         .scalars()
         .all()
     )
@@ -478,6 +584,16 @@ async def decide_relevance_proposal(
         await db.flush()
         result_item_id = item.id
     if body.decision != "reject":
+        if await _media_paths_already_attached_db(
+            db,
+            creator_id=user.id,
+            excluded_item_id=item.id,
+            paths={str(media["gcs_path"]) for media in snapshots},
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Proposal media is already attached to another plan item",
+            )
         try:
             existing_assignments = [
                 ClipAssignment(
@@ -551,17 +667,33 @@ def _preference_request_digest(
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _job_state(job: Job | None, session: CreatorAgentSession) -> str:
-    if job is not None and job.status in {"failed", "cancelled"}:
+def _job_state(
+    job: Job | None,
+    *,
+    variant_id: str | None,
+    generation_id: str | None,
+    session_status: str,
+) -> str:
+    if job is not None and job.status in PLAN_ITEM_JOB_FAILED | {"failed"}:
         return "failed"
-    if (
-        job is not None
-        and job.status == "ready"
-        and session.target_generation_id
-        and session.target_variant_id
-    ):
-        return "ready"
-    if job is not None or session.status in {
+    if job is not None and job.status in PLAN_ITEM_JOB_READY | {"ready"}:
+        if not generation_id or not variant_id:
+            return "stale"
+        variants = (job.assembly_plan or {}).get("variants") or []
+        exact = next(
+            (
+                variant
+                for variant in variants
+                if isinstance(variant, dict) and variant.get("variant_id") == variant_id
+            ),
+            None,
+        )
+        if exact is None or exact.get("render_generation_id") != generation_id:
+            return "stale"
+        if exact.get("render_status") == "failed":
+            return "failed"
+        return "ready" if exact.get("render_status") == "ready" else "processing"
+    if job is not None or session_status in {
         "executing",
         "rendering",
         "reviewing",
@@ -588,14 +720,15 @@ async def _workspace_response(
         else []
     )
     sessions_by_id = {row.id: row for row in sessions}
-    job_ids = [session.target_job_id for session in sessions if session.target_job_id]
+    job_ids = [row.job_id for row in deliverables if row.job_id]
     jobs = (
         (await db.execute(select(Job).where(Job.id.in_(job_ids)))).scalars().all()
         if job_ids
         else []
     )
     jobs_by_id = {row.id: row for row in jobs}
-    stale = int(plan.ownership_epoch or 0) != int(receipt.ownership_epoch)
+    receipt_stale = int(plan.ownership_epoch or 0) != int(receipt.ownership_epoch)
+    any_stale = receipt_stale
     output: list[WorkspaceDeliverableResponse] = []
     states: list[str] = []
     for row in deliverables:
@@ -605,8 +738,12 @@ async def _workspace_response(
             or session.creator_id != receipt.creator_id
             or session.plan_item_id != row.plan_item_id
             or int(session.ownership_epoch) != int(row.ownership_epoch)
+            or int(session.revision) != int(row.session_revision)
+            or session.target_job_id != row.job_id
+            or session.target_variant_id != row.variant_id
+            or session.target_generation_id != row.render_generation_id
         ):
-            stale = True
+            any_stale = True
             states.append("stale")
             output.append(
                 WorkspaceDeliverableResponse(
@@ -623,46 +760,45 @@ async def _workspace_response(
                 )
             )
             continue
-        job = jobs_by_id.get(session.target_job_id) if session.target_job_id else None
-        if job is not None and (
-            job.user_id != receipt.creator_id
+        job = jobs_by_id.get(row.job_id) if row.job_id else None
+        if (
+            row.job_id is None
+            or job is None
+            or job.user_id != receipt.creator_id
             or job.content_plan_item_id != row.plan_item_id
             or int(job.content_plan_ownership_epoch or -1) != int(row.ownership_epoch)
         ):
-            stale = True
+            deliverable_stale = True
             state = "stale"
         else:
-            state = _job_state(job, session)
-        if stale:
+            deliverable_stale = False
+            state = _job_state(
+                job,
+                variant_id=row.variant_id,
+                generation_id=row.render_generation_id,
+                session_status=session.status,
+            )
+            if state == "stale":
+                deliverable_stale = True
+        if receipt_stale or deliverable_stale:
             state = "stale"
+            any_stale = True
         states.append(state)
-        job_id = session.target_job_id or row.job_id
-        variant_id = session.target_variant_id or row.variant_id
-        generation_id = session.target_generation_id or row.render_generation_id
-        generation_receipt = row.generation_receipt
-        if generation_id and job_id and variant_id:
-            generation_receipt = {
-                "job_id": str(job_id),
-                "variant_id": variant_id,
-                "render_generation_id": generation_id,
-                "ownership_epoch": int(row.ownership_epoch),
-                "session_revision": int(session.revision),
-            }
         output.append(
             WorkspaceDeliverableResponse(
                 deliverable_id=str(row.id),
                 plan_item_id=str(row.plan_item_id),
                 creator_session_id=str(row.creator_session_id),
                 ownership_epoch=int(row.ownership_epoch),
-                session_revision=int(session.revision),
+                session_revision=int(row.session_revision),
                 status=state,
-                job_id=str(job_id) if job_id else None,
-                variant_id=variant_id,
-                render_generation_id=generation_id,
-                generation_receipt=generation_receipt,
+                job_id=str(row.job_id) if row.job_id else None,
+                variant_id=row.variant_id,
+                render_generation_id=row.render_generation_id,
+                generation_receipt=row.generation_receipt,
             )
         )
-    if stale:
+    if any_stale:
         receipt_status = "stale"
     elif any(state == "failed" for state in states):
         receipt_status = "failed"
@@ -692,9 +828,13 @@ async def _workspace_response(
 async def _latest_workspace_receipt(
     plan: ContentPlan, user: CurrentUser, db: AsyncSession, receipt_id: str | None = None
 ) -> WorkspaceReceiptResponse:
-    stmt = select(CreatorWorkspaceReceipt).where(
-        CreatorWorkspaceReceipt.plan_id == plan.id,
-        CreatorWorkspaceReceipt.creator_id == user.id,
+    stmt = (
+        select(CreatorWorkspaceReceipt)
+        .where(
+            CreatorWorkspaceReceipt.plan_id == plan.id,
+            CreatorWorkspaceReceipt.creator_id == user.id,
+        )
+        .options(selectinload(CreatorWorkspaceReceipt.deliverables))
     )
     if receipt_id is not None:
         try:
@@ -728,7 +868,9 @@ async def create_workspace_receipt(
     digest = _workspace_request_digest(plan.id, int(plan.ownership_epoch or 0), body.plan_item_ids)
     existing = (
         await db.execute(
-            select(CreatorWorkspaceReceipt).where(
+            select(CreatorWorkspaceReceipt)
+            .options(selectinload(CreatorWorkspaceReceipt.deliverables))
+            .where(
                 CreatorWorkspaceReceipt.creator_id == user.id,
                 CreatorWorkspaceReceipt.plan_id == plan.id,
                 CreatorWorkspaceReceipt.idempotency_key == body.idempotency_key,
@@ -761,24 +903,43 @@ async def create_workspace_receipt(
     )
     if len(items) != len(item_ids):
         raise HTTPException(status_code=404, detail="One or more plan items were not found")
-    sessions = (
-        (
-            await db.execute(
-                select(CreatorAgentSession)
-                .where(
-                    CreatorAgentSession.creator_id == user.id,
-                    CreatorAgentSession.plan_item_id.in_(item_ids),
-                )
-                .order_by(
-                    CreatorAgentSession.updated_at.desc(), CreatorAgentSession.created_at.desc()
-                )
-            )
+    session_rank = (
+        func.row_number()
+        .over(
+            partition_by=CreatorAgentSession.plan_item_id,
+            order_by=(
+                CreatorAgentSession.updated_at.desc(),
+                CreatorAgentSession.created_at.desc(),
+                CreatorAgentSession.id.desc(),
+            ),
         )
+        .label("session_rank")
+    )
+    complete_sessions = (
+        select(CreatorAgentSession, session_rank)
+        .where(
+            CreatorAgentSession.creator_id == user.id,
+            CreatorAgentSession.plan_item_id.in_(item_ids),
+            CreatorAgentSession.target_job_id.is_not(None),
+            CreatorAgentSession.target_variant_id.is_not(None),
+            CreatorAgentSession.target_generation_id.is_not(None),
+        )
+        .subquery()
+    )
+    session_alias = aliased(CreatorAgentSession, complete_sessions)
+    sessions = (
+        (await db.execute(select(session_alias).where(complete_sessions.c.session_rank == 1)))
         .scalars()
         .all()
     )
     session_by_item: dict[uuid.UUID, CreatorAgentSession] = {}
     for session in sessions:
+        if not (
+            session.target_job_id and session.target_variant_id and session.target_generation_id
+        ):
+            # A newer briefing/session row may not have rendered anything yet;
+            # it must not hide the newest complete target for this PlanItem.
+            continue
         session_by_item.setdefault(session.plan_item_id, session)
     missing = [item_id for item_id in item_ids if item_id not in session_by_item]
     if missing:
@@ -805,15 +966,33 @@ async def create_workspace_receipt(
     )
     jobs_by_id = {job.id: job for job in jobs}
     for session in session_by_item.values():
-        if session.target_job_id:
-            job = jobs_by_id.get(session.target_job_id)
-            if (
-                job is None
-                or job.user_id != user.id
-                or job.content_plan_item_id != session.plan_item_id
-                or int(job.content_plan_ownership_epoch or -1) != epoch
-            ):
-                raise HTTPException(status_code=409, detail="Creator Job ownership is stale")
+        if not (
+            session.target_job_id and session.target_variant_id and session.target_generation_id
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Every deliverable must have an exact Creator render target",
+            )
+        job = jobs_by_id.get(session.target_job_id)
+        variants = ((job.assembly_plan or {}).get("variants") or []) if job else []
+        exact_variant = next(
+            (
+                variant
+                for variant in variants
+                if isinstance(variant, dict)
+                and variant.get("variant_id") == session.target_variant_id
+            ),
+            None,
+        )
+        if (
+            job is None
+            or job.user_id != user.id
+            or job.content_plan_item_id != session.plan_item_id
+            or int(job.content_plan_ownership_epoch or -1) != epoch
+            or exact_variant is None
+            or exact_variant.get("render_generation_id") != session.target_generation_id
+        ):
+            raise HTTPException(status_code=409, detail="Creator Job target is stale")
 
     receipt = CreatorWorkspaceReceipt(
         creator_id=user.id,
@@ -856,7 +1035,10 @@ async def create_workspace_receipt(
             )
         )
     await db.commit()
-    await db.refresh(receipt)
+    # Refresh the relationship explicitly: a plain parent refresh expires
+    # relationship state under AsyncSession and `_workspace_response` must not
+    # trigger implicit lazy IO while projecting immutable deliverables.
+    await db.refresh(receipt, attribute_names=["deliverables"])
     return await _workspace_response(db, receipt, plan)
 
 

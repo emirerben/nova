@@ -564,6 +564,8 @@ _RUBRIC_FILENAME_OVERRIDES: dict[str, str] = {
     # rsplit would yield "copilot"; the rubric ships as edit_copilot.md.
     "nova.edit.copilot": "edit_copilot",
     "nova.edit.director": "edit_director",
+    # rsplit would yield "main"; the rubric ships as main_creator.md.
+    "nova.creator.main": "main_creator",
 }
 
 

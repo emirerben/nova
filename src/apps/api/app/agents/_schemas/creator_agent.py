@@ -434,7 +434,10 @@ class CreatorCraftBundle(_CreatorModel):
         command_names = {command.command for command in self.commands}
         if "set_media_overlay" in command_names and len(command_names) != 1:
             raise ValueError("media overlay craft must be the only command in a bundle")
-        if "remove_optional_treatment" in command_names and len(command_names) != 1:
+        if "remove_optional_treatment" in command_names and (
+            len(command_names) != 1
+            or sum(command == "remove_optional_treatment" for command in self.commands) != 1
+        ):
             raise ValueError("optional treatment removal must be the only command in a bundle")
         for command in self.commands:
             for field_name in (
@@ -562,7 +565,7 @@ class CreatorWorkspaceRelevanceProposal(_CreatorModel):
     ownership_epoch: int = Field(ge=0)
     idempotency_key: str = Field(min_length=1, max_length=160)
     media_ids: list[str] = Field(min_length=1, max_length=MAX_CREATOR_WORKSPACE_MEDIA_IDS)
-    status: Literal["pending", "ready", "failed", "approved", "rejected"] = "pending"
+    status: Literal["pending", "processing", "ready", "failed", "approved", "rejected"] = "pending"
     relevance: Literal["existing_item", "new_topic", "unmatched"]
     target_plan_item_id: str | None = Field(default=None, max_length=160)
     topic: str | None = Field(default=None, max_length=500)
@@ -705,9 +708,12 @@ class CreatorAutomationDecision(_CreatorModel):
     expected_improvement: float | None = Field(default=None, ge=0.0, le=5.0)
     render_budget_remaining: int = Field(ge=0, le=2)
     automatic_revision_count: int = Field(ge=0, le=1)
-    allowlist_action: Literal[
-        "transition_fallback", "caption_legibility", "remove_optional_treatment", "speech_cut"
-    ] | None = None
+    allowlist_action: (
+        Literal[
+            "transition_fallback", "caption_legibility", "remove_optional_treatment", "speech_cut"
+        ]
+        | None
+    ) = None
     command: CreatorCraftCommand | None = None
     proposed_revision: CreatorRevisionProposal | None = None
 

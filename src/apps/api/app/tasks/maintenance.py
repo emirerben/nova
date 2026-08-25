@@ -597,6 +597,16 @@ def cleanup_agent_runs(self, retention_days: int | None = None) -> dict:
                      WHERE id IN (
                        SELECT id FROM creator_agent_sessions
                         WHERE updated_at < :cutoff
+                          -- Workspace deliverables are immutable audit
+                          -- receipts.  Keep their exact Creator session
+                          -- readable even after the normal retention window;
+                          -- deleting it would cascade the deliverable and
+                          -- silently erase the receipt's evidence.
+                          AND NOT EXISTS (
+                            SELECT 1
+                              FROM creator_workspace_deliverables
+                             WHERE creator_session_id = creator_agent_sessions.id
+                          )
                         LIMIT :batch
                      )
                     """

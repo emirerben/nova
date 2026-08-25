@@ -561,6 +561,8 @@ export default function PlanItemPage() {
   // already the backend's safe default either way.
   const [hasLandscapeClip, setHasLandscapeClip] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [speechCleanupSaving, setSpeechCleanupSaving] = useState(false);
+  const [speechCleanupLocal, setSpeechCleanupLocal] = useState<boolean | null>(null);
   // uploaderBusy: true while ShotSlotUploader has any upload/commit in flight (D6).
   const [uploaderBusy, setUploaderBusy] = useState(false);
   // Idea-centric: propose-only AI plan state.
@@ -839,6 +841,64 @@ export default function PlanItemPage() {
   }, [pollError]);
 
   const item = data?.item ?? null;
+
+  useEffect(() => {
+    setSpeechCleanupLocal(item?.speech_cleanup_enabled ?? null);
+  }, [item?.speech_cleanup_enabled]);
+
+  const speechCleanupEnabled = speechCleanupLocal ?? item?.speech_cleanup_enabled ?? false;
+  const speechCleanupAvailable = item?.speech_cleanup_available === true;
+  const speechCleanupHasNotice = Boolean(item?.speech_cleanup_notice);
+  const speechCleanupUnavailableWhileOn = speechCleanupEnabled && !speechCleanupAvailable;
+  const speechCleanupNoticeCopy =
+    item?.speech_cleanup_notice?.reason === "unsupported_format"
+      ? "This edit format cannot use Speech cleanup, so it was turned off."
+      : item?.speech_cleanup_notice?.reason === "replacement_voiceover"
+        ? "A replacement voiceover was added, so Speech cleanup was turned off."
+        : "Your main footage changed, so Speech cleanup was turned off.";
+
+  const toggleSpeechCleanup = useCallback(async () => {
+    // An unavailable On state is still actionable: the user may explicitly
+    // turn it off. Turning it on remains server-gated by capability.
+    if (
+      !item ||
+      (!speechCleanupAvailable && !speechCleanupEnabled) ||
+      speechCleanupSaving ||
+      generating
+    )
+      return;
+    const next = !speechCleanupEnabled;
+    setSpeechCleanupLocal(next);
+    setSpeechCleanupSaving(true);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 10_000);
+    try {
+      // updatePlanItem is intentionally the only consent mutation. Create reads
+      // the server-owned value and stamps the immutable job contract.
+      await updatePlanItem(item.id, { speech_cleanup_enabled: next }, { signal: controller.signal });
+      await refetch();
+    } catch {
+      setSpeechCleanupLocal(null);
+      setError("We couldn't update Speech cleanup. Try again.");
+      // Any transport error may have committed server-side. Reconcile before
+      // exposing a local state that could enable an unsafe Create click.
+      try {
+        await refetch();
+      } catch {
+        // Keep the optimistic state cleared when reconciliation itself fails.
+      }
+    } finally {
+      window.clearTimeout(timeout);
+      setSpeechCleanupSaving(false);
+    }
+  }, [generating, item, refetch, speechCleanupAvailable, speechCleanupEnabled, speechCleanupSaving]);
+
+  const acknowledgeSpeechCleanupNotice = useCallback(async () => {
+    if (!item?.speech_cleanup_notice?.id) return;
+    await updatePlanItem(item.id, {
+      speech_cleanup_notice_ack_id: item.speech_cleanup_notice.id,
+    }).then(() => refetch()).catch(() => null);
+  }, [item, refetch]);
 
   useEffect(() => {
     if (item?.audio_mode) {
@@ -1512,7 +1572,22 @@ export default function PlanItemPage() {
 
 
 
-  async function handleGenerate() {
+  async function handleGenerate(
+    input?: Parameters<typeof generatePlanItem>[1],
+  ) {
+    // Create is fail-closed while the consent PATCH is unresolved, and while a
+    // stored On preference is temporarily unavailable. The backend repeats
+    // this gate; this guard prevents a stale/optimistic UI click from entering
+    // the request path at all.
+    const isExplicitCleanupOptOut = input?.speech_cleanup_action === "disable_and_create";
+    if (speechCleanupSaving || (speechCleanupUnavailableWhileOn && !isExplicitCleanupOptOut)) {
+      setError(
+        speechCleanupSaving
+          ? "Saving Speech cleanup preference…"
+          : "Speech cleanup is temporarily unavailable. Turn it off to create without cleanup.",
+      );
+      return;
+    }
     setGenerating(true);
     setError(null);
     // Arm the wait window BEFORE the POST so the release-effect can't fire
@@ -1534,7 +1609,9 @@ export default function PlanItemPage() {
       if (item && needsFormatPersist(item.edit_format)) {
         await updatePlanItem(item.id, { edit_format: resolvedFormat });
       }
-      const generated = await generatePlanItem(itemId);
+      const generated = input
+        ? await generatePlanItem(itemId, input)
+        : await generatePlanItem(itemId);
       // A legacy API may still return the persisted direction checkpoint. Keep
       // the local creation lock held; the next poll observes the server-side
       // resume instead of turning this into a dead-end review step.
@@ -1642,6 +1719,13 @@ export default function PlanItemPage() {
   // This drives the ProgressTheater "Try again" button below.
   const allVariantsFailed =
     variants.length > 0 && variants.every((v) => v.render_status === "failed");
+  const speechCleanupRecoveryAvailable = Boolean(
+    allVariantsFailed &&
+      item.current_job_id &&
+      (data?.job?.failure_reason === "speech_cleanup_failed" ||
+        data?.job?.speech_cleanup_failure_reason ||
+        variants.some((variant) => variant.error_class === "speech_cleanup_failed")),
+  );
   const zeroVariantFailure = jobFailureCopy(data?.job?.failure_reason);
   // Conformance in-flight: clips attached + guide present + verdict pending,
   // bounded by the poll window — resolves to the tile, the on-track line, or
@@ -1832,7 +1916,13 @@ export default function PlanItemPage() {
       stepsPresentation="disclosure"
       size="full"
       tone="light"
-      onRetry={allVariantsFailed && !generating ? handleGenerate : undefined}
+      onRetry={
+        allVariantsFailed && !generating && !speechCleanupRecoveryAvailable
+          ? () => {
+              void handleGenerate();
+            }
+          : undefined
+      }
     />
   ) : null;
 
@@ -2000,6 +2090,63 @@ export default function PlanItemPage() {
         </h2>
         {uploaderNode}
       </section>
+      {(speechCleanupAvailable || speechCleanupHasNotice || speechCleanupEnabled) && (
+        <section aria-labelledby="speech-cleanup-heading" className="rounded-xl border border-zinc-200 bg-white p-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 id="speech-cleanup-heading" className="text-sm font-semibold text-[#0c0c0e]">
+                Speech cleanup
+              </h2>
+              <p className="mt-1 text-xs leading-5 text-[#71717a]">
+                Remove filler sounds such as “um”, “uh”, and repeated syllables from spoken footage.
+                It only runs when you create the video.
+              </p>
+            </div>
+            {(speechCleanupAvailable || speechCleanupEnabled) && (
+              <Button
+                type="button"
+                onClick={toggleSpeechCleanup}
+                disabled={speechCleanupSaving || generating}
+                aria-pressed={speechCleanupEnabled}
+                variant="outline"
+                size="sm"
+                className={`shrink-0 transition-colors ${
+                  speechCleanupEnabled
+                    ? "border-lime-500 bg-lime-50 text-lime-800"
+                    : "border-zinc-300 bg-white text-zinc-700 hover:border-lime-400"
+                }`}
+              >
+                {speechCleanupSaving
+                  ? "Saving…"
+                  : speechCleanupEnabled
+                    ? speechCleanupUnavailableWhileOn
+                      ? "Turn off"
+                      : "Speech cleanup on"
+                    : "Clean up speech"}
+              </Button>
+            )}
+          </div>
+          {speechCleanupUnavailableWhileOn && (
+            <p className="mt-3 rounded-lg bg-zinc-100 px-3 py-2 text-xs leading-5 text-zinc-700">
+              Speech cleanup is temporarily unavailable. Turn it off to create this video without cleanup.
+            </p>
+          )}
+          {item?.speech_cleanup_notice && (
+            <div className="mt-3 flex items-center justify-between gap-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <span>{speechCleanupNoticeCopy}</span>
+              <Button
+                type="button"
+                variant="link"
+                size="sm"
+                className="h-auto px-1 py-0 font-medium text-amber-900"
+                onClick={acknowledgeSpeechCleanupNotice}
+              >
+                Got it
+              </Button>
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 
@@ -2107,7 +2254,10 @@ export default function PlanItemPage() {
   );
 
   const generateGated =
-    gate.disabled || (guidedEditActive && !guidedEditApproved && !guidedEditAutoDesign);
+    gate.disabled ||
+    speechCleanupSaving ||
+    speechCleanupUnavailableWhileOn ||
+    (guidedEditActive && !guidedEditApproved && !guidedEditAutoDesign);
   const generateLabel = generating
     ? "Creating…"
     : guidedDesigning
@@ -2210,7 +2360,9 @@ export default function PlanItemPage() {
                       <p className="text-sm text-muted-foreground">{generateHint}</p>
                     )}
                     <Button
-                      onClick={handleGenerate}
+                      onClick={() => {
+                        void handleGenerate();
+                      }}
                       disabled={generateGated}
                       className="hidden sm:flex"
                     >
@@ -2287,7 +2439,12 @@ export default function PlanItemPage() {
                   directly above this bar on every breakpoint. */}
               {!isGenerating && (
                 <div className="sticky bottom-0 z-20 -mx-5 mt-4 border-t border-zinc-200 bg-[#ffffff] px-5 pb-[max(16px,env(safe-area-inset-bottom))] pt-4 sm:hidden md:mx-0 md:px-0">
-                  <InkButton onClick={handleGenerate} disabled={generateGated}>
+                  <InkButton
+                    onClick={() => {
+                      void handleGenerate();
+                    }}
+                    disabled={generateGated}
+                  >
                     {generateLabel}
                   </InkButton>
                 </div>
@@ -2325,6 +2482,46 @@ export default function PlanItemPage() {
             {error && (
               <div className="mb-6 rounded border border-zinc-200 bg-white px-4 py-3 text-sm text-[#3f3f46]">
                 {error}
+              </div>
+            )}
+            {speechCleanupRecoveryAvailable && (
+              <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                <p className="font-medium">Speech cleanup couldn&apos;t finish.</p>
+                <p className="mt-1 text-amber-900/80">
+                  Retry the cleanup, or create the video without it.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={generating || speechCleanupUnavailableWhileOn}
+                    onClick={() => {
+                      if (!item.current_job_id) return;
+                      void handleGenerate({
+                        speech_cleanup_action: "retry_required",
+                        expected_job_id: item.current_job_id,
+                      });
+                    }}
+                  >
+                    Retry speech cleanup
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    disabled={generating}
+                    onClick={() => {
+                      if (!item.current_job_id) return;
+                      void handleGenerate({
+                        speech_cleanup_action: "disable_and_create",
+                        expected_job_id: item.current_job_id,
+                      });
+                    }}
+                  >
+                    Create without cleanup
+                  </Button>
+                </div>
               </div>
             )}
 
@@ -3210,6 +3407,18 @@ function FocusedResults({
   const releaseVariantLabel = [isKriaPick ? "Kria's pick" : null, modePill]
     .filter(Boolean)
     .join(" · ") || "Original";
+  const speechCleanupReceipt =
+    variant?.silence_cut_outcome === "applied"
+      ? `Speech cleanup applied${
+          (variant.silence_cut?.time_saved_s ?? 0) > 0
+            ? ` · ${variant.silence_cut?.time_saved_s?.toFixed(1)}s removed`
+            : ""
+        }.`
+      : variant?.silence_cut_outcome === "no_change"
+        ? "Speech cleanup checked the audio; no filler sounds needed removal."
+        : variant?.silence_cut_outcome === "insufficient_source_speech"
+          ? "Speech cleanup skipped: there was not enough source speech to process."
+          : null;
   const releaseTikTokConnection: TikTokConnection | null = tiktokSimulation
     ? {
         available: true,
@@ -3394,6 +3603,14 @@ function FocusedResults({
               selectedVariantId={variant?.variant_id ?? null}
               onSelect={onVariantSelect}
             />
+          )}
+          {speechCleanupReceipt && (
+            <div
+              role="status"
+              className="mt-3 rounded-lg border border-lime-200 bg-lime-50 px-3 py-2 text-xs leading-5 text-lime-900"
+            >
+              {speechCleanupReceipt}
+            </div>
           )}
         </div>
 

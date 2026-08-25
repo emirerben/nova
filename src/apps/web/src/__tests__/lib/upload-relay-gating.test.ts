@@ -13,6 +13,8 @@
 
 import {
   UPLOAD_INTERRUPTED_MESSAGE,
+  creatorWorkspaceUploadContentTypeForFile,
+  normaliseCreatorWorkspaceUploadContentType,
   uploadContentTypeForFile,
   uploadToGcs,
   uploadToGcsWithProgress,
@@ -145,5 +147,14 @@ describe("uploadContentTypeForFile — single source for sign + PUT", () => {
     expect(uploadContentTypeForFile(new File([""], "clip.unknown", { type: "" }))).toBe(
       "video/mp4",
     );
+  });
+});
+
+describe("creator workspace upload MIME parity", () => {
+  it("normalises MOV/QuickTime to the MP4 type signed by /uploads/presigned", () => {
+    const mov = new File([""], "walk.MOV", { type: "video/quicktime" });
+    expect(creatorWorkspaceUploadContentTypeForFile(mov)).toBe("video/mp4");
+    expect(normaliseCreatorWorkspaceUploadContentType("video/quicktime")).toBe("video/mp4");
+    expect(normaliseCreatorWorkspaceUploadContentType("video/mp4")).toBe("video/mp4");
   });
 });

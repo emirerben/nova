@@ -1,4 +1,5 @@
 import json
+from typing import Literal
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from pydantic import Field, field_validator, model_validator
@@ -81,6 +82,11 @@ class Settings(BaseSettings):
     # API lands ahead of Vercel. After the owned direct uploader is deployed,
     # set true on Fly to require voiceover-uploads/direct/{user_id}/ exactly.
     generative_direct_voiceover_strict_enabled: bool = False
+
+    # Speech cleanup rollout contract.  ``legacy_auto`` keeps mixed API/worker
+    # deploys compatible; opt_in exposes the creator control and stamps strict
+    # immutable job contracts; disabled closes the capability fail-closed.
+    speech_cleanup_mode: Literal["legacy_auto", "opt_in", "disabled"] = "legacy_auto"
 
     # yt-dlp cookies for admin URL imports. Use YTDLP_COOKIES_B64 in hosted
     # environments (secret-safe, decoded into a short-lived 0600 temp file) or
@@ -832,6 +838,16 @@ class Settings(BaseSettings):
             and not self.main_creator_agent_review_enabled
         ):
             raise ValueError("main creator auto iteration requires review")
+        if (
+            self.main_creator_agent_auto_iteration_enabled
+            and not self.main_creator_agent_quality_review_enabled
+        ):
+            raise ValueError("main creator auto iteration requires quality review")
+        if (
+            self.main_creator_agent_auto_iteration_enabled
+            and not self.main_creator_agent_execution_enabled
+        ):
+            raise ValueError("main creator auto iteration requires execution")
         return self
 
     # Agent/session retention (days). Job- and creator-session-scoped agent
