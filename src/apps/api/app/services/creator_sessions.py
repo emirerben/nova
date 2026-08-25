@@ -542,8 +542,7 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
         if ready_variant:
             session.target_variant_id = str(ready_variant["variant_id"])
             session.target_generation_id = (
-                str(ready_variant.get("render_generation_id") or "")
-                or None
+                str(ready_variant.get("render_generation_id") or "") or None
             )
         session.last_good = {
             "job_id": str(job.id),
@@ -554,7 +553,9 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
             review_enabled and settings.main_creator_agent_quality_review_enabled
         )
         if quality_review_enabled and session.target_variant_id and session.target_generation_id:
-            from app.tasks.creator_quality_review import queue_creator_quality_review  # noqa: PLC0415
+            from app.tasks.creator_quality_review import (  # noqa: PLC0415
+                queue_creator_quality_review,
+            )
 
             queue_creator_quality_review(
                 session,

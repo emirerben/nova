@@ -196,13 +196,18 @@ async def create_relevance_proposal(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="media_ids must reference uploads") from exc
     jobs = (
-        await db.execute(
-            select(Job).where(Job.id.in_(ids), Job.user_id == user.id)
-        )
-    ).scalars().all()
+        (await db.execute(select(Job).where(Job.id.in_(ids), Job.user_id == user.id)))
+        .scalars()
+        .all()
+    )
     by_id = {str(job.id): job for job in jobs}
     if len(by_id) != len(ids):
         raise HTTPException(status_code=404, detail="One or more uploads were not found")
+    if any(
+        not job.raw_storage_path or not str(job.raw_storage_path).startswith(f"{user.id}/")
+        for job in jobs
+    ):
+        raise HTTPException(status_code=409, detail="One or more uploads are not attachable")
     snapshot = [
         {
             "media_id": media_id,
@@ -319,8 +324,10 @@ async def decide_relevance_proposal(
     except (KeyError, ValueError, TypeError) as exc:
         raise HTTPException(status_code=409, detail="Proposal media identity is invalid") from exc
     live_jobs = (
-        await db.execute(select(Job).where(Job.id.in_(source_ids), Job.user_id == user.id))
-    ).scalars().all()
+        (await db.execute(select(Job).where(Job.id.in_(source_ids), Job.user_id == user.id)))
+        .scalars()
+        .all()
+    )
     live_by_id = {str(job.id): job for job in live_jobs}
     for media in snapshots:
         job = live_by_id.get(str(media["source_job_id"]))
@@ -362,9 +369,21 @@ async def decide_relevance_proposal(
         result_item_id = item.id
     if body.decision != "reject":
         try:
+            existing_assignments = [
+                ClipAssignment(
+                    gcs_path=str(assignment["gcs_path"]),
+                    shot_id=assignment.get("shot_id"),
+                    user_note=str(assignment.get("user_note") or ""),
+                    machine_matched=bool(assignment.get("machine_matched", False)),
+                    media_id=(str(assignment["media_id"]) if assignment.get("media_id") else None),
+                )
+                for assignment in (item.clip_assignments or [])
+                if isinstance(assignment, dict) and assignment.get("gcs_path")
+            ]
             set_item_clips(
                 item,
-                [
+                existing_assignments
+                + [
                     ClipAssignment(
                         gcs_path=str(media["gcs_path"]),
                         media_id=str(media["media_id"]),
@@ -377,7 +396,7 @@ async def decide_relevance_proposal(
                 status_code=409,
                 detail="Proposal media is no longer attachable",
             ) from exc
-        # Replacing an existing item's footage invalidates any prior
+        # Attaching footage invalidates any prior
         # conformance evidence; this route intentionally does not enqueue a
         # render or analysis job as part of approval.
         item.conformance = None
