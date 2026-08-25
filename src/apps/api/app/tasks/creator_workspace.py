@@ -105,9 +105,7 @@ def detect_plan_relevance(proposal_id: str) -> None:
                 row.status = "ready"
                 row.relevance = result.relevance
                 row.target_plan_item_id = (
-                    uuid.UUID(result.target_plan_item_id)
-                    if result.target_plan_item_id
-                    else None
+                    uuid.UUID(result.target_plan_item_id) if result.target_plan_item_id else None
                 )
                 row.topic = result.topic
                 row.rationale = result.rationale
