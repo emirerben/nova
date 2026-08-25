@@ -24,16 +24,26 @@ is an optional advanced tool for creators who want to shape the edit before buil
    creates a token-fenced attempt, and queues `draft_edit_proposal`.
 4. The task waits for existing visual-pool analysis, analyzes every attached clip without current
    metadata, and resolves the immutable storage generation for every source.
-5. `EditProposalAgent` sees the complete media set plus creator-written context. It proposes an
-   ordered title and story beats. It must use every source when there are at most three, may leave
-   one out when there are four to six, and must use at least seven when more are available. It may
-   not invent personal experiences. There is no artificial duration floor: `draft_edit_proposal`
+5. The server keeps the complete accepted media set in the proposal snapshot, then gives
+   `EditProposalAgent` a deterministic render-capable shortlist of at most 32 sources plus
+   creator-written context. Prompt-visible sources use short per-call aliases (`m001`, `m002`, …),
+   which the parser resolves back to exact owned IDs; opaque storage identities never need to pass
+   through the model. The agent proposes an ordered title and story beats. It must use every source
+   when there are at most three, may leave one out when there are four to six, and must use at least
+   seven when more are available. It may not invent personal experiences. There is no artificial
+   duration floor: `draft_edit_proposal`
    computes a feasible-duration estimate from the analyzed media (`feasible_guided_duration_s` —
    real video durations summed, plus a fixed per-image credit) and clamps the brief's requested
    duration down to it (`adapt_target_duration_s`) before calling the agent, so a short clip still
    yields an edit instead of failing schema validation trying to stretch it. Footage under 3s is
    infeasible for a guided story — the agent is never called; the attempt fails with
    `guided_edit_infeasible` naming the actual footage length.
+   If guided-story or fast-montage planning terminates after its bounded retries, the task builds a
+   neutral deterministic proposal from the complete owned set and asks the strict renderer to
+   validate it before saving or auto-approving it. Fast-cut recovery uses distinct,
+   non-overlapping source windows. Guided recovery uses metadata-free server copy so generated
+   analysis cannot become visible text. `text_explainer` does not use this recovery because its
+   semantic copy cannot be safely rebound to arbitrary footage.
 6. The item page shows combined photo/video thumbnails. The creator can continue the same
    conversation with requests such as “put food first,” “make it slower,” or “use less text.”
    Conversational revisions may reorder and rewrite editorial fields. They may also move the
@@ -239,11 +249,11 @@ uses the automatic design path instead of requiring a proposal review:
 
 **Duration feasibility is renderer-aware end to end** (P2-1). `feasible_guided_duration_s` credits a
 video its own probed duration only when that duration clears the renderer's own per-moment minimum
-(`_RENDERER_MIN_MOMENT_S = 1.4`, mirroring guided_story.py's `_allocate_beat_durations`); a video
+(`GUIDED_STORY_MIN_MOMENT_S = 1.4`, shared with guided_story.py's direction policy); a video
 with no duration, a zero duration, or a duration below that minimum earns ZERO credit — it previously
 fell into the image-credit branch and was overestimated. `guided_feasibility_threshold_s(media_count)`
 scales the infeasibility gate with how much media is being asked to share the story
-(`_RENDERER_MIN_MOMENT_S * min(3, media_count)`, floored at `MIN_GUIDED_DURATION_S`) instead of a flat
+(`GUIDED_STORY_MIN_MOMENT_S * min(3, media_count)`, floored at `MIN_GUIDED_DURATION_S`) instead of a flat
 constant. The agent's own `+/-5s` output tolerance (`EditProposalAgent.parse`) checks its output
 against the TARGET it was given, not against real footage — with a small target (e.g. the
 `MIN_GUIDED_DURATION_S=3` floor) that tolerance window alone could still accept an output nobody
@@ -434,11 +444,13 @@ detail and proposal mutation responses carry the full review payload, keeping li
 - State/CAS/digest tests: `tests/services/test_edit_proposals.py`
 - API Generate codes + auto-design kill-switch pin + idempotency:
   `tests/routes/test_plan_item_generation.py`
-- Draft-attempt crash regressions, duration-adaptation clamp, and the
+- Draft-attempt crash regressions, duration-adaptation clamp, large mixed-media
+  snapshot preservation, renderer-validated deterministic recovery, and the
   `auto_finalize` state machine (approve+dispatch, dispatch failure, clip-only
   montage fallback, pool-assets-present no-fallback):
   `tests/tasks/test_edit_proposal_build.py`
-- Source-diversity, distinct-chapter, and observation-only draft guards:
+- Source-diversity, 32-source alias shortlisting/resolution, distinct-chapter,
+  non-overlapping fast-cut repair, and observation-only draft guards:
   `tests/agents/test_edit_proposal_agent.py`
 - Direction confirmation CAS, explicit-direction bypass, and fast-montage proposal routes:
   `tests/routes/test_edit_proposal_routes.py`

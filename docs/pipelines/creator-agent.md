@@ -44,7 +44,10 @@ pacing, and available treatments. Nothing renders until **Render this** is click
 
 After confirmation, the server re-resolves the manifest and rejects stale plans.
 For guided-compatible stories it translates the creative thesis into the existing
-guided planner's `ProposalBrief`; that specialist owns exact beat/media planning.
+guided planner's `ProposalBrief`; that specialist receives a deterministic,
+render-capable shortlist of at most 32 media sources under per-call aliases such
+as `m001`. The complete accepted media universe remains in the server-owned
+proposal snapshot and editor, so bounding the model call never drops uploads.
 Audio-led and voiceover formats always use the native renderer. The existing
 `dispatch_item_render_for` gateway mints the Job. V1 then follows that exact Job
 and records its selected ready variant and `render_generation_id`. The creator can
@@ -79,8 +82,10 @@ proposal are shown as feedback, never applied automatically by V1 or Stage 2.
   command. Turning on the flag does not opt a session in.
 - Native plans resolve confirmed opaque media IDs back to that exact item's clip
   assignments; an asset-only native selection fails closed instead of rendering
-  unrelated footage. Guided plans delegate exact media selection to the approved
-  proposal snapshot.
+  unrelated footage. Native selection is normalized to at most 12 owned non-asset
+  IDs. Guided strategies carry no selected IDs; the guided proposal owns exact
+  media selection from its bounded shortlist while retaining the full accepted
+  universe in the snapshot.
 - A running confirmation receipt is resumable after process death. Reconciliation
   accepts only a Job for the same creator, PlanItem, ownership epoch, and a creation
   time after the confirmation receipt; native Jobs must also carry the exact
@@ -219,9 +224,13 @@ when a specialist owns a stronger typed contract:
 - post-render taste changes → Stage 3's existing editor commit/speech-cut gateways;
   the Main Creator compiles commands but never receives renderer capabilities.
 
-Specialist failure never grants the Main Creator a broader capability. Guided
-planning fails to a saved, retryable session; it does not fabricate a story plan.
-Native music matching retains its existing original-audio fallback.
+Specialist failure never grants the Main Creator a broader capability. A terminal
+guided-story or fast-montage planning failure may recover through neutral,
+server-authored structure built only from owned media. That recovery is accepted
+only after the strict renderer validates its timing and source windows; otherwise
+it fails closed. `text_explainer` remains semantic and fails closed instead of
+rebinding copy to arbitrary footage. Native music matching retains its existing
+original-audio fallback.
 
 ### Good-enough and failure policy
 
@@ -233,9 +242,10 @@ rubrics and can recommend one revision, but still requires confirmation.
 Failures are stable and bounded: missing media asks the creator to upload; a stale
 manifest returns 409 and requires re-planning; unavailable voiceover cannot be
 activated; an active render cannot be cancelled through this controller; dispatch
-failure saves the confirmed plan and a typed execution error; agent failure falls
-back to a conservative strategy; render failure preserves the plan for a fresh
-session. No branch generates raw media operations.
+failure saves the confirmed plan and a typed execution error; Main Creator output
+is normalized at the model boundary; eligible guided specialist failures use the
+strictly validated deterministic recovery above; render failure preserves the
+plan for a fresh session. No branch generates raw media operations.
 
 ### Rollout
 
@@ -306,6 +316,11 @@ flags are live.
 - Stage 5 tests pin 0085/0086/0088/0089 state, idempotent proposal decisions, ownership
   re-fencing, distinct deliverables, stale receipts, and explicit-only preference
   writes;
+- large-media tests pin 45 clips plus 58 ready visuals, the 12-ID Main Creator
+  native bound, the 32-alias specialist prompt, exact alias resolution, and full
+  snapshot/editor-universe preservation;
+- fallback tests pin non-overlapping fast cuts, renderer validation before guided
+  auto-approval, and fail-closed `text_explainer` behavior;
 - editor regressions pin exact PlanItem ownership for overlays/SFX and the music
   commit crash repair;
 - frontend tests prove no confirmation call occurs before **Render this**;
