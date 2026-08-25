@@ -784,7 +784,16 @@ class Settings(BaseSettings):
     # Future format and workspace gates.  These are intentionally independent of
     # the Main Creator conversation gate so capability manifests fail closed
     # until their render/ownership contracts are live.
-    edit_format_day_vlog_enabled: bool = False
+    edit_format_day_vlog_enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable the strict day_vlog guided renderer. It requires a multi-shot "
+            "filming guide, preserves first-appearance chronology, caps transitions "
+            "at 0.2s, and fails visibly when media is insufficient; it never silently "
+            "downgrades to montage. Read by API capability resolution and workers, so "
+            "flip Fly + restart both API and worker processes."
+        ),
+    )
     edit_format_single_hero_enabled: bool = False
     main_creator_agent_freeform_uploads_enabled: bool = False
     main_creator_agent_workspace_enabled: bool = False
