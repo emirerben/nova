@@ -80,6 +80,7 @@ from app.services.job_phases import (
     record_phase,
     record_sub_phase,
 )
+from app.services.speech_cleanup import SpeechCleanupFailure
 from app.worker import celery_app
 
 
@@ -853,6 +854,20 @@ def orchestrate_generative_job(self, job_id: str) -> None:
             mark_failed_phase(job_id)
             _fail_job(job_id, str(exc), failure_reason=exc.code)
             return
+        except SpeechCleanupFailure as exc:
+            log.warning(
+                "generative_job_speech_cleanup_failed",
+                job_id=job_id,
+                failure_reason=exc.reason,
+            )
+            mark_failed_phase(job_id)
+            _fail_job(
+                job_id,
+                str(exc),
+                failure_reason="speech_cleanup_failed",
+                speech_cleanup_failure_reason=exc.reason,
+            )
+            return
         except SoftTimeLimitExceeded:
             # The 30-min soft limit fired (heavy 4K/HDR footage). Fail VISIBLY with a
             # user-actionable message instead of letting the hard time_limit SIGKILL
@@ -1066,6 +1081,16 @@ def _run_generative_job_impl(
             job.mode = "generative"
         db.commit()
         all_candidates = job.all_candidates or {}
+        speech_cleanup_contract = str(
+            (job.assembly_plan or {}).get("speech_cleanup_contract") or "legacy_auto"
+        )
+        if speech_cleanup_contract not in {"legacy_auto", "required_v1", "off_v1"}:
+            raise SpeechCleanupFailure("invalid_contract")
+        speech_cut_execution = (job.assembly_plan or {}).get("speech_cut_control") or {}
+        if speech_cut_execution.get("execution_contract") == "restore_original_v1":
+            speech_cleanup_contract = "off_v1"
+        if speech_cleanup_contract == "required_v1" and not settings.silence_cut_enabled:
+            raise SpeechCleanupFailure("engine_unavailable")
         clip_paths_gcs: list[str] = all_candidates.get("clip_paths", []) or []
         # Closed allowlist enforced at the API edge; legacy rows default to "en".
         language: str = all_candidates.get("language") or "en"
@@ -1519,6 +1544,16 @@ def _run_generative_job_impl(
             prefer_narrated_voiceover=(job.mode == "content_plan"),
         )
         if (
+            speech_cleanup_contract == "required_v1"
+            and archetype == "montage"
+            and archetype_fallback_reason not in {"no_speech", "spine_too_short"}
+        ):
+            # A required cleanup job must never silently degrade to a generic
+            # montage when its declared renderer is unavailable. The two
+            # speech-absence fallbacks are explicit benign no-op receipts;
+            # every other downgrade is an actionable renderer failure.
+            raise SpeechCleanupFailure("unsupported_renderer")
+        if (
             archetype == "talking_head"
             and speech_cut_pinned_spine
             and speech_cut_pinned_spine in clip_id_to_local
@@ -1566,7 +1601,11 @@ def _run_generative_job_impl(
         # call and ONE cut encode (subtitled + the talking_head spine). Lives
         # under the job tmpdir — per-variant scratch cleanup
         # (shutil.rmtree(variant_dir)) never touches it.
-        silence_cut_cache = _SilenceCutCache(os.path.join(tmpdir, "silence_cut"))
+        silence_cut_cache = (
+            None
+            if speech_cleanup_contract == "off_v1"
+            else _SilenceCutCache(os.path.join(tmpdir, "silence_cut"))
+        )
 
         def _render_one_spec(rank: int, spec: dict[str, Any], spine: str | None) -> dict[str, Any]:
             """Render a single (already non-resumable) spec: mark rendering →
@@ -1621,6 +1660,7 @@ def _run_generative_job_impl(
                         landscape_fit=landscape_fit,
                         silence_cut_disabled=silence_cut_disabled,
                         silence_cut_cache=silence_cut_cache,
+                        speech_cleanup_contract=speech_cleanup_contract,
                     )
                 elif spec.get("archetype") == "narrated":
                     result = _render_narrated_variant(
@@ -1644,6 +1684,7 @@ def _run_generative_job_impl(
                         landscape_fit=landscape_fit,
                         silence_cut_disabled=silence_cut_disabled,
                         silence_cut_cache=silence_cut_cache,
+                        speech_cleanup_contract=speech_cleanup_contract,
                         smart_captions=smart_captions,
                         render_trace_id=render_trace_id,
                     )
@@ -1670,6 +1711,8 @@ def _run_generative_job_impl(
                         language=language,
                         landscape_fit=landscape_fit,
                         montage_preset=montage_preset,
+                        speech_cleanup_contract=speech_cleanup_contract,
+                        speech_cleanup_fallback_reason=archetype_fallback_reason,
                     )
                 record_render_stage(
                     "variant_render",
@@ -7989,6 +8032,15 @@ def _run_regenerate_variant(
             (job.all_candidates or {}).get("montage_preset")
         )
         variants = ((job.assembly_plan or {}).get("variants")) or []
+        speech_cleanup_contract_regen = str(
+            (job.assembly_plan or {}).get("speech_cleanup_contract") or "legacy_auto"
+        )
+        _fallback_snapshot = (job.assembly_plan or {}).get("archetype_fallback") or {}
+        speech_cleanup_fallback_reason_regen = (
+            str(_fallback_snapshot.get("reason"))
+            if isinstance(_fallback_snapshot, dict) and _fallback_snapshot.get("reason")
+            else None
+        )
         existing = next((v for v in variants if v.get("variant_id") == variant_id), None)
         if existing is None:
             log.error("generative_regenerate_variant_unknown", job_id=job_id, variant_id=variant_id)
@@ -8804,6 +8856,8 @@ def _run_regenerate_variant(
                 cluster_accent_size_px_override=resolved_cluster_accent_size_override,
                 landscape_fit=landscape_fit_regen,
                 montage_preset=montage_preset_regen,
+                speech_cleanup_contract=speech_cleanup_contract_regen,
+                speech_cleanup_fallback_reason=speech_cleanup_fallback_reason_regen,
                 behind_subject_override=text_behind_subject,
                 lyrics_enabled=inherited_lyrics_enabled,
                 lyric_line_overrides=inherited_lyric_line_overrides,
@@ -10385,8 +10439,12 @@ def _classify_error(exc: BaseException) -> str:
     """
     from celery.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
 
+    from app.services.speech_cleanup import SpeechCleanupFailure  # noqa: PLC0415
+
     if isinstance(exc, SoftTimeLimitExceeded):
         return "timeout"
+    if isinstance(exc, SpeechCleanupFailure):
+        return "speech_cleanup_failed"
     name = type(exc).__name__.lower()
     msg = str(exc).lower()
     if "ffmpeg" in name or "encoder" in name or "ffmpeg" in msg or "codec" in msg:
@@ -10588,6 +10646,8 @@ def _render_generative_variant(
     cluster_accent_size_px_override: int | None = None,
     landscape_fit: str = "fill",
     montage_preset: str = "classic",
+    speech_cleanup_contract: str = "legacy_auto",
+    speech_cleanup_fallback_reason: str | None = None,
     behind_subject_override: bool | None = None,
     lyrics_enabled: bool | None = None,
     lyric_line_overrides: dict | None = None,
@@ -10794,6 +10854,21 @@ def _render_generative_variant(
         "lyric_line_overrides": lyric_line_overrides or None,
         "lyric_overlay_snapshot": None,
     }
+    # Self-narration can intentionally fall back to the montage renderer when
+    # there is no usable source speech (or the selected spine is too short). In
+    # the required contract this is a successful, explicit no-op receipt rather
+    # than an unmarked uncleaned success. The fallback is safe because the
+    # resolver proved there is no supported speech lane to process.
+    if speech_cleanup_contract == "required_v1" and speech_cleanup_fallback_reason in {
+        "no_speech",
+        "spine_too_short",
+    }:
+        base["silence_cut"] = {
+            "removed": [],
+            "time_saved_s": 0.0,
+            "outcome": "insufficient_source_speech",
+        }
+        base["silence_cut_outcome"] = "insufficient_source_speech"
     if spec.get("music_window_video_duration_s") is not None:
         base["music_window_video_duration_s"] = spec["music_window_video_duration_s"]
     if resolved_montage_preset != DEFAULT_MONTAGE_PRESET:
@@ -11725,6 +11800,7 @@ def _render_talking_head_variant(
     landscape_fit: str = "fill",
     silence_cut_disabled: bool = False,
     silence_cut_cache: _SilenceCutCache | None = None,
+    speech_cleanup_contract: str = "legacy_auto",
 ) -> dict[str, Any]:
     """Render the talking_head variant: spine audio + B-roll, then burn the AI intro.
 
@@ -11803,6 +11879,8 @@ def _render_talking_head_variant(
         "speech_cut_candidates": None,
         "speech_cut_forced_removals": None,
         "speech_cuts_disabled": False,
+        "silence_cut_outcome": None,
+        "speech_cleanup_failure_reason": None,
     }
 
     try:
@@ -11818,10 +11896,14 @@ def _render_talking_head_variant(
         # needs the SPINE probe, so it lives inside the assembler (same event).
         silence_cut_fn = None
         silence_cut_out: dict[str, Any] = {}
-        if settings.silence_cut_enabled or settings.retake_cut_enabled:
+        cleanup_required = speech_cleanup_contract == "required_v1"
+        cleanup_off = speech_cleanup_contract == "off_v1"
+        if not cleanup_off and (
+            cleanup_required or settings.silence_cut_enabled or settings.retake_cut_enabled
+        ):
             from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
-            if silence_cut_disabled:
+            if silence_cut_disabled and not cleanup_required:
                 # Per-item opt-out (10A) — skips the WHOLE stage, retakes included.
                 record_pipeline_event(
                     "silence_cut", "silence_cut_skipped_disabled", {"variant_id": variant_id}
@@ -11839,14 +11921,19 @@ def _render_talking_head_variant(
                     # one variant is never re-analyzed for another. `cache_key`
                     # lets the assembler key a pre-capped analysis WAV by its
                     # SOURCE spine (+cap), so the entry stays clip-addressed.
-                    return _silence_cut_analysis(
-                        analysis_path,
-                        duration_s,
-                        job_id=job_id,
-                        cache=silence_cut_cache,
-                        cache_key=cache_key,
-                        source_fingerprint=source_fingerprint,
-                    )
+                    kwargs: dict[str, Any] = {
+                        "job_id": job_id,
+                        "cache": silence_cut_cache,
+                        "cache_key": cache_key,
+                        "source_fingerprint": source_fingerprint,
+                    }
+                    if cleanup_required:
+                        kwargs.update(
+                            include_retakes=False,
+                            include_silence_and_fillers=True,
+                            analysis_policy="required_v1",
+                        )
+                    return _silence_cut_analysis(analysis_path, duration_s, **kwargs)
 
         assemble_talking_head(
             clip_paths=clip_id_to_local,
@@ -11860,8 +11947,21 @@ def _render_talking_head_variant(
             landscape_fit=landscape_fit,
             silence_cut_fn=silence_cut_fn,
             silence_cut_out=silence_cut_out,
+            strict_speech_cleanup=cleanup_required,
         )
         base["silence_cut"] = silence_cut_out.get("summary")
+        base["silence_cut_outcome"] = (
+            silence_cut_out.get("outcome")
+            or ("applied" if silence_cut_out.get("summary") else "no_change")
+            if cleanup_required
+            else None
+        )
+        if cleanup_required and base["silence_cut_outcome"] == "insufficient_source_speech":
+            base["silence_cut"] = {
+                "removed": [],
+                "time_saved_s": 0.0,
+                "outcome": "insufficient_source_speech",
+            }
         base["speech_cut_candidates"] = silence_cut_out.get("review_candidates") or None
         base["spine_clip_id"] = silence_cut_out.get("spine_clip_id")
 
@@ -11979,6 +12079,7 @@ def _render_talking_head_variant(
             "render_status": "failed",
             "error": err,
             "error_class": _classify_error(exc),
+            "speech_cleanup_failure_reason": getattr(exc, "reason", None),
         }
 
 
@@ -12392,6 +12493,9 @@ def _silence_cut_analysis(
     cache: _SilenceCutCache | None,
     cache_key: str | None = None,
     source_fingerprint: str | None = None,
+    include_retakes: bool | None = None,
+    include_silence_and_fillers: bool | None = None,
+    analysis_policy: str = "legacy_auto",
 ) -> dict[str, Any]:
     """Detection inputs + CutPlan for one clip, computed once per job (7A).
 
@@ -12474,11 +12578,12 @@ def _silence_cut_analysis(
             )
             # d=0.1 (NOT speech_coverage's 0.3 default): the cut path needs short
             # real silences visible to the intersection rule (round 2 / 9A).
-            silences = (
-                detect_silences(clip_path, min_silence_s=0.1)
-                if settings.silence_cut_enabled
-                else []
+            silence_enabled = (
+                bool(include_silence_and_fillers)
+                if include_silence_and_fillers is not None
+                else bool(settings.silence_cut_enabled)
             )
+            silences = detect_silences(clip_path, min_silence_s=0.1) if silence_enabled else []
             if not silences:
                 # Calibration gate visibility: zero silencedetect ranges means
                 # rule 2 self-disables inside build_cut_plan (noisy footage —
@@ -12488,18 +12593,21 @@ def _silence_cut_analysis(
                     "silence_cut_rule2_disabled",
                     {"clip": os.path.basename(clip_path)},
                 )
-            retake_spans, review_candidates = _silence_cut_retake_spans(
-                transcript,
-                job_id=job_id,
-                source_fingerprint=source_fingerprint or cache_key or clip_path,
-            )
+            if include_retakes is False:
+                retake_spans, review_candidates = [], []
+            else:
+                retake_spans, review_candidates = _silence_cut_retake_spans(
+                    transcript,
+                    job_id=job_id,
+                    source_fingerprint=source_fingerprint or cache_key or clip_path,
+                )
             plan = build_cut_plan(
                 transcript.words,
                 silences,
                 duration_s,
                 retake_spans=retake_spans,
                 forced_removals=forced_removals,
-                include_silence_and_fillers=settings.silence_cut_enabled,
+                include_silence_and_fillers=silence_enabled,
             )
             review_candidates = [
                 candidate
@@ -12538,6 +12646,11 @@ def _silence_cut_analysis(
     if cache is None:
         return _compute()
     key = cache_key or clip_path
+    if analysis_policy != "legacy_auto":
+        forced_digest = hashlib.sha256(
+            json.dumps(forced_removals, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()[:16]
+        key = f"{key}::policy={analysis_policy}::forced={forced_digest}"
     # Per-key locking (R3c): hold the global lock only to get-or-insert the
     # key's slot. The first arrival computes OUTSIDE the lock (whisper +
     # silencedetect + retakes are seconds of network/CPU) and then publishes;
@@ -13256,6 +13369,7 @@ def _render_subtitled_variant(
     landscape_fit: str = "fill",
     silence_cut_disabled: bool = False,
     silence_cut_cache: _SilenceCutCache | None = None,
+    speech_cleanup_contract: str = "legacy_auto",
     smart_captions: dict[str, str] | None = None,
     render_trace_id: str | None = None,
 ) -> dict[str, Any]:
@@ -13473,6 +13587,8 @@ def _render_subtitled_variant(
         "speech_cut_candidates": None,
         "speech_cut_forced_removals": None,
         "speech_cuts_disabled": False,
+        "silence_cut_outcome": None,
+        "speech_cleanup_failure_reason": None,
     }
     if base.get("smart_caption_policy") is not None:
         base["smart_caption_policy"] = _effective_smart_caption_policy(
@@ -13540,7 +13656,11 @@ def _render_subtitled_variant(
         sc_apply = False  # True ⇒ pass keep_segments into the reframe
         sc_apply_failed = False
         strict_silence_cut = False
-        if settings.silence_cut_enabled or settings.retake_cut_enabled:
+        cleanup_required = speech_cleanup_contract == "required_v1"
+        cleanup_off = speech_cleanup_contract == "off_v1"
+        if not cleanup_off and (
+            cleanup_required or settings.silence_cut_enabled or settings.retake_cut_enabled
+        ):
             from app.pipeline.silence_cut import (  # noqa: PLC0415
                 BAILOUT_CLIP_TOO_SHORT,
                 BAILOUT_NO_WORDS,
@@ -13557,17 +13677,21 @@ def _render_subtitled_variant(
                     "variant_id": variant_id,
                     "silence_cut_enabled": bool(settings.silence_cut_enabled),
                     "retake_cut_enabled": bool(settings.retake_cut_enabled),
+                    "speech_cleanup_contract": speech_cleanup_contract,
                     "has_audio": bool(probe.has_audio),
                     "silence_cut_disabled": bool(silence_cut_disabled),
                 },
             )
             strict_silence_cut = bool(
-                settings.silence_cut_enabled
-                and probe.has_audio
-                and not silence_cut_disabled
-                and float(probe.duration_s) >= MIN_CLIP_S
+                cleanup_required
+                or (
+                    settings.silence_cut_enabled
+                    and probe.has_audio
+                    and not silence_cut_disabled
+                    and float(probe.duration_s) >= MIN_CLIP_S
+                )
             )
-            if silence_cut_disabled:
+            if silence_cut_disabled and not cleanup_required:
                 # Per-item opt-out (10A) — skips the WHOLE stage, retakes included.
                 record_pipeline_event(
                     "silence_cut", "silence_cut_skipped_disabled", {"variant_id": variant_id}
@@ -13587,6 +13711,9 @@ def _render_subtitled_variant(
                         job_id=job_id,
                         cache=silence_cut_cache,
                         source_fingerprint=next(iter(clip_id_to_local)),
+                        include_retakes=False if cleanup_required else None,
+                        include_silence_and_fillers=True if cleanup_required else None,
+                        analysis_policy="required_v1" if cleanup_required else "legacy_auto",
                     )
                 if strict_silence_cut and sc_entry["failed"]:
                     record_pipeline_event(
@@ -13594,6 +13721,8 @@ def _render_subtitled_variant(
                         "silence_cut_required_failed",
                         {"variant_id": variant_id, "reason": "analysis_failed"},
                     )
+                    if cleanup_required:
+                        raise SpeechCleanupFailure("analysis_failed")
                     raise RuntimeError("silence_cut_required: analysis failed")
                 # `words` must be non-empty to adopt the verbatim transcript:
                 # an empty-words bailout (e.g. clip_too_short — P3 returns
@@ -13610,6 +13739,8 @@ def _render_subtitled_variant(
                                 "silence_cut_required_failed",
                                 {"variant_id": variant_id, "reason": "analysis_no_plan"},
                             )
+                            if cleanup_required:
+                                raise SpeechCleanupFailure("analysis_no_plan")
                             raise RuntimeError("silence_cut_required: analysis returned no plan")
                     elif strict_silence_cut and sc_plan.bailout_reason not in (
                         None,
@@ -13624,6 +13755,8 @@ def _render_subtitled_variant(
                                 "reason": sc_plan.bailout_reason,
                             },
                         )
+                        if cleanup_required:
+                            raise SpeechCleanupFailure("unsafe_plan")
                         raise RuntimeError(
                             f"silence_cut_required: unsafe plan bailout ({sc_plan.bailout_reason})"
                         )
@@ -13778,6 +13911,8 @@ def _render_subtitled_variant(
                             "silence_cut_required_failed",
                             {"variant_id": variant_id, "reason": "apply_failed"},
                         )
+                        if cleanup_required:
+                            raise SpeechCleanupFailure("apply_failed") from exc
                         raise RuntimeError("silence_cut_required: apply failed") from exc
                     sc_apply = False
                     sc_apply_failed = True
@@ -14528,6 +14663,9 @@ def _render_subtitled_variant(
         silence_cut_summary: dict[str, Any] | None = None
         if sc_plan is not None and sc_plan.bailout_reason is None:
             silence_cut_summary = plan_summary(sc_plan, original_duration_s=float(probe.duration_s))
+            if cleanup_required:
+                base["silence_cut_outcome"] = "applied" if sc_apply else "no_change"
+                silence_cut_summary["outcome"] = base["silence_cut_outcome"]
             record_pipeline_event(
                 "silence_cut",
                 "silence_cut_plan",
@@ -14541,6 +14679,18 @@ def _render_subtitled_variant(
             )
         if sc_entry is not None:
             base["speech_cut_candidates"] = sc_entry.get("review_candidates") or None
+        if cleanup_required and (
+            sc_entry is None
+            or sc_entry.get("failed")
+            or not sc_entry.get("words")
+            or sc_entry.get("plan") is None
+        ):
+            base["silence_cut_outcome"] = "insufficient_source_speech"
+            base["silence_cut"] = {
+                "removed": [],
+                "time_saved_s": 0.0,
+                "outcome": "insufficient_source_speech",
+            }
         if smart_v2 and base.get("smart_validation_receipts") is not None:
             try:
                 import resource  # noqa: PLC0415
@@ -14593,6 +14743,8 @@ def _render_subtitled_variant(
             "speech_cut_candidates": base.get("speech_cut_candidates"),
             "speech_cut_forced_removals": base.get("speech_cut_forced_removals"),
             "speech_cuts_disabled": base.get("speech_cuts_disabled", False),
+            "silence_cut_outcome": base.get("silence_cut_outcome"),
+            "speech_cleanup_failure_reason": base.get("speech_cleanup_failure_reason"),
         }
     except Exception as exc:
         err = str(exc)[:MAX_ERROR_DETAIL_LEN]
@@ -14609,6 +14761,7 @@ def _render_subtitled_variant(
             "render_status": "failed",
             "error": err,
             "error_class": _classify_error(exc),
+            "speech_cleanup_failure_reason": getattr(exc, "reason", None),
         }
 
 
@@ -16838,6 +16991,12 @@ def _clip_set_summary(clip_metas: list) -> str:
 _SPEECH_CUT_FINALIZER_CLAIM_TTL_S = 1810.0
 
 
+def _legacy_silence_disabled_after_operation(plan: dict[str, Any], desired: bool) -> bool:
+    if plan.get("speech_cleanup_contract") in {"required_v1", "off_v1"}:
+        return bool(plan.get("silence_cut_disabled"))
+    return bool(desired)
+
+
 def _speech_cut_claim_matches(control: dict[str, Any], operation_id: str, attempt_id: str) -> bool:
     claim = control.get("finalizer_claim") or {}
     return bool(
@@ -17145,7 +17304,9 @@ def _restore_failed_speech_cut_rerender(
         ]
         job.assembly_plan = {
             **plan,
-            "silence_cut_disabled": bool(control.get("prior_disabled")),
+            "silence_cut_disabled": _legacy_silence_disabled_after_operation(
+                plan, bool(control.get("prior_disabled"))
+            ),
             "speech_cut_control": None,
             "speech_cut_previous_variant": None,
             "speech_cut_previous_variants": None,
@@ -17205,7 +17366,9 @@ def _publish_speech_cut_rerender(
             raise RuntimeError("speech cut publication variant disappeared")
         job.assembly_plan = {
             **plan,
-            "silence_cut_disabled": bool(control.get("desired_disabled")),
+            "silence_cut_disabled": _legacy_silence_disabled_after_operation(
+                plan, bool(control.get("desired_disabled"))
+            ),
             "speech_cut_control": None,
             "speech_cut_previous_variant": None,
             "speech_cut_previous_variants": None,
@@ -17319,6 +17482,15 @@ def _finalize_job(
         terminal = "variants_ready"
     else:
         terminal = "variants_failed"
+    cleanup_failure_reason = next(
+        (
+            str(result.get("speech_cleanup_failure_reason"))
+            for result in failures
+            if result.get("error_class") == "speech_cleanup_failed"
+            and result.get("speech_cleanup_failure_reason")
+        ),
+        None,
+    )
     speech_cut_status_kwargs = (
         {
             "expected_speech_cut_operation_id": expected_operation_id,
@@ -17532,11 +17704,24 @@ def _finalize_job(
                     "speech_cut_in_flight": r.get("speech_cut_in_flight"),
                     "speech_cut_last_receipt": r.get("speech_cut_last_receipt"),
                     "speech_cut_last_error": r.get("speech_cut_last_error"),
+                    "silence_cut_outcome": r.get("silence_cut_outcome"),
+                    "speech_cleanup_failure_reason": r.get("speech_cleanup_failure_reason"),
+                    "error_class": r.get("error_class"),
                 }
                 for r in results
             ],
+            **(
+                {"speech_cleanup_failure_reason": cleanup_failure_reason}
+                if cleanup_failure_reason
+                else {}
+            ),
         },
         merge_finalized_variants=True,
+        failure_reason=(
+            "speech_cleanup_failed"
+            if terminal == "variants_failed" and cleanup_failure_reason
+            else None
+        ),
         **speech_cut_status_kwargs,
     )
     if accepted is False:
@@ -17672,6 +17857,7 @@ def _set_status(
     extra_plan: dict[str, Any] | None = None,
     *,
     merge_finalized_variants: bool = False,
+    failure_reason: str | None = None,
     expected_speech_cut_operation_id: str | None = None,
     expected_speech_cut_attempt_id: str | None = None,
 ) -> bool:
@@ -17695,6 +17881,8 @@ def _set_status(
             ):
                 raise RuntimeError("speech cut finalization was superseded")
         job.status = status
+        if failure_reason:
+            job.failure_reason = failure_reason
         if extra_plan is not None:
             existing = job.assembly_plan or {}
             plan_patch = extra_plan
@@ -17711,7 +17899,12 @@ def _set_status(
     return True
 
 
-def _fail_job(job_id: str, error_detail: str, failure_reason: str | None = None) -> bool:
+def _fail_job(
+    job_id: str,
+    error_detail: str,
+    failure_reason: str | None = None,
+    speech_cleanup_failure_reason: str | None = None,
+) -> bool:
     try:
         with _sync_session() as db:
             # Row-locked: reconciling variant render_status below is a
@@ -17745,8 +17938,11 @@ def _fail_job(job_id: str, error_detail: str, failure_reason: str | None = None)
                         else v
                         for v in variants
                     ]
-                    if new_variants != variants:
-                        job.assembly_plan = {**ap, "variants": new_variants}
+                    patch = {"variants": new_variants} if new_variants != variants else {}
+                    if speech_cleanup_failure_reason:
+                        patch["speech_cleanup_failure_reason"] = speech_cleanup_failure_reason
+                    if patch:
+                        job.assembly_plan = {**ap, **patch}
 
                 db.commit()
                 return True

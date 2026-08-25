@@ -81,7 +81,7 @@ def script_dir() -> ScriptDirectory:
 
 def test_single_alembic_head(script_dir: ScriptDirectory) -> None:
     heads = script_dir.get_heads()
-    assert heads == ["0083"], f"expected a single head 0083, got {heads}"
+    assert heads == ["0084"], f"expected a single head 0084, got {heads}"
 
 
 def test_migration_chain_is_linear(script_dir: ScriptDirectory) -> None:
@@ -96,6 +96,11 @@ def test_migration_chain_is_linear(script_dir: ScriptDirectory) -> None:
     script = script_dir.get_revision("0081")
     assert script is not None
     assert script.down_revision == "0080"
+
+    for revision, expected_down in (("0082", "0081"), ("0083", "0082"), ("0084", "0083")):
+        script = script_dir.get_revision(revision)
+        assert script is not None
+        assert script.down_revision == expected_down
 
 
 def test_new_tables_registered() -> None:

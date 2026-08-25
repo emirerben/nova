@@ -97,11 +97,9 @@ def set_item_clips(item: PlanItem, assignments: list[ClipAssignment]) -> None:
     slot_clips = [a.gcs_path for a in assignments if a.shot_id is not None]
     pool_clips = [a.gcs_path for a in assignments if a.shot_id is None]
 
-    previous_media = {
-        (str(a.get("media_id") or ""), str(a.get("gcs_path") or ""))
-        for a in (item.clip_assignments or [])
-        if isinstance(a, dict) and a.get("gcs_path")
-    }
+    from app.services.speech_cleanup import main_footage_identity, reconcile_consent
+
+    previous_identity = main_footage_identity(item)
     item.clip_assignments = [
         {
             "gcs_path": a.gcs_path,
@@ -113,8 +111,8 @@ def set_item_clips(item: PlanItem, assignments: list[ClipAssignment]) -> None:
         for a in assignments
     ]
     item.clip_gcs_paths = slot_clips + pool_clips
-    current_media = {(str(a.media_id or ""), a.gcs_path) for a in assignments}
-    if current_media != previous_media:
+    if main_footage_identity(item) != previous_identity:
+        reconcile_consent(item, previous_identity)
         # Import locally to keep this low-level sole writer free of a module
         # cycle at import time. No proposal means this is a cheap no-op.
         from app.services.edit_proposals import mark_edit_proposal_stale  # noqa: PLC0415
