@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections.abc import Mapping
 from typing import Annotated, Any, Literal, TypeAlias
 
@@ -295,6 +296,13 @@ class SetMediaOverlayCommand(CreatorTargetPin):
     start_s: float = Field(ge=0.0)
     end_s: float = Field(gt=0.0)
 
+    @field_validator("start_s", "end_s")
+    @classmethod
+    def _validate_finite_timing(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("media overlay timing must be finite")
+        return value
+
     @field_validator("asset_id")
     @classmethod
     def _validate_asset_id(cls, value: str) -> str:
@@ -339,13 +347,20 @@ CreatorCraftCommand: TypeAlias = Annotated[
 ]
 CREATOR_CRAFT_COMMAND_ADAPTER = TypeAdapter(CreatorCraftCommand)
 
-# Stage 3 is intentionally narrow.  Overlay, SFX, and speech-cut commands
-# remain typed above for the later lanes, but cannot enter a core-craft bundle.
+# Stage 3 is intentionally narrow. Overlay is the first media lane admitted
+# to a craft bundle; SFX and speech-cut commands remain typed above for later
+# lanes but cannot enter a bundle yet.
 CreatorCoreCraftCommand: TypeAlias = Annotated[
     SetCaptionStyleCommand | SetTransitionCommand | SetLookPresetCommand,
     Field(discriminator="command"),
 ]
 CREATOR_CORE_CRAFT_COMMAND_ADAPTER = TypeAdapter(CreatorCoreCraftCommand)
+
+CreatorCraftBundleCommand: TypeAlias = Annotated[
+    SetCaptionStyleCommand | SetTransitionCommand | SetLookPresetCommand | SetMediaOverlayCommand,
+    Field(discriminator="command"),
+]
+CREATOR_CRAFT_BUNDLE_COMMAND_ADAPTER = TypeAdapter(CreatorCraftBundleCommand)
 
 
 class CreatorCraftBundle(_CreatorModel):
@@ -366,7 +381,7 @@ class CreatorCraftBundle(_CreatorModel):
     expected_generation_id: str = Field(min_length=1, max_length=160)
     expected_revision: int = Field(ge=0)
     expected_ownership_epoch: int = Field(ge=0)
-    commands: list[CreatorCoreCraftCommand] = Field(
+    commands: list[CreatorCraftBundleCommand] = Field(
         min_length=1, max_length=MAX_CREATOR_CRAFT_COMMANDS
     )
 
@@ -388,6 +403,9 @@ class CreatorCraftBundle(_CreatorModel):
 
     @model_validator(mode="after")
     def _pin_commands_to_bundle_target(self) -> CreatorCraftBundle:
+        command_names = {command.command for command in self.commands}
+        if "set_media_overlay" in command_names and len(command_names) != 1:
+            raise ValueError("media overlay craft must be the only command in a bundle")
         for command in self.commands:
             for field_name in (
                 "expected_manifest_hash",
@@ -823,8 +841,10 @@ __all__ = [
     "CreatorCommand",
     "CreatorCoreCraftCommand",
     "CreatorCraftBundle",
+    "CreatorCraftBundleCommand",
     "CreatorCraftCommand",
     "CREATOR_CORE_CRAFT_COMMAND_ADAPTER",
+    "CREATOR_CRAFT_BUNDLE_COMMAND_ADAPTER",
     "CreatorEditSnapshot",
     "CreatorEditPlan",
     "CreatorLimits",

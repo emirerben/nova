@@ -44,12 +44,17 @@ from app.models import (
     Job,
     Persona,
     PlanItem,
+    PlanItemAsset,
 )
-from app.routes.generative_jobs import enqueue_editor_commit_render, prepare_editor_commit
+from app.routes.generative_jobs import (
+    enqueue_editor_commit_render,
+    prepare_editor_commit,
+)
 from app.services.content_plan_persona import load_owned_plan_persona
 from app.services.creator_craft import (
     CreatorCraftValidationError,
     build_core_craft_editor_commit,
+    build_media_overlay_craft_editor_commit,
     craft_preview,
 )
 from app.services.creator_sessions import (
@@ -1018,9 +1023,59 @@ async def _rollback_craft_commit(
         failed_receipt.error = {
             "code": "craft_enqueue_failed",
             "message": str(error)[:300],
+            "job_id": str(job_id),
+            "generation": generation,
+            "rolled_back": True,
         }
         failed_receipt.completed_at = datetime.now(UTC)
     await db.commit()
+
+
+async def _resolve_creator_overlay_asset(
+    db: AsyncSession,
+    *,
+    item: PlanItem,
+    user_id: uuid.UUID,
+    asset_id: str,
+) -> dict[str, Any]:
+    """Resolve an opaque upload/catalog identity to a locked asset snapshot.
+
+    The agent sees ``asset-{uuid}`` identities in its manifest.  Accept the
+    equivalent ``visual-{uuid}`` catalog spelling and the bare UUID for
+    version-skewed clients, but never accept a path or URL from the request.
+    """
+
+    raw_id = asset_id
+    for prefix in ("asset-", "visual-"):
+        if raw_id.startswith(prefix):
+            raw_id = raw_id[len(prefix) :]
+            break
+    try:
+        asset_uuid = uuid.UUID(raw_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Unknown overlay asset") from exc
+    asset = (
+        await db.execute(
+            select(PlanItemAsset)
+            .where(
+                PlanItemAsset.id == asset_uuid,
+                PlanItemAsset.plan_item_id == item.id,
+                PlanItemAsset.user_id == user_id,
+                PlanItemAsset.status == "ready",
+                PlanItemAsset.deduplicated_to_asset_id.is_(None),
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(status_code=422, detail="Unknown overlay asset")
+    return {
+        "id": str(asset.id),
+        "kind": asset.kind,
+        "gcs_path": asset.gcs_path,
+        "preview_gcs_path": getattr(asset, "preview_gcs_path", None),
+        "duration_s": asset.duration_s,
+    }
 
 
 @router.post(
@@ -1033,12 +1088,12 @@ async def execute_creator_craft(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CreatorCraftResponse:
-    """Execute one exact-generation core-craft bundle atomically.
+    """Execute one exact-generation craft bundle atomically.
 
-    Caption style, transitions, and looks all compile into the existing editor
-    commit gateway.  This route owns only the creator/session/job fences and
-    the durable idempotency receipt; it never constructs FFmpeg or resolves a
-    storage capability from an opaque ID.
+    Core treatments and the media-overlay lane compile into the existing editor
+    commit gateway. This route owns the creator/session/job fences, resolves an
+    asset only after ownership checks, and persists a durable idempotency
+    receipt; it never accepts storage capabilities from the model.
     """
 
     _require_feature(user.id, execution=True)
@@ -1129,6 +1184,19 @@ async def execute_creator_craft(
         generation = str(existing_result.get("generation") or "")
         if not generation or current_generation != generation:
             raise HTTPException(status_code=409, detail="Creator craft execution is stale")
+        recorded_pins = existing_result.get("pins")
+        if isinstance(recorded_pins, dict):
+            expected_pins = {
+                "manifest_hash": body.expected_manifest_hash,
+                "context_hash": body.expected_context_hash,
+                "job_id": body.expected_job_id,
+                "variant_id": body.expected_variant_id,
+                "generation_id": body.expected_generation_id,
+                "revision": body.expected_revision,
+                "ownership_epoch": body.expected_ownership_epoch,
+            }
+            if recorded_pins != expected_pins:
+                raise HTTPException(status_code=409, detail="Creator craft execution is stale")
         preview = existing_result.get("preview") or {}
         previous_assembly_plan = existing_result.get("previous_assembly_plan")
     else:
@@ -1136,21 +1204,42 @@ async def execute_creator_craft(
             raise HTTPException(status_code=409, detail="Creator render generation changed")
         if variant.get("render_status") not in (None, "ready"):
             raise HTTPException(status_code=409, detail="Creator render is busy")
+        overlay_assets: dict[str, dict[str, Any]] = {}
         for command in body.commands:
             capability_name = {
                 "set_caption_style": "caption_style",
                 "set_transition": "transitions",
                 "set_look_preset": "wide_looks",
-            }[command.command]
+                "set_media_overlay": "media_overlays",
+            }.get(command.command)
+            if capability_name is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Creator treatment is unavailable",
+                )
             capability = manifest.capabilities.get(capability_name)
             if capability is None or not capability.available:
                 raise HTTPException(
                     status_code=404,
                     detail=f"Creator treatment is unavailable: {capability_name}",
                 )
+            if command.command == "set_media_overlay":
+                overlay_assets[command.asset_id] = await _resolve_creator_overlay_asset(
+                    db,
+                    item=item,
+                    user_id=user.id,
+                    asset_id=command.asset_id,
+                )
         previous_assembly_plan = copy.deepcopy(job.assembly_plan)
         try:
-            editor_commit = build_core_craft_editor_commit(body, variant=variant)
+            if overlay_assets:
+                editor_commit = build_media_overlay_craft_editor_commit(
+                    body,
+                    variant=variant,
+                    assets=overlay_assets,
+                )
+            else:
+                editor_commit = build_core_craft_editor_commit(body, variant=variant)
             prepared = prepare_editor_commit(
                 job,
                 body.expected_variant_id,
@@ -1179,6 +1268,15 @@ async def execute_creator_craft(
             "preview": preview,
             "previous_assembly_plan": previous_assembly_plan,
             "stable_manifest_fingerprint": _stable_manifest_fingerprint(manifest),
+            "pins": {
+                "manifest_hash": body.expected_manifest_hash,
+                "context_hash": body.expected_context_hash,
+                "job_id": body.expected_job_id,
+                "variant_id": body.expected_variant_id,
+                "generation_id": body.expected_generation_id,
+                "revision": body.expected_revision,
+                "ownership_epoch": body.expected_ownership_epoch,
+            },
         }
         await db.flush()
         receipt_id = receipt.id

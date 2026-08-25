@@ -9,6 +9,7 @@ from app.agents._schemas.creator_agent import CreatorCraftBundle
 from app.services.creator_craft import (
     CreatorCraftValidationError,
     build_core_craft_editor_commit,
+    build_media_overlay_craft_editor_commit,
     craft_preview,
 )
 
@@ -130,3 +131,70 @@ def test_preview_contains_bounded_treatment_data_only() -> None:
         "transitions": [],
         "looks": [],
     }
+
+
+def test_media_overlay_compiler_resolves_only_server_asset_snapshot() -> None:
+    bundle = _bundle(
+        {"command": "set_media_overlay", "asset_id": "asset-42", "start_s": 1.25, "end_s": 3.5}
+    )
+    commit = build_media_overlay_craft_editor_commit(
+        bundle,
+        variant={"media_overlays": [{"id": "old", "kind": "image", "src_gcs_path": "users/u/old"}]},
+        asset={
+            "id": "42",
+            "kind": "video",
+            "gcs_path": "users/u/plan/item/pool/new.mp4",
+            "preview_gcs_path": "users/u/plan/item/pool/new.jpg",
+            "duration_s": 8.0,
+        },
+    )
+    assert commit.base_generation == bundle.expected_generation_id
+    assert commit.media_overlays is not None
+    assert len(commit.media_overlays) == 2
+    added = commit.media_overlays[-1]
+    assert added["src_gcs_path"].startswith("users/")
+    assert added["start_s"] == 1.25 and added["end_s"] == 3.5
+    assert added["clip_duration_s"] == 8.0
+
+
+def test_media_overlay_compiler_rejects_mixed_bundle_without_partial_commit() -> None:
+    with pytest.raises(ValidationError, match="media overlay craft must be the only command"):
+        _bundle(
+            {"command": "set_media_overlay", "asset_id": "asset-42", "start_s": 0, "end_s": 1},
+            {"command": "set_caption_style", "caption_style": "word"},
+        )
+
+    bundle = _bundle(
+        {"command": "set_media_overlay", "asset_id": "asset-42", "start_s": 0, "end_s": 1}
+    )
+    with pytest.raises(CreatorCraftValidationError):
+        build_media_overlay_craft_editor_commit(bundle, variant={}, asset={"kind": "image"})
+
+
+def test_media_overlay_bundle_stages_multiple_cards_atomically() -> None:
+    bundle = _bundle(
+        {"command": "set_media_overlay", "asset_id": "asset-1", "start_s": 0, "end_s": 1},
+        {"command": "set_media_overlay", "asset_id": "visual-2", "start_s": 2, "end_s": 3},
+    )
+    commit = build_media_overlay_craft_editor_commit(
+        bundle,
+        variant={},
+        assets={
+            "asset-1": {"kind": "image", "gcs_path": "users/u/plan/i/pool/1.png"},
+            "visual-2": {"kind": "image", "gcs_path": "users/u/plan/i/pool/2.png"},
+        },
+    )
+    assert commit.media_overlays is not None
+    assert [card["start_s"] for card in commit.media_overlays] == [0.0, 2.0]
+
+
+def test_media_overlay_command_rejects_non_finite_timing() -> None:
+    with pytest.raises(ValidationError):
+        _bundle(
+            {
+                "command": "set_media_overlay",
+                "asset_id": "asset-1",
+                "start_s": float("nan"),
+                "end_s": 1,
+            }
+        )
