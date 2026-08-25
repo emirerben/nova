@@ -318,7 +318,7 @@ class SetMediaOverlayCommand(CreatorTargetPin):
 class SetLicensedSfxCommand(CreatorTargetPin):
     command: Literal["set_licensed_sfx"]
     sound_effect_id: str = Field(min_length=1, max_length=160)
-    at_s: float = Field(ge=0.0)
+    at_s: float = Field(ge=0.0, le=60.0)
 
     @field_validator("sound_effect_id")
     @classmethod
@@ -329,6 +329,9 @@ class SetLicensedSfxCommand(CreatorTargetPin):
 class ApplySpeechCutCommand(CreatorTargetPin):
     command: Literal["apply_speech_cut"]
     candidate_id: str = Field(min_length=1, max_length=160)
+    # Optional on the broader inert CreatorEditPlan wire shape for backwards
+    # compatibility; the executable craft route requires it before staging.
+    expected_cut_revision: str | None = Field(default=None, min_length=1, max_length=64)
 
     @field_validator("candidate_id")
     @classmethod
@@ -347,17 +350,26 @@ CreatorCraftCommand: TypeAlias = Annotated[
 ]
 CREATOR_CRAFT_COMMAND_ADAPTER = TypeAdapter(CreatorCraftCommand)
 
-# Stage 3 is intentionally narrow. Overlay is the first media lane admitted
-# to a craft bundle; SFX and speech-cut commands remain typed above for later
-# lanes but cannot enter a bundle yet.
+# Core, licensed-SFX, and speech-cut commands may share the existing editor
+# receipt. Media overlays use the same receipt but remain overlay-only because
+# their full replacement list has a separate owner-validation boundary.
 CreatorCoreCraftCommand: TypeAlias = Annotated[
-    SetCaptionStyleCommand | SetTransitionCommand | SetLookPresetCommand,
+    SetCaptionStyleCommand
+    | SetTransitionCommand
+    | SetLookPresetCommand
+    | SetLicensedSfxCommand
+    | ApplySpeechCutCommand,
     Field(discriminator="command"),
 ]
 CREATOR_CORE_CRAFT_COMMAND_ADAPTER = TypeAdapter(CreatorCoreCraftCommand)
 
 CreatorCraftBundleCommand: TypeAlias = Annotated[
-    SetCaptionStyleCommand | SetTransitionCommand | SetLookPresetCommand | SetMediaOverlayCommand,
+    SetCaptionStyleCommand
+    | SetTransitionCommand
+    | SetLookPresetCommand
+    | SetMediaOverlayCommand
+    | SetLicensedSfxCommand
+    | ApplySpeechCutCommand,
     Field(discriminator="command"),
 ]
 CREATOR_CRAFT_BUNDLE_COMMAND_ADAPTER = TypeAdapter(CreatorCraftBundleCommand)

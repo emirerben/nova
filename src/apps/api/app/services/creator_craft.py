@@ -13,8 +13,10 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.agents._schemas.creator_agent import (
+    ApplySpeechCutCommand,
     CreatorCraftBundle,
     SetCaptionStyleCommand,
+    SetLicensedSfxCommand,
     SetLookPresetCommand,
     SetMediaOverlayCommand,
     SetTransitionCommand,
@@ -85,6 +87,7 @@ def build_core_craft_editor_commit(
     bundle: CreatorCraftBundle,
     *,
     variant: dict[str, Any],
+    licensed_sfx: dict[str, Any] | None = None,
 ) -> EditorCommitRequest:
     """Compile a bundle into one existing atomic editor commit request.
 
@@ -96,12 +99,27 @@ def build_core_craft_editor_commit(
     slots = _effective_slots(variant)
     slot_edits: list[TimelineSlotEdit] | None = None
     caption_meta: EditorCommitCaptionMeta | None = None
+    sound_effects: list[dict[str, Any]] | None = None
 
     for command in bundle.commands:
         if isinstance(command, SetCaptionStyleCommand):
             if caption_meta is not None:
                 raise CreatorCraftValidationError("Only one caption-style command is allowed")
             caption_meta = EditorCommitCaptionMeta(style=command.caption_style)
+            continue
+
+        if isinstance(command, SetLicensedSfxCommand):
+            if sound_effects is not None:
+                raise CreatorCraftValidationError("Only one licensed SFX command is allowed")
+            if licensed_sfx is None:
+                raise CreatorCraftValidationError("The licensed sound effect is unavailable")
+            sound_effects = [dict(licensed_sfx)]
+            continue
+
+        if isinstance(command, ApplySpeechCutCommand):
+            # Speech-cut state is staged by the route through the existing
+            # candidate state machine. It deliberately never becomes an
+            # editor payload (which only accepts lane data).
             continue
 
         if isinstance(command, (SetTransitionCommand, SetLookPresetCommand)):
@@ -132,6 +150,7 @@ def build_core_craft_editor_commit(
     return EditorCommitRequest(
         caption_meta=caption_meta,
         timeline_slots=slot_edits,
+        sound_effects=sound_effects,
         base_generation=bundle.expected_generation_id,
     )
 
@@ -240,6 +259,23 @@ def craft_preview(bundle: CreatorCraftBundle, *, generation: str, sections: dict
     ]
     if overlay_preview:
         preview["media_overlays"] = overlay_preview
+    licensed_sfx = [
+        {
+            "sound_effect_id": command.sound_effect_id,
+            "at_s": command.at_s,
+        }
+        for command in bundle.commands
+        if isinstance(command, SetLicensedSfxCommand)
+    ]
+    speech_cuts = [
+        {"candidate_id": command.candidate_id}
+        for command in bundle.commands
+        if isinstance(command, ApplySpeechCutCommand)
+    ]
+    if licensed_sfx:
+        preview["licensed_sfx"] = licensed_sfx
+    if speech_cuts:
+        preview["speech_cuts"] = speech_cuts
     return preview
 
 

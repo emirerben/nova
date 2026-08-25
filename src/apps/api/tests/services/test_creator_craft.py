@@ -198,3 +198,56 @@ def test_media_overlay_command_rejects_non_finite_timing() -> None:
                 "end_s": 1,
             }
         )
+
+
+def test_sfx_command_compiles_only_from_server_resolved_catalog_placement() -> None:
+    bundle = _bundle(
+        {
+            "command": "set_licensed_sfx",
+            "sound_effect_id": "catalog-pop",
+            "at_s": 1.25,
+        }
+    )
+    commit = build_core_craft_editor_commit(
+        bundle,
+        variant={"duration_s": 4.0},
+        licensed_sfx={
+            "id": "placement-1",
+            "sound_effect_id": "catalog-pop",
+            "src_gcs_path": "sound-effects/catalog-pop.wav",
+            "at_s": 1.25,
+        },
+    )
+    assert commit.sound_effects == [
+        {
+            "id": "placement-1",
+            "sound_effect_id": "catalog-pop",
+            "src_gcs_path": "sound-effects/catalog-pop.wav",
+            "at_s": 1.25,
+        }
+    ]
+
+
+def test_sfx_command_cannot_compile_without_catalog_resolution() -> None:
+    bundle = _bundle(
+        {
+            "command": "set_licensed_sfx",
+            "sound_effect_id": "catalog-pop",
+            "at_s": 1.25,
+        }
+    )
+    with pytest.raises(CreatorCraftValidationError, match="licensed sound effect"):
+        build_core_craft_editor_commit(bundle, variant={"duration_s": 4.0})
+
+
+def test_speech_cut_command_is_candidate_id_only_and_preview_is_bounded() -> None:
+    bundle = _bundle(
+        {
+            "command": "apply_speech_cut",
+            "candidate_id": "cut_1234567890abcdef",
+            "expected_cut_revision": "rev-123",
+        }
+    )
+    preview = craft_preview(bundle, generation="new-generation", sections={"speech_cut": True})
+    assert preview["speech_cuts"] == [{"candidate_id": "cut_1234567890abcdef"}]
+    assert "start_s" not in preview["speech_cuts"][0]
