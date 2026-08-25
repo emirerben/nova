@@ -24,6 +24,7 @@ QUALITY_REVIEW_AGENT_NAME = "nova.creator_quality_reviewer"
 QUALITY_REVIEW_PROMPT_VERSION = "2026-08-25"
 QUALITY_REVIEW_MODEL = "gemini-2.5-flash"
 READY_JOB_STATUSES = frozenset({"variants_ready", "variants_ready_partial"})
+OBJECTIVE_SCORE_THRESHOLD = 4.0
 
 
 def review_key(session_id: str, job_id: str, variant_id: str, generation_id: str) -> str:
@@ -36,6 +37,48 @@ def _task_id(key: str) -> str:
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _objective_action_for_scores(scores: dict[str, float]) -> tuple[str | None, str]:
+    """Classify only failing rubric dimensions as objective or taste-based.
+
+    The shared final-video rubric mixes mechanical observations (for example,
+    caption legibility) with taste judgments such as hook strength.  A low
+    taste score must never be relabelled objective merely because the rubric
+    also contains an unrelated caption dimension.
+    """
+
+    objective: list[tuple[float, str]] = []
+    taste_failure = False
+    for raw_dimension, raw_score in scores.items():
+        try:
+            score = float(raw_score)
+        except (TypeError, ValueError):
+            continue
+        if score >= OBJECTIVE_SCORE_THRESHOLD:
+            continue
+        dimension = str(raw_dimension).lower()
+        action: str | None = None
+        if any(token in dimension for token in ("caption", "legib", "text")):
+            action = "caption_legibility"
+        elif "transition" in dimension:
+            action = "transition_fallback"
+        elif any(token in dimension for token in ("speech", "silence", "filler", "retake")):
+            action = "speech_cut"
+        elif any(token in dimension for token in ("overlay", "sfx", "sound_effect")):
+            action = "remove_optional_treatment"
+        else:
+            taste_failure = True
+        if action is not None:
+            objective.append((score, action))
+
+    objective.sort(key=lambda value: (value[0], value[1]))
+    action = objective[0][1] if objective else None
+    if objective and not taste_failure:
+        return action, "objective"
+    if objective:
+        return action, "mixed"
+    return None, "taste"
 
 
 def queue_creator_quality_review(
@@ -144,16 +187,7 @@ def build_review_payload(
         )
     evidence = evidence[:12]
     decision = "approve" if verdict.band.value == "auto_pass" else "revise"
-    dimensions = {str(key).lower() for key in (verdict.scores or {})}
-    allowlist_action = None
-    if any("caption" in key or "legib" in key or "text" in key for key in dimensions):
-        allowlist_action = "caption_legibility"
-    elif any("speech" in key or "silence" in key or "filler" in key for key in dimensions):
-        allowlist_action = "speech_cut"
-    elif any("transition" in key for key in dimensions):
-        allowlist_action = "transition_fallback"
-    elif any("overlay" in key or "sfx" in key or "sound_effect" in key for key in dimensions):
-        allowlist_action = "remove_optional_treatment"
+    allowlist_action, review_mode = _objective_action_for_scores(verdict.scores or {})
     expected_improvement = getattr(verdict, "expected_improvement", None)
     if expected_improvement is None:
         expected_improvement = max(0.0, min(5.0, 4.0 - float(verdict.avg)))
@@ -194,7 +228,7 @@ def build_review_payload(
         render_generation_id=generation_id,
         manifest_hash=manifest,
         context_hash=context,
-        review_mode="objective",
+        review_mode=review_mode,
         decision=decision,
         quality_score=float(verdict.avg),
         confidence=float(verdict.confidence),
@@ -207,9 +241,9 @@ def build_review_payload(
     return {
         "status": "complete",
         **receipt.model_dump(mode="json"),
-        "objective_tag": "objective_quality",
         "expected_improvement": round(float(expected_improvement), 3),
         "allowlist_action": allowlist_action,
+        **({"objective_tag": "objective_quality"} if review_mode == "objective" else {}),
         **({"rollback_receipt": rollback_receipt} if isinstance(rollback_receipt, dict) else {}),
     }
 

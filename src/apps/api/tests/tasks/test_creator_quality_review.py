@@ -89,6 +89,62 @@ def test_review_payload_has_timestamped_evidence_and_one_inert_revision():
         row["evidence_id"] for row in payload["evidence"]
     ]
     assert payload["context_hash"] == "c" * 64
+    assert payload["review_mode"] == "mixed"
+    assert "objective_tag" not in payload
+
+
+def test_review_payload_marks_only_an_objective_failing_dimension_eligible():
+    verdict = GradeVerdict(
+        band=GradeBand.ESCALATE,
+        scores={
+            "hook_strength": 4,
+            "text_legibility_and_timing": 2,
+            "looks_filmed_not_templated": 4,
+            "overall_quality": 4,
+        },
+        avg=3.5,
+        confidence=0.9,
+        reasoning="Captions are difficult to read.",
+    )
+
+    payload = cqr.build_review_payload(
+        _session(),
+        job_id="job-1",
+        variant_id="variant-1",
+        generation_id="generation-1",
+        verdict=verdict,
+    )
+
+    assert payload["review_mode"] == "objective"
+    assert payload["objective_tag"] == "objective_quality"
+    assert payload["allowlist_action"] == "caption_legibility"
+
+
+def test_review_payload_never_labels_a_taste_only_failure_objective():
+    verdict = GradeVerdict(
+        band=GradeBand.ESCALATE,
+        scores={
+            "hook_strength": 2,
+            "text_legibility_and_timing": 5,
+            "looks_filmed_not_templated": 3,
+            "overall_quality": 3,
+        },
+        avg=3.25,
+        confidence=0.95,
+        reasoning="The edit feels generic.",
+    )
+
+    payload = cqr.build_review_payload(
+        _session(),
+        job_id="job-1",
+        variant_id="variant-1",
+        generation_id="generation-1",
+        verdict=verdict,
+    )
+
+    assert payload["review_mode"] == "taste"
+    assert payload["allowlist_action"] is None
+    assert "objective_tag" not in payload
 
 
 def test_review_payload_fails_closed_when_context_pin_is_missing():
