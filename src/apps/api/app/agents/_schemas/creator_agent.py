@@ -339,13 +339,27 @@ class ApplySpeechCutCommand(CreatorTargetPin):
         return _opaque_id(value, field_name="candidate_id")
 
 
+class RemoveOptionalTreatmentCommand(CreatorTargetPin):
+    """Remove one already-persisted optional treatment; never add or replace media."""
+
+    command: Literal["remove_optional_treatment"]
+    treatment: Literal["media_overlay", "sfx"]
+    treatment_id: str | None = Field(default=None, max_length=160)
+
+    @field_validator("treatment_id")
+    @classmethod
+    def _validate_treatment_id(cls, value: str | None) -> str | None:
+        return _opaque_id(value, field_name="treatment_id") if value is not None else None
+
+
 CreatorCraftCommand: TypeAlias = Annotated[
     SetCaptionStyleCommand
     | SetTransitionCommand
     | SetLookPresetCommand
     | SetMediaOverlayCommand
     | SetLicensedSfxCommand
-    | ApplySpeechCutCommand,
+    | ApplySpeechCutCommand
+    | RemoveOptionalTreatmentCommand,
     Field(discriminator="command"),
 ]
 CREATOR_CRAFT_COMMAND_ADAPTER = TypeAdapter(CreatorCraftCommand)
@@ -358,7 +372,8 @@ CreatorCoreCraftCommand: TypeAlias = Annotated[
     | SetTransitionCommand
     | SetLookPresetCommand
     | SetLicensedSfxCommand
-    | ApplySpeechCutCommand,
+    | ApplySpeechCutCommand
+    | RemoveOptionalTreatmentCommand,
     Field(discriminator="command"),
 ]
 CREATOR_CORE_CRAFT_COMMAND_ADAPTER = TypeAdapter(CreatorCoreCraftCommand)
@@ -369,7 +384,8 @@ CreatorCraftBundleCommand: TypeAlias = Annotated[
     | SetLookPresetCommand
     | SetMediaOverlayCommand
     | SetLicensedSfxCommand
-    | ApplySpeechCutCommand,
+    | ApplySpeechCutCommand
+    | RemoveOptionalTreatmentCommand,
     Field(discriminator="command"),
 ]
 CREATOR_CRAFT_BUNDLE_COMMAND_ADAPTER = TypeAdapter(CreatorCraftBundleCommand)
@@ -418,6 +434,8 @@ class CreatorCraftBundle(_CreatorModel):
         command_names = {command.command for command in self.commands}
         if "set_media_overlay" in command_names and len(command_names) != 1:
             raise ValueError("media overlay craft must be the only command in a bundle")
+        if "remove_optional_treatment" in command_names and len(command_names) != 1:
+            raise ValueError("optional treatment removal must be the only command in a bundle")
         for command in self.commands:
             for field_name in (
                 "expected_manifest_hash",
@@ -687,6 +705,9 @@ class CreatorAutomationDecision(_CreatorModel):
     expected_improvement: float | None = Field(default=None, ge=0.0, le=5.0)
     render_budget_remaining: int = Field(ge=0, le=2)
     automatic_revision_count: int = Field(ge=0, le=1)
+    allowlist_action: Literal[
+        "transition_fallback", "caption_legibility", "remove_optional_treatment", "speech_cut"
+    ] | None = None
     command: CreatorCraftCommand | None = None
     proposed_revision: CreatorRevisionProposal | None = None
 
@@ -697,8 +718,8 @@ class CreatorAutomationDecision(_CreatorModel):
 
     @model_validator(mode="after")
     def _require_revision_for_eligibility(self) -> CreatorAutomationDecision:
-        if self.decision == "eligible" and (self.proposed_revision is None or self.command is None):
-            raise ValueError("eligible automation decisions require a revision and command")
+        if self.decision == "eligible" and self.proposed_revision is None:
+            raise ValueError("eligible automation decisions require a revision")
         return self
 
 
@@ -864,6 +885,7 @@ __all__ = [
     "CreatorRevisionProposal",
     "CreatorReviewEvidence",
     "CreatorReviewReceipt",
+    "RemoveOptionalTreatmentCommand",
     "CreatorTargetPin",
     "CreatorWorkspaceDeliverableReceipt",
     "CreatorWorkspacePreferenceSignal",

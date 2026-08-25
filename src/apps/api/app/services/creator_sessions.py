@@ -643,6 +643,11 @@ def serialize_session(session: CreatorAgentSession) -> dict[str, Any]:
             "error_message",
             "evidence",
             "proposed_revision",
+            "objective_tag",
+            "expected_improvement",
+            "allowlist_action",
+            "automatic_revision_count",
+            "rollback_receipt",
         }
         review = {key: raw_review[key] for key in allowed if key in raw_review}
         evidence = review.get("evidence")
@@ -685,6 +690,18 @@ def serialize_session(session: CreatorAgentSession) -> dict[str, Any]:
         "pending_plan": session.active_plan if session.phase == "awaiting_confirmation" else None,
         "current_job_id": str(session.target_job_id) if session.target_job_id else None,
         "last_review": review,
+        "auto_iteration": (
+            {
+                "available": bool(
+                    settings.main_creator_agent_review_enabled
+                    and settings.main_creator_agent_quality_review_enabled
+                    and settings.main_creator_agent_auto_iteration_enabled
+                ),
+                "label": "One objective revision, if eligible",
+            }
+            if settings.main_creator_agent_auto_iteration_enabled
+            else None
+        ),
         "events": [
             {
                 "id": str(event.id),

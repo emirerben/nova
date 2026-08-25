@@ -60,6 +60,9 @@ def queue_creator_quality_review(
         "reviewer": "video_quality_grader",
         "queued_at": _now(),
     }
+    prior_auto = current.get("auto_iteration")
+    if isinstance(prior_auto, dict) and isinstance(prior_auto.get("rollback_receipt"), dict):
+        pending["rollback_receipt"] = prior_auto["rollback_receipt"]
     session.last_review = pending
     try:
         quality_review_creator_session.apply_async(
@@ -113,6 +116,19 @@ def build_review_payload(
         )
     evidence = evidence[:12]
     decision = "approve" if verdict.band.value == "auto_pass" else "revise"
+    dimensions = {str(key).lower() for key in (verdict.scores or {})}
+    allowlist_action = None
+    if any("caption" in key or "legib" in key or "text" in key for key in dimensions):
+        allowlist_action = "caption_legibility"
+    elif any("speech" in key or "silence" in key or "filler" in key for key in dimensions):
+        allowlist_action = "speech_cut"
+    elif any("transition" in key for key in dimensions):
+        allowlist_action = "transition_fallback"
+    elif any("overlay" in key or "sfx" in key or "sound_effect" in key for key in dimensions):
+        allowlist_action = "remove_optional_treatment"
+    expected_improvement = getattr(verdict, "expected_improvement", None)
+    if expected_improvement is None:
+        expected_improvement = max(0.0, min(5.0, 4.0 - float(verdict.avg)))
     proposal = None
     if decision == "revise":
         proposal = {
@@ -153,7 +169,20 @@ def build_review_payload(
         proposed_revision=proposal,
         reviewed_at=_now(),
     )
-    return {"status": "complete", **receipt.model_dump(mode="json")}
+    prior_review = session.last_review if isinstance(session.last_review, dict) else {}
+    rollback_receipt = prior_review.get("rollback_receipt")
+    return {
+        "status": "complete",
+        **receipt.model_dump(mode="json"),
+        "objective_tag": "objective_quality",
+        "expected_improvement": round(float(expected_improvement), 3),
+        "allowlist_action": allowlist_action,
+        **(
+            {"rollback_receipt": rollback_receipt}
+            if isinstance(rollback_receipt, dict)
+            else {}
+        ),
+    }
 
 
 def claim_exact_review(
