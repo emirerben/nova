@@ -629,28 +629,33 @@ def _preference_request_digest(
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _job_state(job: Job | None, session: CreatorAgentSession) -> str:
+def _job_state(
+    job: Job | None,
+    *,
+    variant_id: str | None,
+    generation_id: str | None,
+    session_status: str,
+) -> str:
     if job is not None and job.status in PLAN_ITEM_JOB_FAILED | {"failed"}:
         return "failed"
     if job is not None and job.status in PLAN_ITEM_JOB_READY | {"ready"}:
-        if not session.target_generation_id or not session.target_variant_id:
+        if not generation_id or not variant_id:
             return "stale"
         variants = (job.assembly_plan or {}).get("variants") or []
         exact = next(
             (
                 variant
                 for variant in variants
-                if isinstance(variant, dict)
-                and variant.get("variant_id") == session.target_variant_id
+                if isinstance(variant, dict) and variant.get("variant_id") == variant_id
             ),
             None,
         )
-        if exact is None or exact.get("render_generation_id") != session.target_generation_id:
+        if exact is None or exact.get("render_generation_id") != generation_id:
             return "stale"
         if exact.get("render_status") == "failed":
             return "failed"
         return "ready" if exact.get("render_status") == "ready" else "processing"
-    if job is not None or session.status in {
+    if job is not None or session_status in {
         "executing",
         "rendering",
         "reviewing",
@@ -677,7 +682,7 @@ async def _workspace_response(
         else []
     )
     sessions_by_id = {row.id: row for row in sessions}
-    job_ids = [session.target_job_id for session in sessions if session.target_job_id]
+    job_ids = [row.job_id for row in deliverables if row.job_id]
     jobs = (
         (await db.execute(select(Job).where(Job.id.in_(job_ids)))).scalars().all()
         if job_ids
@@ -695,6 +700,10 @@ async def _workspace_response(
             or session.creator_id != receipt.creator_id
             or session.plan_item_id != row.plan_item_id
             or int(session.ownership_epoch) != int(row.ownership_epoch)
+            or int(session.revision) != int(row.session_revision)
+            or session.target_job_id != row.job_id
+            or session.target_variant_id != row.variant_id
+            or session.target_generation_id != row.render_generation_id
         ):
             any_stale = True
             states.append("stale")
@@ -713,9 +722,11 @@ async def _workspace_response(
                 )
             )
             continue
-        job = jobs_by_id.get(session.target_job_id) if session.target_job_id else None
-        if job is not None and (
-            job.user_id != receipt.creator_id
+        job = jobs_by_id.get(row.job_id) if row.job_id else None
+        if (
+            row.job_id is None
+            or job is None
+            or job.user_id != receipt.creator_id
             or job.content_plan_item_id != row.plan_item_id
             or int(job.content_plan_ownership_epoch or -1) != int(row.ownership_epoch)
         ):
@@ -723,37 +734,30 @@ async def _workspace_response(
             state = "stale"
         else:
             deliverable_stale = False
-            state = _job_state(job, session)
+            state = _job_state(
+                job,
+                variant_id=row.variant_id,
+                generation_id=row.render_generation_id,
+                session_status=session.status,
+            )
             if state == "stale":
                 deliverable_stale = True
         if receipt_stale or deliverable_stale:
             state = "stale"
             any_stale = True
         states.append(state)
-        job_id = session.target_job_id or row.job_id
-        variant_id = session.target_variant_id or row.variant_id
-        generation_id = session.target_generation_id or row.render_generation_id
-        generation_receipt = row.generation_receipt
-        if generation_id and job_id and variant_id:
-            generation_receipt = {
-                "job_id": str(job_id),
-                "variant_id": variant_id,
-                "render_generation_id": generation_id,
-                "ownership_epoch": int(row.ownership_epoch),
-                "session_revision": int(session.revision),
-            }
         output.append(
             WorkspaceDeliverableResponse(
                 deliverable_id=str(row.id),
                 plan_item_id=str(row.plan_item_id),
                 creator_session_id=str(row.creator_session_id),
                 ownership_epoch=int(row.ownership_epoch),
-                session_revision=int(session.revision),
+                session_revision=int(row.session_revision),
                 status=state,
-                job_id=str(job_id) if job_id else None,
-                variant_id=variant_id,
-                render_generation_id=generation_id,
-                generation_receipt=generation_receipt,
+                job_id=str(row.job_id) if row.job_id else None,
+                variant_id=row.variant_id,
+                render_generation_id=row.render_generation_id,
+                generation_receipt=row.generation_receipt,
             )
         )
     if any_stale:
@@ -899,15 +903,33 @@ async def create_workspace_receipt(
     )
     jobs_by_id = {job.id: job for job in jobs}
     for session in session_by_item.values():
-        if session.target_job_id:
-            job = jobs_by_id.get(session.target_job_id)
-            if (
-                job is None
-                or job.user_id != user.id
-                or job.content_plan_item_id != session.plan_item_id
-                or int(job.content_plan_ownership_epoch or -1) != epoch
-            ):
-                raise HTTPException(status_code=409, detail="Creator Job ownership is stale")
+        if not (
+            session.target_job_id and session.target_variant_id and session.target_generation_id
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Every deliverable must have an exact Creator render target",
+            )
+        job = jobs_by_id.get(session.target_job_id)
+        variants = ((job.assembly_plan or {}).get("variants") or []) if job else []
+        exact_variant = next(
+            (
+                variant
+                for variant in variants
+                if isinstance(variant, dict)
+                and variant.get("variant_id") == session.target_variant_id
+            ),
+            None,
+        )
+        if (
+            job is None
+            or job.user_id != user.id
+            or job.content_plan_item_id != session.plan_item_id
+            or int(job.content_plan_ownership_epoch or -1) != epoch
+            or exact_variant is None
+            or exact_variant.get("render_generation_id") != session.target_generation_id
+        ):
+            raise HTTPException(status_code=409, detail="Creator Job target is stale")
 
     receipt = CreatorWorkspaceReceipt(
         creator_id=user.id,

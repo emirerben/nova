@@ -283,6 +283,17 @@ def _strict_creator_format(edit_format: str) -> bool:
     return edit_format in {"day_vlog", "single_hero"}
 
 
+def _auto_iteration_already_finalized(session: CreatorAgentSession) -> bool:
+    marker = session.last_review if isinstance(session.last_review, dict) else {}
+    auto_marker = (
+        marker.get("auto_iteration") if isinstance(marker.get("auto_iteration"), dict) else {}
+    )
+    return int(session.automatic_revision_count or 0) >= 1 or auto_marker.get("status") in {
+        "queued",
+        "complete",
+    }
+
+
 def _reset_render_target(session: CreatorAgentSession) -> None:
     """Fence a new creative plan from every prior render identity."""
 
@@ -1826,6 +1837,12 @@ async def request_creator_auto_iteration(
         return await _response(db, refreshed)
 
     refreshed = await _load_session(db, session.id, user.id, item.id, for_update=True)
+    # The craft receipt is idempotent, but two requests can both observe the
+    # pre-craft `running` marker while the first is across the broker boundary.
+    # The session row lock serializes finalization; once either request records
+    # the one allowed cycle, every follower returns without burning counters.
+    if _auto_iteration_already_finalized(refreshed):
+        return await _response(db, refreshed)
     refreshed.status = "rendering"
     refreshed.target_generation_id = craft_response.generation
     refreshed.render_attempts += 1

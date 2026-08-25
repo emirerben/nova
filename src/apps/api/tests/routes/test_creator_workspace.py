@@ -20,6 +20,7 @@ from app.routes.creator_workspace import (
     _job_state,
     _media_paths_already_attached,
     _request_digest,
+    _workspace_response,
 )
 from app.tasks import creator_workspace as relevance_task
 
@@ -223,7 +224,15 @@ def test_workspace_job_state_requires_exact_variant_generation(
         },
     )
 
-    assert _job_state(job, session) == expected
+    assert (
+        _job_state(
+            job,
+            variant_id=session.target_variant_id,
+            generation_id=session.target_generation_id,
+            session_status=session.status,
+        )
+        == expected
+    )
 
 
 @pytest.mark.asyncio
@@ -473,3 +482,68 @@ async def test_workspace_decision_locks_source_jobs_in_deterministic_order(monke
     assert source_stmt._for_update_arg is not None
     assert len(source_stmt._order_by_clauses) == 1
     assert response.status == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_workspace_poll_marks_changed_session_target_stale_without_rewriting_pins() -> None:
+    creator_id = uuid.uuid4()
+    plan_id = uuid.uuid4()
+    item_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    pinned_job_id = uuid.uuid4()
+    row = SimpleNamespace(
+        id=uuid.uuid4(),
+        position=0,
+        creator_id=creator_id,
+        plan_id=plan_id,
+        plan_item_id=item_id,
+        creator_session_id=session_id,
+        ownership_epoch=3,
+        session_revision=7,
+        job_id=pinned_job_id,
+        variant_id="variant-old",
+        render_generation_id="generation-old",
+        generation_receipt={
+            "job_id": str(pinned_job_id),
+            "variant_id": "variant-old",
+            "render_generation_id": "generation-old",
+        },
+    )
+    receipt = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=creator_id,
+        plan_id=plan_id,
+        ownership_epoch=3,
+        idempotency_key="workspace-1",
+        request_digest="digest",
+        deliverables=[row],
+    )
+    session = SimpleNamespace(
+        id=session_id,
+        creator_id=creator_id,
+        plan_item_id=item_id,
+        ownership_epoch=3,
+        revision=8,
+        target_job_id=uuid.uuid4(),
+        target_variant_id="variant-new",
+        target_generation_id="generation-new",
+        status="rendering",
+    )
+    session_result = MagicMock()
+    session_result.scalars.return_value.all.return_value = [session]
+    job_result = MagicMock()
+    job_result.scalars.return_value.all.return_value = []
+    persona_result = MagicMock()
+    persona_result.scalar_one_or_none.return_value = None
+    db = AsyncMock()
+    db.execute.side_effect = [session_result, job_result, persona_result]
+    plan = SimpleNamespace(ownership_epoch=3, preference_summary=None)
+
+    response = await _workspace_response(db, receipt, plan)
+
+    deliverable = response.deliverables[0]
+    assert response.status == "stale"
+    assert deliverable.status == "stale"
+    assert deliverable.job_id == str(pinned_job_id)
+    assert deliverable.variant_id == "variant-old"
+    assert deliverable.render_generation_id == "generation-old"

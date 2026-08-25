@@ -30,6 +30,7 @@ from app.routes.creator_agent import (
     StartBody,
     TurnBody,
     _apply_plan_intent,
+    _auto_iteration_already_finalized,
     _creator_speech_cut_source_enabled,
     _reset_render_target,
     _seed_guided_specialist_brief,
@@ -106,6 +107,26 @@ def test_creator_speech_cut_uses_candidate_specific_kill_switch(monkeypatch) -> 
     assert _creator_speech_cut_source_enabled("retake_review") is False
     assert _creator_speech_cut_source_enabled("filler_review") is True
     assert _creator_speech_cut_source_enabled("untrusted_source") is False
+
+
+@pytest.mark.parametrize(
+    ("count", "status", "expected"),
+    [
+        (0, "running", False),
+        (1, "running", True),
+        (0, "queued", True),
+        (0, "complete", True),
+    ],
+)
+def test_auto_iteration_finalization_is_one_cycle_idempotent(
+    count: int, status: str, expected: bool
+) -> None:
+    session = SimpleNamespace(
+        automatic_revision_count=count,
+        last_review={"auto_iteration": {"status": status}},
+    )
+
+    assert _auto_iteration_already_finalized(session) is expected
 
 
 @pytest.mark.asyncio
