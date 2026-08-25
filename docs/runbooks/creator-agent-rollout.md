@@ -10,13 +10,16 @@ inferred preferences. Keep those consent boundaries separate.
 
 - V1, Stage 2, Stage 3, M6, and Stage 5 are implemented behind backend flags and
   default off.
-- Stage 4 is not implemented. `CreatorAutomationDecision` is an inert schema
-  contract and the frontend helper is dormant; no API route or worker consumes
-  `MAIN_CREATOR_AGENT_AUTO_ITERATION_ENABLED`.
+- Stage 4 is implemented behind `MAIN_CREATOR_AGENT_AUTO_ITERATION_ENABLED=false`.
+  The route requires explicit per-session opt-in, objective-review thresholds,
+  the exact four-action allowlist, exact target pins, and a durable one-cycle cap.
+  The frontend helper only submits an explicit opt-in request; enabling the
+  backend flag does not enroll a session.
 - Migration `0081_creator_agent_sessions` is the V1 state foundation.
   Migrations `0082_creator_workspace_proposals` and
-  `0083_creator_workspace_receipts` add Stage 5 persistence. Apply all three
-  before enabling any Creator Agent capability.
+  `0083_creator_workspace_receipts` add Stage 5 persistence. Migration
+  `0084_creator_auto_iteration` adds the Stage 4 opt-in and 0..1 automatic
+  revision count. Apply all four before enabling any Creator Agent capability.
 
 ## Flag matrix and dependencies
 
@@ -27,7 +30,7 @@ inferred preferences. Keep those consent boundaries separate.
 | `MAIN_CREATOR_AGENT_EXECUTION_ENABLED` | `false` | Requires master; enables confirmed render execution and Stage 3 craft. |
 | `MAIN_CREATOR_AGENT_REVIEW_ENABLED` | `false` | Requires master; exposes review state and creator feedback. |
 | `MAIN_CREATOR_AGENT_QUALITY_REVIEW_ENABLED` | `false` | Requires review; queues the exact-generation `video_quality_grader` task. |
-| `MAIN_CREATOR_AGENT_AUTO_ITERATION_ENABLED` | `false` | Keep off. Startup requires review, but no live controller consumes it yet. |
+| `MAIN_CREATOR_AGENT_AUTO_ITERATION_ENABLED` | `false` | Requires master, execution, review, and quality-review flags. Still requires explicit `opt_in=true` per session; server enforces objective thresholds, allowlist, exact pins, and one cycle. |
 | `EDIT_FORMAT_DAY_VLOG_ENABLED` | `false` | Requires representative local-render evidence; strict chronology depends on `NARRATIVE_CLIP_ORDER_ENABLED=true`. |
 | `EDIT_FORMAT_SINGLE_HERO_ENABLED` | `false` | Requires representative local-render evidence; worker rejects missing/version-mismatched jobs. |
 | `MAIN_CREATOR_AGENT_FREEFORM_UPLOADS_ENABLED` | `false` | Enables only proposal intake/classification; approval is still required. |
@@ -57,8 +60,9 @@ make a backend route safe.
    (cd src/apps/api && alembic upgrade head)
    ```
 
-   The expected Creator Agent head includes `0083`. Do not downgrade `0082` or
-   `0083` during a feature rollback; rows and receipts must remain readable.
+   The expected Creator Agent head is `0084`. Do not downgrade `0082`, `0083`, or
+   `0084` during a feature rollback; proposals, receipts, opt-in state, and
+   rollback evidence must remain readable.
 
 2. **Deploy and restart dark.** Deploy API and worker code with every flag above
    at its default. Restart both process groups, then smoke the health endpoint
@@ -100,11 +104,27 @@ make a backend route safe.
 6. **Stage 2 canary.** Enable `MAIN_CREATOR_AGENT_REVIEW_ENABLED=true` and then
    `MAIN_CREATOR_AGENT_QUALITY_REVIEW_ENABLED=true`, restart both process groups,
    and render one exact ready generation. Verify one stable review task, bounded
-   evidence, and an inert proposed revision. Exercise a stale generation and a
+   evidence, and a confirmation-gated proposed revision. Exercise a stale generation and a
    grader failure; both must leave the video unchanged and show an unavailable or
    failed receipt.
 
-7. **Stage 3 treatment canaries.** Enable only the existing treatment flags needed
+7. **Stage 4 bounded auto-iteration canary.** Keep the frontend affordance
+   unavailable and enable `MAIN_CREATOR_AGENT_AUTO_ITERATION_ENABLED=true` only
+   for an internal cohort after the Stage 2 canary is green. For one session,
+   submit `opt_in=true` with the current revision and client event id. Verify
+   the server rejects missing opt-in, confidence below `0.85`, quality `>= 4`,
+   expected improvement below `0.5`, a non-`objective_quality` tag, exhausted
+   budget, and every action outside the exact allowlist
+   (`transition_fallback`, `caption_legibility`, `remove_optional_treatment`,
+   `speech_cut`). For an eligible review,
+   verify exactly one compiled command, exact target pins, the stable
+   `creator-auto:{session_id}:{target_generation_id}` idempotency key, duplicate
+   recovery through the craft receipt, and `automatic_revision_count == 1`.
+   Confirm the `last_good` receipt names the prior generation and assembly plan;
+   force a craft/render failure and confirm fail-open recovery leaves the current
+   video unchanged. Do not expand the cohort until this ledger is complete.
+
+8. **Stage 3 treatment canaries.** Enable only the existing treatment flags needed
    for the cohort. Test each command independently, then test a stale generation,
    duplicate idempotency key, owner mismatch, and queue-publication failure. For
    overlays, verify the asset is owned by the exact PlanItem and that a mixed
@@ -112,7 +132,7 @@ make a backend route safe.
    fencing and rollback. Keep `make verify-overlays` in the evidence ledger for
    any overlay or overlay-renderer change.
 
-8. **M6 canaries.** With API and workers on the same renderer versions, enable one
+9. **M6 canaries.** With API and workers on the same renderer versions, enable one
    format at a time. Before the flag flip, run the local-render matrix below.
    For `day_vlog`, use representative multi-shot footage whose filming guide has
    at least two shots. For `single_hero`, use a dominant hero plus at least one
@@ -120,7 +140,7 @@ make a backend route safe.
    marker, insufficient media, and disabled flag fail visibly; none may produce a
    montage fallback.
 
-9. **Stage 5 intake, then coordination.** Enable
+10. **Stage 5 intake, then coordination.** Enable
    `MAIN_CREATOR_AGENT_FREEFORM_UPLOADS_ENABLED` only after migration 0082 and
    the proposal browser flow is verified. Test ready `existing_item`, `new_topic`,
    and `unmatched` proposals; every decision must be explicit and hash-fenced.
@@ -129,7 +149,7 @@ make a backend route safe.
    Enable `USER_STYLE_ENABLED` only if testing an explicit `style_edit`; the note
    and style edit must be visibly creator-authored and idempotent.
 
-10. **Frontend exposure and expansion.** Set
+11. **Frontend exposure and expansion.** Set
     `NEXT_PUBLIC_MAIN_CREATOR_AGENT_ENABLED=true` only after the backend canary
     ledger is green, build the web app, and use the browser QA checklist below.
     Expand the stable rollout percent in small cohorts while watching route 409/404
@@ -146,6 +166,13 @@ make a backend route safe.
   compatible worker is live.
 - Stage 2 claims and persists only the exact creator/session/PlanItem/Job/variant/
   generation tuple. A newer render must make the old review stale.
+- Stage 4 claims the same exact tuple plus manifest/context hashes, session
+  revision, ownership epoch, and generation idempotency key. The 0084 columns
+  default to opt-out and zero, so old workers ignore the new state safely while
+  the migration is applied. A prepared craft receipt is recovered idempotently;
+  a successful cycle records the prior generation and assembly plan in the
+  `last_good` rollback receipt. Never replay an auto command against a new
+  generation or manually attach its receipt to another session.
 - Workspace proposals and receipts carry ownership epochs. A plan ownership change
   makes pending work stale; do not manually reattach a receipt to a new item.
 - Keep API and worker flags synchronized. A frontend flag is not a substitute for
@@ -174,9 +201,10 @@ The `NEXT_PUBLIC_*` setting belongs in Vercel, not Fly; rebuild the web app to
 remove the panel. Format and treatment flags can be turned off independently if
 one renderer lane is unhealthy. Turning off a flag prevents new capability use;
 persisted sessions, proposals, preferences, and receipts remain readable for
-reconciliation. Do not delete rows or downgrade migrations as an incident
-response. Re-enable in the forward order only after the failed canary is
-understood. Stage 4 remains off regardless of review health.
+reconciliation. Turning off the Stage 4 flag blocks new auto-iteration requests,
+while an already queued craft follows its exact receipt and pin checks. Do not
+delete rows or downgrade migrations as an incident response. Re-enable in the
+forward order only after the failed canary is understood.
 
 ## Mandatory verification ledger
 
@@ -185,13 +213,14 @@ paths for every row. A green unit suite is not a substitute for the human rows.
 
 | Check | Required evidence | Status / owner / timestamp |
 |---|---|---|
-| Migration | `alembic current` and `alembic heads` show `0083`; schema test sees all four workspace tables | |
+| Migration | `alembic current` and `alembic heads` show `0084`; schema test sees 0082 proposal, 0083 receipt, and 0084 opt-in/count state | |
 | Replay evals | Focused Creator Agent/schema/capability/session/workspace tests pass | |
 | Live eval | `test_main_creator_evals.py --eval-mode=live --with-judge` passes with approved credentials | |
 | Stage 2 exact render | Ready Job/variant/generation receipt; review evidence and stale-target case | |
+| Stage 4 bounded auto-iteration | Explicit opt-in; threshold skips; one allowlisted command; exact pins; duplicate recovery; one-cycle cap; prior-generation rollback receipt; fail-open craft/render case | |
 | Stage 3 craft | Caption, transition, look, SFX, overlay, and speech-cut receipts; enqueue rollback case | |
-| Day-vlog local render | `make local-render MODE=generative CLIPS="<clip-a> <clip-b>"`; inspect MP4 with `ffprobe` and a human | |
-| Single-hero local render | `make local-render MODE=generative CLIPS="<hero> <cutaway>"`; inspect hero dominance and duration | |
+| Day-vlog local render | `make local-render MODE=generative EDIT_FORMAT=day_vlog CLIPS="<clip-a> <clip-b>"`; inspect MP4 with `ffprobe` and a human | |
+| Single-hero local render | `make local-render MODE=generative EDIT_FORMAT=single_hero CLIPS="<hero> <cutaway>"`; inspect hero dominance and duration | |
 | Overlay verification | `make verify-overlays`; read `.overlay-verify/report.json` and inspect `.overlay-verify/montage.png` | |
 | Browser QA | Use the `/browse` skill against the canary: session → Render this → review → craft/workspace receipts; verify keyboard/focus, stale/error copy, and no pre-confirm render | |
 | Rollback | Flags off + both process groups restarted; old receipts still poll and no new render is minted | |
