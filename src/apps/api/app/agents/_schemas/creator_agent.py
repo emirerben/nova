@@ -705,9 +705,12 @@ class CreatorAutomationDecision(_CreatorModel):
     expected_improvement: float | None = Field(default=None, ge=0.0, le=5.0)
     render_budget_remaining: int = Field(ge=0, le=2)
     automatic_revision_count: int = Field(ge=0, le=1)
-    allowlist_action: Literal[
-        "transition_fallback", "caption_legibility", "remove_optional_treatment", "speech_cut"
-    ] | None = None
+    allowlist_action: (
+        Literal[
+            "transition_fallback", "caption_legibility", "remove_optional_treatment", "speech_cut"
+        ]
+        | None
+    ) = None
     command: CreatorCraftCommand | None = None
     proposed_revision: CreatorRevisionProposal | None = None
 

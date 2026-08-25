@@ -289,7 +289,7 @@ def test_review_receipt_requires_bounded_evidence_and_revision_when_needed() -> 
 
 
 def test_automation_decision_requires_explicit_revision() -> None:
-    with pytest.raises(ValidationError, match="revision and command"):
+    with pytest.raises(ValidationError, match="require a revision"):
         CreatorAutomationDecision(
             decision="eligible",
             reason_code="high_confidence",

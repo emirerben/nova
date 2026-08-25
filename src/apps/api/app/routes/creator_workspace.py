@@ -526,8 +526,10 @@ async def decide_relevance_proposal(
         other_items = (
             (
                 await db.execute(
-                    select(PlanItem).where(
-                        PlanItem.content_plan_id == plan.id,
+                    select(PlanItem)
+                    .join(ContentPlan, ContentPlan.id == PlanItem.content_plan_id)
+                    .where(
+                        ContentPlan.user_id == user.id,
                         PlanItem.id != item.id,
                     )
                 )

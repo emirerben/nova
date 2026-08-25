@@ -19,7 +19,9 @@ inferred preferences. Keep those consent boundaries separate.
   Migrations `0082_creator_workspace_proposals` and
   `0083_creator_workspace_receipts` add Stage 5 persistence. Migration
   `0084_creator_auto_iteration` adds the Stage 4 opt-in and 0..1 automatic
-  revision count. Apply all four before enabling any Creator Agent capability.
+  revision count. Migration `0085_creator_workspace_proposal_processing` adds
+  durable relevance claims and retries. Apply all five before enabling any
+  Creator Agent capability.
 
 ## Flag matrix and dependencies
 
@@ -60,9 +62,9 @@ make a backend route safe.
    (cd src/apps/api && alembic upgrade head)
    ```
 
-   The expected Creator Agent head is `0084`. Do not downgrade `0082`, `0083`, or
-   `0084` during a feature rollback; proposals, receipts, opt-in state, and
-   rollback evidence must remain readable.
+   The expected Creator Agent head is `0085`. Do not downgrade `0082`, `0083`,
+   `0084`, or `0085` during a feature rollback; proposals, processing claims,
+   receipts, opt-in state, and rollback evidence must remain readable.
 
 2. **Deploy and restart dark.** Deploy API and worker code with every flag above
    at its default. Restart both process groups, then smoke the health endpoint
@@ -213,7 +215,7 @@ paths for every row. A green unit suite is not a substitute for the human rows.
 
 | Check | Required evidence | Status / owner / timestamp |
 |---|---|---|
-| Migration | `alembic current` and `alembic heads` show `0084`; schema test sees 0082 proposal, 0083 receipt, and 0084 opt-in/count state | |
+| Migration | `alembic current` and `alembic heads` show `0085`; schema test sees 0082 proposal, 0083 receipt, 0084 opt-in/count state, and 0085 processing claims | |
 | Replay evals | Focused Creator Agent/schema/capability/session/workspace tests pass | |
 | Live eval | `test_main_creator_evals.py --eval-mode=live --with-judge` passes with approved credentials | |
 | Stage 2 exact render | Ready Job/variant/generation receipt; review evidence and stale-target case | |

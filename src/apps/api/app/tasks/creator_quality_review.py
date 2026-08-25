@@ -210,11 +210,7 @@ def build_review_payload(
         "objective_tag": "objective_quality",
         "expected_improvement": round(float(expected_improvement), 3),
         "allowlist_action": allowlist_action,
-        **(
-            {"rollback_receipt": rollback_receipt}
-            if isinstance(rollback_receipt, dict)
-            else {}
-        ),
+        **({"rollback_receipt": rollback_receipt} if isinstance(rollback_receipt, dict) else {}),
     }
 
 
