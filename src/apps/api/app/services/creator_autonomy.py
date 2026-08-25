@@ -13,6 +13,7 @@ from typing import Any
 from app.agents._schemas.creator_agent import (
     ApplySpeechCutCommand,
     CreatorAutomationDecision,
+    CreatorCraftBundle,
     CreatorCraftCommand,
     CreatorRevisionProposal,
     CreatorTargetPin,
@@ -176,17 +177,10 @@ def build_auto_command(
             or []
         )
         boundary = review.get("boundary_index")
-        if boundary is None:
-            boundary = next(
-                (
-                    index
-                    for index, slot in enumerate(slots[:-1])
-                    if str(slot.get("transition_after") or "cut") != "cut"
-                ),
-                None,
-            )
-        if boundary is None:
-            raise ValueError("no_transition_boundary")
+        if not isinstance(boundary, int) or isinstance(boundary, bool):
+            raise ValueError("reviewed_boundary_required")
+        if boundary < 0 or boundary >= len(slots) - 1:
+            raise ValueError("reviewed_boundary_not_present")
         return SetTransitionCommand(
             **target,
             command="set_transition",
@@ -205,14 +199,14 @@ def build_auto_command(
         )
         source = [value for value in (source or []) if isinstance(value, Mapping)]
         treatment_id = review.get("treatment_id")
-        if treatment_id is None and source:
-            treatment_id = (
-                source[0].get("id")
-                or source[0].get("asset_id")
-                or source[0].get("sound_effect_id")
-            )
         if not source or not treatment_id:
-            raise ValueError("optional_treatment_not_present")
+            raise ValueError("reviewed_treatment_required")
+        if not any(
+            str(value.get("id") or value.get("asset_id") or value.get("sound_effect_id") or "")
+            == str(treatment_id)
+            for value in source
+        ):
+            raise ValueError("reviewed_treatment_not_present")
         return RemoveOptionalTreatmentCommand(
             **target,
             command="remove_optional_treatment",
@@ -250,6 +244,54 @@ def build_auto_command(
     raise ValueError("treatment_not_allowlisted")
 
 
+def build_auto_bundle(
+    *,
+    session_id: str,
+    idempotency_key: str,
+    pin: Mapping[str, Any],
+    action: str,
+    review: Mapping[str, Any],
+    variant: Mapping[str, Any],
+) -> CreatorCraftBundle:
+    """Build the exact bounded request persisted before publishing work."""
+
+    command = build_auto_command(action, pin=pin, review=review, variant=variant)
+    return CreatorCraftBundle(
+        session_id=session_id,
+        idempotency_key=idempotency_key,
+        commands=[command],
+        **pin,
+    )
+
+
+def recover_auto_bundle(
+    raw_bundle: Any,
+    *,
+    session_id: str,
+    idempotency_key: str,
+    job_id: str,
+    variant_id: str,
+    generation_id: str,
+    ownership_epoch: int,
+) -> CreatorCraftBundle:
+    """Validate a persisted request without rebuilding against mutable state."""
+
+    try:
+        bundle = CreatorCraftBundle.model_validate(raw_bundle)
+    except ValueError as exc:
+        raise ValueError("automatic_revision_receipt_invalid") from exc
+    if (
+        bundle.session_id != session_id
+        or bundle.idempotency_key != idempotency_key
+        or bundle.expected_job_id != job_id
+        or bundle.expected_variant_id != variant_id
+        or bundle.expected_generation_id != generation_id
+        or bundle.expected_ownership_epoch != ownership_epoch
+    ):
+        raise ValueError("automatic_revision_receipt_stale")
+    return bundle
+
+
 __all__ = [
     "ALLOWLIST",
     "MAX_AUTOMATIC_REVISIONS",
@@ -257,5 +299,7 @@ __all__ = [
     "MIN_EXPECTED_IMPROVEMENT",
     "OBJECTIVE_TAG",
     "build_auto_command",
+    "build_auto_bundle",
     "evaluate_auto_iteration",
+    "recover_auto_bundle",
 ]

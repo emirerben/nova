@@ -648,6 +648,7 @@ def serialize_session(session: CreatorAgentSession) -> dict[str, Any]:
             "allowlist_action",
             "automatic_revision_count",
             "rollback_receipt",
+            "auto_iteration",
         }
         review = {key: raw_review[key] for key in allowed if key in raw_review}
         evidence = review.get("evidence")
@@ -679,6 +680,38 @@ def serialize_session(session: CreatorAgentSession) -> dict[str, Any]:
                 review["proposed_revision"]["evidence_ids"] = review["proposed_revision"][
                     "evidence_ids"
                 ][:8]
+        auto_iteration = review.get("auto_iteration")
+        if isinstance(auto_iteration, dict):
+            bounded_auto = {
+                key: auto_iteration[key]
+                for key in (
+                    "status",
+                    "action",
+                    "session_id",
+                    "job_id",
+                    "variant_id",
+                    "previous_generation_id",
+                    "generation_id",
+                    "receipt_id",
+                    "request_expected_revision",
+                    "expected_revision",
+                    "ownership_epoch",
+                )
+                if key in auto_iteration
+            }
+            rollback = auto_iteration.get("rollback_receipt")
+            if isinstance(rollback, dict):
+                bounded_auto["rollback_receipt"] = {
+                    key: rollback[key]
+                    for key in (
+                        "job_id",
+                        "variant_id",
+                        "previous_generation_id",
+                        "craft_receipt_id",
+                    )
+                    if key in rollback
+                }
+            review["auto_iteration"] = bounded_auto
 
     return {
         "id": str(session.id),
