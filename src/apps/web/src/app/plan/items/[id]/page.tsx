@@ -1918,7 +1918,9 @@ export default function PlanItemPage() {
       tone="light"
       onRetry={
         allVariantsFailed && !generating && !speechCleanupRecoveryAvailable
-          ? handleGenerate
+          ? () => {
+              void handleGenerate();
+            }
           : undefined
       }
     />
