@@ -4578,14 +4578,16 @@ export default function EditorShell({
   );
 
   const addMediaVisualBlocks = useCallback(
-    (assetIds: string[], displayMode: "fullscreen" | "overlay", afterSelected = false) => {
+    (assetIds: string[], displayMode: "fullscreen" | "overlay", asSequence = false) => {
       if (readOnly || !visualBlocksAllowed) return;
       const selected = selection?.kind === "visual" ? localVisualBlocks.find((block) => block.id === selection.id) : null;
-      if (afterSelected && !selected) {
-        notify("Select a media layer to place the sequence after.");
-        return;
-      }
-      let cursorEnd = afterSelected ? selected?.end_s ?? null : null;
+      // A sequence can start a new media lane at the playhead. When a media
+      // layer is selected, preserve the more precise "place after selected"
+      // behavior. Requiring a pre-existing layer made the first photo
+      // sequence impossible even though the drawer exposed the action.
+      let cursorEnd = asSequence
+        ? selected?.end_s ?? Math.max(0, outputToBaseTimeRef.current(currentTime))
+        : null;
       const additions: MediaVisualBlock[] = [];
       for (const assetId of assetIds) {
         const asset = poolAssets.find((candidate) => candidate.id === assetId && candidate.status === "ready");
@@ -4637,9 +4639,12 @@ export default function EditorShell({
           scale: 0.35,
           z: Math.max(-1, ...localVisualBlocks.filter((block) => block.kind === "media").map((block) => block.z)) + 1 + additions.length,
         });
-        cursorEnd = afterSelected ? end : null;
+        cursorEnd = asSequence ? end : null;
       }
-      if (!additions.length) return;
+      if (!additions.length) {
+        if (asSequence) notify("There isn't enough timeline space for this sequence.");
+        return;
+      }
       history.record();
       setLocalVisualBlocks((blocks) => [...blocks, ...additions]);
       setVisualBlocksDirty(true);

@@ -870,9 +870,14 @@ function VisualsDrawer({
 
       <section>
         <div className="mb-2 flex items-center justify-between">
-          <p className="text-[12px] font-semibold text-[#3f3f46]">Montage assets</p>
-          <span className="text-[11px] text-[#71717a]">Choose 3–12</span>
+          <p className="text-[12px] font-semibold text-[#3f3f46]">Photos &amp; video</p>
+          <span className="text-[11px] text-[#71717a]">
+            {selectedAssetIds.length} selected
+          </span>
         </div>
+        <p className="mb-3 text-[11px] leading-4 text-[#71717a]">
+          Select one or more for full screen, overlay, or a sequence. Montages use 3–12.
+        </p>
         <label className="mb-3 flex min-h-11 cursor-pointer items-center justify-center rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-3 text-[12px] font-semibold text-[#3f3f46] hover:border-zinc-400 focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-lime-500 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50">
           {uploading
             ? "Uploading visuals…"
@@ -930,7 +935,7 @@ function VisualsDrawer({
         <div className="mt-2 grid grid-cols-2 gap-2">
           <Button type="button" variant="outline" disabled={selectedAssetIds.length !== 1} onClick={() => onAddMediaBlock?.(selectedAssetIds, "fullscreen")} className="min-h-11 text-[11px]">Add full screen</Button>
           <Button type="button" variant="outline" disabled={selectedAssetIds.length !== 1} onClick={() => onAddMediaBlock?.(selectedAssetIds, "overlay")} className="min-h-11 text-[11px]">Add as overlay</Button>
-          <Button type="button" variant="outline" disabled={selectedAssetIds.length < 1} onClick={() => { onAddMediaSequence?.(selectedAssetIds); setSelectedAssetIds([]); }} className="col-span-2 min-h-11 text-[11px]">Place sequence after selected</Button>
+          <Button type="button" variant="outline" disabled={selectedAssetIds.length < 1} onClick={() => { onAddMediaSequence?.(selectedAssetIds); setSelectedAssetIds([]); }} className="col-span-2 min-h-11 text-[11px]">Place selected in sequence</Button>
         </div>
       </section>
 
@@ -990,7 +995,11 @@ function VisualsDrawer({
             <div className="flex items-center justify-between gap-2">
               <div>
                 <p className="text-[12px] font-semibold text-[#0c0c0e]">
-                  {block.kind === "montage" ? `Montage · ${block.shots.length} shots` : "Text card"}
+                  {block.kind === "montage"
+                    ? `Montage · ${block.shots.length} shots`
+                    : block.kind === "media"
+                      ? `${block.media_kind === "image" ? "Photo" : "Video"} · ${block.display_mode === "fullscreen" ? "Full screen" : "Overlay"}`
+                      : "Text card"}
                 </p>
                 <p className="text-[11px] text-[#71717a]">
                   {block.start_s.toFixed(1)}s–{block.end_s.toFixed(1)}s · {block.timing_mode}
@@ -1596,7 +1605,7 @@ function VisualsDrawer({
         ))}
         {blocks.length === 0 && (
           <p className="rounded-lg border border-dashed border-zinc-300 px-3 py-4 text-center text-[12px] text-[#71717a]">
-            No visual blocks yet.
+            Upload a photo or video, then add it full screen, as an overlay, or in a sequence.
           </p>
         )}
       </section>

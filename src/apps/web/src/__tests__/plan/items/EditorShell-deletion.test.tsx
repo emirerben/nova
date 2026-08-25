@@ -684,6 +684,44 @@ describe("EditorShell visuals upload lifecycle", () => {
     };
   }
 
+  it("places the first selected photos contiguously from the playhead", async () => {
+    const first = poolAsset({
+      id: "asset-first",
+      source_filename: "first.png",
+      gcs_path: "users/u/plan/item-1/pool/first.png",
+    });
+    const second = poolAsset({
+      id: "asset-second",
+      source_filename: "second.png",
+      gcs_path: "users/u/plan/item-1/pool/second.png",
+    });
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "GET" && url.endsWith("/assets")) {
+        return jsonResponse({ assets: [first, second], max_assets: 20 });
+      }
+      throw new Error(`Unmocked fetch: ${method} ${url}`);
+    }) as unknown as typeof fetch;
+
+    await renderShell(makeVariant([], [], { duration_s: 8 }));
+    const video = document.querySelector("video");
+    expect(video).not.toBeNull();
+    Object.defineProperty(video, "duration", { configurable: true, value: 8 });
+    fireEvent.loadedMetadata(video as HTMLVideoElement);
+    fireEvent.click(screen.getByRole("button", { name: "Visuals tool" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Select first.png" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select second.png" }));
+    fireEvent.click(screen.getByRole("button", { name: "Place selected in sequence" }));
+
+    expect(screen.getByRole("button", { name: "Media, 0:00–0:02" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Media, 0:02–0:04" })).toBeInTheDocument();
+    expect(mockToast).not.toHaveBeenCalledWith(
+      "Select a media layer to place the sequence after.",
+      expect.anything(),
+    );
+  });
+
   it("shows a failed transfer in the real drawer and retries it without disabling the picker", async () => {
     let presignCalls = 0;
     let putCalls = 0;

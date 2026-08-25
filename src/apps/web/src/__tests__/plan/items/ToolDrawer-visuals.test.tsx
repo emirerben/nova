@@ -101,8 +101,55 @@ describe("ToolDrawer visual blocks", () => {
     expect(onAddMediaBlock).toHaveBeenNthCalledWith(2, ["asset-0"], "overlay");
 
     fireEvent.click(screen.getByRole("button", { name: `Select ${assets[1].source_filename}` }));
-    fireEvent.click(screen.getByRole("button", { name: "Place sequence after selected" }));
+    fireEvent.click(screen.getByRole("button", { name: "Place selected in sequence" }));
     expect(onAddMediaSequence).toHaveBeenCalledWith(["asset-0", "asset-1"]);
+  });
+
+  it("explains that one photo can be used without creating a montage", () => {
+    renderVisuals();
+
+    expect(screen.getByText("Photos & video")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Select one or more for full screen, overlay, or a sequence. Montages use 3–12.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("0 selected")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Upload a photo or video, then add it full screen, as an overlay, or in a sequence.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("labels photo and video timeline blocks as media instead of text cards", () => {
+    renderVisuals({
+      visualBlocks: [
+        {
+          version: 1,
+          id: "photo-1",
+          kind: "media",
+          start_s: 0,
+          end_s: 2,
+          timing_mode: "manual",
+          origin: "user",
+          transition_in: "cut",
+          transition_out: "cut",
+          audio_policy: { base: "continue", sfx: "continue" },
+          asset_id: assets[0].id,
+          src_gcs_path: assets[0].gcs_path,
+          media_kind: "image",
+          display_mode: "fullscreen",
+          transform: { fit_mode: "contain", focal_x: 0.5, focal_y: 0.5, zoom: 1 },
+          x_frac: 0.5,
+          y_frac: 0.5,
+          scale: 0.35,
+          z: 0,
+        },
+      ],
+    });
+
+    expect(screen.getByText("Photo · Full screen")).toBeInTheDocument();
   });
 
   it("shows source-labeled asset context and saves creator edits", async () => {
