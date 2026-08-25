@@ -11,7 +11,11 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlalchemy.exc import MissingGreenlet
 
-from app.agents._schemas.creator_agent import CreativeStrategy, canonical_context_hash
+from app.agents._schemas.creator_agent import (
+    CreativeStrategy,
+    CreatorCraftBundle,
+    canonical_context_hash,
+)
 from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
 from app.auth import get_current_user
 from app.config import Settings, settings
@@ -31,7 +35,34 @@ from app.routes.creator_agent import (
     _seed_guided_specialist_brief,
     _strict_creator_format,
 )
-from app.services.creator_capabilities import compile_strategy_to_plan, resolve_creator_manifest
+from app.services.creator_capabilities import (
+    compile_strategy_to_plan,
+    resolve_creator_manifest,
+)
+
+
+def _craft_bundle(
+    *,
+    session_id: uuid.UUID,
+    job_id: uuid.UUID,
+    generation_id: str,
+    idempotency_key: str = "craft-1",
+) -> CreatorCraftBundle:
+    pins = {
+        "expected_manifest_hash": "a" * 64,
+        "expected_context_hash": "b" * 64,
+        "expected_job_id": str(job_id),
+        "expected_variant_id": "variant-1",
+        "expected_generation_id": generation_id,
+        "expected_revision": 3,
+        "expected_ownership_epoch": 4,
+    }
+    return CreatorCraftBundle(
+        session_id=str(session_id),
+        idempotency_key=idempotency_key,
+        commands=[{**pins, "command": "set_caption_style", "caption_style": "word"}],
+        **pins,
+    )
 
 
 @pytest.fixture()
@@ -198,6 +229,221 @@ def test_strict_creator_formats_never_use_montage_fallback() -> None:
     assert _strict_creator_format("day_vlog") is True
     assert _strict_creator_format("single_hero") is True
     assert _strict_creator_format("montage") is False
+
+
+def _craft_route_context(*, user_id: uuid.UUID, job_id: uuid.UUID, session_id: uuid.UUID):
+    item_id = uuid.uuid4()
+    item = SimpleNamespace(id=item_id, current_job_id=job_id)
+    plan = SimpleNamespace(ownership_epoch=4)
+    session = SimpleNamespace(
+        id=session_id,
+        creator_id=user_id,
+        plan_item_id=item_id,
+        status="awaiting_feedback",
+        revision=3,
+        ownership_epoch=4,
+    )
+    job = SimpleNamespace(
+        id=job_id,
+        user_id=user_id,
+        content_plan_item_id=item_id,
+        content_plan_ownership_epoch=4,
+        status="variants_ready",
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "variant-1",
+                    "render_generation_id": "generation-2",
+                    "render_status": "ready",
+                }
+            ]
+        },
+    )
+    manifest = SimpleNamespace(
+        manifest_hash="a" * 64,
+        context_hash="b" * 64,
+        capabilities={"caption_style": SimpleNamespace(available=True)},
+    )
+    return item, plan, session, job, manifest
+
+
+@pytest.mark.asyncio
+async def test_creator_craft_rejects_stale_exact_generation_pin(monkeypatch) -> None:
+    user_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    item, plan, session, job, manifest = _craft_route_context(
+        user_id=user_id, job_id=job_id, session_id=session_id
+    )
+    db = AsyncMock()
+    receipt_result = MagicMock()
+    receipt_result.scalar_one_or_none.return_value = None
+    db.execute.return_value = receipt_result
+    db.get.return_value = job
+    monkeypatch.setattr(creator_routes, "_require_feature", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, plan, SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+
+    with pytest.raises(HTTPException) as caught:
+        await creator_routes.execute_creator_craft(
+            str(item.id),
+            _craft_bundle(
+                session_id=session_id,
+                job_id=job_id,
+                generation_id="generation-1",
+            ),
+            SimpleNamespace(id=user_id),
+            db,
+        )
+
+    assert caught.value.status_code == 409
+    assert caught.value.detail == "Creator render generation changed"
+    db.add.assert_not_called()
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_creator_craft_replays_succeeded_receipt_without_reenqueue(monkeypatch) -> None:
+    user_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    item, plan, session, job, manifest = _craft_route_context(
+        user_id=user_id, job_id=job_id, session_id=session_id
+    )
+    body = _craft_bundle(
+        session_id=session_id,
+        job_id=job_id,
+        generation_id="generation-2",
+    )
+    receipt = SimpleNamespace(
+        id=uuid.uuid4(),
+        request_digest=canonical_context_hash(body.model_dump(mode="json")),
+        status="succeeded",
+        result={"generation": "generation-2", "preview": {"caption_style": "word"}},
+    )
+    db = AsyncMock()
+    receipt_result = MagicMock()
+    receipt_result.scalar_one_or_none.return_value = receipt
+    db.execute.return_value = receipt_result
+    db.get.return_value = job
+    enqueue = MagicMock()
+    monkeypatch.setattr(creator_routes, "enqueue_editor_commit_render", enqueue)
+    monkeypatch.setattr(creator_routes, "_require_feature", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, plan, SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+
+    response = await creator_routes.execute_creator_craft(
+        str(item.id), body, SimpleNamespace(id=user_id), db
+    )
+
+    assert response.status == "succeeded"
+    assert response.generation == "generation-2"
+    assert response.preview == {"caption_style": "word"}
+    enqueue.assert_not_called()
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_creator_craft_enqueue_failure_restores_plan_and_fails_receipt(monkeypatch) -> None:
+    user_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    item, plan, session, job, manifest = _craft_route_context(
+        user_id=user_id, job_id=job_id, session_id=session_id
+    )
+    body = _craft_bundle(
+        session_id=session_id,
+        job_id=job_id,
+        generation_id="generation-2",
+    )
+    previous_assembly_plan = job.assembly_plan.copy()
+    receipt_id = uuid.uuid4()
+    failed_receipt = SimpleNamespace(id=receipt_id, status="running", error=None)
+    db = AsyncMock()
+    receipt_result = MagicMock()
+    receipt_result.scalar_one_or_none.return_value = None
+    db.execute.return_value = receipt_result
+    db.get.side_effect = [job, job, failed_receipt]
+
+    def add(value):
+        if isinstance(value, CreatorAgentExecution):
+            value.id = receipt_id
+
+    db.add = MagicMock(side_effect=add)
+    editor_commit = SimpleNamespace(
+        caption_meta=SimpleNamespace(style="word"),
+        timeline_slots=None,
+        sound_effects=None,
+        media_overlays=None,
+    )
+
+    def prepare(*_args, **_kwargs):
+        job.assembly_plan = {
+            "variants": [
+                {
+                    "variant_id": "variant-1",
+                    "render_generation_id": "generation-2",
+                    "render_status": "rendering",
+                }
+            ]
+        }
+        return {"generation": "generation-2", "sections": {"caption_meta": True}}
+
+    monkeypatch.setattr(creator_routes, "_require_feature", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, plan, SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(
+        creator_routes,
+        "build_core_craft_editor_commit",
+        lambda *_args, **_kwargs: editor_commit,
+    )
+    monkeypatch.setattr(creator_routes, "prepare_editor_commit", prepare)
+    monkeypatch.setattr(creator_routes, "craft_preview", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(creator_routes, "_stable_manifest_fingerprint", lambda _manifest: "stable")
+    monkeypatch.setattr(
+        creator_routes,
+        "enqueue_editor_commit_render",
+        MagicMock(side_effect=RuntimeError("broker unavailable")),
+    )
+
+    with pytest.raises(HTTPException) as caught:
+        await creator_routes.execute_creator_craft(
+            str(item.id), body, SimpleNamespace(id=user_id), db
+        )
+
+    assert caught.value.status_code == 503
+    assert job.assembly_plan == previous_assembly_plan
+    assert failed_receipt.status == "failed"
+    assert failed_receipt.error["code"] == "craft_enqueue_failed"
+    assert failed_receipt.error["rolled_back"] is True
+    db.rollback.assert_awaited_once()
 
 
 class _ExpiringNamespace:
