@@ -1,4 +1,4 @@
-import { addJobToPlan, listMyJobs, NotAuthenticatedError } from "@/lib/me-api";
+import { addJobToPlan, deleteMyJob, listMyJobs, NotAuthenticatedError } from "@/lib/me-api";
 
 function jsonResponse(status: number, body: unknown): Response {
   return {
@@ -56,11 +56,29 @@ describe("me-api client", () => {
     await expect(listMyJobs()).rejects.toBeInstanceOf(NotAuthenticatedError);
   });
 
+  it("DELETEs one job and accepts a 204 response", async () => {
+    const fetchMock = jest.fn().mockResolvedValue(jsonResponse(204, null));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(deleteMyJob("j1")).resolves.toBeUndefined();
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/me/jobs/j1");
+    expect(init.method).toBe("DELETE");
+  });
+
   it("surfaces the backend detail on other errors", async () => {
     global.fetch = jest
       .fn()
       .mockResolvedValue(jsonResponse(404, { detail: "Plan day not found" })) as unknown as typeof fetch;
 
     await expect(addJobToPlan("j1", 99)).rejects.toThrow("Plan day not found");
+  });
+
+  it("preserves the HTTP status for delete conflict handling", async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValue(jsonResponse(409, { detail: "This video is still being prepared." })) as unknown as typeof fetch;
+
+    await expect(deleteMyJob("j1")).rejects.toMatchObject({ status: 409 });
   });
 });

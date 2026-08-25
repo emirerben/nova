@@ -8,6 +8,10 @@ purge_user_storage           — async GCS walk deleting everything under
                                 of each job's raw_storage_path (covers the legacy
                                 dev-user/ and {user_id}/{job_id}/ upload shapes that
                                 predate the users/ prefix — see infra/README.md).
+sweep_job_storage_deletions  — Beat-driven dispatcher that recovers deletion
+                                manifests after broker or worker loss.
+purge_job_storage             — exact-key cleanup driven by a durable manifest;
+                                failed keys remain persisted for backoff retries.
 
 Split from the request path (routes/me.py) because a user with a large media
 footprint could hold the request past FastAPI's own timeout — the DB rows are
@@ -16,12 +20,43 @@ deleted synchronously (cheap), the GCS bytes are swept here (potentially slow).
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import structlog
+from sqlalchemy import and_, delete, or_, select
 
 from app.config import settings
+from app.database import sync_session
+from app.models import JobStorageDeletion
 from app.worker import celery_app
 
 log = structlog.get_logger()
+
+_JOB_STORAGE_DELETION_LEASE = timedelta(minutes=10)
+_JOB_STORAGE_DELETION_RETRY_BASE_S = 60
+_JOB_STORAGE_DELETION_RETRY_MAX_S = 3600
+_JOB_STORAGE_DELETION_RETENTION = timedelta(days=30)
+
+
+def cleanup_job_storage_paths(object_paths: list[str]) -> tuple[int, list[str]]:
+    """Best-effort delete of exact object keys, returning only failed keys.
+
+    The caller has already validated that these keys belong to one deleted Job.
+    Keeping the helper synchronous makes it usable by Celery and the narrow
+    post-commit fallback in the DELETE /me/jobs route.
+    """
+    from app.storage import delete_object_best_effort  # noqa: PLC0415
+
+    deleted = 0
+    failed: list[str] = []
+    for path in dict.fromkeys(object_paths):
+        if not isinstance(path, str) or not path.strip():
+            continue
+        if delete_object_best_effort(path):
+            deleted += 1
+        else:
+            failed.append(path)
+    return deleted, failed
 
 
 @celery_app.task(name="tasks.send_account_deletion_email", max_retries=0)
@@ -145,4 +180,170 @@ def purge_user_storage(
         "user_prefix_objects_deleted": user_deleted,
         "job_prefix_objects_deleted": job_deleted,
         "raw_paths_deleted": raw_deleted,
+    }
+
+
+def _claim_job_storage_deletion(outbox_id: str) -> tuple[list[str], int] | None:
+    """Claim one due manifest, recovering leases abandoned by dead workers."""
+    now = datetime.now(UTC)
+    with sync_session() as db:
+        deletion = db.execute(
+            select(JobStorageDeletion).where(JobStorageDeletion.id == outbox_id).with_for_update()
+        ).scalar_one_or_none()
+        if deletion is None or deletion.status == "completed":
+            return None
+        if deletion.status == "processing":
+            if deletion.lease_until is not None and deletion.lease_until > now:
+                return None
+        elif deletion.next_attempt_at is not None and deletion.next_attempt_at > now:
+            return None
+
+        deletion.status = "processing"
+        deletion.attempts += 1
+        deletion.lease_until = now + _JOB_STORAGE_DELETION_LEASE
+        db.commit()
+        paths = deletion.object_paths if isinstance(deletion.object_paths, list) else []
+        return list(paths), deletion.attempts
+
+
+def _finish_job_storage_deletion(
+    outbox_id: str,
+    *,
+    deleted: int,
+    failed: list[str],
+    error: str | None = None,
+) -> None:
+    now = datetime.now(UTC)
+    with sync_session() as db:
+        deletion = db.execute(
+            select(JobStorageDeletion).where(JobStorageDeletion.id == outbox_id).with_for_update()
+        ).scalar_one_or_none()
+        if deletion is None:
+            return
+
+        deletion.lease_until = None
+        if failed:
+            deletion.status = "pending"
+            deletion.object_paths = list(dict.fromkeys(failed))
+            retry_delay = min(
+                _JOB_STORAGE_DELETION_RETRY_BASE_S * (2 ** min(max(deletion.attempts - 1, 0), 6)),
+                _JOB_STORAGE_DELETION_RETRY_MAX_S,
+            )
+            deletion.next_attempt_at = now + timedelta(seconds=retry_delay)
+            deletion.last_error = error or f"{len(failed)} storage objects could not be deleted"
+        else:
+            deletion.status = "completed"
+            deletion.object_paths = []
+            deletion.next_attempt_at = None
+            deletion.last_error = None
+            deletion.completed_at = now
+        db.commit()
+
+
+@celery_app.task(
+    name="tasks.purge_job_storage",
+    autoretry_for=(),
+    max_retries=0,
+    soft_time_limit=300,
+    time_limit=360,
+)
+def purge_job_storage(outbox_id: str) -> dict:
+    """Process a durable deletion manifest and retain failures for retry."""
+    claimed = _claim_job_storage_deletion(outbox_id)
+    if claimed is None:
+        return {"status": "skipped", "deleted": 0, "failed": 0}
+
+    object_paths, attempt = claimed
+    error: str | None = None
+    try:
+        deleted, failed = cleanup_job_storage_paths(object_paths)
+    except Exception as exc:  # noqa: BLE001 — lease recovery handles outages
+        deleted = 0
+        failed = object_paths
+        error = f"{type(exc).__name__}: {exc}"
+
+    _finish_job_storage_deletion(
+        outbox_id,
+        deleted=deleted,
+        failed=failed,
+        error=error,
+    )
+    if failed:
+        log.warning(
+            "purge_job_storage_pending_retry",
+            outbox_id=outbox_id,
+            deleted=deleted,
+            failed=len(failed),
+            attempt=attempt,
+        )
+        return {"status": "pending", "deleted": deleted, "failed": len(failed)}
+
+    log.info("purge_job_storage_done", outbox_id=outbox_id, deleted=deleted)
+    return {"status": "completed", "deleted": deleted, "failed": 0}
+
+
+@celery_app.task(
+    name="tasks.sweep_job_storage_deletions",
+    autoretry_for=(),
+    max_retries=0,
+    soft_time_limit=60,
+    time_limit=90,
+)
+def sweep_job_storage_deletions(limit: int = 100) -> dict:
+    """Dispatch due manifests and recover work from lost broker/worker state."""
+    now = datetime.now(UTC)
+    due = or_(
+        and_(
+            JobStorageDeletion.status == "pending",
+            or_(
+                JobStorageDeletion.next_attempt_at.is_(None),
+                JobStorageDeletion.next_attempt_at <= now,
+            ),
+        ),
+        and_(
+            JobStorageDeletion.status == "processing",
+            or_(
+                JobStorageDeletion.lease_until.is_(None),
+                JobStorageDeletion.lease_until <= now,
+            ),
+        ),
+    )
+    with sync_session() as db:
+        outbox_ids = list(
+            db.execute(
+                select(JobStorageDeletion.id)
+                .where(due)
+                .order_by(JobStorageDeletion.created_at)
+                .limit(limit)
+            ).scalars()
+        )
+        pruned = (
+            db.execute(
+                delete(JobStorageDeletion).where(
+                    JobStorageDeletion.status == "completed",
+                    JobStorageDeletion.completed_at < now - _JOB_STORAGE_DELETION_RETENTION,
+                )
+            ).rowcount
+            or 0
+        )
+        db.commit()
+
+    dispatched = 0
+    dispatch_failed = 0
+    for outbox_id in outbox_ids:
+        try:
+            purge_job_storage.apply_async(args=[str(outbox_id)])
+            dispatched += 1
+        except Exception as exc:  # noqa: BLE001 — next Beat sweep retries
+            dispatch_failed += 1
+            log.error(
+                "purge_job_storage_dispatch_failed",
+                outbox_id=str(outbox_id),
+                error=str(exc),
+            )
+
+    return {
+        "dispatched": dispatched,
+        "dispatch_failed": dispatch_failed,
+        "pruned": pruned,
     }

@@ -68,6 +68,10 @@ export function WorkspaceHome({ plan, onRefresh, onError }: WorkspaceHomeProps) 
     }
   }
 
+  const handleDeleted = useCallback((jobId: string) => {
+    setJobs((current) => current.filter((job) => job.id !== jobId));
+  }, []);
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div className="mx-auto flex max-w-[900px] flex-col gap-10 px-6 pb-24 pt-14">
@@ -128,7 +132,7 @@ export function WorkspaceHome({ plan, onRefresh, onError }: WorkspaceHomeProps) 
               <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
                 {jobs.map((job) => (
                   <li key={job.id}>
-                    <LibraryTile job={job} />
+                    <LibraryTile job={job} onDeleted={handleDeleted} />
                   </li>
                 ))}
               </ul>
