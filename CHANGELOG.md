@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.52.0.0] — 2026-08-25
+
+### Added
+- **Kria’s Creator Agent roadmap is implemented behind default-off rollout controls.** Exact-generation video reviews now carry timestamped evidence and bounded revision proposals; review failures remain visible without failing an otherwise successful render.
+- **Day Vlog and Single Hero gain strict guided-render policies.** Day Vlog preserves chronological filming-guide order, while Single Hero reserves the edit for one dominant owned clip plus usable cutaways; disabled, incompatible, or insufficient-media requests fail visibly instead of silently becoming montages.
+- **Creators can review off-plan footage before changing a plan.** Authenticated, owner-fenced relevance proposals require an explicit attach, new-topic, or reject decision, and plan-level workspace receipts track each deliverable’s immutable session, Job, variant, and generation identity.
+
+### Changed
+- **Creator craft can apply validated captions, transitions, looks, owner-scoped overlays, licensed sound effects, and approved speech cuts as atomic idempotent bundles.** Existing treatment flags and renderer owners remain authoritative, and broker redelivery is guarded by a durable generation claim.
+- **Automatic iteration is limited to one explicitly opted-in corrective pass.** Server policy requires objective evidence, high confidence, measurable expected improvement, remaining budget, and an allowlisted correction while preserving the previous ready generation for rollback.
+- **Explicit creator preference notes stay explicit and plan-scoped.** The workspace records only confirmed feedback through existing style and preference-summary contracts; it does not infer taste, enroll training, reuse media across items, publish, or acquire external assets.
+
+### Fixed
+- **Creator review, craft, workspace, and automation recovery now stay on their exact ownership and generation receipts.** Stale reviews cannot attach to newer renders, queue retries cannot duplicate expensive craft work, rollback preserves concurrent sibling state, and workspace audit receipts survive normal session cleanup.
+
 ## [0.51.5.0] — 2026-08-25
 
 ### Fixed
