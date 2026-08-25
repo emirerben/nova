@@ -340,6 +340,16 @@ Full format support for the two planned-but-unimplemented edit formats in the
 `edit_format` contract. Gated behind `EDIT_FORMAT_DAY_VLOG_ENABLED` /
 `EDIT_FORMAT_SINGLE_HERO_ENABLED` kill switches (same pattern as talking_head).
 
+`day_vlog` is now implemented behind `EDIT_FORMAT_DAY_VLOG_ENABLED` (default
+off). Its worker path is strict: it requires at least two usable filming-guide
+shots, preserves their first-appearance order, allows only hard cuts or
+crossfades up to 0.2s, and rejects output outside the footage/product duration
+bound instead of downgrading to montage. API-created jobs pin a renderer-version
+marker so mixed API/worker deploys fail closed when the marker is missing or
+incompatible. The capability manifest reports `disabled_by_setting` while the
+flag is off. Production parity still needs `make local-render` with representative
+multi-shot day-vlog footage; no local-render artifact is claimed by unit tests.
+
 ---
 
 ## Enabling in production

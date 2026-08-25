@@ -37,6 +37,11 @@ EditFormat = Literal[
 
 DEFAULT_EDIT_FORMAT: EditFormat = "montage"
 
+# Worker boundary fence for the first non-legacy guided format.  This is kept
+# with the vocabulary so API/worker mixed-version jobs can fail closed instead
+# of treating a newly-known token as the legacy montage default.
+DAY_VLOG_RENDERER_VERSION = 1
+
 EDIT_FORMATS: tuple[str, ...] = get_args(EditFormat)
 
 # Formats spined by narration. With NARRATED_SELF_NARRATION_ENABLED off (the

@@ -135,16 +135,94 @@ def test_resolve_montage_passthrough_no_fallback(monkeypatch):
     assert events == []  # montage is the default — no fallback noise
 
 
-def test_resolve_unimplemented_format_falls_back(monkeypatch):
+def test_resolve_day_vlog_flag_off_does_not_downgrade(monkeypatch):
     events = _trace_capture(monkeypatch)
     archetype, spine, _reason = gb._resolve_archetype(
         "day_vlog", [_Meta("c1")], {"c1": "/a.mp4"}, job_id="j"
     )
-    assert (archetype, spine) == ("montage", None)
-    assert any(
-        e[1] == "archetype_fallback" and e[2]["reason"] == "archetype_not_implemented"
-        for e in events
+    assert (archetype, spine) == ("day_vlog", None)
+    assert _reason == "flag_disabled"
+    assert events == []
+
+
+def test_resolve_day_vlog_enabled_requires_guide_media(monkeypatch):
+    monkeypatch.setattr(gb.settings, "edit_format_day_vlog_enabled", True, raising=False)
+    archetype, spine, reason = gb._resolve_archetype(
+        "day_vlog",
+        [_Meta("c1"), _Meta("c2")],
+        {"c1": "/a.mp4", "c2": "/b.mp4"},
+        job_id="j",
+        filming_guide=[{"what": "first"}],
     )
+    assert (archetype, spine, reason) == ("day_vlog", None, "insufficient_media")
+
+
+def test_resolve_day_vlog_enabled_selects_strict_archetype(monkeypatch):
+    monkeypatch.setattr(gb.settings, "edit_format_day_vlog_enabled", True, raising=False)
+    archetype, spine, reason = gb._resolve_archetype(
+        "day_vlog",
+        [_Meta("c1"), _Meta("c2")],
+        {"c1": "/a.mp4", "c2": "/b.mp4"},
+        job_id="j",
+        filming_guide=[{"what": "first"}, {"what": "last"}],
+    )
+    assert (archetype, spine, reason) == ("day_vlog", None, None)
+
+
+def test_day_vlog_ignores_generic_montage_variant_set(monkeypatch):
+    monkeypatch.setattr(gb.settings, "edit_format_day_vlog_enabled", True, raising=False)
+    specs = gb._specs_for_archetype("day_vlog", None)
+    assert len(specs) == 1
+    assert specs[0]["archetype"] == "day_vlog"
+    assert specs[0]["strict_day_vlog"] is True
+
+
+def test_day_vlog_chronology_kill_switch_fails_closed(monkeypatch):
+    monkeypatch.setattr(gb.settings, "NARRATIVE_CLIP_ORDER_ENABLED", False, raising=False)
+    with pytest.raises(gb.DayVlogPolicyError, match="chronology"):
+        gb._resolve_narrative_order(
+            2,
+            {"c1": "/a.mp4", "c2": "/b.mp4"},
+            job_id="j",
+            strict=True,
+        )
+
+
+def test_day_vlog_step_policy_pins_chronology_transitions_and_duration():
+    steps = [
+        types.SimpleNamespace(
+            clip_id="c1",
+            slot={"target_duration_s": 2.0, "transition_in": "cut", "transition_duration_s": 0},
+        ),
+        types.SimpleNamespace(
+            clip_id="c2",
+            slot={
+                "target_duration_s": 2.5,
+                "transition_in": "crossfade",
+                "transition_duration_s": 0.2,
+            },
+        ),
+    ]
+    gb._validate_day_vlog_steps(steps, ["c1", "c2"], max_duration_s=10)
+
+
+def test_day_vlog_step_policy_rejects_reordered_or_long_transition():
+    steps = [
+        types.SimpleNamespace(
+            clip_id="c2",
+            slot={"target_duration_s": 2.0, "transition_in": "cut", "transition_duration_s": 0},
+        ),
+        types.SimpleNamespace(
+            clip_id="c1",
+            slot={
+                "target_duration_s": 2.0,
+                "transition_in": "crossfade",
+                "transition_duration_s": 0.3,
+            },
+        ),
+    ]
+    with pytest.raises(gb.DayVlogPolicyError):
+        gb._validate_day_vlog_steps(steps, ["c1", "c2"], max_duration_s=10)
 
 
 def test_resolve_subtitled_flag_off_falls_back_to_montage(monkeypatch):
