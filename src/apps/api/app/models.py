@@ -785,6 +785,12 @@ class CreatorAgentSession(Base):
     question_budget: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     agent_call_budget: Mapped[int] = mapped_column(Integer, nullable=False, server_default="8")
     iteration_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    auto_iteration_opt_in: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    automatic_revision_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
     question_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     agent_call_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     last_review: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
@@ -819,7 +825,8 @@ class CreatorAgentSession(Base):
         CheckConstraint(
             "revision >= 0 AND ownership_epoch >= 0 AND iteration_budget >= 0 "
             "AND question_budget >= 0 AND agent_call_budget >= 0 "
-            "AND iteration_count >= 0 AND question_count >= 0 AND agent_call_count >= 0 "
+            "AND iteration_count >= 0 AND automatic_revision_count >= 0 "
+            "AND question_count >= 0 AND agent_call_count >= 0 "
             "AND max_render_attempts >= 0 AND render_attempts >= 0",
             name="ck_creator_agent_sessions_counters_nonnegative",
         ),

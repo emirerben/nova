@@ -1272,6 +1272,16 @@ export interface CreatorAgentReview {
   error_message?: string | null;
   evidence?: CreatorReviewEvidence[];
   proposed_revision?: CreatorReviewRevision | null;
+  objective_tag?: "objective_quality" | null;
+  expected_improvement?: number | null;
+  allowlist_action?:
+    | "transition_fallback"
+    | "caption_legibility"
+    | "remove_optional_treatment"
+    | "speech_cut"
+    | null;
+  automatic_revision_count?: number | null;
+  rollback_receipt?: Record<string, unknown> | null;
 }
 
 export interface CreatorAutoIterationCapability {
@@ -1359,9 +1369,9 @@ export function cancelCreatorAgentSession(
 }
 
 /**
- * Future autonomy boundary. The control is intentionally hidden unless the
- * server advertises `session.auto_iteration.available`; V1 never guesses an
- * endpoint or mutates a plan from a checkbox.
+ * Session-scoped autonomy boundary. The control is intentionally hidden unless
+ * the server advertises `session.auto_iteration.available`; the server owns all
+ * policy, identity fencing, and mutation.
  */
 export function requestCreatorAutoIteration(
   itemId: string,

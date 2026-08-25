@@ -15,6 +15,7 @@ from typing import Any
 from app.agents._schemas.creator_agent import (
     ApplySpeechCutCommand,
     CreatorCraftBundle,
+    RemoveOptionalTreatmentCommand,
     SetCaptionStyleCommand,
     SetLicensedSfxCommand,
     SetLookPresetCommand,
@@ -121,6 +122,45 @@ def build_core_craft_editor_commit(
             # candidate state machine. It deliberately never becomes an
             # editor payload (which only accepts lane data).
             continue
+
+        if isinstance(command, RemoveOptionalTreatmentCommand):
+            if command.treatment == "media_overlay":
+                current = [
+                    dict(value)
+                    for value in (variant.get("media_overlays") or [])
+                    if isinstance(value, dict)
+                ]
+                if command.treatment_id:
+                    current = [
+                        value
+                        for value in current
+                        if str(value.get("id") or value.get("asset_id") or "")
+                        != command.treatment_id
+                    ]
+                else:
+                    current = []
+                return EditorCommitRequest(
+                    media_overlays=current,
+                    base_generation=bundle.expected_generation_id,
+                )
+            current_sfx = [
+                dict(value)
+                for value in (variant.get("sound_effects") or [])
+                if isinstance(value, dict)
+            ]
+            if command.treatment_id:
+                current_sfx = [
+                    value
+                    for value in current_sfx
+                    if str(value.get("id") or value.get("sound_effect_id") or "")
+                    != command.treatment_id
+                ]
+            else:
+                current_sfx = []
+            return EditorCommitRequest(
+                sound_effects=current_sfx,
+                base_generation=bundle.expected_generation_id,
+            )
 
         if isinstance(command, (SetTransitionCommand, SetLookPresetCommand)):
             if not slots:
