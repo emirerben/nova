@@ -161,6 +161,44 @@ def test_proposal_timing_validator_ignores_malformed_best_moments() -> None:
     validate_proposal_timing(snapshot)
 
 
+@pytest.mark.parametrize("violation", ["adjacent", "overlap"])
+def test_proposal_timing_validator_rejects_unsafe_fast_cut_reuse(violation: str) -> None:
+    raw = _guided_snapshot(direction="fast_montage")
+    snapshot = EditProposalSnapshot.model_validate(raw["approved_proposal"])
+    snapshot.duration_s = 3
+    second_media_id = "coast-video" if violation == "adjacent" else "food-photo"
+    snapshot.fast_cuts = [
+        FastMontageCut(
+            cut_id="cut-1",
+            media_id="coast-video",
+            source_start_s=0,
+            source_end_s=1,
+            output_duration_s=1,
+            role="hook",
+        ),
+        FastMontageCut(
+            cut_id="cut-2",
+            media_id=second_media_id,
+            source_start_s=0,
+            source_end_s=1,
+            output_duration_s=1,
+            role="build",
+        ),
+        FastMontageCut(
+            cut_id="cut-3",
+            media_id="coast-video",
+            source_start_s=0.5,
+            source_end_s=1.5,
+            output_duration_s=1,
+            role="payoff",
+        ),
+    ]
+
+    message = "adjacently" if violation == "adjacent" else "overlapping video footage"
+    with pytest.raises(GuidedStoryError, match=message):
+        validate_proposal_timing(snapshot)
+
+
 def test_compiler_uses_only_beat_selected_media_and_hits_target_duration() -> None:
     raw = _guided_snapshot(catalog_extra=True)
     plan = compile_execution_plan(raw, track=None)

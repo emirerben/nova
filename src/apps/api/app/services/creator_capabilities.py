@@ -25,8 +25,13 @@ from app.agents._schemas.creator_agent import (
     canonical_context_hash,
     canonical_manifest_hash,
 )
+from app.agents._schemas.creator_policy import (
+    CAPABILITY_DRAFT_GUIDED_PROPOSAL,
+    MAX_MAIN_CREATOR_SELECTED_MEDIA,
+    effective_render_program,
+    normalize_creator_strategy_media,
+)
 from app.agents._schemas.edit_format import (
-    AUDIO_LED_EDIT_FORMATS,
     EDIT_FORMATS,
     coerce_edit_format,
     guided_edit_applicable,
@@ -37,7 +42,6 @@ from app.config import settings
 CAPABILITY_SET_ITEM_INTENT = "set_item_intent"
 CAPABILITY_GUIDED_STORY = "guided_story"
 CAPABILITY_NATIVE_RENDER = "native_render"
-CAPABILITY_DRAFT_GUIDED_PROPOSAL = "draft_guided_proposal"
 CAPABILITY_DISPATCH_RENDER = "dispatch_render"
 CAPABILITY_SELECT_READY_VARIANT = "select_ready_variant"
 CAPABILITY_CAPTION_STYLE = "caption_style"
@@ -298,42 +302,10 @@ def compile_strategy_to_plan(
     if an agent asks for one.
     """
 
-    media_ids = {media.media_id for media in manifest.media}
-    if any(media_id not in media_ids for media_id in strategy.selected_media_ids):
-        raise ValueError("strategy selected_media_ids must reference manifest media")
-
+    strategy = normalize_creator_strategy_media(manifest, strategy)
     strategy_format = coerce_edit_format(strategy.edit_format)
-    format_capability = manifest.capabilities.get(f"edit_format:{strategy_format}")
-    if format_capability is None or not format_capability.available:
-        raise ValueError(f"edit format {strategy_format!r} is unavailable")
-    audio_requires_native = strategy.audio_strategy in {"original_audio", "voiceover"}
-    native_required = (
-        manifest.has_voiceover
-        or audio_requires_native
-        or strategy_format in AUDIO_LED_EDIT_FORMATS
-        or not guided_edit_applicable(strategy_format, has_voiceover=manifest.has_voiceover)
-    )
-    if native_required:
-        effective_program = "native"
-    elif (
-        strategy.render_program == "guided"
-        and manifest.capabilities.get(CAPABILITY_DRAFT_GUIDED_PROPOSAL)
-        and manifest.capabilities[CAPABILITY_DRAFT_GUIDED_PROPOSAL].available
-    ):
-        effective_program = "guided"
-    else:
-        # Native is the safe universal fallback for a strategy that explicitly
-        # chooses it or when guided planning is unavailable. The compiler never
-        # upgrades a native request into guided execution.
-        effective_program = "native"
+    effective_program = strategy.render_program
     selected_media_ids = list(strategy.selected_media_ids)
-    if effective_program == "native":
-        native_ids = {
-            media.media_id for media in manifest.media if not media.media_id.startswith("asset-")
-        }
-        selected_media_ids = [media_id for media_id in selected_media_ids if media_id in native_ids]
-        if not selected_media_ids:
-            raise ValueError("native rendering requires at least one attached clip")
     treatment_capabilities = {
         "overlays": "media_overlays",
         "sfx": "sound_effects",
@@ -418,7 +390,10 @@ __all__ = [
     "CAPABILITY_NATIVE_RENDER",
     "CAPABILITY_SELECT_READY_VARIANT",
     "CAPABILITY_SET_ITEM_INTENT",
+    "MAX_MAIN_CREATOR_SELECTED_MEDIA",
     "build_creator_manifest",
     "compile_strategy_to_plan",
+    "effective_render_program",
+    "normalize_creator_strategy_media",
     "resolve_creator_manifest",
 ]

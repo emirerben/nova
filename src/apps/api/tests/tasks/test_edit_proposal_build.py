@@ -680,7 +680,7 @@ def test_many_too_short_videos_no_longer_overestimated_via_image_credit_bug() ->
     though not one of them is individually usable as its own beat moment —
     each was silently credited the FULL _IMAGE_FEASIBLE_CREDIT_S (1.4s) under
     the pre-P2-1 bug, overestimating total feasibility to 5.6s. Each now
-    correctly earns zero credit (below _RENDERER_MIN_MOMENT_S), so the whole
+    correctly earns zero credit (below GUIDED_STORY_MIN_MOMENT_S), so the whole
     set is correctly infeasible.
     """
 
@@ -715,8 +715,13 @@ class _FakeAgentOutput:
         self.story_beats = [_FakeBeat(media_ids)]
 
 
-def test_main_creator_guided_execution_persists_all_150_media(monkeypatch) -> None:
-    """A 50-clip + 100-visual confirmed plan reaches Kria intact."""
+@pytest.mark.parametrize(("clip_count", "asset_count"), [(45, 58), (50, 100)])
+def test_main_creator_large_shape_rejects_unknown_refs_then_persists_safe_fallback_media(
+    monkeypatch,
+    clip_count: int,
+    asset_count: int,
+) -> None:
+    """The production failure and maximum accepted media shapes reach Kria intact."""
 
     item_id = uuid.uuid4()
     owner_id = uuid.uuid4()
@@ -725,7 +730,7 @@ def test_main_creator_guided_execution_persists_all_150_media(monkeypatch) -> No
             "media_id": f"clip-{index}",
             "gcs_path": f"users/u/plan/{item_id}/clips/{index}.mp4",
         }
-        for index in range(50)
+        for index in range(clip_count)
     ]
     item = _prod_item(item_id, clip_assignments=assignments, approval_mode="auto")
     clip_refs = [
@@ -747,7 +752,7 @@ def test_main_creator_guided_execution_persists_all_150_media(monkeypatch) -> No
             generation="1",
             kind="image",
         )
-        for index in range(100)
+        for index in range(asset_count)
     ]
     db = _Db(_Result(rows=[SimpleNamespace(user_id=owner_id, status="ready") for _ in pool_refs]))
 
@@ -755,7 +760,7 @@ def test_main_creator_guided_execution_persists_all_150_media(monkeypatch) -> No
     def _session():
         yield db
 
-    captured_media: list[object] = []
+    prompts: list[str] = []
     monkeypatch.setattr(proposal_build, "sync_session", _session)
     monkeypatch.setattr(proposal_build, "_locked_item", lambda *_a, **_kw: (item, owner_id))
     monkeypatch.setattr(proposal_build, "_attempt_is_active", lambda *_a, **_kw: True)
@@ -766,13 +771,44 @@ def test_main_creator_guided_execution_persists_all_150_media(monkeypatch) -> No
         lambda clip_assignments, *_a, **_kw: list(zip(clip_assignments, clip_refs, strict=True)),
     )
     monkeypatch.setattr(proposal_build, "media_generations_match_sync", lambda _refs: True)
-    monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
+    raw_unknown_story = json.dumps(
+        {
+            "title": "A few moments",
+            "duration_s": 24,
+            "story_beats": [
+                {
+                    "topic": "Opening",
+                    "thought": "This semantic copy must never move to unrelated footage.",
+                    "media_ids": ["unknown-a"],
+                    "duration_s": 8,
+                },
+                {
+                    "topic": "Details",
+                    "thought": "Small details give the sequence texture.",
+                    "media_ids": ["unknown-b"],
+                    "duration_s": 8,
+                },
+                {
+                    "topic": "Closing",
+                    "thought": "A final frame gives the edit a finish.",
+                    "media_ids": ["unknown-c"],
+                    "duration_s": 8,
+                },
+            ],
+        }
+    )
 
-    def _run_agent(_self, input):  # noqa: ANN001, A002
-        captured_media[:] = input.media
-        return _FakeAgentOutput([clip_refs[0].media_id])
+    class _UnknownStoryClient:
+        def invoke(self, **kwargs):  # noqa: ANN003, ANN202
+            from app.agents._runtime import ModelInvocation
 
-    monkeypatch.setattr("app.agents.edit_proposal.EditProposalAgent.run", _run_agent)
+            prompts.append(kwargs["prompt"])
+            return ModelInvocation(raw_text=raw_unknown_story)
+
+    monkeypatch.setattr(
+        "app.agents._model_client.default_client",
+        lambda: _UnknownStoryClient(),
+    )
 
     proposal_build._run_draft_attempt(
         SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, auto_finalize=True
@@ -782,8 +818,132 @@ def test_main_creator_guided_execution_persists_all_150_media(monkeypatch) -> No
     assert persisted is not None
     assert persisted.status == "approved"
     assert persisted.last_approved is not None
-    assert len(captured_media) == 150
-    assert len(persisted.last_approved.snapshot.media) == 150
+    assert len(prompts) == 2  # real Agent.run schema retry boundary
+    assert all(prompt.count('"media_id": "m') == 32 for prompt in prompts)
+    assert len(persisted.last_approved.snapshot.media) == clip_count + asset_count
+    selected = {
+        media_id
+        for beat in persisted.last_approved.snapshot.story_beats
+        for media_id in beat.media_ids
+    }
+    assert selected <= {ref.media_id for ref in persisted.last_approved.snapshot.media}
+    assert len(selected) >= 7
+    assert all(
+        beat.thought != "This semantic copy must never move to unrelated footage."
+        for beat in persisted.last_approved.snapshot.story_beats
+    )
+
+
+def _prepare_terminal_agent_attempt(monkeypatch, *, direction: str = "guided_story"):
+    from app.agents._runtime import TerminalError
+
+    item_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    item = _prod_item(item_id, approval_mode="auto")
+    item.edit_proposal = _proposal(
+        brief=ProposalBrief(direction=direction, duration_s=6),
+        approval_mode="auto",
+    )
+    db = _Db(_Result(rows=[]))
+
+    @contextmanager
+    def _session():
+        yield db
+
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    monkeypatch.setattr(proposal_build, "_locked_item", lambda *_a, **_kw: (item, owner_id))
+    monkeypatch.setattr(proposal_build, "_attempt_is_active", lambda *_a, **_kw: True)
+    clip_ref = MediaRef(
+        lane="clip",
+        media_id=str(_PROD_CLIP_ASSIGNMENT["media_id"]),
+        gcs_path=str(_PROD_CLIP_ASSIGNMENT["gcs_path"]),
+        generation=str(_PROD_CLIP_ASSIGNMENT["generation"]),
+        kind="video",
+        duration_s=6.768333,
+    )
+    monkeypatch.setattr(
+        proposal_build,
+        "_analyze_clip_assignments",
+        lambda assignments, *_a, **_kw: [(assignments[0], clip_ref)],
+    )
+    monkeypatch.setattr(proposal_build, "media_generations_match_sync", lambda _refs: True)
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
+    monkeypatch.setattr(
+        "app.agents.edit_proposal.EditProposalAgent.run",
+        lambda *_a, **_kw: (_ for _ in ()).throw(TerminalError("malformed provider media ref")),
+    )
+    return item_id, item
+
+
+def test_initial_draft_terminal_agent_failure_uses_renderer_validated_fallback(
+    monkeypatch,
+) -> None:
+    from app.pipeline import guided_story
+
+    item_id, item = _prepare_terminal_agent_attempt(monkeypatch)
+    real_validate = guided_story.validate_proposal_timing
+    validated = []
+
+    def _spy_validate(snapshot):  # noqa: ANN001
+        validated.append(snapshot)
+        return real_validate(snapshot)
+
+    monkeypatch.setattr(guided_story, "validate_proposal_timing", _spy_validate)
+
+    proposal_build._run_draft_attempt(
+        SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, auto_finalize=True
+    )
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None
+    assert persisted.status == "approved"
+    assert persisted.last_approved is not None
+    snapshot = persisted.last_approved.snapshot
+    assert snapshot.title == "A few moments"
+    assert validated == [snapshot]
+    assert {media_id for beat in snapshot.story_beats for media_id in beat.media_ids} == {
+        _PROD_CLIP_ASSIGNMENT["media_id"]
+    }
+
+
+def test_initial_draft_does_not_approve_fallback_rejected_by_renderer(monkeypatch) -> None:
+    from app.pipeline import guided_story
+
+    item_id, item = _prepare_terminal_agent_attempt(monkeypatch)
+    monkeypatch.setattr(
+        guided_story,
+        "validate_proposal_timing",
+        lambda _snapshot: (_ for _ in ()).throw(
+            guided_story.GuidedStoryError(
+                "guided_story_timing_infeasible",
+                "The fallback cannot be compiled safely.",
+            )
+        ),
+    )
+
+    proposal_build._run_draft_attempt(
+        SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, auto_finalize=True
+    )
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None
+    assert persisted.status == "failed"
+    assert persisted.draft is None
+    assert persisted.last_approved is None
+
+
+def test_text_explainer_terminal_agent_failure_stays_fail_closed(monkeypatch) -> None:
+    item_id, item = _prepare_terminal_agent_attempt(monkeypatch, direction="text_explainer")
+
+    proposal_build._run_draft_attempt(
+        SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, auto_finalize=True
+    )
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None
+    assert persisted.status == "failed"
+    assert persisted.draft is None
+    assert persisted.last_approved is None
 
 
 class _FakeFastAgentOutput:

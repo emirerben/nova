@@ -22,7 +22,11 @@ from app.agents._schemas.text_element import TextElement
 from app.config import settings
 from app.pipeline.canvas import LANDSCAPE, PORTRAIT, Canvas
 from app.pipeline.probe import probe_video
-from app.schemas.edit_proposal import EditProposalSnapshot, canonical_media_digest
+from app.schemas.edit_proposal import (
+    GUIDED_STORY_MIN_MOMENT_S,
+    EditProposalSnapshot,
+    canonical_media_digest,
+)
 
 log = structlog.get_logger()
 
@@ -34,7 +38,11 @@ _FRAME_FLOOR_EPSILON_S = 1e-9
 _DURATION_MATCH_TOLERANCE_S = 0.001
 _MEDIA_PREP_MAX_WORKERS = 3
 _DIRECTION_POLICY = {
-    "guided_story": {"min_moment_s": 1.4, "transition": "crossfade", "text_effect": "fade-in"},
+    "guided_story": {
+        "min_moment_s": GUIDED_STORY_MIN_MOMENT_S,
+        "transition": "crossfade",
+        "text_effect": "fade-in",
+    },
     "fast_montage": {"min_moment_s": 0.8, "transition": "none", "text_effect": "static"},
     "text_explainer": {
         "min_moment_s": 1.8,
@@ -1188,6 +1196,31 @@ def compile_execution_plan(
 
 def validate_proposal_timing(snapshot: EditProposalSnapshot) -> None:
     """Reject an editorial revision that the strict renderer cannot allocate."""
+
+    if snapshot.fast_cuts:
+        media_by_id = {ref.media_id: ref for ref in snapshot.media}
+        previous_id: str | None = None
+        windows_by_media: dict[str, list[tuple[float, float]]] = {}
+        for cut in snapshot.fast_cuts:
+            if cut.media_id == previous_id:
+                raise GuidedStoryError(
+                    "guided_story_snapshot_invalid",
+                    "Fast montage cuts cannot repeat the same media adjacently.",
+                )
+            previous_id = cut.media_id
+            ref = media_by_id.get(cut.media_id)
+            if ref is not None and ref.kind == "video":
+                windows_by_media.setdefault(cut.media_id, []).append(
+                    (float(cut.source_start_s), float(cut.source_end_s))
+                )
+        for windows in windows_by_media.values():
+            windows.sort()
+            for previous, current in zip(windows, windows[1:]):
+                if current[0] < previous[1] - _DURATION_MATCH_TOLERANCE_S:
+                    raise GuidedStoryError(
+                        "guided_story_snapshot_invalid",
+                        "Fast montage cuts cannot reuse overlapping video footage.",
+                    )
 
     media_digest = canonical_media_digest(snapshot.media)
     compile_execution_plan(

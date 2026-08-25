@@ -14,7 +14,13 @@ from app.agents.edit_proposal import (
     EditProposalMedia,
     minimum_required_sources,
 )
-from app.schemas.edit_proposal import EditProposalSnapshot, FastMontageCut, MediaRef, StoryBeat
+from app.schemas.edit_proposal import (
+    GUIDED_STORY_MIN_MOMENT_S,
+    EditProposalSnapshot,
+    FastMontageCut,
+    MediaRef,
+    StoryBeat,
+)
 
 log = structlog.get_logger()
 
@@ -26,122 +32,127 @@ def _moment_energy(moment: dict) -> float:
     return {"low": 2.0, "medium": 5.0, "high": 8.0}.get(str(raw).casefold(), 0.0)
 
 
-def _ranked_fast_media(source: EditProposalSnapshot) -> list:
+def _ranked_fast_media(media: list[MediaRef]) -> list:
     def score(ref) -> float:  # noqa: ANN001
         moments = (ref.analysis or {}).get("best_moments")
         energies = [_moment_energy(moment) for moment in moments or [] if isinstance(moment, dict)]
         return max(energies, default=0.0)
 
     return sorted(
-        enumerate(source.media),
+        enumerate(media),
         key=lambda row: (-score(row[1]), row[0]),
     )
 
 
-def _fallback_source_window(ref, duration_s: float, occurrence: int) -> tuple[float, float]:  # noqa: ANN001
-    if ref.kind == "image":
-        return 0.0, round(duration_s, 3)
-    source_duration_s = float(ref.duration_s or 0.0)
-    raw_moments = (ref.analysis or {}).get("best_moments")
-    moments = [moment for moment in raw_moments or [] if isinstance(moment, dict)]
-    if moments:
-        moment = sorted(
-            enumerate(moments),
-            key=lambda row: (-_moment_energy(row[1]), row[0]),
-        )[occurrence % len(moments)][1]
-        try:
-            moment_start_s = max(0.0, float(moment.get("start_s", 0.0)))
-            moment_end_s = min(source_duration_s, float(moment.get("end_s", source_duration_s)))
-        except (TypeError, ValueError):
-            moment_start_s, moment_end_s = 0.0, source_duration_s
-        if moment_end_s > moment_start_s:
-            center_s = (moment_start_s + moment_end_s) / 2
-            start_s = min(
-                max(0.0, center_s - duration_s / 2),
-                source_duration_s - duration_s,
-            )
-            start_s = round(start_s, 3)
-            return start_s, round(start_s + duration_s, 3)
-    start_s = max(0.0, (source_duration_s - duration_s) / 2)
-    start_s = round(start_s, 3)
-    return start_s, round(start_s + duration_s, 3)
-
-
-def _fallback_fast_cuts(source: EditProposalSnapshot, duration_s: int) -> list[FastMontageCut]:
+def deterministic_fast_cuts(media: list[MediaRef], duration_s: int) -> list[FastMontageCut]:
     """Build a strict source-aware montage when the semantic planner is invalid.
 
     The model still owns the normal creative path. This deterministic compiler
     prevents arithmetic/schema drift from turning an explicit direction change
-    into a user-visible failure, using analyzed strongest moments first.
+    into a user-visible failure. Every video window is consumed at most once,
+    image sources are used once, and adjacent cuts always use different media.
     """
 
-    eligible = [
-        ref for ref in source.media if ref.kind == "image" or float(ref.duration_s or 0.0) >= 0.4
-    ]
+    eligible = [ref for ref in media if ref.kind == "image" or float(ref.duration_s or 0.0) >= 0.4]
     if not eligible:
         raise ValueError("fast montage fallback found no usable media")
     eligible_ids = {ref.media_id for ref in eligible}
-    ranked = [ref for _, ref in _ranked_fast_media(source) if ref.media_id in eligible_ids]
+    ranked = [ref for _, ref in _ranked_fast_media(media) if ref.media_id in eligible_ids]
     target_duration_s = max(3, min(60, int(duration_s)))
     target_ms = target_duration_s * 1000
-    capacity_ms = {
+    source_capacity_ms = {
         ref.media_id: (
-            1200
-            if ref.kind == "image"
-            else min(1200, math.floor(float(ref.duration_s or 0.0) * 1000))
+            1200 if ref.kind == "image" else math.floor(float(ref.duration_s or 0.0) * 1000)
         )
         for ref in ranked
     }
-    primary_ceiling_ms = max(capacity_ms.values())
-    if primary_ceiling_ms < 800:
+    if max(source_capacity_ms.values()) < 800:
         raise ValueError("fast montage fallback found no source supporting a primary cut")
-    long_sources = [ref for ref in ranked if capacity_ms[ref.media_id] >= primary_ceiling_ms]
-    short_sources = [ref for ref in ranked if ref not in long_sources]
-
     required_sources = minimum_required_sources(len(eligible))
-    selected_short: list[tuple[MediaRef, int]] = []
-    short_budget_ms = target_ms - 800
-    for ref in short_sources:
-        if len(selected_short) >= max(0, required_sources - 1):
+    available_kinds = {ref.kind for ref in eligible}
+    rank = {ref.media_id: index for index, ref in enumerate(ranked)}
+    remaining_ms = dict(source_capacity_ms)
+    reservations: list[tuple[MediaRef, int, int]] = []
+    used_ids: set[str] = set()
+    used_kinds: set[str] = set()
+    previous_id: str | None = None
+    last_pick_was_new = False
+    minimum_total_ms = 0
+    maximum_total_ms = 0
+    while len(reservations) < 80:
+        if (
+            maximum_total_ms >= target_ms
+            and len(used_ids) >= required_sources
+            and used_kinds == available_kinds
+        ):
             break
-        safe_ms = capacity_ms[ref.media_id]
-        if sum(duration_ms for _, duration_ms in selected_short) + safe_ms > short_budget_ms:
-            continue
-        selected_short.append((ref, safe_ms))
+        candidates = [
+            ref
+            for ref in ranked
+            if ref.media_id != previous_id and remaining_ms[ref.media_id] >= 400
+        ]
+        if len(used_ids) < required_sources and (not reservations or not last_pick_was_new):
+            unseen = [ref for ref in candidates if ref.media_id not in used_ids]
+            if unseen:
+                candidates = unseen
+        missing_kinds = available_kinds - used_kinds
+        if missing_kinds:
+            missing_kind_candidates = [ref for ref in candidates if ref.kind in missing_kinds]
+            if missing_kind_candidates:
+                candidates = missing_kind_candidates
+        candidates = [
+            ref
+            for ref in candidates
+            if minimum_total_ms
+            + (800 if remaining_ms[ref.media_id] >= 800 else remaining_ms[ref.media_id])
+            <= target_ms
+        ]
+        if not candidates:
+            break
+        ref = min(
+            candidates,
+            key=lambda candidate: (
+                -remaining_ms[candidate.media_id],
+                rank[candidate.media_id],
+            ),
+        )
+        maximum_ms = min(1200, remaining_ms[ref.media_id])
+        minimum_ms = 800 if maximum_ms >= 800 else maximum_ms
+        was_new = ref.media_id not in used_ids
+        reservations.append((ref, minimum_ms, maximum_ms))
+        remaining_ms[ref.media_id] -= maximum_ms
+        minimum_total_ms += minimum_ms
+        maximum_total_ms += maximum_ms
+        used_ids.add(ref.media_id)
+        used_kinds.add(ref.kind)
+        previous_id = ref.media_id
+        last_pick_was_new = was_new
+    if (
+        maximum_total_ms < target_ms
+        or minimum_total_ms > target_ms
+        or len(used_ids) < required_sources
+        or used_kinds != available_kinds
+    ):
+        raise ValueError("fast montage fallback cannot allocate distinct source windows safely")
 
-    remaining_ms = target_ms - sum(duration_ms for _, duration_ms in selected_short)
-    minimum_long_cuts = math.ceil(remaining_ms / primary_ceiling_ms)
-    maximum_long_cuts = math.floor(remaining_ms / 800)
-    required_long_sources = max(1, required_sources - len(selected_short))
-    if maximum_long_cuts < max(minimum_long_cuts, required_long_sources):
-        raise ValueError("fast montage fallback cannot satisfy source variety and cut duration")
-    long_cut_count = min(
-        max(round(remaining_ms / 1000), minimum_long_cuts, required_long_sources),
-        maximum_long_cuts,
-    )
-    if long_cut_count + len(selected_short) > 80:
-        raise ValueError("fast montage fallback needs more than 80 safe cuts")
-    base_cut_ms, remainder_ms = divmod(remaining_ms, long_cut_count)
-    long_durations_ms = [
-        base_cut_ms + (1 if index < remainder_ms else 0) for index in range(long_cut_count)
-    ]
+    remaining_target_ms = target_ms - minimum_total_ms
+    scheduled: list[tuple[MediaRef, int, int]] = []
+    consumed_ms = {ref.media_id: 0 for ref in ranked}
+    for ref, minimum_ms, maximum_ms in reservations:
+        extra_ms = min(remaining_target_ms, maximum_ms - minimum_ms)
+        duration_ms = minimum_ms + extra_ms
+        remaining_target_ms -= extra_ms
+        start_ms = consumed_ms[ref.media_id]
+        consumed_ms[ref.media_id] += duration_ms
+        scheduled.append((ref, duration_ms, start_ms))
+    if remaining_target_ms:
+        raise ValueError("fast montage fallback could not preserve the target duration")
 
-    scheduled: list[tuple[MediaRef, int]] = []
-    short_queue = list(selected_short)
-    insertion_interval = math.ceil(long_cut_count / (len(short_queue) + 1))
-    for index, duration_ms in enumerate(long_durations_ms):
-        scheduled.append((long_sources[index % len(long_sources)], duration_ms))
-        if short_queue and (index + 1) % insertion_interval == 0:
-            scheduled.append(short_queue.pop(0))
-    scheduled.extend(short_queue)
-
-    occurrences: dict[str, int] = {}
     cuts: list[FastMontageCut] = []
-    for index, (ref, duration_ms) in enumerate(scheduled):
+    for index, (ref, duration_ms, start_ms) in enumerate(scheduled):
         exact_cut_duration_s = duration_ms / 1000
-        occurrence = occurrences.get(ref.media_id, 0)
-        occurrences[ref.media_id] = occurrence + 1
-        start_s, end_s = _fallback_source_window(ref, exact_cut_duration_s, occurrence)
+        start_s = round(start_ms / 1000, 3) if ref.kind == "video" else 0.0
+        end_s = round(start_s + exact_cut_duration_s, 3)
         cuts.append(
             FastMontageCut(
                 cut_id=f"fallback-cut-{index + 1}",
@@ -157,6 +168,74 @@ def _fallback_fast_cuts(source: EditProposalSnapshot, duration_s: int) -> list[F
     if abs(sum(cut.output_duration_s for cut in cuts) - target_duration_s) > 0.001:
         raise ValueError("fast montage fallback could not preserve the target duration")
     return cuts
+
+
+def deterministic_guided_beats(media: list[MediaRef], duration_s: int) -> list[StoryBeat]:
+    """Build conservative, metadata-free story structure from renderable owned media."""
+
+    eligible = [
+        ref
+        for ref in media
+        if ref.kind == "image" or float(ref.duration_s or 0.0) >= GUIDED_STORY_MIN_MOMENT_S
+    ]
+    if not eligible:
+        raise ValueError("guided story fallback found no usable media")
+
+    images = [ref for ref in eligible if ref.kind == "image"]
+    videos = sorted(
+        (ref for ref in eligible if ref.kind == "video"),
+        key=lambda ref: -float(ref.duration_s or 0.0),
+    )
+    ordered: list[MediaRef] = []
+    while images or videos:
+        if videos:
+            ordered.append(videos.pop(0))
+        if images:
+            ordered.append(images.pop(0))
+
+    target_s = max(3, min(60, int(duration_s)))
+    source_count = max(
+        1,
+        min(7, len(ordered), math.floor(target_s / GUIDED_STORY_MIN_MOMENT_S)),
+    )
+    selected = ordered[:source_count]
+    beat_count = min(5, source_count)
+    groups: list[list[MediaRef]] = [[] for _ in range(beat_count)]
+    for index, ref in enumerate(selected):
+        groups[index % beat_count].append(ref)
+
+    durations = [round(GUIDED_STORY_MIN_MOMENT_S * len(group), 3) for group in groups]
+    remaining = round(target_s - sum(durations), 3)
+    index = 0
+    while remaining > 0.001:
+        capacity = round(12.0 - durations[index % beat_count], 3)
+        if capacity > 0:
+            addition = min(remaining, capacity)
+            durations[index % beat_count] = round(durations[index % beat_count] + addition, 3)
+            remaining = round(remaining - addition, 3)
+        index += 1
+        if index > beat_count * 2 and remaining > 0.001:
+            raise ValueError("guided story fallback cannot allocate target duration")
+
+    copy = [
+        ("Opening", "A few moments, together."),
+        ("Details", "Details worth noticing."),
+        ("Closing", "One last look."),
+        ("Another view", "A different angle on the moment."),
+        ("Final frame", "A final frame to remember."),
+    ]
+    return [
+        StoryBeat(
+            beat_id=f"fallback-beat-{beat_index + 1}",
+            topic=copy[beat_index][0],
+            thought=copy[beat_index][1],
+            thought_source="ai_draft",
+            media_ids=[ref.media_id for ref in group],
+            layout="fullscreen",
+            duration_s=durations[beat_index],
+        )
+        for beat_index, group in enumerate(groups)
+    ]
 
 
 def _compatibility_beats(cuts: list[FastMontageCut]) -> list[StoryBeat]:
@@ -214,6 +293,7 @@ def plan_direction_snapshot(
         for ref in source.media
     ]
     output = None
+    used_fallback = False
     try:
         output = EditProposalAgent(default_client()).run(
             EditProposalAgentInput(
@@ -228,17 +308,19 @@ def plan_direction_snapshot(
             ctx=RunContext(job_id=job_id) if job_id else None,
         )
     except TerminalError as exc:
-        if direction != "fast_montage":
+        if direction == "text_explainer":
             raise
         log.warning(
-            "edit_direction_planner.fast_montage_fallback",
+            "edit_direction_planner.deterministic_fallback",
             job_id=job_id,
+            direction=direction,
             error=str(exc),
         )
+        used_fallback = True
     cuts = (
         output.fast_cuts
         if output is not None and direction == "fast_montage"
-        else _fallback_fast_cuts(source, duration_s)
+        else deterministic_fast_cuts(source.media, duration_s)
         if direction == "fast_montage"
         else None
     )
@@ -246,8 +328,9 @@ def plan_direction_snapshot(
         if not cuts:
             raise ValueError("fast montage planner returned no source-aware cuts")
         beats = _compatibility_beats(cuts)
+    elif output is None:
+        beats = deterministic_guided_beats(source.media, duration_s)
     else:
-        assert output is not None
         beats = [
             StoryBeat(
                 beat_id=f"beat-{index + 1}",
@@ -265,12 +348,17 @@ def plan_direction_snapshot(
             "direction": direction,
             "goal": goal,
             "pace": pace,
-            "duration_s": int(duration_s) if direction == "fast_montage" else output.duration_s,
+            "duration_s": int(duration_s)
+            if output is None or direction == "fast_montage"
+            else output.duration_s,
             "title": output.title if output is not None else source.title,
             "story_beats": beats,
             "fast_cuts": cuts,
         }
     )
-    if direction == "fast_montage":
-        return EditProposalSnapshot.model_validate(planned.model_dump(mode="json"))
-    return planned
+    result = EditProposalSnapshot.model_validate(planned.model_dump(mode="json"))
+    if used_fallback:
+        from app.pipeline.guided_story import validate_proposal_timing  # noqa: PLC0415
+
+        validate_proposal_timing(result)
+    return result

@@ -17,6 +17,7 @@ from sqlalchemy import func, select
 from app.database import sync_session
 from app.models import ContentPlan, PlanItem, PlanItemAsset
 from app.schemas.edit_proposal import (
+    GUIDED_STORY_MIN_MOMENT_S,
     MAIN_CREATOR_FAIL_CLOSED,
     EditProposal,
     EditProposalSnapshot,
@@ -81,15 +82,12 @@ MIN_GUIDED_DURATION_S = 3
 # image the guided_story per-media floor (guided_story.py _DIRECTION_POLICY
 # "guided_story"."min_moment_s") rather than an unbounded amount.
 _IMAGE_FEASIBLE_CREDIT_S = 1.4
-# guided_story.py's own per-moment minimum for the "guided_story" direction
-# (_DIRECTION_POLICY["guided_story"]["min_moment_s"]) — duplicated here as a
-# constant rather than imported to keep this module's planning estimate free
-# of a pipeline import; guided_story.py:377,395-399 is the actual render-time
-# enforcement this mirrors. A video shorter than this can never be its own
+# guided_story.py's own per-moment minimum for the "guided_story" direction.
+# The shared schema constant keeps planning and rendering in lockstep without
+# importing the pipeline. A video shorter than this can never be its own
 # legible beat moment, so it earns zero credit below (P2-1, 2026-08-18
 # adversarial review) — it was previously falling into the image branch and
 # being credited as if it were a full _IMAGE_FEASIBLE_CREDIT_S image.
-_RENDERER_MIN_MOMENT_S = 1.4
 
 
 def _fast_story_beats(cuts: list[FastMontageCut]) -> list[StoryBeat]:
@@ -130,7 +128,7 @@ def feasible_guided_duration_s(media: list[MediaRef]) -> float:
     media can support. Videos contribute their own probed duration once — a
     beat can never be stretched past what was actually filmed (no
     slow-mo/loop) — but ONLY when that duration clears
-    `_RENDERER_MIN_MOMENT_S`; a video with no probed duration, a zero
+    `GUIDED_STORY_MIN_MOMENT_S`; a video with no probed duration, a zero
     duration, or a duration too short to be its own legible moment
     contributes nothing (not the image credit). This is a pre-agent planning
     estimate — guided_story.py's `_source_window` / `_allocate_beat_durations`
@@ -141,7 +139,7 @@ def feasible_guided_duration_s(media: list[MediaRef]) -> float:
     for ref in media:
         if ref.kind == "video":
             duration = float(ref.duration_s) if ref.duration_s else 0.0
-            if duration >= _RENDERER_MIN_MOMENT_S:
+            if duration >= GUIDED_STORY_MIN_MOMENT_S:
                 total += duration
         else:
             total += _IMAGE_FEASIBLE_CREDIT_S
@@ -161,7 +159,10 @@ def guided_feasibility_threshold_s(media_count: int) -> float:
     never calls the agent at all — the montage-fallback path handles it.
     """
 
-    return max(MIN_GUIDED_DURATION_S, _RENDERER_MIN_MOMENT_S * min(3, max(1, media_count)))
+    return max(
+        MIN_GUIDED_DURATION_S,
+        GUIDED_STORY_MIN_MOMENT_S * min(3, max(1, media_count)),
+    )
 
 
 def adapt_target_duration_s(brief_duration_s: int, feasible_s: float) -> int:
@@ -622,10 +623,15 @@ def _run_draft_attempt(
     """
 
     from app.agents._model_client import default_client  # noqa: PLC0415
+    from app.agents._runtime import TerminalError  # noqa: PLC0415
     from app.agents.edit_proposal import (  # noqa: PLC0415
         EditProposalAgent,
         EditProposalAgentInput,
         EditProposalMedia,
+    )
+    from app.services.edit_direction_planner import (  # noqa: PLC0415
+        deterministic_fast_cuts,
+        deterministic_guided_beats,
     )
     from app.services.edit_proposals import approve_proposal  # noqa: PLC0415
 
@@ -888,17 +894,30 @@ def _run_draft_attempt(
             )
             for ref in media
         ]
-        output = EditProposalAgent(default_client()).run(
-            EditProposalAgentInput(
-                idea=idea,
-                theme=theme,
-                direction=brief.direction,
-                goal=brief.goal,
-                pace=brief.pace,
-                target_duration_s=target_duration_s,
-                media=agent_media,
+        fallback_used = False
+        try:
+            output = EditProposalAgent(default_client()).run(
+                EditProposalAgentInput(
+                    idea=idea,
+                    theme=theme,
+                    direction=brief.direction,
+                    goal=brief.goal,
+                    pace=brief.pace,
+                    target_duration_s=target_duration_s,
+                    media=agent_media,
+                )
             )
-        )
+        except TerminalError as exc:
+            if brief.direction == "text_explainer":
+                raise
+            fallback_used = True
+            output = None
+            log.warning(
+                "edit_proposal.deterministic_fallback",
+                item_id=item_id,
+                direction=brief.direction,
+                error=str(exc),
+            )
         # EditProposalAgent.parse()'s +/-5s tolerance checks output.duration_s
         # against target_duration_s, NOT against real footage — with a small
         # target (e.g. the MIN_GUIDED_DURATION_S=3 floor) that tolerance
@@ -906,7 +925,7 @@ def _run_draft_attempt(
         # the true footage cap (P2-1a, 2026-08-18 adversarial review). Reject
         # rather than silently rewrite per-beat durations the agent already
         # sized for a specific total.
-        if output.duration_s > math.floor(feasible_duration_s):
+        if output is not None and output.duration_s > math.floor(feasible_duration_s):
             with sync_session() as db:
                 locked = _locked_item(db, iid, ownership_epoch)
                 item = locked[0] if locked else None
@@ -931,12 +950,20 @@ def _run_draft_attempt(
                     )
                     db.commit()
             return
+        if output is None and brief.direction == "fast_montage":
+            fallback_cuts = deterministic_fast_cuts(media, target_duration_s)
+            fallback_beats = _fast_story_beats(fallback_cuts)
+        else:
+            fallback_cuts = None
+            fallback_beats = (
+                deterministic_guided_beats(media, target_duration_s) if output is None else None
+            )
         snapshot = EditProposalSnapshot(
             direction=brief.direction,
             goal=brief.goal,
             pace=brief.pace,
-            duration_s=output.duration_s,
-            title=output.title,
+            duration_s=output.duration_s if output is not None else target_duration_s,
+            title=output.title if output is not None else "A few moments",
             media=media,
             story_beats=(
                 [
@@ -951,15 +978,23 @@ def _run_draft_attempt(
                     )
                     for beat in output.story_beats
                 ]
-                if brief.direction != "fast_montage"
+                if output is not None and brief.direction != "fast_montage"
                 else _fast_story_beats(output.fast_cuts or [])
+                if output is not None
+                else fallback_beats
             ),
             fast_cuts=(
                 [cut.model_dump(mode="json") for cut in output.fast_cuts]
-                if brief.direction == "fast_montage" and output.fast_cuts
-                else None
+                if output is not None and brief.direction == "fast_montage" and output.fast_cuts
+                else fallback_cuts
             ),
         )
+        if fallback_used:
+            # Never auto-approve a deterministic recovery that the strict
+            # renderer cannot compile from the complete accepted media set.
+            from app.pipeline.guided_story import validate_proposal_timing  # noqa: PLC0415
+
+            validate_proposal_timing(snapshot)
         with sync_session() as db:
             locked = _locked_item(db, iid, ownership_epoch)
             item = locked[0] if locked else None

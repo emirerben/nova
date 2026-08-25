@@ -16,11 +16,12 @@ from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.creator_agent import (
     CREATOR_AGENT_OUTPUT_ADAPTER,
     CreatorAgentOutput,
+    ProposeStrategy,
     ResolvedCreatorManifest,
 )
 from app.pipeline.prompt_loader import load_prompt
 
-MAIN_CREATOR_PROMPT_VERSION = "2026-08-24-v4"
+MAIN_CREATOR_PROMPT_VERSION = "2026-08-25-v5"
 
 
 class MainCreatorInput(BaseModel):
@@ -71,12 +72,29 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             user_message=input.user_message,
         )
 
-    def parse(self, raw_text: str, input: MainCreatorInput) -> MainCreatorOutput:  # noqa: A002, ARG002
+    def parse(self, raw_text: str, input: MainCreatorInput) -> MainCreatorOutput:  # noqa: A002
         try:
             data = json.loads(raw_text)
             if not isinstance(data, dict):
                 raise ValueError("response is not an object")
             action = CREATOR_AGENT_OUTPUT_ADAPTER.validate_python(data.get("action"))
+            if isinstance(action, ProposeStrategy):
+                # Share the compiler's exact policy: guided planning never
+                # echoes opaque IDs, while native planning remains bounded to
+                # owned non-asset media.
+                from app.agents._schemas.creator_policy import (  # noqa: PLC0415
+                    normalize_creator_strategy_media,
+                )
+
+                action = action.model_copy(
+                    update={
+                        "strategy": normalize_creator_strategy_media(
+                            input.capability_manifest,
+                            action.strategy,
+                            repair_model_output=True,
+                        )
+                    }
+                )
             return MainCreatorOutput(action=action)
         except Exception as exc:  # noqa: BLE001
             raise SchemaError(f"main_creator: invalid output: {exc}") from exc
