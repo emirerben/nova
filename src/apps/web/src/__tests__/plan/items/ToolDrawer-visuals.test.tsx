@@ -146,10 +146,34 @@ describe("ToolDrawer visual blocks", () => {
           scale: 0.35,
           z: 0,
         },
+        {
+          version: 1,
+          id: "video-1",
+          kind: "media",
+          start_s: 2,
+          end_s: 4,
+          timing_mode: "manual",
+          origin: "user",
+          transition_in: "cut",
+          transition_out: "cut",
+          audio_policy: { base: "continue", sfx: "continue" },
+          asset_id: "video-asset",
+          src_gcs_path: "users/u/plan/i/pool/clip.mov",
+          media_kind: "video",
+          display_mode: "overlay",
+          transform: { fit_mode: "cover", focal_x: 0.5, focal_y: 0.5, zoom: 1 },
+          x_frac: 0.5,
+          y_frac: 0.5,
+          scale: 0.35,
+          z: 1,
+          source_start_s: 0,
+          source_end_s: 2,
+        },
       ],
     });
 
     expect(screen.getByText("Photo · Full screen")).toBeInTheDocument();
+    expect(screen.getByText("Video · Overlay")).toBeInTheDocument();
   });
 
   it("shows source-labeled asset context and saves creator edits", async () => {

@@ -709,17 +709,19 @@ describe("EditorShell visuals upload lifecycle", () => {
     expect(video).not.toBeNull();
     Object.defineProperty(video, "duration", { configurable: true, value: 8 });
     fireEvent.loadedMetadata(video as HTMLVideoElement);
+    Object.defineProperty(video, "currentTime", {
+      configurable: true,
+      value: 1,
+      writable: true,
+    });
+    fireEvent.timeUpdate(video as HTMLVideoElement);
     fireEvent.click(screen.getByRole("button", { name: "Visuals tool" }));
     fireEvent.click(await screen.findByRole("button", { name: "Select first.png" }));
     fireEvent.click(screen.getByRole("button", { name: "Select second.png" }));
     fireEvent.click(screen.getByRole("button", { name: "Place selected in sequence" }));
 
-    expect(screen.getByRole("button", { name: "Media, 0:00–0:02" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Media, 0:02–0:04" })).toBeInTheDocument();
-    expect(mockToast).not.toHaveBeenCalledWith(
-      "Select a media layer to place the sequence after.",
-      expect.anything(),
-    );
+    expect(screen.getByRole("button", { name: "Media, 0:01–0:03" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Media, 0:03–0:05" })).toBeInTheDocument();
   });
 
   it("shows a failed transfer in the real drawer and retries it without disabling the picker", async () => {
