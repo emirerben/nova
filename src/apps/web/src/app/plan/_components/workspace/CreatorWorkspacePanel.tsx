@@ -92,21 +92,20 @@ export function CreatorWorkspacePanel({
   const done = deliverables.filter((item) => item.status === "ready").length;
 
   return (
-    <section aria-label="Creator workspace" className="rounded-xl border border-white/15 bg-[#151515] p-4 text-white">
+    <section aria-label="Creator workspace" className="rounded-2xl border border-zinc-200 bg-white p-4 text-[#0c0c0e] shadow-sm">
       {available && receipt && (
         <>
           <div className="flex items-baseline justify-between gap-3">
             <div>
               <p className="text-sm font-semibold">Workspace progress</p>
-              <p className="mt-1 text-xs text-white/55">{done} of {deliverables.length} deliverables ready · {statusLabel(receipt.status)}</p>
+              <p className="mt-1 text-sm text-zinc-500">{done} of {deliverables.length} deliverables ready · {statusLabel(receipt.status)}</p>
             </div>
-            <span className="text-xs text-lime-200">{deliverables.length ? Math.round((done / deliverables.length) * 100) : 0}%</span>
           </div>
           {deliverables.length > 0 && (
             <ul className="mt-3 grid gap-2 sm:grid-cols-2">
               {deliverables.map((item) => (
-                <li key={item.deliverable_id} className="rounded-md border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white/70">
-                  <span className="font-medium text-white">Deliverable</span> · {statusLabel(item.status)}
+                <li key={item.deliverable_id} className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-600">
+                  <span className="font-medium text-zinc-900">Deliverable</span> · {statusLabel(item.status)}
                 </li>
               ))}
             </ul>
@@ -117,12 +116,12 @@ export function CreatorWorkspacePanel({
       {proposal && <RelevanceDecision proposal={proposal} pendingDecision={pendingDecision} setPendingDecision={setPendingDecision} onConfirm={() => void confirmDecision()} deciding={deciding} />}
 
       {available && (
-        <div className="mt-4 border-t border-white/10 pt-4">
+        <div className="mt-4 border-t border-zinc-200 pt-4">
           <p className="text-sm font-medium">Teach Kria one thing about your taste</p>
-          <p className="mt-1 text-xs text-white/50">Only a note you explicitly confirm becomes a preference signal.</p>
+          <p className="mt-1 text-sm text-zinc-500">Only a note you explicitly confirm becomes a preference signal.</p>
           {pendingNote ? (
-            <div className="mt-3 rounded-md border border-lime-300/30 bg-lime-300/10 p-3">
-              <p className="text-sm text-white">“{pendingNote}”</p>
+            <div className="mt-3 rounded-md border border-lime-200 bg-lime-50 p-3">
+              <p className="text-sm text-zinc-900">“{pendingNote}”</p>
               <div className="mt-2 flex gap-2">
                 <Button size="sm" disabled={savingNote} onClick={() => void confirmPreference()}>{savingNote ? "Saving…" : "Confirm preference"}</Button>
                 <Button size="sm" variant="outline" disabled={savingNote} onClick={() => setPendingNote(null)}>Keep editing</Button>
@@ -130,13 +129,13 @@ export function CreatorWorkspacePanel({
             </div>
           ) : (
             <form className="mt-3 flex gap-2" onSubmit={(event) => { event.preventDefault(); if (note.trim()) setPendingNote(note.trim()); }}>
-              <Input aria-label="Preference note" value={note} onChange={(event) => setNote(event.target.value)} className="min-w-0 flex-1 border-white/15 bg-white/[0.06] text-white placeholder:text-white/35" placeholder="More quiet openings, please…" />
+              <Input aria-label="Preference note" value={note} onChange={(event) => setNote(event.target.value)} className="min-w-0 flex-1" placeholder="More quiet openings, please…" />
               <Button type="submit" size="sm" disabled={!note.trim()}>Review</Button>
             </form>
           )}
         </div>
       )}
-      {error && <p className="mt-3 text-xs text-amber-200" role="status">{error}</p>}
+      {error && <p className="mt-3 text-sm text-zinc-700" role="alert">{error}</p>}
     </section>
   );
 }
@@ -154,23 +153,23 @@ function RelevanceDecision({
   onConfirm: () => void;
   deciding: boolean;
 }) {
-  if (proposal.status === "pending") return <p className="mt-3 text-sm text-white/60" role="status">Checking where this footage belongs…</p>;
-  if (proposal.status === "failed") return <p className="mt-3 text-sm text-amber-200" role="status">We couldn’t classify that footage yet.</p>;
+  if (proposal.status === "pending" || proposal.status === "processing") return <p className="mt-3 text-sm text-zinc-600" role="status">Checking where this footage belongs…</p>;
+  if (proposal.status === "failed") return <p className="mt-3 text-sm text-zinc-700" role="alert">We couldn’t classify that footage yet.</p>;
   if (proposal.status !== "ready") return null;
   const title = proposal.relevance === "existing_item" ? "This looks useful for an existing plan item." : proposal.relevance === "new_topic" ? `This could be a new topic: ${proposal.topic ?? "Untitled"}` : "This doesn’t clearly match the current plan.";
   const decision = proposal.relevance === "existing_item" ? "accept_existing" : proposal.relevance === "new_topic" ? "accept_new_topic" : "reject";
   return (
-    <div className="mt-4 rounded-lg border border-white/15 bg-white/[0.04] p-3">
+    <div className="mt-4 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
       <p className="text-sm font-medium">{title}</p>
-      {proposal.rationale && <p className="mt-1 text-xs text-white/55">{proposal.rationale}</p>}
+      {proposal.rationale && <p className="mt-1 text-sm text-zinc-600">{proposal.rationale}</p>}
       {!pendingDecision ? (
         <div className="mt-3 flex flex-wrap gap-2">
           <Button size="sm" onClick={() => setPendingDecision(decision)}>Review suggested choice</Button>
           <Button size="sm" variant="outline" onClick={() => setPendingDecision("reject")}>Keep out of plan</Button>
         </div>
       ) : (
-        <div className="mt-3 rounded-md border border-lime-300/30 bg-lime-300/10 p-3">
-          <p className="text-xs text-white/75">Confirm: {pendingDecision === "reject" ? "keep this footage out of the plan" : "use this footage in the workspace"}?</p>
+        <div className="mt-3 rounded-md border border-lime-200 bg-lime-50 p-3">
+          <p className="text-sm text-zinc-700">Confirm: {pendingDecision === "reject" ? "keep this footage out of the plan" : "use this footage in the workspace"}?</p>
           <div className="mt-2 flex gap-2"><Button size="sm" disabled={deciding} onClick={onConfirm}>{deciding ? "Saving…" : "Confirm decision"}</Button><Button size="sm" variant="outline" disabled={deciding} onClick={() => setPendingDecision(null)}>Cancel</Button></div>
         </div>
       )}

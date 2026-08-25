@@ -165,15 +165,15 @@ export default function MainCreatorAgentPanel({ itemId }: { itemId: string }) {
   return (
     <section
       aria-label="Create with Kria"
-      className="rounded-xl border border-white/15 bg-[#151515] p-4 text-white shadow-sm"
+      className="rounded-xl border border-lime-300/70 bg-lime-50/50 p-4"
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2 text-sm font-semibold text-white">
-            <Sparkles className="h-4 w-4 text-lime-300" aria-hidden="true" />
+          <div className="flex items-center gap-2 text-sm font-semibold text-[#0c0c0e]">
+            <Sparkles className="h-4 w-4 text-lime-700" aria-hidden="true" />
             Create with Kria
           </div>
-          <p className="mt-1 text-sm text-white/65">
+          <p className="mt-1 text-sm text-[#52525b]">
             Talk through the edit. Kria will propose a creative direction before rendering.
           </p>
         </div>
@@ -197,8 +197,8 @@ export default function MainCreatorAgentPanel({ itemId }: { itemId: string }) {
           aria-live="polite"
         >
           {visibleEvents.map((event) => (
-            <div key={event.id} className="text-sm text-white/85">
-              <p className="mb-0.5 text-[11px] font-medium uppercase tracking-wide text-white/45">
+            <div key={event.id} className="text-sm text-[#27272a]">
+              <p className="mb-0.5 text-[11px] font-medium uppercase tracking-wide text-[#71717a]">
                 {event.role === "user" ? "You" : "Kria"}
               </p>
               <p>{eventText(event)}</p>
@@ -208,27 +208,27 @@ export default function MainCreatorAgentPanel({ itemId }: { itemId: string }) {
       )}
 
       {plan && session?.status === "awaiting_confirmation" && (
-        <div className="mt-4 rounded-lg border border-white/15 bg-white/[0.06] p-3">
-          <p className="text-sm font-semibold text-white">{plan.summary}</p>
+        <div className="mt-4 rounded-lg border border-lime-300 bg-white p-3">
+          <p className="text-sm font-semibold text-[#18181b]">{plan.summary}</p>
           {plan.creative_rationale && (
-            <p className="mt-1 text-sm text-white/65">{plan.creative_rationale}</p>
+            <p className="mt-1 text-sm text-[#52525b]">{plan.creative_rationale}</p>
           )}
           {plan.intro_hook && (
-            <p className="mt-3 text-sm text-white/75">
-              <span className="font-medium text-white">Opening idea:</span> {plan.intro_hook}
+            <p className="mt-3 text-sm text-[#3f3f46]">
+              <span className="font-medium text-[#18181b]">Opening idea:</span> {plan.intro_hook}
             </p>
           )}
           {plan.story_structure && plan.story_structure.length > 0 && (
-            <ol className="mt-2 list-decimal space-y-0.5 pl-5 text-sm text-white/65">
+            <ol className="mt-2 list-decimal space-y-0.5 pl-5 text-sm text-[#52525b]">
               {plan.story_structure.map((beat) => (
                 <li key={beat}>{beat}</li>
               ))}
             </ol>
           )}
-          <div className="mt-3 flex flex-wrap gap-1.5 text-xs text-white/75">
-            {plan.edit_format && <span className="rounded-full bg-white/10 px-2 py-1">{plan.edit_format}</span>}
-            {plan.audio_strategy && <span className="rounded-full bg-white/10 px-2 py-1">{plan.audio_strategy}</span>}
-            {plan.caption_style && <span className="rounded-full bg-white/10 px-2 py-1">{plan.caption_style} captions</span>}
+          <div className="mt-3 flex flex-wrap gap-1.5 text-xs text-[#3f3f46]">
+            {plan.edit_format && <span className="rounded-full bg-zinc-100 px-2 py-1">{plan.edit_format}</span>}
+            {plan.audio_strategy && <span className="rounded-full bg-zinc-100 px-2 py-1">{plan.audio_strategy}</span>}
+            {plan.caption_style && <span className="rounded-full bg-zinc-100 px-2 py-1">{plan.caption_style} captions</span>}
           </div>
           <TreatmentPreview plan={plan} />
           <div className="mt-3 flex gap-2">
@@ -241,7 +241,7 @@ export default function MainCreatorAgentPanel({ itemId }: { itemId: string }) {
                 )}
               </Button>
             ) : (
-              <p className="self-center text-xs text-white/45">
+              <p className="self-center text-xs text-[#71717a]">
                 Rendering is not enabled for this preview yet.
               </p>
             )}
@@ -259,7 +259,7 @@ export default function MainCreatorAgentPanel({ itemId }: { itemId: string }) {
       )}
 
       {busy && (
-        <div className="mt-4 flex items-center gap-2 text-sm text-white/65" aria-live="polite">
+        <div className="mt-4 flex items-center gap-2 text-sm text-[#52525b]" aria-live="polite">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
           {session?.status === "rendering" ? "Rendering the confirmed direction…" : "Kria is checking the edit…"}
         </div>
@@ -297,7 +297,7 @@ export default function MainCreatorAgentPanel({ itemId }: { itemId: string }) {
             rows={2}
           />
           <div className="flex items-center justify-between gap-3">
-            <p className="text-xs text-white/45">Nothing renders until you confirm.</p>
+            <p className="text-xs text-[#71717a]">Nothing renders until you confirm.</p>
             <Button type="button" size="sm" disabled={!message.trim() || sending} onClick={() => void send()}>
               {sending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : session ? "Send" : "Start"}
             </Button>
@@ -308,17 +308,17 @@ export default function MainCreatorAgentPanel({ itemId }: { itemId: string }) {
       {session?.last_review && <CreatorReviewReceipt review={session.last_review} />}
 
       {session?.auto_iteration?.available && session.status === "awaiting_feedback" && (
-        <div className="mt-4 rounded-lg border border-white/15 bg-white/[0.04] p-3">
-          <label className="flex items-start gap-2 text-sm text-white/80">
+        <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-3">
+          <label className="flex items-start gap-2 text-sm text-zinc-700">
             <input
               type="checkbox"
-              className="mt-0.5 accent-lime-300"
+              className="mt-0.5 accent-lime-600"
               checked={autoOptIn}
               onChange={(event) => setAutoOptIn(event.target.checked)}
             />
             <span>
               Allow one automatic revision if the review finds an objective issue.
-              <span className="mt-1 block text-xs text-white/45">You can still review the result before publishing.</span>
+              <span className="mt-1 block text-xs text-zinc-500">You can still review the result before publishing.</span>
             </span>
           </label>
           {autoOptIn && (
@@ -329,7 +329,7 @@ export default function MainCreatorAgentPanel({ itemId }: { itemId: string }) {
         </div>
       )}
 
-      {error && <p className="mt-2 text-sm text-red-300">{error}</p>}
+      {error && <p className="mt-2 text-sm text-zinc-700" role="alert">{error}</p>}
     </section>
   );
 }
@@ -344,9 +344,9 @@ function TreatmentPreview({ plan }: { plan: NonNullable<CreatorAgentSession["pen
   return (
     <div className="mt-4 grid gap-2 sm:grid-cols-3" aria-label="Treatment previews">
       {cards.map((card) => (
-        <div key={card.key} className="rounded-md border border-white/10 bg-black/20 px-2.5 py-2">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-lime-200">{card.label}</p>
-          <p className="mt-1 text-xs text-white/60">{card.detail}</p>
+        <div key={card.key} className="rounded-md border border-zinc-200 bg-white px-2.5 py-2">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-lime-700">{card.label}</p>
+          <p className="mt-1 text-xs text-zinc-600">{card.detail}</p>
         </div>
       ))}
     </div>
@@ -355,40 +355,40 @@ function TreatmentPreview({ plan }: { plan: NonNullable<CreatorAgentSession["pen
 
 function CreatorReviewReceipt({ review }: { review: CreatorAgentReview }) {
   if (review.status === "queued" || review.status === "running") {
-    return <p className="mt-4 text-sm text-white/60" role="status">Reviewing the exact render…</p>;
+    return <p className="mt-4 text-sm text-zinc-600" role="status">Reviewing the exact render…</p>;
   }
   if (review.status === "failed" || review.status === "unavailable" || review.error_message) {
     return (
-      <div className="mt-4 rounded-lg border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100" role="status">
+      <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-700" role="status">
         <p className="font-medium">The quality review is unavailable.</p>
-        <p className="mt-1 text-xs text-amber-100/70">{review.error_message ?? "Your rendered video is still available. You can decide what feels right."}</p>
+        <p className="mt-1 text-xs text-zinc-500">{review.error_message ?? "Your rendered video is still available. You can decide what feels right."}</p>
       </div>
     );
   }
   const evidence = review.evidence ?? [];
   return (
-    <div className="mt-4 rounded-lg border border-white/15 bg-white/[0.04] p-3" aria-label="Render review">
+    <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-3" aria-label="Render review">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-semibold text-white">Render review</p>
-        {typeof review.quality_score === "number" && <span className="text-xs text-white/50">{review.quality_score.toFixed(1)}/5</span>}
+        <p className="text-sm font-semibold text-zinc-900">Render review</p>
+        {typeof review.quality_score === "number" && <span className="text-xs text-zinc-500">{review.quality_score.toFixed(1)}/5</span>}
       </div>
       {evidence.length > 0 ? (
         <ul className="mt-3 space-y-2">
           {evidence.map((item) => (
-            <li key={item.evidence_id} className="border-l border-lime-300/70 pl-2 text-xs text-white/70">
-              <span className="font-medium text-white/90">{formatReviewTime(item.start_s)} · {item.kind}</span>{" "}{item.observation}
+            <li key={item.evidence_id} className="border-l border-lime-600 pl-2 text-xs text-zinc-600">
+              <span className="font-medium text-zinc-900">{formatReviewTime(item.start_s)} · {item.kind}</span>{" "}{item.observation}
             </li>
           ))}
         </ul>
       ) : (
-        <p className="mt-2 text-xs text-white/55">No evidence-linked issues were found.</p>
+        <p className="mt-2 text-xs text-zinc-500">No evidence-linked issues were found.</p>
       )}
       {review.proposed_revision && (
-        <p className="mt-3 border-t border-white/10 pt-3 text-xs text-white/65">
-          Suggested next pass: <span className="text-white/90">{review.proposed_revision.summary}</span>
+        <p className="mt-3 border-t border-zinc-200 pt-3 text-xs text-zinc-600">
+          Suggested next pass: <span className="text-zinc-900">{review.proposed_revision.summary}</span>
         </p>
       )}
-      <p className="mt-3 text-[11px] text-white/40">This is a bounded recommendation. Nothing changes without your confirmation.</p>
+      <p className="mt-3 text-[11px] text-zinc-500">This is a bounded recommendation. Nothing changes without your confirmation.</p>
     </div>
   );
 }
