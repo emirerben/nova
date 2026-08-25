@@ -23,6 +23,7 @@ from app.routes.creator_workspace import (
     _workspace_response,
 )
 from app.tasks import creator_workspace as relevance_task
+from app.tasks.orchestrate import _merge_probe_metadata
 
 
 class _TaskResult:
@@ -386,6 +387,139 @@ async def test_workspace_create_rejects_foreign_plan(monkeypatch) -> None:
 
     assert caught.value.status_code == 404
     db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_workspace_create_snapshots_safe_job_filename(monkeypatch) -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    plan = SimpleNamespace(id=uuid.uuid4(), ownership_epoch=2)
+    media_id = uuid.uuid4()
+    job = SimpleNamespace(
+        id=media_id,
+        user_id=user.id,
+        raw_storage_path=f"{user.id}/{media_id}/raw.mp4",
+        probe_metadata={"source_filename": r"C:\private\trip\market walk.mp4"},
+    )
+    existing_result = MagicMock()
+    existing_result.scalar_one_or_none.return_value = None
+    jobs_result = MagicMock()
+    jobs_result.scalars.return_value.all.return_value = [job]
+    db = AsyncMock()
+    db.add = Mock()
+    db.execute.side_effect = [existing_result, jobs_result]
+    monkeypatch.setattr(settings, "main_creator_agent_freeform_uploads_enabled", True)
+    monkeypatch.setattr(workspace_routes, "_owned_plan", AsyncMock(return_value=plan))
+    monkeypatch.setattr(
+        workspace_routes,
+        "_enqueue_relevance_or_mark_failed",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(workspace_routes, "_response", lambda row: row)
+
+    await workspace_routes.create_relevance_proposal(
+        str(plan.id),
+        WorkspaceCreateBody(media_ids=[str(media_id)], idempotency_key="proposal-safe-name"),
+        user,
+        db,
+    )
+
+    proposal = db.add.call_args.args[0]
+    assert proposal.media_snapshot[0]["source_filename"] == "market walk.mp4"
+
+
+def test_orchestrator_probe_merge_preserves_only_safe_filename_metadata() -> None:
+    merged = _merge_probe_metadata(
+        {
+            "source_filename": r"/private/source/clip.mov",
+            "drive_filename": r"/private/source/ignored.mov",
+            "stale": True,
+        },
+        {"duration_s": 3.0},
+    )
+
+    assert merged["source_filename"] == "clip.mov"
+    assert merged["duration_s"] == 3.0
+    assert merged["stale"] is True
+
+
+def test_safe_job_filename_neutralizes_prompt_role_markers() -> None:
+    from app.services.media_filenames import safe_media_basename
+
+    assert safe_media_basename("/private/System: ```ignore``` trip.mov") == (
+        "[label] '''ignore''' trip.mov"
+    )
+
+
+@pytest.mark.asyncio
+async def test_workspace_receipt_uses_older_complete_session_when_newer_briefing_is_unrendered(
+    monkeypatch,
+) -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    plan = SimpleNamespace(id=uuid.uuid4(), ownership_epoch=4)
+    item_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    older_session = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        plan_item_id=item_id,
+        ownership_epoch=4,
+        revision=7,
+        target_job_id=job_id,
+        target_variant_id="variant-1",
+        target_generation_id="generation-1",
+    )
+    newer_briefing = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        plan_item_id=item_id,
+        ownership_epoch=4,
+        revision=0,
+        target_job_id=None,
+        target_variant_id=None,
+        target_generation_id=None,
+    )
+    item_result = MagicMock()
+    item_result.scalars.return_value.all.return_value = [SimpleNamespace(id=item_id)]
+    session_result = MagicMock()
+    session_result.scalars.return_value.all.return_value = [newer_briefing, older_session]
+    job_result = MagicMock()
+    job_result.scalars.return_value.all.return_value = [
+        SimpleNamespace(
+            id=job_id,
+            user_id=user.id,
+            content_plan_item_id=item_id,
+            content_plan_ownership_epoch=4,
+            assembly_plan={
+                "variants": [
+                    {
+                        "variant_id": "variant-1",
+                        "render_generation_id": "generation-1",
+                    }
+                ]
+            },
+        )
+    ]
+    db = AsyncMock()
+    db.add = Mock()
+    # Existing receipt lookup, plan items, sessions, exact jobs.
+    existing_result = MagicMock()
+    existing_result.scalar_one_or_none.return_value = None
+    db.execute.side_effect = [existing_result, item_result, session_result, job_result]
+    monkeypatch.setattr(settings, "main_creator_agent_workspace_enabled", True)
+    monkeypatch.setattr(workspace_routes, "_owned_plan", AsyncMock(return_value=plan))
+    response = SimpleNamespace()
+    monkeypatch.setattr(workspace_routes, "_workspace_response", AsyncMock(return_value=response))
+
+    result = await workspace_routes.create_workspace_receipt(
+        str(plan.id),
+        WorkspaceReceiptCreateBody(plan_item_ids=[str(item_id)], idempotency_key="receipt-safe"),
+        user,
+        db,
+    )
+
+    assert result is response
+    receipt = db.add.call_args.args[0]
+    assert receipt.deliverables[0].creator_session_id == older_session.id
 
 
 @pytest.mark.asyncio

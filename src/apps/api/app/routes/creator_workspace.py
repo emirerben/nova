@@ -32,6 +32,7 @@ from app.models import (
 from app.routes.personas import StyleEdit
 from app.services.feedback_summary import MAX_NOTES_IN_SUMMARY, build_preference_summary
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
+from app.services.media_filenames import safe_media_basename
 from app.services.plan_clips import ClipAssignment, ClipAssignmentError, set_item_clips
 from app.tasks.creator_workspace import detect_plan_relevance
 
@@ -371,7 +372,16 @@ async def create_relevance_proposal(
             "gcs_path": by_id[media_id].raw_storage_path,
             "gcs_generation": None,
             "kind": "video",
-            "source_filename": None,
+            "source_filename": safe_media_basename(
+                (by_id[media_id].probe_metadata or {}).get("source_filename")
+                if isinstance(by_id[media_id].probe_metadata, dict)
+                else None
+            )
+            or safe_media_basename(
+                (by_id[media_id].probe_metadata or {}).get("drive_filename")
+                if isinstance(by_id[media_id].probe_metadata, dict)
+                else None
+            ),
         }
         for media_id in body.media_ids
     ]
@@ -877,6 +887,12 @@ async def create_workspace_receipt(
     )
     session_by_item: dict[uuid.UUID, CreatorAgentSession] = {}
     for session in sessions:
+        if not (
+            session.target_job_id and session.target_variant_id and session.target_generation_id
+        ):
+            # A newer briefing/session row may not have rendered anything yet;
+            # it must not hide the newest complete target for this PlanItem.
+            continue
         session_by_item.setdefault(session.plan_item_id, session)
     missing = [item_id for item_id in item_ids if item_id not in session_by_item]
     if missing:

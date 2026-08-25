@@ -24,6 +24,7 @@ from app.auth import CurrentUserOrSynthetic
 from app.config import settings
 from app.database import get_db
 from app.models import Job, VideoTemplate
+from app.services.media_filenames import safe_media_basename
 
 log = structlog.get_logger()
 router = APIRouter()
@@ -180,6 +181,7 @@ async def create_presigned_upload(
         status="queued",
         raw_storage_path=gcs_path,
         selected_platforms=body.platforms,
+        probe_metadata={"source_filename": safe_media_basename(body.filename)},
     )
     db.add(job)
     await db.commit()
@@ -265,6 +267,7 @@ async def import_from_drive(
     # Encrypt the access token before it touches Redis
     encrypted_token = _encrypt_token(body.google_access_token)
 
+    safe_filename = safe_media_basename(body.filename)
     job = Job(
         id=uuid.UUID(job_id),
         user_id=current_user.id,
@@ -272,7 +275,8 @@ async def import_from_drive(
         raw_storage_path=gcs_path,
         selected_platforms=body.platforms,
         probe_metadata={
-            "drive_filename": body.filename,
+            "source_filename": safe_filename,
+            "drive_filename": safe_filename,
             "drive_file_size_bytes": body.file_size_bytes,
         },
         # Persist before broker publication so admin cancellation can revoke
