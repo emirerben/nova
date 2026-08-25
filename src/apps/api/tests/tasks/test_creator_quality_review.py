@@ -38,6 +38,22 @@ def _verdict(band=GradeBand.ESCALATE):
         avg=2.5,
         confidence=0.8,
         reasoning="The opening is generic.",
+        evidence=[
+            {
+                "dimension": "hook_strength",
+                "kind": "structure",
+                "start_s": 0.0,
+                "end_s": 2.4,
+                "observation": "The opening starts with an establishing shot and no open loop.",
+            },
+            {
+                "dimension": "text_legibility_and_timing",
+                "kind": "caption",
+                "start_s": 1.1,
+                "end_s": 2.8,
+                "observation": "The caption crosses a bright area and is difficult to read.",
+            },
+        ],
         raw_response='{"scores": {}}',
     )
 
@@ -105,6 +121,15 @@ def test_review_payload_marks_only_an_objective_failing_dimension_eligible():
         avg=3.5,
         confidence=0.9,
         reasoning="Captions are difficult to read.",
+        evidence=[
+            {
+                "dimension": "text_legibility_and_timing",
+                "kind": "caption",
+                "start_s": 1.0,
+                "end_s": 2.0,
+                "observation": "The caption loses contrast over the bright wall.",
+            }
+        ],
     )
 
     payload = cqr.build_review_payload(
@@ -132,6 +157,15 @@ def test_review_payload_never_labels_a_taste_only_failure_objective():
         avg=3.25,
         confidence=0.95,
         reasoning="The edit feels generic.",
+        evidence=[
+            {
+                "dimension": "looks_filmed_not_templated",
+                "kind": "visual",
+                "start_s": 3.0,
+                "end_s": 4.5,
+                "observation": "The repeated crop and hold feel formulaic.",
+            }
+        ],
     )
 
     payload = cqr.build_review_payload(
@@ -156,6 +190,19 @@ def test_review_payload_fails_closed_when_context_pin_is_missing():
             variant_id="variant-1",
             generation_id="generation-1",
             verdict=_verdict(),
+        )
+
+
+def test_review_payload_rejects_missing_timestamped_evidence():
+    verdict = _verdict()
+    verdict.evidence = []
+    with pytest.raises(ValueError, match="timestamped grader evidence"):
+        cqr.build_review_payload(
+            _session(),
+            job_id="job-1",
+            variant_id="variant-1",
+            generation_id="generation-1",
+            verdict=verdict,
         )
 
 

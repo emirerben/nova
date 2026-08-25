@@ -44,6 +44,13 @@ fine — it is the safety valve against confidently-wrong auto-passes.
 
 Pass threshold: avg ≥ 3.5
 
+Also return 1-8 **timecoded evidence** observations grounded in moments you
+actually watched. Each observation must reference one score dimension, use
+seconds from the start of the attached video, and describe only what is visible
+or audible in that window. Never invent evenly spaced timestamps or infer a
+moment you could not observe. `kind` is one of `visual`, `audio`, `timing`,
+`caption`, or `structure`.
+
 Return ONLY a JSON object of this exact shape:
 
-    {"scores": {"hook_strength": 4, "text_legibility_and_timing": 4, "looks_filmed_not_templated": 3, "overall_quality": 4}, "confidence": 0.8, "reasoning": "<one sentence: what changed and why this verdict>"}
+    {"scores": {"hook_strength": 4, "text_legibility_and_timing": 4, "looks_filmed_not_templated": 3, "overall_quality": 4}, "confidence": 0.8, "reasoning": "<one sentence: what changed and why this verdict>", "evidence": [{"dimension": "text_legibility_and_timing", "kind": "caption", "start_s": 1.2, "end_s": 2.8, "observation": "The opening caption remains readable against the moving background."}]}

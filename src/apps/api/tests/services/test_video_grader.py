@@ -87,8 +87,32 @@ class _FakeClient:
         )
 
 
-def _judge_json(scores: dict[str, float], confidence: float, reasoning: str = "ok") -> str:
-    return json.dumps({"scores": scores, "confidence": confidence, "reasoning": reasoning})
+def _judge_json(
+    scores: dict[str, float],
+    confidence: float,
+    reasoning: str = "ok",
+    *,
+    evidence: list[dict[str, Any]] | None = None,
+) -> str:
+    dimension = next(iter(scores))
+    return json.dumps(
+        {
+            "scores": scores,
+            "confidence": confidence,
+            "reasoning": reasoning,
+            "evidence": evidence
+            if evidence is not None
+            else [
+                {
+                    "dimension": dimension,
+                    "kind": "visual",
+                    "start_s": 0.2,
+                    "end_s": 1.4,
+                    "observation": "The opening moment is clearly visible.",
+                }
+            ],
+        }
+    )
 
 
 @pytest.fixture
@@ -137,6 +161,7 @@ def test_happy_path_auto_pass(video_file: str) -> None:
     assert verdict.risk_tag == "low"
     assert verdict.tokens_in == 5000
     assert verdict.tokens_out == 200
+    assert verdict.evidence[0]["start_s"] == pytest.approx(0.2)
     # The grader uploaded the local file and invoked with the video as media.
     assert client.upload_calls == [video_file]
     assert client.invoke_calls[0]["media_uri"] == "files/fake-123"
@@ -218,6 +243,48 @@ def test_low_confidence_forces_escalate_through_grade(video_file: str) -> None:
     assert verdict.band is GradeBand.ESCALATE
     assert verdict.risk_tag == "low_confidence"
     assert verdict.avg == pytest.approx(4.5)  # scores untouched; only the band flips
+
+
+def test_creator_mode_requires_timestamped_evidence(video_file: str) -> None:
+    scores = _scores(4, 4, 4, 4)
+    raw = json.dumps({"scores": scores, "confidence": 0.9, "reasoning": "clean"})
+
+    with pytest.raises(VideoGraderError, match="no timestamped evidence"):
+        VideoQualityGrader(
+            RUBRIC_PATH, client=_FakeClient(raw_text=raw), require_evidence=True
+        ).grade(video_file)
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        [{"dimension": "missing", "kind": "visual", "start_s": 0, "end_s": 1, "observation": "x"}],
+        [
+            {
+                "dimension": "hook_strength",
+                "kind": "visual",
+                "start_s": 2,
+                "end_s": 1,
+                "observation": "x",
+            }
+        ],
+        [
+            {
+                "dimension": "hook_strength",
+                "kind": "guess",
+                "start_s": 0,
+                "end_s": 1,
+                "observation": "x",
+            }
+        ],
+    ],
+)
+def test_malformed_timestamped_evidence_is_rejected(
+    video_file: str, evidence: list[dict[str, Any]]
+) -> None:
+    raw = _judge_json({"hook_strength": 4}, 0.9, evidence=evidence)
+    with pytest.raises(VideoGraderError, match="grader evidence"):
+        _grader(_FakeClient(raw_text=raw)).grade(video_file)
 
 
 # ── Determinism: per-dimension score-variance fixture ────────────────────────

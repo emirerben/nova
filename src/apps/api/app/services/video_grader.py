@@ -8,7 +8,7 @@ ONLY `LLMJudge`'s rubric-loading + `Pass threshold` regex contract (so the
 
   1. uploads the MP4 via `ModelDispatcher.upload_media` (Gemini File API),
   2. invokes a `gemini-*` model with the rubric as prompt + the video as media,
-  3. parses `{"scores": {...}, "confidence": <float>, "reasoning": "..."}`,
+  3. parses scores, confidence, reasoning, and bounded timecoded evidence,
   4. maps avg + self-reported confidence to a 3-band `GradeVerdict`.
 
 Deliberately stateless + side-effect-free: the Celery task
@@ -78,6 +78,7 @@ class GradeVerdict:
     confidence: float = 0.0
     threshold: float = DEFAULT_PASS_THRESHOLD
     reasoning: str = ""
+    evidence: list[dict[str, Any]] = field(default_factory=list)
     risk_tag: str = "low"
     raw_response: str = ""
     tokens_in: int = 0
@@ -119,8 +120,8 @@ def load_rubric(rubric_path: Path | str) -> tuple[str, float]:
     return text, threshold
 
 
-def _parse_grade_json(raw: str) -> tuple[dict[str, float], float, str]:
-    """Tolerant parse of the judge JSON → (scores, confidence, reasoning).
+def _parse_grade_json(raw: str) -> tuple[dict[str, float], float, str, list[dict[str, Any]]]:
+    """Tolerant parse of the judge JSON plus strict bounded evidence.
 
     Mirrors `llm_judge._parse_judge_json` but additionally extracts the
     self-reported `confidence` float (defaults to 0.0 → forces escalate when
@@ -156,7 +157,41 @@ def _parse_grade_json(raw: str) -> tuple[dict[str, float], float, str]:
     confidence = max(0.0, min(1.0, confidence))
 
     reasoning = str(data.get("reasoning", ""))
-    return scores, confidence, reasoning
+
+    evidence: list[dict[str, Any]] = []
+    raw_evidence = data.get("evidence", [])
+    if not isinstance(raw_evidence, list):
+        raise VideoGraderError("grader `evidence` field is not a list")
+    allowed_kinds = {"visual", "audio", "timing", "caption", "structure"}
+    for index, value in enumerate(raw_evidence[:12]):
+        if not isinstance(value, dict):
+            raise VideoGraderError(f"grader evidence {index} is not an object")
+        dimension = str(value.get("dimension", "")).strip()
+        kind = str(value.get("kind", "")).strip()
+        observation = str(value.get("observation", "")).strip()
+        try:
+            start_s = float(value.get("start_s"))
+            end_s = float(value.get("end_s"))
+        except (TypeError, ValueError) as exc:
+            raise VideoGraderError(f"grader evidence {index} has invalid timestamps") from exc
+        if dimension not in scores:
+            raise VideoGraderError(f"grader evidence {index} references an unknown dimension")
+        if kind not in allowed_kinds:
+            raise VideoGraderError(f"grader evidence {index} has an invalid kind")
+        if not (0.0 <= start_s < end_s <= 3600.0):
+            raise VideoGraderError(f"grader evidence {index} has an invalid time window")
+        if not observation:
+            raise VideoGraderError(f"grader evidence {index} has no observation")
+        evidence.append(
+            {
+                "dimension": dimension,
+                "kind": kind,
+                "start_s": start_s,
+                "end_s": end_s,
+                "observation": observation[:500],
+            }
+        )
+    return scores, confidence, reasoning, evidence
 
 
 def map_verdict(
@@ -215,6 +250,7 @@ class VideoQualityGrader:
         t_pass: float = T_PASS,
         t_reject: float = T_REJECT,
         t_floor: float = T_FLOOR,
+        require_evidence: bool = False,
     ) -> None:
         self.rubric_path = Path(rubric_path)
         self.model = model
@@ -223,6 +259,7 @@ class VideoQualityGrader:
         self.t_pass = t_pass
         self.t_reject = t_reject
         self.t_floor = t_floor
+        self.require_evidence = require_evidence
         self._client = client
         self._rubric_cache: tuple[str, float] | None = None
 
@@ -279,9 +316,11 @@ class VideoQualityGrader:
         tokens_out = int(getattr(invocation, "tokens_out", 0) or 0)
 
         # 3. Parse scores + confidence (raises on malformed/empty).
-        scores, confidence, reasoning = _parse_grade_json(raw_text)
+        scores, confidence, reasoning, evidence = _parse_grade_json(raw_text)
         if not scores:
             raise VideoGraderError(f"grader returned no scores; raw response: {raw_text[:500]!r}")
+        if self.require_evidence and not evidence:
+            raise VideoGraderError("grader returned no timestamped evidence")
 
         avg = sum(scores.values()) / len(scores)
 
@@ -301,6 +340,7 @@ class VideoQualityGrader:
             confidence=confidence,
             threshold=threshold,
             reasoning=reasoning,
+            evidence=evidence,
             risk_tag=risk_tag,
             raw_response=raw_text,
             tokens_in=tokens_in,

@@ -21,7 +21,7 @@ from app.worker import celery_app
 
 log = structlog.get_logger()
 QUALITY_REVIEW_AGENT_NAME = "nova.creator_quality_reviewer"
-QUALITY_REVIEW_PROMPT_VERSION = "2026-08-25"
+QUALITY_REVIEW_PROMPT_VERSION = "2026-08-25.2"
 QUALITY_REVIEW_MODEL = "gemini-2.5-flash"
 READY_JOB_STATUSES = frozenset({"variants_ready", "variants_ready_partial"})
 OBJECTIVE_SCORE_THRESHOLD = 4.0
@@ -171,18 +171,22 @@ def build_review_payload(
 
     key = review_key(str(session.id), job_id, variant_id, generation_id)
     evidence = []
-    for index, (dimension, score) in enumerate((verdict.scores or {}).items()):
+    grader_evidence = list(getattr(verdict, "evidence", None) or [])
+    if not grader_evidence:
+        raise ValueError("creator review requires timestamped grader evidence")
+    for index, observed in enumerate(grader_evidence[:12]):
+        dimension = str(observed.get("dimension") or "")
+        if dimension not in (verdict.scores or {}):
+            raise ValueError("creator review evidence references an unknown score dimension")
+        score = float(verdict.scores[dimension])
         evidence.append(
             {
                 "evidence_id": f"{key}-evidence-{index}",
-                "kind": "caption" if "text" in dimension or "caption" in dimension else "visual",
+                "kind": observed.get("kind"),
                 "severity": "warning" if float(score) < 4 else "info",
-                "start_s": float(index),
-                "end_s": float(index + 1),
-                "observation": (
-                    f"{dimension.replace('_', ' ')} scored {float(score):.1f}/5. "
-                    f"{str(verdict.reasoning or 'Review this moment manually.')[:380]}"
-                )[:500],
+                "start_s": observed.get("start_s"),
+                "end_s": observed.get("end_s"),
+                "observation": str(observed.get("observation") or "")[:500],
             }
         )
     evidence = evidence[:12]
@@ -199,7 +203,10 @@ def build_review_payload(
             "rationale": str(
                 verdict.reasoning or "The objective review found room for improvement."
             )[:1000],
-            "evidence_ids": [row["evidence_id"] for row in evidence[:8]],
+            "evidence_ids": [
+                row["evidence_id"] for row in evidence if row["severity"] in {"warning", "critical"}
+            ][:8]
+            or [row["evidence_id"] for row in evidence[:8]],
         }
     active = session.active_plan if isinstance(session.active_plan, dict) else {}
     manifest = getattr(session, "manifest_hash", None)
@@ -517,7 +524,11 @@ def review_with_video_quality_grader(video_gcs_path: str) -> Any:
     with tempfile.TemporaryDirectory(prefix="creator-review-") as tmpdir:
         local_path = str(Path(tmpdir) / "render.mp4")
         download_to_file(video_gcs_path, local_path)
-        return VideoQualityGrader(RUBRIC_PATH, model=QUALITY_REVIEW_MODEL).grade(local_path)
+        return VideoQualityGrader(
+            RUBRIC_PATH,
+            model=QUALITY_REVIEW_MODEL,
+            require_evidence=True,
+        ).grade(local_path)
 
 
 def mark_review_unavailable(
