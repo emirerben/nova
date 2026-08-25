@@ -12637,8 +12637,9 @@ def _render_talking_head_variant(
     the mechanics (pre-cap, has_audio gate, keep_segments reframe, b-roll cut-point
     anchors) live in the assembler, and the analysis routes through the shared
     `_silence_cut_analysis` + per-job cache so a clip is never re-analyzed. Every
-    gate/failure falls OPEN to the uncut flow; flag off is byte-identical
-    (kill-switch pinned).
+    Historical legacy_auto gates/failures fall open to the uncut flow;
+    required_v1 is strict and off_v1 skips the stage. Flag off remains
+    byte-identical for non-required contracts (kill-switch pinned).
     """
     from app.pipeline.generative_overlays import build_persistent_intro_overlays  # noqa: PLC0415
     from app.pipeline.probe import probe_video  # noqa: PLC0415
@@ -14465,9 +14466,9 @@ def _render_subtitled_variant(
         # Detection runs on the ORIGINAL clip BEFORE the reframe. The base renders
         # start=0 / full duration / speed 1.0, so clip timeline == base timeline:
         # the plan's keep_segments apply directly inside the reframe and the
-        # remapped word times are natively base-relative. Explicit opt-outs and
-        # ineligible clips remain fail-open; enabled eligible clips fail visibly
-        # instead of silently publishing an uncut fallback.
+        # remapped word times are natively base-relative. Strictness is owned by
+        # the immutable job contract: required_v1 fails visibly, off_v1 skips,
+        # and historical legacy_auto jobs preserve best-effort uncut fallback.
         sc_entry: dict[str, Any] | None = None  # per-clip cache entry (7A)
         sc_words: list | None = None  # verbatim original-clip words for captions
         sc_language = ""
@@ -14484,7 +14485,6 @@ def _render_subtitled_variant(
                 BAILOUT_CLIP_TOO_SHORT,
                 BAILOUT_NO_WORDS,
                 KEEP_SEGMENTS_PUNCH_IN,
-                MIN_CLIP_S,
                 plan_event_payload,
                 plan_summary,
             )
@@ -14501,15 +14501,7 @@ def _render_subtitled_variant(
                     "silence_cut_disabled": bool(silence_cut_disabled),
                 },
             )
-            strict_silence_cut = bool(
-                cleanup_required
-                or (
-                    settings.silence_cut_enabled
-                    and probe.has_audio
-                    and not silence_cut_disabled
-                    and float(probe.duration_s) >= MIN_CLIP_S
-                )
-            )
+            strict_silence_cut = cleanup_required
             if silence_cut_disabled and not cleanup_required:
                 # Per-item opt-out (10A) — skips the WHOLE stage, retakes included.
                 record_pipeline_event(
@@ -14540,9 +14532,7 @@ def _render_subtitled_variant(
                         "silence_cut_required_failed",
                         {"variant_id": variant_id, "reason": "analysis_failed"},
                     )
-                    if cleanup_required:
-                        raise SpeechCleanupFailure("analysis_failed")
-                    raise RuntimeError("silence_cut_required: analysis failed")
+                    raise SpeechCleanupFailure("analysis_failed")
                 # `words` must be non-empty to adopt the verbatim transcript:
                 # an empty-words bailout (e.g. clip_too_short — P3 returns
                 # before whisper runs) must caption from the base-transcription
@@ -14558,9 +14548,7 @@ def _render_subtitled_variant(
                                 "silence_cut_required_failed",
                                 {"variant_id": variant_id, "reason": "analysis_no_plan"},
                             )
-                            if cleanup_required:
-                                raise SpeechCleanupFailure("analysis_no_plan")
-                            raise RuntimeError("silence_cut_required: analysis returned no plan")
+                            raise SpeechCleanupFailure("analysis_no_plan")
                     elif strict_silence_cut and sc_plan.bailout_reason not in (
                         None,
                         BAILOUT_CLIP_TOO_SHORT,
@@ -14574,11 +14562,7 @@ def _render_subtitled_variant(
                                 "reason": sc_plan.bailout_reason,
                             },
                         )
-                        if cleanup_required:
-                            raise SpeechCleanupFailure("unsafe_plan")
-                        raise RuntimeError(
-                            f"silence_cut_required: unsafe plan bailout ({sc_plan.bailout_reason})"
-                        )
+                        raise SpeechCleanupFailure("unsafe_plan")
                     # A bailed-out plan is a no-op (render uncut); a clean plan
                     # with zero removals skips the segmented encode too. Captions
                     # still come from the already-paid-for verbatim transcript.
@@ -14709,9 +14693,9 @@ def _render_subtitled_variant(
                 # None when the camera-less retry succeeded.
                 if exc is not None and not sc_apply:
                     raise exc
-                # An enabled eligible render cannot publish an uncut fallback:
-                # a segment-filter failure must be visible as a failed variant.
-                # Explicitly ineligible paths retain the old uncut retry below.
+                # A required render cannot publish an uncut fallback: a
+                # segment-filter failure must be visible as a failed variant.
+                # Historical best-effort jobs retain the uncut retry below.
                 if exc is not None:
                     log.warning(
                         "silence_cut_apply_failed",
@@ -14730,9 +14714,7 @@ def _render_subtitled_variant(
                             "silence_cut_required_failed",
                             {"variant_id": variant_id, "reason": "apply_failed"},
                         )
-                        if cleanup_required:
-                            raise SpeechCleanupFailure("apply_failed") from exc
-                        raise RuntimeError("silence_cut_required: apply failed") from exc
+                        raise SpeechCleanupFailure("apply_failed") from exc
                     sc_apply = False
                     sc_apply_failed = True
                     sc_plan = None

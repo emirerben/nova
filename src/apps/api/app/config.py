@@ -83,10 +83,10 @@ class Settings(BaseSettings):
     # set true on Fly to require voiceover-uploads/direct/{user_id}/ exactly.
     generative_direct_voiceover_strict_enabled: bool = False
 
-    # Speech cleanup rollout contract.  ``legacy_auto`` keeps mixed API/worker
-    # deploys compatible; opt_in exposes the creator control and stamps strict
-    # immutable job contracts; disabled closes the capability fail-closed.
-    speech_cleanup_mode: Literal["legacy_auto", "opt_in", "disabled"] = "legacy_auto"
+    # Live speech-cleanup rollout state. New jobs always receive an explicit
+    # required_v1/off_v1 contract; legacy_auto is historical-job compatibility
+    # only and is intentionally rejected as a live setting.
+    speech_cleanup_mode: Literal["opt_in", "disabled"] = "opt_in"
 
     # yt-dlp cookies for admin URL imports. Use YTDLP_COOKIES_B64 in hosted
     # environments (secret-safe, decoded into a short-lived 0600 temp file) or
@@ -302,10 +302,9 @@ class Settings(BaseSettings):
         "clip's own audio is transcribed verbatim (whisper bias prompt), silences "
         "are detected, and dead air + filler vocalizations are cut inside the "
         "reframe (alternating punch-in jump cuts); captions are built from the "
-        "remapped transcript minus filler tokens. Explicit opt-outs, no-audio, "
-        "short clips, and no-speech clips remain fail-open; analysis/apply failures "
-        "and unsafe safety-rail bailouts on eligible clips fail the variant instead "
-        "of publishing uncut audio. Per-item "
+        "remapped transcript minus filler tokens. Historical legacy_auto jobs "
+        "fail open to uncut timing; required_v1 jobs surface typed analysis/apply/"
+        "unsafe-plan failures; off_v1 skips cleanup entirely. Per-item "
         "opt-out: POST /admin/jobs/{job_id}/silence-cut-disable (takes effect on "
         "the next FULL re-render only). "
         "Kill switch: `fly secrets set SILENCE_CUT_ENABLED=false --app nova-video` "
