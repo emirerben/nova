@@ -25,6 +25,7 @@ MAX_CREATOR_OUTPUT_DURATION_S = 60.0
 MAX_CREATOR_REVIEW_EVIDENCE = 12
 MAX_CREATOR_REVISION_EVIDENCE_IDS = 8
 MAX_CREATOR_WORKSPACE_MEDIA_IDS = 50
+MAX_CREATOR_CRAFT_COMMANDS = 3
 
 
 class _CreatorModel(BaseModel):
@@ -337,6 +338,69 @@ CreatorCraftCommand: TypeAlias = Annotated[
     Field(discriminator="command"),
 ]
 CREATOR_CRAFT_COMMAND_ADAPTER = TypeAdapter(CreatorCraftCommand)
+
+# Stage 3 is intentionally narrow.  Overlay, SFX, and speech-cut commands
+# remain typed above for the later lanes, but cannot enter a core-craft bundle.
+CreatorCoreCraftCommand: TypeAlias = Annotated[
+    SetCaptionStyleCommand | SetTransitionCommand | SetLookPresetCommand,
+    Field(discriminator="command"),
+]
+CREATOR_CORE_CRAFT_COMMAND_ADAPTER = TypeAdapter(CreatorCoreCraftCommand)
+
+
+class CreatorCraftBundle(_CreatorModel):
+    """One exact-generation, atomic bundle of core craft operations.
+
+    Commands retain their own pins so an extracted command cannot be replayed
+    against another target.  The bundle repeats the target as its execution
+    envelope and rejects any disagreement before a database lookup or write.
+    """
+
+    schema_version: Literal[1] = CREATOR_AGENT_SCHEMA_VERSION
+    session_id: str = Field(min_length=1, max_length=160)
+    idempotency_key: str = Field(min_length=1, max_length=160)
+    expected_manifest_hash: str = Field(min_length=64, max_length=64)
+    expected_context_hash: str = Field(min_length=64, max_length=64)
+    expected_job_id: str = Field(min_length=1, max_length=160)
+    expected_variant_id: str = Field(min_length=1, max_length=160)
+    expected_generation_id: str = Field(min_length=1, max_length=160)
+    expected_revision: int = Field(ge=0)
+    expected_ownership_epoch: int = Field(ge=0)
+    commands: list[CreatorCoreCraftCommand] = Field(
+        min_length=1, max_length=MAX_CREATOR_CRAFT_COMMANDS
+    )
+
+    @field_validator(
+        "session_id",
+        "idempotency_key",
+        "expected_job_id",
+        "expected_variant_id",
+        "expected_generation_id",
+    )
+    @classmethod
+    def _validate_bundle_ids(cls, value: str, info) -> str:
+        return _opaque_id(value, field_name=info.field_name)
+
+    @field_validator("expected_manifest_hash", "expected_context_hash")
+    @classmethod
+    def _validate_bundle_hashes(cls, value: str, info) -> str:
+        return _sha256_hex(value, field_name=info.field_name)
+
+    @model_validator(mode="after")
+    def _pin_commands_to_bundle_target(self) -> CreatorCraftBundle:
+        for command in self.commands:
+            for field_name in (
+                "expected_manifest_hash",
+                "expected_context_hash",
+                "expected_job_id",
+                "expected_variant_id",
+                "expected_generation_id",
+                "expected_revision",
+                "expected_ownership_epoch",
+            ):
+                if getattr(command, field_name, None) != getattr(self, field_name):
+                    raise ValueError(f"command does not pin bundle {field_name}")
+        return self
 
 
 class CreatorReviewEvidence(_CreatorModel):
@@ -757,7 +821,10 @@ __all__ = [
     "CreatorAgentResponse",
     "CreatorCatalogRef",
     "CreatorCommand",
+    "CreatorCoreCraftCommand",
+    "CreatorCraftBundle",
     "CreatorCraftCommand",
+    "CREATOR_CORE_CRAFT_COMMAND_ADAPTER",
     "CreatorEditSnapshot",
     "CreatorEditPlan",
     "CreatorLimits",

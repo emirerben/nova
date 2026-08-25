@@ -110,6 +110,10 @@ def test_new_tables_registered() -> None:
     assert "content_plans" in tables
     assert "plan_items" in tables
     assert "creator_style_assignments" in tables
+    assert "creator_workspace_proposals" in tables
+    assert "creator_workspace_receipts" in tables
+    assert "creator_workspace_deliverables" in tables
+    assert "creator_workspace_preference_signals" in tables
 
     persona_cols = set(tables["personas"].columns.keys())
     assert {
