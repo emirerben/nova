@@ -4579,7 +4579,7 @@ export default function EditorShell({
 
   const addMediaVisualBlocks = useCallback(
     (assetIds: string[], displayMode: "fullscreen" | "overlay", asSequence = false) => {
-      if (readOnly || !visualBlocksAllowed) return;
+      if (readOnly || !visualBlocksAllowed) return [];
       const selected = selection?.kind === "visual" ? localVisualBlocks.find((block) => block.id === selection.id) : null;
       // A sequence can start a new media lane at the playhead. When a media
       // layer is selected, preserve the more precise "place after selected"
@@ -4589,6 +4589,8 @@ export default function EditorShell({
         ? selected?.end_s ?? Math.max(0, outputToBaseTimeRef.current(currentTime))
         : null;
       const additions: MediaVisualBlock[] = [];
+      const placedAssetIds: string[] = [];
+      let sequenceOutOfSpace = false;
       for (const assetId of assetIds) {
         const asset = poolAssets.find((candidate) => candidate.id === assetId && candidate.status === "ready");
         if (!asset || (asset.kind === "video" && !(asset.duration_s && asset.duration_s > 0))) continue;
@@ -4602,7 +4604,11 @@ export default function EditorShell({
               durationS: desiredDuration,
               videoDurationS: duration,
             });
-        const openWindow = displayMode === "fullscreen" && adjacent == null
+        if (asSequence && adjacent == null) {
+          sequenceOutOfSpace = true;
+          break;
+        }
+        const openWindow = !asSequence && displayMode === "fullscreen" && adjacent == null
           ? nextVisualBlockWindow(desiredDuration)
           : null;
         const start = adjacent?.start_s ?? (displayMode === "overlay"
@@ -4639,17 +4645,32 @@ export default function EditorShell({
           scale: 0.35,
           z: Math.max(-1, ...localVisualBlocks.filter((block) => block.kind === "media").map((block) => block.z)) + 1 + additions.length,
         });
+        placedAssetIds.push(asset.id);
         cursorEnd = asSequence ? end : null;
       }
       if (!additions.length) {
-        if (asSequence) notify("There isn't enough timeline space for this sequence.");
-        return;
+        if (asSequence) {
+          notify(
+            sequenceOutOfSpace
+              ? "There isn't enough timeline space for this sequence."
+              : "The selected media isn't ready to place yet.",
+          );
+        }
+        return [];
       }
       history.record();
       setLocalVisualBlocks((blocks) => [...blocks, ...additions]);
       setVisualBlocksDirty(true);
       setActiveTool("visuals");
       selectElement("visual", additions[0].id);
+      if (asSequence && additions.length < assetIds.length) {
+        notify(
+          sequenceOutOfSpace
+            ? `Placed ${additions.length} of ${assetIds.length}. There isn't enough timeline space for the rest.`
+            : `Placed ${additions.length} of ${assetIds.length}. The rest isn't ready yet.`,
+        );
+      }
+      return placedAssetIds;
     },
     [currentTime, duration, history, localVisualBlocks, nextVisualBlockWindow, notify, poolAssets, readOnly, selectElement, selection, visualBlocksAllowed],
   );
@@ -7570,6 +7591,7 @@ export default function EditorShell({
               onAddMontage={addMontageBlock}
               onAddMediaBlock={(ids, mode) => addMediaVisualBlocks(ids, mode)}
               onAddMediaSequence={(ids) => addMediaVisualBlocks(ids, "fullscreen", true)}
+              mediaSequenceAfterSelection={selection?.kind === "visual"}
               onAddTextCard={addTextCard}
               onAddVisualBlockText={addVisualBlockText}
               onSelectVisualBlockText={selectText}
@@ -7660,6 +7682,7 @@ export default function EditorShell({
               onAddMontage={addMontageBlock}
               onAddMediaBlock={(ids, mode) => addMediaVisualBlocks(ids, mode)}
               onAddMediaSequence={(ids) => addMediaVisualBlocks(ids, "fullscreen", true)}
+              mediaSequenceAfterSelection={selection?.kind === "visual"}
               onAddTextCard={addTextCard}
               onAddVisualBlockText={addVisualBlockText}
               onSelectVisualBlockText={selectText}

@@ -92,7 +92,7 @@ describe("ToolDrawer visual blocks", () => {
 
   it("exposes fullscreen, overlay, and adjacent sequence media actions", () => {
     const onAddMediaBlock = jest.fn();
-    const onAddMediaSequence = jest.fn();
+    const onAddMediaSequence = jest.fn((ids: string[]) => ids);
     renderVisuals({ onAddMediaBlock, onAddMediaSequence });
     fireEvent.click(screen.getByRole("button", { name: `Select ${assets[0].source_filename}` }));
     fireEvent.click(screen.getByRole("button", { name: "Add full screen" }));
@@ -103,15 +103,31 @@ describe("ToolDrawer visual blocks", () => {
     fireEvent.click(screen.getByRole("button", { name: `Select ${assets[1].source_filename}` }));
     fireEvent.click(screen.getByRole("button", { name: "Place selected in sequence" }));
     expect(onAddMediaSequence).toHaveBeenCalledWith(["asset-0", "asset-1"]);
+    expect(screen.getByText("0 selected")).toBeInTheDocument();
   });
 
-  it("explains that one photo can be used without creating a montage", () => {
+  it("keeps unplaced assets selected and makes the selected anchor explicit", () => {
+    const onAddMediaSequence = jest.fn(() => ["asset-0"]);
+    renderVisuals({
+      onAddMediaSequence,
+      mediaSequenceAfterSelection: true,
+    });
+    fireEvent.click(screen.getByRole("button", { name: `Select ${assets[0].source_filename}` }));
+    fireEvent.click(screen.getByRole("button", { name: `Select ${assets[1].source_filename}` }));
+    fireEvent.click(screen.getByRole("button", { name: "Place sequence after selected" }));
+
+    expect(onAddMediaSequence).toHaveBeenCalledWith(["asset-0", "asset-1"]);
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+  });
+
+  it("explains that one photo can be used without creating a montage", async () => {
     renderVisuals();
 
     expect(screen.getByText("Photos & video")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "About Photos and video" }));
     expect(
-      screen.getByText(
-        "Select one or more for full screen, overlay, or a sequence. Montages use 3–12.",
+      await screen.findByText(
+        /Select one or more for full screen, overlay, or a sequence\. Montages use 3–12\./,
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("0 selected")).toBeInTheDocument();
@@ -166,8 +182,9 @@ describe("ToolDrawer visual blocks", () => {
           y_frac: 0.5,
           scale: 0.35,
           z: 1,
-          source_start_s: 0,
-          source_end_s: 2,
+          source_duration_s: 2,
+          trim_start_s: 0,
+          trim_end_s: 2,
         },
       ],
     });

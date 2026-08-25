@@ -724,6 +724,88 @@ describe("EditorShell visuals upload lifecycle", () => {
     expect(screen.getByRole("button", { name: "Media, 0:03–0:05" })).toBeInTheDocument();
   });
 
+  it("keeps the timeline unchanged when a first sequence has no remaining space", async () => {
+    const asset = poolAsset({
+      id: "asset-no-space",
+      source_filename: "no-space.png",
+      gcs_path: "users/u/plan/item-1/pool/no-space.png",
+    });
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "GET" && url.endsWith("/assets")) {
+        return jsonResponse({ assets: [asset], max_assets: 20 });
+      }
+      throw new Error(`Unmocked fetch: ${method} ${url}`);
+    }) as unknown as typeof fetch;
+
+    await renderShell(makeVariant([], [], { duration_s: 8 }));
+    const video = document.querySelector("video");
+    expect(video).not.toBeNull();
+    Object.defineProperty(video, "duration", { configurable: true, value: 8 });
+    fireEvent.loadedMetadata(video as HTMLVideoElement);
+    Object.defineProperty(video, "currentTime", {
+      configurable: true,
+      value: 8,
+      writable: true,
+    });
+    fireEvent.timeUpdate(video as HTMLVideoElement);
+    fireEvent.click(screen.getByRole("button", { name: "Visuals tool" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Select no-space.png" }));
+    fireEvent.click(screen.getByRole("button", { name: "Place selected in sequence" }));
+
+    expect(mockToast).toHaveBeenCalledWith(
+      "There isn't enough timeline space for this sequence.",
+      expect.anything(),
+    );
+    expect(screen.queryByRole("button", { name: /^Media,/ })).not.toBeInTheDocument();
+  });
+
+  it("stops a near-end sequence instead of stacking remaining photos", async () => {
+    const assets = ["first", "second", "third"].map((name) =>
+      poolAsset({
+        id: `asset-${name}`,
+        source_filename: `${name}.png`,
+        gcs_path: `users/u/plan/item-1/pool/${name}.png`,
+      }),
+    );
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "GET" && url.endsWith("/assets")) {
+        return jsonResponse({ assets, max_assets: 20 });
+      }
+      throw new Error(`Unmocked fetch: ${method} ${url}`);
+    }) as unknown as typeof fetch;
+
+    await renderShell(makeVariant([], [], { duration_s: 8 }));
+    const video = document.querySelector("video");
+    expect(video).not.toBeNull();
+    Object.defineProperty(video, "duration", { configurable: true, value: 8 });
+    fireEvent.loadedMetadata(video as HTMLVideoElement);
+    Object.defineProperty(video, "currentTime", {
+      configurable: true,
+      value: 7,
+      writable: true,
+    });
+    fireEvent.timeUpdate(video as HTMLVideoElement);
+    fireEvent.click(screen.getByRole("button", { name: "Visuals tool" }));
+    for (const asset of assets) {
+      fireEvent.click(
+        await screen.findByRole("button", { name: `Select ${asset.source_filename}` }),
+      );
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Place selected in sequence" }));
+
+    expect(screen.getAllByRole("button", { name: /^Media,/ })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Media, 0:07–0:08" })).toBeInTheDocument();
+    expect(mockToast).toHaveBeenCalledWith(
+      "Placed 1 of 3. There isn't enough timeline space for the rest.",
+      expect.anything(),
+    );
+    expect(screen.getByText("2 selected")).toBeInTheDocument();
+  });
+
   it("shows a failed transfer in the real drawer and retries it without disabling the picker", async () => {
     let presignCalls = 0;
     let putCalls = 0;
