@@ -185,6 +185,16 @@ def test_day_vlog_jobs_pin_renderer_version_for_mixed_workers() -> None:
     assert job.all_candidates["day_vlog_renderer_version"] == 1
 
 
+def test_single_hero_jobs_pin_renderer_version_for_mixed_workers() -> None:
+    job = build_generative_job(
+        user_id=uuid.uuid4(),
+        clip_paths=["users/u/plan/i/a.mp4", "users/u/plan/i/b.mp4"],
+        edit_format="single_hero",
+    )
+    assert job.all_candidates["edit_format"] == "single_hero"
+    assert job.all_candidates["single_hero_renderer_version"] == 1
+
+
 def test_smart_captions_context_is_pinned_only_for_subtitled_jobs() -> None:
     context = {"preset_id": "cigdem", "preset_version": "v1"}
     smart = build_generative_job(

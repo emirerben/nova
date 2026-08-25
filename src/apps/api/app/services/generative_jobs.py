@@ -17,6 +17,7 @@ from app.agents._schemas.edit_format import (
     DAY_VLOG_RENDERER_VERSION,
     DEFAULT_EDIT_FORMAT,
     EDIT_FORMATS,
+    SINGLE_HERO_RENDERER_VERSION,
     coerce_edit_format,
 )
 from app.models import Job
@@ -275,6 +276,10 @@ def build_generative_job(
         # Explicit worker contract: a mixed-version worker must not silently
         # normalize this new guided format back to montage.
         all_candidates["day_vlog_renderer_version"] = DAY_VLOG_RENDERER_VERSION
+    if declared_edit_format == "single_hero":
+        # Explicit worker contract: a mixed-version worker must not silently
+        # normalize this new guided format back to montage.
+        all_candidates["single_hero_renderer_version"] = SINGLE_HERO_RENDERER_VERSION
     if declared_edit_format and declared_edit_format not in EDIT_FORMATS:
         all_candidates["declared_edit_format"] = declared_edit_format
     if variant_policy in {
