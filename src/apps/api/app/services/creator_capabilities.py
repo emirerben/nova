@@ -41,6 +41,7 @@ CAPABILITY_DRAFT_GUIDED_PROPOSAL = "draft_guided_proposal"
 CAPABILITY_DISPATCH_RENDER = "dispatch_render"
 CAPABILITY_SELECT_READY_VARIANT = "select_ready_variant"
 CAPABILITY_CAPTION_STYLE = "caption_style"
+CAPABILITY_AUTOMATIC_CUT = "automatic_cut"
 
 _FEATURE_SETTINGS = {
     "main_creator_agent": "main_creator_agent_enabled",
@@ -218,6 +219,17 @@ def resolve_creator_manifest(
             _available()
             if settings.main_creator_agent_execution_enabled
             else _unavailable("disabled_by_setting", "caption styling is disabled by the server")
+        ),
+        # Reviewable speech-cut candidates are produced independently by the
+        # silence/filler and retake detectors.  Execution validates the exact
+        # pending candidate and its detector-specific switch again.
+        CAPABILITY_AUTOMATIC_CUT: (
+            _available()
+            if settings.silence_cut_enabled or settings.retake_cut_enabled
+            else _unavailable(
+                "disabled_by_setting",
+                "automatic speech cuts are disabled by the server",
+            )
         ),
     }
 

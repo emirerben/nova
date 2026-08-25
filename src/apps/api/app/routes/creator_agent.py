@@ -1134,6 +1134,16 @@ async def _resolve_creator_licensed_sfx(
     return validated[0]
 
 
+def _creator_speech_cut_source_enabled(source: str) -> bool:
+    """Resolve the independent detector switch for an approved candidate."""
+
+    if source == "retake_review":
+        return settings.retake_cut_enabled
+    if source in {"silence_review", "filler_review"}:
+        return settings.silence_cut_enabled
+    return False
+
+
 def _stage_creator_speech_cut(
     job: Job,
     *,
@@ -1146,8 +1156,6 @@ def _stage_creator_speech_cut(
 
     from app.pipeline.speech_cut_state import accept_candidate
 
-    if not settings.silence_cut_enabled or not settings.retake_cut_enabled:
-        raise HTTPException(status_code=404, detail="Automatic speech cuts are unavailable")
     variant = next(
         (
             v
@@ -1158,6 +1166,19 @@ def _stage_creator_speech_cut(
     )
     if variant is None:
         raise HTTPException(status_code=404, detail="Creator variant changed")
+    candidate = next(
+        (
+            value
+            for value in variant.get("speech_cut_candidates") or []
+            if isinstance(value, dict) and value.get("candidate_id") == command.candidate_id
+        ),
+        None,
+    )
+    if candidate is None or candidate.get("status") != "pending":
+        raise HTTPException(status_code=404, detail="speech_cut_candidate_not_found")
+    candidate_source = str(candidate.get("source") or "")
+    if not _creator_speech_cut_source_enabled(candidate_source):
+        raise HTTPException(status_code=404, detail="Automatic speech cuts are unavailable")
     if variant.get("resolved_archetype") not in {"subtitled", "talking_head"}:
         raise HTTPException(status_code=422, detail="Automatic speech cuts are unavailable")
     if not variant.get("base_video_path"):

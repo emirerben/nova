@@ -25,6 +25,7 @@ from app.routes.creator_agent import (
     StartBody,
     TurnBody,
     _apply_plan_intent,
+    _creator_speech_cut_source_enabled,
     _reset_render_target,
     _seed_guided_specialist_brief,
 )
@@ -59,6 +60,19 @@ def _manifest(monkeypatch, *, has_voiceover: bool = False):
         has_voiceover=has_voiceover,
         media=[{"media_id": "clip-1", "kind": "video"}],
     )
+
+
+def test_creator_speech_cut_uses_candidate_specific_kill_switch(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "silence_cut_enabled", False)
+    monkeypatch.setattr(settings, "retake_cut_enabled", True)
+    assert _creator_speech_cut_source_enabled("retake_review") is True
+    assert _creator_speech_cut_source_enabled("silence_review") is False
+
+    monkeypatch.setattr(settings, "silence_cut_enabled", True)
+    monkeypatch.setattr(settings, "retake_cut_enabled", False)
+    assert _creator_speech_cut_source_enabled("retake_review") is False
+    assert _creator_speech_cut_source_enabled("filler_review") is True
+    assert _creator_speech_cut_source_enabled("untrusted_source") is False
 
 
 class _ExpiringNamespace:
