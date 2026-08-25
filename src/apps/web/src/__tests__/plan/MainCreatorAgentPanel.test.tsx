@@ -107,3 +107,36 @@ it("shows a strategy preview without a dead render action during planning-only r
   expect(screen.queryByRole("button", { name: "Render this" })).toBeNull();
   expect(screen.getByText("Rendering is not enabled for this preview yet.")).not.toBeNull();
 });
+
+it("shows bounded review evidence without mutating the confirmed render", async () => {
+  getSession.mockResolvedValue({
+    ...proposed,
+    status: "awaiting_feedback",
+    pending_plan: null,
+    last_review: {
+      status: "complete",
+      decision: "revise",
+      evidence: [
+        {
+          evidence_id: "evidence-1",
+          kind: "visual",
+          severity: "warning",
+          start_s: 4,
+          end_s: 5,
+          observation: "The opening loses momentum.",
+        },
+      ],
+      proposed_revision: {
+        revision_id: "revision-1",
+        summary: "Tighten the first beat.",
+        evidence_ids: ["evidence-1"],
+      },
+    },
+  });
+
+  render(<MainCreatorAgentPanel itemId="item-1" />);
+
+  expect(await screen.findByText("The opening loses momentum.")).not.toBeNull();
+  expect(screen.getByText(/Nothing changes without your confirmation/)).not.toBeNull();
+  expect(confirmPlan).not.toHaveBeenCalled();
+});
