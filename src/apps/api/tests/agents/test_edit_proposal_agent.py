@@ -229,7 +229,6 @@ def test_fast_montage_splits_and_interleaves_recoverable_overlong_windows() -> N
             lambda cut: cut.update(source_end_s=cut["source_end_s"] + 0.2),
             "must match its source window",
         ),
-        (lambda cut: cut.update(media_id="unknown"), "unknown media"),
         (lambda cut: cut.update(source_start_s=29.0, source_end_s=30.4), "exceeds video"),
         (lambda cut: cut.update(transition="dissolve"), "Input should be 'none'"),
         (
@@ -254,6 +253,101 @@ def test_fast_montage_split_repair_rejects_material_cut_violations(
             json.dumps(payload),
             _fractional_fast_input(),
         )
+
+
+def test_fast_montage_repairs_unknown_media_to_prompt_visible_owned_source() -> None:
+    payload = _fractional_fast_payload(declared_duration_s=14)
+    payload["fast_cuts"][0]["media_id"] = "invented-provider-id"
+
+    output = EditProposalAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(payload),
+        _fractional_fast_input(),
+    )
+
+    cuts = output.fast_cuts or []
+    assert cuts[0].media_id in {"media-0", "media-1", "media-2"}
+    assert all(cut.media_id != "invented-provider-id" for cut in cuts)
+
+
+def _production_shape_input(*, direction: str = "guided_story") -> EditProposalAgentInput:
+    media = [
+        EditProposalMedia(
+            media_id=f"clip-{index:02d}-11111111-1111-1111-1111-111111111111",
+            lane="clip",
+            kind="video",
+            duration_s=8,
+            best_moments=[{"start_s": 1, "end_s": 4, "energy": 8 - index / 100}],
+        )
+        for index in range(45)
+    ]
+    media.extend(
+        EditProposalMedia(
+            media_id=f"asset-{index:02d}-22222222-2222-2222-2222-222222222222",
+            lane="asset",
+            kind="image",
+            subject=f"uploaded photo {index}",
+        )
+        for index in range(58)
+    )
+    return EditProposalAgentInput(
+        idea="A large mixed-media story",
+        direction=direction,
+        goal="Use the strongest photos and clips without repetition",
+        pace="balanced" if direction != "fast_montage" else "fast",
+        target_duration_s=24 if direction != "fast_montage" else 14,
+        media=media,
+    )
+
+
+def test_production_45_plus_58_shape_uses_bounded_alias_prompt_and_repairs_unknown_refs() -> None:
+    agent_input = _production_shape_input()
+    agent = EditProposalAgent(None)  # type: ignore[arg-type]
+
+    prompt = agent.render_prompt(agent_input)
+    assert prompt.count('"media_id": "m') == 32
+    assert agent_input.media[0].media_id not in prompt
+    assert agent_input.media[-1].media_id not in prompt
+
+    output = agent.parse(
+        json.dumps(
+            {
+                "title": "A few moments",
+                "duration_s": 24,
+                "story_beats": [
+                    {
+                        "topic": "Opening",
+                        "thought": "A clear opening sets the visual rhythm.",
+                        "media_ids": ["unknown-a"],
+                        "layout": "fullscreen",
+                        "duration_s": 8,
+                    },
+                    {
+                        "topic": "Details",
+                        "thought": "Small details give the sequence texture.",
+                        "media_ids": ["unknown-b"],
+                        "layout": "fullscreen",
+                        "duration_s": 8,
+                    },
+                    {
+                        "topic": "Closing",
+                        "thought": "A final frame gives the edit a finish.",
+                        "media_ids": ["unknown-c"],
+                        "layout": "fullscreen",
+                        "duration_s": 8,
+                    },
+                ],
+            }
+        ),
+        agent_input,
+    )
+
+    selected = {media_id for beat in output.story_beats for media_id in beat.media_ids}
+    assert len(selected) >= 7
+    assert selected <= {media.media_id for media in agent_input.media}
+    assert {media.kind for media in agent_input.media if media.media_id in selected} == {
+        "image",
+        "video",
+    }
 
 
 def test_fast_montage_rejects_expansion_beyond_cut_limit() -> None:

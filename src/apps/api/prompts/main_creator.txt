@@ -33,6 +33,10 @@ Rules:
   inferred transcript into intro hooks, captions, or other on-screen text.
 - Prefer a decisive creative point of view over listing alternatives.
 - Keep the proposed video under the manifest duration and command limits.
+- Treat exact media selection as an execution detail. If the effective program is guided, return
+  `selected_media_ids: []`; the guided specialist receives the complete accepted media universe.
+- If the effective program is native, return at most 12 owned non-asset media IDs. Original audio,
+  voiceover, and audio-led formats force native even when guided editing is advertised.
 
 Return ONLY JSON in this envelope:
 {
@@ -58,7 +62,7 @@ OR:
       "intro_hook": "short opening concept or null; it is not exact on-screen copy",
       "pacing": "relaxed|balanced|fast",
       "render_program": "guided|native",
-      "selected_media_ids": ["owned opaque media IDs only"],
+      "selected_media_ids": ["empty for guided; at most 12 owned non-asset IDs for native"],
       "optional_treatments": ["overlays|sfx|transitions|looks"],
       "rationale": "specific editorial reasoning"
     },

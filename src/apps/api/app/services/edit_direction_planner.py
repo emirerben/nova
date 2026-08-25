@@ -26,14 +26,14 @@ def _moment_energy(moment: dict) -> float:
     return {"low": 2.0, "medium": 5.0, "high": 8.0}.get(str(raw).casefold(), 0.0)
 
 
-def _ranked_fast_media(source: EditProposalSnapshot) -> list:
+def _ranked_fast_media(media: list[MediaRef]) -> list:
     def score(ref) -> float:  # noqa: ANN001
         moments = (ref.analysis or {}).get("best_moments")
         energies = [_moment_energy(moment) for moment in moments or [] if isinstance(moment, dict)]
         return max(energies, default=0.0)
 
     return sorted(
-        enumerate(source.media),
+        enumerate(media),
         key=lambda row: (-score(row[1]), row[0]),
     )
 
@@ -67,7 +67,7 @@ def _fallback_source_window(ref, duration_s: float, occurrence: int) -> tuple[fl
     return start_s, round(start_s + duration_s, 3)
 
 
-def _fallback_fast_cuts(source: EditProposalSnapshot, duration_s: int) -> list[FastMontageCut]:
+def deterministic_fast_cuts(media: list[MediaRef], duration_s: int) -> list[FastMontageCut]:
     """Build a strict source-aware montage when the semantic planner is invalid.
 
     The model still owns the normal creative path. This deterministic compiler
@@ -75,13 +75,11 @@ def _fallback_fast_cuts(source: EditProposalSnapshot, duration_s: int) -> list[F
     into a user-visible failure, using analyzed strongest moments first.
     """
 
-    eligible = [
-        ref for ref in source.media if ref.kind == "image" or float(ref.duration_s or 0.0) >= 0.4
-    ]
+    eligible = [ref for ref in media if ref.kind == "image" or float(ref.duration_s or 0.0) >= 0.4]
     if not eligible:
         raise ValueError("fast montage fallback found no usable media")
     eligible_ids = {ref.media_id for ref in eligible}
-    ranked = [ref for _, ref in _ranked_fast_media(source) if ref.media_id in eligible_ids]
+    ranked = [ref for _, ref in _ranked_fast_media(media) if ref.media_id in eligible_ids]
     target_duration_s = max(3, min(60, int(duration_s)))
     target_ms = target_duration_s * 1000
     capacity_ms = {
@@ -159,6 +157,67 @@ def _fallback_fast_cuts(source: EditProposalSnapshot, duration_s: int) -> list[F
     return cuts
 
 
+def deterministic_guided_beats(media: list[MediaRef], duration_s: int) -> list[StoryBeat]:
+    """Build conservative, metadata-free story structure from renderable owned media."""
+
+    eligible = [ref for ref in media if ref.kind == "image" or float(ref.duration_s or 0.0) >= 1.4]
+    if not eligible:
+        raise ValueError("guided story fallback found no usable media")
+
+    images = [ref for ref in eligible if ref.kind == "image"]
+    videos = sorted(
+        (ref for ref in eligible if ref.kind == "video"),
+        key=lambda ref: -float(ref.duration_s or 0.0),
+    )
+    ordered: list[MediaRef] = []
+    while images or videos:
+        if videos:
+            ordered.append(videos.pop(0))
+        if images:
+            ordered.append(images.pop(0))
+
+    target_s = max(3, min(60, int(duration_s)))
+    source_count = max(1, min(7, len(ordered), math.floor(target_s / 1.4)))
+    selected = ordered[:source_count]
+    beat_count = min(5, source_count)
+    groups: list[list[MediaRef]] = [[] for _ in range(beat_count)]
+    for index, ref in enumerate(selected):
+        groups[index % beat_count].append(ref)
+
+    durations = [round(1.4 * len(group), 3) for group in groups]
+    remaining = round(target_s - sum(durations), 3)
+    index = 0
+    while remaining > 0.001:
+        capacity = round(12.0 - durations[index % beat_count], 3)
+        if capacity > 0:
+            addition = min(remaining, capacity)
+            durations[index % beat_count] = round(durations[index % beat_count] + addition, 3)
+            remaining = round(remaining - addition, 3)
+        index += 1
+        if index > beat_count * 2 and remaining > 0.001:
+            raise ValueError("guided story fallback cannot allocate target duration")
+
+    copy = [
+        ("Opening", "A few moments, together."),
+        ("Details", "Details worth noticing."),
+        ("Closing", "One last look."),
+        ("Another view", "A different angle on the moment."),
+        ("Final frame", "A final frame to remember."),
+    ]
+    return [
+        StoryBeat(
+            beat_id=f"fallback-beat-{beat_index + 1}",
+            topic=copy[beat_index][0],
+            thought=copy[beat_index][1],
+            thought_source="ai_draft",
+            media_ids=[ref.media_id for ref in group],
+            layout="fullscreen",
+            duration_s=durations[beat_index],
+        )
+        for beat_index, group in enumerate(groups)
+    ]
+
+
 def _compatibility_beats(cuts: list[FastMontageCut]) -> list[StoryBeat]:
     """Keep older readers functional while fast_cuts remain authoritative."""
 
@@ -214,6 +273,7 @@ def plan_direction_snapshot(
         for ref in source.media
     ]
     output = None
+    used_fallback = False
     try:
         output = EditProposalAgent(default_client()).run(
             EditProposalAgentInput(
@@ -228,17 +288,19 @@ def plan_direction_snapshot(
             ctx=RunContext(job_id=job_id) if job_id else None,
         )
     except TerminalError as exc:
-        if direction != "fast_montage":
+        if direction == "text_explainer":
             raise
         log.warning(
-            "edit_direction_planner.fast_montage_fallback",
+            "edit_direction_planner.deterministic_fallback",
             job_id=job_id,
+            direction=direction,
             error=str(exc),
         )
+        used_fallback = True
     cuts = (
         output.fast_cuts
         if output is not None and direction == "fast_montage"
-        else _fallback_fast_cuts(source, duration_s)
+        else deterministic_fast_cuts(source.media, duration_s)
         if direction == "fast_montage"
         else None
     )
@@ -246,8 +308,9 @@ def plan_direction_snapshot(
         if not cuts:
             raise ValueError("fast montage planner returned no source-aware cuts")
         beats = _compatibility_beats(cuts)
+    elif output is None:
+        beats = deterministic_guided_beats(source.media, duration_s)
     else:
-        assert output is not None
         beats = [
             StoryBeat(
                 beat_id=f"beat-{index + 1}",
@@ -265,12 +328,17 @@ def plan_direction_snapshot(
             "direction": direction,
             "goal": goal,
             "pace": pace,
-            "duration_s": int(duration_s) if direction == "fast_montage" else output.duration_s,
+            "duration_s": int(duration_s)
+            if output is None or direction == "fast_montage"
+            else output.duration_s,
             "title": output.title if output is not None else source.title,
             "story_beats": beats,
             "fast_cuts": cuts,
         }
     )
-    if direction == "fast_montage":
-        return EditProposalSnapshot.model_validate(planned.model_dump(mode="json"))
-    return planned
+    result = EditProposalSnapshot.model_validate(planned.model_dump(mode="json"))
+    if used_fallback:
+        from app.pipeline.guided_story import validate_proposal_timing  # noqa: PLC0415
+
+        validate_proposal_timing(result)
+    return result

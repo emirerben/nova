@@ -715,8 +715,10 @@ class _FakeAgentOutput:
         self.story_beats = [_FakeBeat(media_ids)]
 
 
-def test_main_creator_guided_execution_persists_all_150_media(monkeypatch) -> None:
-    """A 50-clip + 100-visual confirmed plan reaches Kria intact."""
+def test_main_creator_production_shape_repairs_agent_refs_and_persists_all_media(
+    monkeypatch,
+) -> None:
+    """The exact 45-clip + 58-visual failure shape reaches Kria intact."""
 
     item_id = uuid.uuid4()
     owner_id = uuid.uuid4()
@@ -725,7 +727,7 @@ def test_main_creator_guided_execution_persists_all_150_media(monkeypatch) -> No
             "media_id": f"clip-{index}",
             "gcs_path": f"users/u/plan/{item_id}/clips/{index}.mp4",
         }
-        for index in range(50)
+        for index in range(45)
     ]
     item = _prod_item(item_id, clip_assignments=assignments, approval_mode="auto")
     clip_refs = [
@@ -747,7 +749,7 @@ def test_main_creator_guided_execution_persists_all_150_media(monkeypatch) -> No
             generation="1",
             kind="image",
         )
-        for index in range(100)
+        for index in range(58)
     ]
     db = _Db(_Result(rows=[SimpleNamespace(user_id=owner_id, status="ready") for _ in pool_refs]))
 
@@ -770,7 +772,37 @@ def test_main_creator_guided_execution_persists_all_150_media(monkeypatch) -> No
 
     def _run_agent(_self, input):  # noqa: ANN001, A002
         captured_media[:] = input.media
-        return _FakeAgentOutput([clip_refs[0].media_id])
+        from app.agents.edit_proposal import EditProposalAgent
+
+        return EditProposalAgent(None).parse(  # type: ignore[arg-type]
+            json.dumps(
+                {
+                    "title": "A few moments",
+                    "duration_s": 24,
+                    "story_beats": [
+                        {
+                            "topic": "Opening",
+                            "thought": "A clear opening sets the visual rhythm.",
+                            "media_ids": ["unknown-a"],
+                            "duration_s": 8,
+                        },
+                        {
+                            "topic": "Details",
+                            "thought": "Small details give the sequence texture.",
+                            "media_ids": ["unknown-b"],
+                            "duration_s": 8,
+                        },
+                        {
+                            "topic": "Closing",
+                            "thought": "A final frame gives the edit a finish.",
+                            "media_ids": ["unknown-c"],
+                            "duration_s": 8,
+                        },
+                    ],
+                }
+            ),
+            input,
+        )
 
     monkeypatch.setattr("app.agents.edit_proposal.EditProposalAgent.run", _run_agent)
 
@@ -782,8 +814,71 @@ def test_main_creator_guided_execution_persists_all_150_media(monkeypatch) -> No
     assert persisted is not None
     assert persisted.status == "approved"
     assert persisted.last_approved is not None
-    assert len(captured_media) == 150
-    assert len(persisted.last_approved.snapshot.media) == 150
+    assert len(captured_media) == 103
+    assert len(persisted.last_approved.snapshot.media) == 103
+    selected = {
+        media_id
+        for beat in persisted.last_approved.snapshot.story_beats
+        for media_id in beat.media_ids
+    }
+    assert selected <= {ref.media_id for ref in persisted.last_approved.snapshot.media}
+    assert len(selected) >= 7
+
+
+def test_initial_draft_terminal_agent_failure_uses_renderer_validated_fallback(
+    monkeypatch,
+) -> None:
+    from app.agents._runtime import TerminalError
+
+    item_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    item = _prod_item(item_id, approval_mode="auto")
+    item.edit_proposal = _proposal(
+        brief=ProposalBrief(duration_s=6),
+        approval_mode="auto",
+    )
+    db = _Db(_Result(rows=[]))
+
+    @contextmanager
+    def _session():
+        yield db
+
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    monkeypatch.setattr(proposal_build, "_locked_item", lambda *_a, **_kw: (item, owner_id))
+    monkeypatch.setattr(proposal_build, "_attempt_is_active", lambda *_a, **_kw: True)
+    clip_ref = MediaRef(
+        lane="clip",
+        media_id=str(_PROD_CLIP_ASSIGNMENT["media_id"]),
+        gcs_path=str(_PROD_CLIP_ASSIGNMENT["gcs_path"]),
+        generation=str(_PROD_CLIP_ASSIGNMENT["generation"]),
+        kind="video",
+        duration_s=6.768333,
+    )
+    monkeypatch.setattr(
+        proposal_build,
+        "_analyze_clip_assignments",
+        lambda assignments, *_a, **_kw: [(assignments[0], clip_ref)],
+    )
+    monkeypatch.setattr(proposal_build, "media_generations_match_sync", lambda _refs: True)
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
+    monkeypatch.setattr(
+        "app.agents.edit_proposal.EditProposalAgent.run",
+        lambda *_a, **_kw: (_ for _ in ()).throw(TerminalError("malformed provider media ref")),
+    )
+
+    proposal_build._run_draft_attempt(
+        SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, auto_finalize=True
+    )
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None
+    assert persisted.status == "approved"
+    assert persisted.last_approved is not None
+    snapshot = persisted.last_approved.snapshot
+    assert snapshot.title == "A few moments"
+    assert {media_id for beat in snapshot.story_beats for media_id in beat.media_ids} == {
+        _PROD_CLIP_ASSIGNMENT["media_id"]
+    }
 
 
 class _FakeFastAgentOutput:

@@ -311,11 +311,15 @@ def _fallback_strategy(manifest: Any) -> CreativeStrategy:
         audio_strategy="licensed_music",
         pacing="balanced",
         render_program=manifest.render_program,
-        selected_media_ids=[
-            media.media_id
-            for media in manifest.media
-            if manifest.render_program == "guided" or not media.media_id.startswith("asset-")
-        ],
+        selected_media_ids=(
+            []
+            if manifest.render_program == "guided"
+            else [
+                media.media_id
+                for media in manifest.media
+                if not media.media_id.startswith("asset-")
+            ][:12]
+        ),
         rationale=(
             "Build a clear opening, keep only the strongest moments, "
             "and preserve a natural short-form rhythm."

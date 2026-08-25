@@ -622,10 +622,15 @@ def _run_draft_attempt(
     """
 
     from app.agents._model_client import default_client  # noqa: PLC0415
+    from app.agents._runtime import TerminalError  # noqa: PLC0415
     from app.agents.edit_proposal import (  # noqa: PLC0415
         EditProposalAgent,
         EditProposalAgentInput,
         EditProposalMedia,
+    )
+    from app.services.edit_direction_planner import (  # noqa: PLC0415
+        deterministic_fast_cuts,
+        deterministic_guided_beats,
     )
     from app.services.edit_proposals import approve_proposal  # noqa: PLC0415
 
@@ -888,17 +893,30 @@ def _run_draft_attempt(
             )
             for ref in media
         ]
-        output = EditProposalAgent(default_client()).run(
-            EditProposalAgentInput(
-                idea=idea,
-                theme=theme,
-                direction=brief.direction,
-                goal=brief.goal,
-                pace=brief.pace,
-                target_duration_s=target_duration_s,
-                media=agent_media,
+        fallback_used = False
+        try:
+            output = EditProposalAgent(default_client()).run(
+                EditProposalAgentInput(
+                    idea=idea,
+                    theme=theme,
+                    direction=brief.direction,
+                    goal=brief.goal,
+                    pace=brief.pace,
+                    target_duration_s=target_duration_s,
+                    media=agent_media,
+                )
             )
-        )
+        except TerminalError as exc:
+            if brief.direction == "text_explainer":
+                raise
+            fallback_used = True
+            output = None
+            log.warning(
+                "edit_proposal.deterministic_fallback",
+                item_id=item_id,
+                direction=brief.direction,
+                error=str(exc),
+            )
         # EditProposalAgent.parse()'s +/-5s tolerance checks output.duration_s
         # against target_duration_s, NOT against real footage — with a small
         # target (e.g. the MIN_GUIDED_DURATION_S=3 floor) that tolerance
@@ -906,7 +924,7 @@ def _run_draft_attempt(
         # the true footage cap (P2-1a, 2026-08-18 adversarial review). Reject
         # rather than silently rewrite per-beat durations the agent already
         # sized for a specific total.
-        if output.duration_s > math.floor(feasible_duration_s):
+        if output is not None and output.duration_s > math.floor(feasible_duration_s):
             with sync_session() as db:
                 locked = _locked_item(db, iid, ownership_epoch)
                 item = locked[0] if locked else None
@@ -931,12 +949,20 @@ def _run_draft_attempt(
                     )
                     db.commit()
             return
+        if output is None and brief.direction == "fast_montage":
+            fallback_cuts = deterministic_fast_cuts(media, target_duration_s)
+            fallback_beats = _fast_story_beats(fallback_cuts)
+        else:
+            fallback_cuts = None
+            fallback_beats = (
+                deterministic_guided_beats(media, target_duration_s) if output is None else None
+            )
         snapshot = EditProposalSnapshot(
             direction=brief.direction,
             goal=brief.goal,
             pace=brief.pace,
-            duration_s=output.duration_s,
-            title=output.title,
+            duration_s=output.duration_s if output is not None else target_duration_s,
+            title=output.title if output is not None else "A few moments",
             media=media,
             story_beats=(
                 [
@@ -951,15 +977,23 @@ def _run_draft_attempt(
                     )
                     for beat in output.story_beats
                 ]
-                if brief.direction != "fast_montage"
+                if output is not None and brief.direction != "fast_montage"
                 else _fast_story_beats(output.fast_cuts or [])
+                if output is not None
+                else fallback_beats
             ),
             fast_cuts=(
                 [cut.model_dump(mode="json") for cut in output.fast_cuts]
-                if brief.direction == "fast_montage" and output.fast_cuts
-                else None
+                if output is not None and brief.direction == "fast_montage" and output.fast_cuts
+                else fallback_cuts
             ),
         )
+        if fallback_used:
+            # Never auto-approve a deterministic recovery that the strict
+            # renderer cannot compile from the complete accepted media set.
+            from app.pipeline.guided_story import validate_proposal_timing  # noqa: PLC0415
+
+            validate_proposal_timing(snapshot)
         with sync_session() as db:
             locked = _locked_item(db, iid, ownership_epoch)
             item = locked[0] if locked else None

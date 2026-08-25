@@ -148,6 +148,69 @@ def test_fast_montage_uses_analyzed_deterministic_fallback_on_terminal_schema(
     assert cuts[0].source_start_s == 2.5
 
 
+def test_guided_replan_terminal_failure_builds_compiler_valid_mixed_media_fallback(
+    monkeypatch,
+) -> None:
+    media = [
+        MediaRef(
+            lane="clip",
+            media_id=f"clip-{index}",
+            gcs_path=f"users/test/clip-{index}.mp4",
+            generation="1",
+            kind="video",
+            duration_s=8,
+        )
+        for index in range(45)
+    ]
+    media.extend(
+        MediaRef(
+            lane="asset",
+            media_id=f"asset-{index}",
+            gcs_path=f"users/test/asset-{index}.jpg",
+            generation="1",
+            kind="image",
+        )
+        for index in range(58)
+    )
+    source = EditProposalSnapshot(
+        direction="guided_story",
+        goal="Tell the story",
+        pace="balanced",
+        duration_s=24,
+        title="Creator-approved title",
+        media=media,
+        story_beats=[
+            StoryBeat(
+                beat_id="beat-1",
+                topic="Opening",
+                media_ids=[media[0].media_id],
+                duration_s=12,
+            ),
+            StoryBeat(
+                beat_id="beat-2",
+                topic="Closing",
+                media_ids=[media[-1].media_id],
+                duration_s=12,
+            ),
+        ],
+    )
+    monkeypatch.setattr(edit_direction_planner, "EditProposalAgent", FailingAgent)
+
+    planned = edit_direction_planner.plan_direction_snapshot(
+        source,
+        direction="guided_story",
+        goal="Use the strongest photos and clips",
+        pace="balanced",
+        duration_s=24,
+    )
+
+    assert planned.title == "Creator-approved title"
+    assert len(planned.media) == 103
+    selected = {media_id for beat in planned.story_beats for media_id in beat.media_ids}
+    assert selected <= {ref.media_id for ref in planned.media}
+    assert {ref.kind for ref in planned.media if ref.media_id in selected} == {"image", "video"}
+
+
 def _mixed_duration_source(duration_s: int) -> EditProposalSnapshot:
     media = [
         MediaRef(

@@ -8,6 +8,7 @@ import re
 from collections import defaultdict, deque
 from typing import ClassVar, Literal
 
+import structlog
 from pydantic import BaseModel, Field, model_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
@@ -32,6 +33,10 @@ _FAST_CUT_TOTAL_TOLERANCE_S = 0.15
 _FAST_DURATION_RECONCILE_TOLERANCE_S = 0.5
 _FAST_DURATION_EPSILON_S = 0.001
 _FAST_RECOVERABLE_CUT_MAX_S = 2.4
+EDIT_PROPOSAL_AGENT_MEDIA_LIMIT = 32
+_GUIDED_RENDER_MIN_S = 1.4
+
+log = structlog.get_logger()
 
 
 def minimum_required_sources(available: int) -> int:
@@ -85,6 +90,189 @@ class EditProposalAgentInput(BaseModel):
     # footage can actually support before invoking the agent.
     target_duration_s: int = Field(ge=3, le=60)
     media: list[EditProposalMedia] = Field(min_length=1, max_length=MAX_EDIT_PROPOSAL_MEDIA)
+
+
+def _media_energy(media: EditProposalMedia) -> float:
+    energies: list[float] = []
+    for moment in media.best_moments:
+        raw = moment.get("energy") if isinstance(moment, dict) else None
+        if isinstance(raw, (int, float)) and math.isfinite(float(raw)):
+            energies.append(float(raw))
+        else:
+            energies.append({"low": 2.0, "medium": 5.0, "high": 8.0}.get(str(raw).casefold(), 0.0))
+    return max(energies, default=0.0)
+
+
+def shortlist_edit_proposal_media(
+    input: EditProposalAgentInput,  # noqa: A002
+) -> list[EditProposalMedia]:
+    """Select bounded, render-capable evidence while preserving upload diversity."""
+
+    eligible: list[tuple[int, EditProposalMedia]] = []
+    for index, media in enumerate(input.media):
+        minimum_video_s = 0.4 if input.direction == "fast_montage" else _GUIDED_RENDER_MIN_S
+        if (
+            media.kind == "video"
+            and media.duration_s is not None
+            and float(media.duration_s) < minimum_video_s
+        ):
+            continue
+        eligible.append((index, media))
+    if not eligible:
+        eligible = list(enumerate(input.media))
+
+    buckets: dict[tuple[str, str], list[tuple[int, EditProposalMedia]]] = defaultdict(list)
+    for row in eligible:
+        buckets[(row[1].lane, row[1].kind)].append(row)
+    for rows in buckets.values():
+        rows.sort(
+            key=lambda row: (
+                -bool(row[1].user_context.strip()),
+                -_media_energy(row[1]),
+                -float(row[1].duration_s or 0.0),
+                row[0],
+            )
+        )
+
+    ordered_keys = [
+        key
+        for key in (("clip", "video"), ("asset", "image"), ("asset", "video"), ("clip", "image"))
+        if buckets.get(key)
+    ]
+    selected: list[EditProposalMedia] = []
+    while ordered_keys and len(selected) < EDIT_PROPOSAL_AGENT_MEDIA_LIMIT:
+        remaining_keys: list[tuple[str, str]] = []
+        for key in ordered_keys:
+            rows = buckets[key]
+            if rows and len(selected) < EDIT_PROPOSAL_AGENT_MEDIA_LIMIT:
+                _index, media = rows.pop(0)
+                selected.append(media)
+            if rows:
+                remaining_keys.append(key)
+        ordered_keys = remaining_keys
+    return selected
+
+
+def _prompt_media(
+    input: EditProposalAgentInput,  # noqa: A002
+) -> tuple[list[EditProposalMedia], dict[str, str], dict[str, str]]:
+    selected = shortlist_edit_proposal_media(input)
+    alias_to_id = {f"m{index + 1:03d}": media.media_id for index, media in enumerate(selected)}
+    id_to_alias = {media_id: alias for alias, media_id in alias_to_id.items()}
+    return (
+        [media.model_copy(update={"media_id": id_to_alias[media.media_id]}) for media in selected],
+        alias_to_id,
+        id_to_alias,
+    )
+
+
+def _resolve_model_media_references(
+    payload: dict,
+    input: EditProposalAgentInput,  # noqa: A002
+) -> dict:
+    """Resolve short aliases and repair invented refs only to prompt-visible owned media."""
+
+    _aliased, alias_to_id, id_to_alias = _prompt_media(input)
+    candidates = list(id_to_alias)
+    media_by_id = {media.media_id: media for media in shortlist_edit_proposal_media(input)}
+    candidate_cursor = 0
+    repairs = 0
+    unknown_story_reference_repaired = False
+    story_used_short_alias = False
+
+    def next_candidate(*, excluded: set[str], source_end_s: float | None = None) -> str | None:
+        nonlocal candidate_cursor
+        if not candidates:
+            return None
+        for offset in range(len(candidates)):
+            index = (candidate_cursor + offset) % len(candidates)
+            candidate = candidates[index]
+            media = media_by_id[candidate]
+            supports_window = (
+                source_end_s is None
+                or media.kind == "image"
+                or float(media.duration_s or 0.0) + _FAST_DURATION_EPSILON_S >= source_end_s
+            )
+            if candidate not in excluded and supports_window:
+                candidate_cursor = (index + 1) % len(candidates)
+                return candidate
+        return None
+
+    raw_beats = payload.get("story_beats")
+    if isinstance(raw_beats, list):
+        used: set[str] = set()
+        for raw_beat in raw_beats:
+            if not isinstance(raw_beat, dict) or not isinstance(raw_beat.get("media_ids"), list):
+                continue
+            resolved: list[str] = []
+            for raw_id in raw_beat["media_ids"]:
+                media_id = alias_to_id.get(str(raw_id))
+                if media_id is not None:
+                    story_used_short_alias = True
+                if media_id is None and str(raw_id) in id_to_alias:
+                    media_id = str(raw_id)
+                if media_id is None:
+                    media_id = next_candidate(excluded=set(resolved))
+                    repairs += 1
+                    unknown_story_reference_repaired = True
+                if media_id is not None and media_id not in resolved:
+                    resolved.append(media_id)
+            raw_beat["media_ids"] = resolved
+            used.update(resolved)
+        minimum = minimum_required_sources(len(input.media))
+        if raw_beats and (unknown_story_reference_repaired or story_used_short_alias):
+            beat_index = 0
+            while len(used) < minimum:
+                raw_beat = raw_beats[beat_index % len(raw_beats)]
+                beat_index += 1
+                if not isinstance(raw_beat, dict) or not isinstance(
+                    raw_beat.get("media_ids"), list
+                ):
+                    if beat_index > len(raw_beats) * 4:
+                        break
+                    continue
+                if len(raw_beat["media_ids"]) >= 4:
+                    if beat_index > len(raw_beats) * 4:
+                        break
+                    continue
+                media_id = next_candidate(excluded=used | set(raw_beat["media_ids"]))
+                if media_id is None:
+                    break
+                raw_beat["media_ids"].append(media_id)
+                used.add(media_id)
+                repairs += 1
+
+    raw_cuts = payload.get("fast_cuts")
+    if isinstance(raw_cuts, list):
+        used: set[str] = set()
+        previous: str | None = None
+        for raw_cut in raw_cuts:
+            if not isinstance(raw_cut, dict):
+                continue
+            raw_id = str(raw_cut.get("media_id") or "")
+            media_id = alias_to_id.get(raw_id)
+            if media_id is None and raw_id in id_to_alias:
+                media_id = raw_id
+            if media_id is None:
+                try:
+                    source_end_s = float(raw_cut.get("source_end_s"))
+                except (TypeError, ValueError):
+                    source_end_s = None
+                # Prefer a fresh source until the normal seven-source floor is
+                # met, then only avoid an adjacent repeat.
+                excluded = ({previous} if previous else set()) | (
+                    used if len(used) < minimum_required_sources(len(input.media)) else set()
+                )
+                media_id = next_candidate(excluded=excluded, source_end_s=source_end_s)
+                repairs += 1
+            if media_id is not None:
+                raw_cut["media_id"] = media_id
+                used.add(media_id)
+                previous = media_id
+
+    if repairs:
+        log.warning("edit_proposal.media_references_repaired", count=repairs)
+    return payload
 
 
 class DraftStoryBeat(BaseModel):
@@ -348,7 +536,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.3.0",
+        prompt_version="1.4.0",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -363,12 +551,14 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
         return ["title", "story_beats"]
 
     def render_prompt(self, input: EditProposalAgentInput) -> str:  # noqa: A002
+        prompt_media, _alias_to_id, _id_to_alias = _prompt_media(input)
         video_footage_s = sum(
-            m.duration_s for m in input.media if m.kind == "video" and m.duration_s
+            m.duration_s for m in prompt_media if m.kind == "video" and m.duration_s
         )
         footage_note = (
             f"Real available video footage totals about {video_footage_s:.1f}s across "
-            f"{sum(1 for m in input.media if m.kind == 'video')} clip(s). Plan beats that "
+            f"{sum(1 for m in prompt_media if m.kind == 'video')} shortlisted clip(s). "
+            "Plan beats that "
             "fit inside what was actually filmed — never invent extra footage or imply a "
             "clip is longer than it is."
             if video_footage_s > 0
@@ -394,7 +584,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             target_duration_s=str(input.target_duration_s),
             fast_timing_note=fast_timing_note,
             footage_note=footage_note,
-            media_json=json.dumps([row.model_dump() for row in input.media], ensure_ascii=False),
+            media_json=json.dumps([row.model_dump() for row in prompt_media], ensure_ascii=False),
         )
 
     def parse(
@@ -408,6 +598,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             raise SchemaError(f"edit_proposal: invalid output — {exc}") from exc
         if not isinstance(payload, dict):
             raise SchemaError("edit_proposal: invalid output — expected an object")
+        payload = _resolve_model_media_references(payload, input)
         repaired_cut_ids: set[str] = set()
         if input.direction == "fast_montage":
             payload, repaired_cut_ids = _normalize_fast_montage_duration(payload, input)
