@@ -17,6 +17,7 @@ from typing import Annotated, Any, Literal, TypeAlias
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
 from app.agents._schemas.edit_format import EditFormat, RenderProgram
+from app.schemas.edit_proposal import MixedMediaTimingProfile
 
 CREATOR_AGENT_SCHEMA_VERSION = 1
 MAX_CREATOR_COMMANDS = 4
@@ -191,6 +192,7 @@ class CreativeStrategy(_CreatorModel):
     render_program: RenderProgram = "guided"
     selected_media_ids: list[str] = Field(default_factory=list, max_length=MAX_CREATOR_MEDIA_REFS)
     optional_treatments: list[OptionalTreatment] = Field(default_factory=list, max_length=4)
+    mixed_media_timing: MixedMediaTimingProfile | None = None
     rationale: str = Field(default="", max_length=2000)
 
     @field_validator("story_structure")
@@ -899,6 +901,7 @@ __all__ = [
     "CreatorWorkspaceRelevanceDecision",
     "CreatorWorkspaceRelevanceProposal",
     "CreativeStrategy",
+    "MixedMediaTimingProfile",
     "DispatchRenderCommand",
     "DraftGuidedProposalCommand",
     "ProposeStrategy",

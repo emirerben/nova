@@ -1282,6 +1282,12 @@ export interface CreatorAgentEvent {
   created_at: string;
 }
 
+export interface CreatorAgentMixedMediaTimingProfile {
+  image_hold: "very_fast" | "standard";
+  video_hold: "longer" | "standard";
+  boundary_style: "cut" | "crossfade";
+}
+
 export interface CreatorAgentPlanPreview {
   version: number;
   plan_hash: string;
@@ -1292,6 +1298,9 @@ export interface CreatorAgentPlanPreview {
   story_structure?: string[];
   caption_style?: string | null;
   intro_hook?: string | null;
+  creator_request?: string;
+  /** Optional mixed-media timing profile. Older API responses omit this block. */
+  mixed_media_timing?: CreatorAgentMixedMediaTimingProfile | null;
   /** Optional on newer creator-agent responses. Older APIs omit this block. */
   edit_plan?: {
     strategy?: {
@@ -1595,6 +1604,7 @@ export function draftEditProposal(
     goal: string;
     pace: EditProposalPace;
     duration_s: number;
+    mixed_media_timing?: CreatorAgentMixedMediaTimingProfile | null;
   },
 ): Promise<PlanItem> {
   return request<PlanItem>(`/plan-items/${itemId}/edit-proposal/draft`, {
@@ -3309,20 +3319,24 @@ export interface EditProposalSnapshot {
   media: EditProposalMediaRef[];
   story_beats: EditProposalBeat[];
   fast_cuts?: EditProposalFastCut[] | null;
+  mixed_media_timing?: CreatorAgentMixedMediaTimingProfile | null;
 }
 
 export interface EditProposal {
   schema_version: 1;
   proposal_version: number;
   generation_attempt_id: string;
+  planning_started_at?: string | null;
   media_digest: string | null;
   status: EditProposalStatus;
   guidance?: ProposalGuidance | null;
   brief: {
     direction: EditProposalDirection;
     goal: string;
+    creator_request?: string;
     pace: EditProposalPace;
     duration_s: number;
+    mixed_media_timing?: CreatorAgentMixedMediaTimingProfile | null;
   };
   conversation: Array<{
     role: "user" | "agent";

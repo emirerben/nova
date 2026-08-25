@@ -302,6 +302,11 @@ describe("EditProposalCard", () => {
       goal: "Explain the food and architecture",
       pace: "relaxed",
       duration_s: 30,
+      mixed_media_timing: {
+        image_hold: "very_fast",
+        video_hold: "longer",
+        boundary_style: "cut",
+      },
     };
     briefing.brief_ready = true;
     briefing.conversation = [

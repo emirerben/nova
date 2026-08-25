@@ -66,7 +66,7 @@ log "Starting API on :8000 (uvicorn --reload)..."
 echo $! >> "$PID_FILE"
 
 # ── Worker ───────────────────────────────────────────────────────────────────
-# -Q celery,plan-jobs,overlay-jobs: drain the default queue, the content-plan
+# -Q celery,plan-jobs,overlay-jobs,creator-guided-jobs: drain the default queue, the content-plan
 # render queue (per-item + activation renders route to plan-jobs), AND the
 # SFX/media-overlay edit queue (sound-effects + overlay renders route to
 # overlay-jobs via dispatch_set_sound_effects / dispatch_set_media_overlays).
@@ -79,7 +79,7 @@ log "Starting Celery worker (watchfiles auto-restart)..."
 (
   cd "$REPO/src/apps/api"
   PATH="$REPO/src/apps/api/.venv/bin:$PATH" exec .venv/bin/watchfiles --filter python \
-    "celery -A app.worker:celery_app worker --loglevel=info --concurrency=2 --pool=${CELERY_POOL:-prefork} -Q celery,plan-jobs,overlay-jobs" \
+    "celery -A app.worker:celery_app worker --loglevel=info --concurrency=2 --pool=${CELERY_POOL:-prefork} -Q celery,plan-jobs,overlay-jobs,creator-guided-jobs" \
     app
 ) > "$DEV_DIR/worker.log" 2>&1 &
 echo $! >> "$PID_FILE"

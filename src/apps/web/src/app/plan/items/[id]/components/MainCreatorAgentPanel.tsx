@@ -34,6 +34,19 @@ function eventId(): string {
 const ACTIVE_STATES = new Set(["executing", "rendering", "reviewing"]);
 const ACTIVE_REVIEW_STATES = new Set(["pending", "queued", "running"]);
 
+function mixedMediaTimingLabel(
+  profile: NonNullable<CreatorAgentSession["pending_plan"]>["mixed_media_timing"],
+): string | null {
+  if (
+    profile?.image_hold !== "very_fast" ||
+    profile.video_hold !== "longer" ||
+    profile.boundary_style !== "cut"
+  ) {
+    return null;
+  }
+  return "Photos 0.5–0.8s · Videos 1.5–3s · hard cuts";
+}
+
 function shouldPoll(session: CreatorAgentSession): boolean {
   if (ACTIVE_STATES.has(session.status)) return true;
   return session.status === "awaiting_feedback" && ACTIVE_REVIEW_STATES.has(session.last_review?.status ?? "");
@@ -163,6 +176,7 @@ export default function MainCreatorAgentPanel({ itemId }: { itemId: string }) {
   if (loading || !available) return null;
 
   const plan = session?.pending_plan;
+  const timingLabel = plan ? mixedMediaTimingLabel(plan.mixed_media_timing) : null;
   const busy = !!session && ACTIVE_STATES.has(session.status);
   const terminal = !!session && ["completed", "failed", "cancelled"].includes(session.status);
   const prompt = session
@@ -231,6 +245,11 @@ export default function MainCreatorAgentPanel({ itemId }: { itemId: string }) {
                 <li key={beat}>{beat}</li>
               ))}
             </ol>
+          )}
+          {timingLabel && (
+            <p className="mt-3 rounded-lg border border-lime-200 bg-lime-50 px-2.5 py-2 text-xs font-medium text-lime-800">
+              {timingLabel}
+            </p>
           )}
           <div className="mt-3 flex flex-wrap gap-1.5 text-xs text-[#3f3f46]">
             {plan.edit_format && <span className="rounded-full bg-zinc-100 px-2 py-1">{plan.edit_format}</span>}

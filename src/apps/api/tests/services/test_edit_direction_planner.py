@@ -2,7 +2,13 @@ import pytest
 
 from app.agents._runtime import TerminalError
 from app.agents.edit_proposal import EditProposalAgentOutput
-from app.schemas.edit_proposal import EditProposalSnapshot, FastMontageCut, MediaRef, StoryBeat
+from app.schemas.edit_proposal import (
+    EditProposalSnapshot,
+    FastMontageCut,
+    MediaRef,
+    MixedMediaTimingProfile,
+    StoryBeat,
+)
 from app.services import edit_direction_planner
 
 
@@ -153,6 +159,297 @@ def test_fast_montage_uses_analyzed_deterministic_fallback_on_terminal_schema(
     assert all(
         current[0] >= previous[1] for previous, current in zip(strong_windows, strong_windows[1:])
     )
+
+
+def test_mixed_media_fallback_prefers_quick_photos_and_longer_videos() -> None:
+    media = [
+        MediaRef(
+            lane="asset",
+            media_id="photo",
+            gcs_path="users/test/photo.jpg",
+            generation="1",
+            kind="image",
+        ),
+        MediaRef(
+            lane="clip",
+            media_id="video",
+            gcs_path="users/test/video.mp4",
+            generation="1",
+            kind="video",
+            duration_s=8,
+        ),
+    ]
+    cuts = edit_direction_planner.deterministic_fast_cuts(
+        media,
+        4,
+        MixedMediaTimingProfile(image_hold="very_fast", video_hold="longer", boundary_style="cut"),
+    )
+    assert sum(cut.output_duration_s for cut in cuts) == pytest.approx(4)
+    assert any(cut.media_id == "photo" and 0.5 <= cut.output_duration_s <= 0.8 for cut in cuts)
+    assert any(cut.media_id == "video" and cut.output_duration_s >= 1.5 for cut in cuts)
+    assert all(cut.transition == "none" for cut in cuts)
+
+
+def test_mixed_media_fallback_caps_source_floor_to_low_target_capacity() -> None:
+    media = [
+        MediaRef(
+            lane="asset",
+            media_id=f"photo-{index}",
+            gcs_path=f"users/test/photo-{index}.jpg",
+            generation="1",
+            kind="image",
+        )
+        for index in range(7)
+    ]
+    profile = MixedMediaTimingProfile(
+        image_hold="very_fast", video_hold="longer", boundary_style="cut"
+    )
+
+    cuts = edit_direction_planner.deterministic_fast_cuts(media, 3, profile)
+
+    assert len({cut.media_id for cut in cuts}) == 6
+    assert sum(cut.output_duration_s for cut in cuts) == pytest.approx(3)
+    assert all(0.5 <= cut.output_duration_s <= 0.8 for cut in cuts)
+
+
+def test_mixed_media_fallback_source_floor_accounts_for_video_hold() -> None:
+    media = [
+        MediaRef(
+            lane="asset",
+            media_id=f"photo-{index}",
+            gcs_path=f"users/test/photo-{index}.jpg",
+            generation="1",
+            kind="image",
+        )
+        for index in range(7)
+    ] + [
+        MediaRef(
+            lane="clip",
+            media_id="video",
+            gcs_path="users/test/video.mp4",
+            generation="1",
+            kind="video",
+            duration_s=8,
+        )
+    ]
+    profile = MixedMediaTimingProfile(
+        image_hold="very_fast", video_hold="longer", boundary_style="cut"
+    )
+
+    cuts = edit_direction_planner.deterministic_fast_cuts(media, 3, profile)
+
+    assert len({cut.media_id for cut in cuts}) == 4
+    assert sum(cut.output_duration_s for cut in cuts) == pytest.approx(3)
+    assert any(
+        cut.media_id == "video" and cut.output_duration_s == pytest.approx(1.5) for cut in cuts
+    )
+
+
+def test_mixed_media_target_is_clamped_to_image_and_video_capacity() -> None:
+    media = [
+        MediaRef(
+            lane="asset",
+            media_id="photo",
+            gcs_path="users/test/photo.jpg",
+            generation="1",
+            kind="image",
+        ),
+        MediaRef(
+            lane="clip",
+            media_id="video",
+            gcs_path="users/test/video.mp4",
+            generation="1",
+            kind="video",
+            duration_s=8,
+        ),
+    ]
+    profile = MixedMediaTimingProfile(
+        image_hold="very_fast", video_hold="longer", boundary_style="cut"
+    )
+
+    # One photo can separate only two windows from the same video, so the
+    # schedulable capacity is 3s + 0.8s + 3s, not the raw 8.8s source sum.
+    assert edit_direction_planner.clamp_fast_montage_target_duration_s(media, 60, profile) == 6
+    # No profile means the legacy 3–60s target contract remains unchanged.
+    assert edit_direction_planner.clamp_fast_montage_target_duration_s(media, 24) == 24
+
+
+def test_one_video_one_photo_fallback_succeeds_at_adjacency_aware_clamp(monkeypatch) -> None:
+    media = [
+        MediaRef(
+            lane="asset",
+            media_id="photo",
+            gcs_path="users/test/photo.jpg",
+            generation="1",
+            kind="image",
+        ),
+        MediaRef(
+            lane="clip",
+            media_id="video",
+            gcs_path="users/test/video.mp4",
+            generation="1",
+            kind="video",
+            duration_s=8,
+        ),
+    ]
+    source = EditProposalSnapshot(
+        direction="guided_story",
+        goal="Tell the story",
+        pace="balanced",
+        duration_s=60,
+        title="Creator title",
+        media=media,
+        story_beats=[
+            StoryBeat(beat_id="beat-1", topic="Story", media_ids=["photo"], duration_s=12)
+        ],
+    )
+    profile = MixedMediaTimingProfile(
+        image_hold="very_fast", video_hold="longer", boundary_style="cut"
+    )
+    monkeypatch.setattr(edit_direction_planner, "EditProposalAgent", FailingAgent)
+
+    planned = edit_direction_planner.plan_direction_snapshot(
+        source,
+        direction="fast_montage",
+        goal="Move through the strongest moments",
+        pace="fast",
+        duration_s=60,
+        mixed_media_timing=profile,
+    )
+
+    assert planned.duration_s == 6
+    assert sum(cut.output_duration_s for cut in planned.fast_cuts or []) == pytest.approx(6)
+
+
+def test_mixed_media_target_rejects_capacity_below_agent_minimum() -> None:
+    media = [
+        MediaRef(
+            lane="asset",
+            media_id="photo",
+            gcs_path="users/test/photo.jpg",
+            generation="1",
+            kind="image",
+        ),
+        MediaRef(
+            lane="clip",
+            media_id="video",
+            gcs_path="users/test/video.mp4",
+            generation="1",
+            kind="video",
+            duration_s=1.0,
+        ),
+    ]
+    profile = MixedMediaTimingProfile(
+        image_hold="very_fast", video_hold="longer", boundary_style="cut"
+    )
+
+    with pytest.raises(ValueError, match="less than the minimum 3s"):
+        edit_direction_planner.clamp_fast_montage_target_duration_s(media, 60, profile)
+
+
+def test_mixed_media_fallback_uses_clamped_target(monkeypatch) -> None:
+    media = [
+        MediaRef(
+            lane="asset",
+            media_id="photo",
+            gcs_path="users/test/photo.jpg",
+            generation="1",
+            kind="image",
+        ),
+        MediaRef(
+            lane="clip",
+            media_id="video-1",
+            gcs_path="users/test/video-1.mp4",
+            generation="1",
+            kind="video",
+            duration_s=8,
+        ),
+        MediaRef(
+            lane="clip",
+            media_id="video-2",
+            gcs_path="users/test/video-2.mp4",
+            generation="1",
+            kind="video",
+            duration_s=8,
+        ),
+    ]
+    source = EditProposalSnapshot(
+        direction="guided_story",
+        goal="Tell the story",
+        pace="balanced",
+        duration_s=60,
+        title="Creator title",
+        media=media,
+        story_beats=[
+            StoryBeat(beat_id="beat-1", topic="Story", media_ids=["photo"], duration_s=12)
+        ],
+    )
+    profile = MixedMediaTimingProfile(
+        image_hold="very_fast", video_hold="longer", boundary_style="cut"
+    )
+    monkeypatch.setattr(edit_direction_planner, "EditProposalAgent", FailingAgent)
+
+    planned = edit_direction_planner.plan_direction_snapshot(
+        source,
+        direction="fast_montage",
+        goal="Move through the strongest moments",
+        pace="fast",
+        duration_s=60,
+        mixed_media_timing=profile,
+    )
+
+    assert planned.duration_s == 16
+    assert sum(cut.output_duration_s for cut in planned.fast_cuts or []) == pytest.approx(16)
+
+
+def test_real_large_mixed_media_shape_selects_a_timed_subset_without_overlap() -> None:
+    media = [
+        MediaRef(
+            lane="clip",
+            media_id=f"video-{index}",
+            gcs_path=f"users/test/video-{index}.mp4",
+            generation="1",
+            kind="video",
+            duration_s=8.0,
+            analysis={"best_moments": [{"energy": 10 - (index % 5)}]},
+        )
+        for index in range(45)
+    ] + [
+        MediaRef(
+            lane="asset",
+            media_id=f"photo-{index}",
+            gcs_path=f"users/test/photo-{index}.jpg",
+            generation="1",
+            kind="image",
+        )
+        for index in range(58)
+    ]
+    profile = MixedMediaTimingProfile(
+        image_hold="very_fast", video_hold="longer", boundary_style="cut"
+    )
+
+    cuts = edit_direction_planner.deterministic_fast_cuts(media, 24, profile)
+
+    assert len(cuts) < len(media)
+    assert sum(cut.output_duration_s for cut in cuts) == pytest.approx(24, abs=0.001)
+    by_id = {ref.media_id: ref for ref in media}
+    assert {by_id[cut.media_id].kind for cut in cuts} == {"image", "video"}
+    windows: dict[str, list[tuple[float, float]]] = {}
+    for cut in cuts:
+        ref = by_id[cut.media_id]
+        assert cut.transition == "none"
+        if ref.kind == "image":
+            assert 0.5 <= cut.output_duration_s <= 0.8
+        else:
+            assert 1.5 <= cut.output_duration_s <= 3.0
+            assert cut.source_end_s <= float(ref.duration_s)
+            windows.setdefault(ref.media_id, []).append((cut.source_start_s, cut.source_end_s))
+    for source_windows in windows.values():
+        ordered = sorted(source_windows)
+        assert all(
+            current[0] >= previous[1]
+            for previous, current in zip(ordered, ordered[1:], strict=False)
+        )
 
 
 def test_guided_replan_terminal_failure_builds_compiler_valid_mixed_media_fallback(

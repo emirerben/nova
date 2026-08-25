@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.agents._schemas.creator_agent import CreativeStrategy, CreatorEditSnapshot
+from app.schemas.edit_proposal import MixedMediaTimingProfile
 from app.services import creator_capabilities as capabilities
 from app.services.creator_sessions import compile_active_plan
 
@@ -355,9 +356,19 @@ def test_session_compiles_agent_strategy_through_capability_service(monkeypatch)
         strategy=CreativeStrategy(
             edit_format="montage",
             selected_media_ids=["clip-1"],
+            mixed_media_timing=MixedMediaTimingProfile(
+                image_hold="very_fast", video_hold="longer", boundary_style="cut"
+            ),
         ),
         summary="A fast, personal montage.",
+        creator_request="Photos should have a very fast transition, videos can be a bit longer",
     )
 
     assert receipt["version"] == 1
+    assert receipt["creator_request"].startswith("Photos should")
+    assert receipt["mixed_media_timing"] == {
+        "image_hold": "very_fast",
+        "video_hold": "longer",
+        "boundary_style": "cut",
+    }
     assert receipt["edit_plan"]["commands"][-1]["command"] == "dispatch_render"

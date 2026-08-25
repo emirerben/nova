@@ -18,6 +18,7 @@ from app.services.queue_state import (
     get_live_job_index,
     get_queue_position,
     get_queue_snapshot,
+    get_task_runtime_state,
     render_worker_idle,
 )
 
@@ -49,6 +50,10 @@ def _broker_msg_for(job_id: str) -> bytes:
     body = json.dumps([[job_id], {}, embed])
     envelope = {"body": base64.b64encode(body.encode()).decode()}
     return json.dumps(envelope).encode()
+
+
+def _broker_msg_for_task(task_id: str) -> bytes:
+    return json.dumps({"headers": {"id": task_id}, "body": "unused"}).encode()
 
 
 # ── get_live_job_index ──────────────────────────────────────────────────────
@@ -153,6 +158,46 @@ def test_runtime_state_falls_back_to_job_id_when_celery_task_id_null() -> None:
 
     assert state.state == "active"
     assert state.task_id == job_id  # fell back to job_id
+
+
+def test_task_runtime_state_finds_a_queued_creator_task() -> None:
+    task_id = f"edit-proposal-{uuid.uuid4()}"
+    redis = MagicMock()
+    redis.llen.return_value = 2
+    redis.lrange.return_value = [b"invalid", _broker_msg_for_task(task_id)]
+    celery_app = _fake_celery(redis=redis)
+
+    state = get_task_runtime_state(celery_app, task_id, queue_name="creator-guided-jobs")
+
+    assert state.state == "queued"
+
+
+def test_task_runtime_state_finds_an_active_creator_task() -> None:
+    task_id = f"edit-proposal-{uuid.uuid4()}"
+    redis = MagicMock()
+    redis.llen.return_value = 0
+    celery_app = _fake_celery(
+        active={"celery@worker-1": [{"id": task_id}]},
+        reserved={},
+        redis=redis,
+    )
+
+    state = get_task_runtime_state(celery_app, task_id, queue_name="creator-guided-jobs")
+
+    assert state.state == "active"
+    assert state.worker == "celery@worker-1"
+
+
+def test_task_runtime_state_keeps_a_deep_queue_inconclusive() -> None:
+    task_id = f"edit-proposal-{uuid.uuid4()}"
+    redis = MagicMock()
+    redis.llen.return_value = 101
+    redis.lrange.return_value = [_broker_msg_for_task("another-task")] * 100
+    celery_app = _fake_celery(active={}, reserved={}, redis=redis)
+
+    state = get_task_runtime_state(celery_app, task_id, queue_name="creator-guided-jobs")
+
+    assert state.state == "unknown"
 
 
 # ── get_queue_snapshot ──────────────────────────────────────────────────────
@@ -333,10 +378,12 @@ def test_render_worker_idle_none_on_redis_llen_failure() -> None:
 
 def test_render_worker_queues_constant_matches_fly_toml_worker_queues() -> None:
     """Pin the constant's contents — this must stay in sync with fly.toml's
-    `celery ... -Q celery,plan-jobs,overlay-jobs` by hand (no way to share
+    `celery ... -Q celery,plan-jobs,overlay-jobs,creator-guided-jobs` by hand (no way to share
     a literal between TOML and Python). A drift here silently breaks BOTH
     the wake-hook signal filter and this idle-check."""
-    assert RENDER_WORKER_QUEUES == frozenset({"celery", "plan-jobs", "overlay-jobs"})
+    assert RENDER_WORKER_QUEUES == frozenset(
+        {"celery", "plan-jobs", "overlay-jobs", "creator-guided-jobs"}
+    )
 
 
 def test_inspect_uses_dedicated_fast_polling_connection() -> None:

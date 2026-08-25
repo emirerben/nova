@@ -86,7 +86,7 @@ def _inspector(celery_app: Celery):
 _QUEUE_SCAN_CAP = 100
 
 # The queues the `worker` Fly process consumes (fly.toml:
-# `celery ... -Q celery,plan-jobs,overlay-jobs`). "celery" is Celery's
+# `celery ... -Q celery,plan-jobs,overlay-jobs,creator-guided-jobs`). "celery" is Celery's
 # built-in default queue name — anything dispatched without an explicit
 # `queue=` kwarg lands here. Shared by:
 #   - render_worker_idle() below (queue-depth + active/reserved check)
@@ -100,9 +100,12 @@ _QUEUE_SCAN_CAP = 100
 # between TOML and Python) — but drift now fails CI:
 # tests/test_worker_prewarm_gate.py pins both this set against the worker
 # line AND the light line's disjointness from it.
-RENDER_WORKER_QUEUES: frozenset[str] = frozenset({"celery", "plan-jobs", "overlay-jobs"})
+RENDER_WORKER_QUEUES: frozenset[str] = frozenset(
+    {"celery", "plan-jobs", "overlay-jobs", "creator-guided-jobs"}
+)
 
 RuntimeStateLiteral = Literal["active", "reserved", "not_found", "unknown"]
+TaskRuntimeStateLiteral = Literal["active", "reserved", "queued", "not_found", "unknown"]
 
 
 @dataclass
@@ -132,6 +135,12 @@ class JobRuntimeState:
     state: RuntimeStateLiteral
     worker: str | None
     task_id: str | None
+
+
+@dataclass
+class TaskRuntimeState:
+    state: TaskRuntimeStateLiteral
+    worker: str | None = None
 
 
 @dataclass
@@ -220,6 +229,54 @@ def get_job_runtime_state(
             task_id=task_id,
         )
     return JobRuntimeState(state="not_found", worker=None, task_id=task_id)
+
+
+def get_task_runtime_state(
+    celery_app: Celery,
+    task_id: str,
+    *,
+    queue_name: str,
+) -> TaskRuntimeState:
+    """Locate a non-Job task without treating unavailable/deep state as absent.
+
+    Creator proposal tasks can legitimately wait longer than their execution
+    budget behind a concurrency-one worker. Reconciliation calls this only
+    after the receipt lease has elapsed, so its broker round-trip stays off the
+    normal polling path.
+    """
+
+    queue_scan_complete = False
+    try:
+        with celery_app.connection_or_acquire() as conn:
+            redis_client = conn.default_channel.client  # type: ignore[attr-defined]
+            depth = int(redis_client.llen(queue_name) or 0)
+            sample_size = min(depth, _QUEUE_SCAN_CAP)
+            messages = redis_client.lrange(queue_name, 0, sample_size - 1) if sample_size else []
+            if any(_extract_task_id_from_broker_message(raw) == task_id for raw in messages or []):
+                return TaskRuntimeState(state="queued")
+            queue_scan_complete = depth <= _QUEUE_SCAN_CAP
+    except Exception as exc:  # noqa: BLE001
+        log.warning("task_runtime_queue_scan_failed", queue=queue_name, error=str(exc))
+        return TaskRuntimeState(state="unknown")
+
+    try:
+        conn, inspector = _inspector(celery_app)
+        with conn:
+            active = inspector.active() or {}
+            reserved = inspector.reserved() or {}
+    except Exception as exc:  # noqa: BLE001
+        log.warning("task_runtime_inspect_failed", task_id=task_id, error=str(exc))
+        return TaskRuntimeState(state="unknown")
+
+    for worker_name, tasks in active.items():
+        if any(str(task.get("id") or "") == task_id for task in tasks):
+            return TaskRuntimeState(state="active", worker=worker_name)
+    for worker_name, tasks in reserved.items():
+        if any(str(task.get("id") or "") == task_id for task in tasks):
+            return TaskRuntimeState(state="reserved", worker=worker_name)
+    if not queue_scan_complete:
+        return TaskRuntimeState(state="unknown")
+    return TaskRuntimeState(state="not_found")
 
 
 def get_queue_snapshot(celery_app: Celery) -> QueueSnapshot:
@@ -404,3 +461,19 @@ def _extract_job_id_from_broker_message(raw: object) -> str | None:
     except Exception:  # noqa: BLE001
         return None
     return None
+
+
+def _extract_task_id_from_broker_message(raw: object) -> str | None:
+    """Best-effort decode of a Redis-broker envelope's Celery task id."""
+
+    if raw is None:
+        return None
+    try:
+        import json  # noqa: PLC0415
+
+        envelope = json.loads(raw if isinstance(raw, (str, bytes, bytearray)) else str(raw))
+        headers = envelope.get("headers") or {}
+        task_id = headers.get("id") if isinstance(headers, dict) else None
+        return str(task_id) if task_id else None
+    except Exception:  # noqa: BLE001
+        return None

@@ -1,6 +1,6 @@
 {
   "agent": "nova.plan.edit_proposal",
-  "prompt_version": "1.4.0",
+  "prompt_version": "1.5.2",
   "input": {
     "idea": "Corfu coast",
     "theme": "A day by the water",
@@ -8,6 +8,7 @@
     "goal": "Make a quick coastal sequence that still has a beginning and ending",
     "pace": "fast",
     "target_duration_s": 7,
+    "mixed_media_timing": {"image_hold":"very_fast","video_hold":"longer","boundary_style":"cut"},
     "media": [
       {"media_id":"b1","lane":"clip","kind":"video","duration_s":5,"subject":"sailboat leaving harbor"},
       {"media_id":"b2","lane":"asset","kind":"image","subject":"rocky beach"},
@@ -18,7 +19,7 @@
       {"media_id":"b7","lane":"asset","kind":"image","subject":"sunset over sea"}
     ]
   },
-  "raw_text": "{\"title\":\"Corfu by the water\",\"duration_s\":7,\"story_beats\":[],\"fast_cuts\":[{\"cut_id\":\"c1\",\"media_id\":\"b1\",\"source_start_s\":0,\"source_end_s\":1,\"output_duration_s\":1,\"role\":\"hook\",\"transition\":\"none\",\"beat_align\":true},{\"cut_id\":\"c2\",\"media_id\":\"b2\",\"source_start_s\":0,\"source_end_s\":1,\"output_duration_s\":1,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":true},{\"cut_id\":\"c3\",\"media_id\":\"b3\",\"source_start_s\":1,\"source_end_s\":2,\"output_duration_s\":1,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":true},{\"cut_id\":\"c4\",\"media_id\":\"b4\",\"source_start_s\":0,\"source_end_s\":1,\"output_duration_s\":1,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":true},{\"cut_id\":\"c5\",\"media_id\":\"b5\",\"source_start_s\":2,\"source_end_s\":3,\"output_duration_s\":1,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":true},{\"cut_id\":\"c6\",\"media_id\":\"b6\",\"source_start_s\":0,\"source_end_s\":1,\"output_duration_s\":1,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":true},{\"cut_id\":\"c7\",\"media_id\":\"b7\",\"source_start_s\":0,\"source_end_s\":1,\"output_duration_s\":1,\"role\":\"payoff\",\"transition\":\"none\",\"beat_align\":true}]}",
+  "raw_text": "{\"title\":\"Corfu by the water\",\"duration_s\":7,\"story_beats\":[],\"mixed_media_timing\":{\"image_hold\":\"very_fast\",\"video_hold\":\"longer\",\"boundary_style\":\"cut\"},\"fast_cuts\":[{\"cut_id\":\"c1\",\"media_id\":\"b1\",\"source_start_s\":0,\"source_end_s\":1.5,\"output_duration_s\":1.5,\"role\":\"hook\",\"transition\":\"none\",\"beat_align\":true},{\"cut_id\":\"c2\",\"media_id\":\"b2\",\"source_start_s\":0,\"source_end_s\":0.625,\"output_duration_s\":0.625,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":true},{\"cut_id\":\"c3\",\"media_id\":\"b3\",\"source_start_s\":0,\"source_end_s\":1.5,\"output_duration_s\":1.5,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":true},{\"cut_id\":\"c4\",\"media_id\":\"b4\",\"source_start_s\":0,\"source_end_s\":0.625,\"output_duration_s\":0.625,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":true},{\"cut_id\":\"c5\",\"media_id\":\"b5\",\"source_start_s\":0,\"source_end_s\":1.5,\"output_duration_s\":1.5,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":true},{\"cut_id\":\"c6\",\"media_id\":\"b6\",\"source_start_s\":0,\"source_end_s\":0.625,\"output_duration_s\":0.625,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":true},{\"cut_id\":\"c7\",\"media_id\":\"b7\",\"source_start_s\":0,\"source_end_s\":0.625,\"output_duration_s\":0.625,\"role\":\"payoff\",\"transition\":\"none\",\"beat_align\":true}]}",
   "meta": {
     "source": "hand_authored_golden",
     "case": "source-aware fast montage cut program",
