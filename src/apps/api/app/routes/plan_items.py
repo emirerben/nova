@@ -122,6 +122,7 @@ from app.routes.generative_jobs import (
 from app.routes.music_jobs import classify_slot_kind
 from app.routes.waitlist import get_real_ip
 from app.schemas.edit_proposal import (
+    MAX_EDIT_PROPOSAL_MEDIA,
     EditProposalResponse,
     EditProposalSnapshot,
     MediaRef,
@@ -2133,7 +2134,7 @@ async def _edit_guide_media_summary(
                 "description": str(analysis.get("description") or "")[:500],
             }
         )
-    limited = summaries[:60]
+    limited = summaries[:MAX_EDIT_PROPOSAL_MEDIA]
     for index, summary in enumerate(limited, start=1):
         summary["media_ref"] = f"media_{index}"
     return limited

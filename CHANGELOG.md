@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.51.5.0] — 2026-08-25
+
+### Fixed
+- **Kria guided edits can now retain all 50 clips and 100 ready visuals.** The proposal, review, and editor snapshots keep the complete deduplicated media set instead of failing at 60 items.
+- **Large guided edits analyze source clips faster and recover promptly from failures.** Clip analysis runs three at a time, preserves the creator's order, and does not wait for sibling analysis work before recording a retry or failure.
+- **Visual uploads no longer wait for an entire selection to be prepared first.** Each file signs, uploads, and registers independently, with three active pipelines and unchanged per-file retry, capacity, and deduplication behavior.
+
 ## [0.51.4.0] — 2026-08-25
 
 ### Fixed

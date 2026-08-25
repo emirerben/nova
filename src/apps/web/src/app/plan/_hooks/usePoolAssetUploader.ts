@@ -23,7 +23,7 @@ export const POOL_ASSET_MIME_TYPES = [
   "video/quicktime",
 ] as const;
 
-const TRANSFER_CONCURRENCY = 3;
+const UPLOAD_PIPELINE_CONCURRENCY = 3;
 const MAX_POOL_IMAGE_BYTES = 25 * 1024 * 1024;
 const MAX_POOL_VIDEO_BYTES = 512 * 1024 * 1024;
 const RESERVATION_CLEANUP_GRACE_MS = 15 * 60 * 1000;
@@ -139,9 +139,8 @@ export function usePoolAssetUploader({
   onReservationFinalized,
 }: UsePoolAssetUploaderOptions) {
   const internal = useRef(new Map<string, InternalUpload>());
-  const registrationTail = useRef<Promise<void>>(Promise.resolve());
-  const activeTransfers = useRef(0);
-  const transferWaiters = useRef<
+  const activePipelines = useRef(0);
+  const pipelineWaiters = useRef<
     Array<{ resolve: () => void; reject: (reason?: unknown) => void }>
   >([]);
   const [uploads, setUploads] = useState<PendingPoolUpload[]>([]);
@@ -202,7 +201,7 @@ export function usePoolAssetUploader({
       internal.current.forEach((upload) => upload.abortController.abort());
       internal.current.clear();
       const cancelled = new DOMException("Upload cancelled", "AbortError");
-      transferWaiters.current.splice(0).forEach((waiter) => waiter.reject(cancelled));
+      pipelineWaiters.current.splice(0).forEach((waiter) => waiter.reject(cancelled));
     },
     [],
   );
@@ -213,23 +212,23 @@ export function usePoolAssetUploader({
     [],
   );
 
-  const acquireTransferSlot = useCallback(async (signal: AbortSignal) => {
+  const acquirePipelineSlot = useCallback(async (signal: AbortSignal) => {
     if (signal.aborted) throw new DOMException("Upload cancelled", "AbortError");
-    if (activeTransfers.current < TRANSFER_CONCURRENCY) {
-      activeTransfers.current += 1;
+    if (activePipelines.current < UPLOAD_PIPELINE_CONCURRENCY) {
+      activePipelines.current += 1;
       return;
     }
     await new Promise<void>((resolve, reject) => {
       let waiter: { resolve: () => void; reject: (reason?: unknown) => void };
       const onAbort = () => {
-        const index = transferWaiters.current.indexOf(waiter);
-        if (index >= 0) transferWaiters.current.splice(index, 1);
+        const index = pipelineWaiters.current.indexOf(waiter);
+        if (index >= 0) pipelineWaiters.current.splice(index, 1);
         waiter.reject(new DOMException("Upload cancelled", "AbortError"));
       };
       waiter = {
         resolve: () => {
           signal.removeEventListener("abort", onAbort);
-          activeTransfers.current += 1;
+          activePipelines.current += 1;
           resolve();
         },
         reject: (reason?: unknown) => {
@@ -238,13 +237,13 @@ export function usePoolAssetUploader({
         },
       };
       signal.addEventListener("abort", onAbort, { once: true });
-      transferWaiters.current.push(waiter);
+      pipelineWaiters.current.push(waiter);
     });
   }, []);
 
-  const releaseTransferSlot = useCallback(() => {
-    activeTransfers.current = Math.max(0, activeTransfers.current - 1);
-    transferWaiters.current.shift()?.resolve();
+  const releasePipelineSlot = useCallback(() => {
+    activePipelines.current = Math.max(0, activePipelines.current - 1);
+    pipelineWaiters.current.shift()?.resolve();
   }, []);
 
   const fail = useCallback(
@@ -285,120 +284,120 @@ export function usePoolAssetUploader({
     [isActive, onDeduped, onRegistered, onReservationFinalized, publish],
   );
 
-  const enqueueRegistration = useCallback(
-    (upload: InternalUpload): Promise<void> => {
-      const work = registrationTail.current.then(async () => {
+  const register = useCallback(
+    async (upload: InternalUpload): Promise<void> => {
+      try {
         if (!isActive(upload)) return;
-        try {
-          upload.stage = "registering";
-          upload.failedStage = null;
-          upload.message = null;
-          publish();
-          if (upload.contentHash === undefined) {
-            upload.contentHash = await sha256HexOfFile(upload.file);
-          }
-          if (!isActive(upload)) return;
-          if (!upload.signed) throw new Error("Missing upload target");
-          const asset = await registerPoolAsset(
-            itemId,
-            {
-              reservation_id: upload.signed.reservation_id,
-              gcs_path: upload.signed.gcs_path,
-              content_type: uploadContentTypeForFile(upload.file),
-              content_hash: upload.contentHash,
-              source_filename: upload.file.name,
-            },
-            upload.correlationId,
-          );
-          finish(upload, asset);
-        } catch (err) {
-          // An expired reservation is a transfer-stage failure even though the
-          // registration request discovered it. Repeating registration would
-          // reuse an object the backend has already removed; restart from a
-          // freshly signed target and PUT the retained File again instead.
-          const retryStage =
-            err instanceof PlanApiError &&
-            (err.stage === "transfer" || err.code === "upload_reservation_expired")
-              ? "uploading"
-              : "registering";
-          fail(upload, retryStage, err);
+        if (!upload.signed) throw new Error("Missing upload target");
+        upload.stage = "registering";
+        upload.failedStage = null;
+        upload.message = null;
+        publish();
+        if (upload.contentHash === undefined) {
+          upload.contentHash = await sha256HexOfFile(upload.file);
         }
-      });
-      registrationTail.current = work.then(
-        () => undefined,
-        () => undefined,
-      );
-      return work;
+        if (!isActive(upload)) return;
+        const asset = await registerPoolAsset(
+          itemId,
+          {
+            reservation_id: upload.signed.reservation_id,
+            gcs_path: upload.signed.gcs_path,
+            content_type: uploadContentTypeForFile(upload.file),
+            content_hash: upload.contentHash,
+            source_filename: upload.file.name,
+          },
+          upload.correlationId,
+        );
+        finish(upload, asset);
+      } catch (err) {
+        // An expired reservation is a transfer-stage failure even though the
+        // registration request discovered it. Repeating registration would
+        // reuse an object the backend has already removed; restart from a
+        // freshly signed target and PUT the retained File again instead.
+        const retryStage =
+          err instanceof PlanApiError &&
+          (err.stage === "transfer" || err.code === "upload_reservation_expired")
+            ? "uploading"
+            : "registering";
+        fail(upload, retryStage, err);
+      }
     },
     [fail, finish, isActive, itemId, publish],
   );
 
-  const transfer = useCallback(
+  const signUploadTransferAndRegister = useCallback(
     async (upload: InternalUpload): Promise<void> => {
       let acquired = false;
       try {
-        await acquireTransferSlot(upload.abortController.signal);
+        await acquirePipelineSlot(upload.abortController.signal);
         acquired = true;
         if (!isActive(upload)) return;
-        if (!upload.signed) throw new Error("Missing upload target");
+        const targets = await requestPoolAssetUploadUrls(
+          itemId,
+          [
+            {
+              filename: upload.file.name,
+              content_type: uploadContentTypeForFile(upload.file),
+              file_size_bytes: upload.file.size,
+              client_upload_id: upload.clientUploadId,
+            },
+          ],
+          upload.correlationId,
+        );
+        const target = targets[0];
+        if (targets.length !== 1 || !target || target.client_upload_id !== upload.clientUploadId) {
+          throw new Error("Upload target identity mismatch");
+        }
+        upload.signed = target;
+        upload.reservationMayExist = false;
+        publish();
+        if (!isActive(upload)) return;
         upload.stage = "uploading";
         upload.failedStage = null;
         upload.message = null;
         publish();
         await uploadToGcs(
-          upload.signed.upload_url,
+          target.upload_url,
           upload.file,
-          upload.signed.upload_headers,
+          target.upload_headers,
           upload.correlationId,
           upload.abortController.signal,
         );
         if (!isActive(upload)) return;
-        void enqueueRegistration(upload);
+        await register(upload);
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
-        fail(upload, "uploading", err);
+        const stage = upload.signed ? "uploading" : "preparing";
+        fail(upload, stage, err);
       } finally {
-        if (acquired) releaseTransferSlot();
+        if (acquired) releasePipelineSlot();
       }
     },
-    [acquireTransferSlot, enqueueRegistration, fail, isActive, publish, releaseTransferSlot],
+    [acquirePipelineSlot, fail, isActive, itemId, publish, register, releasePipelineSlot],
   );
 
   const signAndTransfer = useCallback(
-    async (batch: InternalUpload[]) => {
+    (batch: InternalUpload[]) => {
+      void Promise.all(batch.map(signUploadTransferAndRegister));
+    },
+    [signUploadTransferAndRegister],
+  );
+
+  const retryRegistration = useCallback(
+    async (upload: InternalUpload): Promise<void> => {
+      let acquired = false;
       try {
-        const targets = await requestPoolAssetUploadUrls(
-          itemId,
-          batch.map((upload) => ({
-            filename: upload.file.name,
-            content_type: uploadContentTypeForFile(upload.file),
-            file_size_bytes: upload.file.size,
-            client_upload_id: upload.clientUploadId,
-          })),
-          batch[0]?.correlationId ?? stableId("batch"),
-        );
-        if (targets.length !== batch.length) throw new Error("Upload target count mismatch");
-        const targetsByClientId = new Map(
-          targets.map((target) => [target.client_upload_id, target] as const),
-        );
-        if (
-          targetsByClientId.size !== targets.length ||
-          batch.some((upload) => !targetsByClientId.has(upload.clientUploadId))
-        ) {
-          throw new Error("Upload target identity mismatch");
-        }
-        batch.forEach((upload) => {
-          if (!isActive(upload)) return;
-          upload.signed = targetsByClientId.get(upload.clientUploadId) ?? null;
-          upload.reservationMayExist = false;
-        });
-        publish();
-        await Promise.all(batch.map(transfer));
+        await acquirePipelineSlot(upload.abortController.signal);
+        acquired = true;
+        await register(upload);
       } catch (err) {
-        batch.forEach((upload) => fail(upload, "preparing", err));
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        fail(upload, "registering", err);
+      } finally {
+        if (acquired) releasePipelineSlot();
       }
     },
-    [fail, isActive, itemId, publish, transfer],
+    [acquirePipelineSlot, fail, register, releasePipelineSlot],
   );
 
   const addFiles = useCallback(
@@ -494,10 +493,10 @@ export function usePoolAssetUploader({
         upload.failedStage = null;
         upload.message = null;
         publish();
-        void enqueueRegistration(upload);
+        void retryRegistration(upload);
       }
     },
-    [enqueueRegistration, publish, signAndTransfer],
+    [publish, retryRegistration, signAndTransfer],
   );
 
   const remove = useCallback(

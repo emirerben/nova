@@ -6,6 +6,7 @@ import math
 import os
 import tempfile
 import uuid
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from pathlib import Path
 
 import structlog
@@ -33,6 +34,7 @@ from app.worker import celery_app
 log = structlog.get_logger()
 
 _TASK_LIMITS = {"soft_time_limit": 540, "time_limit": 600}
+_CLIP_ANALYSIS_CONCURRENCY = 3
 
 
 def _locked_item(
@@ -319,6 +321,73 @@ def _analyze_clip_assignment(raw: dict, pool_by_path: dict[str, MediaRef]) -> tu
         analysis=analysis,
     )
     return entry, ref
+
+
+def _analyze_clip_assignments(
+    assignments: list[dict],
+    pool_by_path: dict[str, MediaRef],
+    *,
+    item_id: uuid.UUID,
+    attempt_id: str,
+    ownership_epoch: int,
+) -> list[tuple[dict, MediaRef]] | None:
+    """Analyze raw clips three at a time while preserving assignment order.
+
+    Pool assets have already been analyzed by their own per-asset Celery tasks.
+    This only fans out synchronous source-clip work. ``None`` means the
+    proposal attempt was superseded while work was in flight.
+    """
+
+    if not assignments:
+        return []
+
+    results: list[tuple[dict, MediaRef] | None] = [None] * len(assignments)
+    next_index = 0
+    futures: dict[Future[tuple[dict, MediaRef]], int] = {}
+
+    executor = ThreadPoolExecutor(
+        max_workers=min(_CLIP_ANALYSIS_CONCURRENCY, len(assignments)),
+        thread_name_prefix="guided-clip-analysis",
+    )
+    completed_successfully = False
+    try:
+
+        def submit_next() -> bool:
+            nonlocal next_index
+            if next_index >= len(assignments):
+                return False
+            if not _attempt_is_active(item_id, attempt_id, ownership_epoch):
+                return False
+            future = executor.submit(
+                _analyze_clip_assignment, assignments[next_index], pool_by_path
+            )
+            futures[future] = next_index
+            next_index += 1
+            return True
+
+        while len(futures) < _CLIP_ANALYSIS_CONCURRENCY and next_index < len(assignments):
+            if not submit_next():
+                return None
+
+        while futures:
+            completed, _ = wait(futures, return_when=FIRST_COMPLETED)
+            for future in completed:
+                index = futures.pop(future)
+                # Propagate classified analysis exceptions to the caller so it
+                # retains the existing retryable/permanent failure behaviour.
+                results[index] = future.result()
+
+            while len(futures) < _CLIP_ANALYSIS_CONCURRENCY and next_index < len(assignments):
+                if not submit_next():
+                    return None
+        completed_successfully = True
+        return [result for result in results if result is not None]
+    finally:
+        # On a stale attempt or classified analysis failure, do not wait for
+        # sibling Gemini calls to drain. Let the caller write its failure or
+        # schedule the retry before the Celery hard limit, and cancel any
+        # work that never started. A clean run still joins every worker.
+        executor.shutdown(wait=completed_successfully, cancel_futures=not completed_successfully)
 
 
 def _attempt_is_active(
@@ -633,14 +702,40 @@ def _run_draft_attempt(
         )
 
         pool_by_path = {row.gcs_path: row for row in pool}
-        analyzed_assignments: list[dict] = []
-        clip_refs: list[MediaRef] = []
-        for assignment in assignments:
-            if not _attempt_is_active(iid, attempt_id, ownership_epoch):
-                return
+        try:
+            analyzed_results = _analyze_clip_assignments(
+                assignments,
+                pool_by_path,
+                item_id=iid,
+                attempt_id=attempt_id,
+                ownership_epoch=ownership_epoch,
+            )
+        except AssetUnreadableError as exc:
+            with sync_session() as db:
+                locked = _locked_item(db, iid, ownership_epoch)
+                item = locked[0] if locked else None
+                current = parse_edit_proposal(item.edit_proposal) if item else None
+                if (
+                    item
+                    and current
+                    and current.generation_attempt_id == attempt_id
+                    and current.status == "analyzing"
+                ):
+                    _fail(
+                        item,
+                        current,
+                        "media_unreadable",
+                        "Kria couldn't read one of these clips. Export it as JPG, "
+                        "PNG, WebP, HEIC, HEIF, MP4, or MOV and try again.",
+                        retryable=False,
+                        detail=_exc_detail(exc),
+                    )
+                    db.commit()
+            return
+        except AnalysisTemporarilyUnavailableError as exc:
             try:
-                analyzed, ref = _analyze_clip_assignment(assignment, pool_by_path)
-            except AssetUnreadableError as exc:
+                raise self.retry(countdown=15)
+            except MaxRetriesExceededError:
                 with sync_session() as db:
                     locked = _locked_item(db, iid, ownership_epoch)
                     item = locked[0] if locked else None
@@ -654,40 +749,17 @@ def _run_draft_attempt(
                         _fail(
                             item,
                             current,
-                            "media_unreadable",
-                            "Kria couldn't read one of these clips. Export it as JPG, "
-                            "PNG, WebP, HEIC, HEIF, MP4, or MOV and try again.",
-                            retryable=False,
+                            "media_analysis_temporarily_unavailable",
+                            "Kria temporarily couldn't analyze one of these clips. "
+                            "Try again in a bit.",
                             detail=_exc_detail(exc),
                         )
                         db.commit()
                 return
-            except AnalysisTemporarilyUnavailableError as exc:
-                try:
-                    raise self.retry(countdown=15)
-                except MaxRetriesExceededError:
-                    with sync_session() as db:
-                        locked = _locked_item(db, iid, ownership_epoch)
-                        item = locked[0] if locked else None
-                        current = parse_edit_proposal(item.edit_proposal) if item else None
-                        if (
-                            item
-                            and current
-                            and current.generation_attempt_id == attempt_id
-                            and current.status == "analyzing"
-                        ):
-                            _fail(
-                                item,
-                                current,
-                                "media_analysis_temporarily_unavailable",
-                                "Kria temporarily couldn't analyze one of these clips. "
-                                "Try again in a bit.",
-                                detail=_exc_detail(exc),
-                            )
-                            db.commit()
-                    return
-            analyzed_assignments.append(analyzed)
-            clip_refs.append(ref)
+        if analyzed_results is None:
+            return
+        analyzed_assignments = [entry for entry, _ref in analyzed_results]
+        clip_refs = [ref for _entry, ref in analyzed_results]
         # De-duplicate pool assets promoted into the clip lane: they remain
         # stored separately, but one object must not count twice in the story.
         clip_paths = {ref.gcs_path for ref in clip_refs}

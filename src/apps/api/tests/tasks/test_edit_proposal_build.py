@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import uuid
 from contextlib import contextmanager, nullcontext
+from threading import Event, Lock
+from time import sleep
 from types import SimpleNamespace
 
 import pytest
@@ -13,6 +15,7 @@ import app.tasks.edit_proposal_build as proposal_build
 from app.schemas.edit_proposal import (
     EditProposal,
     FastMontageCut,
+    MediaRef,
     ProposalBrief,
     parse_edit_proposal,
 )
@@ -46,6 +49,131 @@ _PROD_CLIP_ASSIGNMENT = json.loads(
 # future version bump. The rotation-staleness tests below build their own
 # explicitly-versioned copies instead of relying on this module-level value.
 _PROD_CLIP_ASSIGNMENT["analysis"]["analysis_version"] = ANALYSIS_VERSION
+
+
+def test_clip_analysis_uses_three_workers_and_preserves_assignment_order(monkeypatch) -> None:
+    active = 0
+    max_active = 0
+    lock = Lock()
+    assignments = [
+        {"media_id": f"clip-{index}", "gcs_path": f"users/u/{index}.mp4"} for index in range(7)
+    ]
+
+    monkeypatch.setattr(proposal_build, "_attempt_is_active", lambda *_args: True)
+
+    def _analyze(raw: dict, _pool: dict[str, MediaRef]) -> tuple[dict, MediaRef]:
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        sleep(0.02)
+        with lock:
+            active -= 1
+        return raw, MediaRef(
+            lane="clip",
+            media_id=str(raw["media_id"]),
+            gcs_path=str(raw["gcs_path"]),
+            generation="1",
+            kind="video",
+            duration_s=2,
+        )
+
+    monkeypatch.setattr(proposal_build, "_analyze_clip_assignment", _analyze)
+
+    results = proposal_build._analyze_clip_assignments(
+        assignments,
+        {},
+        item_id=uuid.uuid4(),
+        attempt_id="attempt-1",
+        ownership_epoch=0,
+    )
+
+    assert results is not None
+    assert max_active == proposal_build._CLIP_ANALYSIS_CONCURRENCY
+    assert [ref.media_id for _entry, ref in results] == [
+        "clip-0",
+        "clip-1",
+        "clip-2",
+        "clip-3",
+        "clip-4",
+        "clip-5",
+        "clip-6",
+    ]
+
+
+def test_clip_analysis_stops_submitting_after_a_terminal_failure(monkeypatch) -> None:
+    calls: list[str] = []
+    assignments = [
+        {"media_id": f"clip-{index}", "gcs_path": f"users/u/{index}.mp4"} for index in range(6)
+    ]
+
+    monkeypatch.setattr(proposal_build, "_attempt_is_active", lambda *_args: True)
+
+    def _analyze(raw: dict, _pool: dict[str, MediaRef]) -> tuple[dict, MediaRef]:
+        calls.append(str(raw["media_id"]))
+        if raw["media_id"] == "clip-1":
+            raise AssetUnreadableError("unreadable")
+        sleep(0.02)
+        return raw, MediaRef(
+            lane="clip",
+            media_id=str(raw["media_id"]),
+            gcs_path=str(raw["gcs_path"]),
+            generation="1",
+            kind="video",
+            duration_s=2,
+        )
+
+    monkeypatch.setattr(proposal_build, "_analyze_clip_assignment", _analyze)
+
+    with pytest.raises(AssetUnreadableError, match="unreadable"):
+        proposal_build._analyze_clip_assignments(
+            assignments,
+            {},
+            item_id=uuid.uuid4(),
+            attempt_id="attempt-1",
+            ownership_epoch=0,
+        )
+
+    assert "clip-1" in calls
+    assert set(calls).issubset({"clip-0", "clip-1", "clip-2"})
+
+
+def test_clip_analysis_failure_does_not_wait_for_sibling_workers(monkeypatch) -> None:
+    release_siblings = Event()
+    siblings_started = Event()
+    assignments = [
+        {"media_id": f"clip-{index}", "gcs_path": f"users/u/{index}.mp4"} for index in range(3)
+    ]
+
+    monkeypatch.setattr(proposal_build, "_attempt_is_active", lambda *_args: True)
+
+    def _analyze(raw: dict, _pool: dict[str, MediaRef]) -> tuple[dict, MediaRef]:
+        if raw["media_id"] == "clip-1":
+            siblings_started.wait(timeout=1)
+            raise AssetUnreadableError("unreadable")
+        siblings_started.set()
+        release_siblings.wait(timeout=1)
+        return raw, MediaRef(
+            lane="clip",
+            media_id=str(raw["media_id"]),
+            gcs_path=str(raw["gcs_path"]),
+            generation="1",
+            kind="video",
+            duration_s=2,
+        )
+
+    monkeypatch.setattr(proposal_build, "_analyze_clip_assignment", _analyze)
+
+    with pytest.raises(AssetUnreadableError, match="unreadable"):
+        proposal_build._analyze_clip_assignments(
+            assignments,
+            {},
+            item_id=uuid.uuid4(),
+            attempt_id="attempt-1",
+            ownership_epoch=0,
+        )
+
+    release_siblings.set()
 
 
 class _Result:
@@ -585,6 +713,77 @@ class _FakeAgentOutput:
         self.title = "Athens in a moment"
         self.duration_s = duration_s
         self.story_beats = [_FakeBeat(media_ids)]
+
+
+def test_main_creator_guided_execution_persists_all_150_media(monkeypatch) -> None:
+    """A 50-clip + 100-visual confirmed plan reaches Kria intact."""
+
+    item_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    assignments = [
+        {
+            "media_id": f"clip-{index}",
+            "gcs_path": f"users/u/plan/{item_id}/clips/{index}.mp4",
+        }
+        for index in range(50)
+    ]
+    item = _prod_item(item_id, clip_assignments=assignments, approval_mode="auto")
+    clip_refs = [
+        MediaRef(
+            lane="clip",
+            media_id=str(assignment["media_id"]),
+            gcs_path=str(assignment["gcs_path"]),
+            generation="1",
+            kind="video",
+            duration_s=2,
+        )
+        for assignment in assignments
+    ]
+    pool_refs = [
+        MediaRef(
+            lane="asset",
+            media_id=f"asset-{index}",
+            gcs_path=f"users/u/plan/{item_id}/pool/{index}.jpg",
+            generation="1",
+            kind="image",
+        )
+        for index in range(100)
+    ]
+    db = _Db(_Result(rows=[SimpleNamespace(user_id=owner_id, status="ready") for _ in pool_refs]))
+
+    @contextmanager
+    def _session():
+        yield db
+
+    captured_media: list[object] = []
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    monkeypatch.setattr(proposal_build, "_locked_item", lambda *_a, **_kw: (item, owner_id))
+    monkeypatch.setattr(proposal_build, "_attempt_is_active", lambda *_a, **_kw: True)
+    monkeypatch.setattr(proposal_build, "_pool_refs", lambda *_a, **_kw: pool_refs)
+    monkeypatch.setattr(
+        proposal_build,
+        "_analyze_clip_assignments",
+        lambda clip_assignments, *_a, **_kw: list(zip(clip_assignments, clip_refs, strict=True)),
+    )
+    monkeypatch.setattr(proposal_build, "media_generations_match_sync", lambda _refs: True)
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
+
+    def _run_agent(_self, input):  # noqa: ANN001, A002
+        captured_media[:] = input.media
+        return _FakeAgentOutput([clip_refs[0].media_id])
+
+    monkeypatch.setattr("app.agents.edit_proposal.EditProposalAgent.run", _run_agent)
+
+    proposal_build._run_draft_attempt(
+        SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, auto_finalize=True
+    )
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None
+    assert persisted.status == "approved"
+    assert persisted.last_approved is not None
+    assert len(captured_media) == 150
+    assert len(persisted.last_approved.snapshot.media) == 150
 
 
 class _FakeFastAgentOutput:

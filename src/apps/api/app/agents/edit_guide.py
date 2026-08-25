@@ -20,6 +20,7 @@ from app.agents.prompt_safety import sanitize_prompt_text
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import (
     EDIT_CONVERSATION_MAX_TURNS,
+    MAX_EDIT_PROPOSAL_MEDIA,
     EditConversationTurn,
     ProposalBrief,
 )
@@ -71,7 +72,9 @@ class EditGuideInput(BaseModel):
         default_factory=list, max_length=EDIT_CONVERSATION_MAX_TURNS
     )
     brief: ProposalBrief = Field(default_factory=ProposalBrief)
-    media: list[EditGuideMediaSummary] = Field(default_factory=list, max_length=60)
+    media: list[EditGuideMediaSummary] = Field(
+        default_factory=list, max_length=MAX_EDIT_PROPOSAL_MEDIA
+    )
     title: str = ""
     beats: list[EditGuideBeatInput] = Field(default_factory=list, max_length=20)
 
