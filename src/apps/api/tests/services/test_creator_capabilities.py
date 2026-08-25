@@ -79,6 +79,19 @@ def test_manifest_reports_caption_style_from_live_creator_execution_flag(monkeyp
     assert enabled.capabilities[capabilities.CAPABILITY_CAPTION_STYLE].available is True
 
 
+def test_manifest_reports_automatic_cut_when_either_detector_is_enabled(monkeypatch) -> None:
+    monkeypatch.setattr(capabilities.settings, "silence_cut_enabled", False)
+    monkeypatch.setattr(capabilities.settings, "retake_cut_enabled", False)
+    disabled = capabilities.resolve_creator_manifest(item_id="item-1")
+    assert disabled.capabilities[capabilities.CAPABILITY_AUTOMATIC_CUT].reason_code == (
+        "disabled_by_setting"
+    )
+
+    monkeypatch.setattr(capabilities.settings, "retake_cut_enabled", True)
+    enabled = capabilities.resolve_creator_manifest(item_id="item-1")
+    assert enabled.capabilities[capabilities.CAPABILITY_AUTOMATIC_CUT].available is True
+
+
 def test_day_vlog_manifest_is_explicitly_unavailable_while_flag_off(monkeypatch) -> None:
     monkeypatch.setattr(capabilities.settings, "edit_format_day_vlog_enabled", False)
     manifest = capabilities.resolve_creator_manifest(
