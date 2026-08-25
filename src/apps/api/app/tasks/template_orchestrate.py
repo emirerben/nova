@@ -38,6 +38,7 @@ from datetime import UTC, datetime
 import redis as redis_lib
 import structlog
 from celery.exceptions import SoftTimeLimitExceeded
+from httpx import HTTPError
 from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.config import settings
@@ -2082,7 +2083,7 @@ def _upload_clips_parallel(
             return idx, None
         try:
             ref = gemini_upload_and_wait(path)
-        except (GeminiAnalysisError, GeminiRefusalError, PollingTimeoutError) as exc:
+        except (GeminiAnalysisError, GeminiRefusalError, HTTPError, PollingTimeoutError) as exc:
             file_size = None
             try:
                 file_size = os.path.getsize(path)
