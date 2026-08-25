@@ -17,6 +17,7 @@ from app.routes.creator_workspace import (
     WorkspacePreferenceSignalBody,
     WorkspaceReceiptCreateBody,
     _enqueue_relevance_or_mark_failed,
+    _job_state,
     _media_paths_already_attached,
     _request_digest,
 )
@@ -185,6 +186,44 @@ def test_workspace_rejects_cross_item_media_reuse() -> None:
         [SimpleNamespace(clip_gcs_paths=["user/job-2/raw.mp4"], clip_assignments=[])],
         {"user/job-1/raw.mp4"},
     )
+
+
+@pytest.mark.parametrize(
+    ("render_status", "generation", "expected"),
+    [
+        ("ready", "generation-2", "ready"),
+        ("ready", "other-generation", "stale"),
+        ("rendering", "generation-2", "processing"),
+        ("failed", "generation-2", "failed"),
+    ],
+)
+def test_workspace_job_state_requires_exact_variant_generation(
+    render_status: str, generation: str, expected: str
+) -> None:
+    session = SimpleNamespace(
+        status="rendering",
+        target_variant_id="variant-2",
+        target_generation_id="generation-2",
+    )
+    job = SimpleNamespace(
+        status="variants_ready_partial",
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "variant-1",
+                    "render_status": "ready",
+                    "render_generation_id": "generation-1",
+                },
+                {
+                    "variant_id": "variant-2",
+                    "render_status": render_status,
+                    "render_generation_id": generation,
+                },
+            ]
+        },
+    )
+
+    assert _job_state(job, session) == expected
 
 
 @pytest.mark.asyncio
@@ -393,3 +432,44 @@ async def test_workspace_decision_replays_same_idempotent_choice(monkeypatch) ->
     assert response.status == "approved"
     assert response.decision == "accept_new_topic"
     db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_workspace_decision_locks_source_jobs_in_deterministic_order(monkeypatch) -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    plan = SimpleNamespace(id=uuid.uuid4(), ownership_epoch=3)
+    row = _decision_row(status="ready", epoch=3)
+    source_job_id = uuid.uuid4()
+    row.media_snapshot = [
+        {
+            "media_id": "media-1",
+            "source_job_id": str(source_job_id),
+            "gcs_path": "users/creator/source.mp4",
+        }
+    ]
+    proposal_result = MagicMock()
+    proposal_result.scalar_one_or_none.return_value = row
+    source_job = SimpleNamespace(id=source_job_id, raw_storage_path="users/creator/source.mp4")
+    source_result = MagicMock()
+    source_result.scalars.return_value.all.return_value = [source_job]
+    db = AsyncMock()
+    db.execute.side_effect = [proposal_result, source_result]
+    monkeypatch.setattr(settings, "main_creator_agent_freeform_uploads_enabled", True)
+    monkeypatch.setattr(workspace_routes, "_owned_plan", AsyncMock(return_value=plan))
+
+    response = await workspace_routes.decide_relevance_proposal(
+        str(plan.id),
+        str(row.id),
+        WorkspaceDecisionBody(
+            expected_proposal_hash="a" * 64,
+            decision="reject",
+            client_event_id="reject-1",
+        ),
+        user,
+        db,
+    )
+
+    source_stmt = db.execute.await_args_list[1].args[0]
+    assert source_stmt._for_update_arg is not None
+    assert len(source_stmt._order_by_clauses) == 1
+    assert response.status == "rejected"

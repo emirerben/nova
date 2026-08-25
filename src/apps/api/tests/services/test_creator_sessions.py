@@ -25,12 +25,78 @@ def _session(**overrides):
         "max_render_attempts": 2,
         "active_plan": None,
         "target_job_id": None,
+        "target_variant_id": None,
+        "target_generation_id": None,
         "events": [],
         "created_at": datetime(2026, 8, 24, tzinfo=UTC),
         "updated_at": datetime(2026, 8, 24, tzinfo=UTC),
     }
     values.update(overrides)
     return SimpleNamespace(**values)
+
+
+def test_session_variant_target_preserves_exact_nonfirst_variant() -> None:
+    session = _session(
+        target_variant_id="chosen",
+        target_generation_id="generation-chosen",
+    )
+    variants = [
+        {
+            "variant_id": "first",
+            "render_status": "ready",
+            "render_generation_id": "generation-first",
+        },
+        {
+            "variant_id": "chosen",
+            "render_status": "ready",
+            "render_generation_id": "generation-chosen",
+        },
+    ]
+
+    variant, state = creator_sessions._session_variant_target(session, variants)
+
+    assert state == "ready"
+    assert variant["variant_id"] == "chosen"
+
+
+@pytest.mark.parametrize(
+    ("variants", "expected_state"),
+    [
+        ([], "stale"),
+        (
+            [
+                {
+                    "variant_id": "chosen",
+                    "render_status": "ready",
+                    "render_generation_id": "new-generation",
+                }
+            ],
+            "stale",
+        ),
+        (
+            [
+                {
+                    "variant_id": "chosen",
+                    "render_status": "rendering",
+                    "render_generation_id": "generation-chosen",
+                }
+            ],
+            "processing",
+        ),
+    ],
+)
+def test_session_variant_target_never_falls_back_from_exact_target(
+    variants, expected_state
+) -> None:
+    session = _session(
+        target_variant_id="chosen",
+        target_generation_id="generation-chosen",
+    )
+
+    variant, state = creator_sessions._session_variant_target(session, variants)
+
+    assert variant is None
+    assert state == expected_state
 
 
 def test_rollout_eligibility_fails_closed_and_honors_full_rollout(monkeypatch) -> None:

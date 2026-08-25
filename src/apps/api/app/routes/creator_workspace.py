@@ -31,6 +31,7 @@ from app.models import (
 )
 from app.routes.personas import StyleEdit
 from app.services.feedback_summary import MAX_NOTES_IN_SUMMARY, build_preference_summary
+from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
 from app.services.plan_clips import ClipAssignment, ClipAssignmentError, set_item_clips
 from app.tasks.creator_workspace import detect_plan_relevance
 
@@ -478,8 +479,19 @@ async def decide_relevance_proposal(
         source_ids = [uuid.UUID(str(media["source_job_id"])) for media in snapshots]
     except (KeyError, ValueError, TypeError) as exc:
         raise HTTPException(status_code=409, detail="Proposal media identity is invalid") from exc
+    # Source Jobs are the shared serialization point across plans. Locking them
+    # in deterministic UUID order prevents concurrent approvals from both
+    # passing the cross-item path scan before either attachment commits.
+    source_ids = sorted(set(source_ids), key=str)
     live_jobs = (
-        (await db.execute(select(Job).where(Job.id.in_(source_ids), Job.user_id == user.id)))
+        (
+            await db.execute(
+                select(Job)
+                .where(Job.id.in_(source_ids), Job.user_id == user.id)
+                .order_by(Job.id)
+                .with_for_update()
+            )
+        )
         .scalars()
         .all()
     )
@@ -618,15 +630,26 @@ def _preference_request_digest(
 
 
 def _job_state(job: Job | None, session: CreatorAgentSession) -> str:
-    if job is not None and job.status in {"failed", "cancelled"}:
+    if job is not None and job.status in PLAN_ITEM_JOB_FAILED | {"failed"}:
         return "failed"
-    if (
-        job is not None
-        and job.status == "ready"
-        and session.target_generation_id
-        and session.target_variant_id
-    ):
-        return "ready"
+    if job is not None and job.status in PLAN_ITEM_JOB_READY | {"ready"}:
+        if not session.target_generation_id or not session.target_variant_id:
+            return "stale"
+        variants = (job.assembly_plan or {}).get("variants") or []
+        exact = next(
+            (
+                variant
+                for variant in variants
+                if isinstance(variant, dict)
+                and variant.get("variant_id") == session.target_variant_id
+            ),
+            None,
+        )
+        if exact is None or exact.get("render_generation_id") != session.target_generation_id:
+            return "stale"
+        if exact.get("render_status") == "failed":
+            return "failed"
+        return "ready" if exact.get("render_status") == "ready" else "processing"
     if job is not None or session.status in {
         "executing",
         "rendering",
@@ -661,7 +684,8 @@ async def _workspace_response(
         else []
     )
     jobs_by_id = {row.id: row for row in jobs}
-    stale = int(plan.ownership_epoch or 0) != int(receipt.ownership_epoch)
+    receipt_stale = int(plan.ownership_epoch or 0) != int(receipt.ownership_epoch)
+    any_stale = receipt_stale
     output: list[WorkspaceDeliverableResponse] = []
     states: list[str] = []
     for row in deliverables:
@@ -672,7 +696,7 @@ async def _workspace_response(
             or session.plan_item_id != row.plan_item_id
             or int(session.ownership_epoch) != int(row.ownership_epoch)
         ):
-            stale = True
+            any_stale = True
             states.append("stale")
             output.append(
                 WorkspaceDeliverableResponse(
@@ -695,12 +719,16 @@ async def _workspace_response(
             or job.content_plan_item_id != row.plan_item_id
             or int(job.content_plan_ownership_epoch or -1) != int(row.ownership_epoch)
         ):
-            stale = True
+            deliverable_stale = True
             state = "stale"
         else:
+            deliverable_stale = False
             state = _job_state(job, session)
-        if stale:
+            if state == "stale":
+                deliverable_stale = True
+        if receipt_stale or deliverable_stale:
             state = "stale"
+            any_stale = True
         states.append(state)
         job_id = session.target_job_id or row.job_id
         variant_id = session.target_variant_id or row.variant_id
@@ -728,7 +756,7 @@ async def _workspace_response(
                 generation_receipt=generation_receipt,
             )
         )
-    if stale:
+    if any_stale:
         receipt_status = "stale"
     elif any(state == "failed" for state in states):
         receipt_status = "failed"

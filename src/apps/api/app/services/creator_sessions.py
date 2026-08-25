@@ -97,6 +97,48 @@ def _job_matches_guided_attempt(job: Job | None, attempt_id: str | None) -> bool
     )
 
 
+def _session_variant_target(
+    session: CreatorAgentSession, variants: list[object]
+) -> tuple[dict[str, Any] | None, str]:
+    """Resolve only the session's exact variant/generation once it is pinned."""
+
+    if session.target_variant_id:
+        exact = next(
+            (
+                variant
+                for variant in variants
+                if isinstance(variant, dict)
+                and variant.get("variant_id") == session.target_variant_id
+            ),
+            None,
+        )
+        if exact is None:
+            return None, "stale"
+        generation_id = str(exact.get("render_generation_id") or "") or None
+        if session.target_generation_id and generation_id != session.target_generation_id:
+            return None, "stale"
+        if exact.get("render_status") == "failed":
+            return None, "failed"
+        if exact.get("render_status") != "ready":
+            return None, "processing"
+        if generation_id is None:
+            return None, "stale"
+        return exact, "ready"
+
+    ready = next(
+        (
+            variant
+            for variant in variants
+            if isinstance(variant, dict)
+            and variant.get("render_status") == "ready"
+            and variant.get("variant_id")
+            and variant.get("render_generation_id")
+        ),
+        None,
+    )
+    return (ready, "ready") if ready is not None else (None, "stale")
+
+
 def creator_context(persona: Persona, item: PlanItem) -> tuple[str, str]:
     data = persona.persona or {}
     creator = {
@@ -531,24 +573,30 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
         )
         return True
     if job.status in PLAN_ITEM_JOB_READY:
+        variants = (job.assembly_plan or {}).get("variants") or []
+        ready_variant, target_state = _session_variant_target(session, variants)
+        if target_state == "processing":
+            changed = session.phase != "rendering"
+            session.phase = "rendering"
+            return changed
+        if ready_variant is None:
+            session.phase = "failed"
+            session.last_error = {
+                "code": "render_target_failed"
+                if target_state == "failed"
+                else "render_identity_mismatch"
+            }
+            await append_event(
+                db,
+                session,
+                event_type="system_render_failed",
+                payload={"message": "The selected render changed. Start a new version."},
+            )
+            return True
         was_awaiting_feedback = session.phase == "awaiting_feedback"
         session.phase = "awaiting_feedback"
-        variants = (job.assembly_plan or {}).get("variants") or []
-        ready_variant = next(
-            (
-                variant
-                for variant in variants
-                if isinstance(variant, dict)
-                and variant.get("render_status") == "ready"
-                and variant.get("variant_id")
-            ),
-            None,
-        )
-        if ready_variant:
-            session.target_variant_id = str(ready_variant["variant_id"])
-            session.target_generation_id = (
-                str(ready_variant.get("render_generation_id") or "") or None
-            )
+        session.target_variant_id = str(ready_variant["variant_id"])
+        session.target_generation_id = str(ready_variant["render_generation_id"])
         session.last_good = {
             "job_id": str(job.id),
             "plan_hash": (session.active_plan or {}).get("plan_hash"),
