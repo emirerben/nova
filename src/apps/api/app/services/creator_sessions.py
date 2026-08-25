@@ -542,11 +542,7 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
         if ready_variant:
             session.target_variant_id = str(ready_variant["variant_id"])
             session.target_generation_id = (
-                str(
-                    ready_variant.get("render_generation_id")
-                    or ready_variant.get("render_finished_at")
-                    or ""
-                )
+                str(ready_variant.get("render_generation_id") or "")
                 or None
             )
         session.last_good = {
@@ -554,7 +550,28 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
             "plan_hash": (session.active_plan or {}).get("plan_hash"),
         }
         review_enabled = settings.main_creator_agent_review_enabled
-        if review_enabled:
+        quality_review_enabled = (
+            review_enabled and settings.main_creator_agent_quality_review_enabled
+        )
+        if quality_review_enabled and session.target_variant_id and session.target_generation_id:
+            from app.tasks.creator_quality_review import queue_creator_quality_review  # noqa: PLC0415
+
+            queue_creator_quality_review(
+                session,
+                job_id=str(job.id),
+                variant_id=str(session.target_variant_id),
+                render_generation_id=str(session.target_generation_id),
+            )
+        elif quality_review_enabled:
+            session.last_review = {
+                "status": "unavailable",
+                "decision": "unavailable",
+                "error_code": "review_target_missing",
+                "error_message": "The ready render has no exact variant generation to review.",
+                "job_id": str(job.id),
+                "failed_at": datetime.now(UTC).isoformat(),
+            }
+        elif review_enabled:
             session.last_review = {
                 "decision": "approve",
                 "mode": "structural_v1",
@@ -608,9 +625,11 @@ def serialize_session(session: CreatorAgentSession) -> dict[str, Any]:
             "job_id",
             "variant_id",
             "render_generation_id",
+            "generation_id",
             "manifest_hash",
             "context_hash",
             "review_mode",
+            "mode",
             "decision",
             "reviewer",
             "quality_score",
