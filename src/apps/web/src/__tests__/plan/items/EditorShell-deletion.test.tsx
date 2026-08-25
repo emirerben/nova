@@ -684,6 +684,144 @@ describe("EditorShell visuals upload lifecycle", () => {
     };
   }
 
+  function mockPoolAssets(assets: PoolAsset[]) {
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "GET" && url.endsWith("/assets")) {
+        return jsonResponse({ assets, max_assets: 20 });
+      }
+      throw new Error(`Unmocked fetch: ${method} ${url}`);
+    }) as unknown as typeof fetch;
+  }
+
+  async function renderVisualsAt(
+    variant: PlanItemVariant,
+    duration: number,
+    currentTime: number,
+  ) {
+    await renderShell(variant);
+    const video = document.querySelector("video");
+    expect(video).not.toBeNull();
+    Object.defineProperty(video, "duration", { configurable: true, value: duration });
+    fireEvent.loadedMetadata(video as HTMLVideoElement);
+    Object.defineProperty(video, "currentTime", {
+      configurable: true,
+      value: currentTime,
+      writable: true,
+    });
+    fireEvent.timeUpdate(video as HTMLVideoElement);
+  }
+
+  it("places the first selected photos contiguously from the playhead", async () => {
+    const first = poolAsset({
+      id: "asset-first",
+      source_filename: "first.png",
+      gcs_path: "users/u/plan/item-1/pool/first.png",
+    });
+    const second = poolAsset({
+      id: "asset-second",
+      source_filename: "second.png",
+      gcs_path: "users/u/plan/item-1/pool/second.png",
+    });
+    mockPoolAssets([first, second]);
+    await renderVisualsAt(makeVariant([], [], { duration_s: 8 }), 8, 1);
+    fireEvent.click(screen.getByRole("button", { name: "Visuals tool" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Select first.png" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select second.png" }));
+    fireEvent.click(screen.getByRole("button", { name: "Place selected in sequence" }));
+
+    expect(screen.getByRole("button", { name: "Media, 0:01–0:03" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Media, 0:03–0:05" })).toBeInTheDocument();
+  });
+
+  it("places a sequence after the selected visual instead of the playhead", async () => {
+    const asset = poolAsset({
+      id: "asset-after-selected",
+      source_filename: "after-selected.png",
+      gcs_path: "users/u/plan/item-1/pool/after-selected.png",
+    });
+    const existing: VisualBlock = {
+      version: 1,
+      id: "existing-media",
+      kind: "media",
+      start_s: 2,
+      end_s: 4,
+      timing_mode: "manual",
+      origin: "user",
+      transition_in: "cut",
+      transition_out: "cut",
+      audio_policy: { base: "continue", sfx: "continue" },
+      asset_id: "existing-asset",
+      src_gcs_path: "users/u/plan/item-1/pool/existing.png",
+      media_kind: "image",
+      source_duration_s: null,
+      trim_start_s: null,
+      trim_end_s: null,
+      display_mode: "fullscreen",
+      transform: { fit_mode: "contain", focal_x: 0.5, focal_y: 0.5, zoom: 1 },
+      x_frac: 0.5,
+      y_frac: 0.5,
+      scale: 0.35,
+      z: 0,
+    };
+    mockPoolAssets([asset]);
+    await renderVisualsAt(makeVariant([], [existing], { duration_s: 8 }), 8, 1);
+    fireEvent.click(screen.getByRole("button", { name: "Media, 0:02–0:04" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Select after-selected.png" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Place sequence after selected" }));
+
+    expect(screen.getByRole("button", { name: "Media, 0:04–0:06" })).toBeInTheDocument();
+  });
+
+  it("keeps the timeline unchanged when a first sequence has no remaining space", async () => {
+    const asset = poolAsset({
+      id: "asset-no-space",
+      source_filename: "no-space.png",
+      gcs_path: "users/u/plan/item-1/pool/no-space.png",
+    });
+    mockPoolAssets([asset]);
+    await renderVisualsAt(makeVariant([], [], { duration_s: 8 }), 8, 8);
+    fireEvent.click(screen.getByRole("button", { name: "Visuals tool" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Select no-space.png" }));
+    fireEvent.click(screen.getByRole("button", { name: "Place selected in sequence" }));
+
+    expect(mockToast).toHaveBeenCalledWith(
+      "There isn't enough timeline space for this sequence.",
+      expect.anything(),
+    );
+    expect(screen.queryByRole("button", { name: /^Media,/ })).not.toBeInTheDocument();
+  });
+
+  it("stops a near-end sequence instead of stacking remaining photos", async () => {
+    const assets = ["first", "second", "third"].map((name) =>
+      poolAsset({
+        id: `asset-${name}`,
+        source_filename: `${name}.png`,
+        gcs_path: `users/u/plan/item-1/pool/${name}.png`,
+      }),
+    );
+    mockPoolAssets(assets);
+    await renderVisualsAt(makeVariant([], [], { duration_s: 8 }), 8, 7);
+    fireEvent.click(screen.getByRole("button", { name: "Visuals tool" }));
+    for (const asset of assets) {
+      fireEvent.click(
+        await screen.findByRole("button", { name: `Select ${asset.source_filename}` }),
+      );
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Place selected in sequence" }));
+
+    expect(screen.getAllByRole("button", { name: /^Media,/ })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Media, 0:07–0:08" })).toBeInTheDocument();
+    expect(mockToast).toHaveBeenCalledWith(
+      "Placed 1 of 3. There isn't enough timeline space for the rest.",
+      expect.anything(),
+    );
+    expect(screen.getByText("2 selected")).toBeInTheDocument();
+  });
+
   it("shows a failed transfer in the real drawer and retries it without disabling the picker", async () => {
     let presignCalls = 0;
     let putCalls = 0;
