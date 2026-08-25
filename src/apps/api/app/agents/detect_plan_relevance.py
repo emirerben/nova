@@ -48,6 +48,21 @@ class DetectPlanRelevanceAgent(Agent[DetectPlanRelevanceInput, DetectPlanRelevan
     Input = DetectPlanRelevanceInput
     Output = DetectPlanRelevanceOutput
 
+    def __init__(self, model_client=None) -> None:  # noqa: ANN001
+        # Rule-based agents never invoke the client, but the shared Agent base
+        # keeps one constructor shape for model-backed siblings.
+        super().__init__(model_client)
+
+    def render_prompt(self, input: DetectPlanRelevanceInput) -> str:  # noqa: A002
+        raise NotImplementedError("rule-based relevance does not render a prompt")
+
+    def parse(
+        self,
+        raw_text: str,
+        input: DetectPlanRelevanceInput,  # noqa: ARG002, A002
+    ) -> DetectPlanRelevanceOutput:
+        raise NotImplementedError("rule-based relevance does not parse model output")
+
     def compute(self, input: DetectPlanRelevanceInput) -> DetectPlanRelevanceOutput:
         media_tokens: set[str] = set()
         for media in input.media:

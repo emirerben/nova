@@ -70,7 +70,6 @@ def test_review_payload_has_timestamped_evidence_and_one_inert_revision():
 
 
 def test_stale_target_never_persists_review_or_agent_run(monkeypatch):
-    session = _session()
     persist_run = Mock()
     monkeypatch.setattr(
         cqr,
