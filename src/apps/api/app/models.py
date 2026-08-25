@@ -946,6 +946,158 @@ class CreatorWorkspaceProposal(Base):
     )
 
 
+class CreatorWorkspaceReceipt(Base):
+    """Plan-scoped coordination receipt for a set of creator deliverables.
+
+    The receipt is only a read/polling boundary: it does not dispatch renders,
+    attach media, or publish anything.  Each child row pins its own Creator
+    session and generation identity so a plan-level poll can never accidentally
+    treat one item's Job as another item's output.
+    """
+
+    __tablename__ = "creator_workspace_receipts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    plan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("content_plans.id", ondelete="CASCADE"), nullable=False
+    )
+    ownership_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    request_digest: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    deliverables: Mapped[list["CreatorWorkspaceDeliverable"]] = relationship(
+        back_populates="receipt",
+        cascade="all, delete-orphan",
+        order_by="CreatorWorkspaceDeliverable.position",
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','processing','ready','failed','stale')",
+            name="ck_creator_workspace_receipts_status",
+        ),
+        CheckConstraint("ownership_epoch >= 0", name="ck_creator_workspace_receipts_epoch"),
+        UniqueConstraint(
+            "creator_id",
+            "plan_id",
+            "idempotency_key",
+            name="uq_creator_workspace_receipts_idempotency",
+        ),
+        Index("idx_creator_workspace_receipts_plan_created", "plan_id", "created_at"),
+    )
+
+
+class CreatorWorkspaceDeliverable(Base):
+    """One immutable item/session/job/generation pin within a workspace receipt."""
+
+    __tablename__ = "creator_workspace_deliverables"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    receipt_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_workspace_receipts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    plan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("content_plans.id", ondelete="CASCADE"), nullable=False
+    )
+    plan_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_items.id", ondelete="CASCADE"), nullable=False
+    )
+    creator_session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_agent_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    ownership_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    session_revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True
+    )
+    variant_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    render_generation_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    generation_receipt: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    receipt: Mapped["CreatorWorkspaceReceipt"] = relationship(back_populates="deliverables")
+    creator_session: Mapped["CreatorAgentSession"] = relationship()
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','processing','ready','failed','stale')",
+            name="ck_creator_workspace_deliverables_status",
+        ),
+        CheckConstraint(
+            "ownership_epoch >= 0 AND session_revision >= 0 AND position >= 0",
+            name="ck_creator_workspace_deliverables_counters",
+        ),
+        UniqueConstraint("receipt_id", "plan_item_id", name="uq_creator_workspace_receipt_item"),
+        UniqueConstraint("receipt_id", "position", name="uq_creator_workspace_receipt_position"),
+        Index("idx_creator_workspace_deliverables_item", "plan_item_id", "created_at"),
+    )
+
+
+class CreatorWorkspacePreferenceSignal(Base):
+    """Explicit creator-authored workspace preference, with retry identity.
+
+    This is an audit/idempotency envelope around the existing VideoFeedback and
+    Persona.style contracts.  ``source`` is deliberately fixed; no AI-inferred
+    or training-originated signal can enter through this endpoint.
+    """
+
+    __tablename__ = "creator_workspace_preference_signals"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    plan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("content_plans.id", ondelete="CASCADE"), nullable=False
+    )
+    receipt_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_workspace_receipts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    ownership_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    client_event_id: Mapped[str] = mapped_column(Text, nullable=False)
+    request_digest: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False, server_default="creator_explicit")
+    signal: Mapped[str] = mapped_column(Text, nullable=False, server_default="note")
+    note: Mapped[str] = mapped_column(Text, nullable=False)
+    style_edit: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("source = 'creator_explicit'", name="ck_creator_workspace_pref_source"),
+        CheckConstraint("signal = 'note'", name="ck_creator_workspace_pref_signal"),
+        CheckConstraint("ownership_epoch >= 0", name="ck_creator_workspace_pref_epoch"),
+        UniqueConstraint(
+            "creator_id",
+            "plan_id",
+            "client_event_id",
+            name="uq_creator_workspace_pref_idempotency",
+        ),
+        Index("idx_creator_workspace_pref_plan_created", "plan_id", "created_at"),
+    )
+
+
 class AgentRun(Base):
     """One row per agent invocation. Captures full input + raw LLM response +
     parsed output so the admin job-debug view can show exactly what each

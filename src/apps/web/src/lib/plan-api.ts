@@ -1314,6 +1314,95 @@ export function cancelCreatorAgentSession(
   });
 }
 
+// ── Creator workspace coordination (Stage 5, default-off backend gate) ──────
+
+export interface CreatorWorkspaceDeliverable {
+  deliverable_id: string;
+  plan_item_id: string;
+  creator_session_id: string;
+  ownership_epoch: number;
+  session_revision: number;
+  status: "pending" | "processing" | "ready" | "failed" | "stale";
+  job_id: string | null;
+  variant_id: string | null;
+  render_generation_id: string | null;
+  generation_receipt: Record<string, unknown> | null;
+}
+
+export interface CreatorWorkspaceReceipt {
+  receipt_id: string;
+  creator_id: string;
+  plan_id: string;
+  ownership_epoch: number;
+  idempotency_key: string;
+  request_digest: string;
+  status: "pending" | "processing" | "ready" | "failed" | "stale";
+  deliverables: CreatorWorkspaceDeliverable[];
+  preference_summary: string | null;
+  style: Record<string, unknown> | null;
+}
+
+export function createCreatorWorkspaceReceipt(
+  planId: string,
+  planItemIds: string[],
+  idempotencyKey: string,
+): Promise<CreatorWorkspaceReceipt> {
+  return request<CreatorWorkspaceReceipt>(`/content-plans/${planId}/workspace/receipts`, {
+    method: "POST",
+    body: JSON.stringify({ plan_item_ids: planItemIds, idempotency_key: idempotencyKey }),
+  });
+}
+
+export function pollCreatorWorkspaceReceipt(
+  planId: string,
+  receiptId: string,
+): Promise<CreatorWorkspaceReceipt> {
+  return request<CreatorWorkspaceReceipt>(
+    `/content-plans/${planId}/workspace/receipts/${receiptId}`,
+    { cache: "no-store" },
+  );
+}
+
+export function pollLatestCreatorWorkspaceReceipt(
+  planId: string,
+): Promise<CreatorWorkspaceReceipt> {
+  return request<CreatorWorkspaceReceipt>(`/content-plans/${planId}/workspace`, {
+    cache: "no-store",
+  });
+}
+
+export function recordCreatorWorkspacePreferenceSignal(
+  planId: string,
+  note: string,
+  clientEventId: string,
+  styleEdit?: StyleEdit,
+  receiptId?: string,
+): Promise<WorkspacePreferenceSignalResponse> {
+  return request<WorkspacePreferenceSignalResponse>(
+    `/content-plans/${planId}/workspace/preference-signals`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        note,
+        client_event_id: clientEventId,
+        ...(styleEdit ? { style_edit: styleEdit } : {}),
+        ...(receiptId ? { receipt_id: receiptId } : {}),
+      }),
+    },
+  );
+}
+
+export interface WorkspacePreferenceSignalResponse {
+  signal_id: string;
+  creator_id: string;
+  plan_id: string;
+  ownership_epoch: number;
+  source: "creator_explicit";
+  note: string;
+  style: Record<string, unknown> | null;
+  preference_summary: string | null;
+}
+
 export function draftEditProposal(
   itemId: string,
   brief: {

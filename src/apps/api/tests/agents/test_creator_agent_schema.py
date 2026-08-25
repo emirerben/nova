@@ -12,6 +12,8 @@ from app.agents._schemas.creator_agent import (
     CreatorEditPlan,
     CreatorReviewEvidence,
     CreatorReviewReceipt,
+    CreatorWorkspaceDeliverableReceipt,
+    CreatorWorkspaceReceipt,
     CreatorWorkspaceRelevanceDecision,
     CreatorWorkspaceRelevanceProposal,
     DispatchRenderCommand,
@@ -346,4 +348,26 @@ def test_workspace_relevance_requires_explicit_decision_and_matching_payload() -
             relevance="existing_item",
             confidence=0.8,
             proposal_hash="c" * 64,
+        )
+
+
+def test_workspace_receipt_requires_one_epoch_and_distinct_item_session_pins() -> None:
+    child = CreatorWorkspaceDeliverableReceipt(
+        plan_item_id="item-1", creator_session_id="session-1", ownership_epoch=3
+    )
+    receipt = CreatorWorkspaceReceipt(
+        receipt_id="receipt-1",
+        creator_id="creator-1",
+        plan_id="plan-1",
+        ownership_epoch=3,
+        deliverables=[child],
+    )
+    assert receipt.deliverables[0].ownership_epoch == 3
+    with pytest.raises(ValidationError):
+        CreatorWorkspaceReceipt(
+            receipt_id="receipt-2",
+            creator_id="creator-1",
+            plan_id="plan-1",
+            ownership_epoch=3,
+            deliverables=[child, child.model_copy(update={"plan_item_id": "item-2"})],
         )

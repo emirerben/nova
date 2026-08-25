@@ -512,6 +512,74 @@ class CreatorWorkspaceRelevanceDecision(_CreatorModel):
         return _sha256_hex(value, field_name="expected_proposal_hash")
 
 
+class CreatorWorkspaceDeliverableReceipt(_CreatorModel):
+    """One item-scoped identity in a plan-level workspace poll receipt."""
+
+    plan_item_id: str = Field(min_length=1, max_length=160)
+    creator_session_id: str = Field(min_length=1, max_length=160)
+    ownership_epoch: int = Field(ge=0)
+    status: Literal["pending", "processing", "ready", "failed", "stale"] = "pending"
+    job_id: str | None = Field(default=None, max_length=160)
+    variant_id: str | None = Field(default=None, max_length=160)
+    render_generation_id: str | None = Field(default=None, max_length=160)
+
+    @field_validator(
+        "plan_item_id", "creator_session_id", "job_id", "variant_id", "render_generation_id"
+    )
+    @classmethod
+    def _validate_receipt_ids(cls, value: str | None, info) -> str | None:
+        return _opaque_id(value, field_name=info.field_name) if value is not None else None
+
+
+class CreatorWorkspaceReceipt(_CreatorModel):
+    """Bounded, inert coordination response for multiple child PlanItems."""
+
+    receipt_id: str = Field(min_length=1, max_length=160)
+    creator_id: str = Field(min_length=1, max_length=160)
+    plan_id: str = Field(min_length=1, max_length=160)
+    ownership_epoch: int = Field(ge=0)
+    status: Literal["pending", "processing", "ready", "failed", "stale"] = "pending"
+    deliverables: list[CreatorWorkspaceDeliverableReceipt] = Field(
+        min_length=1, max_length=MAX_CREATOR_WORKSPACE_MEDIA_IDS
+    )
+    preference_summary: str | None = Field(default=None, max_length=800)
+    style: dict | None = None
+
+    @field_validator("receipt_id", "creator_id", "plan_id")
+    @classmethod
+    def _validate_receipt_owner_ids(cls, value: str, info) -> str:
+        return _opaque_id(value, field_name=info.field_name)
+
+    @model_validator(mode="after")
+    def _require_distinct_deliverables(self) -> CreatorWorkspaceReceipt:
+        item_ids = [item.plan_item_id for item in self.deliverables]
+        session_ids = [item.creator_session_id for item in self.deliverables]
+        if len(item_ids) != len(set(item_ids)):
+            raise ValueError("workspace receipt deliverables must target distinct plan items")
+        if len(session_ids) != len(set(session_ids)):
+            raise ValueError("workspace receipt deliverables must retain distinct sessions")
+        if any(item.ownership_epoch != self.ownership_epoch for item in self.deliverables):
+            raise ValueError("workspace receipt ownership epochs must match")
+        return self
+
+
+class CreatorWorkspacePreferenceSignal(_CreatorModel):
+    """Explicit creator-authored feedback; inferred signals are not representable."""
+
+    signal_id: str = Field(min_length=1, max_length=160)
+    creator_id: str = Field(min_length=1, max_length=160)
+    plan_id: str = Field(min_length=1, max_length=160)
+    ownership_epoch: int = Field(ge=0)
+    source: Literal["creator_explicit"] = "creator_explicit"
+    note: str = Field(min_length=1, max_length=1200)
+    style: dict | None = None
+
+    @field_validator("signal_id", "creator_id", "plan_id")
+    @classmethod
+    def _validate_preference_ids(cls, value: str, info) -> str:
+        return _opaque_id(value, field_name=info.field_name)
+
+
 class CreatorAutomationDecision(_CreatorModel):
     """Deterministic controller output for a possible automatic revision."""
 
@@ -698,6 +766,9 @@ __all__ = [
     "CreatorReviewEvidence",
     "CreatorReviewReceipt",
     "CreatorTargetPin",
+    "CreatorWorkspaceDeliverableReceipt",
+    "CreatorWorkspacePreferenceSignal",
+    "CreatorWorkspaceReceipt",
     "CreatorWorkspaceRelevanceDecision",
     "CreatorWorkspaceRelevanceProposal",
     "CreativeStrategy",
