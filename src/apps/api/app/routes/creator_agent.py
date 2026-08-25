@@ -1772,7 +1772,6 @@ async def request_creator_auto_iteration(
                 "bundle": bundle.model_dump(mode="json"),
             },
         }
-        session.status = "rendering"
         await db.commit()
     try:
         craft_response = await execute_creator_craft(item_id, bundle, user, db)
