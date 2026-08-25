@@ -8,6 +8,7 @@ dispatch through the existing render entry point.
 from __future__ import annotations
 
 import asyncio
+import copy
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Any
@@ -25,6 +26,7 @@ from app.agents._runtime import RunContext, TerminalError
 from app.agents._schemas.creator_agent import (
     AskUser,
     CreativeStrategy,
+    CreatorCraftBundle,
     CreatorEditPlan,
     ProposeStrategy,
     ReviewDecision,
@@ -43,7 +45,13 @@ from app.models import (
     Persona,
     PlanItem,
 )
+from app.routes.generative_jobs import enqueue_editor_commit_render, prepare_editor_commit
 from app.services.content_plan_persona import load_owned_plan_persona
+from app.services.creator_craft import (
+    CreatorCraftValidationError,
+    build_core_craft_editor_commit,
+    craft_preview,
+)
 from app.services.creator_sessions import (
     ACTIVE_CREATOR_PHASES,
     append_event,
@@ -54,7 +62,7 @@ from app.services.creator_sessions import (
     rollout_eligible,
     serialize_session,
 )
-from app.services.job_status import PLAN_ITEM_JOB_TERMINAL
+from app.services.job_status import PLAN_ITEM_JOB_READY, PLAN_ITEM_JOB_TERMINAL
 
 log = structlog.get_logger()
 router = APIRouter()
@@ -93,6 +101,13 @@ class ConfirmBody(_StrictBody):
 class CancelBody(_StrictBody):
     session_id: uuid.UUID
     expected_revision: int = Field(ge=0)
+
+
+class CreatorCraftResponse(BaseModel):
+    status: str
+    receipt_id: str
+    generation: str | None = None
+    preview: dict[str, Any] = Field(default_factory=dict)
 
 
 class CreatorSessionResponse(BaseModel):
@@ -953,6 +968,259 @@ async def confirm_creator_plan(
         },
     )
     return await _response(db, completed)
+
+
+def _craft_response(receipt: CreatorAgentExecution) -> CreatorCraftResponse:
+    result = receipt.result if isinstance(receipt.result, dict) else {}
+    preview = result.get("preview") if isinstance(result.get("preview"), dict) else {}
+    return CreatorCraftResponse(
+        status=str(receipt.status),
+        receipt_id=str(receipt.id),
+        generation=(str(result.get("generation")) if result.get("generation") else None),
+        preview=preview,
+    )
+
+
+def _stable_manifest_fingerprint(manifest: Any) -> str:
+    """Hash live policy/media context while excluding the expected render identity."""
+
+    payload = manifest.model_dump(mode="json")
+    payload["current_edit"] = None
+    payload.pop("context_hash", None)
+    payload.pop("manifest_hash", None)
+    return canonical_context_hash(payload)
+
+
+async def _rollback_craft_commit(
+    db: AsyncSession,
+    *,
+    receipt_id: uuid.UUID,
+    job_id: uuid.UUID,
+    previous_assembly_plan: dict | None,
+    generation: str,
+    error: Exception,
+) -> None:
+    """Undo only this craft generation when broker publication fails."""
+
+    await db.rollback()
+    locked_job = await db.get(Job, job_id, populate_existing=True, with_for_update=True)
+    if locked_job is not None:
+        variants = list((locked_job.assembly_plan or {}).get("variants") or [])
+        current = next(
+            (value for value in variants if value.get("render_generation_id") == generation),
+            None,
+        )
+        if current is not None:
+            locked_job.assembly_plan = copy.deepcopy(previous_assembly_plan)
+    failed_receipt = await db.get(CreatorAgentExecution, receipt_id, with_for_update=True)
+    if failed_receipt is not None:
+        failed_receipt.status = "failed"
+        failed_receipt.error = {
+            "code": "craft_enqueue_failed",
+            "message": str(error)[:300],
+        }
+        failed_receipt.completed_at = datetime.now(UTC)
+    await db.commit()
+
+
+@router.post(
+    "/{item_id}/creator-agent/craft",
+    response_model=CreatorCraftResponse,
+)
+async def execute_creator_craft(
+    item_id: str,
+    body: CreatorCraftBundle,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> CreatorCraftResponse:
+    """Execute one exact-generation core-craft bundle atomically.
+
+    Caption style, transitions, and looks all compile into the existing editor
+    commit gateway.  This route owns only the creator/session/job fences and
+    the durable idempotency receipt; it never constructs FFmpeg or resolves a
+    storage capability from an opaque ID.
+    """
+
+    _require_feature(user.id, execution=True)
+    item, plan_row, persona = await _owned_context(db, item_id, user.id, for_update=True)
+    try:
+        session_id = uuid.UUID(body.session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="Creator session changed") from exc
+    session = await _load_session(db, session_id, user.id, item.id, for_update=True)
+    request_digest = canonical_context_hash(body.model_dump(mode="json"))
+    receipt = (
+        await db.execute(
+            select(CreatorAgentExecution).where(
+                CreatorAgentExecution.session_id == session.id,
+                CreatorAgentExecution.idempotency_key == body.idempotency_key,
+            )
+        )
+    ).scalar_one_or_none()
+    if receipt is not None:
+        if receipt.request_digest != request_digest:
+            raise HTTPException(status_code=409, detail="Idempotency key reused")
+        if receipt.status not in {"running", "succeeded"}:
+            raise HTTPException(status_code=409, detail="Creator craft execution is not resumable")
+    elif session.status not in {"reviewing", "awaiting_feedback", "completed"}:
+        raise HTTPException(status_code=409, detail="Creator render is not ready for craft")
+
+    if session.revision != body.expected_revision:
+        raise HTTPException(status_code=409, detail="Creator session changed")
+    if session.ownership_epoch != int(plan_row.ownership_epoch or 0):
+        raise HTTPException(status_code=409, detail="Creator ownership changed")
+    if body.expected_ownership_epoch != int(plan_row.ownership_epoch or 0):
+        raise HTTPException(status_code=409, detail="Creator ownership changed")
+
+    manifest, _media_context = await resolve_item_creator_context(db, item, persona=persona)
+    existing_result = receipt.result if receipt is not None else None
+    recovering_prepared = bool(
+        receipt is not None
+        and receipt.status in {"running", "succeeded"}
+        and isinstance(existing_result, dict)
+        and existing_result.get("prepared")
+    )
+    full_manifest_match = (
+        body.expected_manifest_hash == manifest.manifest_hash
+        and body.expected_context_hash == manifest.context_hash
+    )
+    stable_manifest_match = bool(
+        recovering_prepared
+        and existing_result.get("stable_manifest_fingerprint")
+        == _stable_manifest_fingerprint(manifest)
+    )
+    if not full_manifest_match and not stable_manifest_match:
+        raise HTTPException(status_code=409, detail="Creator capability manifest changed")
+
+    try:
+        expected_job_id = uuid.UUID(body.expected_job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="Creator render target changed") from exc
+    job = await db.get(Job, expected_job_id, populate_existing=True, with_for_update=True)
+    if (
+        job is None
+        or job.user_id != user.id
+        or job.content_plan_item_id != item.id
+        or int(job.content_plan_ownership_epoch or 0) != body.expected_ownership_epoch
+        or item.current_job_id != job.id
+        or job.status not in PLAN_ITEM_JOB_READY
+    ):
+        raise HTTPException(status_code=409, detail="Creator render target changed")
+    variants = list((job.assembly_plan or {}).get("variants") or [])
+    variant = next(
+        (value for value in variants if value.get("variant_id") == body.expected_variant_id),
+        None,
+    )
+    if variant is None:
+        raise HTTPException(status_code=409, detail="Creator variant changed")
+    current_generation = str(variant.get("render_generation_id") or "")
+
+    if receipt is not None and receipt.status == "succeeded":
+        recorded_result = receipt.result if isinstance(receipt.result, dict) else {}
+        if current_generation != str(recorded_result.get("generation") or ""):
+            raise HTTPException(status_code=409, detail="Creator craft execution is stale")
+        return _craft_response(receipt)
+
+    # A running receipt may have committed the new generation immediately
+    # before a worker/process crash.  Reuse its exact prepared editor commit;
+    # never compile against mutable post-crash state.
+    prepared = existing_result.get("prepared") if isinstance(existing_result, dict) else None
+    if prepared is not None:
+        generation = str(existing_result.get("generation") or "")
+        if not generation or current_generation != generation:
+            raise HTTPException(status_code=409, detail="Creator craft execution is stale")
+        preview = existing_result.get("preview") or {}
+        previous_assembly_plan = existing_result.get("previous_assembly_plan")
+    else:
+        if current_generation != body.expected_generation_id:
+            raise HTTPException(status_code=409, detail="Creator render generation changed")
+        if variant.get("render_status") not in (None, "ready"):
+            raise HTTPException(status_code=409, detail="Creator render is busy")
+        for command in body.commands:
+            capability_name = {
+                "set_caption_style": "caption_style",
+                "set_transition": "transitions",
+                "set_look_preset": "wide_looks",
+            }[command.command]
+            capability = manifest.capabilities.get(capability_name)
+            if capability is None or not capability.available:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Creator treatment is unavailable: {capability_name}",
+                )
+        previous_assembly_plan = copy.deepcopy(job.assembly_plan)
+        try:
+            editor_commit = build_core_craft_editor_commit(body, variant=variant)
+            prepared = prepare_editor_commit(
+                job,
+                body.expected_variant_id,
+                editor_commit,
+                user_id=str(user.id),
+                plan_item_id=str(item.id),
+            )
+        except CreatorCraftValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        generation = str(prepared["generation"])
+        preview = craft_preview(body, generation=generation, sections=prepared["sections"])
+        if receipt is None:
+            receipt = CreatorAgentExecution(
+                session_id=session.id,
+                idempotency_key=body.idempotency_key,
+                request_digest=request_digest,
+                expected_revision=body.expected_revision,
+                expected_manifest_hash=manifest.manifest_hash,
+                status="running",
+            )
+            db.add(receipt)
+        receipt.result = {
+            "kind": "creator_core_craft",
+            "generation": generation,
+            "prepared": prepared,
+            "preview": preview,
+            "previous_assembly_plan": previous_assembly_plan,
+            "stable_manifest_fingerprint": _stable_manifest_fingerprint(manifest),
+        }
+        await db.flush()
+        receipt_id = receipt.id
+        await db.commit()
+
+    assert receipt is not None
+    if receipt.id is None:
+        raise HTTPException(status_code=409, detail="Creator craft receipt is unavailable")
+    receipt_id = receipt.id
+    try:
+        enqueue_editor_commit_render(str(expected_job_id), body.expected_variant_id, prepared)
+    except Exception as exc:  # noqa: BLE001 — committed state must be rolled back
+        if previous_assembly_plan is not None:
+            await _rollback_craft_commit(
+                db,
+                receipt_id=receipt_id,
+                job_id=expected_job_id,
+                previous_assembly_plan=previous_assembly_plan,
+                generation=generation,
+                error=exc,
+            )
+        else:
+            await db.rollback()
+            failed_receipt = await db.get(CreatorAgentExecution, receipt_id, with_for_update=True)
+            if failed_receipt is not None:
+                failed_receipt.status = "failed"
+                failed_receipt.error = {
+                    "code": "craft_enqueue_failed",
+                    "message": str(exc)[:300],
+                }
+                failed_receipt.completed_at = datetime.now(UTC)
+                await db.commit()
+        raise HTTPException(
+            status_code=503,
+            detail="The creator treatment could not be queued; the current video is unchanged.",
+        ) from exc
+
+    receipt.status = "succeeded"
+    receipt.completed_at = datetime.now(UTC)
+    response = _craft_response(receipt)
+    await db.commit()
+    return response
 
 
 @router.post("/{item_id}/creator-agent/cancel", response_model=CreatorSessionResponse)
