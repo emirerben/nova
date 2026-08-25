@@ -14,7 +14,13 @@ from app.agents.edit_proposal import (
     EditProposalMedia,
     minimum_required_sources,
 )
-from app.schemas.edit_proposal import EditProposalSnapshot, FastMontageCut, MediaRef, StoryBeat
+from app.schemas.edit_proposal import (
+    GUIDED_STORY_MIN_MOMENT_S,
+    EditProposalSnapshot,
+    FastMontageCut,
+    MediaRef,
+    StoryBeat,
+)
 
 log = structlog.get_logger()
 
@@ -160,7 +166,11 @@ def deterministic_fast_cuts(media: list[MediaRef], duration_s: int) -> list[Fast
 def deterministic_guided_beats(media: list[MediaRef], duration_s: int) -> list[StoryBeat]:
     """Build conservative, metadata-free story structure from renderable owned media."""
 
-    eligible = [ref for ref in media if ref.kind == "image" or float(ref.duration_s or 0.0) >= 1.4]
+    eligible = [
+        ref
+        for ref in media
+        if ref.kind == "image" or float(ref.duration_s or 0.0) >= GUIDED_STORY_MIN_MOMENT_S
+    ]
     if not eligible:
         raise ValueError("guided story fallback found no usable media")
 
@@ -177,14 +187,17 @@ def deterministic_guided_beats(media: list[MediaRef], duration_s: int) -> list[S
             ordered.append(images.pop(0))
 
     target_s = max(3, min(60, int(duration_s)))
-    source_count = max(1, min(7, len(ordered), math.floor(target_s / 1.4)))
+    source_count = max(
+        1,
+        min(7, len(ordered), math.floor(target_s / GUIDED_STORY_MIN_MOMENT_S)),
+    )
     selected = ordered[:source_count]
     beat_count = min(5, source_count)
     groups: list[list[MediaRef]] = [[] for _ in range(beat_count)]
     for index, ref in enumerate(selected):
         groups[index % beat_count].append(ref)
 
-    durations = [round(1.4 * len(group), 3) for group in groups]
+    durations = [round(GUIDED_STORY_MIN_MOMENT_S * len(group), 3) for group in groups]
     remaining = round(target_s - sum(durations), 3)
     index = 0
     while remaining > 0.001:

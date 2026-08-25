@@ -7,6 +7,7 @@ from app.agents.edit_proposal import (
     EditProposalAgent,
     EditProposalAgentInput,
     EditProposalMedia,
+    shortlist_edit_proposal_media,
 )
 
 
@@ -348,6 +349,35 @@ def test_production_45_plus_58_shape_uses_bounded_alias_prompt_and_repairs_unkno
         "image",
         "video",
     }
+
+
+def test_guided_short_aliases_resolve_to_exact_shortlisted_owned_media() -> None:
+    agent_input = _production_shape_input()
+    expected = [media.media_id for media in shortlist_edit_proposal_media(agent_input)[:7]]
+    output = EditProposalAgent(None).parse(  # type: ignore[arg-type]
+        _raw([f"m{index + 1:03d}" for index in range(7)]),
+        agent_input,
+    )
+
+    selected = {media_id for beat in output.story_beats for media_id in beat.media_ids}
+    assert selected == set(expected)
+
+
+def test_fast_montage_short_aliases_preserve_owned_sources_and_windows() -> None:
+    agent_input = _fractional_fast_input()
+    payload = _fractional_fast_payload()
+    alias_for = {"media-0": "m001", "media-1": "m002", "media-2": "m003"}
+    for cut in payload["fast_cuts"]:
+        cut["media_id"] = alias_for[cut["media_id"]]
+
+    output = EditProposalAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(payload),
+        agent_input,
+    )
+
+    cuts = output.fast_cuts or []
+    assert {cut.media_id for cut in cuts} == {"media-0", "media-1", "media-2"}
+    assert all(cut.source_end_s > cut.source_start_s for cut in cuts)
 
 
 def test_fast_montage_rejects_expansion_beyond_cut_limit() -> None:

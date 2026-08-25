@@ -26,6 +26,7 @@ from app.agents._schemas.creator_agent import (
     canonical_manifest_hash,
 )
 from app.agents._schemas.creator_policy import (
+    CAPABILITY_DRAFT_GUIDED_PROPOSAL,
     MAX_MAIN_CREATOR_SELECTED_MEDIA,
     effective_render_program,
     normalize_creator_strategy_media,
@@ -41,7 +42,6 @@ from app.config import settings
 CAPABILITY_SET_ITEM_INTENT = "set_item_intent"
 CAPABILITY_GUIDED_STORY = "guided_story"
 CAPABILITY_NATIVE_RENDER = "native_render"
-CAPABILITY_DRAFT_GUIDED_PROPOSAL = "draft_guided_proposal"
 CAPABILITY_DISPATCH_RENDER = "dispatch_render"
 CAPABILITY_SELECT_READY_VARIANT = "select_ready_variant"
 CAPABILITY_CAPTION_STYLE = "caption_style"

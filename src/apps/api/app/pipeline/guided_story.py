@@ -22,7 +22,11 @@ from app.agents._schemas.text_element import TextElement
 from app.config import settings
 from app.pipeline.canvas import LANDSCAPE, PORTRAIT, Canvas
 from app.pipeline.probe import probe_video
-from app.schemas.edit_proposal import EditProposalSnapshot, canonical_media_digest
+from app.schemas.edit_proposal import (
+    GUIDED_STORY_MIN_MOMENT_S,
+    EditProposalSnapshot,
+    canonical_media_digest,
+)
 
 log = structlog.get_logger()
 
@@ -34,7 +38,11 @@ _FRAME_FLOOR_EPSILON_S = 1e-9
 _DURATION_MATCH_TOLERANCE_S = 0.001
 _MEDIA_PREP_MAX_WORKERS = 3
 _DIRECTION_POLICY = {
-    "guided_story": {"min_moment_s": 1.4, "transition": "crossfade", "text_effect": "fade-in"},
+    "guided_story": {
+        "min_moment_s": GUIDED_STORY_MIN_MOMENT_S,
+        "transition": "crossfade",
+        "text_effect": "fade-in",
+    },
     "fast_montage": {"min_moment_s": 0.8, "transition": "none", "text_effect": "static"},
     "text_explainer": {
         "min_moment_s": 1.8,

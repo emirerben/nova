@@ -8,6 +8,7 @@ from app.agents._schemas.edit_format import (
 )
 
 MAX_MAIN_CREATOR_SELECTED_MEDIA = 12
+CAPABILITY_DRAFT_GUIDED_PROPOSAL = "draft_guided_proposal"
 
 
 def effective_render_program(
@@ -32,7 +33,7 @@ def effective_render_program(
     )
     if native_required:
         return "native"
-    guided = manifest.capabilities.get("draft_guided_proposal")
+    guided = manifest.capabilities.get(CAPABILITY_DRAFT_GUIDED_PROPOSAL)
     if strategy.render_program == "guided" and guided and guided.available:
         return "guided"
     return "native"
@@ -81,6 +82,7 @@ def normalize_creator_strategy_media(
 
 __all__ = [
     "MAX_MAIN_CREATOR_SELECTED_MEDIA",
+    "CAPABILITY_DRAFT_GUIDED_PROPOSAL",
     "effective_render_program",
     "normalize_creator_strategy_media",
 ]

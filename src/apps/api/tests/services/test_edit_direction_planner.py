@@ -211,6 +211,20 @@ def test_guided_replan_terminal_failure_builds_compiler_valid_mixed_media_fallba
     assert {ref.kind for ref in planned.media if ref.media_id in selected} == {"image", "video"}
 
 
+def test_text_explainer_replan_terminal_failure_does_not_invent_copy(monkeypatch) -> None:
+    source = _mixed_duration_source(14)
+    monkeypatch.setattr(edit_direction_planner, "EditProposalAgent", FailingAgent)
+
+    with pytest.raises(TerminalError):
+        edit_direction_planner.plan_direction_snapshot(
+            source,
+            direction="text_explainer",
+            goal="Explain the visible details",
+            pace="balanced",
+            duration_s=14,
+        )
+
+
 def _mixed_duration_source(duration_s: int) -> EditProposalSnapshot:
     media = [
         MediaRef(

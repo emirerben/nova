@@ -13,7 +13,11 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.pipeline.prompt_loader import load_prompt
-from app.schemas.edit_proposal import MAX_EDIT_PROPOSAL_MEDIA, FastMontageCut
+from app.schemas.edit_proposal import (
+    GUIDED_STORY_MIN_MOMENT_S,
+    MAX_EDIT_PROPOSAL_MEDIA,
+    FastMontageCut,
+)
 
 _SENSORY_CLAIM = re.compile(
     r"\b(?:delicious|tasty|flavorful|refreshing|favorite)\b",
@@ -34,7 +38,6 @@ _FAST_DURATION_RECONCILE_TOLERANCE_S = 0.5
 _FAST_DURATION_EPSILON_S = 0.001
 _FAST_RECOVERABLE_CUT_MAX_S = 2.4
 EDIT_PROPOSAL_AGENT_MEDIA_LIMIT = 32
-_GUIDED_RENDER_MIN_S = 1.4
 
 log = structlog.get_logger()
 
@@ -110,7 +113,7 @@ def shortlist_edit_proposal_media(
 
     eligible: list[tuple[int, EditProposalMedia]] = []
     for index, media in enumerate(input.media):
-        minimum_video_s = 0.4 if input.direction == "fast_montage" else _GUIDED_RENDER_MIN_S
+        minimum_video_s = 0.4 if input.direction == "fast_montage" else GUIDED_STORY_MIN_MOMENT_S
         if (
             media.kind == "video"
             and media.duration_s is not None

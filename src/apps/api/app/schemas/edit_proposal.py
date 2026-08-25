@@ -43,6 +43,7 @@ EDIT_CONVERSATION_MAX_TURNS = 20
 # Guided-edit snapshots must preserve the complete deduplicated set so a
 # Main Creator-confirmed plan never fails after the product has accepted it.
 MAX_EDIT_PROPOSAL_MEDIA = 150
+GUIDED_STORY_MIN_MOMENT_S = 1.4
 MAIN_CREATOR_FAIL_CLOSED = "main_creator_fail_closed"
 # Who/what approved a proposal — "auto" for AI-designs-by-default
 # (GUIDED_AUTO_DESIGN_ENABLED); "user" for an explicit creator approval.

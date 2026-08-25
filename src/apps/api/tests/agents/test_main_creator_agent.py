@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from app.agents._schemas.creator_agent import (
     CapabilityAvailability,
     CreatorMediaRef,
@@ -98,3 +100,36 @@ def test_audio_led_main_creator_output_is_native_and_bounded_to_twelve_clips() -
     assert strategy.render_program == "native"
     assert len(strategy.selected_media_ids) == 12
     assert all(not media_id.startswith("asset-") for media_id in strategy.selected_media_ids)
+    assert len(output.model_dump_json()) < 1800
+
+
+@pytest.mark.parametrize(
+    ("selected", "expected_count"),
+    [
+        ([], 12),
+        (["clip-00-11111111-1111-1111-1111-111111111111"] * 2, 1),
+        (["asset-00-22222222-2222-2222-2222-222222222222"], 12),
+        (["invented-provider-id"], 12),
+    ],
+)
+def test_native_main_creator_repairs_empty_duplicate_asset_and_invented_ids(
+    selected: list[str],
+    expected_count: int,
+) -> None:
+    agent_input = _input()
+
+    output = MainCreatorAgent(None).parse(  # type: ignore[arg-type]
+        _raw(audio_strategy="original_audio", selected=selected),
+        agent_input,
+    )
+
+    assert isinstance(output.action, ProposeStrategy)
+    resolved = output.action.strategy.selected_media_ids
+    assert len(resolved) == expected_count
+    assert len(resolved) == len(set(resolved))
+    assert set(resolved) <= {
+        media.media_id
+        for media in agent_input.capability_manifest.media
+        if not media.media_id.startswith("asset-")
+    }
+    assert len(output.model_dump_json()) < 1800

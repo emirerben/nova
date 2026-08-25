@@ -17,6 +17,7 @@ from sqlalchemy import func, select
 from app.database import sync_session
 from app.models import ContentPlan, PlanItem, PlanItemAsset
 from app.schemas.edit_proposal import (
+    GUIDED_STORY_MIN_MOMENT_S,
     MAIN_CREATOR_FAIL_CLOSED,
     EditProposal,
     EditProposalSnapshot,
@@ -81,15 +82,12 @@ MIN_GUIDED_DURATION_S = 3
 # image the guided_story per-media floor (guided_story.py _DIRECTION_POLICY
 # "guided_story"."min_moment_s") rather than an unbounded amount.
 _IMAGE_FEASIBLE_CREDIT_S = 1.4
-# guided_story.py's own per-moment minimum for the "guided_story" direction
-# (_DIRECTION_POLICY["guided_story"]["min_moment_s"]) — duplicated here as a
-# constant rather than imported to keep this module's planning estimate free
-# of a pipeline import; guided_story.py:377,395-399 is the actual render-time
-# enforcement this mirrors. A video shorter than this can never be its own
+# guided_story.py's own per-moment minimum for the "guided_story" direction.
+# The shared schema constant keeps planning and rendering in lockstep without
+# importing the pipeline. A video shorter than this can never be its own
 # legible beat moment, so it earns zero credit below (P2-1, 2026-08-18
 # adversarial review) — it was previously falling into the image branch and
 # being credited as if it were a full _IMAGE_FEASIBLE_CREDIT_S image.
-_RENDERER_MIN_MOMENT_S = 1.4
 
 
 def _fast_story_beats(cuts: list[FastMontageCut]) -> list[StoryBeat]:
@@ -130,7 +128,7 @@ def feasible_guided_duration_s(media: list[MediaRef]) -> float:
     media can support. Videos contribute their own probed duration once — a
     beat can never be stretched past what was actually filmed (no
     slow-mo/loop) — but ONLY when that duration clears
-    `_RENDERER_MIN_MOMENT_S`; a video with no probed duration, a zero
+    `GUIDED_STORY_MIN_MOMENT_S`; a video with no probed duration, a zero
     duration, or a duration too short to be its own legible moment
     contributes nothing (not the image credit). This is a pre-agent planning
     estimate — guided_story.py's `_source_window` / `_allocate_beat_durations`
@@ -141,7 +139,7 @@ def feasible_guided_duration_s(media: list[MediaRef]) -> float:
     for ref in media:
         if ref.kind == "video":
             duration = float(ref.duration_s) if ref.duration_s else 0.0
-            if duration >= _RENDERER_MIN_MOMENT_S:
+            if duration >= GUIDED_STORY_MIN_MOMENT_S:
                 total += duration
         else:
             total += _IMAGE_FEASIBLE_CREDIT_S
@@ -161,7 +159,10 @@ def guided_feasibility_threshold_s(media_count: int) -> float:
     never calls the agent at all — the montage-fallback path handles it.
     """
 
-    return max(MIN_GUIDED_DURATION_S, _RENDERER_MIN_MOMENT_S * min(3, max(1, media_count)))
+    return max(
+        MIN_GUIDED_DURATION_S,
+        GUIDED_STORY_MIN_MOMENT_S * min(3, max(1, media_count)),
+    )
 
 
 def adapt_target_duration_s(brief_duration_s: int, feasible_s: float) -> int:

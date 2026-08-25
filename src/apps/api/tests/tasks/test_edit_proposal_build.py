@@ -680,7 +680,7 @@ def test_many_too_short_videos_no_longer_overestimated_via_image_credit_bug() ->
     though not one of them is individually usable as its own beat moment —
     each was silently credited the FULL _IMAGE_FEASIBLE_CREDIT_S (1.4s) under
     the pre-P2-1 bug, overestimating total feasibility to 5.6s. Each now
-    correctly earns zero credit (below _RENDERER_MIN_MOMENT_S), so the whole
+    correctly earns zero credit (below GUIDED_STORY_MIN_MOMENT_S), so the whole
     set is correctly infeasible.
     """
 
@@ -828,16 +828,14 @@ def test_main_creator_large_shape_repairs_agent_refs_and_persists_all_media(
     assert len(selected) >= 7
 
 
-def test_initial_draft_terminal_agent_failure_uses_renderer_validated_fallback(
-    monkeypatch,
-) -> None:
+def _prepare_terminal_agent_attempt(monkeypatch, *, direction: str = "guided_story"):
     from app.agents._runtime import TerminalError
 
     item_id = uuid.uuid4()
     owner_id = uuid.uuid4()
     item = _prod_item(item_id, approval_mode="auto")
     item.edit_proposal = _proposal(
-        brief=ProposalBrief(duration_s=6),
+        brief=ProposalBrief(direction=direction, duration_s=6),
         approval_mode="auto",
     )
     db = _Db(_Result(rows=[]))
@@ -868,6 +866,23 @@ def test_initial_draft_terminal_agent_failure_uses_renderer_validated_fallback(
         "app.agents.edit_proposal.EditProposalAgent.run",
         lambda *_a, **_kw: (_ for _ in ()).throw(TerminalError("malformed provider media ref")),
     )
+    return item_id, item
+
+
+def test_initial_draft_terminal_agent_failure_uses_renderer_validated_fallback(
+    monkeypatch,
+) -> None:
+    from app.pipeline import guided_story
+
+    item_id, item = _prepare_terminal_agent_attempt(monkeypatch)
+    real_validate = guided_story.validate_proposal_timing
+    validated = []
+
+    def _spy_validate(snapshot):  # noqa: ANN001
+        validated.append(snapshot)
+        return real_validate(snapshot)
+
+    monkeypatch.setattr(guided_story, "validate_proposal_timing", _spy_validate)
 
     proposal_build._run_draft_attempt(
         SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, auto_finalize=True
@@ -879,9 +894,50 @@ def test_initial_draft_terminal_agent_failure_uses_renderer_validated_fallback(
     assert persisted.last_approved is not None
     snapshot = persisted.last_approved.snapshot
     assert snapshot.title == "A few moments"
+    assert validated == [snapshot]
     assert {media_id for beat in snapshot.story_beats for media_id in beat.media_ids} == {
         _PROD_CLIP_ASSIGNMENT["media_id"]
     }
+
+
+def test_initial_draft_does_not_approve_fallback_rejected_by_renderer(monkeypatch) -> None:
+    from app.pipeline import guided_story
+
+    item_id, item = _prepare_terminal_agent_attempt(monkeypatch)
+    monkeypatch.setattr(
+        guided_story,
+        "validate_proposal_timing",
+        lambda _snapshot: (_ for _ in ()).throw(
+            guided_story.GuidedStoryError(
+                "guided_story_timing_infeasible",
+                "The fallback cannot be compiled safely.",
+            )
+        ),
+    )
+
+    proposal_build._run_draft_attempt(
+        SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, auto_finalize=True
+    )
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None
+    assert persisted.status == "failed"
+    assert persisted.draft is None
+    assert persisted.last_approved is None
+
+
+def test_text_explainer_terminal_agent_failure_stays_fail_closed(monkeypatch) -> None:
+    item_id, item = _prepare_terminal_agent_attempt(monkeypatch, direction="text_explainer")
+
+    proposal_build._run_draft_attempt(
+        SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, auto_finalize=True
+    )
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None
+    assert persisted.status == "failed"
+    assert persisted.draft is None
+    assert persisted.last_approved is None
 
 
 class _FakeFastAgentOutput:
