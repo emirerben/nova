@@ -40,6 +40,7 @@ CAPABILITY_NATIVE_RENDER = "native_render"
 CAPABILITY_DRAFT_GUIDED_PROPOSAL = "draft_guided_proposal"
 CAPABILITY_DISPATCH_RENDER = "dispatch_render"
 CAPABILITY_SELECT_READY_VARIANT = "select_ready_variant"
+CAPABILITY_CAPTION_STYLE = "caption_style"
 
 _FEATURE_SETTINGS = {
     "main_creator_agent": "main_creator_agent_enabled",
@@ -210,6 +211,13 @@ def resolve_creator_manifest(
             _available()
             if ready_variant
             else _unavailable("no_ready_variant", "a ready variant is required before selection")
+        ),
+        # Caption style has no separate rollout switch; it is available only
+        # when the authenticated Creator execution gateway is enabled.
+        CAPABILITY_CAPTION_STYLE: (
+            _available()
+            if settings.main_creator_agent_execution_enabled
+            else _unavailable("disabled_by_setting", "caption styling is disabled by the server")
         ),
     }
 
@@ -386,6 +394,7 @@ build_creator_manifest = resolve_creator_manifest
 
 __all__ = [
     "CAPABILITY_DISPATCH_RENDER",
+    "CAPABILITY_CAPTION_STYLE",
     "CAPABILITY_DRAFT_GUIDED_PROPOSAL",
     "CAPABILITY_GUIDED_STORY",
     "CAPABILITY_NATIVE_RENDER",
