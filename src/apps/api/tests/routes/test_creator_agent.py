@@ -21,6 +21,7 @@ from app.models import CreatorAgentExecution, Job
 from app.routes import creator_agent as creator_routes
 from app.routes import plan_items as plan_item_routes
 from app.routes.creator_agent import (
+    AutoIterationBody,
     ConfirmBody,
     StartBody,
     TurnBody,
@@ -73,6 +74,123 @@ def test_creator_speech_cut_uses_candidate_specific_kill_switch(monkeypatch) -> 
     assert _creator_speech_cut_source_enabled("retake_review") is False
     assert _creator_speech_cut_source_enabled("filler_review") is True
     assert _creator_speech_cut_source_enabled("untrusted_source") is False
+
+
+@pytest.mark.asyncio
+async def test_auto_iteration_keeps_ready_phase_until_craft_succeeds(monkeypatch) -> None:
+    """The craft gateway must see the ready phase on first dispatch and retry."""
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    item_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    session = SimpleNamespace(
+        id=session_id,
+        creator_id=user.id,
+        plan_item_id=item_id,
+        status="awaiting_feedback",
+        revision=11,
+        ownership_epoch=7,
+        auto_iteration_opt_in=False,
+        max_render_attempts=2,
+        render_attempts=1,
+        automatic_revision_count=0,
+        target_job_id=job_id,
+        target_variant_id="variant-1",
+        target_generation_id="generation-1",
+        last_review={
+            "status": "complete",
+            "review_mode": "objective",
+            "render_generation_id": "generation-1",
+            "confidence": 0.9,
+            "quality_score": 3.0,
+            "expected_improvement": 0.5,
+            "objective_tag": "objective_quality",
+            "allowlist_action": "caption_legibility",
+            "proposed_revision": {"revision_id": "revision-1", "summary": "Fix captions"},
+        },
+    )
+    item = SimpleNamespace(id=item_id)
+    plan = SimpleNamespace(ownership_epoch=7)
+    job = SimpleNamespace(
+        id=job_id,
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "variant-1",
+                    "render_generation_id": "generation-1",
+                    "render_status": "ready",
+                }
+            ]
+        },
+    )
+    manifest = SimpleNamespace(manifest_hash="a" * 64, context_hash="b" * 64)
+    db = AsyncMock()
+    query_result = MagicMock()
+    query_result.scalar_one_or_none.return_value = None
+    db.execute.return_value = query_result
+    db.get.return_value = job
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, plan, SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(side_effect=[session, session]))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+
+    async def append_event(*_args, **_kwargs):
+        session.revision += 1
+
+    monkeypatch.setattr(creator_routes, "append_event", append_event)
+    monkeypatch.setattr(
+        creator_routes,
+        "evaluate_auto_iteration",
+        lambda *_args, **_kwargs: SimpleNamespace(decision="eligible"),
+    )
+    captured: dict = {}
+
+    def build_bundle(**kwargs):
+        captured["pin"] = kwargs["pin"]
+        return SimpleNamespace(model_dump=lambda mode: {"bounded": True})
+
+    monkeypatch.setattr(creator_routes, "build_auto_bundle", build_bundle)
+
+    async def craft(*_args, **_kwargs):
+        captured["status_at_craft"] = session.status
+        return SimpleNamespace(generation="generation-2", receipt_id="craft-receipt-1")
+
+    monkeypatch.setattr(creator_routes, "execute_creator_craft", craft)
+    monkeypatch.setattr(
+        creator_routes,
+        "_response",
+        AsyncMock(return_value=SimpleNamespace(status="rendering")),
+    )
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_execution_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_review_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_quality_review_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_auto_iteration_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_rollout_percent", 100)
+
+    result = await creator_routes.request_creator_auto_iteration(
+        str(item_id),
+        AutoIterationBody(
+            session_id=session_id,
+            expected_revision=11,
+            opt_in=True,
+            client_event_id="auto-event-1",
+        ),
+        user,
+        db,
+    )
+
+    assert result.status == "rendering"
+    assert captured["status_at_craft"] == "awaiting_feedback"
+    assert captured["pin"]["expected_revision"] == 12
 
 
 class _ExpiringNamespace:
