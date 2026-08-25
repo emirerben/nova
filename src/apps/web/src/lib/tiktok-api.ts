@@ -53,6 +53,8 @@ export interface TikTokPublication {
   visibility_status: string;
   public_at?: string | null;
   retryable: boolean;
+  /** API-authoritative guard for deleting the owning library job. */
+  deletion_blocked?: boolean;
   failure_code: string | null;
   failure_detail: string | null;
   latest_metrics: Record<string, number | null> | null;

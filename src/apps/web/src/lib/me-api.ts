@@ -14,6 +14,16 @@ export { NotAuthenticatedError };
 
 const ME_BASE = "/api/me";
 
+export class MeApiError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "MeApiError";
+    this.status = status;
+  }
+}
+
 export type LibraryJobStatus = "ready" | "generating" | "failed";
 
 /** The three mutually-exclusive thumb reactions on a video (a `note` is separate). */
@@ -43,6 +53,7 @@ export interface LibraryJob {
     processing_status: string;
     visibility_status: string;
     retryable: boolean;
+    deletion_blocked: boolean;
     failure_code: string | null;
     failure_detail: string | null;
     latest_metrics: Record<string, number | null> | null;
@@ -76,7 +87,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // non-JSON error body; keep the generic message
     }
-    throw new Error(detail);
+    throw new MeApiError(detail, res.status);
   }
   // 204 No Content (e.g. DELETE) has no body to parse.
   if (res.status === 204) return undefined as T;
@@ -98,6 +109,11 @@ export function addJobToPlan(jobId: string, dayIndex: number): Promise<LibraryJo
     method: "POST",
     body: JSON.stringify({ day_index: dayIndex }),
   });
+}
+
+/** Permanently remove one terminal video from the signed-in user's library. */
+export function deleteMyJob(jobId: string): Promise<void> {
+  return request<void>(`/jobs/${jobId}`, { method: "DELETE" });
 }
 
 export interface FeedbackResponse {

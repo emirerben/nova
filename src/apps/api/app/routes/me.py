@@ -1,6 +1,7 @@
 """Per-user "my" surface — the video library + one-off → plan attach (Phase 1 spine).
 
 GET    /me/jobs                           — the signed-in user's videos (the library)
+DELETE /me/jobs/{job_id}                   — delete one terminal video and its local media
 POST   /me/jobs/{job_id}/add-to-plan      — pin a standalone video onto a plan day
 POST   /me/jobs/{job_id}/open-in-editor   — promote a ready first cut into the editor
 GET    /me/export                     — data-portability bundle (privacy policy §9)
@@ -18,13 +19,14 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from typing import Any, Literal
+from urllib.parse import unquote, urlparse
 
 import structlog
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import CurrentUser
@@ -34,6 +36,8 @@ from app.models import (
     VIDEO_FEEDBACK_THUMB_SIGNALS,
     ContentPlan,
     Job,
+    JobClip,
+    JobStorageDeletion,
     OAuthToken,
     Persona,
     PlanItem,
@@ -61,11 +65,38 @@ router = APIRouter()
 # is exactly how plan_items' copy drifted (missing template_ready/music_ready).
 _JOB_READY = PLAN_ITEM_JOB_READY
 _JOB_FAILED = PLAN_ITEM_JOB_FAILED
-
 _DEFAULT_LIMIT = 24
 _MAX_LIMIT = 60
 OPEN_IN_EDITOR_NOT_READY_DETAIL = "Video is not ready to open in the editor."
 OPEN_IN_EDITOR_LINK_CONFLICT_DETAIL = "Video is linked to a different plan item."
+DELETE_JOB_NOT_TERMINAL_DETAIL = "This video is still being prepared or posted."
+
+_DELETE_ACTIVE_TIKTOK_STATUSES = frozenset(
+    {"queued", "snapshotting", "submitting", "processing", "submission_unknown"}
+)
+_DELETE_OUTPUT_PREFIXES = (
+    "generative-jobs/{job_id}/",
+    "jobs/{job_id}/",
+    "music-jobs/{job_id}/",
+    "auto-music-jobs/{job_id}/",
+)
+_DELETE_VARIANT_PATH_FIELDS = (
+    "output_url",
+    "video_path",
+    "base_video_path",
+    "subject_matte_path",
+    "pre_media_overlay_video_path",
+    "pre_sfx_video_path",
+    "visual_blocks_base_path",
+    "motion_base_path",
+)
+
+
+def _tiktok_delete_blocked(publication: TikTokPublication) -> bool:
+    return publication.processing_status in _DELETE_ACTIVE_TIKTOK_STATUSES or (
+        publication.processing_status == "failed" and publication.retryable
+    )
+
 
 # The persisted `output_url` (both per-variant and single-output job shapes) is a
 # 1-day-TTL signed URL minted at render time; the underlying blob persists forever
@@ -336,6 +367,7 @@ class LibraryTikTokPublication(BaseModel):
     processing_status: str
     visibility_status: str
     retryable: bool
+    deletion_blocked: bool
     failure_code: str | None
     failure_detail: str | None
     latest_metrics: dict | None
@@ -424,6 +456,7 @@ def _to_library_job(
                 processing_status=tiktok_publication.processing_status,
                 visibility_status=tiktok_publication.visibility_status,
                 retryable=tiktok_publication.retryable,
+                deletion_blocked=_tiktok_delete_blocked(tiktok_publication),
                 failure_code=tiktok_publication.failure_code,
                 failure_detail=tiktok_publication.failure_detail,
                 latest_metrics=tiktok_publication.latest_metrics,
@@ -529,6 +562,348 @@ async def list_my_jobs(
         ],
         next_cursor=next_cursor,
     )
+
+
+def _normalize_job_storage_path(path: object) -> str | None:
+    if not isinstance(path, str):
+        return None
+    candidate = path.strip().lstrip("/")
+    if "://" in candidate:
+        parsed = urlparse(candidate)
+        bucket_prefix = f"/{settings.storage_bucket}/"
+        if (
+            parsed.scheme != "https"
+            or parsed.netloc not in {"storage.googleapis.com", "storage.cloud.google.com"}
+            or not parsed.path.startswith(bucket_prefix)
+        ):
+            return None
+        candidate = unquote(parsed.path[len(bucket_prefix) :]).lstrip("/")
+    if not candidate or ".." in candidate.split("/"):
+        return None
+    return candidate
+
+
+def _job_output_path(path: object, job_id: uuid.UUID) -> str | None:
+    candidate = _normalize_job_storage_path(path)
+    if candidate is None:
+        return None
+    if any(
+        candidate.startswith(prefix.format(job_id=job_id)) for prefix in _DELETE_OUTPUT_PREFIXES
+    ):
+        return candidate
+    return None
+
+
+def _job_source_path(path: object, *, user_id: uuid.UUID, job_id: uuid.UUID) -> str | None:
+    candidate = _normalize_job_storage_path(path)
+    if candidate is None:
+        return None
+    allowed_prefixes = (
+        f"{user_id}/{job_id}/",
+        f"dev-user/{job_id}/",
+        f"dev-user/{user_id}/generative/",
+        f"voiceover-uploads/direct/{user_id}/",
+    )
+    return candidate if candidate.startswith(allowed_prefixes) else None
+
+
+def _job_input_paths(job: Job, *, user_id: uuid.UUID, linked_to_plan: bool) -> list[str]:
+    if linked_to_plan:
+        return []
+    candidates = job.all_candidates if isinstance(job.all_candidates, dict) else {}
+    raw_paths: list[object] = [job.raw_storage_path]
+    clip_paths = candidates.get("clip_paths")
+    if isinstance(clip_paths, list):
+        raw_paths.extend(clip_paths)
+    raw_paths.append(candidates.get("voiceover_gcs_path"))
+    paths: list[str] = []
+    for value in raw_paths:
+        if path := _job_source_path(value, user_id=user_id, job_id=job.id):
+            paths.append(path)
+    return list(dict.fromkeys(paths))
+
+
+def _shared_job_input_prefixes(user_id: uuid.UUID) -> tuple[str, ...]:
+    return (
+        f"dev-user/{user_id}/generative/",
+        f"voiceover-uploads/direct/{user_id}/",
+    )
+
+
+def _job_storage_paths(
+    job: Job,
+    clips: list[JobClip],
+    publications: list[TikTokPublication],
+    *,
+    user_id: uuid.UUID,
+    linked_to_plan: bool | None = None,
+) -> list[str]:
+    """Collect exact, job-owned object keys without walking broad prefixes.
+
+    Linked plan jobs deliberately skip raw input paths: those clips belong to
+    the plan and remain recoverable after the finished render is deleted.
+    """
+    paths: list[str] = []
+
+    def add_output(value: object) -> None:
+        if path := _job_output_path(value, job.id):
+            paths.append(path)
+
+    for clip in clips:
+        add_output(clip.video_path)
+        add_output(clip.thumbnail_path)
+
+    plan = job.assembly_plan if isinstance(job.assembly_plan, dict) else {}
+    for field in ("output_path", "video_path", "output_url", "base_output_url"):
+        add_output(plan.get(field))
+    variants = plan.get("variants")
+    if isinstance(variants, list):
+        for variant in variants:
+            if not isinstance(variant, dict):
+                continue
+            for field in _DELETE_VARIANT_PATH_FIELDS:
+                value = variant.get(field)
+                add_output(value)
+                if field == "subject_matte_path":
+                    if matte_path := _job_output_path(value, job.id):
+                        if matte_path.endswith(".mp4"):
+                            paths.append(f"{matte_path}.json")
+
+    for publication in publications:
+        add_output(publication.source_object_path)
+        snapshot_path = f"tiktok-publish/{publication.id}.mp4"
+        if publication.snapshot_object_path == snapshot_path:
+            paths.append(snapshot_path)
+
+    # `all_candidates.clip_paths` contains every source for template/music
+    # jobs, while raw_storage_path is only the legacy/single-input fallback.
+    # Never include either collection for a plan-linked job. The optional
+    # override lets the route protect legacy rows where only PlanItem.current_job_id
+    # carries the link and Job.content_plan_item_id is NULL.
+    if linked_to_plan is None:
+        linked_to_plan = job.content_plan_item_id is not None
+    candidates = job.all_candidates if isinstance(job.all_candidates, dict) else {}
+    clip_paths = candidates.get("clip_paths")
+    if isinstance(clip_paths, list):
+        # Timeline edits may copy plan footage into a job-owned generative-jobs
+        # namespace. Those exact copies are safe to remove even for linked jobs;
+        # the original users/{user_id}/plan/... inputs remain excluded below.
+        for clip_path in clip_paths:
+            add_output(clip_path)
+    preprocessed_cache = candidates.get("preprocessed_source_cache")
+    if isinstance(preprocessed_cache, dict):
+        processed_clip_paths = preprocessed_cache.get("processed_clip_paths")
+        if isinstance(processed_clip_paths, list):
+            for cache_path in processed_clip_paths:
+                add_output(cache_path)
+    hdr_cache = candidates.get("hdr_pretonemap_cache")
+    if isinstance(hdr_cache, dict):
+        processed_by_clip_id = hdr_cache.get("processed_by_clip_id")
+        if isinstance(processed_by_clip_id, dict):
+            for cache_path in processed_by_clip_id.values():
+                add_output(cache_path)
+
+    paths.extend(_job_input_paths(job, user_id=user_id, linked_to_plan=linked_to_plan))
+
+    return list(dict.fromkeys(paths))
+
+
+async def _delete_job_storage_after_commit(outbox_id: uuid.UUID | None) -> None:
+    """Best-effort dispatch; the committed outbox is the retry guarantee."""
+    if outbox_id is None:
+        return
+    from app.tasks.account_lifecycle import purge_job_storage  # noqa: PLC0415
+
+    try:
+        purge_job_storage.apply_async(args=[str(outbox_id)])
+    except Exception as exc:  # noqa: BLE001 — DB deletion must not be rolled back
+        log.error(
+            "purge_job_storage_dispatch_failed",
+            outbox_id=str(outbox_id),
+            error=str(exc),
+        )
+
+
+@router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_my_job(
+    job_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Delete one terminal video while keeping linked plan footage intact."""
+    try:
+        jid = uuid.UUID(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad id") from exc
+
+    snapshot = (
+        await db.execute(select(Job).where(Job.id == jid, Job.user_id == user.id))
+    ).scalar_one_or_none()
+    if snapshot is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    # Discover linked plan ids without locks first. The lock acquisition below
+    # follows the repository-wide mutation order (ContentPlan -> Persona ->
+    # PlanItem -> Job), so delete cannot deadlock with plan edits or attach.
+    link_conditions = [PlanItem.current_job_id == jid]
+    if snapshot.content_plan_item_id is not None:
+        link_conditions.append(PlanItem.id == snapshot.content_plan_item_id)
+    link_filter = link_conditions[0] if len(link_conditions) == 1 else or_(*link_conditions)
+    linked_plan_ids = sorted(
+        {
+            plan_id
+            for plan_id in (
+                await db.execute(
+                    select(PlanItem.content_plan_id)
+                    .join(ContentPlan, ContentPlan.id == PlanItem.content_plan_id)
+                    .where(ContentPlan.user_id == user.id, link_filter)
+                )
+            )
+            .scalars()
+            .all()
+        },
+        key=str,
+    )
+    linked_items: list[PlanItem] = []
+    for plan_id in linked_plan_ids:
+        plan = (
+            await db.execute(
+                select(ContentPlan)
+                .where(ContentPlan.id == plan_id, ContentPlan.user_id == user.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        if plan is None:
+            continue
+        try:
+            await load_owned_plan_persona(db, plan, for_update=True)
+        except PlanPersonaOwnershipError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
+            ) from exc
+        linked_items.extend(
+            list(
+                (
+                    await db.execute(
+                        select(PlanItem)
+                        .where(PlanItem.content_plan_id == plan.id, link_filter)
+                        .with_for_update()
+                        .execution_options(populate_existing=True)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        )
+
+    locked_job = (
+        await db.execute(
+            select(Job)
+            .where(Job.id == jid)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if locked_job is None or locked_job.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if locked_job.status not in _JOB_READY | _JOB_FAILED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=DELETE_JOB_NOT_TERMINAL_DETAIL,
+        )
+
+    publications = list(
+        (
+            await db.execute(
+                select(TikTokPublication)
+                .where(TikTokPublication.job_id == jid, TikTokPublication.user_id == user.id)
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if any(_tiktok_delete_blocked(publication) for publication in publications):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=DELETE_JOB_NOT_TERMINAL_DETAIL,
+        )
+
+    clips = list(
+        (await db.execute(select(JobClip).where(JobClip.job_id == jid).with_for_update()))
+        .scalars()
+        .all()
+    )
+    linked_to_plan = bool(locked_job.content_plan_item_id or linked_items)
+    object_paths = _job_storage_paths(
+        locked_job,
+        clips,
+        publications,
+        user_id=user.id,
+        linked_to_plan=linked_to_plan,
+    )
+    shared_inputs = {
+        path
+        for path in _job_input_paths(locked_job, user_id=user.id, linked_to_plan=linked_to_plan)
+        if path.startswith(_shared_job_input_prefixes(user.id))
+    }
+    if shared_inputs:
+        shared_clip_clauses = [
+            Job.raw_storage_path.in_(shared_inputs),
+            Job.all_candidates["voiceover_gcs_path"].astext.in_(shared_inputs),
+            *(Job.all_candidates["clip_paths"].contains([path]) for path in shared_inputs),
+        ]
+        referenced_rows = (
+            await db.execute(
+                select(Job.raw_storage_path, Job.all_candidates)
+                .where(Job.user_id == user.id, Job.id != jid)
+                .where(or_(*shared_clip_clauses))
+            )
+        ).all()
+        referenced_inputs: set[str] = set()
+        for raw_path, candidates in referenced_rows:
+            if raw_path in shared_inputs:
+                referenced_inputs.add(raw_path)
+            if not isinstance(candidates, dict):
+                continue
+            if candidates.get("voiceover_gcs_path") in shared_inputs:
+                referenced_inputs.add(candidates["voiceover_gcs_path"])
+            candidate_clips = candidates.get("clip_paths")
+            if isinstance(candidate_clips, list):
+                referenced_inputs.update(set(candidate_clips) & shared_inputs)
+        object_paths = [path for path in object_paths if path not in referenced_inputs]
+
+    # Clear every forward plan pointer for this Job, including legacy rows
+    # where Job.content_plan_item_id was not populated. The ownership join
+    # prevents a malformed cross-user row from being touched.
+    for item in linked_items:
+        if item.current_job_id == jid:
+            item.current_job_id = None
+
+    locked_job.content_plan_item_id = None
+    deletion_outbox_id: uuid.UUID | None = None
+    if object_paths:
+        deletion_outbox_id = uuid.uuid4()
+        db.add(
+            JobStorageDeletion(
+                id=deletion_outbox_id,
+                job_id=jid,
+                object_paths=object_paths,
+            )
+        )
+    await db.execute(
+        delete(TikTokPublication).where(
+            TikTokPublication.job_id == jid,
+            TikTokPublication.user_id == user.id,
+        )
+    )
+    await db.execute(delete(JobClip).where(JobClip.job_id == jid))
+    await db.delete(locked_job)
+    await db.commit()
+    await _delete_job_storage_after_commit(deletion_outbox_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 class AddToPlanBody(BaseModel):
