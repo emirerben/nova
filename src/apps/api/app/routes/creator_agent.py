@@ -24,12 +24,14 @@ from sqlalchemy.orm import selectinload
 from app.agents._model_client import default_client
 from app.agents._runtime import RunContext, TerminalError
 from app.agents._schemas.creator_agent import (
+    ApplySpeechCutCommand,
     AskUser,
     CreativeStrategy,
     CreatorCraftBundle,
     CreatorEditPlan,
     ProposeStrategy,
     ReviewDecision,
+    SetLicensedSfxCommand,
     canonical_context_hash,
 )
 from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
@@ -45,10 +47,13 @@ from app.models import (
     Persona,
     PlanItem,
     PlanItemAsset,
+    SoundEffect,
 )
 from app.routes.generative_jobs import (
     enqueue_editor_commit_render,
     prepare_editor_commit,
+    validate_sound_effects_for_user,
+    visual_block_variant_duration,
 )
 from app.services.content_plan_persona import load_owned_plan_persona
 from app.services.creator_craft import (
@@ -67,6 +72,7 @@ from app.services.creator_sessions import (
     rollout_eligible,
     serialize_session,
 )
+from app.services.job_phases import mark_reattempt
 from app.services.job_status import PLAN_ITEM_JOB_READY, PLAN_ITEM_JOB_TERMINAL
 
 log = structlog.get_logger()
@@ -1078,6 +1084,151 @@ async def _resolve_creator_overlay_asset(
     }
 
 
+async def _resolve_creator_licensed_sfx(
+    db: AsyncSession,
+    *,
+    command: SetLicensedSfxCommand,
+    user_id: uuid.UUID,
+    plan_item_id: uuid.UUID,
+    variant: dict[str, Any],
+) -> dict[str, Any]:
+    """Resolve one opaque catalog id into the existing validated SFX shape.
+
+    Creator craft intentionally has no asset/path or end-time input.  The
+    catalog row owns the audio path and duration; the shared placement validator
+    still enforces the persistent path namespace before the editor commit sees
+    it.
+    """
+
+    effect = (
+        await db.execute(select(SoundEffect).where(SoundEffect.id == command.sound_effect_id))
+    ).scalar_one_or_none()
+    if (
+        effect is None
+        or effect.status != "ready"
+        or effect.published_at is None
+        or effect.archived_at is not None
+        or not effect.audio_gcs_path
+    ):
+        raise HTTPException(status_code=404, detail="Licensed sound effect is unavailable")
+    at_s = float(command.at_s)
+    duration = float(visual_block_variant_duration(variant) or 0.0)
+    if duration <= 0.0 or at_s > duration + 1e-6:
+        raise HTTPException(status_code=422, detail="SFX placement is outside the variant")
+    raw = {
+        "id": uuid.uuid4().hex,
+        "sound_effect_id": str(effect.id),
+        "src_gcs_path": str(effect.audio_gcs_path),
+        "at_s": at_s,
+        "duration_s": effect.duration_s,
+        "label": effect.name,
+        "source": "creator_agent",
+    }
+    validated = validate_sound_effects_for_user(
+        sfx_raw=[raw],
+        user_id=str(user_id),
+        plan_item_id=str(plan_item_id),
+    )
+    if len(validated) != 1:
+        raise HTTPException(status_code=422, detail="Licensed sound effect is invalid")
+    return validated[0]
+
+
+def _creator_speech_cut_source_enabled(source: str) -> bool:
+    """Resolve the independent detector switch for an approved candidate."""
+
+    if source == "retake_review":
+        return settings.retake_cut_enabled
+    if source in {"silence_review", "filler_review"}:
+        return settings.silence_cut_enabled
+    return False
+
+
+def _stage_creator_speech_cut(
+    job: Job,
+    *,
+    variant_id: str,
+    command: ApplySpeechCutCommand,
+) -> tuple[dict[str, Any], str, dict[str, Any]]:
+    """Stage an existing candidate state transition without publishing it."""
+
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.pipeline.speech_cut_state import accept_candidate
+
+    variant = next(
+        (
+            v
+            for v in (job.assembly_plan or {}).get("variants") or []
+            if v.get("variant_id") == variant_id
+        ),
+        None,
+    )
+    if variant is None:
+        raise HTTPException(status_code=404, detail="Creator variant changed")
+    candidate = next(
+        (
+            value
+            for value in variant.get("speech_cut_candidates") or []
+            if isinstance(value, dict) and value.get("candidate_id") == command.candidate_id
+        ),
+        None,
+    )
+    if candidate is None or candidate.get("status") != "pending":
+        raise HTTPException(status_code=404, detail="speech_cut_candidate_not_found")
+    candidate_source = str(candidate.get("source") or "")
+    if not _creator_speech_cut_source_enabled(candidate_source):
+        raise HTTPException(status_code=404, detail="Automatic speech cuts are unavailable")
+    if variant.get("resolved_archetype") not in {"subtitled", "talking_head"}:
+        raise HTTPException(status_code=422, detail="Automatic speech cuts are unavailable")
+    if not variant.get("base_video_path"):
+        raise HTTPException(status_code=422, detail="Automatic speech cuts are unavailable")
+    if variant.get("render_status") == "rendering" or variant.get("speech_cut_in_flight"):
+        raise HTTPException(status_code=409, detail="Creator render is busy")
+    if not command.expected_cut_revision:
+        raise HTTPException(status_code=409, detail="Speech-cut revision is required")
+    try:
+        updated, request = accept_candidate(
+            variant,
+            candidate_id_value=command.candidate_id,
+            expected_revision=command.expected_cut_revision,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # ApplySpeechCutCommand's cut revision is separate from the creator session
+    # integer revision envelope and is checked by the candidate state machine.
+    operation_id = uuid.uuid4().hex
+    previous_variants = list((job.assembly_plan or {}).get("variants") or [])
+    updated.update({"ok": False, "render_status": "rendering", "speech_cut_last_error": None})
+    variants = [updated if v.get("variant_id") == variant_id else v for v in previous_variants]
+    control = {
+        "variant_id": variant_id,
+        "forced_removals": updated["speech_cut_in_flight"]["desired_forced_removals"],
+        "desired_disabled": False,
+        "prior_disabled": (job.assembly_plan or {}).get("silence_cut_disabled") is True,
+        "operation": request,
+        "operation_id": operation_id,
+        "finalizer_claim": None,
+        "revision": request["revision"],
+        "in_flight": updated["speech_cut_in_flight"],
+    }
+    job.assembly_plan = {
+        **(job.assembly_plan or {}),
+        "silence_cut_disabled": False,
+        "speech_cut_control": control,
+        "speech_cut_previous_variant": variant,
+        "speech_cut_previous_variants": previous_variants,
+        "speech_cut_last_error": None,
+        "variants": variants,
+    }
+    job.status = "processing"
+    flag_modified(job, "assembly_plan")
+    mark_reattempt(job)
+    return request, operation_id, variant
+
+
 @router.post(
     "/{item_id}/creator-agent/craft",
     response_model=CreatorCraftResponse,
@@ -1090,10 +1241,11 @@ async def execute_creator_craft(
 ) -> CreatorCraftResponse:
     """Execute one exact-generation craft bundle atomically.
 
-    Core treatments and the media-overlay lane compile into the existing editor
-    commit gateway. This route owns the creator/session/job fences, resolves an
-    asset only after ownership checks, and persists a durable idempotency
-    receipt; it never accepts storage capabilities from the model.
+    Caption style, transitions, looks, owner-scoped overlays, and catalog-backed
+    SFX compile into the existing editor gateway. Speech cuts stage through the
+    validated candidate state machine. The route owns creator/session/job
+    fences, the idempotency receipt, and queue publication; it never accepts a
+    storage path or constructs FFmpeg from model output.
     """
 
     _require_feature(user.id, execution=True)
@@ -1158,7 +1310,10 @@ async def execute_creator_craft(
         or job.content_plan_item_id != item.id
         or int(job.content_plan_ownership_epoch or 0) != body.expected_ownership_epoch
         or item.current_job_id != job.id
-        or job.status not in PLAN_ITEM_JOB_READY
+        or (
+            job.status not in PLAN_ITEM_JOB_READY
+            and not (recovering_prepared and job.status == "processing")
+        )
     ):
         raise HTTPException(status_code=409, detail="Creator render target changed")
     variants = list((job.assembly_plan or {}).get("variants") or [])
@@ -1199,6 +1354,7 @@ async def execute_creator_craft(
                 raise HTTPException(status_code=409, detail="Creator craft execution is stale")
         preview = existing_result.get("preview") or {}
         previous_assembly_plan = existing_result.get("previous_assembly_plan")
+        speech_operation_id = existing_result.get("speech_cut_operation_id")
     else:
         if current_generation != body.expected_generation_id:
             raise HTTPException(status_code=409, detail="Creator render generation changed")
@@ -1211,6 +1367,8 @@ async def execute_creator_craft(
                 "set_transition": "transitions",
                 "set_look_preset": "wide_looks",
                 "set_media_overlay": "media_overlays",
+                "set_licensed_sfx": "sound_effects",
+                "apply_speech_cut": "automatic_cut",
             }.get(command.command)
             if capability_name is None:
                 raise HTTPException(
@@ -1231,7 +1389,33 @@ async def execute_creator_craft(
                     asset_id=command.asset_id,
                 )
         previous_assembly_plan = copy.deepcopy(job.assembly_plan)
+        speech_operation_id: str | None = None
+        resolved_sfx: dict[str, Any] | None = None
         try:
+            speech_commands = [
+                command for command in body.commands if isinstance(command, ApplySpeechCutCommand)
+            ]
+            if len(speech_commands) > 1:
+                raise CreatorCraftValidationError("Only one speech-cut command is allowed")
+            if speech_commands:
+                _request, speech_operation_id, _prior_variant = _stage_creator_speech_cut(
+                    job,
+                    variant_id=body.expected_variant_id,
+                    command=speech_commands[0],
+                )
+            sfx_commands = [
+                command for command in body.commands if isinstance(command, SetLicensedSfxCommand)
+            ]
+            if len(sfx_commands) > 1:
+                raise CreatorCraftValidationError("Only one licensed SFX command is allowed")
+            if sfx_commands:
+                resolved_sfx = await _resolve_creator_licensed_sfx(
+                    db,
+                    command=sfx_commands[0],
+                    user_id=user.id,
+                    plan_item_id=item.id,
+                    variant=variant,
+                )
             if overlay_assets:
                 editor_commit = build_media_overlay_craft_editor_commit(
                     body,
@@ -1239,17 +1423,70 @@ async def execute_creator_craft(
                     assets=overlay_assets,
                 )
             else:
-                editor_commit = build_core_craft_editor_commit(body, variant=variant)
-            prepared = prepare_editor_commit(
-                job,
-                body.expected_variant_id,
-                editor_commit,
-                user_id=str(user.id),
-                plan_item_id=str(item.id),
+                editor_commit = build_core_craft_editor_commit(
+                    body,
+                    variant=variant,
+                    licensed_sfx=resolved_sfx,
+                )
+            has_editor_sections = any(
+                value is not None
+                for value in (
+                    editor_commit.caption_meta,
+                    editor_commit.timeline_slots,
+                    editor_commit.sound_effects,
+                    editor_commit.media_overlays,
+                )
             )
+            if has_editor_sections:
+                prepared = prepare_editor_commit(
+                    job,
+                    body.expected_variant_id,
+                    editor_commit,
+                    user_id=str(user.id),
+                    plan_item_id=str(item.id),
+                )
+                if speech_operation_id:
+                    # The speech rerender projects creator-authored lanes from
+                    # this snapshot onto its freshly rebuilt source. Include
+                    # the same-bundle SFX/caption/timeline changes; the separate
+                    # previous_variants snapshot remains the rollback source.
+                    staged_variant = next(
+                        (
+                            value
+                            for value in (job.assembly_plan or {}).get("variants") or []
+                            if value.get("variant_id") == body.expected_variant_id
+                        ),
+                        None,
+                    )
+                    if staged_variant is not None:
+                        job.assembly_plan = {
+                            **(job.assembly_plan or {}),
+                            "speech_cut_previous_variant": copy.deepcopy(staged_variant),
+                        }
+            elif speech_operation_id:
+                # Speech-only bundles do not have an editor section. Mint the
+                # same token the existing speech rerender uses while retaining
+                # the candidate state staged above in this transaction.
+                generation = uuid.uuid4().hex
+                staged_variants = list((job.assembly_plan or {}).get("variants") or [])
+                for staged in staged_variants:
+                    if staged.get("variant_id") == body.expected_variant_id:
+                        staged["render_generation_id"] = generation
+                        staged["render_status"] = "rendering"
+                job.assembly_plan = {**(job.assembly_plan or {}), "variants": staged_variants}
+                prepared = {
+                    "generation": generation,
+                    "has_render_section": True,
+                    "sections": {"speech_cut": True},
+                    "speech_cut_operation_id": speech_operation_id,
+                }
+            else:
+                raise CreatorCraftValidationError("Provide at least one craft command")
         except CreatorCraftValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         generation = str(prepared["generation"])
+        if speech_operation_id:
+            prepared["speech_cut_operation_id"] = speech_operation_id
         preview = craft_preview(body, generation=generation, sections=prepared["sections"])
         if receipt is None:
             receipt = CreatorAgentExecution(
@@ -1267,6 +1504,7 @@ async def execute_creator_craft(
             "prepared": prepared,
             "preview": preview,
             "previous_assembly_plan": previous_assembly_plan,
+            "speech_cut_operation_id": speech_operation_id,
             "stable_manifest_fingerprint": _stable_manifest_fingerprint(manifest),
             "pins": {
                 "manifest_hash": body.expected_manifest_hash,
@@ -1287,7 +1525,14 @@ async def execute_creator_craft(
         raise HTTPException(status_code=409, detail="Creator craft receipt is unavailable")
     receipt_id = receipt.id
     try:
-        enqueue_editor_commit_render(str(expected_job_id), body.expected_variant_id, prepared)
+        if speech_operation_id:
+            from app.tasks.generative_build import rerender_speech_timing
+
+            rerender_speech_timing.apply_async(
+                args=[str(expected_job_id), str(speech_operation_id)], queue="plan-jobs"
+            )
+        else:
+            enqueue_editor_commit_render(str(expected_job_id), body.expected_variant_id, prepared)
     except Exception as exc:  # noqa: BLE001 — committed state must be rolled back
         if previous_assembly_plan is not None:
             await _rollback_craft_commit(
