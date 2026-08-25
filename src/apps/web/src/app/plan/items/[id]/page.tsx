@@ -882,7 +882,11 @@ export default function PlanItemPage() {
       setError("We couldn't update Speech cleanup. Try again.");
       // Any transport error may have committed server-side. Reconcile before
       // exposing a local state that could enable an unsafe Create click.
-      await refetch().catch(() => null);
+      try {
+        await refetch();
+      } catch {
+        // Keep the optimistic state cleared when reconciliation itself fails.
+      }
     } finally {
       window.clearTimeout(timeout);
       setSpeechCleanupSaving(false);
@@ -2097,12 +2101,14 @@ export default function PlanItemPage() {
               </p>
             </div>
             {(speechCleanupAvailable || speechCleanupEnabled) && (
-              <button
+              <Button
                 type="button"
                 onClick={toggleSpeechCleanup}
                 disabled={speechCleanupSaving || generating}
                 aria-pressed={speechCleanupEnabled}
-                className={`shrink-0 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                variant="outline"
+                size="sm"
+                className={`shrink-0 transition-colors ${
                   speechCleanupEnabled
                     ? "border-lime-500 bg-lime-50 text-lime-800"
                     : "border-zinc-300 bg-white text-zinc-700 hover:border-lime-400"
@@ -2115,7 +2121,7 @@ export default function PlanItemPage() {
                       ? "Turn off"
                       : "Speech cleanup on"
                     : "Clean up speech"}
-              </button>
+              </Button>
             )}
           </div>
           {speechCleanupUnavailableWhileOn && (
@@ -2126,9 +2132,15 @@ export default function PlanItemPage() {
           {item?.speech_cleanup_notice && (
             <div className="mt-3 flex items-center justify-between gap-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
               <span>{speechCleanupNoticeCopy}</span>
-              <button type="button" className="font-medium underline" onClick={acknowledgeSpeechCleanupNotice}>
+              <Button
+                type="button"
+                variant="link"
+                size="sm"
+                className="h-auto px-1 py-0 font-medium text-amber-900"
+                onClick={acknowledgeSpeechCleanupNotice}
+              >
                 Got it
-              </button>
+              </Button>
             </div>
           )}
         </section>
@@ -2346,7 +2358,9 @@ export default function PlanItemPage() {
                       <p className="text-sm text-muted-foreground">{generateHint}</p>
                     )}
                     <Button
-                      onClick={handleGenerate}
+                      onClick={() => {
+                        void handleGenerate();
+                      }}
                       disabled={generateGated}
                       className="hidden sm:flex"
                     >
@@ -2423,7 +2437,12 @@ export default function PlanItemPage() {
                   directly above this bar on every breakpoint. */}
               {!isGenerating && (
                 <div className="sticky bottom-0 z-20 -mx-5 mt-4 border-t border-zinc-200 bg-[#ffffff] px-5 pb-[max(16px,env(safe-area-inset-bottom))] pt-4 sm:hidden md:mx-0 md:px-0">
-                  <InkButton onClick={handleGenerate} disabled={generateGated}>
+                  <InkButton
+                    onClick={() => {
+                      void handleGenerate();
+                    }}
+                    disabled={generateGated}
+                  >
                     {generateLabel}
                   </InkButton>
                 </div>

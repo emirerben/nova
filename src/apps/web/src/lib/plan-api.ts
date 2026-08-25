@@ -2088,7 +2088,6 @@ export interface PlanItemVariant {
   } | null;
   silence_cut_outcome?: "applied" | "no_change" | "insufficient_source_speech" | null;
   speech_cleanup_failure_reason?: string | null;
-  error_class?: string | null;
   // Advisory SFX placements from the auto sound-design pass (dark-flagged).
   // null = freshness unverifiable right now (hold prior state); [] = verified,
   // none fresh. Distinct on purpose.
