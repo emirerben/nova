@@ -6,7 +6,7 @@
  * activation, and the ideas ledger is gone.
  */
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
 import { WorkspaceHome } from "@/app/plan/_components/workspace/WorkspaceHome";
@@ -18,7 +18,14 @@ jest.mock("@/lib/me-api", () => ({
 
 jest.mock("@/components/library/LibraryTile", () => ({
   __esModule: true,
-  default: ({ job }) => <div data-testid={`tile-${job.id}`}>{job.status}</div>,
+  default: ({ job, onDeleted }) => (
+    <>
+      <div data-testid={`tile-${job.id}`}>{job.status}</div>
+      <button type="button" onClick={() => onDeleted?.(job.id)}>
+        Delete {job.id}
+      </button>
+    </>
+  ),
 }));
 
 // TikTokConnectionCard reports availability to its parent via onConnection
@@ -139,6 +146,17 @@ describe("WorkspaceHome (basic home)", () => {
     expect(
       screen.queryByRole("button", { name: "Load more videos" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("removes a deleted video from the local grid without reloading the page", async () => {
+    mockListMyJobs.mockResolvedValue({ jobs: [job("j1")], next_cursor: null });
+    renderHome();
+
+    expect(await screen.findByTestId("tile-j1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Delete j1" }));
+
+    await waitFor(() => expect(screen.queryByTestId("tile-j1")).not.toBeInTheDocument());
+    expect(screen.getByText("Your finished videos will appear here.")).toBeInTheDocument();
   });
 
   it("renders an Integrations section with the TikTok card under the grid (release rails target /plan#tiktok)", async () => {
