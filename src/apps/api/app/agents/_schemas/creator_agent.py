@@ -22,6 +22,9 @@ MAX_CREATOR_COMMANDS = 4
 MAX_CREATOR_MEDIA_REFS = 50
 MAX_CREATOR_CATALOG_REFS = 50
 MAX_CREATOR_OUTPUT_DURATION_S = 60.0
+MAX_CREATOR_REVIEW_EVIDENCE = 12
+MAX_CREATOR_REVISION_EVIDENCE_IDS = 8
+MAX_CREATOR_WORKSPACE_MEDIA_IDS = 50
 
 
 class _CreatorModel(BaseModel):
@@ -234,6 +237,309 @@ class ReviewDecision(_CreatorModel):
     issues: list[str] = Field(default_factory=list, max_length=12)
 
 
+class CreatorTargetPin(_CreatorModel):
+    """The immutable target a post-render craft operation must address.
+
+    These are identifiers, not capabilities.  The authenticated execution
+    gateway resolves them again and rejects a target whose generation changed.
+    """
+
+    expected_manifest_hash: str = Field(min_length=64, max_length=64)
+    expected_context_hash: str = Field(min_length=64, max_length=64)
+    expected_job_id: str = Field(min_length=1, max_length=160)
+    expected_variant_id: str = Field(min_length=1, max_length=160)
+    expected_generation_id: str = Field(min_length=1, max_length=160)
+    expected_revision: int = Field(ge=0)
+    expected_ownership_epoch: int = Field(ge=0)
+
+    @field_validator("expected_manifest_hash", "expected_context_hash")
+    @classmethod
+    def _validate_hashes(cls, value: str, info) -> str:
+        return _sha256_hex(value, field_name=info.field_name)
+
+    @field_validator("expected_job_id", "expected_variant_id", "expected_generation_id")
+    @classmethod
+    def _validate_ids(cls, value: str, info) -> str:
+        return _opaque_id(value, field_name=info.field_name)
+
+
+class SetCaptionStyleCommand(CreatorTargetPin):
+    command: Literal["set_caption_style"]
+    caption_style: Literal["sentence", "word"]
+
+
+class SetTransitionCommand(CreatorTargetPin):
+    command: Literal["set_transition"]
+    boundary_index: int = Field(ge=0)
+    transition: Literal["none", "crossfade", "fade_black", "wipe_left", "wipe_right", "fade_white"]
+    duration_s: float = Field(default=0.0, ge=0.0, le=0.3)
+
+
+class SetLookPresetCommand(CreatorTargetPin):
+    command: Literal["set_look_preset"]
+    slot_index: int = Field(ge=0)
+    look_preset: Literal[
+        "none",
+        "stadium_diffusion",
+        "olive_film",
+        "smoky_split_tone",
+        "golden_hour",
+        "faded_analog",
+    ]
+
+
+class SetMediaOverlayCommand(CreatorTargetPin):
+    command: Literal["set_media_overlay"]
+    asset_id: str = Field(min_length=1, max_length=160)
+    start_s: float = Field(ge=0.0)
+    end_s: float = Field(gt=0.0)
+
+    @field_validator("asset_id")
+    @classmethod
+    def _validate_asset_id(cls, value: str) -> str:
+        return _opaque_id(value, field_name="asset_id")
+
+    @model_validator(mode="after")
+    def _require_positive_window(self) -> SetMediaOverlayCommand:
+        if self.end_s <= self.start_s:
+            raise ValueError("media overlay end_s must be greater than start_s")
+        return self
+
+
+class SetLicensedSfxCommand(CreatorTargetPin):
+    command: Literal["set_licensed_sfx"]
+    sound_effect_id: str = Field(min_length=1, max_length=160)
+    at_s: float = Field(ge=0.0)
+
+    @field_validator("sound_effect_id")
+    @classmethod
+    def _validate_sound_effect_id(cls, value: str) -> str:
+        return _opaque_id(value, field_name="sound_effect_id")
+
+
+class ApplySpeechCutCommand(CreatorTargetPin):
+    command: Literal["apply_speech_cut"]
+    candidate_id: str = Field(min_length=1, max_length=160)
+
+    @field_validator("candidate_id")
+    @classmethod
+    def _validate_candidate_id(cls, value: str) -> str:
+        return _opaque_id(value, field_name="candidate_id")
+
+
+CreatorCraftCommand: TypeAlias = Annotated[
+    SetCaptionStyleCommand
+    | SetTransitionCommand
+    | SetLookPresetCommand
+    | SetMediaOverlayCommand
+    | SetLicensedSfxCommand
+    | ApplySpeechCutCommand,
+    Field(discriminator="command"),
+]
+CREATOR_CRAFT_COMMAND_ADAPTER = TypeAdapter(CreatorCraftCommand)
+
+
+class CreatorReviewEvidence(_CreatorModel):
+    """One bounded, timestamped observation from an exact rendered generation."""
+
+    evidence_id: str = Field(min_length=1, max_length=160)
+    kind: Literal["visual", "audio", "timing", "caption", "structure"]
+    severity: Literal["info", "warning", "critical"] = "warning"
+    start_s: float = Field(ge=0.0)
+    end_s: float = Field(gt=0.0)
+    observation: str = Field(min_length=1, max_length=500)
+
+    @field_validator("evidence_id")
+    @classmethod
+    def _validate_evidence_id(cls, value: str) -> str:
+        return _opaque_id(value, field_name="evidence_id")
+
+    @model_validator(mode="after")
+    def _require_positive_window(self) -> CreatorReviewEvidence:
+        if self.end_s <= self.start_s:
+            raise ValueError("review evidence end_s must be greater than start_s")
+        return self
+
+
+class CreatorRevisionProposal(_CreatorModel):
+    """An inert, creator-confirmable revision suggested by a review."""
+
+    revision_id: str = Field(min_length=1, max_length=160)
+    summary: str = Field(min_length=1, max_length=500)
+    rationale: str = Field(default="", max_length=1000)
+    evidence_ids: list[str] = Field(
+        default_factory=list, max_length=MAX_CREATOR_REVISION_EVIDENCE_IDS
+    )
+    strategy: CreativeStrategy | None = None
+
+    @field_validator("revision_id")
+    @classmethod
+    def _validate_revision_id(cls, value: str) -> str:
+        return _opaque_id(value, field_name="revision_id")
+
+    @field_validator("evidence_ids")
+    @classmethod
+    def _validate_evidence_ids(cls, values: list[str]) -> list[str]:
+        normalized = [_opaque_id(value, field_name="evidence_ids") for value in values]
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("evidence_ids must not contain duplicates")
+        return normalized
+
+
+class CreatorReviewReceipt(_CreatorModel):
+    """Review result pinned to one immutable rendered generation."""
+
+    creator_id: str = Field(min_length=1, max_length=160)
+    creator_session_id: str = Field(min_length=1, max_length=160)
+    plan_item_id: str = Field(min_length=1, max_length=160)
+    ownership_epoch: int = Field(ge=0)
+    session_revision: int = Field(ge=0)
+    job_id: str = Field(min_length=1, max_length=160)
+    variant_id: str = Field(min_length=1, max_length=160)
+    render_generation_id: str = Field(min_length=1, max_length=160)
+    manifest_hash: str = Field(min_length=64, max_length=64)
+    context_hash: str = Field(min_length=64, max_length=64)
+    review_mode: Literal["objective", "taste", "mixed"]
+    decision: Literal["approve", "revise", "reject", "unavailable"]
+    reviewer: Literal["video_quality_grader"] = "video_quality_grader"
+    quality_score: float | None = Field(default=None, ge=0.0, le=5.0)
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    evidence: list[CreatorReviewEvidence] = Field(
+        default_factory=list, max_length=MAX_CREATOR_REVIEW_EVIDENCE
+    )
+    proposed_revision: CreatorRevisionProposal | None = None
+    reviewed_at: str = Field(min_length=1, max_length=80)
+
+    @field_validator(
+        "creator_id",
+        "creator_session_id",
+        "plan_item_id",
+        "job_id",
+        "variant_id",
+        "render_generation_id",
+    )
+    @classmethod
+    def _validate_target_ids(cls, value: str, info) -> str:
+        return _opaque_id(value, field_name=info.field_name)
+
+    @field_validator("manifest_hash", "context_hash")
+    @classmethod
+    def _validate_review_hashes(cls, value: str, info) -> str:
+        return _sha256_hex(value, field_name=info.field_name)
+
+    @model_validator(mode="after")
+    def _require_revision_for_revise(self) -> CreatorReviewReceipt:
+        if self.decision == "revise" and self.proposed_revision is None:
+            raise ValueError("revise reviews require a proposed_revision")
+        evidence_ids = [item.evidence_id for item in self.evidence]
+        if len(evidence_ids) != len(set(evidence_ids)):
+            raise ValueError("review evidence_id values must be unique")
+        if self.proposed_revision and not set(self.proposed_revision.evidence_ids).issubset(
+            evidence_ids
+        ):
+            raise ValueError("revision evidence_ids must reference review evidence")
+        return self
+
+
+class CreatorWorkspaceRelevanceProposal(_CreatorModel):
+    """Inert classification of uploaded media against a creator workspace."""
+
+    proposal_id: str = Field(min_length=1, max_length=160)
+    creator_id: str = Field(min_length=1, max_length=160)
+    plan_id: str = Field(min_length=1, max_length=160)
+    ownership_epoch: int = Field(ge=0)
+    idempotency_key: str = Field(min_length=1, max_length=160)
+    media_ids: list[str] = Field(min_length=1, max_length=MAX_CREATOR_WORKSPACE_MEDIA_IDS)
+    status: Literal["pending", "ready", "failed", "approved", "rejected"] = "pending"
+    relevance: Literal["existing_item", "new_topic", "unmatched"]
+    target_plan_item_id: str | None = Field(default=None, max_length=160)
+    topic: str | None = Field(default=None, max_length=500)
+    rationale: str = Field(default="", max_length=1000)
+    confidence: float = Field(ge=0.0, le=1.0)
+    proposal_hash: str = Field(min_length=64, max_length=64)
+
+    @field_validator(
+        "proposal_id",
+        "creator_id",
+        "plan_id",
+        "idempotency_key",
+        "target_plan_item_id",
+    )
+    @classmethod
+    def _validate_workspace_ids(cls, value: str | None, info) -> str | None:
+        return _opaque_id(value, field_name=info.field_name) if value is not None else None
+
+    @field_validator("media_ids")
+    @classmethod
+    def _validate_workspace_media_ids(cls, values: list[str]) -> list[str]:
+        normalized = [_opaque_id(value, field_name="media_ids") for value in values]
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("media_ids must not contain duplicates")
+        return normalized
+
+    @field_validator("proposal_hash")
+    @classmethod
+    def _validate_proposal_hash(cls, value: str) -> str:
+        return _sha256_hex(value, field_name="proposal_hash")
+
+    @model_validator(mode="after")
+    def _validate_relevance_payload(self) -> CreatorWorkspaceRelevanceProposal:
+        if self.relevance == "existing_item" and not self.target_plan_item_id:
+            raise ValueError("existing_item proposals require target_plan_item_id")
+        if self.relevance == "new_topic" and not self.topic:
+            raise ValueError("new_topic proposals require topic")
+        if self.relevance != "new_topic" and self.topic is not None:
+            raise ValueError("only new_topic proposals may include topic")
+        return self
+
+
+class CreatorWorkspaceRelevanceDecision(_CreatorModel):
+    """Explicit user decision for a workspace relevance proposal."""
+
+    proposal_id: str = Field(min_length=1, max_length=160)
+    expected_proposal_hash: str = Field(min_length=64, max_length=64)
+    decision: Literal["accept_existing", "accept_new_topic", "reject"]
+    client_event_id: str = Field(min_length=1, max_length=160)
+
+    @field_validator("proposal_id", "client_event_id")
+    @classmethod
+    def _validate_decision_ids(cls, value: str, info) -> str:
+        return _opaque_id(value, field_name=info.field_name)
+
+    @field_validator("expected_proposal_hash")
+    @classmethod
+    def _validate_expected_proposal_hash(cls, value: str) -> str:
+        return _sha256_hex(value, field_name="expected_proposal_hash")
+
+
+class CreatorAutomationDecision(_CreatorModel):
+    """Deterministic controller output for a possible automatic revision."""
+
+    decision: Literal["eligible", "skip", "blocked"]
+    reason_code: str = Field(min_length=1, max_length=80)
+    review_generation_id: str = Field(min_length=1, max_length=160)
+    opted_in: bool
+    review_mode: Literal["objective", "taste", "mixed"]
+    confidence: float = Field(ge=0.0, le=1.0)
+    current_quality: float | None = Field(default=None, ge=0.0, le=5.0)
+    expected_improvement: float | None = Field(default=None, ge=0.0, le=5.0)
+    render_budget_remaining: int = Field(ge=0, le=2)
+    automatic_revision_count: int = Field(ge=0, le=1)
+    command: CreatorCraftCommand | None = None
+    proposed_revision: CreatorRevisionProposal | None = None
+
+    @field_validator("review_generation_id")
+    @classmethod
+    def _validate_review_generation_id(cls, value: str) -> str:
+        return _opaque_id(value, field_name="review_generation_id")
+
+    @model_validator(mode="after")
+    def _require_revision_for_eligibility(self) -> CreatorAutomationDecision:
+        if self.decision == "eligible" and (self.proposed_revision is None or self.command is None):
+            raise ValueError("eligible automation decisions require a revision and command")
+        return self
+
+
 CreatorAgentOutput: TypeAlias = Annotated[
     AskUser | ProposeStrategy | ReviewDecision,
     Field(discriminator="kind"),
@@ -297,7 +603,13 @@ CreatorCommand: TypeAlias = Annotated[
     SetItemIntentCommand
     | DraftGuidedProposalCommand
     | DispatchRenderCommand
-    | SelectReadyVariantCommand,
+    | SelectReadyVariantCommand
+    | SetCaptionStyleCommand
+    | SetTransitionCommand
+    | SetLookPresetCommand
+    | SetMediaOverlayCommand
+    | SetLicensedSfxCommand
+    | ApplySpeechCutCommand,
     Field(discriminator="command"),
 ]
 CREATOR_COMMAND_ADAPTER = TypeAdapter(CreatorCommand)
@@ -323,6 +635,9 @@ class CreatorEditPlan(_CreatorModel):
         for command in self.commands:
             if command.expected_manifest_hash != self.manifest_hash:
                 raise ValueError("every command must pin the plan manifest_hash")
+            expected_context_hash = getattr(command, "expected_context_hash", None)
+            if expected_context_hash is not None and expected_context_hash != self.context_hash:
+                raise ValueError("every context-pinned command must pin the plan context_hash")
         return self
 
 
@@ -366,24 +681,38 @@ def canonical_manifest_hash(manifest: ResolvedCreatorManifest | Mapping[str, Any
 
 
 __all__ = [
+    "ApplySpeechCutCommand",
     "AskUser",
     "CapabilityAvailability",
+    "CreatorAutomationDecision",
     "CreatorAgentOutput",
     "CreatorAgentResponse",
     "CreatorCatalogRef",
     "CreatorCommand",
+    "CreatorCraftCommand",
     "CreatorEditSnapshot",
     "CreatorEditPlan",
     "CreatorLimits",
     "CreatorMediaRef",
+    "CreatorRevisionProposal",
+    "CreatorReviewEvidence",
+    "CreatorReviewReceipt",
+    "CreatorTargetPin",
+    "CreatorWorkspaceRelevanceDecision",
+    "CreatorWorkspaceRelevanceProposal",
     "CreativeStrategy",
     "DispatchRenderCommand",
     "DraftGuidedProposalCommand",
     "ProposeStrategy",
     "ResolvedCreatorManifest",
     "ReviewDecision",
+    "SetCaptionStyleCommand",
     "SelectReadyVariantCommand",
     "SetItemIntentCommand",
+    "SetLicensedSfxCommand",
+    "SetLookPresetCommand",
+    "SetMediaOverlayCommand",
+    "SetTransitionCommand",
     "canonical_context_hash",
     "canonical_json",
     "canonical_manifest_hash",
