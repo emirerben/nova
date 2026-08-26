@@ -35,7 +35,10 @@ from app.agents._schemas.creator_agent import (
     SetLicensedSfxCommand,
     canonical_context_hash,
 )
-from app.agents._schemas.creator_policy import MAX_MAIN_CREATOR_SELECTED_MEDIA
+from app.agents._schemas.creator_policy import (
+    MAX_MAIN_CREATOR_SELECTED_MEDIA,
+    MixedMediaTimingUnavailableError,
+)
 from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
 from app.auth import CurrentUser
 from app.config import settings
@@ -508,6 +511,25 @@ async def _run_planning_turn(
                 session_id=str(locked.id),
                 error=str(exc)[:300],
             )
+            if isinstance(exc, MixedMediaTimingUnavailableError):
+                locked.status = "failed"
+                locked.last_error = {
+                    "code": "mixed_media_timing_unavailable",
+                    "message": str(exc)[:300],
+                }
+                await append_event(
+                    db,
+                    locked,
+                    event_type="assistant_error",
+                    payload={
+                        "message": (
+                            "Mixed photo and video timing is temporarily unavailable. "
+                            "No fallback edit was rendered."
+                        ),
+                        "code": "mixed_media_timing_unavailable",
+                    },
+                )
+                return await _response(db, locked)
             if _strict_creator_format(strategy.edit_format):
                 locked.status = "failed"
                 locked.last_error = {

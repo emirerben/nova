@@ -115,6 +115,30 @@ def test_main_creator_recognizes_mixed_media_timing_request() -> None:
     }
 
 
+def test_main_creator_repairs_native_mixed_media_timing_to_guided() -> None:
+    agent_input = _input().model_copy(
+        update={
+            "user_message": "Photos should have a very fast transition, videos can be a bit longer"
+        }
+    )
+    raw = json.loads(
+        _raw(
+            audio_strategy="licensed_music",
+            selected=[media.media_id for media in agent_input.capability_manifest.media[:8]],
+        )
+    )
+    raw["action"]["strategy"]["render_program"] = "native"
+
+    output = MainCreatorAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(raw),
+        agent_input,
+    )
+
+    assert isinstance(output.action, ProposeStrategy)
+    assert output.action.strategy.render_program == "guided"
+    assert output.action.strategy.selected_media_ids == []
+
+
 def test_main_creator_recognizes_timing_request_from_an_earlier_user_turn() -> None:
     agent_input = _input().model_copy(
         update={
