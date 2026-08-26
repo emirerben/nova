@@ -33,6 +33,7 @@ import "@testing-library/jest-dom";
 
 process.env.NEXT_PUBLIC_SUBTITLED_ENABLED = "true";
 process.env.NEXT_PUBLIC_GUIDED_EDIT_ENABLED = "true";
+process.env.NEXT_PUBLIC_MAIN_CREATOR_AGENT_ENABLED = "true";
 
 // Mock next/navigation
 jest.mock("next/navigation", () => ({
@@ -348,6 +349,7 @@ describe("PlanItemPage — masonry collage item UX", () => {
           .find((element) => element.tagName === "INPUT")
           ?.getAttribute("accept"),
       ).toContain("image/webp");
+      expect(screen.getAllByRole("region", { name: "Create with Kria" })).toHaveLength(1);
     },
   );
 
@@ -445,6 +447,7 @@ describe("PlanItemPage — ProgressTheater renders with phase data", () => {
     });
 
     expect(screen.getByText("Your setup is saved. Retry the render without uploading again.")).toBeInTheDocument();
+    expect(screen.getAllByRole("region", { name: "Create with Kria" })).toHaveLength(1);
     const retryButton = screen.getByRole("button", { name: "Retry render" });
 
     await act(async () => {
@@ -646,6 +649,7 @@ describe("PlanItemPage — ProgressTheater renders with phase data", () => {
 
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
     expect(screen.getByText("Kria couldn’t finish this video")).toBeInTheDocument();
+    expect(screen.getAllByRole("region", { name: "Create with Kria" })).toHaveLength(1);
     expect(document.querySelector("[data-variant-preview]")).toBeNull();
   });
 });
