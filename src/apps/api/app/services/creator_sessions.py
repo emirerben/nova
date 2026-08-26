@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -31,7 +32,14 @@ from app.models import (
     PlanItemAsset,
     SoundEffect,
 )
+from app.schemas.edit_proposal import parse_edit_proposal
 from app.services.creator_capabilities import resolve_creator_manifest
+from app.services.edit_proposal_limits import (
+    CREATOR_EXECUTION_RECEIPT_LEASE_S,
+    EDIT_PROPOSAL_TASK_HARD_TIME_LIMIT_S,
+    edit_proposal_task_id,
+    queue_for_mixed_media_timing,
+)
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
 
 ACTIVE_CREATOR_PHASES = frozenset(
@@ -50,7 +58,7 @@ TERMINAL_CREATOR_PHASES = frozenset({"completed", "failed", "cancelled"})
 MAX_PUBLIC_EVENTS = 40
 MAX_CREATOR_MEDIA_REFS = 50
 CREATOR_CONTEXT_MAX_CHARS = 3900
-EXECUTION_RECEIPT_LEASE_S = 600
+EXECUTION_RECEIPT_LEASE_S = CREATOR_EXECUTION_RECEIPT_LEASE_S
 
 _PHASE_TO_PUBLIC = {
     "briefing": "briefing",
@@ -393,6 +401,7 @@ def compile_active_plan(
     manifest: Any,
     strategy: CreativeStrategy,
     summary: str,
+    creator_request: str = "",
 ) -> dict[str, Any]:
     """Compile an inert, hash-pinned plan with a deterministic public receipt."""
 
@@ -413,6 +422,11 @@ def compile_active_plan(
         "intro_hook": getattr(strategy, "intro_hook", None),
         "edit_plan": edit_plan.model_dump(mode="json", exclude_none=True),
     }
+    clean_request = _clean(creator_request, 1000)
+    if clean_request:
+        receipt["creator_request"] = clean_request
+    if strategy.mixed_media_timing is not None:
+        receipt["mixed_media_timing"] = strategy.mixed_media_timing.model_dump(mode="json")
     receipt["plan_hash"] = canonical_context_hash(receipt)
     return receipt
 
@@ -523,12 +537,46 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
             )
             return True
         if not exact_job:
-            lease_expired = bool(
+            receipt_lease_expired = bool(
                 receipt is not None
                 and receipt.created_at is not None
                 and datetime.now(UTC) - receipt.created_at
                 >= timedelta(seconds=EXECUTION_RECEIPT_LEASE_S)
             )
+            parsed_proposal = parse_edit_proposal(raw_proposal_state)
+            exact_active_proposal = bool(
+                parsed_proposal is not None
+                and parsed_proposal.generation_attempt_id == expected_guided_attempt
+                and parsed_proposal.status in {"analyzing", "drafting"}
+            )
+            proposal_task_still_valid = bool(
+                exact_active_proposal
+                and parsed_proposal is not None
+                and parsed_proposal.planning_started_at is not None
+                and datetime.now(UTC) - parsed_proposal.planning_started_at
+                < timedelta(seconds=EDIT_PROPOSAL_TASK_HARD_TIME_LIMIT_S)
+            )
+            if (
+                receipt_lease_expired
+                and exact_active_proposal
+                and parsed_proposal is not None
+                and parsed_proposal.planning_started_at is None
+            ):
+                from app.services.queue_state import get_task_runtime_state  # noqa: PLC0415
+                from app.worker import celery_app  # noqa: PLC0415
+
+                queue_name = queue_for_mixed_media_timing(
+                    parsed_proposal.brief.mixed_media_timing,
+                    default_queue=settings.pool_asset_analysis_queue,
+                )
+                runtime = await asyncio.to_thread(
+                    get_task_runtime_state,
+                    celery_app,
+                    edit_proposal_task_id(parsed_proposal.generation_attempt_id),
+                    queue_name=queue_name,
+                )
+                proposal_task_still_valid = runtime.state != "not_found"
+            lease_expired = receipt_lease_expired and not proposal_task_still_valid
             if (
                 not lease_expired
                 or receipt is None

@@ -317,7 +317,7 @@ def _worker_consumes_render_queues(sender) -> bool:
     `worker_ready` passes; `sender.app.amqp.queues.consume_from` reflects the
     queues this process was started with. `-Q maintenance` (the `light` Fly
     machine) restricts it to {"maintenance"}; the render worker's
-    `-Q celery,plan-jobs,overlay-jobs` and a bare local-dev worker (no `-Q`,
+    `-Q celery,plan-jobs,overlay-jobs,creator-guided-jobs` and a bare local-dev worker (no `-Q`,
     consumes the default `celery` queue) both pass.
 
     Fail-CLOSED (False) when the consumer shape can't be read. The asymmetry:

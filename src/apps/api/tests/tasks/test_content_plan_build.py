@@ -18,10 +18,26 @@ from app.agents._schemas.content_plan import PlanItemSpec
 from app.models import ContentPlan, PlanItem
 from app.models import Persona as PersonaRow
 from app.tasks.content_plan_build import (
+    _guided_render_queue,
     generate_content_plan,
     generate_plan_item_videos,
     regenerate_content_plan,
 )
+
+
+def test_mixed_media_guided_render_uses_deploy_fenced_queue() -> None:
+    approved = {
+        "snapshot": {
+            "mixed_media_timing": {
+                "image_hold": "very_fast",
+                "video_hold": "longer",
+                "boundary_style": "cut",
+            }
+        }
+    }
+
+    assert _guided_render_queue(approved) == "creator-guided-jobs"
+    assert _guided_render_queue(None) == "plan-jobs"
 
 
 @pytest.fixture(autouse=True)

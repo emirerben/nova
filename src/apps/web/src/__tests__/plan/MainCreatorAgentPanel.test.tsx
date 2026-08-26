@@ -111,6 +111,27 @@ it("shows a strategy preview without a dead render action during planning-only r
   expect(await screen.findByText("A fast arrival-to-sunset story.")).not.toBeNull();
   expect(screen.queryByRole("button", { name: "Render this" })).toBeNull();
   expect(screen.getByText("Rendering is not enabled for this preview yet.")).not.toBeNull();
+  expect(screen.queryByText("Photos 0.5–0.8s · Videos 1.5–3s · hard cuts")).toBeNull();
+});
+
+it("shows the normalized mixed-media timing profile in the confirmation preview", async () => {
+  getSession.mockResolvedValue({
+    ...proposed,
+    pending_plan: {
+      ...proposed.pending_plan,
+      mixed_media_timing: {
+        image_hold: "very_fast",
+        video_hold: "longer",
+        boundary_style: "cut",
+      },
+    },
+  });
+
+  render(<MainCreatorAgentPanel itemId="item-1" />);
+
+  expect(
+    await screen.findByText("Photos 0.5–0.8s · Videos 1.5–3s · hard cuts"),
+  ).not.toBeNull();
 });
 
 it("shows bounded review evidence without mutating the confirmed render", async () => {

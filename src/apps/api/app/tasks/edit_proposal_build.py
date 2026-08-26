@@ -6,7 +6,9 @@ import math
 import os
 import tempfile
 import uuid
+from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from datetime import UTC, datetime
 from pathlib import Path
 
 import structlog
@@ -29,12 +31,27 @@ from app.schemas.edit_proposal import (
     parse_edit_proposal,
 )
 from app.services.content_plan_persona import load_owned_plan_persona_sync
+from app.services.edit_direction_planner import clamp_fast_montage_target_duration_s
+from app.services.edit_proposal_limits import (
+    EDIT_PROPOSAL_TASK_HARD_TIME_LIMIT_S,
+    EDIT_PROPOSAL_TASK_SOFT_TIME_LIMIT_S,
+)
 from app.services.edit_proposals import media_generations_match_sync, save_proposal_draft
 from app.worker import celery_app
 
 log = structlog.get_logger()
 
-_TASK_LIMITS = {"soft_time_limit": 540, "time_limit": 600}
+_BROKER_VISIBILITY_TIMEOUT_S = int(
+    (celery_app.conf.broker_transport_options or {}).get("visibility_timeout", 1900)
+)
+if EDIT_PROPOSAL_TASK_HARD_TIME_LIMIT_S >= _BROKER_VISIBILITY_TIMEOUT_S:
+    raise RuntimeError(
+        "edit proposal hard time limit must stay below the broker visibility timeout"
+    )
+_TASK_LIMITS = {
+    "soft_time_limit": EDIT_PROPOSAL_TASK_SOFT_TIME_LIMIT_S,
+    "time_limit": EDIT_PROPOSAL_TASK_HARD_TIME_LIMIT_S,
+}
 _CLIP_ANALYSIS_CONCURRENCY = 3
 
 
@@ -331,6 +348,7 @@ def _analyze_clip_assignments(
     item_id: uuid.UUID,
     attempt_id: str,
     ownership_epoch: int,
+    on_complete: Callable[[dict, MediaRef], None] | None = None,
 ) -> list[tuple[dict, MediaRef]] | None:
     """Analyze raw clips three at a time while preserving assignment order.
 
@@ -376,7 +394,10 @@ def _analyze_clip_assignments(
                 index = futures.pop(future)
                 # Propagate classified analysis exceptions to the caller so it
                 # retains the existing retryable/permanent failure behaviour.
-                results[index] = future.result()
+                result = future.result()
+                results[index] = result
+                if on_complete is not None:
+                    on_complete(*result)
 
             while len(futures) < _CLIP_ANALYSIS_CONCURRENCY and next_index < len(assignments):
                 if not submit_next():
@@ -475,6 +496,67 @@ def _merge_analyzed_assignments(current: list[dict], analyzed: list[dict]) -> li
                 entry[field] = source[field]
         merged.append(entry)
     return merged
+
+
+def _merge_analyzed_assignment(current: list[dict], analyzed: dict) -> list[dict] | None:
+    """Checkpoint one result without overwriting concurrent creator edits.
+
+    The generation check is intentionally stricter than the final batch merge:
+    a result from an older object generation must never be written over a newer
+    upload that kept the same media id/path.
+    """
+
+    identity = (str(analyzed.get("media_id") or ""), str(analyzed.get("gcs_path") or ""))
+    if not all(identity):
+        return None
+    merged: list[dict] = []
+    found = False
+    for raw in current:
+        entry = dict(raw)
+        current_identity = (str(entry.get("media_id") or ""), str(entry.get("gcs_path") or ""))
+        if current_identity == identity:
+            current_generation = str(entry.get("generation") or "")
+            analyzed_generation = str(analyzed.get("generation") or "")
+            if current_generation and current_generation != analyzed_generation:
+                return None
+            for field in _ANALYSIS_FIELDS:
+                if field in analyzed:
+                    entry[field] = analyzed[field]
+            found = True
+        merged.append(entry)
+    return merged if found else None
+
+
+def _checkpoint_analyzed_assignment(
+    item_id: uuid.UUID,
+    attempt_id: str,
+    ownership_epoch: int,
+    analyzed: dict,
+    _ref: MediaRef,
+) -> None:
+    """Persist each completed clip while the exact attempt still owns it."""
+
+    with sync_session() as db:
+        locked = _locked_item(db, item_id, ownership_epoch)
+        item = locked[0] if locked else None
+        current = parse_edit_proposal(item.edit_proposal) if item else None
+        if (
+            item is None
+            or current is None
+            or current.generation_attempt_id != attempt_id
+            or current.status != "analyzing"
+        ):
+            return
+        assignments = [
+            dict(row)
+            for row in (item.clip_assignments or [])
+            if isinstance(row, dict) and row.get("gcs_path") and row.get("media_id")
+        ]
+        merged = _merge_analyzed_assignment(assignments, analyzed)
+        if merged is None:
+            return
+        item.clip_assignments = merged
+        db.commit()
 
 
 def _dispatch_after_auto_design(
@@ -692,6 +774,10 @@ def _run_draft_attempt(
                 if isinstance(a, dict) and a.get("gcs_path") and a.get("media_id")
             ]
             idea, theme, brief = item.idea, item.theme or "", proposal.brief
+            if proposal.planning_started_at is None:
+                proposal = proposal.model_copy(update={"planning_started_at": datetime.now(UTC)})
+                item.edit_proposal = proposal.model_dump(mode="json")
+                db.commit()
 
         # Pool/clip media analysis (_analyze_clip_assignment -> analyze_pool_video /
         # analyze_pool_image) runs a raw Gemini call outside the Agent framework, so
@@ -715,6 +801,9 @@ def _run_draft_attempt(
                 item_id=iid,
                 attempt_id=attempt_id,
                 ownership_epoch=ownership_epoch,
+                on_complete=lambda analyzed, ref: _checkpoint_analyzed_assignment(
+                    iid, attempt_id, ownership_epoch, analyzed, ref
+                ),
             )
         except AssetUnreadableError as exc:
             with sync_session() as db:
@@ -808,6 +897,37 @@ def _run_draft_attempt(
                     db.commit()
             return
         target_duration_s = adapt_target_duration_s(brief.duration_s, feasible_duration_s)
+        if brief.direction == "fast_montage":
+            try:
+                target_duration_s = clamp_fast_montage_target_duration_s(
+                    media, target_duration_s, brief.mixed_media_timing
+                )
+            except ValueError as exc:
+                # A typed mixed-media request can pass the generic guided
+                # feasibility floor while still lacking the minimum source
+                # capacity for its per-kind holds. Keep that actionable
+                # outcome distinct from an unexpected proposal failure.
+                with sync_session() as db:
+                    locked = _locked_item(db, iid, ownership_epoch)
+                    item = locked[0] if locked else None
+                    current = parse_edit_proposal(item.edit_proposal) if item else None
+                    if (
+                        item
+                        and current
+                        and current.generation_attempt_id == attempt_id
+                        and current.status == "analyzing"
+                    ):
+                        _fail(
+                            item,
+                            current,
+                            "guided_edit_infeasible",
+                            "The requested photo/video pacing needs at least 3s of usable "
+                            "source footage. Add another photo or video, or choose a "
+                            "different edit direction.",
+                            detail=_exc_detail(exc),
+                        )
+                        db.commit()
+                return
         digest = canonical_media_digest(media)
 
         with sync_session() as db:
@@ -902,8 +1022,10 @@ def _run_draft_attempt(
                     theme=theme,
                     direction=brief.direction,
                     goal=brief.goal,
+                    creator_request=brief.creator_request,
                     pace=brief.pace,
                     target_duration_s=target_duration_s,
+                    mixed_media_timing=brief.mixed_media_timing,
                     media=agent_media,
                 )
             )
@@ -951,7 +1073,9 @@ def _run_draft_attempt(
                     db.commit()
             return
         if output is None and brief.direction == "fast_montage":
-            fallback_cuts = deterministic_fast_cuts(media, target_duration_s)
+            fallback_cuts = deterministic_fast_cuts(
+                media, target_duration_s, brief.mixed_media_timing
+            )
             fallback_beats = _fast_story_beats(fallback_cuts)
         else:
             fallback_cuts = None
@@ -988,6 +1112,7 @@ def _run_draft_attempt(
                 if output is not None and brief.direction == "fast_montage" and output.fast_cuts
                 else fallback_cuts
             ),
+            mixed_media_timing=brief.mixed_media_timing,
         )
         if fallback_used:
             # Never auto-approve a deterministic recovery that the strict

@@ -19,7 +19,10 @@ from app.schemas.edit_proposal import (
     EditProposalSnapshot,
     FastMontageCut,
     MediaRef,
+    MixedMediaTimingProfile,
     StoryBeat,
+    mixed_media_hold_bounds,
+    uses_quick_photo_long_video_timing,
 )
 
 log = structlog.get_logger()
@@ -44,7 +47,66 @@ def _ranked_fast_media(media: list[MediaRef]) -> list:
     )
 
 
-def deterministic_fast_cuts(media: list[MediaRef], duration_s: int) -> list[FastMontageCut]:
+def clamp_fast_montage_target_duration_s(
+    media: list[MediaRef],
+    duration_s: int | float,
+    mixed_media_timing: MixedMediaTimingProfile | None = None,
+) -> int:
+    """Bound typed mixed-media targets by source capacity before planning.
+
+    Images can be used once for at most 0.8s. Videos can consume their
+    probed duration, split into 1.5–3s windows when long enough, without
+    stretching source footage. Legacy plans intentionally retain their
+    existing integer 3–60s clamp.
+    """
+
+    requested = max(3, min(60, int(duration_s)))
+    if not uses_quick_photo_long_video_timing(mixed_media_timing):
+        return requested
+
+    eligible = [ref for ref in media if ref.kind == "image" or float(ref.duration_s or 0.0) >= 0.4]
+    capacities: list[float] = []
+    minimum_cuts: list[int] = []
+    for ref in eligible:
+        if ref.kind == "image":
+            capacities.append(mixed_media_hold_bounds("image").maximum_s)
+            minimum_cuts.append(1)
+            continue
+        source_s = max(0.0, float(ref.duration_s or 0.0))
+        capacities.append(source_s)
+        minimum_cuts.append(max(1, math.ceil(source_s / 3.0)))
+
+    # The compiler forbids adjacent cuts from the same source. If one source
+    # needs more windows than every other source can separate, trim only that
+    # source's usable capacity to the largest schedulable number of 3s windows.
+    # Iterate because trimming one source also changes the separator budget for
+    # another pathological source set.
+    for _ in range(len(eligible)):
+        changed = False
+        total_cuts = sum(minimum_cuts)
+        for index, cut_count in enumerate(minimum_cuts):
+            allowed = total_cuts - cut_count + 1
+            if cut_count <= allowed:
+                continue
+            capacities[index] = min(capacities[index], 3.0 * allowed)
+            minimum_cuts[index] = max(1, math.ceil(capacities[index] / 3.0))
+            changed = True
+            total_cuts = sum(minimum_cuts)
+        if not changed:
+            break
+    capacity_s = sum(capacities)
+    if capacity_s < 3.0 - 0.001:
+        raise ValueError(
+            "mixed-media fast montage has less than the minimum 3s of usable source capacity"
+        )
+    return min(requested, max(3, math.floor(capacity_s)))
+
+
+def deterministic_fast_cuts(
+    media: list[MediaRef],
+    duration_s: int,
+    mixed_media_timing: MixedMediaTimingProfile | None = None,
+) -> list[FastMontageCut]:
     """Build a strict source-aware montage when the semantic planner is invalid.
 
     The model still owns the normal creative path. This deterministic compiler
@@ -58,17 +120,29 @@ def deterministic_fast_cuts(media: list[MediaRef], duration_s: int) -> list[Fast
         raise ValueError("fast montage fallback found no usable media")
     eligible_ids = {ref.media_id for ref in eligible}
     ranked = [ref for _, ref in _ranked_fast_media(media) if ref.media_id in eligible_ids]
-    target_duration_s = max(3, min(60, int(duration_s)))
+    target_duration_s = clamp_fast_montage_target_duration_s(media, duration_s, mixed_media_timing)
     target_ms = target_duration_s * 1000
+    quick_mixed_timing = uses_quick_photo_long_video_timing(mixed_media_timing)
     source_capacity_ms = {
         ref.media_id: (
-            1200 if ref.kind == "image" else math.floor(float(ref.duration_s or 0.0) * 1000)
+            (
+                round(mixed_media_hold_bounds(ref.kind).maximum_s * 1000)
+                if quick_mixed_timing
+                else 1200
+            )
+            if ref.kind == "image"
+            else math.floor(float(ref.duration_s or 0.0) * 1000)
         )
         for ref in ranked
     }
     if max(source_capacity_ms.values()) < 800:
         raise ValueError("fast montage fallback found no source supporting a primary cut")
-    required_sources = minimum_required_sources(len(eligible))
+    required_sources = minimum_required_sources(
+        len(eligible),
+        target_duration_s=target_duration_s,
+        media=eligible,
+        mixed_media_timing=mixed_media_timing,
+    )
     available_kinds = {ref.kind for ref in eligible}
     rank = {ref.media_id: index for index, ref in enumerate(ranked)}
     remaining_ms = dict(source_capacity_ms)
@@ -104,7 +178,12 @@ def deterministic_fast_cuts(media: list[MediaRef], duration_s: int) -> list[Fast
             ref
             for ref in candidates
             if minimum_total_ms
-            + (800 if remaining_ms[ref.media_id] >= 800 else remaining_ms[ref.media_id])
+            + min(
+                remaining_ms[ref.media_id],
+                round(mixed_media_hold_bounds(ref.kind).minimum_s * 1000)
+                if quick_mixed_timing
+                else 800,
+            )
             <= target_ms
         ]
         if not candidates:
@@ -116,8 +195,15 @@ def deterministic_fast_cuts(media: list[MediaRef], duration_s: int) -> list[Fast
                 rank[candidate.media_id],
             ),
         )
-        maximum_ms = min(1200, remaining_ms[ref.media_id])
-        minimum_ms = 800 if maximum_ms >= 800 else maximum_ms
+        if quick_mixed_timing:
+            bounds = mixed_media_hold_bounds(ref.kind)
+            preferred_minimum_ms = round(bounds.minimum_s * 1000)
+            preferred_maximum_ms = round(bounds.maximum_s * 1000)
+        else:
+            preferred_minimum_ms = 800
+            preferred_maximum_ms = 1200
+        maximum_ms = min(preferred_maximum_ms, remaining_ms[ref.media_id])
+        minimum_ms = min(maximum_ms, preferred_minimum_ms)
         was_new = ref.media_id not in used_ids
         reservations.append((ref, minimum_ms, maximum_ms))
         remaining_ms[ref.media_id] -= maximum_ms
@@ -266,6 +352,7 @@ def plan_direction_snapshot(
     goal: str,
     pace: str,
     duration_s: int,
+    mixed_media_timing: MixedMediaTimingProfile | None = None,
     idea: str = "",
     theme: str = "",
     job_id: str | None = None,
@@ -292,6 +379,11 @@ def plan_direction_snapshot(
         )
         for ref in source.media
     ]
+    planning_duration_s = (
+        clamp_fast_montage_target_duration_s(media, duration_s, mixed_media_timing)
+        if direction == "fast_montage"
+        else max(3, min(60, int(duration_s)))
+    )
     output = None
     used_fallback = False
     try:
@@ -302,7 +394,8 @@ def plan_direction_snapshot(
                 direction=direction,
                 goal=goal[:500],
                 pace=pace,
-                target_duration_s=max(3, min(60, int(duration_s))),
+                target_duration_s=planning_duration_s,
+                mixed_media_timing=mixed_media_timing,
                 media=media,
             ),
             ctx=RunContext(job_id=job_id) if job_id else None,
@@ -320,7 +413,7 @@ def plan_direction_snapshot(
     cuts = (
         output.fast_cuts
         if output is not None and direction == "fast_montage"
-        else deterministic_fast_cuts(source.media, duration_s)
+        else deterministic_fast_cuts(source.media, planning_duration_s, mixed_media_timing)
         if direction == "fast_montage"
         else None
     )
@@ -348,12 +441,13 @@ def plan_direction_snapshot(
             "direction": direction,
             "goal": goal,
             "pace": pace,
-            "duration_s": int(duration_s)
+            "duration_s": planning_duration_s
             if output is None or direction == "fast_montage"
             else output.duration_s,
             "title": output.title if output is not None else source.title,
             "story_beats": beats,
             "fast_cuts": cuts,
+            "mixed_media_timing": mixed_media_timing,
         }
     )
     result = EditProposalSnapshot.model_validate(planned.model_dump(mode="json"))

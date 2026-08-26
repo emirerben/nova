@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import tempfile
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -130,6 +131,7 @@ from app.schemas.edit_proposal import (
     StoryBeat,
     canonical_media_digest,
     parse_edit_proposal,
+    recognize_mixed_media_timing,
 )
 from app.schemas.montage_preset import (
     MontagePreset,
@@ -147,6 +149,10 @@ from app.services.edit_interaction_receipts import (
     ExecuteCopilotReceiptResponse,
     persist_copilot_execution,
     persist_copilot_proposal,
+)
+from app.services.edit_proposal_limits import (
+    edit_proposal_task_id,
+    queue_for_mixed_media_timing,
 )
 from app.services.generative_upload_paths import DIRECT_VOICEOVER_PREFIX
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
@@ -2220,6 +2226,90 @@ async def _edit_guide_media_summary(
     return limited
 
 
+def _review_mixed_media_timing(current, message: str):  # noqa: ANN001, ANN202
+    """Apply only explicit timing changes from a draft-review message.
+
+    The review model's brief is intentionally not authoritative: it can echo
+    or omit fields while answering a content-edit request.  The deterministic
+    recognizer owns affirmative mixed-media intent, while this narrow removal
+    grammar lets a creator explicitly opt out without turning ordinary review
+    messages into timing changes.
+    """
+
+    requested = recognize_mixed_media_timing(message)
+    if requested is not None:
+        return requested
+
+    normalized = " ".join(str(message or "").casefold().split())
+    photo = r"(?:photos?|images?|stills?|pictures?)"
+    photo_fast = r"(?:very fast|faster|quick(?:ly)?|snappy|rapid|flash(?: by)?)"
+    photo_slow = r"(?:slower|longer|linger|hold)"
+    video = r"(?:videos?|clips?|footage)"
+    video_long = r"(?:longer|more time|breathe|linger|hold|slower)"
+    video_short = r"(?:shorter|faster|quick(?:er|ly)?|snappy|rapid)"
+    media = rf"(?:mixed[- ]media|media|{photo}|{video})"
+    # A creator may remove individual timeline cuts without changing the
+    # global timing profile, so bare "cut(s)" is deliberately not a reset
+    # token. Explicit timing/pacing/transition/hold language remains scoped.
+    timing = r"(?:timing|pacing|transitions?|holds?)"
+    reset = (
+        r"(?:remove|drop|clear|disable|reset|undo|forget|cancel|standard|normal|regular|default)"
+    )
+    negation = r"(?:do not|don't|dont|never|should not|shouldn't)"
+
+    def paired(left: str, right: str, *, gap: int = 48) -> bool:
+        return bool(
+            re.search(rf"\b{left}\b.{{0,{gap}}}\b{right}\b", normalized)
+            or re.search(rf"\b{right}\b.{{0,{gap}}}\b{left}\b", normalized)
+        )
+
+    def negated(media_kind: str, timing: str) -> bool:
+        return bool(
+            re.search(
+                rf"\b{negation}\b.{{0,24}}\b{media_kind}\b.{{0,24}}\b{timing}\b",
+                normalized,
+            )
+            or re.search(
+                rf"\b{media_kind}\b.{{0,24}}\b{negation}\b.{{0,24}}\b{timing}\b",
+                normalized,
+            )
+        )
+
+    # "Don't change the timing" means preserve the current profile, whereas
+    # "Don't make photos very fast" explicitly retracts this profile.
+    preserve_negation = re.search(
+        rf"\b{negation}\b.{{0,48}}(?:"
+        rf"\b(?:change|alter|touch|modify)\b.{{0,48}}\b{timing}\b|"
+        rf"\b{reset}\b.{{0,48}}\b{timing}\b|"
+        rf"\b{timing}\b.{{0,48}}\b{reset}\b"
+        rf")",
+        normalized,
+    )
+    explicit_reset = re.search(
+        rf"\b{reset}\b.{{0,48}}(?:\b{media}\b.{{0,48}})?\b{timing}\b|"
+        rf"\b{timing}\b.{{0,48}}\b{reset}\b",
+        normalized,
+    )
+    negated_profile = negated(photo, photo_fast) or negated(video, video_long)
+    inverse_profile = (
+        paired(photo, photo_slow)
+        and not negated(photo, photo_slow)
+        or paired(video, video_short)
+        and not negated(video, video_short)
+    )
+    if not preserve_negation and (explicit_reset or negated_profile or inverse_profile):
+        return None
+    return current
+
+
+def _is_mixed_media_capacity_error(exc: BaseException) -> bool:
+    """Recognize the planner's actionable insufficient-capacity outcome."""
+
+    return isinstance(exc, ValueError) and str(exc).startswith(
+        "mixed-media fast montage has less than the minimum 3s"
+    )
+
+
 def _snapshot_from_edit_guide_revision(current, revision) -> EditProposalSnapshot:  # noqa: ANN001
     """Rejoin AI aliases with server-owned beat and media identities."""
 
@@ -2255,6 +2345,16 @@ def _snapshot_from_edit_guide_revision(current, revision) -> EditProposalSnapsho
         media=current.media,
         story_beats=beats,
         fast_cuts=current.fast_cuts if revision.direction == "fast_montage" else None,
+        mixed_media_timing=current.mixed_media_timing,
+    )
+
+
+def _proposal_analysis_queue(proposal) -> str:  # noqa: ANN001
+    """Keep expanded mixed-media cuts away from rolling legacy workers."""
+
+    return queue_for_mixed_media_timing(
+        proposal.brief.mixed_media_timing,
+        default_queue=settings.pool_asset_analysis_queue,
     )
 
 
@@ -2658,7 +2758,8 @@ async def _maybe_auto_design_generate(
                 proposal.generation_attempt_id,
                 ownership_epoch,
             ],
-            queue=settings.pool_asset_analysis_queue,
+            queue=_proposal_analysis_queue(proposal),
+            task_id=edit_proposal_task_id(proposal.generation_attempt_id),
         )
     except Exception as exc:  # noqa: BLE001
         relocked = await _load_owned_item(item_id, owner_id, db, for_update=True)
@@ -2828,12 +2929,15 @@ async def edit_proposal_conversation_turn(
         else None
     )
     phase = "review" if review_snapshot else "briefing"
+    review_mixed_media_timing = review_snapshot.mixed_media_timing if review_snapshot else None
     brief = (
         ProposalBrief(
             direction=review_snapshot.direction,
             goal=review_snapshot.goal,
+            creator_request=current.brief.creator_request if current else "",
             pace=review_snapshot.pace,
             duration_s=review_snapshot.duration_s,
+            mixed_media_timing=review_mixed_media_timing,
         )
         if review_snapshot
         else (current.brief if current else ProposalBrief())
@@ -2921,7 +3025,12 @@ async def edit_proposal_conversation_turn(
         )
 
         try:
-            if result.revision.direction != review_snapshot.direction:
+            requested_mixed_media_timing = _review_mixed_media_timing(
+                review_snapshot.mixed_media_timing,
+                body.message,
+            )
+            timing_changed = requested_mixed_media_timing != review_snapshot.mixed_media_timing
+            if result.revision.direction != review_snapshot.direction or timing_changed:
                 from app.services.edit_direction_planner import (  # noqa: PLC0415
                     plan_direction_snapshot,
                 )
@@ -2935,6 +3044,7 @@ async def edit_proposal_conversation_turn(
                     duration_s=result.revision.duration_s,
                     idea=idea,
                     theme=theme,
+                    mixed_media_timing=requested_mixed_media_timing,
                 )
             else:
                 revised_snapshot = _snapshot_from_edit_guide_revision(
@@ -2944,6 +3054,16 @@ async def edit_proposal_conversation_turn(
         except Exception as exc:  # noqa: BLE001 - every invalid revision must release its fence
             log.warning("edit_guide.timing_invalid", item_id=item_id, error=str(exc)[:300])
             await release_reservation()
+            if _is_mixed_media_capacity_error(exc):
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": "guided_edit_infeasible",
+                        "message": "The requested photo/video pacing needs at least 3s "
+                        "of usable source footage. Add another photo or video, or "
+                        "choose a different edit direction.",
+                    },
+                ) from exc
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={
@@ -2956,6 +3076,8 @@ async def edit_proposal_conversation_turn(
             goal=revised_snapshot.goal,
             pace=revised_snapshot.pace,
             duration_s=revised_snapshot.duration_s,
+            creator_request=brief.creator_request,
+            mixed_media_timing=revised_snapshot.mixed_media_timing,
         )
 
     locked = await _load_owned_item(item_id, owner_id, db, for_update=True)
@@ -3062,7 +3184,8 @@ async def draft_item_edit_proposal(
                 proposal.generation_attempt_id,
                 int(getattr(plan, "ownership_epoch", 0) or 0),
             ],
-            queue=settings.pool_asset_analysis_queue,
+            queue=_proposal_analysis_queue(proposal),
+            task_id=edit_proposal_task_id(proposal.generation_attempt_id),
         )
     except Exception as exc:  # noqa: BLE001
         locked = await _load_owned_item(item_id, user.id, db, for_update=True)
@@ -3192,8 +3315,10 @@ async def confirm_item_edit_direction(
     brief = ProposalBrief(
         direction=hypothesis.direction,
         goal=current.brief.goal or "Show the strongest visual moments quickly.",
+        creator_request=current.brief.creator_request,
         pace=hypothesis.pace,
         duration_s=hypothesis.duration_s,
+        mixed_media_timing=current.brief.mixed_media_timing,
     )
     ensure_clip_media_ids(item)
     proposal = begin_proposal_attempt(item, brief=brief, guidance=guidance)
@@ -3205,7 +3330,8 @@ async def confirm_item_edit_direction(
                 proposal.generation_attempt_id,
                 int(getattr(plan, "ownership_epoch", 0) or 0),
             ],
-            queue=settings.pool_asset_analysis_queue,
+            queue=_proposal_analysis_queue(proposal),
+            task_id=edit_proposal_task_id(proposal.generation_attempt_id),
         )
     except Exception as exc:  # noqa: BLE001
         locked = await _load_owned_item(item_id, user.id, db, for_update=True)

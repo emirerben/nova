@@ -16,6 +16,7 @@ from app.schemas.edit_proposal import (
     EditProposal,
     FastMontageCut,
     MediaRef,
+    MixedMediaTimingProfile,
     ProposalBrief,
     parse_edit_proposal,
 )
@@ -79,6 +80,7 @@ def test_clip_analysis_uses_three_workers_and_preserves_assignment_order(monkeyp
         )
 
     monkeypatch.setattr(proposal_build, "_analyze_clip_assignment", _analyze)
+    completed: list[str] = []
 
     results = proposal_build._analyze_clip_assignments(
         assignments,
@@ -86,6 +88,7 @@ def test_clip_analysis_uses_three_workers_and_preserves_assignment_order(monkeyp
         item_id=uuid.uuid4(),
         attempt_id="attempt-1",
         ownership_epoch=0,
+        on_complete=lambda entry, _ref: completed.append(str(entry["media_id"])),
     )
 
     assert results is not None
@@ -99,6 +102,15 @@ def test_clip_analysis_uses_three_workers_and_preserves_assignment_order(monkeyp
         "clip-5",
         "clip-6",
     ]
+    assert sorted(completed) == [f"clip-{index}" for index in range(7)]
+
+
+def test_proposal_task_limits_fit_broker_visibility_timeout() -> None:
+    assert proposal_build._TASK_LIMITS == {
+        "soft_time_limit": 1440,
+        "time_limit": 1500,
+    }
+    assert proposal_build._TASK_LIMITS["time_limit"] < proposal_build._BROKER_VISIBILITY_TIMEOUT_S
 
 
 def test_clip_analysis_stops_submitting_after_a_terminal_failure(monkeypatch) -> None:
@@ -368,6 +380,137 @@ def test_analysis_merge_preserves_concurrent_clip_editorial_changes() -> None:
     assert merged[0]["analysis"] == {"subject": "coast"}
 
 
+def test_analysis_checkpoint_preserves_user_fields_and_exact_attempt_fence(monkeypatch) -> None:
+    item_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    item = SimpleNamespace(
+        id=item_id,
+        clip_assignments=[
+            {
+                "media_id": "clip-1",
+                "gcs_path": "users/u/plan/i/corfu.mp4",
+                "shot_id": "creator-shot",
+                "user_note": "keep this note",
+                "machine_matched": False,
+            }
+        ],
+        edit_proposal=_proposal(attempt_id="attempt-1"),
+    )
+    db = _Db()
+
+    @contextmanager
+    def _session():
+        yield db
+
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    monkeypatch.setattr(
+        proposal_build,
+        "_locked_item",
+        lambda _db, _item_id, _epoch: (item, owner_id),
+    )
+
+    proposal_build._checkpoint_analyzed_assignment(
+        item_id,
+        "attempt-1",
+        7,
+        {
+            "media_id": "clip-1",
+            "gcs_path": "users/u/plan/i/corfu.mp4",
+            "generation": "42",
+            "kind": "video",
+            "duration_s": 8.5,
+            "aspect": 0.5625,
+            "analysis": {"subject": "coast"},
+        },
+        MediaRef(
+            lane="clip",
+            media_id="clip-1",
+            gcs_path="users/u/plan/i/corfu.mp4",
+            generation="42",
+            kind="video",
+        ),
+    )
+
+    checkpoint = item.clip_assignments[0]
+    assert checkpoint["shot_id"] == "creator-shot"
+    assert checkpoint["user_note"] == "keep this note"
+    assert checkpoint["machine_matched"] is False
+    assert checkpoint["generation"] == "42"
+    assert checkpoint["analysis"] == {"subject": "coast"}
+    assert db.commits == 1
+
+    proposal_build._checkpoint_analyzed_assignment(
+        item_id,
+        "superseded-attempt",
+        7,
+        {
+            "media_id": "clip-1",
+            "gcs_path": "users/u/plan/i/corfu.mp4",
+            "generation": "42",
+            "analysis": {"subject": "must-not-win"},
+        },
+        MediaRef(
+            lane="clip",
+            media_id="clip-1",
+            gcs_path="users/u/plan/i/corfu.mp4",
+            generation="42",
+            kind="video",
+        ),
+    )
+
+    assert item.clip_assignments[0]["analysis"] == {"subject": "coast"}
+    assert db.commits == 1
+
+
+def test_analysis_checkpoint_rejects_stale_media_generation(monkeypatch) -> None:
+    item = SimpleNamespace(
+        clip_assignments=[
+            {
+                "media_id": "clip-1",
+                "gcs_path": "users/u/plan/i/corfu.mp4",
+                "generation": "new-generation",
+                "user_note": "keep this note",
+            }
+        ],
+        edit_proposal=_proposal(),
+    )
+    db = _Db()
+
+    @contextmanager
+    def _session():
+        yield db
+
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    monkeypatch.setattr(
+        proposal_build,
+        "_locked_item",
+        lambda _db, _item_id, _epoch: (item, uuid.uuid4()),
+    )
+
+    proposal_build._checkpoint_analyzed_assignment(
+        uuid.uuid4(),
+        "attempt-1",
+        0,
+        {
+            "media_id": "clip-1",
+            "gcs_path": "users/u/plan/i/corfu.mp4",
+            "generation": "old-generation",
+            "analysis": {"subject": "stale"},
+        },
+        MediaRef(
+            lane="clip",
+            media_id="clip-1",
+            gcs_path="users/u/plan/i/corfu.mp4",
+            generation="old-generation",
+            kind="video",
+        ),
+    )
+
+    assert item.clip_assignments[0]["generation"] == "new-generation"
+    assert "analysis" not in item.clip_assignments[0]
+    assert db.commits == 0
+
+
 def test_clip_video_analysis_uses_privacy_safe_reuse_boundary(monkeypatch) -> None:
     media_id = str(uuid.uuid4())
     generation = "42"
@@ -506,7 +649,7 @@ def test_transient_pool_video_analysis_error_retries_instead_of_wedging(monkeypa
     persisted = parse_edit_proposal(item.edit_proposal)
     assert persisted is not None
     assert persisted.status == "analyzing"  # never permanently wedged
-    assert db.commits == 0
+    assert db.commits == 1  # durable planning-start marker before the retry
 
 
 def test_asset_unreadable_error_fails_non_retryable_with_admin_only_detail(monkeypatch) -> None:
@@ -548,7 +691,7 @@ def test_asset_unreadable_error_fails_non_retryable_with_admin_only_detail(monke
     assert "AssetUnreadableError" in persisted.failure.detail
     # The admin-only diagnostic must never leak into user-facing copy.
     assert "AssetUnreadableError" not in persisted.failure.message
-    assert db.commits == 1
+    assert db.commits == 2  # planning-start marker, then terminal failure
 
 
 def test_unexpected_exception_persists_admin_only_detail(monkeypatch) -> None:
@@ -651,7 +794,72 @@ def test_infeasible_footage_skips_agent_and_fails_with_actionable_message(monkey
     assert persisted.failure is not None
     assert persisted.failure.code == "guided_edit_infeasible"
     assert "0.0" in persisted.failure.message
-    assert db.commits == 1
+    assert db.commits == 3  # planning start, clip checkpoint, terminal infeasible failure
+
+
+def test_mixed_media_capacity_failure_is_persisted_as_actionable_infeasible(
+    monkeypatch,
+) -> None:
+    item_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    assignments = [
+        {
+            "media_id": f"photo-{index}",
+            "gcs_path": f"users/u/plan/{item_id}/photo-{index}.jpg",
+        }
+        for index in range(3)
+    ]
+    item = _prod_item(item_id, clip_assignments=assignments)
+    profile = MixedMediaTimingProfile(
+        image_hold="very_fast",
+        video_hold="longer",
+        boundary_style="cut",
+    )
+    item.edit_proposal = _proposal(
+        brief=ProposalBrief(direction="fast_montage", duration_s=24, mixed_media_timing=profile)
+    )
+    clip_refs = [
+        MediaRef(
+            lane="clip",
+            media_id=assignment["media_id"],
+            gcs_path=assignment["gcs_path"],
+            generation="1",
+            kind="image",
+        )
+        for assignment in assignments
+    ]
+    db = _Db(_Result(rows=[]))
+
+    @contextmanager
+    def _session():
+        yield db
+
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    monkeypatch.setattr(proposal_build, "_locked_item", lambda *_a, **_kw: (item, owner_id))
+    monkeypatch.setattr(proposal_build, "_attempt_is_active", lambda *_a, **_kw: True)
+    monkeypatch.setattr(proposal_build, "_pool_refs", lambda *_a, **_kw: [])
+    monkeypatch.setattr(
+        proposal_build,
+        "_analyze_clip_assignments",
+        lambda clip_assignments, *_a, **_kw: list(zip(clip_assignments, clip_refs, strict=True)),
+    )
+    monkeypatch.setattr(proposal_build, "media_generations_match_sync", lambda _refs: True)
+    monkeypatch.setattr(
+        "app.agents._model_client.default_client",
+        lambda: (_ for _ in ()).throw(AssertionError("capacity failure must precede agent call")),
+    )
+
+    proposal_build._run_draft_attempt(
+        SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, auto_finalize=False
+    )
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None
+    assert persisted.status == "failed"
+    assert persisted.failure is not None
+    assert persisted.failure.code == "guided_edit_infeasible"
+    assert "Add another photo or video" in persisted.failure.message
+    assert db.commits == 2  # planning start, then terminal capacity failure
 
 
 def test_video_below_min_moment_earns_zero_credit_not_image_credit() -> None:
@@ -1065,7 +1273,7 @@ def test_agent_output_longer_than_feasible_footage_is_rejected(monkeypatch) -> N
     assert persisted.failure is not None
     assert persisted.failure.code == "guided_edit_infeasible"
     assert persisted.draft is None  # the oversized snapshot was never persisted
-    assert db.commits == 2  # analyzing -> drafting, then drafting -> failed
+    assert db.commits == 4  # planning start, clip checkpoint, analyzing -> drafting -> failed
 
 
 def _auto_finalize_common_mocks(monkeypatch, item, owner_id) -> None:

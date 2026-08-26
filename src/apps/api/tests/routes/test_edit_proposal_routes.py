@@ -16,6 +16,7 @@ from app.schemas.edit_proposal import (
     EditProposalSnapshot,
     FastMontageCut,
     MediaRef,
+    MixedMediaTimingProfile,
     ProposalBrief,
     StoryBeat,
     canonical_media_digest,
@@ -127,6 +128,14 @@ def _post_request() -> Request:
 @pytest.mark.asyncio
 async def test_confirm_direction_is_versioned_and_dispatches_once(monkeypatch) -> None:
     item = _awaiting_direction_item()
+    item.edit_proposal["brief"]["creator_request"] = (
+        "Photos should have a very fast transition, videos can be a bit longer"
+    )
+    item.edit_proposal["brief"]["mixed_media_timing"] = {
+        "image_hold": "very_fast",
+        "video_hold": "longer",
+        "boundary_style": "cut",
+    }
     proposal = parse_edit_proposal(item.edit_proposal)
     assert proposal is not None and proposal.guidance is not None
     plan = SimpleNamespace(ownership_epoch=4)
@@ -172,6 +181,12 @@ async def test_confirm_direction_is_versioned_and_dispatches_once(monkeypatch) -
     assert saved.guidance.state == "confirmed"
     assert saved.guidance.provenance == "creator_confirmed"
     assert saved.approval_mode is None
+    assert saved.brief.creator_request.startswith("Photos should")
+    assert saved.brief.mixed_media_timing == MixedMediaTimingProfile(
+        image_hold="very_fast",
+        video_hold="longer",
+        boundary_style="cut",
+    )
     assert len(dispatches) == 1
 
     # A lost-response retry is idempotent, but a conflicting override is not.
@@ -387,6 +402,218 @@ def test_snapshot_revision_rejoins_reassigned_media_aliases() -> None:
     revised = plan_items._snapshot_from_edit_guide_revision(current, revision)
 
     assert [beat.media_ids for beat in revised.story_beats] == [["clip-2"], ["clip-1"]]
+
+
+def test_snapshot_revision_preserves_mixed_media_timing_profile() -> None:
+    current = _snapshot().model_copy(
+        update={
+            "mixed_media_timing": MixedMediaTimingProfile(
+                image_hold="very_fast", video_hold="longer", boundary_style="cut"
+            )
+        }
+    )
+    revision = EditGuideRevision(
+        direction="guided_story",
+        goal=current.goal,
+        pace=current.pace,
+        duration_s=current.duration_s,
+        title=current.title,
+        story_beats=[
+            EditGuideRevisionBeat(
+                beat_id="coast",
+                topic="Coast",
+                thought="Coast",
+                layout="fullscreen",
+                duration_s=4,
+                media_refs=["media_1"],
+            )
+        ],
+    )
+
+    revised = plan_items._snapshot_from_edit_guide_revision(current, revision)
+
+    assert revised.mixed_media_timing == current.mixed_media_timing
+
+
+def test_review_timing_recognizes_affirmative_request_and_explicit_removal() -> None:
+    profile = MixedMediaTimingProfile(
+        image_hold="very_fast", video_hold="longer", boundary_style="cut"
+    )
+
+    enabled = plan_items._review_mixed_media_timing(
+        None,
+        "Photos should have a very fast transition, videos can be a bit longer",
+    )
+    assert enabled == profile
+
+    assert (
+        plan_items._review_mixed_media_timing(
+            profile,
+            "Don't make the photos very fast; let the videos breathe.",
+        )
+        is None
+    )
+    assert plan_items._review_mixed_media_timing(profile, "Remove the mixed-media timing") is None
+
+
+def test_review_timing_preserves_profile_for_unrelated_feedback() -> None:
+    profile = MixedMediaTimingProfile(
+        image_hold="very_fast", video_hold="longer", boundary_style="cut"
+    )
+
+    assert plan_items._review_mixed_media_timing(profile, "Put the coast chapter first") == profile
+    assert plan_items._review_mixed_media_timing(profile, "Remove the first two cuts") == profile
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Don't clear the mixed-media timing.",
+        "Do not disable the timing.",
+        "Never drop the media pacing.",
+        "Don't return the timing to default.",
+    ],
+)
+def test_review_timing_preserves_profile_for_negated_reset(message: str) -> None:
+    profile = MixedMediaTimingProfile(
+        image_hold="very_fast", video_hold="longer", boundary_style="cut"
+    )
+
+    assert plan_items._review_mixed_media_timing(profile, message) == profile
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Keep photos snappy, but do not hold videos longer.",
+        "Make the photos not very fast; videos can linger.",
+        "Let the photos linger and make the videos shorter.",
+    ],
+)
+def test_review_timing_clears_profile_for_natural_retractions(message: str) -> None:
+    profile = MixedMediaTimingProfile(
+        image_hold="very_fast", video_hold="longer", boundary_style="cut"
+    )
+
+    assert plan_items._review_mixed_media_timing(profile, message) is None
+
+
+def test_review_timing_does_not_clear_for_negated_inverse_request() -> None:
+    profile = MixedMediaTimingProfile(
+        image_hold="very_fast", video_hold="longer", boundary_style="cut"
+    )
+
+    assert (
+        plan_items._review_mixed_media_timing(
+            profile,
+            "Don't make the photos slower and don't shorten the videos.",
+        )
+        == profile
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("message", "current_profile", "expected_profile"),
+    [
+        (
+            "Photos should have a very fast transition, videos can be a bit longer",
+            None,
+            MixedMediaTimingProfile(
+                image_hold="very_fast", video_hold="longer", boundary_style="cut"
+            ),
+        ),
+        (
+            "Remove the mixed-media timing",
+            MixedMediaTimingProfile(
+                image_hold="very_fast", video_hold="longer", boundary_style="cut"
+            ),
+            None,
+        ),
+    ],
+)
+async def test_conversation_same_direction_replans_explicit_timing_change(
+    monkeypatch, message, current_profile, expected_profile
+) -> None:
+    item = _draft_item()
+    item.idea = "Corfu trip"
+    item.theme = "Corfu"
+    if current_profile is not None:
+        item.edit_proposal["brief"]["mixed_media_timing"] = current_profile.model_dump(mode="json")
+        item.edit_proposal["draft"]["mixed_media_timing"] = current_profile.model_dump(mode="json")
+    monkeypatch.setattr(plan_items.settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(plan_items.settings, "guided_edit_conversation_enabled", True)
+    monkeypatch.setattr(plan_items, "_load_owned_item", AsyncMock(return_value=item))
+    monkeypatch.setattr(plan_items, "plan_item_response", lambda loaded: loaded)
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
+    monkeypatch.setattr(
+        "app.agents.edit_guide.EditGuideAgent.run",
+        lambda _self, _input: EditGuideOutput(
+            reply="I updated the timing.",
+            suggestions=[],
+            brief=ProposalBrief(direction="guided_story", pace="balanced", duration_s=24),
+            ready_to_plan=True,
+            revision=EditGuideRevision(
+                direction="guided_story",
+                goal="Share what stood out",
+                pace="balanced",
+                duration_s=24,
+                title="Corfu story",
+                story_beats=[
+                    EditGuideRevisionBeat(
+                        beat_id="coast",
+                        topic="Coast",
+                        thought="The coast sets the pace.",
+                        layout="fullscreen",
+                        duration_s=4,
+                        media_refs=["media_1"],
+                    )
+                ],
+            ),
+        ),
+    )
+    seen: list[object] = []
+
+    def replan(current, **kwargs):  # noqa: ANN001, ANN202
+        seen.append(kwargs["mixed_media_timing"])
+        return current.model_copy(
+            update={
+                "direction": kwargs["direction"],
+                "pace": kwargs["pace"],
+                "mixed_media_timing": kwargs["mixed_media_timing"],
+            }
+        )
+
+    monkeypatch.setattr("app.services.edit_direction_planner.plan_direction_snapshot", replan)
+    monkeypatch.setattr("app.pipeline.guided_story.validate_proposal_timing", lambda _value: None)
+    db = AsyncMock()
+    db.execute.return_value = SimpleNamespace(scalars=lambda: [])
+
+    await plan_items.edit_proposal_conversation_turn(
+        _request(),
+        str(item.id),
+        plan_items.EditGuideTurnBody(expected_proposal_version=2, message=message),
+        SimpleNamespace(id=uuid.uuid4()),
+        db,
+    )
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert seen == [expected_profile]
+    assert persisted is not None and persisted.draft is not None
+    assert persisted.draft.mixed_media_timing == expected_profile
+    assert persisted.brief.mixed_media_timing == expected_profile
+
+
+def test_mixed_media_proposals_use_the_deploy_fenced_worker_queue() -> None:
+    proposal = SimpleNamespace(
+        brief=ProposalBrief(
+            mixed_media_timing=MixedMediaTimingProfile(
+                image_hold="very_fast", video_hold="longer", boundary_style="cut"
+            )
+        )
+    )
+
+    assert plan_items._proposal_analysis_queue(proposal) == "creator-guided-jobs"
 
 
 def test_snapshot_revision_recalculates_auto_orientation_from_reassigned_media() -> None:
@@ -846,6 +1073,88 @@ async def test_conversation_revision_preserves_media_and_creator_thought(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_conversation_direction_change_preserves_mixed_media_timing(monkeypatch) -> None:
+    item = _draft_item()
+    item.idea = "Corfu trip"
+    item.theme = "Corfu"
+    profile = MixedMediaTimingProfile(
+        image_hold="very_fast",
+        video_hold="longer",
+        boundary_style="cut",
+    )
+    item.edit_proposal["brief"]["creator_request"] = (
+        "Photos should have a very fast transition, videos can be a bit longer"
+    )
+    item.edit_proposal["brief"]["mixed_media_timing"] = profile.model_dump(mode="json")
+    item.edit_proposal["draft"]["mixed_media_timing"] = profile.model_dump(mode="json")
+    monkeypatch.setattr(plan_items.settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(plan_items.settings, "guided_edit_conversation_enabled", True)
+    monkeypatch.setattr(plan_items, "_load_owned_item", AsyncMock(return_value=item))
+    monkeypatch.setattr(plan_items, "plan_item_response", lambda loaded: loaded)
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
+    monkeypatch.setattr(
+        "app.agents.edit_guide.EditGuideAgent.run",
+        lambda _self, _input: EditGuideOutput(
+            reply="I changed the structure but kept your photo and video rhythm.",
+            suggestions=[],
+            brief=ProposalBrief(direction="fast_montage", pace="fast", duration_s=24),
+            ready_to_plan=True,
+            revision=EditGuideRevision(
+                direction="fast_montage",
+                goal="Share what stood out",
+                pace="fast",
+                duration_s=24,
+                title="Corfu highlights",
+                story_beats=[
+                    EditGuideRevisionBeat(
+                        beat_id="coast",
+                        topic="Coast",
+                        thought="The coast sets the pace.",
+                        layout="fullscreen",
+                        duration_s=12,
+                        media_refs=["media_1"],
+                    )
+                ],
+            ),
+        ),
+    )
+    seen: dict = {}
+
+    def replan(current, **kwargs):  # noqa: ANN001, ANN202
+        seen.update(kwargs)
+        return current.model_copy(
+            update={
+                "direction": "fast_montage",
+                "pace": "fast",
+                "mixed_media_timing": kwargs["mixed_media_timing"],
+            }
+        )
+
+    monkeypatch.setattr("app.services.edit_direction_planner.plan_direction_snapshot", replan)
+    monkeypatch.setattr("app.pipeline.guided_story.validate_proposal_timing", lambda _value: None)
+    db = AsyncMock()
+    db.execute.return_value = SimpleNamespace(scalars=lambda: [])
+
+    await plan_items.edit_proposal_conversation_turn(
+        _request(),
+        str(item.id),
+        plan_items.EditGuideTurnBody(
+            expected_proposal_version=2,
+            message="Make it a fast montage but keep the timing I requested.",
+        ),
+        SimpleNamespace(id=uuid.uuid4()),
+        db,
+    )
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert seen["mixed_media_timing"] == profile
+    assert persisted is not None and persisted.draft is not None
+    assert persisted.draft.mixed_media_timing == profile
+    assert persisted.brief.mixed_media_timing == profile
+    assert persisted.brief.creator_request.startswith("Photos should")
+
+
+@pytest.mark.asyncio
 async def test_revision_validation_failure_releases_conversation_attempt(monkeypatch) -> None:
     item = _draft_item()
     item.idea = "Corfu trip"
@@ -901,6 +1210,79 @@ async def test_revision_validation_failure_releases_conversation_attempt(monkeyp
 
     assert exc.value.status_code == 503
     assert exc.value.detail["code"] == "edit_guide_failed"
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None and persisted.conversation_attempt is None
+    assert db.commit.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_review_mixed_media_capacity_failure_is_actionable(monkeypatch) -> None:
+    item = _draft_item()
+    item.idea = "Corfu trip"
+    item.theme = "Corfu"
+    profile = MixedMediaTimingProfile(
+        image_hold="very_fast",
+        video_hold="longer",
+        boundary_style="cut",
+    )
+    item.edit_proposal["brief"]["mixed_media_timing"] = profile.model_dump(mode="json")
+    item.edit_proposal["draft"]["mixed_media_timing"] = profile.model_dump(mode="json")
+    monkeypatch.setattr(plan_items.settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(plan_items.settings, "guided_edit_conversation_enabled", True)
+    monkeypatch.setattr(plan_items, "_load_owned_item", AsyncMock(return_value=item))
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
+    monkeypatch.setattr(
+        "app.agents.edit_guide.EditGuideAgent.run",
+        lambda _self, _input: EditGuideOutput(
+            reply="I changed this to a fast montage.",
+            suggestions=[],
+            brief=ProposalBrief(direction="fast_montage", pace="fast", duration_s=24),
+            ready_to_plan=True,
+            revision=EditGuideRevision(
+                direction="fast_montage",
+                goal="Share what stood out",
+                pace="fast",
+                duration_s=24,
+                title="Corfu highlights",
+                story_beats=[
+                    EditGuideRevisionBeat(
+                        beat_id="coast",
+                        topic="Coast",
+                        thought="The coast sets the pace.",
+                        layout="fullscreen",
+                        duration_s=12,
+                        media_refs=["media_1"],
+                    )
+                ],
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.edit_direction_planner.plan_direction_snapshot",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ValueError(
+                "mixed-media fast montage has less than the minimum 3s of usable source capacity"
+            )
+        ),
+    )
+    db = AsyncMock()
+    db.execute.return_value = SimpleNamespace(scalars=lambda: [])
+
+    with pytest.raises(HTTPException) as exc:
+        await plan_items.edit_proposal_conversation_turn(
+            _request(),
+            str(item.id),
+            plan_items.EditGuideTurnBody(
+                expected_proposal_version=2,
+                message="Make it a fast montage but keep the timing I requested.",
+            ),
+            SimpleNamespace(id=uuid.uuid4()),
+            db,
+        )
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail["code"] == "guided_edit_infeasible"
+    assert "Add another photo or video" in exc.value.detail["message"]
     persisted = parse_edit_proposal(item.edit_proposal)
     assert persisted is not None and persisted.conversation_attempt is None
     assert db.commit.await_count == 2

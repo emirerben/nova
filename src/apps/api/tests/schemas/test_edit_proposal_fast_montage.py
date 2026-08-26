@@ -7,6 +7,7 @@ from app.schemas.edit_proposal import (
     EditProposalSnapshot,
     FastMontageCut,
     MediaRef,
+    MixedMediaTimingProfile,
     ProposalGuidance,
     StoryBeat,
     parse_edit_proposal,
@@ -54,16 +55,16 @@ def test_new_fast_montage_cut_contract_is_source_aware_and_hook_first() -> None:
             FastMontageCut(
                 cut_id="cut-1",
                 media_id="clip-1",
-                source_start_s=0.25,
-                source_end_s=1.25,
+                source_start_s=0,
+                source_end_s=1,
                 output_duration_s=1.0,
                 role="hook",
             ),
             FastMontageCut(
                 cut_id="cut-2",
                 media_id="clip-1",
-                source_start_s=1.25,
-                source_end_s=2.25,
+                source_start_s=1,
+                source_end_s=2,
                 output_duration_s=1.0,
                 role="build",
                 beat_align=True,
@@ -71,8 +72,8 @@ def test_new_fast_montage_cut_contract_is_source_aware_and_hook_first() -> None:
             FastMontageCut(
                 cut_id="cut-3",
                 media_id="clip-1",
-                source_start_s=0,
-                source_end_s=1,
+                source_start_s=2,
+                source_end_s=3,
                 output_duration_s=1.0,
                 role="payoff",
             ),
@@ -142,6 +143,50 @@ def test_fast_montage_cut_total_must_match_proposal_duration() -> None:
                     output_duration_s=1,
                     role="hook",
                 )
+            ],
+        )
+
+
+def test_legacy_fast_montage_cannot_use_expanded_video_hold() -> None:
+    with pytest.raises(ValidationError, match="above 1.2s require"):
+        _snapshot(
+            fast_cuts=[
+                FastMontageCut(
+                    cut_id="cut-1",
+                    media_id="clip-1",
+                    source_start_s=0,
+                    source_end_s=3,
+                    output_duration_s=3,
+                    role="hook",
+                )
+            ]
+        )
+
+
+def test_mixed_media_timing_rejects_overlapping_video_windows() -> None:
+    with pytest.raises(ValidationError, match="must not overlap"):
+        _snapshot(
+            duration_s=3,
+            mixed_media_timing=MixedMediaTimingProfile(
+                image_hold="very_fast", video_hold="longer", boundary_style="cut"
+            ),
+            fast_cuts=[
+                FastMontageCut(
+                    cut_id="cut-1",
+                    media_id="clip-1",
+                    source_start_s=0,
+                    source_end_s=1.5,
+                    output_duration_s=1.5,
+                    role="hook",
+                ),
+                FastMontageCut(
+                    cut_id="cut-2",
+                    media_id="clip-1",
+                    source_start_s=1,
+                    source_end_s=2.5,
+                    output_duration_s=1.5,
+                    role="payoff",
+                ),
             ],
         )
 

@@ -20,8 +20,11 @@ from app.agents._schemas.creator_agent import (
     ResolvedCreatorManifest,
 )
 from app.pipeline.prompt_loader import load_prompt
+from app.schemas.edit_proposal import (
+    recognize_mixed_media_timing,
+)
 
-MAIN_CREATOR_PROMPT_VERSION = "2026-08-25-v5"
+MAIN_CREATOR_PROMPT_VERSION = "2026-08-25-v7"
 
 
 class MainCreatorInput(BaseModel):
@@ -56,7 +59,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
     Input = MainCreatorInput
     Output = MainCreatorOutput
     response_json = True
-    max_output_tokens = 1800
+    max_output_tokens = 3000
 
     def required_fields(self) -> list[str]:
         return ["action"]
@@ -86,11 +89,20 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     normalize_creator_strategy_media,
                 )
 
+                user_messages = [
+                    str(turn.get("content") or "")
+                    for turn in input.conversation
+                    if isinstance(turn, dict) and turn.get("role") == "user"
+                ]
+                timing = recognize_mixed_media_timing(
+                    "\n".join([*user_messages, input.user_message])
+                )
+                strategy = action.strategy.model_copy(update={"mixed_media_timing": timing})
                 action = action.model_copy(
                     update={
                         "strategy": normalize_creator_strategy_media(
                             input.capability_manifest,
-                            action.strategy,
+                            strategy,
                             repair_model_output=True,
                         )
                     }

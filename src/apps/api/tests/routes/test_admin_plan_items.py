@@ -38,6 +38,7 @@ SECRET_DRAFT_TITLE = "SECRET_CREATOR_DRAFT_TITLE"
 SECRET_DRAFT_GOAL = "SECRET_CREATOR_DRAFT_GOAL"
 SECRET_APPROVED_TITLE = "SECRET_CREATOR_APPROVED_TITLE"
 SECRET_BRIEF_GOAL = "SECRET_BRIEF_GOAL_shot on a rooftop at golden hour"
+SECRET_CREATOR_REQUEST = "SECRET_CREATOR_REQUEST_photos fast and videos longer"
 SECRET_USER_NOTE = "SECRET_USER_NOTE_this is the clip from the Tokyo trip"
 SECRET_ATTEMPT_TOKEN = "SECRET_ATTEMPT_TOKEN_do-not-leak-me"  # noqa: S105 - test fixture, not a real secret
 SECRET_MALFORMED_VALUE = "SECRET_MALFORMED_VALUE_should_never_appear"
@@ -76,6 +77,7 @@ def _edit_proposal_dict() -> dict:
         "brief": {
             "direction": "guided_story",
             "goal": SECRET_BRIEF_GOAL,
+            "creator_request": SECRET_CREATOR_REQUEST,
             "pace": "balanced",
             "duration_s": 24,
         },
@@ -362,6 +364,7 @@ class TestPlanItemDebugPayload:
         assert SECRET_DRAFT_GOAL not in raw_text
         assert SECRET_APPROVED_TITLE not in raw_text
         assert SECRET_BRIEF_GOAL not in raw_text
+        assert SECRET_CREATOR_REQUEST not in raw_text
         assert SECRET_USER_NOTE not in raw_text
         assert SECRET_ATTEMPT_TOKEN not in raw_text
 
@@ -421,6 +424,8 @@ class TestPlanItemDebugPayload:
         assert proposal["schema_version"] == 1
         assert "goal" not in proposal["brief"]
         assert proposal["brief"]["goal_length"] == len(SECRET_BRIEF_GOAL)
+        assert proposal["brief"]["creator_request_length"] == len(SECRET_CREATOR_REQUEST)
+        assert "creator_request" not in proposal["brief"]
         assert proposal["brief"]["direction"] == "guided_story"
         assert proposal["brief"]["pace"] == "balanced"
         assert proposal["brief_ready"] is True

@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.53.0.0] — 2026-08-25
+
+### Added
+- **Creators can ask for fast photo cuts and longer video moments in mixed-media edits.** The confirmation preview shows the normalized pacing, photos hold for 0.5–0.8 seconds, usable video moments hold for 1.5–3 seconds when source footage permits, and boundaries use hard cuts while the editor selects the strongest subset of the uploaded media.
+
+### Changed
+- **Large Creator plans can finish analyzing extensive uploads without restarting completed work.** Proposal tasks and execution leases now cover long mixed-media sessions, completed clip analyses checkpoint incrementally, and retries reuse safe cached results while preserving generation and ownership fences.
+- **Creator planning stays faithful when an agent response is truncated or invalid.** The confirmed request and typed timing profile survive clarification, specialist planning, revision, and deterministic fallback, while legacy plans without the profile retain their previous timing behavior.
+
+### Fixed
+- **Fast montages now enforce media-specific timing without stretching sources or drifting from the approved duration.** Validation and fallback require both media kinds when available, non-overlapping video windows, exact duration within tolerance, and source-safe cuts.
+
 ## [0.52.0.2] — 2026-08-25
 
 ### Changed

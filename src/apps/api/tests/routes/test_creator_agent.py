@@ -33,11 +33,14 @@ from app.routes.creator_agent import (
     TurnBody,
     _apply_plan_intent,
     _auto_iteration_already_finalized,
+    _confirmed_creator_request,
     _creator_speech_cut_source_enabled,
+    _fallback_strategy,
     _reset_render_target,
     _seed_guided_specialist_brief,
     _strict_creator_format,
 )
+from app.schemas.edit_proposal import MixedMediaTimingProfile
 from app.services.creator_capabilities import (
     compile_strategy_to_plan,
     resolve_creator_manifest,
@@ -655,6 +658,7 @@ def test_apply_plan_intent_maps_creative_caption_style_to_renderer_contract(monk
 
 
 def test_confirmed_guided_strategy_becomes_specialist_brief(monkeypatch) -> None:
+    creator_request = "Photos should have a very fast transition, videos can be a bit longer"
     manifest = _manifest(monkeypatch)
     edit_plan = compile_strategy_to_plan(
         manifest,
@@ -666,10 +670,18 @@ def test_confirmed_guided_strategy_becomes_specialist_brief(monkeypatch) -> None
             pacing="fast",
             render_program="guided",
             selected_media_ids=["clip-1"],
+            mixed_media_timing=MixedMediaTimingProfile(
+                image_hold="very_fast", video_hold="longer", boundary_style="cut"
+            ),
         ),
     )
     item = SimpleNamespace(edit_proposal=None)
-    _seed_guided_specialist_brief(item, edit_plan, summary="A sharp three-beat story")
+    _seed_guided_specialist_brief(
+        item,
+        edit_plan,
+        summary="A sharp three-beat story",
+        creator_request=creator_request,
+    )
 
     assert item.edit_proposal["status"] == "briefing"
     assert item.edit_proposal["brief_ready"] is True
@@ -678,7 +690,41 @@ def test_confirmed_guided_strategy_becomes_specialist_brief(monkeypatch) -> None
         "goal": "Cold open; Build; Payoff",
         "pace": "fast",
         "duration_s": 24,
+        "creator_request": creator_request,
+        "mixed_media_timing": {
+            "image_hold": "very_fast",
+            "video_hold": "longer",
+            "boundary_style": "cut",
+        },
     }
+
+
+def test_truncated_main_creator_fallback_preserves_exact_mixed_media_request(
+    monkeypatch,
+) -> None:
+    strategy = _fallback_strategy(
+        _manifest(monkeypatch),
+        user_message="Photos should have a very fast transition, videos can be a bit longer",
+    )
+
+    assert strategy.direction == "fast_montage"
+    assert strategy.mixed_media_timing is not None
+    assert strategy.mixed_media_timing.model_dump() == {
+        "image_hold": "very_fast",
+        "video_hold": "longer",
+        "boundary_style": "cut",
+    }
+
+
+def test_confirmed_creator_request_preserves_instruction_across_clarification() -> None:
+    initial = "Photos should have a very fast transition, videos can be a bit longer"
+    events = [
+        SimpleNamespace(sequence=0, role="user", payload={"message": initial}),
+        SimpleNamespace(sequence=1, role="assistant", payload={"message": "Use music?"}),
+        SimpleNamespace(sequence=2, role="user", payload={"message": "Yes"}),
+    ]
+
+    assert _confirmed_creator_request(events, "Yes") == f"{initial}\nYes"
 
 
 def test_main_creator_prompt_contains_no_storage_capabilities(monkeypatch) -> None:

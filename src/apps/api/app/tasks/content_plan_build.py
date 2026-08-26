@@ -36,6 +36,7 @@ from app.services.content_plan_persona import (
     PlanPersonaOwnershipError,
     load_owned_plan_persona_sync,
 )
+from app.services.edit_proposal_limits import queue_for_mixed_media_timing
 from app.services.job_status import PLAN_ITEM_JOB_TERMINAL
 from app.services.seed_provenance import match_specs_to_seeds
 from app.worker import celery_app
@@ -518,6 +519,20 @@ def regenerate_content_plan(
 PLAN_JOBS_QUEUE = "plan-jobs"
 
 
+def _guided_render_queue(approved_proposal: dict | None) -> str:
+    """Route expanded mixed-media snapshots only to current-version workers."""
+
+    if not isinstance(approved_proposal, dict):
+        return PLAN_JOBS_QUEUE
+    snapshot = approved_proposal.get("snapshot")
+    if not isinstance(snapshot, dict):
+        return PLAN_JOBS_QUEUE
+    return queue_for_mixed_media_timing(
+        snapshot.get("mixed_media_timing"),
+        default_queue=PLAN_JOBS_QUEUE,
+    )
+
+
 DispatchOutcome = Literal[
     "dispatched",
     "already_active",
@@ -970,7 +985,11 @@ def _dispatch_item_render(
     # shared sync helper — keeps celery_task_id correlation and routes the queue
     # without bypassing the job_dispatch contract (guarded in tests).
     try:
-        enqueue_orchestrator_sync(orchestrate_generative_job, job_id, queue=PLAN_JOBS_QUEUE)
+        enqueue_orchestrator_sync(
+            orchestrate_generative_job,
+            job_id,
+            queue=_guided_render_queue(approved_proposal),
+        )
     except Exception as exc:  # noqa: BLE001
         # Containment (plans/014 A1/C4): the Job row is already committed, and
         # the reaper deliberately never reaps `queued` — an uncontained publish

@@ -25,7 +25,10 @@ from app.pipeline.probe import probe_video
 from app.schemas.edit_proposal import (
     GUIDED_STORY_MIN_MOMENT_S,
     EditProposalSnapshot,
+    MixedMediaTimingProfile,
     canonical_media_digest,
+    mixed_media_hold_bounds,
+    uses_quick_photo_long_video_timing,
 )
 
 log = structlog.get_logger()
@@ -149,6 +152,7 @@ class GuidedStoryExecutionPlan(BaseModel):
     beat_windows: list[GuidedStoryBeatWindow] = Field(min_length=1)
     text_elements: list[TextElement]
     transition_policy: GuidedStoryTransitionPolicy
+    mixed_media_timing: MixedMediaTimingProfile | None = None
     typography: GuidedStoryTypography
     music: GuidedStoryMusic | None = None
     # Optional post-approval runtime projection.  Canonical approved plans
@@ -316,6 +320,7 @@ def _fast_montage_output_windows(
     duration_s: float,
     track: dict[str, Any] | None,
     video_media_ids: set[str],
+    mixed_media_timing: MixedMediaTimingProfile | None = None,
 ) -> list[tuple[float, float, float | None]]:
     """Allocate hard-cut output windows, optionally snapping marked boundaries.
 
@@ -339,7 +344,10 @@ def _fast_montage_output_windows(
         nominal_boundaries.append(cursor)
     boundaries = list(nominal_boundaries)
     beat_times: list[float] = []
-    if track:
+    # The typed profile is already an exact, creator-approved per-kind timing
+    # program. Legacy beat snapping can move a 0.5s photo below its minimum,
+    # so preserve those approved windows byte-for-byte and use hard cuts.
+    if track and not uses_quick_photo_long_video_timing(mixed_media_timing):
         music_start_s = float(track.get("start_s") or 0.0)
         beat_times = sorted(
             round(float(raw_beat) - music_start_s, 3)
@@ -546,6 +554,7 @@ def _allocate_beat_windows(
     policy: dict,
     transition_type: str,
     transition_duration_s: float,
+    mixed_media_timing: MixedMediaTimingProfile | None = None,
 ) -> list[float]:
     """Water-fill each beat's resolved duration against ITS OWN clips' capacity,
     not just the approved weight ratio, so a rounding-inflated beat can never be
@@ -569,11 +578,26 @@ def _allocate_beat_windows(
             else 0.0
             for offset in range(len(beat_refs))
         ]
+        quick_mixed_timing = uses_quick_photo_long_video_timing(mixed_media_timing)
         capacities_b = [
-            math.inf if ref.kind == "image" else max(0.0, float(ref.duration_s or 0.0) - overlap)
+            0.8
+            if quick_mixed_timing and ref.kind == "image"
+            else min(3.0, max(0.0, float(ref.duration_s or 0.0) - overlap))
+            if quick_mixed_timing
+            else math.inf
+            if ref.kind == "image"
+            else max(0.0, float(ref.duration_s or 0.0) - overlap)
             for ref, overlap in zip(beat_refs, overlaps_s, strict=True)
         ]
-        floors.append(min_moment_s * len(beat.media_ids))
+        if not quick_mixed_timing:
+            floors.append(min_moment_s * len(beat.media_ids))
+        else:
+            floors.append(
+                sum(
+                    0.5 if ref.kind == "image" else min(1.5, float(ref.duration_s or 0.0))
+                    for ref in beat_refs
+                )
+            )
         caps.append(sum(capacities_b))
         ideals.append(float(snapshot.duration_s) * float(beat.duration_s) / weight_total)
         moment_index += len(beat_refs)
@@ -686,10 +710,25 @@ def _allocate_beat_durations(
     min_moment_s: float,
     overlaps_s: list[float],
     beat_topic: str,
+    mixed_media_timing: MixedMediaTimingProfile | None = None,
 ) -> list[float]:
     """Water-fill a beat while respecting the usable length of short videos."""
 
-    if beat_duration_s + _FRAME_S < min_moment_s * len(refs):
+    quick_mixed_timing = uses_quick_photo_long_video_timing(mixed_media_timing)
+    floor_total = (
+        min_moment_s * len(refs)
+        if not quick_mixed_timing
+        else sum(
+            mixed_media_hold_bounds(ref.kind).minimum_s
+            if ref.kind == "image"
+            else min(
+                mixed_media_hold_bounds(ref.kind).minimum_s,
+                float(ref.duration_s or 0.0),
+            )
+            for ref in refs
+        )
+    )
+    if beat_duration_s + _FRAME_S < floor_total:
         raise GuidedStoryError(
             "guided_story_duration_impossible",
             f"Beat {beat_topic} is too short to show all approved media clearly.",
@@ -698,7 +737,9 @@ def _allocate_beat_durations(
     capacities: list[float] = []
     for ref, overlap in zip(refs, overlaps_s, strict=True):
         if ref.kind == "image":
-            capacities.append(math.inf)
+            capacities.append(
+                mixed_media_hold_bounds(ref.kind).maximum_s if quick_mixed_timing else math.inf
+            )
             continue
         source_duration = float(ref.duration_s or 0.0)
         if source_duration <= 0:
@@ -712,12 +753,54 @@ def _allocate_beat_durations(
                 "guided_story_duration_impossible",
                 f"Video {ref.source_filename or ref.media_id} is too short to show clearly.",
             )
-        capacities.append(capacity)
+        capacities.append(
+            min(mixed_media_hold_bounds(ref.kind).maximum_s, capacity)
+            if quick_mixed_timing
+            else capacity
+        )
 
-    allocated = [min_moment_s for _ref in refs]
+    if not quick_mixed_timing:
+        allocated = [min_moment_s for _ref in refs]
+    else:
+        allocated = [
+            mixed_media_hold_bounds(ref.kind).preferred_s
+            if ref.kind == "image"
+            else min(
+                mixed_media_hold_bounds(ref.kind).preferred_s,
+                float(ref.duration_s or 0.0),
+            )
+            for ref in refs
+        ]
+        allocated = [
+            max(
+                mixed_media_hold_bounds(ref.kind).minimum_s
+                if ref.kind == "image"
+                else min(
+                    mixed_media_hold_bounds(ref.kind).minimum_s,
+                    float(ref.duration_s or 0.0),
+                ),
+                value,
+            )
+            for ref, value in zip(refs, allocated, strict=True)
+        ]
     remaining = max(0.0, beat_duration_s - sum(allocated))
+    # A mixed profile uses available headroom in videos first. Photos remain
+    # quick unless the approved total cannot fit without using them.
     active = list(range(len(refs)))
     while remaining > _ALLOCATION_EPSILON_S:
+        if quick_mixed_timing:
+            video_active = [
+                index
+                for index in range(len(refs))
+                if refs[index].kind == "video"
+                and capacities[index] - allocated[index] > _ALLOCATION_EPSILON_S
+            ]
+            active = video_active or [
+                index
+                for index, ref in enumerate(refs)
+                if ref.kind == "image"
+                and capacities[index] - allocated[index] > _ALLOCATION_EPSILON_S
+            ]
         if not active:
             raise GuidedStoryError(
                 "guided_story_duration_impossible",
@@ -762,7 +845,17 @@ def _allocate_beat_durations(
                 break
     elif difference < 0:
         for index in reversed(range(len(rounded))):
-            reduction = min(-difference, rounded[index] - min_moment_s)
+            floor = (
+                min_moment_s
+                if not quick_mixed_timing
+                else mixed_media_hold_bounds(refs[index].kind).minimum_s
+                if refs[index].kind == "image"
+                else min(
+                    mixed_media_hold_bounds(refs[index].kind).minimum_s,
+                    float(refs[index].duration_s or 0.0),
+                )
+            )
+            reduction = min(-difference, rounded[index] - floor)
             if reduction <= 0:
                 continue
             rounded[index] = round(rounded[index] - reduction, 3)
@@ -923,8 +1016,18 @@ def _compile_execution_plan_version(
 
     proposal_version, media_digest, snapshot = validate_guided_snapshot(guided_snapshot)
     policy = _DIRECTION_POLICY[snapshot.direction]
-    transition_type = policy["transition"] if snapshot.pace != "fast" else "none"
-    transition_duration_s = 0.2 if snapshot.pace == "relaxed" else 0.12
+    mixed_timing = snapshot.mixed_media_timing
+    quick_mixed_timing = uses_quick_photo_long_video_timing(mixed_timing)
+    transition_type = (
+        "none"
+        if quick_mixed_timing
+        else policy["transition"]
+        if snapshot.pace != "fast"
+        else "none"
+    )
+    transition_duration_s = (
+        0.0 if quick_mixed_timing else 0.2 if snapshot.pace == "relaxed" else 0.12
+    )
     selected_ids = _selected_media_ids(snapshot)
     by_id = {ref.media_id: ref for ref in snapshot.media}
     if not selected_ids:
@@ -950,6 +1053,7 @@ def _compile_execution_plan_version(
             duration_s=float(snapshot.duration_s),
             track=track,
             video_media_ids={ref.media_id for ref in snapshot.media if ref.kind == "video"},
+            mixed_media_timing=snapshot.mixed_media_timing,
         )
         for cut, (start_s, end_s, beat_time_s) in zip(
             snapshot.fast_cuts, output_windows, strict=True
@@ -1026,6 +1130,7 @@ def _compile_execution_plan_version(
                 selected_media_ids=selected_ids,
                 story_timeline=moments,
                 beat_windows=beat_windows,
+                mixed_media_timing=mixed_timing,
                 text_elements=_text_elements(
                     snapshot, beat_windows, policy, compiler_version=compiler_version
                 ),
@@ -1051,6 +1156,7 @@ def _compile_execution_plan_version(
             policy=policy,
             transition_type=transition_type,
             transition_duration_s=transition_duration_s,
+            mixed_media_timing=mixed_timing,
         )
         if compiler_version >= 4
         else None
@@ -1094,6 +1200,7 @@ def _compile_execution_plan_version(
                 min_moment_s=float(policy["min_moment_s"]),
                 overlaps_s=overlaps_s,
                 beat_topic=beat.topic,
+                mixed_media_timing=mixed_timing,
             )
         beat_start = cursor
         for media_index, media_id in enumerate(beat.media_ids):
@@ -1156,6 +1263,7 @@ def _compile_execution_plan_version(
             selected_media_ids=selected_ids,
             story_timeline=moments,
             beat_windows=beat_windows,
+            mixed_media_timing=mixed_timing,
             text_elements=_text_elements(
                 snapshot,
                 beat_windows,

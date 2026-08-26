@@ -7,7 +7,9 @@ import pytest
 from app.schemas.edit_proposal import (
     EditConversationTurn,
     EditProposalSnapshot,
+    FastMontageCut,
     MediaRef,
+    MixedMediaTimingProfile,
     ProposalBrief,
     StoryBeat,
     canonical_media_digest,
@@ -93,6 +95,73 @@ def _snapshot() -> EditProposalSnapshot:
             )
         ],
     )
+
+
+def _photo_only_mixed_snapshot(*, video_duration_s: float) -> EditProposalSnapshot:
+    photos = [
+        MediaRef(
+            lane="asset",
+            media_id=f"photo-{index}",
+            gcs_path=f"users/u/plan/i/photo-{index}.jpg",
+            generation="1",
+            kind="image",
+        )
+        for index in range(4)
+    ]
+    video = MediaRef(
+        lane="clip",
+        media_id="video-1",
+        gcs_path="users/u/plan/i/video.mp4",
+        generation="1",
+        kind="video",
+        duration_s=video_duration_s,
+    )
+    return EditProposalSnapshot(
+        direction="fast_montage",
+        goal="Keep the photos moving",
+        pace="fast",
+        duration_s=3,
+        title="Quick photo sequence",
+        media=[*photos, video],
+        story_beats=[
+            StoryBeat(
+                beat_id="beat-1",
+                topic="Details",
+                media_ids=[photo.media_id for photo in photos],
+                duration_s=3,
+            )
+        ],
+        fast_cuts=[
+            FastMontageCut(
+                cut_id=f"cut-{index}",
+                media_id=photo.media_id,
+                source_start_s=0,
+                source_end_s=0.75,
+                output_duration_s=0.75,
+                role="hook" if index == 0 else "payoff" if index == 3 else "build",
+            )
+            for index, photo in enumerate(photos)
+        ],
+        mixed_media_timing=MixedMediaTimingProfile(
+            image_hold="very_fast", video_hold="longer", boundary_style="cut"
+        ),
+    )
+
+
+def test_mixed_media_kind_requirement_ignores_video_too_short_for_a_fast_cut() -> None:
+    snapshot = _photo_only_mixed_snapshot(video_duration_s=0.2)
+
+    assert {cut.media_id for cut in snapshot.fast_cuts or []} == {
+        "photo-0",
+        "photo-1",
+        "photo-2",
+        "photo-3",
+    }
+
+
+def test_mixed_media_kind_requirement_still_requires_a_renderable_video() -> None:
+    with pytest.raises(ValueError, match="must use both photos and videos"):
+        _photo_only_mixed_snapshot(video_duration_s=2.0)
 
 
 def _approved_item():
