@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.53.0.1] — 2026-08-26
+
+### Fixed
+- **Failed Creator renders can now start a different creative direction without re-uploading.** The retained-project recovery view exposes the existing Create with Kria conversation alongside render retry, so legacy plans that lost their original request can be replaced with a fresh confirmed direction.
+
 ## [0.53.0.0] — 2026-08-25
 
 ### Added
