@@ -53,6 +53,10 @@ The confirmed request can carry the typed `mixed_media_timing` profile: photos u
 and fast-montage boundaries are hard cuts. The profile is compiled through the
 proposal snapshot and deterministic fallback; absent the profile, legacy timing
 limits remain unchanged.
+When both image and video media are available, this profile forces the guided
+specialist so the proposal can select and time both kinds; if that capability is
+unavailable, planning fails closed before confirmation rather than rendering a
+video-only native fallback.
 Audio-led and voiceover formats always use the native renderer. The existing
 `dispatch_item_render_for` gateway mints the Job. V1 then follows that exact Job
 and records its selected ready variant and `render_generation_id`. The creator can
