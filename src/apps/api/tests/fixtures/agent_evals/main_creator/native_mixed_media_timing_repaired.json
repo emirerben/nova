@@ -1,0 +1,52 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-08-25-v7",
+  "input": {
+    "user_message": "Photos should have a very fast transition, videos can be a bit longer",
+    "creator_context": "Travel creator; warm and direct.",
+    "item_context": "A day exploring Lisbon.",
+    "media_context": [
+      {"media_id": "clip-1", "kind": "video", "creator_note": "arrival"},
+      {"media_id": "clip-2", "kind": "video", "creator_note": "sunset"},
+      {"media_id": "photo-1", "kind": "image", "creator_note": "city detail"}
+    ],
+    "conversation": [],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-1",
+      "edit_format": "montage",
+      "render_program": "guided",
+      "has_voiceover": false,
+      "media": [
+        {"media_id": "clip-1", "kind": "video", "label": "arrival"},
+        {"media_id": "clip-2", "kind": "video", "label": "sunset"},
+        {"media_id": "photo-1", "kind": "image", "label": "city detail"}
+      ],
+      "catalog": [
+        {"catalog_id": "music-track-1", "kind": "music", "label": "Warm travel beat"}
+      ],
+      "capabilities": {
+        "dispatch_render": {"available": true},
+        "draft_guided_proposal": {"available": true},
+        "media_overlays": {"available": false, "reason_code": "disabled_by_setting"},
+        "sound_effects": {"available": false, "reason_code": "disabled_by_setting"},
+        "transitions": {"available": true},
+        "wide_looks": {"available": false, "reason_code": "disabled_by_setting"}
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 60.0
+      },
+      "context_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  },
+  "raw_text": "{\"action\":{\"kind\":\"propose_strategy\",\"strategy\":{\"direction\":\"fast_montage\",\"edit_format\":\"montage\",\"archetype\":\"montage\",\"audio_strategy\":\"licensed_music\",\"story_structure\":[\"Arrival hook\",\"Rapid city-detail photos\",\"Sunset payoff\"],\"caption_style\":\"clean\",\"intro_hook\":\"One day in Lisbon\",\"pacing\":\"fast\",\"render_program\":\"native\",\"selected_media_ids\":[\"clip-1\",\"clip-2\"],\"optional_treatments\":[],\"rationale\":\"Use quick photo cuts around longer usable video moments.\"},\"summary\":\"Quick photos and longer video moments in a hard-cut Lisbon story.\"}}",
+  "output": {},
+  "meta": {
+    "source": "hand-authored-v1-safety",
+    "contract": "model-native mixed-media output is repaired to guided when the typed timing profile needs the complete image/video universe"
+  }
+}
