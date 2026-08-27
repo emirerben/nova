@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,10 +18,26 @@ from app.agents._schemas.content_plan import PlanItemSpec
 from app.models import ContentPlan, PlanItem
 from app.models import Persona as PersonaRow
 from app.tasks.content_plan_build import (
+    _guided_render_queue,
     generate_content_plan,
     generate_plan_item_videos,
     regenerate_content_plan,
 )
+
+
+def test_mixed_media_guided_render_uses_deploy_fenced_queue() -> None:
+    approved = {
+        "snapshot": {
+            "mixed_media_timing": {
+                "image_hold": "very_fast",
+                "video_hold": "longer",
+                "boundary_style": "cut",
+            }
+        }
+    }
+
+    assert _guided_render_queue(approved) == "creator-guided-jobs"
+    assert _guided_render_queue(None) == "plan-jobs"
 
 
 @pytest.fixture(autouse=True)
@@ -46,6 +63,11 @@ def _legacy_task_owner_loader(monkeypatch: pytest.MonkeyPatch):
 
 
 def _session_with(item, plan, persona_row) -> MagicMock:
+    # Live dispatch now resolves every job to required_v1/off_v1. Most legacy
+    # MagicMock fixtures predate the preference and otherwise fabricate a
+    # truthy attribute on access, accidentally requesting strict cleanup.
+    if "speech_cleanup_enabled" not in vars(item):
+        item.speech_cleanup_enabled = False
     plan.id = item.content_plan_id
     session = MagicMock()
 
@@ -238,6 +260,73 @@ def test_smart_captions_context_is_resolved_and_pinned_at_dispatch() -> None:
         db=ctx.__enter__.return_value,
     )
     assert mock_build.call_args.kwargs["smart_captions"] == smart_context
+
+
+@pytest.mark.parametrize(
+    ("requested", "expected_contract"),
+    [(False, "off_v1"), (True, "required_v1")],
+)
+def test_dispatch_snapshots_only_explicit_speech_cleanup_contracts(
+    monkeypatch: pytest.MonkeyPatch,
+    requested: bool,
+    expected_contract: str,
+) -> None:
+    from app.config import settings
+    from app.tasks.content_plan_build import _dispatch_item_render
+
+    item_id = uuid.uuid4()
+    clip_path = "users/u/plan/i/talking.mp4"
+    item = SimpleNamespace(
+        id=item_id,
+        clip_gcs_paths=[clip_path],
+        clip_assignments=[{"media_id": "m1", "gcs_path": clip_path}],
+        filming_guide=[],
+        theme="camera explanation",
+        idea="explain one idea",
+        edit_format="subtitled",
+        audio_mode="kria",
+        voiceover_gcs_path=None,
+        landscape_fit="fit",
+        montage_preset="classic",
+        voiceover_bed_level=None,
+        voiceover_caption_style=None,
+        smart_sound_design_enabled=True,
+        speech_cleanup_enabled=requested,
+        current_job_id=None,
+    )
+    plan = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        preference_summary="",
+        ownership_epoch=0,
+    )
+    job = SimpleNamespace(id=uuid.uuid4(), assembly_plan={})
+    session = MagicMock()
+
+    monkeypatch.setattr(settings, "speech_cleanup_mode", "opt_in")
+    monkeypatch.setattr(settings, "silence_cut_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    with (
+        patch(
+            "app.services.smart_captions.resolve_smart_captions_context_sync",
+            return_value=None,
+        ),
+        patch("app.services.generative_jobs.build_generative_job", return_value=job),
+        patch("app.services.job_dispatch.enqueue_orchestrator_sync"),
+    ):
+        result = _dispatch_item_render(
+            session,
+            item,
+            plan,
+            {"tone": "direct", "content_pillars": []},
+            ownership_epoch=0,
+        )
+
+    assert result.outcome == "dispatched"
+    assert job.assembly_plan["speech_cleanup_requested"] is requested
+    assert job.assembly_plan["speech_cleanup_contract"] == expected_contract
+    assert job.assembly_plan["silence_cut_disabled"] is (not requested)
+    assert job.assembly_plan["speech_cleanup_contract"] != "legacy_auto"
 
 
 def test_missing_persona_rejects_before_job_or_queue() -> None:

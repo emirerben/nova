@@ -10,6 +10,8 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Literal
 
@@ -39,6 +41,93 @@ ConversationRole = Literal["user", "agent"]
 ConversationPhase = Literal["briefing", "review"]
 ConversationSuggestion = Annotated[str, Field(min_length=1, max_length=100)]
 EDIT_CONVERSATION_MAX_TURNS = 20
+CREATOR_SELECTED_ORIENTATION_REASON = "The creator selected this output format."
+
+
+class MixedMediaTimingProfile(BaseModel):
+    """Typed timing intent for mixed photo/video edits.
+
+    The profile is optional so old proposals keep their exact timing behavior.
+    Values describe preferences, not permission to exceed source duration.
+    """
+
+    image_hold: Literal["very_fast", "standard"] = "standard"
+    video_hold: Literal["longer", "standard"] = "standard"
+    boundary_style: Literal["cut", "crossfade"] = "crossfade"
+
+
+@dataclass(frozen=True)
+class MixedMediaHoldBounds:
+    """One source of truth for the compiled quick-photo/long-video policy."""
+
+    minimum_s: float
+    preferred_s: float
+    maximum_s: float
+
+
+MIXED_MEDIA_IMAGE_HOLD = MixedMediaHoldBounds(0.5, 0.65, 0.8)
+MIXED_MEDIA_VIDEO_HOLD = MixedMediaHoldBounds(1.5, 2.0, 3.0)
+
+
+def mixed_media_hold_bounds(kind: MediaKind) -> MixedMediaHoldBounds:
+    """Return the approved bounds for one media kind."""
+
+    return MIXED_MEDIA_IMAGE_HOLD if kind == "image" else MIXED_MEDIA_VIDEO_HOLD
+
+
+def uses_quick_photo_long_video_timing(
+    profile: MixedMediaTimingProfile | None,
+) -> bool:
+    """Return whether the profile authorizes the expanded per-kind bounds."""
+
+    return bool(
+        profile is not None
+        and profile.image_hold == "very_fast"
+        and profile.video_hold == "longer"
+        and profile.boundary_style == "cut"
+    )
+
+
+def recognize_mixed_media_timing(text: str) -> MixedMediaTimingProfile | None:
+    """Recognize an affirmative quick-photo/long-video request without trusting an LLM."""
+
+    normalized = " ".join(str(text or "").casefold().split())
+    photo = r"(?:photos?|images?|stills?|pictures?)"
+    photo_fast = r"(?:very fast|faster|quick(?:ly)?|snappy|rapid|flash(?: by)?)"
+    video = r"(?:videos?|clips?|footage)"
+    video_long = r"(?:longer|more time|breathe|linger|hold|slower)"
+    negation = r"(?:do not|don't|dont|never|should not|shouldn't|not)"
+
+    def paired(left: str, right: str, *, gap: int = 48) -> bool:
+        return bool(
+            re.search(rf"\b{left}\b.{{0,{gap}}}\b{right}\b", normalized)
+            or re.search(rf"\b{right}\b.{{0,{gap}}}\b{left}\b", normalized)
+        )
+
+    def negated(media: str, timing: str) -> bool:
+        return bool(
+            re.search(
+                rf"\b{negation}\b.{{0,24}}\b{media}\b.{{0,24}}\b{timing}\b",
+                normalized,
+            )
+            or re.search(
+                rf"\b{media}\b.{{0,24}}\b{negation}\b.{{0,24}}\b{timing}\b",
+                normalized,
+            )
+        )
+
+    if (
+        paired(photo, photo_fast)
+        and paired(video, video_long)
+        and not negated(photo, photo_fast)
+        and not negated(video, video_long)
+    ):
+        return MixedMediaTimingProfile(
+            image_hold="very_fast", video_hold="longer", boundary_style="cut"
+        )
+    return None
+
+
 # A plan item may contain up to 50 source clips and 100 visual-pool assets.
 # Guided-edit snapshots must preserve the complete deduplicated set so a
 # Main Creator-confirmed plan never fails after the product has accepted it.
@@ -87,7 +176,7 @@ class FastMontageCut(BaseModel):
     media_id: str = Field(min_length=1, max_length=100)
     source_start_s: float = Field(ge=0)
     source_end_s: float = Field(gt=0)
-    output_duration_s: float = Field(ge=0.4, le=1.2)
+    output_duration_s: float = Field(ge=0.4, le=3.0)
     role: Literal["hook", "build", "payoff"]
     transition: Literal["none"] = "none"
     beat_align: bool = False
@@ -129,6 +218,7 @@ class EditProposalSnapshot(BaseModel):
     media: list[MediaRef] = Field(min_length=1, max_length=MAX_EDIT_PROPOSAL_MEDIA)
     story_beats: list[StoryBeat] = Field(min_length=1, max_length=20)
     fast_cuts: list[FastMontageCut] | None = Field(default=None, min_length=1, max_length=80)
+    mixed_media_timing: MixedMediaTimingProfile | None = None
     output_orientation: OutputOrientation | None = None
     output_orientation_reason: str = Field(default="", max_length=240)
 
@@ -153,12 +243,67 @@ class EditProposalSnapshot(BaseModel):
             if missing:
                 raise ValueError("fast montage cuts reference missing media IDs")
             by_id = {ref.media_id: ref for ref in self.media}
+            quick_mixed_timing = uses_quick_photo_long_video_timing(self.mixed_media_timing)
+            if not quick_mixed_timing and any(
+                cut.output_duration_s > 1.2 + 0.001 for cut in self.fast_cuts
+            ):
+                raise ValueError(
+                    "fast montage cuts above 1.2s require the mixed-media timing profile"
+                )
+            cut_kinds = {by_id[cut.media_id].kind for cut in self.fast_cuts}
+            # Only require both lanes when each has at least one source that
+            # could legally appear in a fast cut. A sub-0.4s or unprobed video
+            # cannot satisfy FastMontageCut's minimum/source-bound contract and
+            # must not make an otherwise valid photo montage impossible.
+            available_kinds = {
+                ref.kind
+                for ref in self.media
+                if ref.kind == "image"
+                or (ref.duration_s is not None and ref.duration_s >= 0.4 - 0.001)
+            }
+            if quick_mixed_timing and len(available_kinds) > 1 and cut_kinds != available_kinds:
+                raise ValueError("mixed-media timing must use both photos and videos")
+            image_ids: set[str] = set()
+            video_windows: dict[str, list[tuple[float, float, float]]] = {}
             for cut in self.fast_cuts:
                 ref = by_id[cut.media_id]
-                if ref.kind != "video":
+                if ref.kind == "image":
+                    bounds = mixed_media_hold_bounds(ref.kind)
+                    if quick_mixed_timing and not (
+                        bounds.minimum_s - 0.001
+                        <= cut.output_duration_s
+                        <= bounds.maximum_s + 0.001
+                    ):
+                        raise ValueError("mixed-media photos must hold for 0.5-0.8s")
+                    if quick_mixed_timing and ref.media_id in image_ids:
+                        raise ValueError("mixed-media photos may only be used once")
+                    image_ids.add(ref.media_id)
                     continue
                 if ref.duration_s is None or cut.source_end_s > ref.duration_s + 0.001:
                     raise ValueError("fast montage cut exceeds its server-owned video duration")
+                video_windows.setdefault(ref.media_id, []).append(
+                    (cut.source_start_s, cut.source_end_s, cut.output_duration_s)
+                )
+            for media_id, windows in video_windows.items():
+                ordered = sorted(windows)
+                if any(
+                    current[0] < previous[1] - 0.001
+                    for previous, current in zip(ordered, ordered[1:], strict=False)
+                ):
+                    raise ValueError("fast montage video windows must not overlap")
+                if quick_mixed_timing:
+                    source_duration_s = float(by_id[media_id].duration_s or 0.0)
+                    bounds = mixed_media_hold_bounds("video")
+                    total_used_s = sum(window[2] for window in windows)
+                    for _start_s, _end_s, output_duration_s in windows:
+                        remaining_for_cut_s = source_duration_s - (total_used_s - output_duration_s)
+                        if (
+                            remaining_for_cut_s >= bounds.minimum_s - 0.001
+                            and output_duration_s < bounds.minimum_s - 0.001
+                        ) or output_duration_s > bounds.maximum_s + 0.001:
+                            raise ValueError(
+                                "mixed-media videos must hold for 1.5-3.0s when source permits"
+                            )
             if self.fast_cuts[0].role != "hook":
                 raise ValueError("fast montage must open with a hook cut")
             if any(cut.transition != "none" for cut in self.fast_cuts):
@@ -171,7 +316,7 @@ class EditProposalSnapshot(BaseModel):
             self.output_orientation = orientation
             self.output_orientation_reason = reason
         elif not self.output_orientation_reason:
-            self.output_orientation_reason = "The creator selected this output format."
+            self.output_orientation_reason = CREATOR_SELECTED_ORIENTATION_REASON
         return self
 
 
@@ -297,6 +442,11 @@ class ProposalBrief(BaseModel):
     # footage is actually available (draft_edit_proposal clamps this against
     # analyzed media before it reaches the agent). See agents/DECISIONS.md.
     duration_s: int = Field(default=24, ge=3, le=60)
+    creator_request: str = Field(default="", max_length=1000)
+    mixed_media_timing: MixedMediaTimingProfile | None = None
+    # Main Creator can pin the short-form delivery canvas without changing
+    # ordinary guided-edit orientation inference. None preserves legacy briefs.
+    output_orientation: OutputOrientation | None = None
 
 
 class EditConversationTurn(BaseModel):
@@ -322,6 +472,10 @@ class EditProposal(BaseModel):
     schema_version: Literal[1] = 1
     proposal_version: int = Field(ge=1)
     generation_attempt_id: str = Field(min_length=1, max_length=100)
+    # Set when the heavy analysis/planning phase actually starts, after any
+    # asset-readiness retries. Creator reconciliation uses this to avoid
+    # expiring a queued attempt before its worker task budget has elapsed.
+    planning_started_at: datetime | None = None
     media_digest: str | None = Field(default=None, min_length=64, max_length=64)
     status: ProposalStatus
     # Who/what approved this attempt — "auto" for AI-designs-by-default

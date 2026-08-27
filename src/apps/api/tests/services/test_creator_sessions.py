@@ -11,6 +11,14 @@ import pytest
 
 from app.schemas.edit_proposal import EditProposal, ProposalFailure
 from app.services import creator_sessions
+from app.tasks import edit_proposal_build
+
+
+def test_execution_lease_exceeds_proposal_task_hard_limit() -> None:
+    assert creator_sessions.EXECUTION_RECEIPT_LEASE_S == 1650
+    assert (
+        creator_sessions.EXECUTION_RECEIPT_LEASE_S > edit_proposal_build._TASK_LIMITS["time_limit"]
+    )
 
 
 def _session(**overrides):
@@ -493,6 +501,10 @@ async def test_reconcile_expires_a_succeeded_but_stalled_guided_attempt(monkeypa
     db.get.return_value = item
     db.execute.return_value = result
     monkeypatch.setattr(creator_sessions, "append_event", AsyncMock())
+    monkeypatch.setattr(
+        "app.services.queue_state.get_task_runtime_state",
+        MagicMock(return_value=SimpleNamespace(state="not_found")),
+    )
 
     changed = await creator_sessions.reconcile_render_state(db, session)
 
@@ -500,6 +512,94 @@ async def test_reconcile_expires_a_succeeded_but_stalled_guided_attempt(monkeypa
     assert session.phase == "failed"
     assert receipt.status == "failed"
     assert item.edit_proposal["design_fallback"] == "creator_execution_expired"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_does_not_expire_a_creator_task_still_waiting_in_queue(
+    monkeypatch,
+) -> None:
+    attempt_id = str(uuid.uuid4())
+    session = _session(
+        phase="executing",
+        active_plan={"guided_generation_attempt_id": attempt_id},
+    )
+    item = SimpleNamespace(
+        id=session.plan_item_id,
+        current_job_id=None,
+        edit_proposal=EditProposal(
+            proposal_version=2,
+            generation_attempt_id=attempt_id,
+            status="analyzing",
+            approval_mode="auto",
+        ).model_dump(mode="json"),
+    )
+    receipt = SimpleNamespace(
+        status="succeeded",
+        created_at=datetime.now(UTC)
+        - timedelta(seconds=creator_sessions.EXECUTION_RECEIPT_LEASE_S + 1),
+        error=None,
+        completed_at=datetime.now(UTC),
+    )
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = receipt
+    db = AsyncMock()
+    db.get.return_value = item
+    db.execute.return_value = result
+    append = AsyncMock()
+    runtime = MagicMock(return_value=SimpleNamespace(state="queued"))
+    monkeypatch.setattr(creator_sessions, "append_event", append)
+    monkeypatch.setattr("app.services.queue_state.get_task_runtime_state", runtime)
+
+    changed = await creator_sessions.reconcile_render_state(db, session)
+
+    assert changed is False
+    assert session.phase == "executing"
+    assert receipt.status == "succeeded"
+    append.assert_not_awaited()
+    runtime.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_does_not_expire_a_started_attempt_inside_its_task_budget(
+    monkeypatch,
+) -> None:
+    attempt_id = str(uuid.uuid4())
+    session = _session(
+        phase="executing",
+        active_plan={"guided_generation_attempt_id": attempt_id},
+    )
+    item = SimpleNamespace(
+        id=session.plan_item_id,
+        current_job_id=None,
+        edit_proposal=EditProposal(
+            proposal_version=2,
+            generation_attempt_id=attempt_id,
+            planning_started_at=datetime.now(UTC),
+            status="analyzing",
+            approval_mode="auto",
+        ).model_dump(mode="json"),
+    )
+    receipt = SimpleNamespace(
+        status="succeeded",
+        created_at=datetime.now(UTC)
+        - timedelta(seconds=creator_sessions.EXECUTION_RECEIPT_LEASE_S + 1),
+        error=None,
+        completed_at=datetime.now(UTC),
+    )
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = receipt
+    db = AsyncMock()
+    db.get.return_value = item
+    db.execute.return_value = result
+    append = AsyncMock()
+    monkeypatch.setattr(creator_sessions, "append_event", append)
+
+    changed = await creator_sessions.reconcile_render_state(db, session)
+
+    assert changed is False
+    assert session.phase == "executing"
+    assert receipt.status == "succeeded"
+    append.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -552,6 +652,10 @@ async def test_reconcile_ignores_an_old_terminal_job_when_guided_attempt_stalls(
     db.get.side_effect = [item, old_job]
     db.execute.return_value = result
     monkeypatch.setattr(creator_sessions, "append_event", AsyncMock())
+    monkeypatch.setattr(
+        "app.services.queue_state.get_task_runtime_state",
+        MagicMock(return_value=SimpleNamespace(state="not_found")),
+    )
 
     changed = await creator_sessions.reconcile_render_state(db, session)
 

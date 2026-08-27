@@ -2,6 +2,47 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.53.0.4] — 2026-08-27
+
+### Fixed
+- **Finished videos can now start a new Kria direction without losing their existing render or re-uploading media.** The release desk keeps Create with Kria available after a successful result, including the terminal-session restart control that opens a fresh creative request.
+
+## [0.53.0.3] — 2026-08-27
+
+### Fixed
+- **Mixed photo/video Creator edits now render on the intended vertical canvas with frame-accurate pacing.** The confirmed short-form direction pins 9:16 through planning and conversational revisions, fast-photo/longer-video plans prevent CFR rounding from adding extra frames, and final H.264/AAC outputs enforce the approved duration within 0.15 seconds without stretching or changing legacy edits.
+
+## [0.53.0.2] — 2026-08-26
+
+### Fixed
+- **Mixed photo/video timing requests now always reach the specialist that can use both media kinds.** When photos and videos are available, the typed fast-photo/longer-video profile deterministically selects guided planning even if the Main Creator model suggests the clip-only native path, preventing a failed item's legacy approved timeline from being rendered again. If guided planning is unavailable, Creator stops before confirmation instead of silently rendering a video-only fallback.
+
+## [0.53.0.1] — 2026-08-26
+
+### Fixed
+- **Failed Creator renders can now start a different creative direction without re-uploading.** The retained-project recovery view exposes the existing Create with Kria conversation alongside render retry, so legacy plans that lost their original request can be replaced with a fresh confirmed direction.
+
+## [0.53.0.0] — 2026-08-25
+
+### Added
+- **Creators can ask for fast photo cuts and longer video moments in mixed-media edits.** The confirmation preview shows the normalized pacing, photos hold for 0.5–0.8 seconds, usable video moments hold for 1.5–3 seconds when source footage permits, and boundaries use hard cuts while the editor selects the strongest subset of the uploaded media.
+
+### Changed
+- **Large Creator plans can finish analyzing extensive uploads without restarting completed work.** Proposal tasks and execution leases now cover long mixed-media sessions, completed clip analyses checkpoint incrementally, and retries reuse safe cached results while preserving generation and ownership fences.
+- **Creator planning stays faithful when an agent response is truncated or invalid.** The confirmed request and typed timing profile survive clarification, specialist planning, revision, and deterministic fallback, while legacy plans without the profile retain their previous timing behavior.
+
+### Fixed
+- **Fast montages now enforce media-specific timing without stretching sources or drifting from the approved duration.** Validation and fallback require both media kinds when available, non-overlapping video windows, exact duration within tolerance, and source-safe cuts.
+
+## [0.52.0.2] — 2026-08-25
+
+### Changed
+- **Creators can now choose reliable speech cleanup behavior for new renders.** Explicit On and Off contracts survive queue and worker boundaries, while historical jobs keep their original compatibility behavior.
+
+### Fixed
+- **Talking-to-camera and subtitled renders no longer silently publish uncut video after an opted-in cleanup failure.** Required cleanup failures now surface typed reasons, and benign short/no-speech/no-change cases remain valid no-ops with regression coverage.
+- **Speech cleanup dispatch and render recovery now agree on the same live rollout modes.** Disabled rollout settings fail closed instead of restoring legacy automatic cuts.
+
 ## [0.52.0.1] — 2026-08-25
 
 ### Fixed

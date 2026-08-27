@@ -24,6 +24,7 @@ import {
   type EditProposalDirection,
   type EditProposalPace,
   type EditProposalSnapshot,
+  type CreatorAgentMixedMediaTimingProfile,
   type PlanItem,
 } from "@/lib/plan-api";
 import { InfoDot } from "@/components/ui/InfoDot";
@@ -68,7 +69,15 @@ const PACE_OPTIONS: Array<{ value: EditProposalPace; label: string }> = [
   { value: "fast", label: "Fast" },
 ];
 
-const DEFAULT_BRIEF = {
+type DraftEditBrief = {
+  direction: EditProposalDirection;
+  goal: string;
+  pace: EditProposalPace;
+  duration_s: number;
+  mixed_media_timing?: CreatorAgentMixedMediaTimingProfile | null;
+};
+
+const DEFAULT_BRIEF: DraftEditBrief = {
   direction: "guided_story" as EditProposalDirection,
   goal: "",
   pace: "balanced" as EditProposalPace,
@@ -244,6 +253,7 @@ export default function EditProposalCard({
         goal: retryBrief.goal,
         pace: retryBrief.pace,
         duration_s: retryBrief.duration_s,
+        mixed_media_timing: retryBrief.mixed_media_timing,
       });
     }
     if (proposal?.status !== "approved") setEditingApproved(false);

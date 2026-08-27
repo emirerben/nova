@@ -12,9 +12,12 @@ from app.agents._schemas.text_element import TextElement
 from app.pipeline.generative_overlays import build_overlays_from_text_elements
 from app.pipeline.guided_story import (
     GuidedStoryError,
+    _allocate_beat_durations,
     _compile_execution_plan_version,
     _download_selected,
+    _enforce_strict_story_duration,
     _mix_pinned_music,
+    _quantize_quick_mixed_timeline,
     _render_moments,
     _render_video_moment,
     _upload_verified_outputs,
@@ -30,6 +33,7 @@ from app.schemas.edit_proposal import (
     EditProposalSnapshot,
     FastMontageCut,
     MediaRef,
+    MixedMediaTimingProfile,
     StoryBeat,
     canonical_media_digest,
 )
@@ -308,6 +312,55 @@ def test_fast_montage_none_policy_resolves_to_hard_cut_boundaries() -> None:
     assert guided_story._resolved_transition_boundaries(plan) == ["cut", "cut"]
 
 
+def test_mixed_media_timing_disables_legacy_beat_snap_below_photo_minimum() -> None:
+    raw = _guided_snapshot(direction="fast_montage")
+    proposal = EditProposalSnapshot.model_validate(raw["approved_proposal"])
+    proposal.duration_s = 3
+    proposal.mixed_media_timing = MixedMediaTimingProfile(
+        image_hold="very_fast",
+        video_hold="longer",
+        boundary_style="cut",
+    )
+    proposal.fast_cuts = [
+        FastMontageCut(
+            cut_id="photo-hook",
+            media_id="food-photo",
+            source_start_s=0.0,
+            source_end_s=0.64,
+            output_duration_s=0.64,
+            role="hook",
+            beat_align=True,
+        ),
+        FastMontageCut(
+            cut_id="video-payoff",
+            media_id="coast-video",
+            source_start_s=2.0,
+            source_end_s=4.36,
+            output_duration_s=2.36,
+            role="payoff",
+        ),
+    ]
+    raw["approved_proposal"] = proposal.model_dump(mode="json")
+    raw["media_digest"] = canonical_media_digest(proposal.media)
+
+    plan = compile_execution_plan(
+        raw,
+        track={
+            "track_id": "track-1",
+            "title": "Beat",
+            "audio_gcs_path": "music/beat.mp3",
+            "generation": "1",
+            "start_s": 0.0,
+            "beat_timestamps_s": [0.495],
+        },
+    )
+
+    assert plan["story_timeline"][0]["duration_s"] == pytest.approx(20 / 30)
+    assert plan["story_timeline"][0].get("beat_time_s") is None
+    assert plan["story_timeline"][1]["duration_s"] == pytest.approx(70 / 30)
+    assert validate_execution_plan(plan, raw) == plan
+
+
 def _orientation_snapshot(aspects: list[float], durations: list[float] | None = None) -> dict:
     durations = durations or [2.0] * len(aspects)
     media = [
@@ -501,6 +554,233 @@ def test_guided_story_long_thought_wraps_without_shrinking_to_caption_size() -> 
     assert size == 60
     assert 2 <= len(lines) <= 4
     assert max(font.measureText(line) for line in lines) <= max_width
+
+
+def test_mixed_media_timing_allocator_keeps_photos_quick_and_videos_longer() -> None:
+    refs = [
+        SimpleNamespace(kind="image", duration_s=None),
+        SimpleNamespace(kind="video", duration_s=8.0),
+    ]
+    durations = _allocate_beat_durations(
+        refs,
+        beat_duration_s=3.6,
+        min_moment_s=1.4,
+        overlaps_s=[0.0, 0.0],
+        beat_topic="mixed",
+        mixed_media_timing=MixedMediaTimingProfile(
+            image_hold="very_fast", video_hold="longer", boundary_style="cut"
+        ),
+    )
+    assert 0.5 <= durations[0] <= 0.8
+    assert 1.5 <= durations[1] <= 3.0
+    assert sum(durations) == pytest.approx(3.6, abs=0.001)
+
+
+def test_mixed_media_profile_compiles_to_hard_cut_execution_plan() -> None:
+    raw = _guided_snapshot()
+    snapshot = EditProposalSnapshot.model_validate(raw["approved_proposal"])
+    snapshot = snapshot.model_copy(
+        update={
+            "duration_s": 4,
+            "mixed_media_timing": MixedMediaTimingProfile(
+                image_hold="very_fast", video_hold="longer", boundary_style="cut"
+            ),
+            "story_beats": [
+                StoryBeat(
+                    beat_id="mixed",
+                    topic="Mixed",
+                    media_ids=["food-photo", "coast-video", "town-photo"],
+                    duration_s=4,
+                )
+            ],
+        }
+    )
+    raw["approved_proposal"] = snapshot.model_dump(mode="json")
+
+    plan = compile_execution_plan(raw, track=None)
+
+    assert plan["mixed_media_timing"] == {
+        "image_hold": "very_fast",
+        "video_hold": "longer",
+        "boundary_style": "cut",
+    }
+    assert plan["transition_policy"] == {"type": "none", "duration_s": 0.0}
+    image_durations = [
+        moment["duration_s"] for moment in plan["story_timeline"] if moment["kind"] == "image"
+    ]
+    video_durations = [
+        moment["duration_s"] for moment in plan["story_timeline"] if moment["kind"] == "video"
+    ]
+    assert all(0.5 <= duration <= 0.8 for duration in image_durations)
+    assert all(1.5 <= duration <= 3.0 for duration in video_durations)
+    assert plan["resolved_duration_s"] == pytest.approx(4, abs=0.05)
+    assert validate_execution_plan(plan, raw) == plan
+
+
+def test_quick_mixed_fast_montage_quantizes_many_photos_to_exact_frame_budget() -> None:
+    raw = _guided_snapshot(direction="fast_montage")
+    snapshot = EditProposalSnapshot.model_validate(raw["approved_proposal"])
+    snapshot.duration_s = 15
+    snapshot.mixed_media_timing = MixedMediaTimingProfile(
+        image_hold="very_fast",
+        video_hold="longer",
+        boundary_style="cut",
+    )
+    photo_ids = ["food-photo", "town-photo"] + [f"photo-extra-{index}" for index in range(18)]
+    snapshot.media.extend(
+        MediaRef(
+            lane="asset",
+            media_id=media_id,
+            gcs_path=f"users/u/{media_id}.jpg",
+            generation=f"extra-{index}",
+            kind="image",
+        )
+        for index, media_id in enumerate(photo_ids[2:])
+    )
+    snapshot.fast_cuts = [
+        FastMontageCut(
+            cut_id=f"photo-{index}",
+            media_id=media_id,
+            source_start_s=0.0,
+            source_end_s=0.65,
+            output_duration_s=0.65,
+            role="hook" if index == 0 else "build",
+        )
+        for index, media_id in enumerate(photo_ids)
+    ] + [
+        FastMontageCut(
+            cut_id="video-payoff",
+            media_id="coast-video",
+            source_start_s=2.0,
+            source_end_s=4.0,
+            output_duration_s=2.0,
+            role="payoff",
+        )
+    ]
+    raw["approved_proposal"] = snapshot.model_dump(mode="json")
+    raw["media_digest"] = canonical_media_digest(snapshot.media)
+    raw["media_identities"] = [
+        {
+            "lane": ref.lane,
+            "media_id": ref.media_id,
+            "gcs_path": ref.gcs_path,
+            "generation": ref.generation,
+            "kind": ref.kind,
+        }
+        for ref in snapshot.media
+    ]
+
+    plan = compile_execution_plan(raw, track=None)
+
+    assert len(plan["story_timeline"]) == 21
+    assert sum(moment["duration_s"] for moment in plan["story_timeline"]) == pytest.approx(
+        15.0, abs=1e-5
+    )
+    assert all(
+        float(moment["duration_s"]) * 30 == pytest.approx(round(moment["duration_s"] * 30))
+        for moment in plan["story_timeline"]
+    )
+    assert all(
+        0.5 <= moment["duration_s"] <= 0.8
+        for moment in plan["story_timeline"]
+        if moment["kind"] == "image"
+    )
+    assert all(
+        moment["source_end_s"] - moment["source_start_s"]
+        == pytest.approx(moment["duration_s"], abs=1e-6)
+        for moment in plan["story_timeline"]
+    )
+
+
+def test_quick_mixed_frame_budget_keeps_near_minimum_video_at_45_frames() -> None:
+    moments = [
+        {
+            "beat_id": "mixed",
+            "kind": "video",
+            "duration_s": 1.499,
+            "source_start_s": 0.0,
+            "source_end_s": 1.499,
+            "output_start_s": 0.0,
+            "output_end_s": 1.499,
+        },
+        *[
+            {
+                "beat_id": "mixed",
+                "kind": "image",
+                "duration_s": 0.5,
+                "source_start_s": 0.0,
+                "source_end_s": 0.5,
+                "output_start_s": 1.499 + index * 0.5,
+                "output_end_s": 1.999 + index * 0.5,
+            }
+            for index in range(3)
+        ],
+    ]
+    beat_windows = [
+        {
+            "beat_id": "mixed",
+            "approved_duration_s": 2.999,
+            "resolved_duration_s": 2.999,
+            "start_s": 0.0,
+            "end_s": 2.999,
+        }
+    ]
+
+    resolved = _quantize_quick_mixed_timeline(moments, beat_windows, target_s=2.999)
+
+    assert resolved == pytest.approx(3.0)
+    assert moments[0]["duration_s"] == pytest.approx(1.5)
+    assert moments[0]["source_end_s"] == pytest.approx(1.499)
+
+
+def test_quick_mixed_profile_is_disabled_for_video_only_timeline() -> None:
+    raw = _guided_snapshot(direction="fast_montage")
+    snapshot = EditProposalSnapshot.model_validate(raw["approved_proposal"])
+    video = next(ref for ref in snapshot.media if ref.media_id == "coast-video")
+    video.duration_s = 26.0
+    snapshot.media = [video]
+    snapshot.duration_s = 26
+    snapshot.story_beats = [
+        StoryBeat(
+            beat_id="video",
+            topic="Video",
+            media_ids=["coast-video"],
+            duration_s=12,
+        )
+    ]
+    snapshot.mixed_media_timing = MixedMediaTimingProfile(
+        image_hold="very_fast",
+        video_hold="longer",
+        boundary_style="cut",
+    )
+    snapshot.fast_cuts = [
+        FastMontageCut(
+            cut_id=f"video-{index}",
+            media_id="coast-video",
+            source_start_s=index * 0.65,
+            source_end_s=(index + 1) * 0.65,
+            output_duration_s=0.65,
+            role="hook" if index == 0 else "payoff" if index == 39 else "build",
+        )
+        for index in range(40)
+    ]
+    raw["approved_proposal"] = snapshot.model_dump(mode="json")
+    raw["media_digest"] = canonical_media_digest(snapshot.media)
+    raw["media_identities"] = [
+        {
+            "lane": video.lane,
+            "media_id": video.media_id,
+            "gcs_path": video.gcs_path,
+            "generation": video.generation,
+            "kind": video.kind,
+        }
+    ]
+
+    plan = compile_execution_plan(raw, track=None)
+
+    assert plan["mixed_media_timing"] is None
+    assert plan["resolved_duration_s"] == pytest.approx(26.0)
+    assert all(moment["duration_s"] == pytest.approx(0.65) for moment in plan["story_timeline"])
 
 
 @pytest.mark.parametrize(
@@ -917,6 +1197,26 @@ def test_render_moments_forwards_segment_looks_to_image_and_video_renderers(
     assert calls[1][0] == "video"
     assert calls[1][1]["look_preset"] == "smoky_split_tone"
     assert calls[1][1]["look_adjustments"] == video_moment["look_adjustments"]
+    assert calls[1][1]["exact_duration"] is False
+
+    runtime["mixed_media_timing"] = MixedMediaTimingProfile(
+        image_hold="very_fast",
+        video_hold="longer",
+        boundary_style="cut",
+    ).model_dump(mode="json")
+    calls.clear()
+    probe_index = 0
+    _render_moments(
+        runtime,
+        {
+            moment["media_id"]: f"{moment['media_id']}.source"
+            for moment in runtime["story_timeline"]
+        },
+        str(tmp_path),
+    )
+
+    assert calls[1][0] == "video"
+    assert calls[1][1]["exact_duration"] is True
 
 
 def test_compiler_gives_short_video_its_available_time_and_redistributes_beat() -> None:
@@ -1455,6 +1755,7 @@ def test_legacy_pinned_music_without_end_uses_story_duration(monkeypatch) -> Non
 
     assert captured["validated_window_duration_s"] == 4.5
     assert captured["audio_window_duration_s"] == 4.5
+    assert captured["target_video_duration_s"] is None
 
 
 def test_pinned_music_swap_forwards_exact_window_and_level(monkeypatch) -> None:
@@ -1488,6 +1789,7 @@ def test_pinned_music_swap_forwards_exact_window_and_level(monkeypatch) -> None:
         music,
         track,
         output_duration_s=3.5,
+        strict_duration=True,
     )
 
     assert captured["audio_start_offset_s"] == pytest.approx(1.25)
@@ -1495,6 +1797,142 @@ def test_pinned_music_swap_forwards_exact_window_and_level(monkeypatch) -> None:
     assert captured["audio_window_duration_s"] == pytest.approx(3.5)
     assert captured["audio_generation"] == "track-generation-9"
     assert captured["audio_gain"] == pytest.approx(0.35)
+    assert captured["target_video_duration_s"] == pytest.approx(3.5)
+
+
+def test_strict_story_duration_clamps_bounded_no_music_overrun(monkeypatch, tmp_path) -> None:
+    from app.pipeline import guided_story
+
+    captured: dict = {}
+    output = tmp_path / "capped.mp4"
+    output.write_bytes(b"video")
+
+    def fake_run(cmd, **_kwargs):
+        captured["cmd"] = cmd
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(
+        guided_story,
+        "probe_video",
+        lambda path: SimpleNamespace(duration_s=24.25 if path == "assembled.mp4" else 24.0),
+    )
+    monkeypatch.setattr(guided_story.subprocess, "run", fake_run)
+
+    result = _enforce_strict_story_duration("assembled.mp4", str(output), target_s=24.0)
+
+    assert result == str(output)
+    assert captured["cmd"][captured["cmd"].index("-t") + 1] == "24.000000"
+
+
+@pytest.mark.parametrize("actual_s", [23.85, 24.15])
+def test_strict_story_duration_keeps_source_within_tolerance(
+    monkeypatch, tmp_path, actual_s
+) -> None:
+    from app.pipeline import guided_story
+
+    monkeypatch.setattr(
+        guided_story,
+        "probe_video",
+        lambda _path: SimpleNamespace(duration_s=actual_s),
+    )
+    monkeypatch.setattr(
+        guided_story.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("FFmpeg should not run within tolerance"),
+    )
+
+    assert (
+        _enforce_strict_story_duration("assembled.mp4", str(tmp_path / "capped.mp4"), target_s=24.0)
+        == "assembled.mp4"
+    )
+
+
+def test_strict_story_duration_rejects_failed_cap(monkeypatch, tmp_path) -> None:
+    from app.pipeline import guided_story
+
+    monkeypatch.setattr(
+        guided_story,
+        "probe_video",
+        lambda _path: SimpleNamespace(duration_s=24.2),
+    )
+    monkeypatch.setattr(
+        guided_story.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=1),
+    )
+
+    with pytest.raises(GuidedStoryError, match="approved plan"):
+        _enforce_strict_story_duration("assembled.mp4", str(tmp_path / "capped.mp4"), target_s=24.0)
+
+
+def test_strict_story_duration_rejects_material_underrun(monkeypatch, tmp_path) -> None:
+    from app.pipeline import guided_story
+
+    monkeypatch.setattr(
+        guided_story,
+        "probe_video",
+        lambda _path: SimpleNamespace(duration_s=23.7),
+    )
+
+    with pytest.raises(GuidedStoryError, match="approved plan"):
+        _enforce_strict_story_duration("assembled.mp4", str(tmp_path / "capped.mp4"), target_s=24.0)
+
+
+def test_strict_story_duration_rejects_post_cap_mismatch(monkeypatch, tmp_path) -> None:
+    from app.pipeline import guided_story
+
+    output = tmp_path / "capped.mp4"
+    output.write_bytes(b"video")
+    monkeypatch.setattr(
+        guided_story,
+        "probe_video",
+        lambda path: SimpleNamespace(duration_s=24.2 if path == "assembled.mp4" else 24.16),
+    )
+    monkeypatch.setattr(
+        guided_story.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=0),
+    )
+
+    with pytest.raises(GuidedStoryError, match="approved plan"):
+        _enforce_strict_story_duration("assembled.mp4", str(output), target_s=24.0)
+
+
+@pytest.mark.parametrize("create_empty_output", [False, True])
+def test_strict_story_duration_rejects_missing_or_empty_cap(
+    monkeypatch, tmp_path, create_empty_output
+) -> None:
+    from app.pipeline import guided_story
+
+    output = tmp_path / "capped.mp4"
+    if create_empty_output:
+        output.touch()
+    monkeypatch.setattr(
+        guided_story,
+        "probe_video",
+        lambda _path: SimpleNamespace(duration_s=24.2),
+    )
+    monkeypatch.setattr(
+        guided_story.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=0),
+    )
+
+    with pytest.raises(GuidedStoryError, match="approved plan"):
+        _enforce_strict_story_duration("assembled.mp4", str(output), target_s=24.0)
+
+
+def test_strict_story_duration_rejects_material_overrun(monkeypatch, tmp_path) -> None:
+    from app.pipeline import guided_story
+
+    monkeypatch.setattr(
+        guided_story,
+        "probe_video",
+        lambda _path: SimpleNamespace(duration_s=24.3),
+    )
+
+    with pytest.raises(GuidedStoryError, match="approved plan"):
+        _enforce_strict_story_duration("assembled.mp4", str(tmp_path / "capped.mp4"), target_s=24.0)
 
 
 def _verified_receipt(plan: dict) -> dict:
@@ -1599,6 +2037,51 @@ def test_ready_result_requires_canonical_plan_and_complete_stage_receipts(monkey
     corrupt["render_receipt"]["actual_moment_ids"].pop()
     with pytest.raises(GuidedStoryError) as exc:
         validate_ready_result(plan, corrupt, job_id="job-1", verify_storage=False)
+    assert exc.value.code == "guided_story_receipt_mismatch"
+
+    legacy_duration_overrun = copy.deepcopy(result)
+    legacy_duration_overrun["render_receipt"]["actual_duration_s"] += 0.16
+    assert (
+        validate_ready_result(
+            plan,
+            legacy_duration_overrun,
+            job_id="job-1",
+            verify_storage=False,
+        )
+        == legacy_duration_overrun
+    )
+
+    strict_raw = _guided_snapshot()
+    strict_snapshot = EditProposalSnapshot.model_validate(strict_raw["approved_proposal"])
+    strict_snapshot = strict_snapshot.model_copy(
+        update={
+            "duration_s": 4,
+            "mixed_media_timing": MixedMediaTimingProfile(
+                image_hold="very_fast",
+                video_hold="longer",
+                boundary_style="cut",
+            ),
+            "story_beats": [
+                StoryBeat(
+                    beat_id="mixed",
+                    topic="Mixed",
+                    media_ids=["food-photo", "coast-video", "town-photo"],
+                    duration_s=4,
+                )
+            ],
+        }
+    )
+    strict_raw["approved_proposal"] = strict_snapshot.model_dump(mode="json")
+    strict_plan = compile_execution_plan(strict_raw, track=None)
+    duration_overrun = _ready_result(strict_plan)
+    duration_overrun["render_receipt"]["actual_duration_s"] += 0.16
+    with pytest.raises(GuidedStoryError) as exc:
+        validate_ready_result(
+            strict_plan,
+            duration_overrun,
+            job_id="job-1",
+            verify_storage=False,
+        )
     assert exc.value.code == "guided_story_receipt_mismatch"
 
     for section, field, value in (

@@ -7,14 +7,15 @@ Pins the `_render_subtitled_variant` wiring of the silence-cut stage:
   as test_generative_build_sequence's kill-switch pins
 - has_audio gate short-circuits BEFORE any ASR call (eng review 3A)
 - per-item `silence_cut_disabled` skips the stage entirely, retakes included
-- unsafe safety-rail bailout fails an eligible variant; a clip below MIN_CLIP_S
-  bails BEFORE any whisper/silencedetect spend (P3) and captions fall back to
-  the base-transcription path
+- historical legacy_auto safety bailouts render uncut; required_v1 fails with
+  a typed cleanup reason; off_v1 skips the stage entirely
+- a clip below MIN_CLIP_S bails BEFORE any whisper/silencedetect spend (P3)
+  and captions fall back to the base-transcription path
 - happy path: keep_segments + the KEEP_SEGMENTS_PUNCH_IN constant reach the
   reframe; captions come from remap_words minus filler tokens (15A), NO second
   transcription of the base; `silence_cut` persisted on the variant
-- eligible cut-apply and analysis failures fail the variant instead of shipping
-  an uncut output; analysis failure is still cached once (7A)
+- legacy analysis/apply failures render uncut while required_v1 fails; analysis
+  failure is still cached once (7A)
 - retake isolation: detector failure ⇒ zero retake cuts, silence cuts proceed;
   RETAKE_CUT_ENABLED off ⇒ detector never constructed
 - per-job cache (7A): one whisper + one silencedetect + one cut encode across
@@ -51,9 +52,12 @@ import pytest
 import app.tasks.generative_build as gb
 from app.pipeline.silence_cut import (
     BAILOUT_CLIP_TOO_SHORT,
+    BAILOUT_MAX_REMOVAL,
     KEEP_SEGMENTS_PUNCH_IN,
+    MAX_REMOVAL_FRAC,
     MIN_CLIP_S,
     SILENCE_CUT_VERBATIM_PROMPT,
+    Removal,
     build_cut_plan,
     is_filler_token,
     remap_words,
@@ -94,6 +98,17 @@ BAILOUT_WORDS = [
 ]
 BAILOUT_SILENCES = [(2.0, 9.8)]
 BAILOUT_DURATION = 10.0
+
+# Sanitized production-incident geometry: four proposed removals total 5.135s
+# from an 8.849s mobile talking-to-camera clip (58.0%), above the 40% rail.
+# No production IDs or transcript text belong in this regression fixture.
+INCIDENT_DURATION = 8.849
+INCIDENT_REMOVALS = [
+    Removal(start_s=0.0, end_s=2.66, reason="silence"),
+    Removal(start_s=3.265, end_s=4.660, reason="silence"),
+    Removal(start_s=5.920, end_s=6.400, reason="filler_lexical"),
+    Removal(start_s=7.820, end_s=8.420, reason="filler_lexical"),
+]
 
 # 12 words / 12s, no silences (rule 2/3 inert) — a (0,1) retake span maps to
 # the single removal (0.0, 1.88, "retake").
@@ -242,7 +257,15 @@ def _events_named(calls, name):
     return [e for e in calls["events"] if e[1] == name]
 
 
-def _render(monkeypatch, tmp_path, *, disabled=False, cache=None, subdir="variant"):
+def _render(
+    monkeypatch,
+    tmp_path,
+    *,
+    disabled=False,
+    cache=None,
+    subdir="variant",
+    speech_cleanup_contract="legacy_auto",
+):
     # `subdir` mirrors prod: every variant render gets its OWN variant_dir
     # (variant_{rank}) — multi-render tests must not share one, or the cache's
     # hardlinked cut base would collide with its own inode on reuse.
@@ -257,6 +280,7 @@ def _render(monkeypatch, tmp_path, *, disabled=False, cache=None, subdir="varian
         language="en",
         silence_cut_disabled=disabled,
         silence_cut_cache=cache,
+        speech_cleanup_contract=speech_cleanup_contract,
     )
 
 
@@ -371,7 +395,24 @@ def test_per_item_disable_skips_stage_including_retakes(monkeypatch, tmp_path):
     assert res["silence_cut"] is None
 
 
-def test_unsafe_bailout_fails_eligible_variant(monkeypatch, tmp_path):
+def test_incident_geometry_exceeds_the_unchanged_safety_rail():
+    plan = build_cut_plan(
+        BAILOUT_WORDS,
+        [],
+        INCIDENT_DURATION,
+        forced_removals=INCIDENT_REMOVALS,
+        include_silence_and_fillers=False,
+    )
+    proposed_s = sum(value.end_s - value.start_s for value in INCIDENT_REMOVALS)
+
+    assert proposed_s / INCIDENT_DURATION == pytest.approx(0.5803, abs=0.0001)
+    assert proposed_s > MAX_REMOVAL_FRAC * INCIDENT_DURATION
+    assert plan.bailout_reason == BAILOUT_MAX_REMOVAL
+    assert plan.removed == []
+    assert plan.keep_segments == [(0.0, INCIDENT_DURATION)]
+
+
+def test_legacy_unsafe_bailout_renders_uncut(monkeypatch, tmp_path):
     monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
     monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
     calls = _patch_pipeline(
@@ -383,15 +424,34 @@ def test_unsafe_bailout_fails_eligible_variant(monkeypatch, tmp_path):
 
     res = _render(monkeypatch, tmp_path)
 
-    assert res["ok"] is False
-    assert "unsafe plan bailout" in res["error"]
+    assert res["ok"] is True
     events = _events_named(calls, "silence_cut_bailout")
     assert events and events[0][2]["reason"] == "max_removal_exceeded"
-    assert calls["reframe"] == []
-    # The verbatim analysis still ran once on the ORIGINAL clip.
+    assert len(calls["reframe"]) == 1
+    assert "keep_segments" not in calls["reframe"][0]
     assert len(calls["transcribe"]) == 1
     assert calls["transcribe"][0]["path"].endswith("clip.mp4")
     assert calls["transcribe"][0]["verbatim_prompt"] == SILENCE_CUT_VERBATIM_PROMPT
+    assert not _events_named(calls, "silence_cut_required_failed")
+    assert res["silence_cut"] is None
+
+
+def test_required_unsafe_bailout_fails_with_typed_reason(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    calls = _patch_pipeline(
+        monkeypatch,
+        words=BAILOUT_WORDS,
+        silences=BAILOUT_SILENCES,
+        duration=BAILOUT_DURATION,
+    )
+
+    res = _render(monkeypatch, tmp_path, speech_cleanup_contract="required_v1")
+
+    assert res["ok"] is False
+    assert res["error_class"] == "speech_cleanup_failed"
+    assert res["speech_cleanup_failure_reason"] == "unsafe_plan"
+    assert calls["reframe"] == []
     assert _events_named(calls, "silence_cut_required_failed")
 
 
@@ -406,7 +466,7 @@ def test_short_clip_bails_before_any_asr_spend(monkeypatch, tmp_path):
     calls = _patch_pipeline(monkeypatch, duration=3.0)
     _bomb_retake_detector(monkeypatch)
 
-    res = _render(monkeypatch, tmp_path)
+    res = _render(monkeypatch, tmp_path, speech_cleanup_contract="required_v1")
 
     assert res["ok"] is True
     events = _events_named(calls, "silence_cut_bailout")
@@ -418,7 +478,9 @@ def test_short_clip_bails_before_any_asr_spend(monkeypatch, tmp_path):
     assert calls["transcribe"][0]["verbatim_prompt"] is None
     assert calls["detect"] == []
     assert "keep_segments" not in calls["reframe"][0]
-    assert res["silence_cut"] is None  # bailouts stay event-only
+    assert res["silence_cut_outcome"] == "insufficient_source_speech"
+    assert res["speech_cleanup_failure_reason"] is None
+    assert res["silence_cut"] is None  # no-op bailouts remain event-only
 
 
 def test_eligible_no_speech_clip_fails_open_without_cut(monkeypatch, tmp_path):
@@ -431,7 +493,7 @@ def test_eligible_no_speech_clip_fails_open_without_cut(monkeypatch, tmp_path):
     monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
     calls = _patch_pipeline(monkeypatch, words=[], silences=[], duration=8.0)
 
-    res = _render(monkeypatch, tmp_path)
+    res = _render(monkeypatch, tmp_path, speech_cleanup_contract="required_v1")
 
     assert res["ok"] is True
     events = _events_named(calls, "silence_cut_bailout")
@@ -442,11 +504,13 @@ def test_eligible_no_speech_clip_fails_open_without_cut(monkeypatch, tmp_path):
     assert calls["transcribe"][1]["path"].endswith("final_base.mp4")
     assert calls["transcribe"][1]["verbatim_prompt"] is None
     assert "keep_segments" not in calls["reframe"][0]
+    assert res["silence_cut_outcome"] == "insufficient_source_speech"
+    assert res["speech_cleanup_failure_reason"] is None
+    assert res["silence_cut"] is None  # no-op bailouts remain event-only
 
 
-def test_analysis_failure_fails_variant_and_caches_failure_once(monkeypatch, tmp_path):
-    """Analysis blow-up fails an eligible variant, and the failure is cached
-    (7A) so a sibling render never re-spends the failing call."""
+def test_required_analysis_failure_fails_variant_and_caches_failure_once(monkeypatch, tmp_path):
+    """A required analysis blow-up is typed and cached across sibling renders."""
     import app.pipeline.transcribe as transcribe_mod
 
     monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
@@ -469,12 +533,19 @@ def test_analysis_failure_fails_variant_and_caches_failure_once(monkeypatch, tmp
     monkeypatch.setattr(transcribe_mod, "transcribe_whisper", _flaky_transcribe, raising=False)
     cache = gb._SilenceCutCache(str(tmp_path / "silence_cut"))
 
-    first = _render(monkeypatch, tmp_path, cache=cache)
-    second = _render(monkeypatch, tmp_path, cache=cache, subdir="variant2")
+    first = _render(monkeypatch, tmp_path, cache=cache, speech_cleanup_contract="required_v1")
+    second = _render(
+        monkeypatch,
+        tmp_path,
+        cache=cache,
+        subdir="variant2",
+        speech_cleanup_contract="required_v1",
+    )
 
     assert first["ok"] is False and second["ok"] is False
-    assert "silence_cut_required" in first["error"]
-    assert "silence_cut_required" in second["error"]
+    assert first["error_class"] == second["error_class"] == "speech_cleanup_failed"
+    assert first["speech_cleanup_failure_reason"] == "analysis_failed"
+    assert second["speech_cleanup_failure_reason"] == "analysis_failed"
     # The failing verbatim call was spent ONCE across both renders …
     assert verbatim_calls["n"] == 1
     assert len(_events_named(calls, "silence_cut_analysis_failed")) == 1
@@ -482,6 +553,41 @@ def test_analysis_failure_fails_variant_and_caches_failure_once(monkeypatch, tmp
     base_calls = [c for c in calls["transcribe"] if c["verbatim_prompt"] is None]
     assert base_calls == []
     assert calls["reframe"] == []
+
+
+def test_legacy_analysis_failure_is_cached_and_renders_uncut(monkeypatch, tmp_path):
+    import app.pipeline.transcribe as transcribe_mod
+
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    calls = _patch_pipeline(monkeypatch)
+    verbatim_calls = {"n": 0}
+
+    def _flaky_transcribe(path, *, language=None, verbatim_prompt=None, **kw):
+        calls["transcribe"].append(
+            {"path": path, "language": language, "verbatim_prompt": verbatim_prompt}
+        )
+        if verbatim_prompt is not None:
+            verbatim_calls["n"] += 1
+            raise RuntimeError("whisper 500")
+        return types.SimpleNamespace(
+            words=list(_cut_words()), language="en", low_confidence=False, full_text=""
+        )
+
+    monkeypatch.setattr(transcribe_mod, "transcribe_whisper", _flaky_transcribe, raising=False)
+    cache = gb._SilenceCutCache(str(tmp_path / "silence_cut"))
+
+    first = _render(monkeypatch, tmp_path, cache=cache)
+    second = _render(monkeypatch, tmp_path, cache=cache, subdir="variant2")
+
+    assert first["ok"] is True and second["ok"] is True
+    assert verbatim_calls["n"] == 1
+    assert len(_events_named(calls, "silence_cut_analysis_failed")) == 1
+    assert len(calls["reframe"]) == 2
+    assert all("keep_segments" not in value for value in calls["reframe"])
+    base_calls = [value for value in calls["transcribe"] if value["verbatim_prompt"] is None]
+    assert len(base_calls) == 2
+    assert not _events_named(calls, "silence_cut_required_failed")
 
 
 # ── Happy path ───────────────────────────────────────────────────────────────────
@@ -555,9 +661,7 @@ def test_turkish_elongated_filler_is_cut_from_video_and_captions(monkeypatch, tm
     res = _render(monkeypatch, tmp_path)
 
     assert res["ok"] is True
-    assert calls["reframe"][0]["keep_segments"] == pytest.approx(
-        [(0.0, 1.08), (2.12, 8.0)]
-    )
+    assert calls["reframe"][0]["keep_segments"] == pytest.approx([(0.0, 1.08), (2.12, 8.0)])
     assert [word.text for word in calls["cues"][0]] == [
         "Herkese",
         "merhaba",
@@ -576,7 +680,7 @@ def test_zero_removal_plan_persists_empty_summary(monkeypatch, tmp_path):
     monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
     calls = _patch_pipeline(monkeypatch, words=NO_CUT_WORDS, silences=[])
 
-    res = _render(monkeypatch, tmp_path)
+    res = _render(monkeypatch, tmp_path, speech_cleanup_contract="required_v1")
 
     assert res["ok"] is True
     # Exactly ONE whisper call — the verbatim analysis pass; captions reuse it
@@ -591,15 +695,18 @@ def test_zero_removal_plan_persists_empty_summary(monkeypatch, tmp_path):
         "time_saved_s": 0.0,
         "version": 1,
         "original_duration_s": 6.5,
+        "outcome": "no_change",
     }
+    assert res["silence_cut_outcome"] == "no_change"
+    assert res["speech_cleanup_failure_reason"] is None
     events = _events_named(calls, "silence_cut_plan")
     assert events and events[0][2]["applied"] is False
     assert events[0][2]["removed_count"] == 0
     assert not _events_named(calls, "silence_cut_bailout")
 
 
-def test_cut_apply_failure_fails_eligible_variant(monkeypatch, tmp_path):
-    """A cut-applying reframe failure must not publish an uncut variant."""
+def test_legacy_cut_apply_failure_retries_uncut(monkeypatch, tmp_path):
+    """Historical best-effort jobs recover from a segment-filter failure."""
     import app.pipeline.reframe as reframe_mod
 
     monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
@@ -617,18 +724,58 @@ def test_cut_apply_failure_fails_eligible_variant(monkeypatch, tmp_path):
 
     res = _render(monkeypatch, tmp_path)
 
-    assert res["ok"] is False
-    assert "silence_cut_required" in res["error"]
-    # Only the cut attempt ran; no uncut retry is allowed.
-    assert len(calls["reframe"]) == 1
+    assert res["ok"] is True
+    assert len(calls["reframe"]) == 2
     assert "keep_segments" in calls["reframe"][0]
+    assert "keep_segments" not in calls["reframe"][1]
     events = _events_named(calls, "silence_cut_apply_failed")
     assert events and events[0][2]["variant_id"] == "subtitled"
     assert "blew up" in events[0][2]["error"]
-    assert _events_named(calls, "silence_cut_required_failed")
-    # The failed cut never falls back to a second base transcription.
+    assert not _events_named(calls, "silence_cut_required_failed")
+    assert res["silence_cut"] is None
     base_calls = [c for c in calls["transcribe"] if c["verbatim_prompt"] is None]
-    assert base_calls == []
+    assert len(base_calls) == 1
+
+
+def test_required_cut_apply_failure_fails_with_typed_reason(monkeypatch, tmp_path):
+    import app.pipeline.reframe as reframe_mod
+
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    calls = _patch_pipeline(monkeypatch)
+
+    def _failing_cut(input_path, start_s, end_s, aspect, ass, output_path, **kw):
+        calls["reframe"].append({"input": input_path, "out": output_path, **kw})
+        raise RuntimeError("segment select filter blew up")
+
+    monkeypatch.setattr(reframe_mod, "reframe_and_export", _failing_cut, raising=False)
+
+    res = _render(monkeypatch, tmp_path, speech_cleanup_contract="required_v1")
+
+    assert res["ok"] is False
+    assert res["error_class"] == "speech_cleanup_failed"
+    assert res["speech_cleanup_failure_reason"] == "apply_failed"
+    assert len(calls["reframe"]) == 1
+    assert "keep_segments" in calls["reframe"][0]
+    assert _events_named(calls, "silence_cut_required_failed")
+
+
+def test_off_contract_skips_cleanup_even_when_engine_flags_are_on(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", True, raising=False)
+    calls = _patch_pipeline(monkeypatch)
+    _bomb_retake_detector(monkeypatch)
+
+    res = _render(monkeypatch, tmp_path, speech_cleanup_contract="off_v1")
+
+    assert res["ok"] is True
+    assert calls["detect"] == []
+    assert len(calls["transcribe"]) == 1
+    assert calls["transcribe"][0]["verbatim_prompt"] is None
+    assert len(calls["reframe"]) == 1
+    assert "keep_segments" not in calls["reframe"][0]
+    assert not [event for event in calls["events"] if event[0] == "silence_cut"]
+    assert res["silence_cut"] is None
 
 
 # ── Retakes ──────────────────────────────────────────────────────────────────────
@@ -948,6 +1095,53 @@ def test_finalize_job_preserves_silence_cut(monkeypatch):
     assert captured["plan"]["variants"][0]["spine_clip_id"] == "clip-spine"
 
 
+def test_finalize_job_preserves_required_failure_and_keeps_legacy_success_clear(monkeypatch):
+    captured: list[dict] = []
+
+    def _capture_set_status(job_id, status, extra_plan=None, **kwargs):
+        captured.append({"status": status, "plan": extra_plan, "kwargs": kwargs})
+
+    monkeypatch.setattr(gb, "_set_status", _capture_set_status)
+
+    gb._finalize_job(
+        JOB_ID,
+        [
+            {
+                "variant_id": "subtitled",
+                "rank": 1,
+                "text_mode": "none",
+                "render_status": "failed",
+                "ok": False,
+                "error_class": "speech_cleanup_failed",
+                "speech_cleanup_failure_reason": "unsafe_plan",
+            }
+        ],
+    )
+    gb._finalize_job(
+        JOB_ID,
+        [
+            {
+                "variant_id": "subtitled",
+                "rank": 1,
+                "text_mode": "none",
+                "render_status": "ready",
+                "ok": True,
+                "speech_cleanup_failure_reason": None,
+            }
+        ],
+    )
+
+    required, legacy = captured
+    assert required["status"] == "variants_failed"
+    assert required["plan"]["speech_cleanup_failure_reason"] == "unsafe_plan"
+    assert required["plan"]["variants"][0]["speech_cleanup_failure_reason"] == "unsafe_plan"
+    assert required["kwargs"]["failure_reason"] == "speech_cleanup_failed"
+    assert legacy["status"] == "variants_ready"
+    assert "speech_cleanup_failure_reason" not in legacy["plan"]
+    assert legacy["plan"]["variants"][0]["speech_cleanup_failure_reason"] is None
+    assert legacy["kwargs"]["failure_reason"] is None
+
+
 # ══ talking_head wiring (plans/010 T6) ═══════════════════════════════════════════
 
 
@@ -982,7 +1176,16 @@ def _patch_th_stub(monkeypatch, *, summary=None):
     return calls
 
 
-def _render_th(monkeypatch, tmp_path, *, disabled=False, cache=None, probe_map=None, target=60.0):
+def _render_th(
+    monkeypatch,
+    tmp_path,
+    *,
+    disabled=False,
+    cache=None,
+    probe_map=None,
+    target=60.0,
+    speech_cleanup_contract="legacy_auto",
+):
     vdir = tmp_path / "th_variant"
     vdir.mkdir(exist_ok=True)
     return gb._render_talking_head_variant(
@@ -1001,6 +1204,7 @@ def _render_th(monkeypatch, tmp_path, *, disabled=False, cache=None, probe_map=N
         variant_dir=str(vdir),
         silence_cut_disabled=disabled,
         silence_cut_cache=cache,
+        speech_cleanup_contract=speech_cleanup_contract,
     )
 
 
@@ -1278,6 +1482,166 @@ def test_talking_head_bailout_renders_uncut(monkeypatch, tmp_path):
     assert spine["end"] == pytest.approx(BAILOUT_DURATION)  # full uncut spine
     assert res["silence_cut"] is None
     assert not _events_named(calls, "silence_cut_plan")
+
+
+def test_talking_head_required_bailout_fails_with_typed_reason(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    calls = _patch_th_full(monkeypatch, words=BAILOUT_WORDS, silences=BAILOUT_SILENCES)
+
+    res = _render_th(
+        monkeypatch,
+        tmp_path,
+        probe_map=_th_probe_map(duration=BAILOUT_DURATION),
+        target=BAILOUT_DURATION,
+        speech_cleanup_contract="required_v1",
+    )
+
+    assert res["ok"] is False
+    assert res["error_class"] == "speech_cleanup_failed"
+    assert res["speech_cleanup_failure_reason"] == "unsafe_plan"
+    assert calls["reframe"] == []
+
+
+@pytest.mark.parametrize("failure_reason", ["analysis_failed", "analysis_no_plan"])
+def test_talking_head_required_analysis_failures_are_typed(monkeypatch, tmp_path, failure_reason):
+    """Every strict analysis outcome fails before any composite is published."""
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    calls = _patch_th_full(monkeypatch)
+
+    def _failed_analysis(*_args, **_kwargs):
+        return {
+            "failed": failure_reason == "analysis_failed",
+            "plan": None,
+            "retake_span_count": 0,
+            "review_candidates": [],
+        }
+
+    monkeypatch.setattr(gb, "_silence_cut_analysis", _failed_analysis)
+
+    res = _render_th(
+        monkeypatch,
+        tmp_path,
+        probe_map=_th_probe_map(duration=DURATION),
+        target=DURATION,
+        speech_cleanup_contract="required_v1",
+    )
+
+    assert res["ok"] is False
+    assert res["error_class"] == "speech_cleanup_failed"
+    assert res["speech_cleanup_failure_reason"] == failure_reason
+    assert calls["reframe"] == []
+    assert calls["cmds"] == []
+
+
+def test_talking_head_required_precap_failure_is_typed(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    calls = _patch_th_full(monkeypatch)
+    import app.pipeline.talking_head_assembler as tha
+
+    def _fail_precap(*_args, **_kwargs):
+        raise RuntimeError("pre-cap extraction failed")
+
+    monkeypatch.setattr(tha, "_extract_capped_audio", _fail_precap, raising=False)
+
+    res = _render_th(
+        monkeypatch,
+        tmp_path,
+        probe_map=_th_probe_map(duration=400.0),
+        target=60.0,
+        speech_cleanup_contract="required_v1",
+    )
+
+    assert res["ok"] is False
+    assert res["error_class"] == "speech_cleanup_failed"
+    assert res["speech_cleanup_failure_reason"] == "analysis_prepare_failed"
+    assert calls["reframe"] == []
+    assert calls["cmds"] == []
+
+
+def test_talking_head_required_probe_failure_is_typed(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    calls = _patch_th_full(monkeypatch)
+    import app.pipeline.talking_head_assembler as tha
+
+    monkeypatch.setattr(
+        tha,
+        "probe_video",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("probe failed")),
+        raising=False,
+    )
+
+    res = _render_th(
+        monkeypatch,
+        tmp_path,
+        probe_map={
+            "c1": types.SimpleNamespace(duration_s=DURATION),
+            "c2": types.SimpleNamespace(duration_s=DURATION, has_audio=True),
+        },
+        target=DURATION,
+        speech_cleanup_contract="required_v1",
+    )
+
+    assert res["ok"] is False
+    assert res["error_class"] == "speech_cleanup_failed"
+    assert res["speech_cleanup_failure_reason"] == "probe_failed"
+    assert calls["reframe"] == []
+    assert calls["cmds"] == []
+
+
+def test_talking_head_required_apply_failure_is_typed(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    calls = _patch_th_full(monkeypatch)
+    import app.pipeline.talking_head_assembler as tha
+
+    def _fail_cut(input_path, start_s, end_s, aspect, ass, output_path, **kw):
+        calls["reframe"].append({"input": input_path, "start": start_s, "end": end_s, **kw})
+        if "keep_segments" in kw:
+            raise RuntimeError("segment filter failed")
+
+    monkeypatch.setattr(tha, "reframe_and_export", _fail_cut, raising=False)
+
+    res = _render_th(
+        monkeypatch,
+        tmp_path,
+        probe_map=_th_probe_map(duration=DURATION),
+        target=DURATION,
+        speech_cleanup_contract="required_v1",
+    )
+
+    assert res["ok"] is False
+    assert res["error_class"] == "speech_cleanup_failed"
+    assert res["speech_cleanup_failure_reason"] == "apply_failed"
+    assert len(calls["reframe"]) == 1
+    assert "keep_segments" in calls["reframe"][0]
+    assert calls["cmds"] == []
+
+
+def test_talking_head_off_contract_skips_cleanup(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", True, raising=False)
+    calls = _patch_th_full(monkeypatch)
+    _bomb_retake_detector(monkeypatch)
+
+    res = _render_th(
+        monkeypatch,
+        tmp_path,
+        probe_map=_th_probe_map(duration=DURATION),
+        target=DURATION,
+        speech_cleanup_contract="off_v1",
+    )
+
+    assert res["ok"] is True
+    assert calls["transcribe"] == []
+    assert calls["detect"] == []
+    spine = next(value for value in calls["reframe"] if value["input"].endswith("a.mp4"))
+    assert "keep_segments" not in spine
+    assert not [event for event in calls["events"] if event[0] == "silence_cut"]
+    assert res["silence_cut"] is None
 
 
 def test_talking_head_retake_failure_isolated_cut_still_applies(monkeypatch, tmp_path):

@@ -16,8 +16,9 @@ that can carry the creator's own typed words is either omitted or reduced
 to a structural summary before it reaches this response:
   - `edit_proposal.conversation` — each turn becomes
     {role, phase, length, has_suggestions}, never the actual content.
-  - `edit_proposal.brief.goal` / `draft` / `last_approved` — reduced to
-    length/counts (goal_length, beat_count, media_count, duration_s).
+  - `edit_proposal.brief.goal` / `creator_request` / `draft` / `last_approved`
+    — reduced to length/counts (goal_length, creator_request_length,
+    beat_count, media_count, duration_s).
   - `clip_assignments[*].user_note` — omitted entirely (creator-authored
     free text attached to a clip).
   - `edit_proposal_attempt.token` — never returned (internal write fence,
@@ -126,6 +127,7 @@ class ProposalBriefPayload(BaseModel):
     # it can carry the creator's own words. Never returned verbatim, only
     # its length, so the UI can show "brief set" without leaking text.
     goal_length: int
+    creator_request_length: int
     pace: str
     duration_s: int
 
@@ -265,6 +267,7 @@ def _edit_proposal_debug_payload(raw: Any) -> EditProposalDebugPayload | None:
         brief=ProposalBriefPayload(
             direction=proposal.brief.direction,
             goal_length=len(proposal.brief.goal),
+            creator_request_length=len(proposal.brief.creator_request),
             pace=proposal.brief.pace,
             duration_s=proposal.brief.duration_s,
         ),

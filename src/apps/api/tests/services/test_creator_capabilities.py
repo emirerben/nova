@@ -5,6 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 from app.agents._schemas.creator_agent import CreativeStrategy, CreatorEditSnapshot
+from app.agents._schemas.creator_policy import MixedMediaTimingUnavailableError
+from app.schemas.edit_proposal import MixedMediaTimingProfile
 from app.services import creator_capabilities as capabilities
 from app.services.creator_sessions import compile_active_plan
 
@@ -229,6 +231,152 @@ def test_compile_preserves_explicit_native_program(monkeypatch) -> None:
     assert "draft_guided_proposal" not in [command.command for command in plan.commands]
 
 
+def test_mixed_media_timing_forces_guided_specialist_when_available(monkeypatch) -> None:
+    _enable_guided(monkeypatch)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": "clip-1", "kind": "video"},
+            {"media_id": "asset-photo-1", "kind": "image"},
+        ],
+    )
+
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="montage",
+            render_program="native",
+            selected_media_ids=["clip-1"],
+            mixed_media_timing=MixedMediaTimingProfile(
+                image_hold="very_fast",
+                video_hold="longer",
+                boundary_style="cut",
+            ),
+        ),
+    )
+
+    assert plan.strategy.render_program == "guided"
+    assert plan.strategy.selected_media_ids == ["clip-1", "asset-photo-1"]
+    assert "draft_guided_proposal" in [command.command for command in plan.commands]
+
+
+@pytest.mark.parametrize(
+    ("audio_strategy", "has_voiceover", "include_image"),
+    [
+        pytest.param("original_audio", False, True, id="original-audio"),
+        pytest.param("licensed_music", True, True, id="voiceover-present"),
+        pytest.param("licensed_music", False, False, id="video-only"),
+    ],
+)
+def test_mixed_media_timing_preserves_native_required_paths(
+    monkeypatch,
+    audio_strategy: str,
+    has_voiceover: bool,
+    include_image: bool,
+) -> None:
+    _enable_guided(monkeypatch)
+    media = [{"media_id": "clip-1", "kind": "video"}]
+    if include_image:
+        media.append({"media_id": "asset-photo-1", "kind": "image"})
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        has_voiceover=has_voiceover,
+        media=media,
+    )
+
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="montage",
+            audio_strategy=audio_strategy,
+            render_program="native",
+            selected_media_ids=["clip-1"],
+            mixed_media_timing=MixedMediaTimingProfile(
+                image_hold="very_fast",
+                video_hold="longer",
+                boundary_style="cut",
+            ),
+        ),
+    )
+
+    assert plan.strategy.render_program == "native"
+    assert plan.strategy.selected_media_ids == ["clip-1"]
+    assert "draft_guided_proposal" not in [command.command for command in plan.commands]
+
+
+def test_mixed_media_timing_fails_closed_when_guided_specialist_is_unavailable(
+    monkeypatch,
+) -> None:
+    _enable_guided(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "guided_edit_capability_enabled", False)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": "clip-1", "kind": "video"},
+            {"media_id": "asset-photo-1", "kind": "image"},
+        ],
+    )
+
+    with pytest.raises(
+        MixedMediaTimingUnavailableError,
+        match="mixed-media timing requires the guided proposal capability",
+    ):
+        capabilities.compile_strategy_to_plan(
+            manifest,
+            CreativeStrategy(
+                edit_format="montage",
+                render_program="native",
+                selected_media_ids=["clip-1"],
+                mixed_media_timing=MixedMediaTimingProfile(
+                    image_hold="very_fast",
+                    video_hold="longer",
+                    boundary_style="cut",
+                ),
+            ),
+        )
+
+
+def test_mixed_media_timing_fails_closed_when_guided_capability_is_not_advertised(
+    monkeypatch,
+) -> None:
+    _enable_guided(monkeypatch)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": "clip-1", "kind": "video"},
+            {"media_id": "asset-photo-1", "kind": "image"},
+        ],
+    )
+    manifest = manifest.model_copy(
+        update={
+            "capabilities": {
+                name: availability
+                for name, availability in manifest.capabilities.items()
+                if name != capabilities.CAPABILITY_DRAFT_GUIDED_PROPOSAL
+            }
+        }
+    )
+
+    with pytest.raises(MixedMediaTimingUnavailableError):
+        capabilities.compile_strategy_to_plan(
+            manifest,
+            CreativeStrategy(
+                edit_format="montage",
+                render_program="native",
+                selected_media_ids=["clip-1"],
+                mixed_media_timing=MixedMediaTimingProfile(
+                    image_hold="very_fast",
+                    video_hold="longer",
+                    boundary_style="cut",
+                ),
+            ),
+        )
+
+
 def test_guided_compile_leaves_exact_media_choice_to_the_specialist(monkeypatch) -> None:
     _enable_guided(monkeypatch)
     manifest = capabilities.resolve_creator_manifest(
@@ -355,9 +503,19 @@ def test_session_compiles_agent_strategy_through_capability_service(monkeypatch)
         strategy=CreativeStrategy(
             edit_format="montage",
             selected_media_ids=["clip-1"],
+            mixed_media_timing=MixedMediaTimingProfile(
+                image_hold="very_fast", video_hold="longer", boundary_style="cut"
+            ),
         ),
         summary="A fast, personal montage.",
+        creator_request="Photos should have a very fast transition, videos can be a bit longer",
     )
 
     assert receipt["version"] == 1
+    assert receipt["creator_request"].startswith("Photos should")
+    assert receipt["mixed_media_timing"] == {
+        "image_hold": "very_fast",
+        "video_hold": "longer",
+        "boundary_style": "cut",
+    }
     assert receipt["edit_plan"]["commands"][-1]["command"] == "dispatch_render"

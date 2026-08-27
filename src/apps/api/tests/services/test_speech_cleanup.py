@@ -1,7 +1,9 @@
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
+from app.config import Settings
 from app.services.speech_cleanup import (
     capability_for_item,
     cleanup_inputs,
@@ -39,6 +41,24 @@ def test_required_contract_requires_engine_and_consent():
     assert contract_for_item(item, mode="opt_in", engine_enabled=True) == "required_v1"
     item.speech_cleanup_enabled = False
     assert contract_for_item(item, mode="opt_in", engine_enabled=True) == "off_v1"
+
+
+def test_live_config_defaults_to_opt_in_and_rejects_legacy_auto():
+    required = {
+        "storage_bucket": "test-bucket",
+        "database_url": "postgresql://localhost/nova_test",
+    }
+
+    assert Settings(**required).speech_cleanup_mode == "opt_in"
+    with pytest.raises(ValidationError):
+        Settings(**required, speech_cleanup_mode="legacy_auto")
+
+
+def test_contract_mapper_rejects_legacy_auto_as_a_live_mode():
+    with pytest.raises(ValueError, match="unsupported_speech_cleanup_mode:legacy_auto"):
+        contract_for_item(  # type: ignore[arg-type] - runtime boundary regression
+            _item(), mode="legacy_auto", engine_enabled=True
+        )
 
 
 def test_reconcile_only_revokes_on_ordered_identity_change():

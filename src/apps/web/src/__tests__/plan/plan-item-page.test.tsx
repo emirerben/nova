@@ -33,6 +33,7 @@ import "@testing-library/jest-dom";
 
 process.env.NEXT_PUBLIC_SUBTITLED_ENABLED = "true";
 process.env.NEXT_PUBLIC_GUIDED_EDIT_ENABLED = "true";
+process.env.NEXT_PUBLIC_MAIN_CREATOR_AGENT_ENABLED = "true";
 
 // Mock next/navigation
 jest.mock("next/navigation", () => ({
@@ -55,6 +56,7 @@ jest.mock("@/lib/plan-api", () => ({
   getPlanItem: jest.fn(),
   getPlanItemJobStatus: jest.fn(),
   getPlanItemVariants: jest.fn(),
+  getCreatorAgentSession: jest.fn(),
   requestUploadUrls: jest.fn(),
   attachClips: jest.fn(),
   generatePlanItem: jest.fn(),
@@ -158,6 +160,7 @@ import {
   setVariantMediaOverlays,
   updatePlanItem,
   uploadToGcs,
+  getCreatorAgentSession,
   type PlanItemJobStatus,
 } from "@/lib/plan-api";
 const PlanItemPage = require("@/app/plan/items/[id]/page").default;
@@ -170,6 +173,9 @@ const mockSetVariantMediaOverlays = setVariantMediaOverlays as jest.MockedFuncti
 >;
 const mockUpdatePlanItem = updatePlanItem as jest.MockedFunction<typeof updatePlanItem>;
 const mockUploadToGcs = uploadToGcs as jest.MockedFunction<typeof uploadToGcs>;
+const mockGetCreatorAgentSession = getCreatorAgentSession as jest.MockedFunction<
+  typeof getCreatorAgentSession
+>;
 
 // ===== Factory helpers =====
 
@@ -348,6 +354,7 @@ describe("PlanItemPage — masonry collage item UX", () => {
           .find((element) => element.tagName === "INPUT")
           ?.getAttribute("accept"),
       ).toContain("image/webp");
+      expect(screen.getAllByRole("region", { name: "Create with Kria" })).toHaveLength(1);
     },
   );
 
@@ -445,6 +452,7 @@ describe("PlanItemPage — ProgressTheater renders with phase data", () => {
     });
 
     expect(screen.getByText("Your setup is saved. Retry the render without uploading again.")).toBeInTheDocument();
+    expect(screen.getAllByRole("region", { name: "Create with Kria" })).toHaveLength(1);
     const retryButton = screen.getByRole("button", { name: "Retry render" });
 
     await act(async () => {
@@ -646,6 +654,7 @@ describe("PlanItemPage — ProgressTheater renders with phase data", () => {
 
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
     expect(screen.getByText("Kria couldn’t finish this video")).toBeInTheDocument();
+    expect(screen.getAllByRole("region", { name: "Create with Kria" })).toHaveLength(1);
     expect(document.querySelector("[data-variant-preview]")).toBeNull();
   });
 });
@@ -1917,6 +1926,19 @@ describe("PlanItemPage — per-type setup truth table (V2 redesign)", () => {
 
 describe("PlanItemPage — release desk untitled receipt (V2)", () => {
   it("shows the type receipt eyebrow instead of an h1 reading 'Montage'", async () => {
+    mockGetCreatorAgentSession.mockResolvedValue({
+      id: "creator-session-complete",
+      status: "completed",
+      revision: 5,
+      render_attempts: 1,
+      max_render_attempts: 2,
+      can_render: false,
+      pending_plan: null,
+      current_job_id: "job-1",
+      events: [],
+      created_at: "2026-08-27T08:00:00Z",
+      updated_at: "2026-08-27T08:30:00Z",
+    });
     const item = makeItem({
       status: "ready",
       theme: null,
@@ -1941,5 +1963,9 @@ describe("PlanItemPage — release desk untitled receipt (V2)", () => {
       render(<PlanItemPage />);
     });
     expect(screen.getByRole("heading", { name: "Montage" })).toBeInTheDocument();
+    expect(screen.getAllByRole("region", { name: "Create with Kria" })).toHaveLength(1);
+    fireEvent.click(await screen.findByRole("button", { name: "Start another direction" }));
+    expect(screen.getByLabelText("Message Kria")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
   });
 });

@@ -2345,6 +2345,7 @@ export default function PlanItemPage() {
                 ) : (
                   <CardContent className="space-y-6 pt-6">
                     <div>{clipsTabBody}</div>
+                    {MAIN_CREATOR_AGENT_ENABLED && <MainCreatorAgentPanel itemId={itemId} />}
                     <Separator />
                     {narratedVoiceoverSection}
                     {tellKriaSection}
@@ -2523,6 +2524,12 @@ export default function PlanItemPage() {
                     Create without cleanup
                   </Button>
                 </div>
+              </div>
+            )}
+
+            {(showReleaseDesk || allVariantsFailed) && MAIN_CREATOR_AGENT_ENABLED && (
+              <div className="mb-6">
+                <MainCreatorAgentPanel itemId={itemId} />
               </div>
             )}
 

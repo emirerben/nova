@@ -43,15 +43,16 @@ kill_timeout = 300
   # post-PR #103). One task per worker means each task gets the full CPU
   # allocation. Trade-off: half the parallel throughput, but each render
   # completes in roughly a quarter of the wall-clock.
-  # -Q celery,plan-jobs,overlay-jobs: also drain the content-plan render and
+  # -Q celery,plan-jobs,overlay-jobs,creator-guided-jobs: also drain the content-plan render and
   # overlay queues. Per-item plan renders (generate_plan_item_videos →
   # orchestrate_generative_job) are routed to `plan-jobs` so generate-first-week
   # can enqueue 7 at once; the single concurrency=1 slot serializes them, so
   # they can never run simultaneously and OOM the worker (sized in [[vm]]
-  # below; plan T3). One worker, three queues, still one task at a time.
+  # below; plan T3). creator-guided-jobs fences expanded mixed-media cuts from
+  # rolling legacy workers. One worker, four queues, still one task at a time.
   # This -Q list is CI-pinned against app/services/queue_state.py's
   # RENDER_WORKER_QUEUES by tests/test_worker_prewarm_gate.py.
-  worker = "celery -A app.worker worker --loglevel=info --concurrency=1 -Q celery,plan-jobs,overlay-jobs"
+  worker = "celery -A app.worker worker --loglevel=info --concurrency=1 -Q celery,plan-jobs,overlay-jobs,creator-guided-jobs"
   # 2026-08-02 (render-worker autostop): moves ALL Beat-triggered tasks
   # (sweep_stale_jobs, cleanup_agent_runs, send_daily_digest,
   # cleanup_cancelled_job, and every app.tasks.tiktok.* periodic — see

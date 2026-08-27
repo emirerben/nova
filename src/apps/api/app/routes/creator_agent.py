@@ -35,7 +35,10 @@ from app.agents._schemas.creator_agent import (
     SetLicensedSfxCommand,
     canonical_context_hash,
 )
-from app.agents._schemas.creator_policy import MAX_MAIN_CREATOR_SELECTED_MEDIA
+from app.agents._schemas.creator_policy import (
+    MAX_MAIN_CREATOR_SELECTED_MEDIA,
+    MixedMediaTimingUnavailableError,
+)
 from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
 from app.auth import CurrentUser
 from app.config import settings
@@ -58,6 +61,7 @@ from app.routes.generative_jobs import (
     validate_sound_effects_for_user,
     visual_block_variant_duration,
 )
+from app.schemas.edit_proposal import recognize_mixed_media_timing
 from app.services.content_plan_persona import load_owned_plan_persona
 from app.services.creator_autonomy import (
     build_auto_bundle,
@@ -302,7 +306,20 @@ def _conversation(events: list[CreatorAgentEvent]) -> list[dict[str, str]]:
     ]
 
 
-def _fallback_strategy(manifest: Any) -> CreativeStrategy:
+def _confirmed_creator_request(events: list[CreatorAgentEvent], current_message: str) -> str:
+    """Preserve bounded creator-authored intent across clarification turns."""
+
+    messages = [
+        str((event.payload or {}).get("message") or "").strip()
+        for event in sorted(events, key=lambda value: value.sequence)
+        if event.role == "user" and str((event.payload or {}).get("message") or "").strip()
+    ]
+    if current_message.strip() and (not messages or messages[-1] != current_message.strip()):
+        messages.append(current_message.strip())
+    return "\n".join(messages)[:1000]
+
+
+def _fallback_strategy(manifest: Any, *, user_message: str = "") -> CreativeStrategy:
     current_format = manifest.edit_format
     current_available = manifest.capabilities.get(f"edit_format:{current_format}")
     safe_format = current_format if current_available and current_available.available else "montage"
@@ -312,6 +329,7 @@ def _fallback_strategy(manifest: Any) -> CreativeStrategy:
         audio_strategy="licensed_music",
         pacing="balanced",
         render_program=manifest.render_program,
+        mixed_media_timing=recognize_mixed_media_timing(user_message),
         selected_media_ids=(
             []
             if manifest.render_program == "guided"
@@ -395,6 +413,7 @@ async def _run_planning_turn(
         return await _response(db, locked)
 
     creator_summary, item_summary = creator_context(persona, item)
+    creator_request = _confirmed_creator_request(session.events, user_message)
     agent_input = MainCreatorInput(
         user_message=user_message,
         creator_context=creator_summary,
@@ -420,7 +439,7 @@ async def _run_planning_turn(
         )
         action = ProposeStrategy(
             kind="propose_strategy",
-            strategy=_fallback_strategy(manifest),
+            strategy=_fallback_strategy(manifest, user_message=creator_request),
             summary="A focused, fast-moving edit built from your strongest footage.",
         )
 
@@ -469,7 +488,9 @@ async def _run_planning_turn(
         )
     else:
         strategy = (
-            action.strategy if isinstance(action, ProposeStrategy) else _fallback_strategy(manifest)
+            action.strategy
+            if isinstance(action, ProposeStrategy)
+            else _fallback_strategy(manifest, user_message=creator_request)
         )
         summary = (
             action.summary
@@ -478,7 +499,11 @@ async def _run_planning_turn(
         )
         try:
             locked.active_plan = compile_active_plan(
-                locked, manifest=manifest, strategy=strategy, summary=summary
+                locked,
+                manifest=manifest,
+                strategy=strategy,
+                summary=summary,
+                creator_request=creator_request,
             )
         except ValueError as exc:
             log.warning(
@@ -486,6 +511,25 @@ async def _run_planning_turn(
                 session_id=str(locked.id),
                 error=str(exc)[:300],
             )
+            if isinstance(exc, MixedMediaTimingUnavailableError):
+                locked.status = "failed"
+                locked.last_error = {
+                    "code": "mixed_media_timing_unavailable",
+                    "message": str(exc)[:300],
+                }
+                await append_event(
+                    db,
+                    locked,
+                    event_type="assistant_error",
+                    payload={
+                        "message": (
+                            "Mixed photo and video timing is temporarily unavailable. "
+                            "No fallback edit was rendered."
+                        ),
+                        "code": "mixed_media_timing_unavailable",
+                    },
+                )
+                return await _response(db, locked)
             if _strict_creator_format(strategy.edit_format):
                 locked.status = "failed"
                 locked.last_error = {
@@ -507,12 +551,13 @@ async def _run_planning_turn(
                     },
                 )
                 return await _response(db, locked)
-            strategy = _fallback_strategy(manifest)
+            strategy = _fallback_strategy(manifest, user_message=creator_request)
             locked.active_plan = compile_active_plan(
                 locked,
                 manifest=manifest,
                 strategy=strategy,
                 summary="A safe, focused edit from your strongest footage.",
+                creator_request=creator_request,
             )
         locked.manifest_hash = manifest.manifest_hash
         locked.status = "awaiting_confirmation"
@@ -739,6 +784,7 @@ def _seed_guided_specialist_brief(
     plan: CreatorEditPlan,
     *,
     summary: str,
+    creator_request: str = "",
 ) -> None:
     """Delegate the confirmed strategy through the existing guided planner.
 
@@ -771,8 +817,13 @@ def _seed_guided_specialist_brief(
             goal=goal,
             pace=plan.strategy.pacing,
             duration_s=24,
+            creator_request=creator_request,
+            mixed_media_timing=plan.strategy.mixed_media_timing,
+            output_orientation=(
+                "portrait" if plan.strategy.mixed_media_timing is not None else None
+            ),
         ),
-        user_message="Use the confirmed Main Creator direction.",
+        user_message=creator_request or "Use the confirmed Main Creator direction.",
         agent_reply=summary or plan.strategy.rationale or "Build this direction.",
         suggestions=[],
         ready_to_plan=True,
@@ -900,6 +951,7 @@ async def confirm_creator_plan(
                 item,
                 edit_plan,
                 summary=str(active.get("summary") or ""),
+                creator_request=str(active.get("creator_request") or "")[:1000],
             )
             # Mint the immutable guided execution identity before publishing
             # any background work. A process crash after enqueue can then

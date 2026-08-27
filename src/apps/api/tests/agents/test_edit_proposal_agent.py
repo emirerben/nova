@@ -7,8 +7,10 @@ from app.agents.edit_proposal import (
     EditProposalAgent,
     EditProposalAgentInput,
     EditProposalMedia,
+    minimum_required_sources,
     shortlist_edit_proposal_media,
 )
+from app.schemas.edit_proposal import MixedMediaTimingProfile
 
 
 def _input(count: int = 7) -> EditProposalAgentInput:
@@ -110,6 +112,237 @@ def test_fast_montage_uses_cut_sources_for_mixed_media_variety() -> None:
         "media-1",
         "media-2",
     ]
+
+
+def test_mixed_timing_source_floor_fits_low_target_and_minimum_holds() -> None:
+    media = [
+        EditProposalMedia(media_id=f"photo-{index}", lane="asset", kind="image")
+        for index in range(7)
+    ]
+    profile = MixedMediaTimingProfile(
+        image_hold="very_fast", video_hold="longer", boundary_style="cut"
+    )
+
+    assert (
+        minimum_required_sources(
+            len(media), target_duration_s=3, media=media, mixed_media_timing=profile
+        )
+        == 6
+    )
+
+
+def test_mixed_timing_source_floor_accounts_for_video_minimum_hold() -> None:
+    media = [
+        EditProposalMedia(media_id=f"photo-{index}", lane="asset", kind="image")
+        for index in range(7)
+    ] + [EditProposalMedia(media_id="video", lane="clip", kind="video", duration_s=8)]
+    profile = MixedMediaTimingProfile(
+        image_hold="very_fast", video_hold="longer", boundary_style="cut"
+    )
+
+    # One 1.5s video plus three 0.5s photos is the most distinct source set
+    # that can fit in a 3s typed mixed-media target.
+    assert (
+        minimum_required_sources(
+            len(media), target_duration_s=3, media=media, mixed_media_timing=profile
+        )
+        == 4
+    )
+
+
+def test_mixed_timing_parse_accepts_only_sources_that_fit_low_target() -> None:
+    profile = MixedMediaTimingProfile(
+        image_hold="very_fast", video_hold="longer", boundary_style="cut"
+    )
+    agent_input = EditProposalAgentInput(
+        direction="fast_montage",
+        pace="fast",
+        target_duration_s=3,
+        mixed_media_timing=profile,
+        media=[
+            EditProposalMedia(media_id=f"photo-{index}", lane="asset", kind="image")
+            for index in range(7)
+        ],
+    )
+    payload = {
+        "title": "Quick photo sequence",
+        "duration_s": 3,
+        "story_beats": [],
+        "fast_cuts": [
+            {
+                "cut_id": f"cut-{index + 1}",
+                "media_id": f"photo-{index}",
+                "source_start_s": 0,
+                "source_end_s": 0.5,
+                "output_duration_s": 0.5,
+                "role": "hook" if index == 0 else "payoff" if index == 5 else "build",
+            }
+            for index in range(6)
+        ],
+    }
+
+    output = EditProposalAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(payload), agent_input
+    )
+    assert len({cut.media_id for cut in output.fast_cuts or []}) == 6
+
+
+def test_fast_montage_both_kind_check_ignores_unprobed_video() -> None:
+    agent = EditProposalAgent(None)  # type: ignore[arg-type]
+    agent_input = EditProposalAgentInput(
+        direction="fast_montage",
+        pace="fast",
+        target_duration_s=3,
+        mixed_media_timing=MixedMediaTimingProfile(
+            image_hold="very_fast", video_hold="longer", boundary_style="cut"
+        ),
+        media=[
+            EditProposalMedia(media_id="photo-1", lane="asset", kind="image"),
+            EditProposalMedia(media_id="photo-2", lane="asset", kind="image"),
+            EditProposalMedia(media_id="photo-3", lane="asset", kind="image"),
+            EditProposalMedia(media_id="photo-4", lane="asset", kind="image"),
+            EditProposalMedia(media_id="video-unprobed", lane="clip", kind="video"),
+        ],
+    )
+    payload = {
+        "title": "Photo sequence",
+        "duration_s": 3,
+        "story_beats": [],
+        "fast_cuts": [
+            {
+                "cut_id": "cut-1",
+                "media_id": "photo-1",
+                "source_start_s": 0,
+                "source_end_s": 0.75,
+                "output_duration_s": 0.75,
+                "role": "hook",
+            },
+            {
+                "cut_id": "cut-2",
+                "media_id": "photo-2",
+                "source_start_s": 0,
+                "source_end_s": 0.75,
+                "output_duration_s": 0.75,
+                "role": "build",
+            },
+            {
+                "cut_id": "cut-3",
+                "media_id": "photo-3",
+                "source_start_s": 0,
+                "source_end_s": 0.75,
+                "output_duration_s": 0.75,
+                "role": "build",
+            },
+            {
+                "cut_id": "cut-4",
+                "media_id": "photo-4",
+                "source_start_s": 0,
+                "source_end_s": 0.75,
+                "output_duration_s": 0.75,
+                "role": "payoff",
+            },
+        ],
+    }
+
+    output = agent.parse(json.dumps(payload), agent_input)
+    assert {cut.media_id for cut in output.fast_cuts or []} == {
+        "photo-1",
+        "photo-2",
+        "photo-3",
+        "photo-4",
+    }
+
+
+def _mixed_timing_input() -> EditProposalAgentInput:
+    return EditProposalAgentInput(
+        direction="fast_montage",
+        pace="fast",
+        target_duration_s=3,
+        mixed_media_timing=MixedMediaTimingProfile(
+            image_hold="very_fast", video_hold="longer", boundary_style="cut"
+        ),
+        media=[
+            EditProposalMedia(media_id="video-long", lane="clip", kind="video", duration_s=1.8),
+            EditProposalMedia(media_id="photo", lane="asset", kind="image"),
+            EditProposalMedia(media_id="video-short", lane="clip", kind="video", duration_s=0.6),
+        ],
+    )
+
+
+def test_mixed_timing_prompt_uses_target_capacity_source_floor() -> None:
+    agent_input = EditProposalAgentInput(
+        direction="fast_montage",
+        pace="fast",
+        target_duration_s=3,
+        mixed_media_timing=MixedMediaTimingProfile(
+            image_hold="very_fast", video_hold="longer", boundary_style="cut"
+        ),
+        media=[
+            EditProposalMedia(media_id="video", lane="clip", kind="video", duration_s=8),
+        ],
+    )
+    agent_input.media.extend(
+        EditProposalMedia(media_id=f"photo-extra-{index}", lane="asset", kind="image")
+        for index in range(7)
+    )
+    prompt = EditProposalAgent(None).render_prompt(agent_input)  # type: ignore[arg-type]
+
+    assert "must reference at least 4 distinct AVAILABLE MEDIA aliases" in prompt
+    assert "capped by the target duration" in prompt
+
+
+def _mixed_timing_payload(*, photo_duration_s: float = 0.6) -> dict:
+    long_video_duration_s = round(2.4 - photo_duration_s, 3)
+    return {
+        "title": "Quick photos, held video moments",
+        "duration_s": 3,
+        "story_beats": [],
+        "mixed_media_timing": None,
+        "fast_cuts": [
+            {
+                "cut_id": "cut-1",
+                "media_id": "video-long",
+                "source_start_s": 0,
+                "source_end_s": long_video_duration_s,
+                "output_duration_s": long_video_duration_s,
+                "role": "hook",
+            },
+            {
+                "cut_id": "cut-2",
+                "media_id": "photo",
+                "source_start_s": 0,
+                "source_end_s": photo_duration_s,
+                "output_duration_s": photo_duration_s,
+                "role": "build",
+            },
+            {
+                "cut_id": "cut-3",
+                "media_id": "video-short",
+                "source_start_s": 0,
+                "source_end_s": 0.6,
+                "output_duration_s": 0.6,
+                "role": "payoff",
+            },
+        ],
+    }
+
+
+def test_mixed_timing_parse_forces_profile_and_accepts_short_video_exception() -> None:
+    output = EditProposalAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(_mixed_timing_payload()),
+        _mixed_timing_input(),
+    )
+
+    assert output.mixed_media_timing == _mixed_timing_input().mixed_media_timing
+    assert [cut.output_duration_s for cut in output.fast_cuts or []] == [1.8, 0.6, 0.6]
+
+
+def test_mixed_timing_parse_rejects_photo_outside_profile_bounds() -> None:
+    with pytest.raises(SchemaError, match="mixed-media timing profile was not honored"):
+        EditProposalAgent(None).parse(  # type: ignore[arg-type]
+            json.dumps(_mixed_timing_payload(photo_duration_s=1.0)),
+            _mixed_timing_input(),
+        )
 
 
 def _fractional_fast_payload(*, declared_duration_s: float = 14.2) -> dict:
@@ -308,6 +541,7 @@ def test_production_45_plus_58_shape_uses_bounded_alias_prompt_and_rejects_unkno
 
     prompt = agent.render_prompt(agent_input)
     assert prompt.count('"media_id": "m') == 32
+    assert "must reference at least 7 distinct AVAILABLE MEDIA aliases" in prompt
     assert agent_input.media[0].media_id not in prompt
     assert agent_input.media[-1].media_id not in prompt
 
@@ -417,13 +651,12 @@ def test_fast_montage_rejects_expansion_beyond_cut_limit() -> None:
         )
 
 
-def test_fast_montage_prompt_states_absolute_timing_contract() -> None:
+def test_fast_montage_prompt_states_legacy_timing_contract() -> None:
     prompt = EditProposalAgent(None).render_prompt(_fractional_fast_input())  # type: ignore[arg-type]
 
-    assert "ABSOLUTE LIMIT" in prompt
-    assert "NEVER exceed 1.2 seconds" in prompt
-    assert "14s montage needs at least 12 cuts" in prompt
+    assert "legacy plans use 0.8-1.2s cuts" in prompt
     assert "For this 14s target, emit at least 12 cuts" in prompt
+    assert "absolute 1.2s maximum" in prompt
 
 
 def test_fast_montage_uses_valid_cut_total_over_provider_declared_arithmetic() -> None:

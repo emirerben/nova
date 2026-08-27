@@ -85,6 +85,139 @@ def test_guided_main_creator_output_drops_opaque_media_list() -> None:
     assert len(output.model_dump_json()) < 1800
 
 
+def test_main_creator_prompt_explains_guided_media_and_music_contracts() -> None:
+    prompt = MainCreatorAgent(None).render_prompt(_input())  # type: ignore[arg-type]
+
+    assert "guided, return\n  `selected_media_ids: []`" in prompt
+    assert "only when the manifest catalog contains a usable music entry" in prompt
+
+
+def test_main_creator_recognizes_mixed_media_timing_request() -> None:
+    agent_input = _input().model_copy(
+        update={
+            "user_message": "Photos should have a very fast transition, videos can be a bit longer"
+        }
+    )
+    output = MainCreatorAgent(None).parse(  # type: ignore[arg-type]
+        _raw(
+            audio_strategy="licensed_music",
+            selected=[media.media_id for media in agent_input.capability_manifest.media],
+        ),
+        agent_input,
+    )
+
+    assert isinstance(output.action, ProposeStrategy)
+    assert output.action.strategy.mixed_media_timing is not None
+    assert output.action.strategy.mixed_media_timing.model_dump() == {
+        "image_hold": "very_fast",
+        "video_hold": "longer",
+        "boundary_style": "cut",
+    }
+
+
+def test_main_creator_repairs_native_mixed_media_timing_to_guided() -> None:
+    agent_input = _input().model_copy(
+        update={
+            "user_message": "Photos should have a very fast transition, videos can be a bit longer"
+        }
+    )
+    raw = json.loads(
+        _raw(
+            audio_strategy="licensed_music",
+            selected=[media.media_id for media in agent_input.capability_manifest.media[:8]],
+        )
+    )
+    raw["action"]["strategy"]["render_program"] = "native"
+
+    output = MainCreatorAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(raw),
+        agent_input,
+    )
+
+    assert isinstance(output.action, ProposeStrategy)
+    assert output.action.strategy.render_program == "guided"
+    assert output.action.strategy.selected_media_ids == []
+
+
+def test_main_creator_recognizes_timing_request_from_an_earlier_user_turn() -> None:
+    agent_input = _input().model_copy(
+        update={
+            "user_message": "Yes, use that direction.",
+            "conversation": [
+                {
+                    "role": "user",
+                    "content": (
+                        "Photos should have a very fast transition, videos can be a bit longer"
+                    ),
+                }
+            ],
+        }
+    )
+
+    output = MainCreatorAgent(None).parse(  # type: ignore[arg-type]
+        _raw(audio_strategy="licensed_music", selected=[]),
+        agent_input,
+    )
+
+    assert isinstance(output.action, ProposeStrategy)
+    assert output.action.strategy.mixed_media_timing is not None
+
+
+def test_main_creator_recognizes_natural_mixed_media_timing_paraphrase() -> None:
+    agent_input = _input().model_copy(
+        update={"user_message": "Keep the photos snappy and let the videos breathe."}
+    )
+
+    output = MainCreatorAgent(None).parse(  # type: ignore[arg-type]
+        _raw(audio_strategy="licensed_music", selected=[]),
+        agent_input,
+    )
+
+    assert isinstance(output.action, ProposeStrategy)
+    assert output.action.strategy.mixed_media_timing is not None
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Don't make the photos very fast; let the videos breathe.",
+        "Keep photos snappy, but do not hold the videos longer.",
+    ],
+)
+def test_main_creator_rejects_negated_mixed_media_timing(message: str) -> None:
+    raw = json.loads(_raw(audio_strategy="licensed_music", selected=[]))
+    raw["action"]["strategy"]["mixed_media_timing"] = {
+        "image_hold": "very_fast",
+        "video_hold": "longer",
+        "boundary_style": "cut",
+    }
+
+    output = MainCreatorAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(raw),
+        _input().model_copy(update={"user_message": message}),
+    )
+
+    assert isinstance(output.action, ProposeStrategy)
+    assert output.action.strategy.mixed_media_timing is None
+
+
+def test_main_creator_drops_model_invented_timing_for_unrelated_request() -> None:
+    raw = json.loads(_raw(audio_strategy="licensed_music", selected=[]))
+    raw["action"]["strategy"]["mixed_media_timing"] = {
+        "image_hold": "very_fast",
+        "video_hold": "longer",
+        "boundary_style": "cut",
+    }
+
+    output = MainCreatorAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(raw),
+        _input(),
+    )
+
+    assert isinstance(output.action, ProposeStrategy)
+    assert output.action.strategy.mixed_media_timing is None
+
+
 def test_audio_led_main_creator_output_is_native_and_bounded_to_twelve_clips() -> None:
     agent_input = _input()
     output = MainCreatorAgent(None).parse(  # type: ignore[arg-type]
