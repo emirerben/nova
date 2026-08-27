@@ -8,6 +8,11 @@ All notable changes to this project will be documented in this file.
 - **Finished videos now show stable, source-matched previews on mobile.** Library tiles, variant rails, and the Hero keep signed poster URLs across refreshes, regenerate posters whenever a render changes, and fall back to a playable video when a poster is unavailable.
 - **Existing video outputs can be repaired without re-rendering.** The idempotent poster backfill covers generative, template, music, auto-music, and default job outputs while preserving ownership and render-generation fences.
 
+## [0.53.0.5] — 2026-08-27
+
+### Fixed
+- **Photos in new Kria edits now hold still instead of slowly zooming by default.** Guided and fast mixed-media timelines compile still images without motion, and the renderer skips zoom processing unless an existing timeline explicitly requests it.
+
 ## [0.53.0.4] — 2026-08-27
 
 ### Fixed
