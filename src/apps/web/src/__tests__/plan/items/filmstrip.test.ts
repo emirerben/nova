@@ -6,6 +6,7 @@ import {
   filmstripCoverCrop,
   filmstripDecodeKey,
   filmstripFallbackLabel,
+  filmstripPoolKey,
   filmstripSampleTimes,
   filmstripZoomBucket,
 } from "@/app/plan/items/[id]/_editor/Filmstrip";
@@ -50,6 +51,13 @@ describe("editor source filmstrip helpers", () => {
         zoomBucket: 4,
       }),
     ).not.toBe(base);
+  });
+
+  it("isolates pooled decoders by both source and clip", () => {
+    const base = filmstripPoolKey("source-a.mp4", "slot-1");
+
+    expect(filmstripPoolKey("source-a.mp4", "slot-2")).not.toBe(base);
+    expect(filmstripPoolKey("source-b.mp4", "slot-1")).not.toBe(base);
   });
 
   it("keeps the global seek budget at or under 24 frames", () => {
