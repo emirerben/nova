@@ -84,8 +84,8 @@ is an optional advanced tool for creators who want to shape the edit before buil
   so it survives a later reservation overwriting the envelope. See "AI-designs-by-default" below.
 - `design_fallback`: set to the failure code that triggered a clip-only legacy-montage fallback
   (auto-design only); `null` otherwise, including a normal failure with pool assets present.
-- `brief`: requested direction, goal, pace, duration, confirmed `creator_request`, and optional
-  typed `mixed_media_timing` profile.
+- `brief`: requested direction, goal, pace, duration, confirmed `creator_request`, optional
+  typed `mixed_media_timing` profile, and optional pinned `output_orientation`.
 - `conversation`: up to ten durable creator/Kria exchanges, including reply suggestions. The
   thread survives reloads and proposal-generation retries.
 - `brief_ready`: Kria's signal that it has enough direction to plan. **Build this edit plan** is
@@ -102,7 +102,8 @@ Each draft and approval also persists `output_orientation` plus a plain-language
 selected by approved story beats. Each source votes portrait or landscape by its approved screen
 time; near-square or missing aspect metadata is neutral. A tie follows the first selected
 non-square source, and a story with no usable aspect metadata stays portrait. Unused uploads do not
-affect the decision.
+affect the decision. Main Creator mixed-media briefs pin portrait for the product's short-form
+delivery contract; ordinary guided briefs and auto-selected revisions keep the media-vote behavior.
 
 The two storage lanes remain independent:
 
@@ -360,6 +361,10 @@ tail-first adjustments and fails closed if the requested runtime cannot be reach
 source time. Source variety remains required. When the typed `mixed_media_timing` profile is present,
 photos hold for 0.5–0.8s, usable videos hold for 1.5–3.0s when their source permits, boundaries are
 hard cuts, both eligible media kinds are included, and the total remains within 0.15s of the target.
+The compiler resolves the complete mixed timeline to an exact 30fps frame budget: fractional
+remainder goes to photo holds within their typed bounds, while video windows may shrink but never
+extend or overlap. If the retained timeline contains only one media kind, the mixed profile is
+removed from the execution plan and that timeline keeps its legacy renderer contract.
 For a mixed image/video upload, the profile selects the guided proposal path even when the Main
 Creator strategy would otherwise choose native montage. If guided planning is unavailable, the
 request fails closed before confirmation instead of silently dropping the photos.

@@ -59,6 +59,10 @@ from app.pipeline.agents.gemini_analyzer import (
     gemini_upload_and_wait,
 )
 from app.pipeline.canvas import Canvas
+from app.pipeline.duration_contract import (
+    STRICT_MIXED_MEDIA_DURATION_TOLERANCE_S,
+    STRICT_MIXED_MEDIA_MAX_CFR_OVERRUN_S,
+)
 from app.pipeline.image_clip import is_image_file
 from app.pipeline.orientation import OrientationError, normalize_orientation
 from app.pipeline.reframe import ReframeError, resolve_output_fit
@@ -5938,6 +5942,7 @@ def _mix_template_audio(
     validated_window_duration_s: float | None = None,
     audio_window_duration_s: float | None = None,
     force_video_duration: bool = False,
+    target_video_duration_s: float | None = None,
     audio_gain: float = 1.0,
 ) -> None:
     """Replace assembled video's audio with template music track.
@@ -6002,7 +6007,21 @@ def _mix_template_audio(
         # Strict story timelines have an approved top-level duration. The
         # input uses -stream_loop, so a shorter track is allowed to repeat;
         # never trim approved visual beats to a near-short music file.
-        use_duration = video_dur
+        if target_video_duration_s is None:
+            use_duration = video_dur
+        else:
+            target_duration = float(target_video_duration_s)
+            underrun_s = target_duration - video_dur
+            overrun_s = video_dur - target_duration
+            if underrun_s > STRICT_MIXED_MEDIA_DURATION_TOLERANCE_S:
+                raise RuntimeError("strict story video is shorter than its approved duration")
+            if overrun_s > STRICT_MIXED_MEDIA_MAX_CFR_OVERRUN_S:
+                raise RuntimeError(
+                    "strict story video exceeds its approved duration by more than frame rounding"
+                )
+            # Never stretch an underrun. Clamp only bounded CFR/container
+            # overrun to the approved story duration.
+            use_duration = min(video_dur, target_duration)
     elif video_dur <= 0 and audio_dur <= 0:
         log.warning("audio_mix_probe_both_failed", falling_back_to="natural-length")
         use_duration = 0.0  # will skip -t below

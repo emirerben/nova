@@ -1183,6 +1183,7 @@ def test_fast_cut_program_persists_with_legacy_compatibility_beats(monkeypatch) 
             goal="Lead with the strongest Athens moment",
             pace="fast",
             duration_s=3,
+            output_orientation="portrait",
         )
     )
     db = _Db(_Result(rows=[]))
@@ -1214,6 +1215,8 @@ def test_fast_cut_program_persists_with_legacy_compatibility_beats(monkeypatch) 
     persisted = parse_edit_proposal(item.edit_proposal)
     assert persisted is not None and persisted.status == "draft"
     assert persisted.draft is not None
+    assert persisted.draft.output_orientation == "portrait"
+    assert persisted.draft.output_orientation_reason == "The creator selected this output format."
     assert [cut.cut_id for cut in persisted.draft.fast_cuts or []] == [
         "cut-0",
         "cut-1",

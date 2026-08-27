@@ -136,6 +136,7 @@ async def test_confirm_direction_is_versioned_and_dispatches_once(monkeypatch) -
         "video_hold": "longer",
         "boundary_style": "cut",
     }
+    item.edit_proposal["brief"]["output_orientation"] = "portrait"
     proposal = parse_edit_proposal(item.edit_proposal)
     assert proposal is not None and proposal.guidance is not None
     plan = SimpleNamespace(ownership_epoch=4)
@@ -187,6 +188,7 @@ async def test_confirm_direction_is_versioned_and_dispatches_once(monkeypatch) -
         video_hold="longer",
         boundary_style="cut",
     )
+    assert saved.brief.output_orientation == "portrait"
     assert len(dispatches) == 1
 
     # A lost-response retry is idempotent, but a conflicting override is not.
@@ -541,6 +543,11 @@ async def test_conversation_same_direction_replans_explicit_timing_change(
     if current_profile is not None:
         item.edit_proposal["brief"]["mixed_media_timing"] = current_profile.model_dump(mode="json")
         item.edit_proposal["draft"]["mixed_media_timing"] = current_profile.model_dump(mode="json")
+    item.edit_proposal["brief"]["output_orientation"] = "portrait"
+    item.edit_proposal["draft"]["output_orientation"] = "portrait"
+    item.edit_proposal["draft"]["output_orientation_reason"] = (
+        "The creator selected this output format."
+    )
     monkeypatch.setattr(plan_items.settings, "guided_edit_capability_enabled", True)
     monkeypatch.setattr(plan_items.settings, "guided_edit_conversation_enabled", True)
     monkeypatch.setattr(plan_items, "_load_owned_item", AsyncMock(return_value=item))
@@ -602,6 +609,8 @@ async def test_conversation_same_direction_replans_explicit_timing_change(
     assert persisted is not None and persisted.draft is not None
     assert persisted.draft.mixed_media_timing == expected_profile
     assert persisted.brief.mixed_media_timing == expected_profile
+    assert persisted.draft.output_orientation == "portrait"
+    assert persisted.brief.output_orientation == "portrait"
 
 
 def test_mixed_media_proposals_use_the_deploy_fenced_worker_queue() -> None:
@@ -653,6 +662,39 @@ def test_snapshot_revision_recalculates_auto_orientation_from_reassigned_media()
 
     assert revised.output_orientation == "portrait"
     assert "12.0s portrait" in revised.output_orientation_reason
+
+
+def test_snapshot_revision_preserves_creator_pinned_portrait_orientation() -> None:
+    current = _snapshot()
+    current.media[0].aspect = 1.7778
+    current.output_orientation = "portrait"
+    current.output_orientation_reason = "The creator selected this output format."
+    revision = EditGuideRevision(
+        direction="guided_story",
+        goal="Keep the landscape source in a vertical edit",
+        pace="balanced",
+        duration_s=24,
+        title="Vertical story",
+        story_beats=[
+            EditGuideRevisionBeat(
+                beat_id="coast",
+                topic="Landscape source",
+                thought="Keep it vertical",
+                layout="fullscreen",
+                duration_s=12,
+                media_refs=["media_1"],
+            )
+        ],
+    )
+
+    revised = plan_items._snapshot_from_edit_guide_revision(
+        current,
+        revision,
+        output_orientation="portrait",
+    )
+
+    assert revised.output_orientation == "portrait"
+    assert revised.output_orientation_reason == "The creator selected this output format."
 
 
 def _patch_route_dependencies(monkeypatch, item, *, media_current: bool) -> AsyncMock:
@@ -1086,7 +1128,12 @@ async def test_conversation_direction_change_preserves_mixed_media_timing(monkey
         "Photos should have a very fast transition, videos can be a bit longer"
     )
     item.edit_proposal["brief"]["mixed_media_timing"] = profile.model_dump(mode="json")
+    item.edit_proposal["brief"]["output_orientation"] = "portrait"
     item.edit_proposal["draft"]["mixed_media_timing"] = profile.model_dump(mode="json")
+    item.edit_proposal["draft"]["output_orientation"] = "portrait"
+    item.edit_proposal["draft"]["output_orientation_reason"] = (
+        "The creator selected this output format."
+    )
     monkeypatch.setattr(plan_items.settings, "guided_edit_capability_enabled", True)
     monkeypatch.setattr(plan_items.settings, "guided_edit_conversation_enabled", True)
     monkeypatch.setattr(plan_items, "_load_owned_item", AsyncMock(return_value=item))
@@ -1152,6 +1199,8 @@ async def test_conversation_direction_change_preserves_mixed_media_timing(monkey
     assert persisted.draft.mixed_media_timing == profile
     assert persisted.brief.mixed_media_timing == profile
     assert persisted.brief.creator_request.startswith("Photos should")
+    assert persisted.draft.output_orientation == "portrait"
+    assert persisted.brief.output_orientation == "portrait"
 
 
 @pytest.mark.asyncio

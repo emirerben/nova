@@ -249,6 +249,7 @@ def reframe_and_export(
     look_preset: str = "none",
     look_adjustments: object = None,
     canvas: Canvas | None = None,
+    exact_duration: bool = False,
 ) -> None:
     """Render a single clip to the output spec. Raises ReframeError on failure.
 
@@ -266,6 +267,9 @@ def reframe_and_export(
         violation — callers own the uncut fallback. Not combinable with
         text_overlay_pngs / ass_overlay_paths: cut first, then burn overlays
         on the cut output. None ⇒ byte-identical to the uncut command.
+    exact_duration: add an output-side cap after CFR conversion so a source
+        trim cannot gain one output frame. Disabled by default for legacy
+        renderer call sites.
     """
     duration = end_s - start_s
     if duration <= 0:
@@ -326,6 +330,9 @@ def reframe_and_export(
 
     # Build command -- use filter_complex when overlays are present
     has_overlays = bool(text_overlay_pngs) or bool(ass_overlay_paths)
+
+    if exact_duration and (has_overlays or keep_segments is not None):
+        raise ValueError("exact_duration is supported only for uncut, overlay-free renders")
 
     if keep_segments is not None:
         if has_overlays:
@@ -395,6 +402,7 @@ def reframe_and_export(
         cmd += [
             "-vf",
             vf_string,
+            *(["-t", f"{duration:.6f}"] if exact_duration else []),
             # Intermediate (re-encoded by the final burn). ultrafast keeps per-slot
             # render speed, but its weaker tools macroblock dark gradients and the
             # final fast pass can't recover that. crf=14 (vs the 18 default) spends

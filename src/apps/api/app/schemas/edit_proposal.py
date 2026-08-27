@@ -41,6 +41,7 @@ ConversationRole = Literal["user", "agent"]
 ConversationPhase = Literal["briefing", "review"]
 ConversationSuggestion = Annotated[str, Field(min_length=1, max_length=100)]
 EDIT_CONVERSATION_MAX_TURNS = 20
+CREATOR_SELECTED_ORIENTATION_REASON = "The creator selected this output format."
 
 
 class MixedMediaTimingProfile(BaseModel):
@@ -315,7 +316,7 @@ class EditProposalSnapshot(BaseModel):
             self.output_orientation = orientation
             self.output_orientation_reason = reason
         elif not self.output_orientation_reason:
-            self.output_orientation_reason = "The creator selected this output format."
+            self.output_orientation_reason = CREATOR_SELECTED_ORIENTATION_REASON
         return self
 
 
@@ -443,6 +444,9 @@ class ProposalBrief(BaseModel):
     duration_s: int = Field(default=24, ge=3, le=60)
     creator_request: str = Field(default="", max_length=1000)
     mixed_media_timing: MixedMediaTimingProfile | None = None
+    # Main Creator can pin the short-form delivery canvas without changing
+    # ordinary guided-edit orientation inference. None preserves legacy briefs.
+    output_orientation: OutputOrientation | None = None
 
 
 class EditConversationTurn(BaseModel):

@@ -697,6 +697,7 @@ def test_confirmed_guided_strategy_becomes_specialist_brief(monkeypatch) -> None
             "video_hold": "longer",
             "boundary_style": "cut",
         },
+        "output_orientation": "portrait",
     }
 
 

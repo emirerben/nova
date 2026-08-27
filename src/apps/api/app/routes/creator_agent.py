@@ -819,6 +819,9 @@ def _seed_guided_specialist_brief(
             duration_s=24,
             creator_request=creator_request,
             mixed_media_timing=plan.strategy.mixed_media_timing,
+            output_orientation=(
+                "portrait" if plan.strategy.mixed_media_timing is not None else None
+            ),
         ),
         user_message=creator_request or "Use the confirmed Main Creator direction.",
         agent_reply=summary or plan.strategy.rationale or "Build this direction.",

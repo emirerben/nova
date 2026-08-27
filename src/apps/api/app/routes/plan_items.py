@@ -127,6 +127,7 @@ from app.schemas.edit_proposal import (
     EditProposalResponse,
     EditProposalSnapshot,
     MediaRef,
+    OutputOrientation,
     ProposalBrief,
     StoryBeat,
     canonical_media_digest,
@@ -2310,7 +2311,12 @@ def _is_mixed_media_capacity_error(exc: BaseException) -> bool:
     )
 
 
-def _snapshot_from_edit_guide_revision(current, revision) -> EditProposalSnapshot:  # noqa: ANN001
+def _snapshot_from_edit_guide_revision(  # noqa: ANN001
+    current,
+    revision,
+    *,
+    output_orientation: OutputOrientation | None = None,
+) -> EditProposalSnapshot:
     """Rejoin AI aliases with server-owned beat and media identities."""
 
     beat_by_id = {beat.beat_id: beat for beat in current.story_beats}
@@ -2346,6 +2352,7 @@ def _snapshot_from_edit_guide_revision(current, revision) -> EditProposalSnapsho
         story_beats=beats,
         fast_cuts=current.fast_cuts if revision.direction == "fast_montage" else None,
         mixed_media_timing=current.mixed_media_timing,
+        output_orientation=output_orientation,
     )
 
 
@@ -2938,6 +2945,7 @@ async def edit_proposal_conversation_turn(
             pace=review_snapshot.pace,
             duration_s=review_snapshot.duration_s,
             mixed_media_timing=review_mixed_media_timing,
+            output_orientation=current.brief.output_orientation if current else None,
         )
         if review_snapshot
         else (current.brief if current else ProposalBrief())
@@ -3048,7 +3056,9 @@ async def edit_proposal_conversation_turn(
                 )
             else:
                 revised_snapshot = _snapshot_from_edit_guide_revision(
-                    review_snapshot, result.revision
+                    review_snapshot,
+                    result.revision,
+                    output_orientation=brief.output_orientation,
                 )
             validate_proposal_timing(revised_snapshot)
         except Exception as exc:  # noqa: BLE001 - every invalid revision must release its fence
@@ -3078,6 +3088,7 @@ async def edit_proposal_conversation_turn(
             duration_s=revised_snapshot.duration_s,
             creator_request=brief.creator_request,
             mixed_media_timing=revised_snapshot.mixed_media_timing,
+            output_orientation=brief.output_orientation,
         )
 
     locked = await _load_owned_item(item_id, owner_id, db, for_update=True)
@@ -3319,6 +3330,7 @@ async def confirm_item_edit_direction(
         pace=hypothesis.pace,
         duration_s=hypothesis.duration_s,
         mixed_media_timing=current.brief.mixed_media_timing,
+        output_orientation=current.brief.output_orientation,
     )
     ensure_clip_media_ids(item)
     proposal = begin_proposal_attempt(item, brief=brief, guidance=guidance)

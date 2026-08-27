@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.53.0.3] — 2026-08-27
+
+### Fixed
+- **Mixed photo/video Creator edits now render on the intended vertical canvas with frame-accurate pacing.** The confirmed short-form direction pins 9:16 through planning and conversational revisions, fast-photo/longer-video plans prevent CFR rounding from adding extra frames, and final H.264/AAC outputs enforce the approved duration within 0.15 seconds without stretching or changing legacy edits.
+
 ## [0.53.0.2] — 2026-08-26
 
 ### Fixed
