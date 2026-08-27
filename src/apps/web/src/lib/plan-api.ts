@@ -2246,6 +2246,8 @@ export interface TextPlacementCandidate {
 export interface PlanItemVariant {
   variant_id: string;
   output_url: string | null;
+  poster_path?: string | null;
+  poster_url?: string | null;
   download_url?: string | null;
   duration_s?: number | null;
   // Literal union (not bare string) to match EditableVariant — every plan
@@ -2307,6 +2309,8 @@ export interface PlanItemVariant {
   // is what makes a variant instant-edit-eligible. Absent on lyrics/legacy.
   base_video_url?: string | null;
   base_video_path?: string | null;
+  base_poster_path?: string | null;
+  base_poster_url?: string | null;
   /** Approved guided-story timeline and strict publication evidence. */
   story_timeline?: Array<Record<string, unknown>> | null;
   proposal_version?: number | null;
@@ -2458,6 +2462,8 @@ export interface PlanItemVariant {
    *  Drives the hero's live-edit mode: the base plays under a live CSS card
    *  layer so timeline edits preview instantly without an FFmpeg re-burn. */
   pre_overlay_video_url?: string | null;
+  pre_overlay_poster_path?: string | null;
+  pre_overlay_poster_url?: string | null;
   /** Sound-effect placements applied as the outermost audio layer. */
   sound_effects?: SoundEffectPlacement[] | null;
   /** GCS key of the clean (sfx-free) variant before the first SFX apply-pass. */

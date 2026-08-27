@@ -95,6 +95,7 @@ import { GENERATIVE_PHASE_ORDER, GENERATIVE_PHASE_LABEL } from "@/lib/job-phases
 import { BeamLoader, ProgressTheater } from "@/components/progress";
 import { deriveReceiptText, formatElapsed } from "@/components/progress/logic";
 import { StableVideo } from "@/components/StableVideo";
+import { StablePoster } from "@/components/StablePoster";
 import { usePolledJobStatus } from "@/hooks/usePolledJobStatus";
 import { LightShell } from "@/components/ui/LightShell";
 import { InkButton } from "@/components/ui/InkButton";
@@ -4598,6 +4599,11 @@ function LiveEditPreview({
         ? (variant.pre_overlay_video_url ?? null)
         : (variant.output_url ?? null)
       : null;
+  const previewPoster = liveOverlayMode
+    ? (variant.pre_overlay_poster_url ?? null)
+    : burnedSrc
+      ? (variant.poster_url ?? null)
+      : (variant.base_poster_url ?? null);
   // Live mode keys the identity on the pre-overlay GCS path (re-signed poll
   // URLs never restart playback; the "live:" prefix forces adopt on mode flip).
   const burnedIdentity = liveOverlayMode
@@ -4628,6 +4634,7 @@ function LiveEditPreview({
           ref={sfxVideoRef}
           src={burnedSrc}
           identity={burnedIdentity}
+          poster={previewPoster ?? undefined}
           controls
           loop
           autoPlay
@@ -4643,6 +4650,7 @@ function LiveEditPreview({
           ref={sfxVideoRef}
           src={variant.base_video_url}
           identity={variant.base_video_path ?? undefined}
+          poster={previewPoster ?? undefined}
           controls
           loop
           autoPlay
@@ -4740,13 +4748,22 @@ function VariantReleasePicker({
                   className="aspect-[9/16] h-8 motion-safe:animate-shimmer rounded bg-[length:200%_100%] bg-gradient-to-r from-zinc-100 via-zinc-200 to-zinc-100"
                 />
               ) : (
-                <video
-                  src={value.output_url ?? undefined}
-                  muted
-                  playsInline
-                  preload="metadata"
+                <StablePoster
+                  src={value.poster_url}
+                  identity={`${value.variant_id}:${value.poster_path ?? ""}:${value.render_finished_at ?? ""}`}
+                  alt=""
                   aria-hidden="true"
                   className="aspect-[9/16] h-8 rounded bg-zinc-100 object-cover"
+                  fallback={
+                    <video
+                      src={value.output_url ?? undefined}
+                      muted
+                      playsInline
+                      preload="metadata"
+                      aria-hidden="true"
+                      className="aspect-[9/16] h-8 rounded bg-zinc-100 object-cover"
+                    />
+                  }
                 />
               )}
               Version {index + 1}
@@ -4809,6 +4826,7 @@ function Hero({
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoTime, setVideoTime] = useState(0);
   const [playbackRetry, setPlaybackRetry] = useState(0);
+  const [heroVideoPlaying, setHeroVideoPlaying] = useState(false);
 
   // Sync SFX audio elements to the video playhead for instant preview.
   useSfxPreview(videoRef, sfxPlacements, sfxAudioUrls);
@@ -4844,6 +4862,12 @@ function Hero({
   const heroSrc = liveMode
     ? (variant?.pre_overlay_video_url ?? null)
     : (variant?.output_url ?? null);
+  const heroPoster = liveMode
+    ? (variant?.pre_overlay_poster_url ?? null)
+    : (variant?.poster_url ?? null);
+  const heroPosterIdentity = liveMode
+    ? (variant?.pre_overlay_poster_path ?? `${variant?.variant_id ?? "variant"}:pre-overlay-poster`)
+    : `${variant?.variant_id ?? "variant"}:${variant?.poster_path ?? ""}:${variant?.render_finished_at ?? ""}`;
   const heroSrcPresent = !!heroSrc;
 
   // Re-attach when the hero video mounts (a src becomes available) or the source
@@ -4874,6 +4898,7 @@ function Hero({
   useEffect(() => {
     onPlaybackFailedChange(false);
     setPlaybackRetry(0);
+    setHeroVideoPlaying(false);
   }, [heroIdentity, onPlaybackFailedChange]);
 
   // Frozen-frame veil (V2): pause the old video the instant a re-render
@@ -4906,6 +4931,7 @@ function Hero({
             ref={videoRef}
             src={heroSrc}
             identity={heroIdentity}
+            poster={heroPoster ?? undefined}
             controls
             // Keep the `controls` attribute (plan-item-live-preview.test.tsx
             // locates the hero via `video[controls]` mid-render), but pull it
@@ -4915,10 +4941,40 @@ function Hero({
             tabIndex={rendering ? -1 : undefined}
             playsInline
             preload="metadata"
+            onPlaying={() => setHeroVideoPlaying(true)}
             onLoadedData={() => onPlaybackFailedChange(false)}
             onError={() => onPlaybackFailedChange(true)}
             className="h-full w-full object-contain"
           />
+          {!heroVideoPlaying && !rendering && (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <StablePoster
+                src={heroPoster}
+                identity={heroPosterIdentity}
+                alt=""
+                aria-hidden="true"
+                className="absolute inset-0 h-full w-full object-contain"
+                fallback={<div className="absolute inset-0 bg-zinc-100" aria-hidden="true" />}
+              />
+              <Button
+                type="button"
+                aria-label="Play preview"
+                variant="ghost"
+                className={[
+                  "pointer-events-auto z-10 flex h-14 w-14 items-center justify-center",
+                  "rounded-full bg-black/65 text-white shadow-lg transition hover:bg-black/80",
+                  "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4",
+                  "focus-visible:outline-white",
+                ].join(" ")}
+                onClick={() => {
+                  const video = videoRef.current;
+                  if (video) void video.play();
+                }}
+              >
+                <span className="ml-1 text-2xl" aria-hidden="true">▶</span>
+              </Button>
+            </div>
+          )}
         </div>
       ) : heroSrc && playbackFailed ? (
         <div className="flex h-full flex-col items-center justify-center px-5 text-center">

@@ -104,6 +104,7 @@ from app.services.music_sections import (
     current_best_section_for_track,
     track_config_with_rank_one,
 )
+from app.services.template_poster import upload_video_poster
 from app.tasks._job_cancel_fence import (
     active_job_for_update,
     delete_task_owned_outputs,
@@ -142,6 +143,29 @@ except ImportError:  # pragma: no cover — only hit on broken installs
     match = None  # type: ignore[assignment]
 
 log = structlog.get_logger()
+
+
+def _try_upload_video_poster(
+    local_video_path: str,
+    video_object_path: str,
+    *,
+    job_id: str,
+    rank: int,
+) -> str | None:
+    try:
+        return upload_video_poster(local_video_path, video_object_path)
+    except Exception as exc:  # noqa: BLE001 - poster is a derived asset
+        log.warning(
+            "video_poster_upload_failed",
+            job_id=job_id,
+            source_kind="auto_music_variant",
+            rank=rank,
+            video_path=video_object_path,
+            error_class=type(exc).__name__,
+            error=str(exc)[:300],
+        )
+        return None
+
 
 MAX_ERROR_DETAIL_LEN = 2000
 _SLOT_COUNT_CACHE_ATTR = "_auto_music_slot_count"
@@ -422,6 +446,7 @@ def _run_auto_music_job(job_id: str) -> None:
                         "track_id": r["track_id"],
                         "score": r.get("score"),
                         "output_url": r.get("output_url"),
+                        "poster_path": r.get("poster_path"),
                         "ok": bool(r.get("ok")),
                         "error": r.get("error"),
                     }
@@ -432,13 +457,23 @@ def _run_auto_music_job(job_id: str) -> None:
     except Exception:
         delete_task_owned_outputs(
             job_id,
-            [str(r.get("output_path") or "") for r in successes],
+            [
+                path
+                for r in successes
+                for path in (r.get("output_path"), r.get("poster_path"))
+                if path
+            ],
         )
         raise
     if not finalized:
         delete_task_owned_outputs(
             job_id,
-            [str(r.get("output_path") or "") for r in successes],
+            [
+                path
+                for r in successes
+                for path in (r.get("output_path"), r.get("poster_path"))
+                if path
+            ],
         )
         return
     log.info(
@@ -849,6 +884,7 @@ def _render_one_variant(
             }
 
     created_output_gcs: str | None = None
+    created_output_poster: str | None = None
     try:
         if track.audio_gcs_path is None:
             raise ValueError(f"Track {track_id} has no audio_gcs_path")
@@ -940,6 +976,13 @@ def _render_one_variant(
             delete_task_owned_outputs(job_id, [output_gcs])
             created_output_gcs = None
             raise
+        poster_path = _try_upload_video_poster(
+            final_path,
+            output_gcs,
+            job_id=job_id,
+            rank=rank,
+        )
+        created_output_poster = poster_path
         log.info(
             "auto_music_variant_uploaded",
             job_id=job_id,
@@ -955,12 +998,17 @@ def _render_one_variant(
             match_score=match_score,
             match_rationale=match_rationale,
             video_path=output_gcs,
+            thumbnail_path=poster_path,
             assembly_plan=_assembly_plan_to_dict(assembly_plan, clip_id_to_gcs),
             render_status="ready",
         )
         if not persisted:
-            delete_task_owned_outputs(job_id, [output_gcs])
+            delete_task_owned_outputs(
+                job_id,
+                [path for path in (output_gcs, poster_path) if path],
+            )
             created_output_gcs = None
+            created_output_poster = None
             return {
                 "ok": False,
                 "rank": rank,
@@ -976,10 +1024,14 @@ def _render_one_variant(
             "score": match_score,
             "output_url": output_url,
             "output_path": output_gcs,
+            "poster_path": poster_path,
         }
     except Exception as exc:
         if created_output_gcs:
-            delete_task_owned_outputs(job_id, [created_output_gcs])
+            delete_task_owned_outputs(
+                job_id,
+                [path for path in (created_output_gcs, created_output_poster) if path],
+            )
         err = str(exc)[:MAX_ERROR_DETAIL_LEN]
         log.error(
             "auto_music_variant_failed",
@@ -1044,6 +1096,7 @@ def _write_variant_jobclip(
     match_score: float,
     match_rationale: str,
     video_path: str | None,
+    thumbnail_path: str | None = None,
     assembly_plan: dict[str, Any] | None,
     render_status: str,
     error_detail: str | None = None,
@@ -1055,8 +1108,8 @@ def _write_variant_jobclip(
     are all NOT NULL) are satisfied. start_s/end_s mirror the variant's
     duration when we have it; otherwise 0.0 placeholders. The fields
     that genuinely matter for the variant view are ``rank``,
-    ``music_track_id``, ``match_score``, ``match_rationale``, and
-    ``video_path``.
+    ``music_track_id``, ``match_score``, ``match_rationale``, ``video_path``,
+    and ``thumbnail_path`` (the source-matched poster sibling).
     """
     with _sync_session() as db:
         job = active_job_for_update(
@@ -1080,6 +1133,7 @@ def _write_variant_jobclip(
             end_s=0.0,
             hook_text=None,
             video_path=video_path,
+            thumbnail_path=thumbnail_path,
             render_status=render_status,
             music_track_id=track_id,
             match_score=float(match_score),

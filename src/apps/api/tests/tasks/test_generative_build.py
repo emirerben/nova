@@ -2335,6 +2335,63 @@ def test_upsert_does_not_change_job_status(monkeypatch):
     assert job.status == "rendering"
 
 
+def test_attach_variant_posters_fills_each_source_and_preserves_explicit_key(monkeypatch):
+    calls: list[tuple[str, str]] = []
+
+    def fake_generate(source: str, *, source_kind: str, **_kwargs):
+        calls.append((source, source_kind))
+        return f"{source}.poster.jpg"
+
+    monkeypatch.setattr(gb, "generate_and_upload_from_gcs", fake_generate)
+    enriched, generated = gb._attach_variant_posters(
+        {
+            "variant_id": "song_text",
+            "video_path": "generative-jobs/job/output.mp4",
+            "poster_path": "generative-jobs/job/output.mp4.poster.jpg",
+            "base_video_path": "generative-jobs/job/base.mp4",
+            "pre_media_overlay_video_path": "generative-jobs/job/pre-overlay.mp4",
+        },
+        job_id="job",
+    )
+
+    assert enriched["poster_path"] == "generative-jobs/job/output.mp4.poster.jpg"
+    assert enriched["base_poster_path"] == "generative-jobs/job/base.mp4.poster.jpg"
+    assert enriched["pre_overlay_poster_path"] == ("generative-jobs/job/pre-overlay.mp4.poster.jpg")
+    assert calls == [
+        ("generative-jobs/job/base.mp4", "generative_base"),
+        ("generative-jobs/job/pre-overlay.mp4", "generative_pre_overlay"),
+    ]
+    assert generated == [
+        "generative-jobs/job/base.mp4.poster.jpg",
+        "generative-jobs/job/pre-overlay.mp4.poster.jpg",
+    ]
+
+
+def test_generated_poster_cleanup_keeps_a_winning_reference(monkeypatch):
+    job_id = "11111111-1111-1111-1111-111111111111"
+    referenced = f"generative-jobs/{job_id}/winner.mp4.poster.jpg"
+    orphaned = f"generative-jobs/{job_id}/loser.mp4.poster.jpg"
+    job = _FakeJob(
+        assembly_plan={
+            "variants": [{"variant_id": "v1", "poster_path": referenced}],
+        }
+    )
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        gb,
+        "_delete_cancelled_job_objects",
+        lambda _job_id, paths: deleted.extend(paths),
+    )
+
+    gb._delete_generated_poster_objects_if_unreferenced(
+        job_id,
+        [referenced, orphaned],
+        locked_job=job,
+    )
+
+    assert deleted == [orphaned]
+
+
 # ── assembly_plan RMW writers must row-lock (lost-update guard) ─────────────────
 #
 # Every writer that does a read-modify-write of Job.assembly_plan must SELECT ...
@@ -5120,8 +5177,10 @@ def test_finalize_job_preserves_caption_cues(monkeypatch):
         "render_status": "ready",
         "output_url": "u",
         "video_path": "generative-jobs/j/v.mp4",
+        "poster_path": "generative-jobs/j/v.mp4.poster.jpg",
         "resolved_archetype": "narrated",
         "base_video_path": "generative-jobs/j/base.mp4",
+        "base_poster_path": "generative-jobs/j/base.mp4.poster.jpg",
         "caption_cues": [{"text": "Hello.", "start_s": 0.0, "end_s": 1.0}],
         "voiceover_caption_style": "word",
         "voiceover_caption_font": "Montserrat Bold",
@@ -5139,6 +5198,8 @@ def test_finalize_job_preserves_caption_cues(monkeypatch):
     v = job.assembly_plan["variants"][0]
     assert v["caption_cues"] == [{"text": "Hello.", "start_s": 0.0, "end_s": 1.0}]
     assert v["base_video_path"] == "generative-jobs/j/base.mp4"  # the existing whitelist field
+    assert v["poster_path"] == "generative-jobs/j/v.mp4.poster.jpg"
+    assert v["base_poster_path"] == "generative-jobs/j/base.mp4.poster.jpg"
     # caption style + font must survive too, or a caption edit reburns wrong.
     assert v["voiceover_caption_style"] == "word"
     assert v["voiceover_caption_font"] == "Montserrat Bold"

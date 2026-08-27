@@ -106,6 +106,11 @@ def _patch_common(monkeypatch, job, *, sfx_apply, sound_effects_enabled=True):
     monkeypatch.setattr("app.storage.copy_object", lambda src, dst: None)
     monkeypatch.setattr("app.storage.object_exists", lambda _path: False)
     monkeypatch.setattr("app.storage.signed_get_url", lambda path, **kw: "gs://bucket/signed")
+    monkeypatch.setattr(
+        gb,
+        "generate_and_upload_from_gcs",
+        lambda path, **kw: f"{path}.poster.jpg",
+    )
     monkeypatch.setattr("app.services.pipeline_trace.record_pipeline_event", lambda *a, **k: None)
     # FakeJob is not an ORM-mapped instance; neutralise the dirty-flag call.
     monkeypatch.setattr("sqlalchemy.orm.attributes.flag_modified", lambda obj, key: None)
@@ -130,6 +135,7 @@ def test_overlay_pass_stays_rendering_until_sfx_remix_finishes(monkeypatch):
     assert seen_status["at_remix"] == "rendering"
     # The SFX pass set the single terminal "ready".
     assert v["render_status"] == "ready"
+    assert v["poster_path"] == "gs://bucket/v1.mp4.poster.jpg"
     assert v["render_finished_at"] != "2026-06-01T00:00:00Z"
 
 

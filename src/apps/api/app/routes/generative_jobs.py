@@ -423,6 +423,8 @@ class GenerativeVariant(BaseModel):
     ok: bool | None = None
     output_url: str | None = None
     video_path: str | None = None
+    poster_path: str | None = None
+    poster_url: str | None = None
     music_track_id: str | None = None
     track_title: str | None = None
     # Fresh-signed preview URL (+ best-section offset) for the variant's matched
@@ -480,6 +482,10 @@ class GenerativeVariant(BaseModel):
     # the browser can play the base under a client-side text overlay (instant edit).
     base_video_path: str | None = None
     base_video_url: str | None = None
+    base_poster_path: str | None = None
+    base_poster_url: str | None = None
+    pre_overlay_poster_path: str | None = None
+    pre_overlay_poster_url: str | None = None
     # Strict guided-story approval and publication evidence.
     story_timeline: list[dict] | None = None
     proposal_version: int | None = None
@@ -1515,6 +1521,18 @@ def _variants_for_response(job: Job) -> list[dict]:
                     video_path=video_path,
                     exc_info=True,
                 )
+        poster_path = v.get("poster_path")
+        if poster_path:
+            try:
+                v = {**v, "poster_url": signed_get_url(poster_path, PLAYBACK_URL_TTL_MIN)}
+            except Exception:  # noqa: BLE001 — poster is optional
+                log.warning(
+                    "variant_poster_resign_failed",
+                    job_id=str(job.id),
+                    variant_id=v.get("variant_id"),
+                    poster_path=poster_path,
+                    exc_info=True,
+                )
         base_video_path = v.get("base_video_path")
         if base_video_path:
             try:
@@ -1528,6 +1546,21 @@ def _variants_for_response(job: Job) -> list[dict]:
                     exc_info=True,
                 )
                 # no base_video_url key → the instant editor simply stays hidden
+            base_poster_path = v.get("base_poster_path")
+            if base_poster_path:
+                try:
+                    v = {
+                        **v,
+                        "base_poster_url": signed_get_url(base_poster_path, PLAYBACK_URL_TTL_MIN),
+                    }
+                except Exception:  # noqa: BLE001 — poster is optional
+                    log.warning(
+                        "variant_base_poster_resign_failed",
+                        job_id=str(job.id),
+                        variant_id=v.get("variant_id"),
+                        base_poster_path=base_poster_path,
+                        exc_info=True,
+                    )
         # Overlay-clean base (plan 008 live edit): the un-carded video captured
         # before the first overlay burn. When present, the hero can play THIS
         # and render every card as a live CSS layer — timeline edits reflect
@@ -1548,6 +1581,23 @@ def _variants_for_response(job: Job) -> list[dict]:
                     exc_info=True,
                 )
                 # no pre_overlay_video_url → live-edit mode stays off (baked playback)
+        pre_overlay_poster_path = v.get("pre_overlay_poster_path")
+        if pre_overlay_poster_path:
+            try:
+                v = {
+                    **v,
+                    "pre_overlay_poster_url": signed_get_url(
+                        pre_overlay_poster_path, PLAYBACK_URL_TTL_MIN
+                    ),
+                }
+            except Exception:  # noqa: BLE001 — poster is optional
+                log.warning(
+                    "variant_pre_overlay_poster_resign_failed",
+                    job_id=str(job.id),
+                    variant_id=v.get("variant_id"),
+                    pre_overlay_poster_path=pre_overlay_poster_path,
+                    exc_info=True,
+                )
         # Media-overlay cards: sign each card's src_gcs_path into a preview_url so
         # the browser can show existing applied cards as a live CSS overlay without
         # re-uploading them. Signing failure skips the key on that card (graceful).

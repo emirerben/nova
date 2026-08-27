@@ -443,7 +443,12 @@ def test_accepted_full_render_retires_previous_generation_outputs(monkeypatch):
 
     gb._free_retired_generation_outputs(previous, replacement, job_id=JOB_ID)
 
-    assert sorted(deleted) == sorted(previous.values())
+    assert sorted(deleted) == sorted(
+        [
+            *previous.values(),
+            *(f"{path}.poster.jpg" for path in previous.values()),
+        ]
+    )
 
 
 def test_current_task_terminal_write_lands(monkeypatch):
