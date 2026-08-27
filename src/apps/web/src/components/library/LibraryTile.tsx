@@ -26,6 +26,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/cn";
+import { StablePoster } from "@/components/StablePoster";
 
 /**
  * One 9:16 video in the library. Light editorial canvas (D20/D21).
@@ -103,13 +104,25 @@ export default function LibraryTile({
       )}
     >
       {isReady ? (
-        <video
-          src={job.output_url!}
-          preload="metadata"
-          muted
-          playsInline
+        <StablePoster
+          src={job.poster_url}
+          identity={job.poster_identity ?? undefined}
+          alt="Your video"
+          loading="lazy"
+          decoding="async"
           className="h-full w-full object-cover"
-          aria-label="Your video"
+          fallback={
+            <video
+              src={job.output_url ?? undefined}
+              muted
+              autoPlay
+              loop
+              playsInline
+              preload="metadata"
+              aria-label="Your video preview"
+              className="h-full w-full object-cover"
+            />
+          }
         />
       ) : isFailed ? (
         <div className="flex h-full w-full flex-col items-center justify-center gap-2 p-4 text-center">

@@ -27,6 +27,8 @@ const baseJob: LibraryJob = {
   status: "ready",
   raw_status: "ready",
   output_url: "https://example.test/video.mp4",
+  poster_url: "https://example.test/video.mp4.poster.jpg",
+  poster_identity: "song_text:2026-08-01T10:00:00Z",
   output_variant_id: "song_text",
   tiktok_publishable: true,
   tiktok_publication: null,
@@ -147,6 +149,24 @@ it("shows a Ready-to-post badge on a finished video", () => {
   render(<LibraryTile job={job} />);
 
   expect(screen.getByText("Ready to post")).toBeInTheDocument();
+});
+
+it("renders the durable poster in the library tile without loading the MP4", () => {
+  const { container } = render(<LibraryTile job={baseJob} />);
+
+  expect(screen.getByRole("img", { name: "Your video" })).toHaveAttribute(
+    "src",
+    baseJob.poster_url,
+  );
+  expect(container.querySelector("video")).toBeNull();
+});
+
+it("keeps a playable fallback when a ready job has no poster", () => {
+  const { container } = render(<LibraryTile job={{ ...baseJob, poster_url: null }} />);
+
+  expect(container.querySelector("img")).toBeNull();
+  expect(container.querySelector("video")).toHaveAttribute("src", baseJob.output_url);
+  expect(container.querySelector("video")).toHaveAttribute("autoplay");
 });
 
 it("shows a Rendering badge while a video is still processing", () => {

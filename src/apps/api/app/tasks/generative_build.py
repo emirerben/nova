@@ -83,6 +83,7 @@ from app.services.job_phases import (
     record_sub_phase,
 )
 from app.services.speech_cleanup import SpeechCleanupFailure
+from app.services.template_poster import generate_and_upload_from_gcs
 from app.worker import celery_app
 
 
@@ -949,6 +950,63 @@ def _delete_cancelled_job_objects(job_id: str, paths: list[str]) -> None:
                 job_id=job_id,
                 object_path=path,
             )
+
+
+def _delete_generated_poster_objects_if_unreferenced(
+    job_id: str,
+    paths: list[str],
+    *,
+    locked_job: Job | None = None,
+) -> None:
+    """Delete poster siblings unless a winning render already references them.
+
+    A reburn can reuse an immutable ``base_video_path`` while a newer render
+    wins the row-lock race. Both attempts derive the same poster sibling; the
+    losing attempt must not delete the winner's poster during cleanup.
+    """
+    exact_paths = {
+        path
+        for path in paths
+        if isinstance(path, str)
+        and path.startswith(f"generative-jobs/{job_id}/")
+        and path.endswith(".poster.jpg")
+        and ".." not in path
+    }
+    if not exact_paths:
+        return
+
+    def unreferenced_paths(job: Job | None) -> set[str]:
+        if job is None:
+            return exact_paths
+        plan = job.assembly_plan if isinstance(job.assembly_plan, dict) else {}
+        referenced: set[str] = set()
+        for field in ("poster_path", "base_poster_path"):
+            value = plan.get(field)
+            if isinstance(value, str):
+                referenced.add(value)
+        variants = plan.get("variants")
+        if isinstance(variants, list):
+            for variant in variants:
+                if not isinstance(variant, dict):
+                    continue
+                for field in ("poster_path", "base_poster_path", "pre_overlay_poster_path"):
+                    value = variant.get(field)
+                    if isinstance(value, str):
+                        referenced.add(value)
+        return exact_paths - referenced
+
+    if locked_job is not None:
+        safe_paths = unreferenced_paths(locked_job)
+    else:
+        try:
+            job_uuid = uuid.UUID(job_id)
+        except (TypeError, ValueError):
+            safe_paths = exact_paths
+        else:
+            with _sync_session() as db:
+                job = db.get(Job, job_uuid, with_for_update=True)
+                safe_paths = unreferenced_paths(job)
+    _delete_cancelled_job_objects(job_id, list(safe_paths))
 
 
 # Kill switch for the TextElement authoring layer (T3/T4 — plan-item-timeline).
@@ -4251,6 +4309,7 @@ def _run_media_overlay_pass(
     def _persist_result(
         *,
         output_url: str,
+        poster_path: str | None,
         pre_clean: str | None,
         clear: bool,
     ) -> tuple[bool, bool, bool, bool]:
@@ -4306,6 +4365,9 @@ def _run_media_overlay_pass(
                 if not stale_write_skipped:
                     variant["media_overlays_render_dirty"] = False
                 variant["output_url"] = output_url
+                # This pass overwrites video_path in place, so the previous
+                # sibling poster is no longer source-matched.
+                variant["poster_path"] = poster_path
                 if will_reapply_sfx:
                     variant["render_status"] = "rendering"
                 else:
@@ -4334,8 +4396,14 @@ def _run_media_overlay_pass(
         else:
             signed_url = existing.get("output_url", "")
 
+        poster_path = generate_and_upload_from_gcs(
+            current_video_path,
+            job_id=job_id,
+            source_kind="generative_output_overlay_clear",
+        )
         accepted, will_reapply_sfx, _, _cancelled = _persist_result(
             output_url=signed_url,
+            poster_path=poster_path,
             pre_clean=None,
             clear=True,
         )
@@ -4409,8 +4477,14 @@ def _run_media_overlay_pass(
         )
         return
 
+    poster_path = generate_and_upload_from_gcs(
+        current_video_path,
+        job_id=job_id,
+        source_kind="generative_output_overlay",
+    )
     accepted, will_reapply_sfx, stale_write_skipped, cancelled = _persist_result(
         output_url=new_url,
+        poster_path=poster_path,
         pre_clean=pre_clean,
         clear=False,
     )
@@ -4984,12 +5058,18 @@ def _run_sfx_pass(
         else:
             signed_url = existing.get("output_url", "")
 
+        poster_path = generate_and_upload_from_gcs(
+            current_video_path,
+            job_id=job_id,
+            source_kind="generative_output_sfx_clear",
+        )
         if not _update_variant_entry(
             job_id,
             variant_id,
             {
                 "sound_effects": None,
                 "output_url": signed_url,
+                "poster_path": poster_path,
                 "render_status": "ready",
                 "render_finished_at": datetime.utcnow().isoformat() + "Z",
             },
@@ -5076,6 +5156,11 @@ def _run_sfx_pass(
     patch: dict[str, Any] = {
         "pre_sfx_video_path": pre_clean,
         "output_url": new_url,
+        "poster_path": generate_and_upload_from_gcs(
+            current_video_path,
+            job_id=job_id,
+            source_kind="generative_output_sfx",
+        ),
         "render_status": "ready",
         "render_finished_at": datetime.utcnow().isoformat() + "Z",
     }
@@ -9691,6 +9776,49 @@ def _existing_variants(job_id: str) -> list[dict[str, Any]]:
         return list((job.assembly_plan or {}).get("variants") or [])
 
 
+def _attach_variant_posters(
+    payload: dict[str, Any],
+    *,
+    job_id: str,
+) -> tuple[dict[str, Any], list[str]]:
+    """Attach source-matched poster keys at the variant publish boundary.
+
+    The renderers already upload immutable video objects before their DB write.
+    This narrow adapter keeps every initial render and reburn on one contract,
+    while an extraction/upload failure remains an explicit null poster.
+    """
+    enriched = dict(payload)
+    generated_paths: list[str] = []
+    poster_by_video_path: dict[str, str | None] = {}
+    for video_field, poster_field, source_kind in (
+        ("video_path", "poster_path", "generative_output"),
+        ("base_video_path", "base_poster_path", "generative_base"),
+        (
+            "pre_media_overlay_video_path",
+            "pre_overlay_poster_path",
+            "generative_pre_overlay",
+        ),
+    ):
+        if poster_field in enriched:
+            continue
+        video_path = enriched.get(video_field)
+        if not isinstance(video_path, str) or not video_path:
+            continue
+        if video_path in poster_by_video_path:
+            poster_path = poster_by_video_path[video_path]
+        else:
+            poster_path = generate_and_upload_from_gcs(
+                video_path,
+                job_id=job_id,
+                source_kind=source_kind,
+            )
+            poster_by_video_path[video_path] = poster_path
+        enriched[poster_field] = poster_path
+        if poster_path:
+            generated_paths.append(poster_path)
+    return enriched, generated_paths
+
+
 def _upsert_variant_entry(job_id: str, result: dict[str, Any]) -> bool:
     """Insert or replace `result` in Job.assembly_plan['variants'] by variant_id.
 
@@ -9700,12 +9828,28 @@ def _upsert_variant_entry(job_id: str, result: dict[str, Any]) -> bool:
     `regenerate_generative_variant` task may touch the same row). Does NOT change
     job.status — the job stays `rendering` until `_finalize_job`.
     """
+    enriched_result, generated_poster_paths = _attach_variant_posters(result, job_id=job_id)
+    # `_finalize_job` receives the original render dict after this immediate
+    # upsert. Keep the derived keys on that dict too, otherwise its final
+    # whitelist would accidentally erase the poster persisted by this write.
+    result.update(
+        {
+            field: enriched_result[field]
+            for field in ("poster_path", "base_poster_path", "pre_overlay_poster_path")
+            if field in enriched_result
+        }
+    )
+    result = enriched_result
     variant_id = result.get("variant_id")
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
+            _delete_generated_poster_objects_if_unreferenced(job_id, generated_poster_paths)
             return False
         if _cancelled_job_write_rejected(job, operation="upsert_variant", db=db):
+            _delete_generated_poster_objects_if_unreferenced(
+                job_id, generated_poster_paths, locked_job=job
+            )
             return False
         plan = dict(job.assembly_plan or {})
         variants = list(plan.get("variants") or [])
@@ -9838,13 +9982,27 @@ def _update_variant_entry(
     write as before. Returns False when the patch was discarded or the row was
     missing.
     """
+    enriched_patch, generated_poster_paths = _attach_variant_posters(patch, job_id=job_id)
+    patch.update(
+        {
+            field: enriched_patch[field]
+            for field in ("poster_path", "base_poster_path", "pre_overlay_poster_path")
+            if field in enriched_patch
+        }
+    )
+    patch = enriched_patch
     capture_generation: str | None = None
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
+            _delete_cancelled_job_objects(job_id, cancelled_cleanup_paths or [])
+            _delete_generated_poster_objects_if_unreferenced(job_id, generated_poster_paths)
             return False
         if _cancelled_job_write_rejected(job, operation=outcome or "variant_update", db=db):
             _delete_cancelled_job_objects(job_id, cancelled_cleanup_paths or [])
+            _delete_generated_poster_objects_if_unreferenced(
+                job_id, generated_poster_paths, locked_job=job
+            )
             return False
         plan = dict(job.assembly_plan or {})
         variants = list(plan.get("variants") or [])
@@ -9863,6 +10021,9 @@ def _update_variant_entry(
                         outcome=outcome or "variant_update",
                         expected_gen_id=expected_render_gen_id,
                         actual_gen_id=current,
+                    )
+                    _delete_generated_poster_objects_if_unreferenced(
+                        job_id, generated_poster_paths, locked_job=job
                     )
                     return False
                 variants[i] = {**v, **{k: val for k, val in patch.items() if k != "variant_id"}}
@@ -9889,6 +10050,9 @@ def _update_variant_entry(
                         job.status = "draft"
                 break
         else:
+            _delete_generated_poster_objects_if_unreferenced(
+                job_id, generated_poster_paths, locked_job=job
+            )
             return False
         plan["variants"] = variants
         job.assembly_plan = plan
@@ -11208,7 +11372,11 @@ def _discard_generation_storage(
     generation: object,
     fields: tuple[str, ...] = (
         "video_path",
+        "poster_path",
         "base_video_path",
+        "base_poster_path",
+        "pre_media_overlay_video_path",
+        "pre_overlay_poster_path",
         "subject_matte_path",
         "visual_blocks_base_path",
         "motion_base_path",
@@ -11230,6 +11398,16 @@ def _discard_generation_storage(
         and value.startswith(prefix)
         and (not token or token in value)
     }
+    if not keys:
+        return
+    poster_keys = {
+        value
+        for field in ("poster_path", "base_poster_path", "pre_overlay_poster_path")
+        if isinstance((value := result.get(field)), str) and value in keys
+    }
+    if poster_keys:
+        _delete_generated_poster_objects_if_unreferenced(job_id, list(poster_keys))
+        keys -= poster_keys
     if not keys:
         return
     exact_paths = list(keys)
@@ -11264,6 +11442,7 @@ def _free_retired_generation_outputs(previous: dict, result: dict, *, job_id: st
         path = previous.get(field)
         if isinstance(path, str) and path.startswith(prefix) and path not in keep:
             delete_object_best_effort(path)
+            delete_object_best_effort(f"{path}.poster.jpg")
 
 
 def _discard_uncommitted_reburn_storage(
@@ -18401,6 +18580,7 @@ def _finalize_job(
                     "style_set_id": r.get("style_set_id"),
                     "output_url": r.get("output_url"),
                     "video_path": r.get("video_path"),
+                    "poster_path": r.get("poster_path"),
                     # Initial/guided renders can carry an ownership token too.
                     # The row-locked final merge uses it to distinguish this
                     # result from a newer editor render started after first-ready.
@@ -18418,6 +18598,7 @@ def _finalize_job(
                     "intro_text_color": r.get("intro_text_color"),
                     "intro_behind_subject": r.get("intro_behind_subject"),
                     "base_video_path": r.get("base_video_path"),
+                    "base_poster_path": r.get("base_poster_path"),
                     # Visual replacement blocks render below text/captions. The
                     # original clean base remains immutable; the derived cache
                     # is reused by text-only reburns.
@@ -18437,6 +18618,7 @@ def _finalize_job(
                     "media_overlays": r.get("media_overlays"),
                     "media_overlays_applied_ids": r.get("media_overlays_applied_ids"),
                     "pre_media_overlay_video_path": r.get("pre_media_overlay_video_path"),
+                    "pre_overlay_poster_path": r.get("pre_overlay_poster_path"),
                     # sound-effect placements (SFX lane) — MUST survive finalization
                     # or any later full re-render (text/song/clip edit) strips the
                     # effects with no error: the render-sfx pass reads sound_effects

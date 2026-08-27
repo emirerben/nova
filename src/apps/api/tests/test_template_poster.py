@@ -1,12 +1,13 @@
 """Tests for app.services.template_poster — FFmpeg poster extraction + GCS upload.
 
 Behaviour under test (post brightness-retry change):
-- One FFmpeg subprocess per seek offset; signalstats parsed from stderr.
+- One FFmpeg subprocess per seek offset; showinfo luma statistics parsed from stderr.
 - Returns the first attempt whose luma_mean + luma_stddev clear thresholds.
 - If every attempt is too dark, returns the brightest one (never silently emit black).
 - If every FFmpeg attempt fails entirely, raises PosterExtractionError.
 """
 
+import shutil
 import subprocess
 from unittest.mock import MagicMock, patch
 
@@ -18,6 +19,7 @@ from app.services.template_poster import (
     PosterExtractionError,
     extract_poster_bytes,
     generate_and_upload,
+    generate_and_upload_from_gcs,
 )
 
 _FAKE_JPEG = b"\xff\xd8\xff\xe0fake-jpeg-payload\xff\xd9"
@@ -59,6 +61,7 @@ def test_first_seek_passes_threshold_returns_immediately():
     assert run.call_count == 1
     cmd = run.call_args.args[0]
     assert "signalstats" in " ".join(cmd)
+    assert "showinfo" in " ".join(cmd)
     assert f"{POSTER_SEEK_ATTEMPTS_S[0]:.3f}" in cmd
 
 
@@ -81,12 +84,8 @@ def test_fade_in_clip_falls_back_to_later_seek():
 def test_uniformly_dark_video_returns_brightest_attempt():
     """Every attempt fails the threshold (night scene). The brightest one wins
     and a warning log fires — but we never silently emit a black frame."""
-    attempts = [
-        _ok_attempt(yavg=5.0, ydev=1.0),
-        _ok_attempt(yavg=28.0, ydev=3.0),  # brightest
-        _ok_attempt(yavg=20.0, ydev=2.0),
-        _ok_attempt(yavg=15.0, ydev=2.0),
-    ]
+    attempts = [_ok_attempt(yavg=5.0 + i, ydev=1.0) for i in range(len(POSTER_SEEK_ATTEMPTS_S))]
+    attempts[1] = _ok_attempt(yavg=28.0, ydev=3.0)  # brightest
     # Pin the JPEG of the brightest attempt to a distinctive value so we can
     # assert it was the one returned.
     distinctive = b"\xff\xd8\xff\xe0brightest_attempt\xff\xd9"
@@ -178,6 +177,39 @@ def test_command_includes_safety_flags():
     assert run.call_args.kwargs.get("stdin") == subprocess.DEVNULL
 
 
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is required")
+def test_real_ffmpeg_short_clip_emits_a_valid_poster(tmp_path):
+    """Exercise the production filter chain, including showinfo statistics."""
+    source = tmp_path / "short.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=64x64:rate=25",
+            "-t",
+            "0.2",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-y",
+            str(source),
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    poster = extract_poster_bytes(str(source))
+
+    assert poster.startswith(b"\xff\xd8\xff")
+    assert poster.endswith(b"\xff\xd9")
+    assert len(poster) > 100
+
+
 def test_generate_and_upload_uses_template_id_in_path():
     """The GCS object path is templates/<id>/poster.jpg."""
     fake_jpeg = b"\xff\xd8\xff\xe0payload\xff\xd9"
@@ -209,3 +241,28 @@ def test_generate_and_upload_propagates_extraction_error():
     ):
         with pytest.raises(PosterExtractionError):
             generate_and_upload("tpl-abc", "/tmp/v.mp4")
+
+
+def test_video_poster_object_path_is_deterministic():
+    from app.services.template_poster import poster_object_path
+
+    assert poster_object_path("jobs/job-1/output.mp4") == "jobs/job-1/output.mp4.poster.jpg"
+
+
+def test_generate_and_upload_from_gcs_downloads_exact_video_key(monkeypatch):
+    downloaded = {}
+
+    def fake_download(path, local_path):
+        downloaded["path"] = path
+        downloaded["local_path"] = local_path
+
+    monkeypatch.setattr("app.services.template_poster.download_to_file", fake_download)
+    monkeypatch.setattr(
+        "app.services.template_poster.upload_video_poster",
+        lambda local_path, video_path: f"{video_path}.poster.jpg",
+    )
+
+    result = generate_and_upload_from_gcs("generative-jobs/job-1/output.mp4", job_id="job-1")
+
+    assert result == "generative-jobs/job-1/output.mp4.poster.jpg"
+    assert downloaded["path"] == "generative-jobs/job-1/output.mp4"

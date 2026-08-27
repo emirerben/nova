@@ -16,6 +16,7 @@ export interface VariantRenderCardVariant {
   render_started_at?: string | null;
   render_finished_at?: string | null;
   output_url?: string | null;
+  poster_url?: string | null;
   error?: string | null;
   error_class?: string | null;
 }
@@ -45,7 +46,15 @@ interface VariantRenderCardProps {
  * No red (brand guideline). No raw error text shown.
  */
 export function VariantRenderCard({ variant, isNewlyReady, onRetry, tone = "dark" }: VariantRenderCardProps) {
-  const { variant_id, render_status, render_started_at, render_finished_at, output_url, error_class } = variant;
+  const {
+    variant_id,
+    render_status,
+    render_started_at,
+    render_finished_at,
+    output_url,
+    poster_url,
+    error_class,
+  } = variant;
   const displayName = variantDisplayName(variant_id);
 
   const [arrivedOnce, setArrivedOnce] = useState(false);
@@ -141,6 +150,7 @@ export function VariantRenderCard({ variant, isNewlyReady, onRetry, tone = "dark
           <div className="t-skel-content">
             <ReadyCardInner
               outputUrl={output_url ?? null}
+              posterUrl={poster_url ?? null}
               renderFinishedAt={render_finished_at ?? null}
               displayName={displayName}
               tone={tone}
@@ -220,11 +230,13 @@ function RenderingStatus({
 
 function ReadyCardInner({
   outputUrl,
+  posterUrl,
   renderFinishedAt,
   displayName,
   tone,
 }: {
   outputUrl: string | null;
+  posterUrl: string | null;
   renderFinishedAt: string | null;
   displayName: string;
   tone: "dark" | "light";
@@ -238,6 +250,7 @@ function ReadyCardInner({
         <StableVideo
           src={stableVideoSrc}
           identity={renderFinishedAt ?? undefined}
+          poster={posterUrl ?? undefined}
           controls
           playsInline
           loop

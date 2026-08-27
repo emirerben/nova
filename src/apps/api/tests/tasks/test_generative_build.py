@@ -5120,8 +5120,10 @@ def test_finalize_job_preserves_caption_cues(monkeypatch):
         "render_status": "ready",
         "output_url": "u",
         "video_path": "generative-jobs/j/v.mp4",
+        "poster_path": "generative-jobs/j/v.mp4.poster.jpg",
         "resolved_archetype": "narrated",
         "base_video_path": "generative-jobs/j/base.mp4",
+        "base_poster_path": "generative-jobs/j/base.mp4.poster.jpg",
         "caption_cues": [{"text": "Hello.", "start_s": 0.0, "end_s": 1.0}],
         "voiceover_caption_style": "word",
         "voiceover_caption_font": "Montserrat Bold",
@@ -5139,6 +5141,8 @@ def test_finalize_job_preserves_caption_cues(monkeypatch):
     v = job.assembly_plan["variants"][0]
     assert v["caption_cues"] == [{"text": "Hello.", "start_s": 0.0, "end_s": 1.0}]
     assert v["base_video_path"] == "generative-jobs/j/base.mp4"  # the existing whitelist field
+    assert v["poster_path"] == "generative-jobs/j/v.mp4.poster.jpg"
+    assert v["base_poster_path"] == "generative-jobs/j/base.mp4.poster.jpg"
     # caption style + font must survive too, or a caption edit reburns wrong.
     assert v["voiceover_caption_style"] == "word"
     assert v["voiceover_caption_font"] == "Montserrat Bold"

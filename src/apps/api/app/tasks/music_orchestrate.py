@@ -47,6 +47,7 @@ from app.services.music_sections import (
     reconcile_track_config_to_rank_one,
     refresh_recipe_cached_for_bounds,
 )
+from app.services.template_poster import upload_video_poster
 from app.storage import download_to_file
 from app.tasks._job_cancel_fence import (
     active_job_for_update,
@@ -83,6 +84,27 @@ except ImportError:
 log = structlog.get_logger()
 
 MAX_ERROR_DETAIL_LEN = 2000
+
+
+def _try_upload_video_poster(
+    local_video_path: str,
+    video_object_path: str,
+    *,
+    job_id: str,
+    source_kind: str,
+) -> str | None:
+    try:
+        return upload_video_poster(local_video_path, video_object_path)
+    except Exception as exc:  # noqa: BLE001 - poster is a derived asset
+        log.warning(
+            "video_poster_upload_failed",
+            job_id=job_id,
+            source_kind=source_kind,
+            video_path=video_object_path,
+            error_class=type(exc).__name__,
+            error=str(exc)[:300],
+        )
+        return None
 
 
 def _coerce_best_start_s(track_config: dict | None) -> float:
@@ -864,6 +886,12 @@ def _run_music_job(job_id: str) -> None:
         except Exception:
             delete_task_owned_outputs(job_id, [output_gcs])
             raise
+        poster_path = _try_upload_video_poster(
+            final_path,
+            output_gcs,
+            job_id=job_id,
+            source_kind="music_output",
+        )
         log.info("music_job_uploaded", job_id=job_id, gcs_path=output_gcs)
 
     # [12] Mark done
@@ -882,14 +910,15 @@ def _run_music_job(job_id: str) -> None:
                     **existing_plan,
                     "output_url": output_url,
                     "output_path": output_gcs,
+                    "poster_path": poster_path,
                 }
                 db.commit()
                 finalized = True
     except Exception:
-        delete_task_owned_outputs(job_id, [output_gcs])
+        delete_task_owned_outputs(job_id, [path for path in (output_gcs, poster_path) if path])
         raise
     if not finalized:
-        delete_task_owned_outputs(job_id, [output_gcs])
+        delete_task_owned_outputs(job_id, [path for path in (output_gcs, poster_path) if path])
         return
 
     log.info("music_job_done", job_id=job_id)
@@ -1731,6 +1760,12 @@ def _run_templated_music_job(job_id: str) -> None:
         except Exception:
             delete_task_owned_outputs(job_id, [output_gcs])
             raise
+        poster_path = _try_upload_video_poster(
+            final_path,
+            output_gcs,
+            job_id=job_id,
+            source_kind="templated_music_output",
+        )
         log.info("templated_music_job_uploaded", job_id=job_id, gcs_path=output_gcs)
 
     # [9] Mark done
@@ -1749,14 +1784,15 @@ def _run_templated_music_job(job_id: str) -> None:
                     **existing,
                     "output_url": output_url,
                     "output_path": output_gcs,
+                    "poster_path": poster_path,
                 }
                 db.commit()
                 finalized = True
     except Exception:
-        delete_task_owned_outputs(job_id, [output_gcs])
+        delete_task_owned_outputs(job_id, [path for path in (output_gcs, poster_path) if path])
         raise
     if not finalized:
-        delete_task_owned_outputs(job_id, [output_gcs])
+        delete_task_owned_outputs(job_id, [path for path in (output_gcs, poster_path) if path])
         return
     log.info("templated_music_job_done", job_id=job_id)
 
