@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.53.0.2] — 2026-08-26
+
+### Fixed
+- **Mixed photo/video timing requests now always reach the specialist that can use both media kinds.** When photos and videos are available, the typed fast-photo/longer-video profile deterministically selects guided planning even if the Main Creator model suggests the clip-only native path, preventing a failed item's legacy approved timeline from being rendered again. If guided planning is unavailable, Creator stops before confirmation instead of silently rendering a video-only fallback.
+
 ## [0.53.0.1] — 2026-08-26
 
 ### Fixed

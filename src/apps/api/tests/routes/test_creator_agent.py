@@ -15,6 +15,7 @@ from starlette.requests import Request
 from app.agents._schemas.creator_agent import (
     CreativeStrategy,
     CreatorCraftBundle,
+    ProposeStrategy,
     canonical_context_hash,
 )
 from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
@@ -699,6 +700,60 @@ def test_confirmed_guided_strategy_becomes_specialist_brief(monkeypatch) -> None
     }
 
 
+def test_native_mixed_timing_replaces_stale_approved_proposal_with_fresh_brief(
+    monkeypatch,
+) -> None:
+    from app.services import creator_capabilities
+
+    monkeypatch.setattr(creator_capabilities.settings, "guided_edit_capability_enabled", True)
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": "clip-1", "kind": "video"},
+            {"media_id": "asset-photo-1", "kind": "image"},
+        ],
+    )
+    edit_plan = compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="montage",
+            audio_strategy="licensed_music",
+            render_program="native",
+            selected_media_ids=["clip-1"],
+            mixed_media_timing=MixedMediaTimingProfile(
+                image_hold="very_fast",
+                video_hold="longer",
+                boundary_style="cut",
+            ),
+        ),
+    )
+    item = SimpleNamespace(
+        edit_proposal={
+            "proposal_version": 7,
+            "generation_attempt_id": "old-approved-attempt",
+            "status": "approved",
+        }
+    )
+
+    _seed_guided_specialist_brief(
+        item,
+        edit_plan,
+        summary="Fast photos and longer videos.",
+        creator_request="Photos should have a very fast transition, videos can be a bit longer",
+    )
+
+    assert edit_plan.strategy.render_program == "guided"
+    assert item.edit_proposal["proposal_version"] == 9
+    assert item.edit_proposal["status"] == "briefing"
+    assert item.edit_proposal["brief_ready"] is True
+    assert item.edit_proposal["brief"]["mixed_media_timing"] == {
+        "image_hold": "very_fast",
+        "video_hold": "longer",
+        "boundary_style": "cut",
+    }
+
+
 def test_truncated_main_creator_fallback_preserves_exact_mixed_media_request(
     monkeypatch,
 ) -> None:
@@ -713,6 +768,96 @@ def test_truncated_main_creator_fallback_preserves_exact_mixed_media_request(
         "image_hold": "very_fast",
         "video_hold": "longer",
         "boundary_style": "cut",
+    }
+
+
+@pytest.mark.asyncio
+async def test_planning_fails_closed_when_mixed_media_specialist_is_unavailable(
+    monkeypatch,
+) -> None:
+    from app.services import creator_capabilities
+
+    monkeypatch.setattr(creator_capabilities.settings, "guided_edit_capability_enabled", False)
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": "clip-1", "kind": "video"},
+            {"media_id": "asset-photo-1", "kind": "image"},
+        ],
+    )
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4())
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        revision=1,
+        status="planning",
+        events=[],
+        agent_call_count=0,
+        agent_call_budget=2,
+        question_count=0,
+        question_budget=1,
+        active_plan=None,
+        last_error=None,
+    )
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=CreativeStrategy(
+            edit_format="montage",
+            render_program="native",
+            selected_media_ids=["clip-1"],
+            mixed_media_timing=MixedMediaTimingProfile(
+                image_hold="very_fast",
+                video_hold="longer",
+                boundary_style="cut",
+            ),
+        ),
+        summary="Fast photos and longer videos.",
+    )
+    append_event = AsyncMock()
+    response = SimpleNamespace(status="failed")
+
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, SimpleNamespace(), SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(creator_routes, "creator_context", lambda *_args: ("creator", "item"))
+    monkeypatch.setattr(creator_routes, "default_client", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        creator_routes.asyncio,
+        "to_thread",
+        AsyncMock(return_value=SimpleNamespace(action=action)),
+    )
+    monkeypatch.setattr(creator_routes, "append_event", append_event)
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+
+    result = await creator_routes._run_planning_turn(
+        AsyncMock(),
+        item_id=str(item.id),
+        user=user,
+        session_id=session.id,
+        expected_revision=1,
+        user_message="Photos should have a very fast transition, videos can be a bit longer",
+    )
+
+    assert result is response
+    assert session.status == "failed"
+    assert session.active_plan is None
+    assert session.last_error["code"] == "mixed_media_timing_unavailable"
+    assert append_event.await_args.kwargs["event_type"] == "assistant_error"
+    assert append_event.await_args.kwargs["payload"] == {
+        "message": (
+            "Mixed photo and video timing is temporarily unavailable. "
+            "No fallback edit was rendered."
+        ),
+        "code": "mixed_media_timing_unavailable",
     }
 
 

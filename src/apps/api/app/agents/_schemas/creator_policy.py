@@ -11,6 +11,10 @@ MAX_MAIN_CREATOR_SELECTED_MEDIA = 12
 CAPABILITY_DRAFT_GUIDED_PROPOSAL = "draft_guided_proposal"
 
 
+class MixedMediaTimingUnavailableError(ValueError):
+    """The requested per-kind timing cannot be compiled by an available renderer."""
+
+
 def effective_render_program(
     manifest: ResolvedCreatorManifest,
     strategy: CreativeStrategy,
@@ -34,7 +38,21 @@ def effective_render_program(
     if native_required:
         return "native"
     guided = manifest.capabilities.get(CAPABILITY_DRAFT_GUIDED_PROPOSAL)
-    if strategy.render_program == "guided" and guided and guided.available:
+    media_kinds = {media.kind for media in manifest.media}
+    # Native montage only receives attached clips. A per-kind timing request
+    # needs the guided specialist so pool photos are selected and compiled too.
+    mixed_media_timing_requires_specialist = bool(
+        strategy.mixed_media_timing is not None and {"image", "video"}.issubset(media_kinds)
+    )
+    if mixed_media_timing_requires_specialist and not (guided and guided.available):
+        raise MixedMediaTimingUnavailableError(
+            "mixed-media timing requires the guided proposal capability"
+        )
+    if (
+        guided
+        and guided.available
+        and (strategy.render_program == "guided" or mixed_media_timing_requires_specialist)
+    ):
         return "guided"
     return "native"
 
@@ -83,6 +101,7 @@ def normalize_creator_strategy_media(
 __all__ = [
     "MAX_MAIN_CREATOR_SELECTED_MEDIA",
     "CAPABILITY_DRAFT_GUIDED_PROPOSAL",
+    "MixedMediaTimingUnavailableError",
     "effective_render_program",
     "normalize_creator_strategy_media",
 ]

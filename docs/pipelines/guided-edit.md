@@ -360,6 +360,9 @@ tail-first adjustments and fails closed if the requested runtime cannot be reach
 source time. Source variety remains required. When the typed `mixed_media_timing` profile is present,
 photos hold for 0.5–0.8s, usable videos hold for 1.5–3.0s when their source permits, boundaries are
 hard cuts, both eligible media kinds are included, and the total remains within 0.15s of the target.
+For a mixed image/video upload, the profile selects the guided proposal path even when the Main
+Creator strategy would otherwise choose native montage. If guided planning is unavailable, the
+request fails closed before confirmation instead of silently dropping the photos.
 Without that profile, legacy fast-montage cuts remain capped at 1.2s and retain their previous timing
 behavior. Legacy fast-montage snapshots without `fast_cuts`
 remain readable and render through the older story-shaped contract.
