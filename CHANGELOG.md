@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.54.0.0] — 2026-08-27
+
+### Fixed
+- **Finished videos now show stable, source-matched previews on mobile.** Library tiles, variant rails, and the Hero keep signed poster URLs across refreshes, regenerate posters whenever a render changes, and fall back to a playable video when a poster is unavailable.
+- **Existing video outputs can be repaired without re-rendering.** The idempotent poster backfill covers generative, template, music, auto-music, and default job outputs while preserving ownership and render-generation fences.
+
 ## [0.53.0.4] — 2026-08-27
 
 ### Fixed
