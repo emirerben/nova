@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-08-27-v33",
+  "prompt_version": "2026-08-27-v34",
   "input": {
     "utterance": "all of them and make them 0.2 seconds each",
     "prior_turns": [

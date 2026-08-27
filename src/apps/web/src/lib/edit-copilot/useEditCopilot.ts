@@ -502,9 +502,16 @@ export function useEditCopilot(
         },
       );
       receiptResponse = response;
-      const shouldClarify = response.outcome
+      // A pending bulk plan is an unresolved transaction, regardless of the
+      // outcome label. During split deploys (and with older model responses),
+      // a response can carry pending_actions while still saying "proposed".
+      // Applying its partial ops would turn an all-or-zero request into a
+      // misleading staged subset. Keep the draft untouched until the server
+      // returns a complete plan with no pending actions.
+      const hasPendingPlan = (response.pending_actions?.length ?? 0) > 0;
+      const shouldClarify = hasPendingPlan || (response.outcome
         ? response.outcome === "clarification"
-        : response.needs_clarification;
+        : response.needs_clarification);
       const applyResult = shouldClarify
         ? { textActions: [], nextSlots: null, applied: [], rejected: [] }
       : (optsRef.current.applyOpsAtomic ?? optsRef.current.applyOps)(response.ops, snapshot);
