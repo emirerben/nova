@@ -3,8 +3,10 @@ import {
   FILMSTRIP_MAX_SEEKS,
   FILMSTRIP_TILE_W,
   allocateFilmstripSeekBudget,
+  filmstripCoverCrop,
   filmstripDecodeKey,
   filmstripFallbackLabel,
+  filmstripSampleTimes,
   filmstripZoomBucket,
 } from "@/app/plan/items/[id]/_editor/Filmstrip";
 
@@ -90,5 +92,51 @@ describe("editor source filmstrip helpers", () => {
     expect(filmstripFallbackLabel("", 0.469)).toBe("0.5s");
     expect(filmstripFallbackLabel("  ", 3.2)).toBe("3.2s");
     expect(filmstripFallbackLabel("Clip 1", 3.2)).toBe("Clip 1");
+  });
+
+  it("samples the temporal center of each tile inside the exact source window", () => {
+    expect(
+      filmstripSampleTimes({
+        sourceStartS: 3.6,
+        durationS: 3,
+        sourceDurationS: 11.21,
+        tiles: 3,
+      }),
+    ).toEqual([4.1, 5.1, 6.1]);
+  });
+
+  it("clamps final samples to the drawable source bound", () => {
+    expect(
+      filmstripSampleTimes({
+        sourceStartS: 10.9,
+        durationS: 1,
+        sourceDurationS: 11.21,
+        tiles: 2,
+      }),
+    ).toEqual([11.15, 11.16]);
+  });
+
+  it("center-crops source frames instead of distorting them", () => {
+    expect(
+      filmstripCoverCrop({
+        sourceWidth: 1920,
+        sourceHeight: 1080,
+        targetWidth: 56,
+        targetHeight: 40,
+      }),
+    ).toEqual({ sx: 204, sy: 0, sw: 1512, sh: 1080 });
+    expect(
+      filmstripCoverCrop({
+        sourceWidth: 1080,
+        sourceHeight: 1920,
+        targetWidth: 56,
+        targetHeight: 40,
+      }),
+    ).toEqual({
+      sx: 0,
+      sy: 574.2857142857142,
+      sw: 1080,
+      sh: 771.4285714285714,
+    });
   });
 });

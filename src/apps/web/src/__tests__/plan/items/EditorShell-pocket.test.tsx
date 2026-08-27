@@ -14,15 +14,10 @@ delete process.env.NEXT_PUBLIC_EDIT_COPILOT_ENABLED;
  *     at minimum, plus visuals / overlays / styles); nova is absent while the
  *     copilot flag is off.
  *  2. "pocket-ministrip" renders when the clip timeline carries slots.
- *  3. Tapping pocket-dock-text opens a "pocket-sheet" titled "Text"; while a
- *     sheet is open the bottom cluster (dock + ministrip) hides; Escape
- *     closes the sheet and the cluster returns.
- *     NOTE — the spec's "clicking pocket-dock-text again toggles the sheet
- *     closed" is UNREACHABLE through the UI: the dock unmounts whenever a
- *     sheet is open (EditorShell renders it under `!pocketSheetOpen`), so a
- *     second dock tap cannot happen. The TOGGLE_TOOL close branch exists in
- *     pocketReducer but is dead via the dock; the reachable close affordances
- *     (Escape, the sheet's Close button) are pinned instead.
+ *  3. Tapping pocket-dock-text immediately inserts one text bar and opens the
+ *     focused "Edit text" inspector; the intermediate Text tool drawer is
+ *     deliberately skipped. Escape keeps the authored bar and returns to the
+ *     timeline.
  *  4. Legacy displacement: double-tapping a canvas text element opens the
  *     POCKET inspector sheet ("Edit text"), NOT the legacy LightEditSheet —
  *     the legacy-only "Close text editor" close button never appears.
@@ -375,21 +370,20 @@ describe("EditorShell — pocket editor flag ON (light mode)", () => {
     expect(screen.getByTestId("carousel-inspector")).toBeInTheDocument();
   });
 
-  it("dock text tool opens the Text sheet; the bottom cluster hides; Escape closes", async () => {
+  it("dock text tool inserts text and focuses the editor without an intermediate drawer", async () => {
     await renderShell(makeVariant());
 
     fireEvent.click(screen.getByTestId("pocket-dock-text"));
     await settle();
 
-    // The sheet is a dialog named by its title, with the title as a heading.
     const sheet = screen.getByTestId("pocket-sheet");
-    expect(sheet).toBeInTheDocument();
-    expect(screen.getByRole("dialog", { name: "Text" })).toBe(sheet);
-    expect(within(sheet).getByRole("heading", { name: "Text" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Edit text" })).toBe(sheet);
+    expect(within(sheet).queryByRole("button", { name: "Add text" })).toBeNull();
+    const content = within(sheet).getByRole("textbox", { name: "Text content" });
+    expect(content).toHaveValue("Add a title");
+    expect(content).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
 
-    // While the sheet is open, the bottom cluster hides (dock + ministrip).
-    // This is also why a second pocket-dock-text tap cannot toggle the sheet
-    // closed — the dock is unmounted (see file header NOTE).
     expect(screen.queryByTestId("pocket-dock")).toBeNull();
     expect(screen.queryByTestId("pocket-ministrip")).toBeNull();
 

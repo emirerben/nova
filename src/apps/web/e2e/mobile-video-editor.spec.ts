@@ -94,6 +94,67 @@ test("filmstrip dragging scrubs without changing the selected source window", as
   expect(await qaNumber(page, "data-current-time")).toBeGreaterThan(beforeTime);
 });
 
+test("filmstrip samples the exact source window and follows touch every frame", async ({
+  page,
+}) => {
+  const firstStrip = page.getByTestId("editor-filmstrip").first();
+  const firstWindow = (await qaData<QaWindow[]>(page, "data-windows"))[0];
+  const samples =
+    (await firstStrip.getAttribute("data-sample-times"))
+      ?.split(",")
+      .filter(Boolean)
+      .map(Number) ?? [];
+  expect(samples.length).toBeGreaterThan(0);
+  for (const sample of samples) {
+    expect(sample).toBeGreaterThanOrEqual(firstWindow.inS);
+    expect(sample).toBeLessThanOrEqual(firstWindow.inS + firstWindow.durationS);
+  }
+  samples.forEach((sample, index) => {
+    expect(sample).toBeCloseTo(
+      firstWindow.inS + ((index + 0.5) / samples.length) * firstWindow.durationS,
+      2,
+    );
+  });
+
+  const viewport = page.getByTestId("pocket-timeline-viewport");
+  const scrollSamples = await viewport.evaluate(async (element) => {
+    const box = element.getBoundingClientRect();
+    const startX = box.left + box.width * 0.7;
+    const y = box.top + box.height / 2;
+    const dispatch = (type: string, x: number) =>
+      element.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          clientX: x,
+          clientY: y,
+          pointerId: 44,
+          pointerType: "touch",
+          isPrimary: true,
+        }),
+      );
+    dispatch("pointerdown", startX);
+    const positions: number[] = [];
+    for (let index = 1; index <= 6; index += 1) {
+      dispatch("pointermove", startX - index * 12);
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => resolve()),
+      );
+      positions.push(element.scrollLeft);
+    }
+    dispatch("pointerup", startX - 72);
+    return positions;
+  });
+  expect(
+    scrollSamples.every(
+      (value, index) => index === 0 || value >= scrollSamples[index - 1],
+    ),
+  ).toBe(true);
+  expect(
+    new Set(scrollSamples.map((value) => Math.round(value))).size,
+  ).toBeGreaterThan(3);
+});
+
 test("transport, zoom, clip actions, and boundary reasons all respond", async ({ page }) => {
   await expect(page.getByRole("link", { name: "Back to video" })).toHaveAttribute(
     "href",
@@ -166,10 +227,35 @@ test("precision sheet trims and applies Look and transition choices", async ({ p
   await expect(dialog).toBeHidden();
 });
 
-test("every icon tool opens one shadcn sheet and its primary action works", async ({ page }) => {
+test("Text inserts on screen and focuses editing immediately", async ({ page }) => {
+  await page.getByRole("button", { name: "Text tool" }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit text" });
+  const content = dialog.getByRole("textbox", { name: "Text content" });
+  await expect(dialog).toBeVisible();
+  await expect(content).toBeFocused();
+  await expect(page.getByTestId("qa-text-overlay")).toHaveText("Add a title");
+
+  await content.fill("Three cities, one summer");
+  await expect(page.getByTestId("qa-text-overlay")).toHaveText(
+    "Three cities, one summer",
+  );
+  await expect(page.locator("#qa-state")).toHaveAttribute(
+    "data-text",
+    "Three cities, one summer",
+  );
+  await dialog.getByRole("button", { name: "Done" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByTestId("pocket-dock")).toBeVisible();
+  await expect(page.getByTestId("qa-text-overlay")).toHaveText(
+    "Three cities, one summer",
+  );
+});
+
+test("every remaining icon tool opens one shadcn sheet and its primary action works", async ({
+  page,
+}) => {
   const tools = [
     ["Kria", "Review proposal"],
-    ["Text", "Add text"],
     ["Captions", "Edit cue"],
     ["Visuals", "Add media"],
     ["Sounds", "Add SFX"],

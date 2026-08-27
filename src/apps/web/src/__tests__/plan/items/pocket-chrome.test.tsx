@@ -623,7 +623,7 @@ describe("MiniStrip", () => {
     expect(onSelectClip).toHaveBeenCalledWith("incoming", 4.5);
   });
 
-  it("drag beyond 8px scrubs (onScrubStart once, monotonic times) without selecting", () => {
+  it("drag beyond 8px updates the strip directly and coalesces seeks per frame", () => {
     const { viewport, onScrub, onScrubStart, onSelectClip } = renderStrip();
     fireEvent.pointerDown(viewport!, { pointerId: 1, clientX: 140, clientY: 10 });
     fireEvent.pointerMove(viewport!, { pointerId: 1, clientX: 120, clientY: 10 });
@@ -633,13 +633,8 @@ describe("MiniStrip", () => {
 
     expect(onScrubStart).toHaveBeenCalledTimes(1);
     const times = onScrub.mock.calls.map(([t]) => t as number);
-    expect(times).toHaveLength(3); // one per move after crossing the slop
-    expect(times[0]).toBeCloseTo(116 / 48, 5);
-    expect(times[1]).toBeCloseTo(146 / 48, 5);
-    expect(times[2]).toBeCloseTo(196 / 48, 5);
-    for (let i = 1; i < times.length; i += 1) {
-      expect(times[i]).toBeGreaterThan(times[i - 1]);
-    }
+    expect(times).toHaveLength(1);
+    expect(times[0]).toBeCloseTo(196 / 48, 5);
     expect(onSelectClip).not.toHaveBeenCalled();
   });
 
@@ -675,7 +670,9 @@ describe("MiniStrip", () => {
       fireEvent.scroll(viewport!);
       expect(onScrubStart).toHaveBeenCalledTimes(1);
     });
-    expect(onScrub).toHaveBeenCalledWith(3);
+    await waitFor(() => {
+      expect(onScrub).toHaveBeenCalledWith(3);
+    });
   });
 
   it("marks the selected segment and renders presence dots + playhead", () => {

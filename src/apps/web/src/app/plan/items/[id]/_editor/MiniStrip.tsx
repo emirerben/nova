@@ -180,10 +180,19 @@ export function MiniStrip({
   const syncingScrollRef = useRef(false);
   const manualScrollRef = useRef(false);
   const zoomFrameRef = useRef<number | null>(null);
+  const scrubFrameRef = useRef<number | null>(null);
+  const pendingScrubRef = useRef<number | null>(null);
+  const onScrubRef = useRef(onScrub);
+  const nativeScrollActiveRef = useRef(false);
+  const nativeScrollEndTimerRef = useRef<number | null>(null);
   const pendingZoomRef = useRef<{ zoom: number; anchorTimeS: number } | null>(
     null,
   );
   const [zoom, setZoom] = useState(1);
+
+  useEffect(() => {
+    onScrubRef.current = onScrub;
+  }, [onScrub]);
 
   const pixelsPerSecond = POCKET_TIMELINE_BASE_PX_PER_SECOND * zoom;
   const trackWidth = Math.max(1, durationS * pixelsPerSecond);
@@ -221,6 +230,12 @@ export function MiniStrip({
     () => () => {
       if (zoomFrameRef.current != null) {
         cancelAnimationFrame(zoomFrameRef.current);
+      }
+      if (scrubFrameRef.current != null) {
+        cancelAnimationFrame(scrubFrameRef.current);
+      }
+      if (nativeScrollEndTimerRef.current != null) {
+        window.clearTimeout(nativeScrollEndTimerRef.current);
       }
     },
     [],
@@ -270,8 +285,36 @@ export function MiniStrip({
     });
   };
 
-  const scrubToScrollPosition = (scrollLeft: number) => {
-    onScrub(Math.min(durationS, Math.max(0, scrollLeft / pixelsPerSecond)));
+  const scrubToScrollPosition = (scrollLeft: number, flush = false) => {
+    pendingScrubRef.current = Math.min(
+      durationS,
+      Math.max(0, scrollLeft / pixelsPerSecond),
+    );
+    if (flush) {
+      if (scrubFrameRef.current != null) {
+        cancelAnimationFrame(scrubFrameRef.current);
+        scrubFrameRef.current = null;
+      }
+      const pending = pendingScrubRef.current;
+      pendingScrubRef.current = null;
+      if (pending != null) onScrubRef.current(pending);
+      return;
+    }
+    if (scrubFrameRef.current != null) return;
+    scrubFrameRef.current = requestAnimationFrame(() => {
+      scrubFrameRef.current = null;
+      const pending = pendingScrubRef.current;
+      pendingScrubRef.current = null;
+      if (pending != null) onScrubRef.current(pending);
+    });
+  };
+
+  const cancelScheduledScrub = () => {
+    if (scrubFrameRef.current != null) {
+      cancelAnimationFrame(scrubFrameRef.current);
+      scrubFrameRef.current = null;
+    }
+    pendingScrubRef.current = null;
   };
 
   const handleTimelinePointerDown = (
@@ -350,6 +393,7 @@ export function MiniStrip({
     const drag = timelineDragRef.current;
     timelineDragRef.current = null;
     if (wasPinching) {
+      cancelScheduledScrub();
       manualScrollRef.current = false;
       suppressClickRef.current = true;
       window.setTimeout(() => {
@@ -358,12 +402,14 @@ export function MiniStrip({
       return;
     }
     if (cancelled) {
+      cancelScheduledScrub();
       manualScrollRef.current = false;
       suppressClickRef.current = false;
       return;
     }
     if (!drag || drag.pointerId !== event.pointerId) return;
     if (drag.scrubbing) {
+      scrubToScrollPosition(event.currentTarget.scrollLeft, true);
       suppressClickRef.current = true;
       window.setTimeout(() => {
         suppressClickRef.current = false;
@@ -556,10 +602,20 @@ export function MiniStrip({
         <div
           ref={viewportRef}
           data-testid="pocket-timeline-viewport"
-          className="scrollbar-none h-full overflow-x-auto overflow-y-hidden overscroll-x-contain select-none [touch-action:none]"
+          className="scrollbar-none h-full overflow-x-auto overflow-y-hidden overscroll-x-contain select-none [touch-action:none] [will-change:scroll-position]"
           onScroll={(event) => {
             if (syncingScrollRef.current || manualScrollRef.current) return;
-            onScrubStart?.();
+            if (!nativeScrollActiveRef.current) {
+              nativeScrollActiveRef.current = true;
+              onScrubStart?.();
+            }
+            if (nativeScrollEndTimerRef.current != null) {
+              window.clearTimeout(nativeScrollEndTimerRef.current);
+            }
+            nativeScrollEndTimerRef.current = window.setTimeout(() => {
+              nativeScrollActiveRef.current = false;
+              nativeScrollEndTimerRef.current = null;
+            }, 120);
             scrubToScrollPosition(event.currentTarget.scrollLeft);
           }}
           onPointerDown={handleTimelinePointerDown}
@@ -568,7 +624,7 @@ export function MiniStrip({
           onPointerCancel={(event) => finishTimelinePointer(event, true)}
         >
           <div
-            className="relative h-full"
+            className="relative h-full [contain:layout_paint]"
             style={{ width: `calc(${trackWidth}px + 100vw)` }}
           >
             {segments.map((segment, index) => {

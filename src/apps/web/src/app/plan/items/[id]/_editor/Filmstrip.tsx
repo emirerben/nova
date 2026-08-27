@@ -23,7 +23,6 @@ export const FILMSTRIP_MAX_SEEKS = 24;
 export const FILMSTRIP_TILE_W = 56;
 
 const TILE_H = 40;
-const REDRAW_DEBOUNCE_MS = 120;
 
 interface FilmstripRequest {
   src: string | null;
@@ -37,6 +36,8 @@ interface FilmstripRequest {
 }
 
 const rasterCache = new Map<string, HTMLCanvasElement>();
+const MAX_RASTER_CACHE_ENTRIES = 96;
+const latestRequestByClip = new Map<string, string>();
 const sourceVideos = new Map<
   string,
   { video: HTMLVideoElement; queue: Promise<void> }
@@ -87,6 +88,62 @@ export function filmstripFallbackLabel(
   return trimmed && trimmed.length > 0 ? trimmed : formatSeconds(durationS);
 }
 
+export function filmstripSampleTimes({
+  sourceStartS,
+  durationS,
+  sourceDurationS,
+  tiles,
+}: {
+  sourceStartS: number;
+  durationS: number;
+  sourceDurationS: number | null;
+  tiles: number;
+}): number[] {
+  if (tiles <= 0 || durationS <= 0) return [];
+  const maxTime =
+    sourceDurationS != null
+      ? Math.max(0, sourceDurationS - 0.05)
+      : Math.max(0, sourceStartS + durationS - 0.05);
+  return Array.from({ length: tiles }, (_, index) =>
+    Math.max(
+      0,
+      Math.min(
+        sourceStartS + ((index + 0.5) / tiles) * durationS,
+        maxTime,
+      ),
+    ),
+  );
+}
+
+export function filmstripCoverCrop({
+  sourceWidth,
+  sourceHeight,
+  targetWidth,
+  targetHeight,
+}: {
+  sourceWidth: number;
+  sourceHeight: number;
+  targetWidth: number;
+  targetHeight: number;
+}): { sx: number; sy: number; sw: number; sh: number } {
+  if (
+    sourceWidth <= 0 ||
+    sourceHeight <= 0 ||
+    targetWidth <= 0 ||
+    targetHeight <= 0
+  ) {
+    return { sx: 0, sy: 0, sw: 0, sh: 0 };
+  }
+  const sourceAspect = sourceWidth / sourceHeight;
+  const targetAspect = targetWidth / targetHeight;
+  if (sourceAspect > targetAspect) {
+    const sw = sourceHeight * targetAspect;
+    return { sx: (sourceWidth - sw) / 2, sy: 0, sw, sh: sourceHeight };
+  }
+  const sh = sourceWidth / targetAspect;
+  return { sx: 0, sy: (sourceHeight - sh) / 2, sw: sourceWidth, sh };
+}
+
 export function allocateFilmstripSeekBudget(
   widthsPx: number[],
   budget = FILMSTRIP_MAX_SEEKS,
@@ -131,6 +188,7 @@ function pooledSourceVideo(src: string) {
 function waitForLoadedData(video: HTMLVideoElement): Promise<void> {
   if (video.readyState >= 2) return Promise.resolve();
   return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => fail(), 5000);
     const done = () => {
       cleanup();
       resolve();
@@ -140,6 +198,7 @@ function waitForLoadedData(video: HTMLVideoElement): Promise<void> {
       reject(new Error("filmstrip video failed to load"));
     };
     const cleanup = () => {
+      window.clearTimeout(timeout);
       video.removeEventListener("loadeddata", done);
       video.removeEventListener("error", fail);
     };
@@ -153,6 +212,7 @@ function seekVideo(video: HTMLVideoElement, seconds: number): Promise<void> {
     return Promise.resolve();
   }
   return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => fail(), 2000);
     const done = () => {
       cleanup();
       resolve();
@@ -162,30 +222,13 @@ function seekVideo(video: HTMLVideoElement, seconds: number): Promise<void> {
       reject(new Error("filmstrip video seek failed"));
     };
     const cleanup = () => {
+      window.clearTimeout(timeout);
       video.removeEventListener("seeked", done);
       video.removeEventListener("error", fail);
     };
     video.addEventListener("seeked", done, { once: true });
     video.addEventListener("error", fail, { once: true });
     video.currentTime = seconds;
-  });
-}
-
-function waitForDrawableFrame(video: HTMLVideoElement): Promise<void> {
-  if ("requestVideoFrameCallback" in video) {
-    return new Promise((resolve) => {
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        resolve();
-      };
-      video.requestVideoFrameCallback(finish);
-      window.setTimeout(finish, 80);
-    });
-  }
-  return new Promise((resolve) => {
-    requestAnimationFrame(() => resolve());
   });
 }
 
@@ -210,6 +253,16 @@ function copyCanvas(source: HTMLCanvasElement, target: HTMLCanvasElement) {
   ctx.clearRect(0, 0, target.width, target.height);
   ctx.drawImage(source, 0, 0);
   return true;
+}
+
+function cacheRaster(key: string, canvas: HTMLCanvasElement) {
+  rasterCache.delete(key);
+  rasterCache.set(key, canvas);
+  while (rasterCache.size > MAX_RASTER_CACHE_ENTRIES) {
+    const oldest = rasterCache.keys().next().value as string | undefined;
+    if (oldest == null) break;
+    rasterCache.delete(oldest);
+  }
 }
 
 export default function Filmstrip({
@@ -259,23 +312,30 @@ export default function Filmstrip({
     }),
     [clipId, durationS, sourceDurationS, sourceId, sourceStartS, src, tiles],
   );
-  const [activeRequest, setActiveRequest] = useState(request);
+  const activeRequest = request;
+  const sampleTimes = useMemo(
+    () =>
+      filmstripSampleTimes({
+        sourceStartS: activeRequest.sourceStartS,
+        durationS: activeRequest.durationS,
+        sourceDurationS: activeRequest.sourceDurationS,
+        tiles: activeRequest.tiles,
+      }),
+    [activeRequest],
+  );
 
   useEffect(() => {
-    const timer = window.setTimeout(
-      () => setActiveRequest(request),
-      REDRAW_DEBOUNCE_MS,
-    );
-    return () => window.clearTimeout(timer);
-  }, [request]);
-
-  useEffect(() => {
-    if (!activeRequest.src || activeRequest.durationS <= 0 || activeRequest.tiles <= 0) {
+    if (
+      !activeRequest.src ||
+      activeRequest.durationS <= 0 ||
+      activeRequest.tiles <= 0
+    ) {
       setFailed(true);
       return;
     }
 
     let cancelled = false;
+    latestRequestByClip.set(activeRequest.clipId, activeRequest.cacheKey);
     setFailed(false);
 
     const canvas = canvasRef.current;
@@ -288,6 +348,7 @@ export default function Filmstrip({
     const cached = rasterCache.get(activeRequest.cacheKey);
     if (cached) {
       if (!copyCanvas(cached, canvas)) setFailed(true);
+      else canvas.dataset.renderedTiles = `${activeRequest.tiles}`;
       return;
     }
 
@@ -296,56 +357,75 @@ export default function Filmstrip({
     }, 6000);
 
     void enqueueSourceDecode(activeRequest.src, async (video) => {
-      if (cancelled) return;
+      const isStale = () =>
+        cancelled ||
+        latestRequestByClip.get(activeRequest.clipId) !== activeRequest.cacheKey;
+      if (isStale()) return;
       if (video.getAttribute("src") !== activeRequest.src) {
         video.src = activeRequest.src!;
         video.load();
       }
       await waitForLoadedData(video);
-      if (cancelled) return;
+      if (isStale()) return;
       if (video.videoWidth <= 0 || video.videoHeight <= 0) {
         throw new Error("filmstrip source has no drawable video frame");
       }
 
       const rendered = document.createElement("canvas");
-      rendered.width = activeRequest.tiles * FILMSTRIP_TILE_W * dpr;
+      const renderedWidth = Math.max(1, activeRequest.tiles * FILMSTRIP_TILE_W);
+      rendered.width = Math.round(renderedWidth * dpr);
       rendered.height = TILE_H * dpr;
       const ctx = rendered.getContext("2d");
-      if (!ctx) throw new Error("filmstrip canvas unavailable");
+      const visibleCtx = canvas.getContext("2d");
+      if (!ctx || !visibleCtx) throw new Error("filmstrip canvas unavailable");
+      canvas.width = rendered.width;
+      canvas.height = rendered.height;
       ctx.scale(dpr, dpr);
+      visibleCtx.scale(dpr, dpr);
+      ctx.fillStyle = "#e4e4e7";
+      ctx.fillRect(0, 0, renderedWidth, TILE_H);
+      visibleCtx.fillStyle = "#e4e4e7";
+      visibleCtx.fillRect(0, 0, renderedWidth, TILE_H);
+      const crop = filmstripCoverCrop({
+        sourceWidth: video.videoWidth,
+        sourceHeight: video.videoHeight,
+        targetWidth: FILMSTRIP_TILE_W,
+        targetHeight: TILE_H,
+      });
 
-      for (let i = 0; i < activeRequest.tiles; i += 1) {
-        if (cancelled) return;
-        const sourceTime =
-          activeRequest.sourceStartS +
-          ((i + 0.5) / activeRequest.tiles) * activeRequest.durationS;
-        const maxTime =
-          activeRequest.sourceDurationS != null
-            ? Math.max(0, activeRequest.sourceDurationS - 0.05)
-            : Math.max(
-                0,
-                activeRequest.sourceStartS + activeRequest.durationS - 0.05,
-              );
-        await seekVideo(video, Math.max(0, Math.min(sourceTime, maxTime)));
-        if (cancelled) return;
-        await waitForDrawableFrame(video);
-        if (cancelled) return;
+      for (let i = 0; i < sampleTimes.length; i += 1) {
+        if (isStale()) return;
+        await seekVideo(video, sampleTimes[i]);
+        if (isStale()) return;
         if (video.videoWidth <= 0 || video.videoHeight <= 0) {
           throw new Error("filmstrip source has no drawable video frame");
         }
         ctx.drawImage(
           video,
+          crop.sx,
+          crop.sy,
+          crop.sw,
+          crop.sh,
           i * FILMSTRIP_TILE_W,
           0,
           FILMSTRIP_TILE_W,
           TILE_H,
         );
+        visibleCtx.drawImage(
+          video,
+          crop.sx,
+          crop.sy,
+          crop.sw,
+          crop.sh,
+          i * FILMSTRIP_TILE_W,
+          0,
+          FILMSTRIP_TILE_W,
+          TILE_H,
+        );
+        canvas.dataset.renderedTiles = `${i + 1}`;
       }
 
-      rasterCache.set(activeRequest.cacheKey, rendered);
-      if (!cancelled && !copyCanvas(rendered, canvas)) {
-        setFailed(true);
-      }
+      cacheRaster(activeRequest.cacheKey, rendered);
     })
       .catch(() => {
         if (!cancelled) setFailed(true);
@@ -358,7 +438,7 @@ export default function Filmstrip({
       cancelled = true;
       window.clearTimeout(failTimer);
     };
-  }, [activeRequest]);
+  }, [activeRequest, sampleTimes]);
 
   if (failed) {
     const fallbackText = filmstripFallbackLabel(label, durationS);
@@ -367,6 +447,7 @@ export default function Filmstrip({
         data-testid="editor-filmstrip"
         data-clip-key={clipId}
         data-source-range-key={activeRequest.cacheKey}
+        data-sample-times={sampleTimes.map(roundKeyTiming).join(",")}
         className="flex h-full w-full items-center justify-center overflow-hidden rounded bg-zinc-100 px-2"
       >
         {fallbackText ? (
@@ -384,8 +465,9 @@ export default function Filmstrip({
       data-testid="editor-filmstrip"
       data-clip-key={clipId}
       data-source-range-key={activeRequest.cacheKey}
+      data-sample-times={sampleTimes.map(roundKeyTiming).join(",")}
       aria-hidden
-      className="h-full w-full rounded object-cover"
+      className="h-full w-full rounded object-cover [contain:paint]"
       style={{ imageRendering: "auto" }}
     />
   );

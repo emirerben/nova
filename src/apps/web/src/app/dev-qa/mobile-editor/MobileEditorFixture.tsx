@@ -12,6 +12,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 import { formatTimecode } from "@/lib/timeline/time-format";
 import { ContextStrip } from "@/app/plan/items/[id]/_editor/ContextStrip";
 import {
@@ -43,6 +44,7 @@ const INITIAL_WINDOWS: ClipWindow[] = [
 
 type FixturePanel =
   | { kind: "precision" }
+  | { kind: "text" }
   | { kind: "tool"; tool: DockTool }
   | null;
 
@@ -121,6 +123,9 @@ export default function MobileEditorFixture() {
   const [look, setLook] = useState("Clean");
   const [transition, setTransition] = useState("Cut");
   const [toolAction, setToolAction] = useState("");
+  const [textDraft, setTextDraft] = useState<{ id: string; text: string } | null>(
+    null,
+  );
   const [receipt, setReceipt] = useState("Draft · local QA fixture");
   const segments = useMemo(() => projectSegments(windows), [windows]);
   const totalDurationS = segments.at(-1)?.endS ?? 0;
@@ -139,7 +144,12 @@ export default function MobileEditorFixture() {
       : null;
   const deleteDisabledReason =
     windows.length <= 1 ? "At least one clip must remain" : null;
-  const activeTool = panel?.kind === "tool" ? panel.tool : null;
+  const activeTool =
+    panel?.kind === "text"
+      ? "text"
+      : panel?.kind === "tool"
+        ? panel.tool
+        : null;
 
   const seekTo = (seconds: number) => {
     const next = Math.min(totalDurationS, Math.max(0, seconds));
@@ -248,6 +258,7 @@ export default function MobileEditorFixture() {
         data-look={look}
         data-transition={transition}
         data-tool-action={toolAction}
+        data-text={textDraft?.text ?? ""}
       />
       <header className="flex items-center gap-2 border-b border-border px-3">
         <Button asChild variant="ghost" size="icon" aria-label="Back to video">
@@ -280,6 +291,15 @@ export default function MobileEditorFixture() {
           onPause={() => setPlaying(false)}
           onTimeUpdate={(event) => setCurrentTimeS(event.currentTarget.currentTime)}
         />
+        {textDraft && (
+          <div
+            data-testid="qa-text-overlay"
+            data-text-id={textDraft.id}
+            className="pointer-events-none absolute left-1/2 top-1/2 max-w-[72%] -translate-x-1/2 -translate-y-1/2 text-center text-2xl font-semibold text-white [text-shadow:0_1px_4px_rgb(0_0_0/0.9)]"
+          >
+            {textDraft.text || "Text"}
+          </div>
+        )}
         {history.length > 0 && (
           <Button
             type="button"
@@ -359,6 +379,14 @@ export default function MobileEditorFixture() {
           disabledTools={{}}
           novaEnabled
           onToggleTool={(tool) => {
+            if (tool === "text") {
+              const next = { id: crypto.randomUUID(), text: "Add a title" };
+              setTextDraft(next);
+              setPanel({ kind: "text" });
+              setToolAction("text:Add text");
+              setReceipt("Text added · edit it now");
+              return;
+            }
             const closing = panel?.kind === "tool" && panel.tool === tool;
             setPanel(closing ? null : { kind: "tool", tool });
             setReceipt(
@@ -480,6 +508,39 @@ export default function MobileEditorFixture() {
                   ))}
                 </TabsContent>
               </Tabs>
+            </>
+          ) : panel?.kind === "text" && textDraft ? (
+            <>
+              <SheetHeader className="border-b border-border px-4 pb-3 pt-4 text-left">
+                <SheetTitle className="text-base text-balance">
+                  Edit text
+                </SheetTitle>
+                <SheetDescription className="text-pretty">
+                  Type directly, then close this sheet to keep editing.
+                </SheetDescription>
+              </SheetHeader>
+              <div className="grid gap-3 px-4 pt-4">
+                <Textarea
+                  autoFocus
+                  aria-label="Text content"
+                  value={textDraft.text}
+                  className="min-h-24 text-base"
+                  onChange={(event) => {
+                    const text = event.currentTarget.value;
+                    setTextDraft((current) =>
+                      current ? { ...current, text } : current,
+                    );
+                    setReceipt("Unsaved text");
+                  }}
+                />
+                <Button
+                  type="button"
+                  className="min-h-11"
+                  onClick={() => setPanel(null)}
+                >
+                  Done
+                </Button>
+              </div>
             </>
           ) : panel?.kind === "tool" ? (
             <>

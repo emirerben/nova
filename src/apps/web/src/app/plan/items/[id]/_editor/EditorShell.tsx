@@ -4244,13 +4244,13 @@ export default function EditorShell({
 
   const addTextAtPlayhead = useCallback(
     (preset: TextPreset = DEFAULT_TEXT_PRESET) => {
-      if (readOnly) return;
+      if (readOnly) return null;
       if (textElementsLocked) {
         // OV-1: the rail disables the Text/Styles buttons, but this callback
         // is also reachable via preset picks — same gate, honest toast. The
         // copy is text-specific (never the whole-shell "can't be edited").
         notify(textElementsLockedCopy(capabilities));
-        return;
+        return null;
       }
       history.record();
       setTextDirty(true);
@@ -4269,6 +4269,7 @@ export default function EditorShell({
           : bar;
       dispatch({ type: "ADD_TEXT", bar: authoredBar });
       selectText(bar.id);
+      return bar.id;
     },
     [
       currentTime,
@@ -4281,6 +4282,14 @@ export default function EditorShell({
       notify,
     ],
   );
+
+  const addPocketTextAtPlayhead = useCallback(() => {
+    const id = addTextAtPlayhead();
+    if (!id) return;
+    setActiveTool(null);
+    dispatchPocket({ type: "OPEN_INSPECTOR" });
+    focusContent();
+  }, [addTextAtPlayhead, focusContent]);
 
   const splitAndPlaceText = useCallback(
     (text: string): boolean => {
@@ -8085,6 +8094,8 @@ export default function EditorShell({
                   if (tool === "nova") {
                     dispatchPocket({ type: "CLOSE_SHEET" });
                     setActiveTool((cur) => (cur === "nova" ? null : "nova"));
+                  } else if (tool === "text") {
+                    addPocketTextAtPlayhead();
                   } else {
                     setActiveTool(null);
                     dispatchPocket({ type: "TOGGLE_TOOL", tool });
