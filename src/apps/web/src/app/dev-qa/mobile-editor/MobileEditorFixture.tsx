@@ -385,7 +385,7 @@ export default function MobileEditorFixture() {
     setReceipt("Text moved · Undo available");
   };
 
-  const startTextDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+  const startTextDrag = (event: React.PointerEvent<HTMLElement>) => {
     if (!textDraft) return;
     const preview = previewCanvasRef.current?.getBoundingClientRect();
     const frame = textFrameRef.current?.getBoundingClientRect();
@@ -408,7 +408,7 @@ export default function MobileEditorFixture() {
     setTextSelected(true);
   };
 
-  const moveTextDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+  const moveTextDrag = (event: React.PointerEvent<HTMLElement>) => {
     const drag = textDragRef.current;
     const preview = previewCanvasRef.current?.getBoundingClientRect();
     if (!drag || drag.pointerId !== event.pointerId || !preview) return;
@@ -435,7 +435,7 @@ export default function MobileEditorFixture() {
     setReceipt("Moving text…");
   };
 
-  const finishTextDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+  const finishTextDrag = (event: React.PointerEvent<HTMLElement>) => {
     const drag = textDragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     textDragRef.current = null;
@@ -926,6 +926,7 @@ export default function MobileEditorFixture() {
                   );
                   setReceipt("Editing text on screen");
                 }}
+                onPointerDown={(event) => event.stopPropagation()}
                 onKeyDown={(event) => {
                   if (event.key === "Escape") {
                     event.preventDefault();
@@ -948,12 +949,19 @@ export default function MobileEditorFixture() {
                 }}
               />
               {textSelected && (
-                <span
-                  aria-hidden="true"
-                  className="pointer-events-none absolute -right-2 -top-2 grid size-5 place-items-center rounded-full border border-white bg-black/75 text-white shadow"
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="icon"
+                  aria-label="Move text"
+                  className="absolute -right-5 -top-5 size-11 touch-none rounded-full border border-white bg-black/75 p-0 text-white shadow hover:bg-black/85"
+                  onPointerDown={(event) => {
+                    event.stopPropagation();
+                    startTextDrag(event);
+                  }}
                 >
                   <Move className="size-3" />
-                </span>
+                </Button>
               )}
             </div>
           )}

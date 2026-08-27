@@ -298,11 +298,17 @@ test("Text edits directly on the preview and drags in one undoable gesture", asy
   await expect(page.locator("#qa-state")).toHaveAttribute("data-text", "");
   await content.fill("Three cities, one summer");
   const frame = page.getByTestId("qa-text-frame");
+  const moveText = page.getByRole("button", { name: "Move text" });
   const preview = page.getByTestId("qa-preview-canvas");
   const xBefore = await qaNumber(page, "data-text-x");
   const yBefore = await qaNumber(page, "data-text-y");
   const historyBeforeDrag = await qaNumber(page, "data-history-len");
-  await dragOnTarget(frame, 800, 1200);
+  await dragOnTarget(content, 24, 0);
+  expect(await qaNumber(page, "data-text-x")).toBe(xBefore);
+  expect(await qaNumber(page, "data-text-y")).toBe(yBefore);
+  expect(await qaNumber(page, "data-history-len")).toBe(historyBeforeDrag);
+
+  await dragOnTarget(moveText, 800, 1200);
   expect(await qaNumber(page, "data-text-x")).toBeGreaterThan(xBefore);
   expect(await qaNumber(page, "data-text-y")).toBeGreaterThan(yBefore);
   expect(await qaNumber(page, "data-history-len")).toBe(

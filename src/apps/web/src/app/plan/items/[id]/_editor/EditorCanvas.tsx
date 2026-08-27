@@ -18,6 +18,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Move } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type {
   CameraEffect,
@@ -1817,6 +1818,7 @@ export default function EditorCanvas({
                               event.currentTarget.textContent ?? "",
                             );
                           }}
+                          onPointerDown={(event) => event.stopPropagation()}
                           onKeyDown={(event) => {
                             if (event.key !== "Escape") return;
                             event.preventDefault();
@@ -1951,6 +1953,21 @@ export default function EditorCanvas({
                               />
                             </Button>
                           ))}
+                          {isInlineEditable && (
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="icon"
+                              aria-label="Move text"
+                              onPointerDown={(event) => {
+                                event.stopPropagation();
+                                onOverlayPointerDown(event, layout.id);
+                              }}
+                              className="absolute -right-12 -top-12 h-11 w-11 touch-none rounded-full border border-zinc-200 bg-white/95 text-zinc-900 shadow-sm hover:bg-white"
+                            >
+                              <Move aria-hidden className="h-4 w-4" />
+                            </Button>
+                          )}
                         </div>
                       )}
                     </div>
