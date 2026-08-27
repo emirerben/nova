@@ -143,6 +143,7 @@ import {
   parsePlanItemEditorReturnSignal,
   stripPlanItemEditorReturnParams,
 } from "@/lib/editor-return";
+import { verifyCommittedRenderDuration } from "@/lib/render-verification";
 import {
   needsFormatPersist,
   resolvePickerFormat,
@@ -214,6 +215,8 @@ type PendingEdit = {
   priorFinishedAt: string | null;
   sawRendering: boolean;
   targetGeneration?: string | null;
+  expectedDurationS?: number | null;
+  revisionHash?: string | null;
 };
 
 // Edit-style picker copy lives in components/SetupPicker (TYPE_COPY). NOTE:
@@ -816,6 +819,8 @@ export default function PlanItemPage() {
         priorFinishedAt: editorReturnSignal.priorFinishedAt,
         sawRendering: existing?.sawRendering ?? false,
         targetGeneration: editorReturnSignal.generation,
+        expectedDurationS: editorReturnSignal.expectedDurationS ?? null,
+        revisionHash: editorReturnSignal.revisionHash ?? null,
       });
       renderingAction.current = { type: "other", label: "Rendering your saved edits…" };
       setEditGeneration((g) => g + 1);
@@ -994,8 +999,18 @@ export default function PlanItemPage() {
           pending.sawRendering ||
           (v.render_finished_at ?? null) !== pending.priorFinishedAt;
         if ((v.render_status === "ready" || v.render_status === "failed") && isFreshRender) {
+          const verification = pending.expectedDurationS != null && v.render_status === "ready"
+            ? verifyCommittedRenderDuration({
+                expectedDurationS: pending.expectedDurationS,
+                expectedGeneration: pending.targetGeneration,
+                expectedRevisionHash: pending.revisionHash,
+                variant: v,
+              })
+            : null;
           pendingEdits.current.delete(v.variant_id);
-          return v;
+          return verification && !verification.ok
+            ? ({ ...v, render_verification_error: `Saved, but the rendered video doesn’t match the committed timeline. ${verification.detail ?? "Render verification failed."}` } as typeof v & { render_verification_error: string })
+            : v;
         }
         // Pre-edit ready race window: keep forcing "rendering" so the poll
         // continues and controls stay disabled until the real render completes.
@@ -1010,6 +1025,12 @@ export default function PlanItemPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [data, editGeneration],
   );
+
+  useEffect(() => {
+    const mismatch = (variants as Array<PlanItemVariant & { render_verification_error?: string }>)
+      .find((variant) => variant.render_verification_error)?.render_verification_error;
+    if (mismatch) setError(mismatch);
+  }, [variants]);
 
   useEffect(() => {
     if (variants.length === 0) {
@@ -1062,6 +1083,8 @@ export default function PlanItemPage() {
         priorFinishedAt,
         sawRendering: existing?.sawRendering ?? false,
         targetGeneration: existing?.targetGeneration ?? null,
+        expectedDurationS: existing?.expectedDurationS ?? null,
+        revisionHash: existing?.revisionHash ?? null,
       });
       refetch();
     },
@@ -1080,7 +1103,7 @@ export default function PlanItemPage() {
       // pendingEdits.current) fires on the SAME React tick as the click — not after
       // the HTTP round-trip + next poll. setEditGeneration triggers the parent re-render
       // that re-runs the memo; pendingEdits.current is already mutated by then.
-      pendingEdits.current.set(variantId, { priorFinishedAt: prevFinishedAt, sawRendering: false });
+      pendingEdits.current.set(variantId, { priorFinishedAt: prevFinishedAt, sawRendering: false, expectedDurationS: null, revisionHash: null });
       if (actionMeta) renderingAction.current = actionMeta;
       setEditGeneration((g) => g + 1);
       try {

@@ -45,6 +45,23 @@ describe("generated Creator Block v2 contract", () => {
     );
   });
 
+  it("projects media parameters to Copilot asset_ids without changing runtime assets", () => {
+    for (const presetId of ["card_stack", "film_strip"] as const) {
+      const aiEntry = aiCatalog.presets.find((entry) => entry.preset_id === presetId);
+      expect(aiEntry?.parameters).toEqual([
+        expect.objectContaining({ key: "asset_ids", type: "asset_list" }),
+      ]);
+      expect(aiEntry?.defaults).toEqual({ asset_ids: [] });
+      expect(aiEntry?.parameters.some((parameter) => parameter.key === "assets")).toBe(false);
+
+      const runtimeEntry = CREATOR_BLOCK_CATALOG.find((entry) => entry.preset_id === presetId);
+      expect(runtimeEntry?.parameters).toEqual([
+        expect.objectContaining({ key: "assets", type: "asset_list" }),
+      ]);
+      expect(runtimeEntry?.defaults).toEqual({ assets: [] });
+    }
+  });
+
   it("keeps generated schema output drift-free and accepts immutable v1 plus v2", () => {
     const runtimeRoot = resolve(process.cwd(), "../../packages/motion-runtime");
     const check = spawnSync(

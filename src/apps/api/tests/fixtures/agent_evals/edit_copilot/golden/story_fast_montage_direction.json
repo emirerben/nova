@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-08-23-v30",
+  "prompt_version": "2026-08-27-v33",
   "input": {
     "utterance": "Chaneg this to a fast paced montage video",
     "prior_turns": [],
@@ -30,7 +30,7 @@
     "reply": "I’ll build a faster, hard-cut montage from the analyzed footage.",
     "suggestions": [],
     "needs_clarification": false,
-    "outcome": "applied",
+    "outcome": "proposed",
     "rejection_reasons": []
   },
   "meta": {"source": "redacted_production_regression", "case": "content-aware direction replacement"}

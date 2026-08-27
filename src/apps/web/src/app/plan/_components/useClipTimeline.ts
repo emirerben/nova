@@ -45,6 +45,8 @@ export interface ClipTimelineHandle {
   state: EditorState;
   dispatch: React.Dispatch<EditorAction>;
   clips: TimelineClip[];
+  /** Complete guided source catalog, including unused uploaded media. */
+  sourcePool: Array<Record<string, unknown>>;
   /** Per-slot assembled-time windows: [{startS, durationS}]. Index-aligned with state.slots. */
   windows: ReturnType<typeof slotWindows>;
   /** Total assembled-video duration in seconds (sum of active slot durations). */
@@ -56,6 +58,8 @@ export interface ClipTimelineHandle {
   revisionNumber: number | null;
   /** Render baseline paired with revisionNumber for guided direct-write CAS. */
   baseGeneration: string | null;
+  /** Canonical hash of the loaded guided revision. */
+  revisionHash: string | null;
   /** Records whose complete segment-relative interval was removed. */
   tombstones: GuidedTimelineTombstone[];
   /** Refetch from the server (call after Apply / Reset). */
@@ -92,10 +96,12 @@ export function useClipTimeline(
     "loading",
   );
   const [clips, setClips] = useState<TimelineClip[]>([]);
+  const [sourcePool, setSourcePool] = useState<Array<Record<string, unknown>>>([]);
   const [editWideLookPresets, setEditWideLookPresets] = useState<LookPreset[]>([]);
   const [lookPresets, setLookPresets] = useState<LookPreset[]>([]);
   const [revisionNumber, setRevisionNumber] = useState<number | null>(null);
   const [baseGeneration, setBaseGeneration] = useState<string | null>(null);
+  const [revisionHash, setRevisionHash] = useState<string | null>(null);
   const [tombstones, setTombstones] = useState<GuidedTimelineTombstone[]>([]);
   const [state, dispatch] = useReducer(timelineReducer, EMPTY_EDITOR_STATE);
   const requestEpochRef = useRef(0);
@@ -108,15 +114,19 @@ export function useClipTimeline(
     setLookPresets([]);
     setRevisionNumber(null);
     setBaseGeneration(null);
+    setRevisionHash(null);
     setTombstones([]);
+    setSourcePool([]);
     try {
       const data = await getTimeline(ownerId, variantId, base);
       if (requestEpoch !== requestEpochRef.current) return;
       setClips(data.clips);
+      setSourcePool(data.source_pool ?? []);
       setEditWideLookPresets(data.edit_wide_look_presets ?? []);
       setLookPresets(data.look_presets ?? data.edit_wide_look_presets ?? []);
       setRevisionNumber(data.revision_number ?? null);
       setBaseGeneration(data.base_generation ?? null);
+      setRevisionHash(data.revision_hash ?? null);
       setTombstones((data.tombstones ?? []) as unknown as GuidedTimelineTombstone[]);
       dispatch({ type: "RESET_DRAFT", timeline: data });
       setLoadState("ready");
@@ -126,7 +136,9 @@ export function useClipTimeline(
       setLookPresets([]);
       setRevisionNumber(null);
       setBaseGeneration(null);
+      setRevisionHash(null);
       setTombstones([]);
+      setSourcePool([]);
       setLoadState("error");
     }
   }, [ownerId, variantId, base]);
@@ -152,6 +164,7 @@ export function useClipTimeline(
     state,
     dispatch,
     clips,
+    sourcePool,
     windows,
     totalS,
     loadState,
@@ -159,6 +172,7 @@ export function useClipTimeline(
     lookPresets,
     revisionNumber,
     baseGeneration,
+    revisionHash,
     tombstones,
     reload,
   };

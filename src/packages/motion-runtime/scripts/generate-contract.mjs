@@ -273,9 +273,20 @@ function generateAiSnapshot() {
         default_duration_frames: entry.default_duration_frames,
         min_assets: entry.min_assets,
         palette_defaults: entry.palette_defaults,
-        parameters: entry.parameters,
+        parameters: entry.parameters.map((parameter) =>
+          parameter.type === "asset_list"
+            ? { ...parameter, key: "asset_ids" }
+            : parameter,
+        ),
         controls: entry.supported_controls.map((key) => effectiveControl(entry, key)),
-        defaults: entry.defaults,
+        defaults: entry.parameters.some((parameter) => parameter.type === "asset_list")
+          ? Object.fromEntries(
+              Object.entries(entry.defaults).map(([key, value]) => [
+                key === "assets" ? "asset_ids" : key,
+                value,
+              ]),
+            )
+          : entry.defaults,
         motion_defaults: entry.motion_defaults,
       })),
   };

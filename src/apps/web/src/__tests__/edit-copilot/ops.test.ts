@@ -49,6 +49,31 @@ describe("edit-copilot op contract fixtures", () => {
 });
 
 describe("edit-copilot extended op validation", () => {
+  it("normalizes typed bulk selectors and keeps Card Stack asset IDs canonical", () => {
+    expect(validateCopilotOp({
+      op: "add_unused_sources",
+      selector: { scope: "unused_sources", media_kind: "all", quantifier: "all" },
+    }, validationSnapshot)).toMatchObject({ ok: true, op: { selector: { scope: "unused_sources", media_kind: "all", quantifier: "all" } } });
+    expect(validateCopilotOp({
+      op: "set_media_duration",
+      selector: { scope: "timeline", media_kind: "image", quantifier: "all" },
+      duration_s: 0.2,
+    }, validationSnapshot)).toMatchObject({ ok: true });
+    expect(validateCopilotOp({
+      op: "stack_images",
+      selector: { scope: "timeline", media_kind: "image", quantifier: "all" },
+    }, validationSnapshot)).toMatchObject({ ok: true });
+    expect(validateCopilotOp({
+      op: "stack_images",
+      selector: { scope: "unused_sources", media_kind: "image", quantifier: "all" },
+    }, validationSnapshot)).toMatchObject({ ok: false, rejection: { reason: "invalid_value" } });
+    expect(validateCopilotOp({
+      op: "set_media_duration",
+      selector: { scope: "timeline", media_kind: "all", quantifier: "all" },
+      duration_s: 0.2,
+    }, validationSnapshot)).toMatchObject({ ok: true });
+  });
+
   it.each(["staggered-slice", "ink-reveal", "handwriting"])(
     "accepts the editor-directed %s effect",
     (effect) => {

@@ -109,10 +109,10 @@ describe("DirectorSuggestions applied receipts", () => {
       />,
     );
 
-    expect(screen.getByLabelText("Applied Kria suggestions")).toHaveTextContent(
+    expect(screen.getByLabelText("Staged Kria suggestions")).toHaveTextContent(
       "Punch up the hook text",
     );
-    expect(screen.getByLabelText("Applied Kria suggestions")).toHaveTextContent(
+    expect(screen.getByLabelText("Staged Kria suggestions")).toHaveTextContent(
       "Font: PlayfairDisplay-Bold, now Montserrat Bold",
     );
     expect(screen.getAllByText("Showing this moment in preview.")).toHaveLength(2);

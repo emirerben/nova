@@ -35,6 +35,8 @@ export type CopilotOpFamily =
 
 export type CopilotOutcome =
   | "applied"
+  | "proposed"
+  | "staged"
   | "clarification"
   | "no_effect"
   | "unsupported"
@@ -126,6 +128,22 @@ export type CaptionMetaPatch = Partial<{
 }>;
 
 export type MotionCopilotParams = Record<string, unknown>;
+export type BulkMediaKind = "image" | "video" | "all";
+export interface BulkMediaSelector {
+  scope: "timeline" | "unused_sources";
+  media_kind: BulkMediaKind;
+  quantifier: "all";
+}
+export interface BulkIntegrity {
+  revision_number?: number | null;
+  base_generation?: string | null;
+  state_hash?: string | null;
+  source_digest?: string;
+  selection_digest?: string;
+  source_count?: number;
+  timeline_count?: number;
+  target_count?: number;
+}
 export type MotionCopilotPatch = Partial<{
   start_s: number;
   end_s: number;
@@ -143,6 +161,18 @@ export type CopilotOp =
   | { op: "set_text_timing"; bar_index: number; start_s?: number; end_s?: number }
   | { op: "add_text"; text: string; start_s: number; end_s: number }
   | { op: "remove_text"; bar_index: number }
+  | {
+      op: "add_unused_sources";
+      selector: BulkMediaSelector;
+      integrity?: BulkIntegrity;
+    }
+  | { op: "set_media_duration"; selector: BulkMediaSelector; duration_s: number; integrity?: BulkIntegrity }
+  | {
+      op: "stack_images";
+      selector: BulkMediaSelector;
+      preset_id?: "card_stack" | "film_strip";
+      integrity?: BulkIntegrity;
+    }
   | { op: "set_clip_duration"; slot_index: number; duration_s: number }
   | { op: "set_clip_in"; slot_index: number; in_s: number }
   | { op: "trim_clip_start"; slot_index: number; start_s: number }
@@ -332,7 +362,32 @@ export interface CopilotValidationSnapshot {
     transition_after?: string | null;
     transition_duration_s?: number | null;
     look_preset?: string | null;
+    media_id?: string | null;
+    media_kind?: "image" | "video" | null;
+    generation?: string | null;
   }>;
+  /** Complete guided source pool. Unlike the UI's paged asset pool this is
+   * intentionally not capped: bulk selectors are integrity-sensitive. */
+  source_pool?: Array<{
+    clip_index?: number;
+    media_id?: string | null;
+    kind?: "image" | "video" | null;
+    generation?: string | null;
+    duration_s?: number | null;
+    source_duration_s?: number | null;
+    used?: boolean;
+    ready?: boolean;
+    status?: string;
+    media_status?: string;
+    gcs_path?: string | null;
+  }>;
+  source_pool_summary?: {
+    digest: string;
+    total_count: number;
+    ready_unused_count: number;
+    ready_unused_by_kind: { image: number; video: number };
+    selectors: Record<string, { target_count: number; selection_digest: string }>;
+  };
   camera_effects?: unknown[];
   visual_blocks?: unknown[];
   motion?: {
@@ -422,6 +477,30 @@ function nonNegativeNumber(value: unknown): value is number {
 
 function integerIndex(value: unknown): value is number {
   return Number.isInteger(value) && (value as number) >= 0;
+}
+
+function normalizeBulkSelector(raw: unknown): BulkMediaSelector | null {
+  if (!isRecord(raw)) return null;
+  // The compact prompt spelling is accepted at the edge, then normalized to
+  // the canonical selector used by the editor and backend integrity checks.
+  if (raw.kind === "image" || raw.kind === "video") {
+    return { scope: "timeline", media_kind: raw.kind, quantifier: "all" };
+  }
+  if (
+    (raw.scope === "timeline" || raw.scope === "unused_sources") &&
+    (raw.media_kind === "image" || raw.media_kind === "video" || raw.media_kind === "all") &&
+    raw.quantifier === "all"
+  ) {
+    return { scope: raw.scope, media_kind: raw.media_kind, quantifier: "all" };
+  }
+  if (raw.unused === true && raw.status === "ready") {
+    return { scope: "unused_sources", media_kind: "all", quantifier: "all" };
+  }
+  return null;
+}
+
+function normalizeBulkIntegrity(raw: unknown): BulkIntegrity | undefined {
+  return isRecord(raw) ? raw as BulkIntegrity : undefined;
 }
 
 function invalidCreatorBlockParams(
@@ -669,6 +748,9 @@ export function copilotOpFamily(op: Pick<CopilotOp, "op"> | { op: string }): Cop
     return "text";
   }
   if (
+    op.op === "add_unused_sources" ||
+    op.op === "set_media_duration" ||
+    op.op === "stack_images" ||
     op.op === "set_clip_duration" ||
     op.op === "set_clip_in" ||
     op.op === "trim_clip_start" ||
@@ -1011,6 +1093,33 @@ export function validateCopilotOp(
       }
       if (raw.duration_s <= 0) return reject("invalid_value", "duration_s must be positive", opName);
       return { ok: true, op: { op: opName, slot_index: raw.slot_index, duration_s: raw.duration_s } };
+    }
+    case "add_unused_sources": {
+      const selector = normalizeBulkSelector(raw.selector);
+      if (!selector || selector.scope === "timeline") {
+        return reject("invalid_value", "add_unused_sources requires an all-ready-unused source selector", opName);
+      }
+      return { ok: true, op: { op: opName, selector, ...(normalizeBulkIntegrity(raw.integrity) ? { integrity: normalizeBulkIntegrity(raw.integrity) } : {}) } };
+    }
+    case "set_media_duration": {
+      const selector = normalizeBulkSelector(raw.selector);
+      if (!selector || selector.scope !== "timeline") {
+        return reject("invalid_value", "set_media_duration requires an image, video, or clip timeline selector", opName);
+      }
+      if (!finiteNumber(raw.duration_s) || raw.duration_s < 0.1 || raw.duration_s > 60) {
+        return reject("invalid_value", "duration_s must be between 0.1 and 60 seconds", opName);
+      }
+      return { ok: true, op: { op: opName, selector, duration_s: raw.duration_s, ...(normalizeBulkIntegrity(raw.integrity) ? { integrity: normalizeBulkIntegrity(raw.integrity) } : {}) } };
+    }
+    case "stack_images": {
+      const selector = normalizeBulkSelector(raw.selector);
+      if (!selector || selector.scope !== "timeline" || selector.media_kind !== "image") {
+        return reject("invalid_value", "stack_images requires an image timeline selector", opName);
+      }
+      if (raw.preset_id !== undefined && raw.preset_id !== "card_stack" && raw.preset_id !== "film_strip") {
+        return reject("invalid_value", "stack_images preset_id must be card_stack or film_strip", opName);
+      }
+      return { ok: true, op: { op: opName, selector, ...(raw.preset_id ? { preset_id: raw.preset_id } : {}), ...(normalizeBulkIntegrity(raw.integrity) ? { integrity: normalizeBulkIntegrity(raw.integrity) } : {}) } };
     }
     case "set_clip_in": {
       if (!integerIndex(raw.slot_index) || !nonNegativeNumber(raw.in_s)) {
