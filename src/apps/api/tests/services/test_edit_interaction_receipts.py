@@ -48,7 +48,7 @@ def _proposal(**overrides) -> EditInteractionReceipt:  # noqa: ANN003
         "proposed_operations_digest": "d" * 64,
         "prompt_version": "prompt-v1",
         "model": "model-v1",
-        "proposal_outcome": "applied",
+        "proposal_outcome": "proposed",
         "execution_outcome": None,
         "rejection_reasons": [],
         "before_revision_hash": "before",
@@ -68,7 +68,7 @@ async def test_proposal_receipt_records_exact_final_ops() -> None:
         ops=[{"op": "set_text_size", "bar_index": 0, "size_px": 48}],
         confidence=0.9,
         reply="Done",
-        outcome="applied",
+        outcome="proposed",
     )
     body = CopilotTurnBody(
         message="x" * 2000,
@@ -131,7 +131,7 @@ async def test_proposal_receipt_is_not_retained_without_training_eligibility(
         ops=[{"op": "remove_text", "bar_index": 0}],
         confidence=0.9,
         reply="Removed it.",
-        outcome="applied",
+        outcome="proposed",
     )
 
     returned = await persist_copilot_proposal(
@@ -228,14 +228,14 @@ async def test_client_event_cannot_be_reused_for_another_proposal() -> None:
 
 
 @pytest.mark.asyncio
-async def test_save_link_requires_applied_execution_and_uses_canonical_revision() -> None:
+async def test_save_link_requires_staged_execution_and_uses_canonical_revision() -> None:
     proposal = _proposal()
     execution = _proposal(
         id=uuid.uuid4(),
         event_kind="execution",
         proposal_receipt_id=proposal.id,
         client_event_id="client-event",
-        execution_outcome="applied",
+        execution_outcome="staged",
     )
     db = MagicMock()
     db.execute = AsyncMock(

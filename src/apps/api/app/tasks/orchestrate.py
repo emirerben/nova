@@ -420,7 +420,7 @@ def render_clip(self, job_id: str, clip_db_id: str) -> dict:
 
             video_url = upload_public_read(output_path, clip_gcs_path)
             with open(thumb_result.jpeg_path, "rb") as tf:
-                thumb_url = upload_bytes_public_read(tf.read(), thumb_gcs_path)
+                upload_bytes_public_read(tf.read(), thumb_gcs_path)
 
             file_size = os.path.getsize(output_path)
             duration_s = end_s - start_s
@@ -440,8 +440,11 @@ def render_clip(self, job_id: str, clip_db_id: str) -> dict:
                     clip = db.get(JobClip, uuid.UUID(clip_db_id), with_for_update=True)
                     if clip is not None:
                         clip.render_status = "ready"
+                        # Keep the existing admin/debug playback contract for the
+                        # MP4 URL. The /me library normalizes this GCS URL back to
+                        # its object key and re-signs it on every read.
                         clip.video_path = video_url
-                        clip.thumbnail_path = thumb_url
+                        clip.thumbnail_path = thumb_gcs_path
                         clip.duration_s = duration_s
                         clip.file_size_bytes = file_size
                         clip.platform_copy = platform_copy.model_dump()

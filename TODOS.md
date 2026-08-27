@@ -913,11 +913,6 @@ _Reconciled 2026-07-09: T-STYLE-2 shipped in #564 (v0.5.9.0), T-STYLE-3 in #565 
 
 ## UX Cleanup (template-first)
 
-### Smarter poster-frame selection
-**What:** `app/services/template_poster.py` always seeks 1.5s into the template. For a few templates this lands inside a fade-in and produces a near-black thumbnail (e.g. "How do you enjoy your life?" backfilled to 3.8KB). Add a brightness/variance check on the extracted JPEG and retry at later seek offsets (3s, 5s, 10s) if the frame is too dark or low-variance. Optional: an admin override field on `VideoTemplate` to pin a specific seek time.
-**Why:** A few legacy templates ship with fade-ins; the auto-extracted poster looks broken on the homepage. Gradient fallback only kicks in when `thumbnail_gcs_path IS NULL`, not when the poster is technically present but visually empty.
-**Priority:** P3
-
 ### Typed admin editor for `required_inputs`
 **What:** Build a typed UI under `/admin/templates/[id]` that adds/removes/reorders entries in `video_templates.required_inputs`. v1 admins set this by editing the JSON column directly. Also: extend `PATCH /admin/templates/{id}` to accept `required_inputs` (currently it does not — see `routes/admin.py:705 update_template`). Today every template that needs inputs is set up either via a seed script (Dimples Passport) or a one-off backfill script (`scripts/backfill_that_one_trip_to.py`).
 **Priority:** P3

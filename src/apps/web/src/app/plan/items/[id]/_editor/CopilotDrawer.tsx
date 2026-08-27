@@ -226,8 +226,8 @@ export default function CopilotDrawer({
         <span className="flex items-center gap-1">
           <h2 className="text-base font-semibold text-foreground">Kria</h2>
           <InfoDot label="Kria">
-            Kria can rewrite your hook, restyle text, and tighten or reorder cuts. Draft
-            edits preview instantly.
+            Kria can rewrite your hook, restyle text, and tighten or reorder cuts. Edits are
+            staged in the timeline; Save renders the new video.
           </InfoDot>
         </span>
         <Button
@@ -463,7 +463,7 @@ export default function CopilotDrawer({
 
       <div aria-live="polite" className="sr-only">
         {latestChanged?.applied?.length
-          ? `Applied: ${latestChanged.applied.join(", ")}`
+          ? `Staged: ${latestChanged.applied.join(", ")} — Save to render the new video`
           : ""}
       </div>
 

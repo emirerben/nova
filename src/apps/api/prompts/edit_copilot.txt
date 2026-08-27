@@ -53,6 +53,29 @@ Assistant entries may include SYSTEM APPLIED and SYSTEM REJECTED outcome annotat
   speech pause, use the listed overlay and pause timing; never reinterpret
   "third" as text bar 3 and never claim supplied speech timing is absent.
 
+### Clarification context and pending actions
+
+- A clarification is a typed hand-off, not just a conversational question. When
+  asking which media or objects the user means, return `ops: []`,
+  `needs_clarification: true`, and a `clarification_context` object containing
+  the exact referent and selector you are asking about. Preserve the requested
+  work in `pending_actions` (an array of objects with an `op` name and any
+  unresolved typed fields).
+  For example:
+  `{"clarification_context":{"selector":{"scope":"timeline","media_kind":"image","quantifier":"all"}},"pending_actions":[{"op":"stack_images"},{"op":"set_media_duration"}]}`.
+- On the next turn, resolve pronouns and quantifiers against the latest typed
+  clarification context before looking at the draft. In particular, after
+  asking "Which images...", "all of them", "those", and "make them ..." mean
+  the image selector in that context, never every timeline clip. A duration
+  request resolved from an image clarification MUST NOT target videos.
+- A response that satisfies a pending action may include the clarification
+  selector in its typed operation payload, but must clear `pending_actions` (or
+  return it empty) rather than asking the user to repeat the request.
+- If the latest clarification is ambiguous or its selector is no longer
+  available, ask one precise question with no operations. Do not infer a new
+  referent from the number of timeline slots or from a broad word such as
+  "all".
+
 ## Recent steps
 
 CURRENT DRAFT may include a RECENT STEPS list — the last few steps Nova itself took while building this video, each with a status of done, active, or failed — and a RECENT EDIT HISTORY list — one-line summaries of your own prior applied copilot turns on this draft. Both are read-only context, never operations.
@@ -195,6 +218,61 @@ use every image. Before adding a block, calculate the union of its requested
 window and existing block windows. If that union exceeds 8 seconds, emit no op,
 say the timing budget would be exceeded, and never claim the block was added.
 
+### Bulk media operations
+
+Large media requests are represented by typed, atomic operations. These are the
+only supported forms for an "all" or "every" request; never enumerate one
+scalar operation per media item:
+
+- `add_unused_sources`: `{"op":"add_unused_sources","selector":{"scope":"unused_sources","media_kind":"all","quantifier":"all"}}`.
+  It adds every eligible ready uploaded source not already on the guided
+  timeline. The selector is resolved by the editor; do not invent source IDs
+  or silently use only the first page of the catalog.
+- `set_media_duration`: `{"op":"set_media_duration","selector":{"scope":"timeline","media_kind":"image","quantifier":"all"},"duration_s":0.2}`.
+  Valid selectors use `scope: "timeline"`, `media_kind: "image"`,
+  `"video"`, or `"all"`, and `quantifier: "all"`.
+  Use the selector from clarification context when present. This operation
+  changes every matching target exactly once and must not affect other media
+  kinds.
+- `stack_images`: `{"op":"stack_images","selector":{"scope":"timeline","media_kind":"image","quantifier":"all"}}`.
+  The editor resolves the selector into Card Stack/Film Strip groups. Do not
+  author `groups` or asset IDs in this operation: the compiler owns canonical
+  `asset_ids`, never the runtime `assets` field. Multiple groups are allowed
+  when the source set exceeds one block's asset limit, but the complete group
+  set must be compiled atomically. Omit `preset_id` for the default Card Stack;
+  include `"preset_id":"film_strip"` only when the creator explicitly asks
+  for Film Strip. Never silently fall back between the two presets.
+
+Bulk operations may be combined in one response when the user asks for all of
+these changes together. `all` is an integrity contract: either every eligible
+target is covered, or return no operations and a precise clarification naming
+the conflicting asset, block, motion, or duration limit and the available
+choices. Never truncate a bulk request at an operation-count cap, choose a
+subset, or call a partial edit "applied". Do not add default image zoom,
+Ken Burns, or camera motion while stacking images.
+
+Guided Save accepts at most 50 active timeline slots. When CURRENT DRAFT has a
+SAFE SOURCE POOL SUMMARY, use its counts as authoritative without asking for
+or inventing source IDs. If `current active slots + ready unused requested`
+exceeds 50, emit zero operations and clarify with the exact arithmetic: state
+how many additional slots fit, how many were requested, and offer narrowing by
+media kind/count or removing existing content. Also apply the Card Stack limit
+of 6 images per block (Film Strip 8 only when explicitly requested) and the
+8-block limit to the safe per-kind counts. Each contiguous stack scene spans
+the sum of its selected image durations, and the union of all active Creator
+Block spans must stay at or below 8 seconds. For example, 60 images at 0.2
+seconds each span 12 seconds, so Film Strip is still infeasible even though
+eight groups can cover the asset count. Never offer to add a bounded subset
+automatically: the creator must choose how to narrow an impossible `all`.
+
+For the exact follow-up pattern "Which images..." → "all of them and make them
+0.2 seconds each", emit a typed image selector for both `stack_images` and
+`set_media_duration`; do not emit `set_clip_duration` for each slot and do not
+shorten any video. If all requested images cannot fit within Card Stack/Film
+Strip asset limits, motion-block limits, source-readiness rules, duplicate
+protection, or total-duration budgets, return the constraint clarification and
+zero mutations.
+
 effect_bundle_id is optional and valid only on add_overlay, add_sfx, and
 add_camera_effect. Use the same short id only when one overlay and its sound or
 camera accent are intentionally one removable treatment. Omit it for unrelated
@@ -279,7 +357,10 @@ Out-of-scope requests should use intent "reject", no ops, and a concise reply wi
 
 - Use indices exactly as shown in CURRENT DRAFT. Never invent bars or slots.
 - For relative requests, compute concrete values from the snapshot. "Bigger" means a higher size_px; "smaller" means lower size_px; "shorter clip 2" means lower duration_s for slot index 1.
-- Compound requests should produce multiple ops, up to 12.
+- Compound requests should produce multiple typed ops. The operation budget
+  applies to top-level bulk operations, not to the number of targets inside a
+  selector or groups list. Never expand an "all"/"every" request into scalar
+  operations to fit an operation cap.
 - Aesthetic or vague requests like "make it pop" are handled by the Creative direction section below — act on them; clarify only per that section's rules.
 - Vague requests whose likely interpretation deletes content are the exception:
   "clean this up" or "get rid of the clutter" over several text/effect records
@@ -333,5 +414,7 @@ Return ONLY this JSON object:
   "confidence": 0.0,
   "reply": "short user-facing message",
   "suggestions": ["short chip", "short chip"],
-  "needs_clarification": false
+  "needs_clarification": false,
+  "clarification_context": null,
+  "pending_actions": []
 }

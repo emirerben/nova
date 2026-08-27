@@ -17,6 +17,7 @@ cross-user references on add-to-plan return 404 (not 403) so we don't leak which
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 from urllib.parse import unquote, urlparse
@@ -26,8 +27,9 @@ from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 
 from app.auth import CurrentUser
 from app.config import settings
@@ -67,6 +69,7 @@ _JOB_READY = PLAN_ITEM_JOB_READY
 _JOB_FAILED = PLAN_ITEM_JOB_FAILED
 _DEFAULT_LIMIT = 24
 _MAX_LIMIT = 60
+_MAX_PREVIEW_CLIPS = 50
 OPEN_IN_EDITOR_NOT_READY_DETAIL = "Video is not ready to open in the editor."
 OPEN_IN_EDITOR_LINK_CONFLICT_DETAIL = "Video is linked to a different plan item."
 DELETE_JOB_NOT_TERMINAL_DETAIL = "This video is still being prepared or posted."
@@ -83,9 +86,12 @@ _DELETE_OUTPUT_PREFIXES = (
 _DELETE_VARIANT_PATH_FIELDS = (
     "output_url",
     "video_path",
+    "poster_path",
     "base_video_path",
+    "base_poster_path",
     "subject_matte_path",
     "pre_media_overlay_video_path",
+    "pre_overlay_poster_path",
     "pre_sfx_video_path",
     "visual_blocks_base_path",
     "motion_base_path",
@@ -330,33 +336,113 @@ def _derived_status(job: Job) -> str:
     return "generating"
 
 
-def _preview(job: Job) -> tuple[str | None, str | None, str | None]:
-    """One playable URL for the library tile, across every job mode.
+@dataclass(frozen=True)
+class _LibraryPreview:
+    video_path: str
+    poster_path: str | None = None
+    poster_identity: str | None = None
+    variant_id: str | None = None
+    legacy_url: str | None = None
 
-    Generative/content_plan jobs keep per-variant outputs in
-    `assembly_plan["variants"][*]["output_url"]` (only "ready" variants have one);
-    template/music jobs store a single `assembly_plan["output_url"]`.
+
+def _legacy_browser_url(value: object) -> str | None:
+    """Keep only an already-browser-usable URL as a signer-failure fallback."""
+    if not isinstance(value, str):
+        return None
+    parsed = urlparse(value)
+    return value if parsed.scheme in {"http", "https"} and parsed.netloc else None
+
+
+def _owned_job_output_path(path: object, job: Job) -> str | None:
+    """Normalize a persisted object key and prove it belongs to this job.
+
+    Most newer pipelines use an explicit mode prefix (``generative-jobs`` or
+    ``music-jobs``). The default/auto uploader historically used
+    ``{user_id}/{job_id}/...``; accept that exact prefix so those rows can be
+    read and deleted without opening a broad user prefix.
+    """
+    candidate = _normalize_job_storage_path(path)
+    if candidate is None:
+        return None
+    if _job_output_path(candidate, job.id) is not None:
+        return candidate
+    if candidate.startswith(f"{job.user_id}/{job.id}/"):
+        return candidate
+    return None
+
+
+def _preview(job: Job, clips: list[JobClip] | None = None) -> _LibraryPreview | None:
+    """Resolve the best playable object and its source-matched poster.
+
+    A library row may be backed by generative variants, a single assembly-plan
+    output, or the legacy/default JobClip writer. Candidate ordering is stable:
+    ready variants by rank, then the top-level output, then the lowest-ranked
+    ready clip. Every path is ownership-checked before it is signed.
     """
     if job.status == "cancelled":
-        return None, None, None
-    plan = job.assembly_plan or {}
+        return None
+    plan = job.assembly_plan if isinstance(job.assembly_plan, dict) else {}
     variants = plan.get("variants")
     if isinstance(variants, list):
-        for v in variants:
-            if v.get("render_status") == "ready" and v.get("output_url"):
-                return (
-                    v["output_url"],
-                    str(v.get("variant_id") or "") or None,
-                    v.get("video_path") if isinstance(v.get("video_path"), str) else None,
+        ready = [
+            (index, variant)
+            for index, variant in enumerate(variants)
+            if isinstance(variant, dict) and variant.get("render_status") == "ready"
+        ]
+        for index, variant in sorted(ready, key=lambda item: _variant_rank(item[1], item[0])):
+            video_path = _owned_job_output_path(
+                variant.get("video_path") or variant.get("output_url"), job
+            )
+            if video_path:
+                poster_path = _owned_job_output_path(variant.get("poster_path"), job)
+                render_identity = (
+                    variant.get("render_generation_id")
+                    or variant.get("render_finished_at")
+                    or video_path
                 )
-        return None, None, None
-    url = plan.get("output_url")
-    output_path = plan.get("output_path")
-    return (
-        url if isinstance(url, str) else None,
-        None,
-        output_path if isinstance(output_path, str) else None,
+                return _LibraryPreview(
+                    video_path=video_path,
+                    poster_path=poster_path,
+                    poster_identity=f"{variant.get('variant_id') or ''}:{render_identity}",
+                    variant_id=str(variant.get("variant_id") or "") or None,
+                    legacy_url=_legacy_browser_url(variant.get("output_url")),
+                )
+            legacy_url = _legacy_browser_url(variant.get("output_url"))
+            if legacy_url and _job_mode(job) in {"template", "music", "auto_music"}:
+                # Older writers persisted only the signed URL. Keep that
+                # browser-compatible fallback while never treating it as an
+                # owned object key for signing or deletion.
+                return _LibraryPreview(
+                    video_path="",
+                    variant_id=str(variant.get("variant_id") or "") or None,
+                    legacy_url=legacy_url,
+                )
+
+    video_path = _owned_job_output_path(
+        plan.get("output_path") or plan.get("video_path") or plan.get("output_url"), job
     )
+    if video_path:
+        return _LibraryPreview(
+            video_path=video_path,
+            poster_path=_owned_job_output_path(plan.get("poster_path"), job),
+            poster_identity=video_path,
+            legacy_url=_legacy_browser_url(plan.get("output_url")),
+        )
+    legacy_url = _legacy_browser_url(plan.get("output_url"))
+    if legacy_url and _job_mode(job) in {"template", "music", "auto_music"}:
+        return _LibraryPreview(video_path="", legacy_url=legacy_url, poster_identity=None)
+
+    for clip in sorted(clips or [], key=lambda item: (item.rank, str(item.id))):
+        if clip.render_status != "ready":
+            continue
+        video_path = _owned_job_output_path(clip.video_path, job)
+        if video_path:
+            return _LibraryPreview(
+                video_path=video_path,
+                poster_path=_owned_job_output_path(clip.thumbnail_path, job),
+                poster_identity=video_path,
+            )
+    return None
 
 
 class LibraryTikTokPublication(BaseModel):
@@ -387,6 +473,8 @@ class LibraryJob(BaseModel):
     status: str  # derived: ready | generating | failed
     raw_status: str
     output_url: str | None
+    poster_url: str | None = None
+    poster_identity: str | None = None
     download_url: str | None = None
     output_variant_id: str | None = None
     tiktok_publishable: bool = False
@@ -406,12 +494,20 @@ class LibraryJob(BaseModel):
 def _to_library_job(
     job: Job,
     *,
+    clips: list[JobClip] | None = None,
     content_plan_item_id: str | None = None,
     feedback_signal: str | None = None,
     tiktok_publication: TikTokPublication | None = None,
 ) -> LibraryJob:
-    output_url, output_variant_id, output_path = _preview(job)
-    if output_url and output_path:
+    preview = _preview(job, clips)
+    output_url: str | None = preview.legacy_url if preview else None
+    poster_url: str | None = None
+    poster_identity: str | None = None
+    output_variant_id = preview.variant_id if preview else None
+    output_path = preview.video_path if preview else None
+    poster_path = preview.poster_path if preview else None
+    poster_identity = preview.poster_identity if preview else None
+    if output_path:
         try:
             output_url = signed_get_url(output_path, PLAYBACK_URL_TTL_MIN)
         except Exception:  # noqa: BLE001 — a library row must survive signing failure
@@ -419,6 +515,16 @@ def _to_library_job(
                 "library_playback_resign_failed",
                 job_id=str(job.id),
                 output_path=output_path,
+                exc_info=True,
+            )
+    if poster_path:
+        try:
+            poster_url = signed_get_url(poster_path, PLAYBACK_URL_TTL_MIN)
+        except Exception:  # noqa: BLE001 — a library row must survive signing failure
+            log.warning(
+                "library_poster_resign_failed",
+                job_id=str(job.id),
+                poster_path=poster_path,
                 exc_info=True,
             )
     failure_reason, error_class = _job_failure_metadata(job)
@@ -434,7 +540,7 @@ def _to_library_job(
             log.warning("library_download_sign_failed", job_id=str(job.id), exc_info=True)
     plan = job.assembly_plan or {}
     has_owned_output = bool(
-        output_variant_id
+        output_path
         or plan.get("output_path")
         or _job_mode(job) in {"template", "music", "auto_music"}
     )
@@ -444,6 +550,8 @@ def _to_library_job(
         status=_derived_status(job),
         raw_status=job.status,
         output_url=output_url,
+        poster_url=poster_url,
+        poster_identity=poster_identity,
         download_url=download_url,
         output_variant_id=output_variant_id,
         tiktok_publishable=bool(output_url and has_owned_output),
@@ -514,11 +622,12 @@ async def list_my_jobs(
     rows = rows[:limit]
     next_cursor = rows[-1].created_at.isoformat() if has_more and rows else None
 
-    # Batched thumb lookup for this page — one query, no N+1. One-thumb-per-video is
-    # enforced on write, so at most one thumb row per job; newest wins if a race left
-    # two. Scoped to user.id (the rows are already the caller's, but defense-in-depth).
+    # Batched feedback/publication/media lookups for this page — one query per
+    # relation, no N+1. Ready JobClip rows are retained in rank order so the
+    # preview resolver can choose the best available output for legacy/default jobs.
     thumbs: dict[uuid.UUID, str] = {}
     latest_tiktok: dict[uuid.UUID, TikTokPublication] = {}
+    clips_by_job: dict[uuid.UUID, list[JobClip]] = {}
     if rows:
         fb_rows = (
             await db.execute(
@@ -551,10 +660,52 @@ async def list_my_jobs(
         for publication in publication_rows:
             latest_tiktok.setdefault(publication.job_id, publication)
 
+        ranked_clips = (
+            select(
+                JobClip.id.label("clip_id"),
+                func.row_number()
+                .over(
+                    partition_by=JobClip.job_id,
+                    order_by=(JobClip.rank, JobClip.created_at, JobClip.id),
+                )
+                .label("clip_rank"),
+            )
+            .where(
+                JobClip.job_id.in_([j.id for j in rows]),
+                JobClip.render_status == "ready",
+            )
+            .subquery()
+        )
+        clip_rows = (
+            (
+                await db.execute(
+                    select(JobClip)
+                    .options(
+                        load_only(
+                            JobClip.id,
+                            JobClip.job_id,
+                            JobClip.rank,
+                            JobClip.render_status,
+                            JobClip.video_path,
+                            JobClip.thumbnail_path,
+                            JobClip.created_at,
+                        )
+                    )
+                    .join(ranked_clips, JobClip.id == ranked_clips.c.clip_id)
+                    .where(ranked_clips.c.clip_rank <= _MAX_PREVIEW_CLIPS)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for clip in clip_rows:
+            clips_by_job.setdefault(clip.job_id, []).append(clip)
+
     return LibraryResponse(
         jobs=[
             _to_library_job(
                 j,
+                clips=clips_by_job.get(j.id),
                 feedback_signal=thumbs.get(j.id),
                 tiktok_publication=latest_tiktok.get(j.id),
             )
@@ -646,7 +797,7 @@ def _job_storage_paths(
     paths: list[str] = []
 
     def add_output(value: object) -> None:
-        if path := _job_output_path(value, job.id):
+        if path := _owned_job_output_path(value, job):
             paths.append(path)
 
     for clip in clips:
@@ -654,7 +805,14 @@ def _job_storage_paths(
         add_output(clip.thumbnail_path)
 
     plan = job.assembly_plan if isinstance(job.assembly_plan, dict) else {}
-    for field in ("output_path", "video_path", "output_url", "base_output_url"):
+    for field in (
+        "output_path",
+        "video_path",
+        "output_url",
+        "base_output_url",
+        "poster_path",
+        "base_poster_path",
+    ):
         add_output(plan.get(field))
     variants = plan.get("variants")
     if isinstance(variants, list):
@@ -665,7 +823,7 @@ def _job_storage_paths(
                 value = variant.get(field)
                 add_output(value)
                 if field == "subject_matte_path":
-                    if matte_path := _job_output_path(value, job.id):
+                    if matte_path := _owned_job_output_path(value, job):
                         if matte_path.endswith(".mp4"):
                             paths.append(f"{matte_path}.json")
 
@@ -689,7 +847,11 @@ def _job_storage_paths(
         # namespace. Those exact copies are safe to remove even for linked jobs;
         # the original users/{user_id}/plan/... inputs remain excluded below.
         for clip_path in clip_paths:
-            add_output(clip_path)
+            # Do not use the legacy ``{user_id}/{job_id}/`` compatibility
+            # fallback here: that prefix is also used by plan/source uploads,
+            # which linked-job deletion must preserve.
+            if path := _job_output_path(clip_path, job.id):
+                paths.append(path)
     preprocessed_cache = candidates.get("preprocessed_source_cache")
     if isinstance(preprocessed_cache, dict):
         processed_clip_paths = preprocessed_cache.get("processed_clip_paths")

@@ -5056,6 +5056,7 @@ export default function EditorShell({
       readOnly,
     });
     return buildCopilotSnapshot(visibleTextBars, slots, clip.clips, capabilities, clip.state.grid, {
+      sourcePool: clip.sourcePool,
       sfxEnabled: SOUND_EFFECTS_UI_ENABLED,
       overlaysEnabled: MEDIA_OVERLAYS_UI_ENABLED,
       captionsPresent,
@@ -5104,6 +5105,7 @@ export default function EditorShell({
           ? {
               revision_number: clip.revisionNumber,
               base_generation: clip.baseGeneration,
+              state_hash: clip.revisionHash,
             }
           : null,
       editDirectionAvailable:
@@ -5135,7 +5137,9 @@ export default function EditorShell({
     carouselClips,
     carouselMoment,
     clip.clips,
+    clip.sourcePool,
     clip.baseGeneration,
+    clip.revisionHash,
     clip.revisionNumber,
     clip.state.grid,
     clipDirty,
@@ -5189,6 +5193,7 @@ export default function EditorShell({
         bars: state.bars,
         slots,
         clips: clip.clips,
+        sourcePool: clip.sourcePool,
         snapshot,
         capabilities,
         grid: clip.state.grid,
@@ -5227,6 +5232,7 @@ export default function EditorShell({
       captionMeta,
       carouselMoment,
       clip.clips,
+      clip.sourcePool,
       clip.state.grid,
       effectiveMusicTrackId,
       evolvingTypeExposureEnabled,
@@ -5389,7 +5395,8 @@ export default function EditorShell({
         }
         // Flag off: byte-identical to today — no isRenderTurn/assistantText
         // override, so the caller falls back to the outcome-derived
-        // "Applied: Intro layout: ..." reply and the lime receipt pill.
+        // "Staged: Intro layout: ... Save to render the new video." reply and
+        // the lime receipt pill.
         //
         // Flag on: the agent's OWN reply is REQUIRED reading here — the
         // prompt obligates it to carry the feeling-label, the "can't be
@@ -5681,6 +5688,7 @@ export default function EditorShell({
     variantId: variant?.variant_id ?? variantParam ?? "",
     buildSnapshot: buildCopilotDraftSnapshot,
     applyOps: applyCopilotDraftOps,
+    applyOpsAtomic: applyDirectorDraftOps,
     onApplied: handleCopilotOps,
     onReceiptStaged: (receiptId, undoVersion) => {
       if (lastAppliedTurnRef.current?.undoVersion === undoVersion) {
@@ -6223,6 +6231,8 @@ export default function EditorShell({
           generation: res.generation,
           priorFinishedAt: variant.render_finished_at ?? null,
           renderStarted,
+          expectedDurationS: renderStarted ? res.expected_duration_s ?? null : null,
+          revisionHash: renderStarted ? res.revision_hash ?? null : null,
         }),
       );
     } catch (err) {
@@ -7360,7 +7370,7 @@ export default function EditorShell({
             {showCopilotSaveNotice && (
               <div className="flex max-w-[360px] items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-[12px] text-muted-foreground">
                 <span className="truncate">
-                  The preview is a close match — the saved video is rendered exactly.
+                  Staged edits are previewed here. Save to render the new video exactly.
                 </span>
                 <Button
                   type="button"
@@ -8668,7 +8678,7 @@ function LightTopBar({
         {showCopilotNotice ? (
           <div className="mx-auto flex max-w-[320px] items-center justify-center gap-2 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground">
             <span className="truncate">
-              Preview is close; Save renders exactly.
+              Staged preview — Save renders the new video exactly.
             </span>
             <Button
               type="button"

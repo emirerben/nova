@@ -277,6 +277,90 @@ def _parse(
     )
 
 
+def _bulk_snapshot() -> dict:
+    return {
+        "allowed_op_families": ["clip", "text"],
+        "guided_revision": {
+            "revision_number": 7,
+            "base_generation": "render-7",
+            "state_hash": "state-7",
+        },
+        "slots": [
+            {"clip_index": 0, "kind": "video", "duration_s": 3.0, "removed": False},
+            {"clip_index": 1, "kind": "image", "duration_s": 1.0, "removed": False},
+            {"clip_index": 2, "kind": "video", "duration_s": 4.0, "removed": False},
+            {"clip_index": 3, "kind": "image", "duration_s": 1.0, "removed": False},
+        ],
+        "source_pool": [
+            {
+                "media_id": "video-0",
+                "clip_index": 0,
+                "kind": "video",
+                "generation": "v0",
+                "gcs_path": "users/u/v0.mp4",
+                "used": True,
+            },
+            {
+                "media_id": "image-1",
+                "clip_index": 1,
+                "kind": "image",
+                "generation": "i1",
+                "gcs_path": "users/u/i1.jpg",
+                "used": True,
+            },
+            {
+                "media_id": "video-2",
+                "clip_index": 2,
+                "kind": "video",
+                "generation": "v2",
+                "gcs_path": "users/u/v2.mp4",
+                "used": True,
+            },
+            {
+                "media_id": "image-3",
+                "clip_index": 3,
+                "kind": "image",
+                "generation": "i3",
+                "gcs_path": "users/u/i3.jpg",
+                "used": True,
+            },
+            {
+                "media_id": "image-unused-1",
+                "kind": "image",
+                "generation": "u1",
+                "gcs_path": "users/u/u1.jpg",
+                "status": "ready",
+                "used": False,
+            },
+            {
+                "media_id": "image-unused-2",
+                "kind": "image",
+                "generation": "u2",
+                "gcs_path": "users/u/u2.jpg",
+                "status": "ready",
+                "used": False,
+            },
+            {
+                "media_id": "video-unused",
+                "kind": "video",
+                "generation": "uv",
+                "gcs_path": "users/u/uv.mp4",
+                "status": "ready",
+                "used": False,
+            },
+            {
+                "media_id": "image-pending",
+                "kind": "image",
+                "generation": "up",
+                "gcs_path": "users/u/up.jpg",
+                "status": "analyzing",
+                "used": False,
+            },
+        ],
+        "total_duration_s": 9.0,
+    }
+
+
 def test_copilot_valid_op_fixtures_parse() -> None:
     data = json.loads((FIXTURE_DIR / "valid.json").read_text())
     for case in data["cases"]:
@@ -361,7 +445,206 @@ def test_copilot_required_field_drop() -> None:
 def test_copilot_twelve_op_cap() -> None:
     ops = [{"op": "remove_text", "bar_index": 0} for _ in range(15)]
     out = _parse(ops)
-    assert len(out.ops) == 12
+    assert out.ops == []
+    assert out.outcome == "failed"
+    assert "15 ordinary operations" in out.rejection_reasons[0]["detail"]
+
+
+def test_bulk_media_ops_are_preserved_as_typed_single_operations() -> None:
+    snapshot = _bulk_snapshot()
+    out = _parse(
+        [
+            *({"op": "set_clip_duration", "slot_index": 0, "duration_s": 2.5} for _ in range(12)),
+            {
+                "op": "set_media_duration",
+                "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"},
+                "duration_s": 0.2,
+            },
+        ],
+        snapshot=snapshot,
+    )
+    bulk = next(op for op in out.ops if op["op"] == "set_media_duration")
+    assert len(out.ops) == 13
+    assert bulk["selector"] == {"scope": "timeline", "media_kind": "image", "quantifier": "all"}
+    assert bulk["duration_s"] == 0.2
+    assert bulk["integrity"]["target_count"] == 2
+    assert bulk["integrity"]["source_count"] == 8
+    assert bulk["integrity"]["source_digest"].startswith("sp1-")
+    assert bulk["integrity"]["selection_digest"].startswith("sel1-")
+
+
+def test_duplicate_bulk_selector_bundle_fails_closed() -> None:
+    operation = {
+        "op": "set_media_duration",
+        "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"},
+        "duration_s": 0.2,
+    }
+    out = _parse([operation, operation], snapshot=_bulk_snapshot())
+    assert out.ops == []
+    assert out.outcome == "failed"
+    assert "not partially applied" in out.rejection_reasons[0]["detail"]
+
+
+def test_bulk_all_selector_counts_only_ready_unused_sources_and_images() -> None:
+    snapshot = _bulk_snapshot()
+    out = _parse(
+        [
+            {
+                "op": "add_unused_sources",
+                "scope": "unused_sources",
+                "media_kind": "image",
+                "quantifier": "all",
+            },
+            {
+                "op": "stack_images",
+                "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"},
+            },
+        ],
+        snapshot=snapshot,
+    )
+    assert [op["op"] for op in out.ops] == ["add_unused_sources", "stack_images"]
+    assert all(op["integrity"]["target_count"] == 2 for op in out.ops)
+    assert all(op["selector"]["media_kind"] == "image" for op in out.ops)
+
+
+def test_bulk_parser_stamps_integrity_from_safe_summary_without_source_catalog() -> None:
+    full_snapshot = _bulk_snapshot()
+    requested = {
+        "op": "add_unused_sources",
+        "selector": {
+            "scope": "unused_sources",
+            "media_kind": "image",
+            "quantifier": "all",
+        },
+    }
+    full = _parse([requested], snapshot=full_snapshot).ops[0]["integrity"]
+    safe_snapshot = {key: value for key, value in full_snapshot.items() if key != "source_pool"}
+    safe_snapshot["source_pool_summary"] = {
+        "digest": full["source_digest"],
+        "total_count": full["source_count"],
+        "ready_unused_count": full["target_count"],
+        "ready_unused_by_kind": {"image": full["target_count"], "video": 0},
+        "selectors": {
+            "unused_sources:image": {
+                "target_count": full["target_count"],
+                "selection_digest": full["selection_digest"],
+            }
+        },
+    }
+    summarized = _parse([requested], snapshot=safe_snapshot)
+    assert summarized.ops[0]["integrity"] == full
+    assert "source_pool" not in safe_snapshot
+    rendered = _agent().render_prompt(
+        EditCopilotInput(
+            utterance="add all unused clips",
+            prior_turns=[],
+            variant_snapshot=safe_snapshot,
+        )
+    )
+    assert "SAFE SOURCE POOL SUMMARY" in rendered
+    assert f'"total_count": {full["source_count"]}' in rendered
+    assert f'"ready_unused_count": {full["target_count"]}' in rendered
+    assert "gcs_path" not in rendered
+
+
+def test_bulk_ops_reject_wrong_selector_or_empty_eligible_set() -> None:
+    snapshot = _bulk_snapshot()
+    wrong_kind = _parse(
+        [
+            {
+                "op": "stack_images",
+                "selector": {"scope": "timeline", "media_kind": "video", "quantifier": "all"},
+            }
+        ],
+        snapshot=snapshot,
+    )
+    assert wrong_kind.ops == []
+    assert wrong_kind.outcome == "failed"
+
+    no_targets = dict(snapshot)
+    no_targets["source_pool"] = [
+        row
+        for row in snapshot["source_pool"]
+        if row["media_id"] not in {"image-unused-1", "image-unused-2"}
+    ]
+    no_targets["slots"] = []
+    out = _parse(
+        [
+            {
+                "op": "add_unused_sources",
+                "selector": {
+                    "scope": "unused_sources",
+                    "media_kind": "image",
+                    "quantifier": "all",
+                },
+            }
+        ],
+        snapshot=no_targets,
+    )
+    assert out.ops == []
+    assert "no eligible ready media" in out.rejection_reasons[0]["detail"]
+
+
+def test_clarification_context_and_pending_bulk_actions_are_safe_and_ephemeral() -> None:
+    raw = json.dumps(
+        {
+            "intent": "clarify",
+            "ops": [],
+            "confidence": 0.9,
+            "reply": "Which images should I use?",
+            "needs_clarification": True,
+            "clarification_context": {
+                "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"}
+            },
+            "pending_actions": [
+                {
+                    "op": "set_media_duration",
+                    "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"},
+                },
+                {
+                    "op": "stack_images",
+                    "scope": "timeline",
+                    "media_kind": "image",
+                    "quantifier": "all",
+                },
+                {"op": "remove_text", "bar_index": 0},
+            ],
+        }
+    )
+    out = _agent().parse(
+        raw,
+        EditCopilotInput(
+            utterance="Which images?",
+            prior_turns=[],
+            variant_snapshot=_bulk_snapshot(),
+        ),
+    )
+    assert out.clarification_context == {
+        "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"}
+    }
+    assert out.pending_actions == [
+        {
+            "op": "set_media_duration",
+            "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"},
+        },
+        {
+            "op": "stack_images",
+            "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"},
+        },
+    ]
+
+    edit = _parse(
+        [
+            {
+                "op": "set_media_duration",
+                "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"},
+                "duration_s": 0.2,
+            }
+        ],
+        snapshot=_bulk_snapshot(),
+    )
+    assert edit.clarification_context is None
+    assert edit.pending_actions == []
 
 
 def test_format_snapshot_renders_beat_marks() -> None:
@@ -395,6 +678,380 @@ def test_copilot_prompt_resolves_numbered_prior_answer_before_draft_indices() ->
 
     assert "numbered item in the latest assistant reply" in rendered
     assert "not text bar 3" in rendered
+
+
+def test_exact_kria_four_turn_conversation_preserves_image_referent() -> None:
+    agent = _agent()
+    clarification = agent.parse(
+        json.dumps(
+            {
+                "intent": "clarify",
+                "ops": [],
+                "confidence": 0.93,
+                "reply": (
+                    "Which images would you like to stack together, "
+                    "and how short should the duration be?"
+                ),
+                "needs_clarification": True,
+                "clarification_context": {
+                    "selector": {
+                        "scope": "timeline",
+                        "media_kind": "image",
+                        "quantifier": "all",
+                    },
+                    "referent": "images",
+                },
+                "pending_actions": [
+                    {"op": "add_unused_sources"},
+                    {"op": "stack_images"},
+                    {"op": "set_media_duration"},
+                ],
+            }
+        ),
+        EditCopilotInput(
+            utterance="stack the images together and make the shorter",
+            prior_turns=[
+                {
+                    "role": "user",
+                    "content": (
+                        "Add all of the unsued clips as well. Stack multiple images together "
+                        "rather than splitting each between a video"
+                    ),
+                }
+            ],
+            variant_snapshot=_bulk_snapshot(),
+        ),
+    )
+    assert clarification.pending_actions == [
+        {
+            "op": "add_unused_sources",
+            "selector": {
+                "scope": "unused_sources",
+                "media_kind": "all",
+                "quantifier": "all",
+            },
+        },
+        {
+            "op": "stack_images",
+            "selector": {
+                "scope": "timeline",
+                "media_kind": "image",
+                "quantifier": "all",
+            },
+        },
+        {
+            "op": "set_media_duration",
+            "selector": {
+                "scope": "timeline",
+                "media_kind": "image",
+                "quantifier": "all",
+            },
+        },
+    ]
+
+    rendered = agent.render_prompt(
+        EditCopilotInput(
+            utterance="all of them and make them 0.2 seconds each",
+            prior_turns=[
+                {
+                    "role": "user",
+                    "content": (
+                        "Add all of the unsued clips as well. Stack multiple images together "
+                        "rather than splitting each between a video"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": "stack the images together and make the shorter",
+                },
+                {
+                    "role": "assistant",
+                    "content": clarification.reply,
+                    "clarification_context": clarification.clarification_context,
+                    "pending_actions": clarification.pending_actions,
+                },
+            ],
+            variant_snapshot=_bulk_snapshot(),
+        )
+    )
+    assert "SYSTEM CLARIFICATION" in rendered
+    assert "SYSTEM PENDING BULK ACTIONS" in rendered
+    assert "add_unused_sources" in rendered
+    assert "stack_images" in rendered
+    assert "set_media_duration" in rendered
+    assert "timeline" in rendered and "image" in rendered and "quantifier" in rendered
+
+    completed = agent.parse(
+        json.dumps(
+            {
+                "intent": "edit",
+                "ops": [
+                    {
+                        "op": "add_unused_sources",
+                        "selector": {
+                            "scope": "unused_sources",
+                            "media_kind": "image",
+                            "quantifier": "all",
+                        },
+                    },
+                    {
+                        "op": "set_media_duration",
+                        "selector": {
+                            "scope": "unused_sources",
+                            "media_kind": "all",
+                            "quantifier": "all",
+                        },
+                        "duration_s": 0.2,
+                    },
+                    {
+                        "op": "stack_images",
+                        "selector": {
+                            "scope": "unused_sources",
+                            "media_kind": "all",
+                            "quantifier": "all",
+                        },
+                    },
+                ],
+                "confidence": 0.95,
+                "reply": "I can stage the complete edit.",
+                "needs_clarification": False,
+            }
+        ),
+        EditCopilotInput(
+            utterance="all of them and make them 0.2 seconds each",
+            prior_turns=[
+                {
+                    "role": "assistant",
+                    "content": clarification.reply,
+                    "clarification_context": clarification.clarification_context,
+                    "pending_actions": clarification.pending_actions,
+                }
+            ],
+            variant_snapshot=_bulk_snapshot(),
+        ),
+    )
+    assert [operation["op"] for operation in completed.ops] == [
+        "add_unused_sources",
+        "set_media_duration",
+        "stack_images",
+    ]
+    assert completed.ops[0]["selector"]["media_kind"] == "all"
+    assert completed.ops[1]["selector"]["media_kind"] == "image"
+    assert completed.ops[2]["selector"]["media_kind"] == "image"
+
+    widened_clarification = agent.parse(
+        json.dumps(
+            {
+                "intent": "clarify",
+                "ops": [],
+                "confidence": 0.95,
+                "reply": "The complete request exceeds the editor limits.",
+                "needs_clarification": True,
+                "clarification_context": {
+                    "selector": {
+                        "scope": "unused_sources",
+                        "media_kind": "all",
+                        "quantifier": "all",
+                    }
+                },
+                "pending_actions": [
+                    {"op": "add_unused_sources"},
+                    {
+                        "op": "stack_images",
+                        "selector": {
+                            "scope": "unused_sources",
+                            "media_kind": "all",
+                            "quantifier": "all",
+                        },
+                    },
+                    {
+                        "op": "set_media_duration",
+                        "selector": {
+                            "scope": "unused_sources",
+                            "media_kind": "all",
+                            "quantifier": "all",
+                        },
+                        "duration_s": 0.2,
+                    },
+                ],
+            }
+        ),
+        EditCopilotInput(
+            utterance="all of them and make them 0.2 seconds each",
+            prior_turns=[
+                {
+                    "role": "assistant",
+                    "content": clarification.reply,
+                    "clarification_context": clarification.clarification_context,
+                    "pending_actions": clarification.pending_actions,
+                }
+            ],
+            variant_snapshot=_bulk_snapshot(),
+        ),
+    )
+    assert widened_clarification.clarification_context == clarification.clarification_context
+    assert widened_clarification.pending_actions[1]["selector"]["media_kind"] == "image"
+    assert widened_clarification.pending_actions[2]["selector"]["media_kind"] == "image"
+
+
+@pytest.mark.parametrize("omitted_op", ["add_unused_sources", "set_media_duration"])
+def test_pronoun_followup_restores_safe_pending_bulk_action(omitted_op: str) -> None:
+    clarification = {
+        "role": "assistant",
+        "content": "Which images, and how short?",
+        "clarification_context": {
+            "referent": "images",
+            "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"},
+        },
+        "pending_actions": [
+            {"op": "add_unused_sources"},
+            {"op": "stack_images"},
+            {"op": "set_media_duration"},
+        ],
+    }
+    operations = [
+        {
+            "op": "add_unused_sources",
+            "selector": {
+                "scope": "unused_sources",
+                "media_kind": "all",
+                "quantifier": "all",
+            },
+        },
+        {
+            "op": "stack_images",
+            "selector": {
+                "scope": "timeline",
+                "media_kind": "image",
+                "quantifier": "all",
+            },
+        },
+        {
+            "op": "set_media_duration",
+            "selector": {
+                "scope": "timeline",
+                "media_kind": "image",
+                "quantifier": "all",
+            },
+            "duration_s": 0.2,
+        },
+    ]
+    out = _agent().parse(
+        json.dumps(
+            {
+                "intent": "edit",
+                "ops": [operation for operation in operations if operation["op"] != omitted_op],
+                "confidence": 0.99,
+                "reply": "Done.",
+                "needs_clarification": False,
+            }
+        ),
+        EditCopilotInput(
+            utterance="all of them and make them 0.2 seconds each",
+            prior_turns=[clarification],
+            variant_snapshot=_bulk_snapshot(),
+        ),
+    )
+
+    assert {op["op"] for op in out.ops} == {
+        "add_unused_sources",
+        "stack_images",
+        "set_media_duration",
+    }
+    duration = next(op for op in out.ops if op["op"] == "set_media_duration")
+    assert duration["duration_s"] == 0.2
+    assert out.outcome == "proposed"
+
+
+def test_pronoun_followup_without_required_duration_fails_closed() -> None:
+    clarification = {
+        "role": "assistant",
+        "content": "Which images, and how short?",
+        "clarification_context": {
+            "referent": "images",
+            "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"},
+        },
+        "pending_actions": [
+            {"op": "add_unused_sources"},
+            {"op": "stack_images"},
+            {"op": "set_media_duration"},
+        ],
+    }
+    out = _agent().parse(
+        json.dumps(
+            {
+                "intent": "edit",
+                "ops": [],
+                "confidence": 0.99,
+                "reply": "Done.",
+                "needs_clarification": False,
+            }
+        ),
+        EditCopilotInput(
+            utterance="all of them",
+            prior_turns=[clarification],
+            variant_snapshot=_bulk_snapshot(),
+        ),
+    )
+
+    assert out.ops == []
+    assert out.outcome == "failed"
+    assert "set_media_duration" in out.rejection_reasons[0]["detail"]
+
+
+def test_production_scale_pronoun_followup_returns_exact_capacity_clarification() -> None:
+    fixture_path = (
+        Path(__file__).parent
+        / "fixtures"
+        / "agent_evals"
+        / "edit_copilot"
+        / "golden"
+        / "kria_bulk_followup_impossible_all.json"
+    )
+    fixture = json.loads(fixture_path.read_text())
+    fixture_input = fixture["input"]
+    out = _agent().parse(
+        json.dumps(
+            {
+                "intent": "edit",
+                "ops": [
+                    {
+                        "op": "stack_images",
+                        "selector": {
+                            "scope": "timeline",
+                            "media_kind": "image",
+                            "quantifier": "all",
+                        },
+                    },
+                    {
+                        "op": "set_media_duration",
+                        "selector": {
+                            "scope": "timeline",
+                            "media_kind": "image",
+                            "quantifier": "all",
+                        },
+                        "duration_s": 0.2,
+                    },
+                ],
+                "confidence": 0.99,
+                "reply": "Done.",
+                "needs_clarification": False,
+            }
+        ),
+        EditCopilotInput(
+            utterance=fixture_input["utterance"],
+            prior_turns=fixture_input["prior_turns"],
+            variant_snapshot=fixture_input["variant_snapshot"],
+        ),
+    )
+
+    assert out.ops == []
+    assert out.outcome == "clarification"
+    assert out.needs_clarification is True
+    assert "33 additional" in out.reply
+    assert "10 Card Stacks" in out.reply
+    assert "12-second" in out.reply
+    assert "8-second motion" in out.reply
 
 
 def test_format_snapshot_renders_meta_only_captions() -> None:
@@ -701,7 +1358,7 @@ def test_copilot_fast_direction_is_revision_bound() -> None:
         utterance="Chaneg this to a fast paced montage video",
     )
     assert out.ops == [op]
-    assert out.outcome == "applied"
+    assert out.outcome == "proposed"
 
     missing = _parse([op], snapshot=_full_snapshot(allowed=["direction"]))
     assert missing.ops == []
@@ -741,6 +1398,25 @@ def test_honest_outcome_preserves_concrete_negated_no_effect_explanation() -> No
     assert reply == "No change was made because the title already says Corfu."
 
 
+def test_honest_outcome_keeps_legacy_wire_value_during_split_deploy() -> None:
+    output = EditCopilotOutput(
+        intent="edit",
+        ops=[],
+        confidence=0.9,
+        reply="Done.",
+        outcome="applied",
+    )
+
+    outcome, reply = _honest_outcome(
+        output,
+        [{"op": "edit_text", "bar_index": 0, "text": "Corfu"}],
+        supports_proposed=False,
+    )
+
+    assert outcome == "applied"
+    assert reply == "Done."
+
+
 @pytest.mark.parametrize(
     ("output", "ops", "expected_outcome", "expected_reply"),
     [
@@ -749,8 +1425,20 @@ def test_honest_outcome_preserves_concrete_negated_no_effect_explanation() -> No
                 intent="edit", ops=[], confidence=0.9, reply="Done.", outcome="applied"
             ),
             [{"op": "edit_text", "bar_index": 0, "text": "Corfu"}],
-            "applied",
-            "Done.",
+            "proposed",
+            "I prepared this edit for the editor to validate and stage.",
+        ),
+        (
+            EditCopilotOutput(
+                intent="edit",
+                ops=[],
+                confidence=0.9,
+                reply="Staged every image. Save to render the new video.",
+                outcome="proposed",
+            ),
+            [{"op": "stack_images"}],
+            "proposed",
+            "I prepared this edit for the editor to validate and stage.",
         ),
         (
             EditCopilotOutput(
@@ -1597,6 +2285,18 @@ def test_format_snapshot_exposes_exact_guided_revision_identity() -> None:
     assert "base_generation='render-generation-abc'" in rendered
 
 
+def test_format_snapshot_exposes_timeline_media_identity_and_kind() -> None:
+    from app.agents.edit_copilot import _format_snapshot
+
+    snap = _snapshot(allowed=["clip", "motion"])
+    snap["slots"][0].update({"media_id": "image-production-1", "media_kind": "image"})
+
+    rendered = _format_snapshot(snap)
+
+    assert "media_id='image-production-1'" in rendered
+    assert "media_kind='image'" in rendered
+
+
 def test_honest_outcome_rejection_precedes_clarification_hint() -> None:
     output = EditCopilotOutput(
         intent="edit",
@@ -2169,12 +2869,16 @@ def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
     # normalized existing-block motion state, then (2026-08-22-v28) for
     # story-native trim and explicit music-removal operations, then
     # (2026-08-23-v29) for guided-title aliasing and structured outcomes, then
-    # (2026-08-23-v30) for server-planned direction replacement — update
+    # (2026-08-23-v30) for server-planned direction replacement, then
+    # (2026-08-27-v31) for typed atomic bulk-media selectors and structured
+    # clarification referents, then (2026-08-27-v32) for safe source-capacity
+    # arithmetic and fail-closed 50-slot guidance, then (2026-08-27-v33) for
+    # the 8-second active Creator Block union constraint — update
     # this pin whenever EDIT_COPILOT_PROMPT_VERSION moves, per the
     # prompt-change rule.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-23-v30"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-27-v33"
 
 
 def _motion_snapshot() -> dict:

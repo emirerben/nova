@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.55.0.0] — 2026-08-27
+
+### Added
+- **Kria can now stage complete “all” and “every” mixed-media edits in one atomic action.** Ready unused sources can be added together, image, video, or all-clip durations can be changed with typed selectors, and images can be gathered into valid Card Stack or Film Strip groups without silently dropping targets.
+
+### Changed
+- **Clarification answers keep the media the creator was already discussing.** Replies such as “all of them” and “make them 0.2 seconds each” preserve an image referent, stage the full timeline immediately, and tell the creator that Save will render the new video.
+
+### Fixed
+- **Creator Blocks now give Kria canonical asset IDs while keeping runtime conversion inside the editor adapter.** Card Stack and Film Strip plans validate consistently across Copilot, the frontend, the motion runtime, and Save.
+- **Impossible bulk requests now fail without partial mutations.** Kria reports the exact timeline, duration, grouping, or motion constraint and the available narrowing choices instead of truncating at 12 operations or claiming a partial edit was applied.
+- **Saved renders are verified against their committed timeline.** The ready generation must match the committed revision and expected duration within one 30 fps frame before the editor reports success.
+
+## [0.54.0.0] — 2026-08-27
+
+### Fixed
+- **Finished videos now show stable, source-matched previews on mobile.** Library tiles, variant rails, and the Hero keep signed poster URLs across refreshes, regenerate posters whenever a render changes, and fall back to a playable video when a poster is unavailable.
+- **Existing video outputs can be repaired without re-rendering.** The idempotent poster backfill covers generative, template, music, auto-music, and default job outputs while preserving ownership and render-generation fences.
+
+## [0.53.0.5] — 2026-08-27
+
+### Fixed
+- **Photos in new Kria edits now hold still instead of slowly zooming by default.** Guided and fast mixed-media timelines compile still images without motion, and the renderer skips zoom processing unless an existing timeline explicitly requests it.
+
 ## [0.53.0.4] — 2026-08-27
 
 ### Fixed

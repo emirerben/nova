@@ -41,6 +41,26 @@ def _make_recipe() -> TemplateRecipe:
     )
 
 
+def test_video_poster_upload_failure_is_fail_open(monkeypatch):
+    import app.tasks.template_orchestrate as task
+
+    monkeypatch.setattr(
+        task,
+        "upload_video_poster",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("poster unavailable")),
+    )
+
+    assert (
+        task._try_upload_video_poster(
+            "/tmp/output.mp4",
+            "generative-jobs/job/output.mp4",
+            job_id="job",
+            source_kind="generative_output",
+        )
+        is None
+    )
+
+
 class TestClipIdToPathMap:
     """Regression: _clip_id_to_path_map must not crash on cache hits.
 

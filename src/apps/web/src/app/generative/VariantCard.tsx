@@ -220,6 +220,7 @@ export function VariantCard({
               <StableVideo
                 src={variant.base_video_url}
                 identity={variant.base_video_path ?? undefined}
+                poster={variant.base_poster_url ?? undefined}
                 controls
                 loop
                 autoPlay
@@ -288,6 +289,7 @@ export function VariantCard({
             <StableVideo
               src={variant.output_url}
               identity={variant.render_finished_at ?? undefined}
+              poster={variant.poster_url ?? undefined}
               controls
               className="h-full w-full object-contain"
             />

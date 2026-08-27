@@ -66,7 +66,7 @@ function AppliedReceipt({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-lime-800">
-            {isCurrent ? "Applied" : "Changed since"}
+            {isCurrent ? "Staged" : "Changed since"}
           </p>
           <p className="mt-0.5 truncate text-[12px] font-semibold text-[#27272a]">
             {receipt.title}
@@ -306,7 +306,7 @@ export default function DirectorSuggestions({
       ))}
 
       {appliedReceipts.length > 0 && (
-        <div aria-label="Applied Kria suggestions" aria-live="polite" className="space-y-2">
+        <div aria-label="Staged Kria suggestions" aria-live="polite" className="space-y-2">
           {appliedReceipts.map((receipt) => (
             <AppliedReceipt
               key={receipt.id}

@@ -191,6 +191,8 @@ export interface EditorCommitResponse {
   revision_number?: number | null;
   /** Canonical server identity of the saved editor state. */
   revision_hash?: string | null;
+  /** Server-computed duration of the exact committed timeline. */
+  expected_duration_s?: number | null;
   /** Per-section persist echo — which sections this commit actually wrote. */
   sections: {
     text_elements?: boolean;

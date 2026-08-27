@@ -960,6 +960,43 @@ def test_variants_for_response_download_sign_failure_keeps_fresh_playback(monkey
     assert "download_url" not in ready
 
 
+def test_variants_for_response_resigns_all_poster_variants_without_mutating_storage(monkeypatch):
+    import app.routes.generative_jobs as gj
+
+    job = _base_video_job()
+    variants = job.assembly_plan["variants"]
+    variants[0].update(
+        {
+            "poster_path": "generative-jobs/j/variant_1_song_text.mp4.poster.jpg",
+            "base_poster_path": "generative-jobs/j/base_1_song_text.mp4.poster.jpg",
+            "pre_media_overlay_video_path": "generative-jobs/j/pre_1_song_text.mp4",
+            "pre_overlay_poster_path": "generative-jobs/j/pre_1_song_text.mp4.poster.jpg",
+        }
+    )
+    variants[0]["output_url"] = "https://stale.example/output"
+    calls = []
+
+    def sign(path, ttl):
+        calls.append((path, ttl))
+        return f"https://fresh.example/{path}"
+
+    monkeypatch.setattr(gj, "signed_get_url", sign)
+    out = gj._variants_for_response(job)
+    ready = next(v for v in out if v["variant_id"] == "song_text")
+
+    assert ready["poster_url"].endswith("variant_1_song_text.mp4.poster.jpg")
+    assert ready["base_poster_url"].endswith("base_1_song_text.mp4.poster.jpg")
+    assert ready["pre_overlay_poster_url"].endswith("pre_1_song_text.mp4.poster.jpg")
+    assert {path for path, _ in calls} >= {
+        "generative-jobs/j/variant_1_song_text.mp4.poster.jpg",
+        "generative-jobs/j/base_1_song_text.mp4.poster.jpg",
+        "generative-jobs/j/pre_1_song_text.mp4.poster.jpg",
+    }
+    assert "poster_url" not in variants[0]
+    assert "base_poster_url" not in variants[0]
+    assert "pre_overlay_poster_url" not in variants[0]
+
+
 # ── Lazy HEIC overlay-preview backfill persists under a row lock ────────────────
 # The status GET computes previews from an UNLOCKED assembly_plan snapshot.
 # Committing that snapshot's whole plan would clobber a concurrent worker write

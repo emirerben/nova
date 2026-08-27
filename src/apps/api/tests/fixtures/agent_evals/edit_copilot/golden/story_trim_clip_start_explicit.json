@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-08-23-v30",
+  "prompt_version": "2026-08-27-v33",
   "input": {
     "utterance": "trim clip 2 starting from second 1",
     "prior_turns": [],

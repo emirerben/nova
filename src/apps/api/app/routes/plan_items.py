@@ -5544,6 +5544,7 @@ async def editor_commit_item(
         generation=prep["generation"],
         revision_number=prep.get("revision_number"),
         revision_hash=canonical_revision_hash,
+        expected_duration_s=prep.get("expected_duration_s"),
         sections=EditorCommitSections(
             text_elements=prep["sections"]["text_elements"],
             caption_cues=prep["sections"]["caption_cues"],

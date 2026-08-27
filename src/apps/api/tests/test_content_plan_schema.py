@@ -80,6 +80,7 @@ _EXPECTED_CHAIN = {
     "0087": "0086",
     "0088": "0087",
     "0089": "0088",
+    "0090": "0089",
 }
 
 
@@ -91,7 +92,12 @@ def script_dir() -> ScriptDirectory:
 
 def test_single_alembic_head(script_dir: ScriptDirectory) -> None:
     heads = script_dir.get_heads()
-    assert heads == ["0089"], f"expected a single head 0089, got {heads}"
+    assert heads == ["0090"], f"expected a single head 0090, got {heads}"
+
+
+def test_edit_interaction_outcome_constants_cover_staged_lifecycle() -> None:
+    assert "proposed" in models.EDIT_INTERACTION_PROPOSAL_OUTCOMES
+    assert "staged" in models.EDIT_INTERACTION_EXECUTION_OUTCOMES
 
 
 def test_migration_chain_is_linear(script_dir: ScriptDirectory) -> None:

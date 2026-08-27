@@ -4,6 +4,8 @@ const EDITOR_RETURN_PARAM_NAMES = [
   "editor_generation",
   "editor_prior_finished_at",
   "editor_render",
+  "editor_expected_duration",
+  "editor_revision_hash",
 ] as const;
 
 type EditorReturnParamName = (typeof EDITOR_RETURN_PARAM_NAMES)[number];
@@ -14,6 +16,8 @@ export interface EditorReturnSignal {
   generation: string;
   priorFinishedAt: string | null;
   renderStarted: boolean;
+  expectedDurationS?: number | null;
+  revisionHash?: string | null;
   key: string;
 }
 
@@ -22,6 +26,8 @@ export interface EditorReturnHrefInput {
   generation: string;
   priorFinishedAt: string | null;
   renderStarted: boolean;
+  expectedDurationS?: number | null;
+  revisionHash?: string | null;
 }
 
 export interface EditorCommitSectionsLike {
@@ -75,6 +81,10 @@ export function buildPlanItemEditorReturnHref(
   if (input.priorFinishedAt !== null) {
     params.set("editor_prior_finished_at", input.priorFinishedAt);
   }
+  if (typeof input.expectedDurationS === "number" && Number.isFinite(input.expectedDurationS)) {
+    params.set("editor_expected_duration", input.expectedDurationS.toFixed(3));
+  }
+  if (input.revisionHash) params.set("editor_revision_hash", input.revisionHash);
   return `/plan/items/${encodeURIComponent(itemId)}?${params.toString()}`;
 }
 
@@ -89,12 +99,18 @@ export function parsePlanItemEditorReturnSignal(
 
   const priorFinishedAt = params.get("editor_prior_finished_at");
   const renderStarted = params.get("editor_render") === "1";
+  const expectedRaw = params.get("editor_expected_duration");
+  const revisionHash = params.get("editor_revision_hash");
+  const expectedParsed = expectedRaw === null ? Number.NaN : Number(expectedRaw);
+  const expectedDurationS = expectedRaw !== null && Number.isFinite(expectedParsed) && expectedParsed >= 0 ? expectedParsed : null;
   return {
     variantId,
     generation,
     priorFinishedAt: priorFinishedAt || null,
     renderStarted,
-    key: [variantId, generation, priorFinishedAt ?? "", renderStarted ? "1" : "0"].join(":"),
+    ...(expectedDurationS === null ? {} : { expectedDurationS }),
+    ...(revisionHash ? { revisionHash } : {}),
+    key: [variantId, generation, priorFinishedAt ?? "", renderStarted ? "1" : "0", ...(expectedDurationS === null ? [] : [expectedDurationS]), ...(revisionHash ? [revisionHash] : [])].join(":"),
   };
 }
 

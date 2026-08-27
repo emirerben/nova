@@ -1721,13 +1721,21 @@ EDIT_ARTIFACT_ELIGIBILITY_BASES = ("internal_grant", "training_consent")
 EDIT_INTERACTION_EVENT_KINDS = ("proposal", "execution", "save_link")
 EDIT_INTERACTION_PROPOSAL_OUTCOMES = (
     "applied",
+    "proposed",
     "clarification",
     "no_effect",
     "unsupported",
     "stale",
     "failed",
 )
-EDIT_INTERACTION_EXECUTION_OUTCOMES = ("applied", "no_effect", "rejected", "stale", "failed")
+EDIT_INTERACTION_EXECUTION_OUTCOMES = (
+    "applied",
+    "staged",
+    "no_effect",
+    "rejected",
+    "stale",
+    "failed",
+)
 EDIT_FEEDBACK_RATINGS = ("good", "bad", "mixed", "not_applicable")
 EDIT_FEEDBACK_DIMENSIONS = (
     "overall_quality",
@@ -2041,13 +2049,13 @@ class EditInteractionReceipt(Base):
             name="ck_edit_interaction_receipts_event_kind",
         ),
         CheckConstraint(
-            "proposal_outcome IN ('applied', 'clarification', 'no_effect', "
+            "proposal_outcome IN ('applied', 'proposed', 'clarification', 'no_effect', "
             "'unsupported', 'stale', 'failed')",
             name="ck_edit_interaction_receipts_proposal_outcome",
         ),
         CheckConstraint(
             "execution_outcome IS NULL OR execution_outcome IN "
-            "('applied', 'no_effect', 'rejected', 'stale', 'failed')",
+            "('applied', 'staged', 'no_effect', 'rejected', 'stale', 'failed')",
             name="ck_edit_interaction_receipts_execution_outcome",
         ),
         CheckConstraint(

@@ -27,6 +27,7 @@ import {
   applyTextTimingInput,
   sequentialSlotLayout,
 } from "@/app/plan/items/[id]/_editor/editor-bar-drag";
+import { nextAddedKey } from "@/app/generative/timeline-math";
 import {
   buildCaptionTextReplacement,
   smartStyleForRole,
@@ -61,9 +62,12 @@ import {
   type CopilotOverlayCardSnapshot,
   type CopilotCaptionMetaSnapshot,
   motionMutationFingerprint,
+  bulkSelectionDigest,
+  bulkSourcePoolDigest,
 } from "./snapshot";
 import {
   createCreatorBlockInstance,
+  creatorBlockAssetRefs,
   creatorBlockDurationFramesV2,
   creatorBlockEntry,
   retimeCreatorBlockManualSpan,
@@ -176,6 +180,8 @@ export interface ApplyCopilotOpsContext {
   slots: DraftSlot[];
   /** Complete guided source pool used by server-planned direction replacements. */
   clips?: TimelineClip[];
+  /** Raw complete source catalog returned by TimelineResponse. */
+  sourcePool?: Array<Record<string, unknown>>;
   snapshot: CopilotSnapshot;
   capabilities?: EditorCapabilities | null;
   grid?: number[];
@@ -451,6 +457,168 @@ function currentSlotIndex(slots: DraftSlot[], key: string): number {
   return slots.findIndex((slot) => slot.key === key);
 }
 
+const BULK_MAX_SLOTS = 50;
+const BULK_MAX_DURATION_S = 60;
+const BULK_PRESET_ASSET_LIMITS = {
+  card_stack: { min: 2, max: 6 },
+  film_strip: { min: 3, max: 8 },
+} as const;
+
+type BulkSourceRow = {
+  clip_index: number;
+  media_id: string;
+  kind: "image" | "video" | null;
+  generation: string | null;
+  duration_s: number | null;
+  used: boolean;
+  ready: boolean;
+  gcs_path?: string | null;
+};
+
+type BulkSourceIndex = {
+  rows: BulkSourceRow[];
+  byClipIndex: Map<number, BulkSourceRow>;
+  byMediaId: Map<string, BulkSourceRow>;
+};
+
+const bulkSourceIndexCache = new WeakMap<ApplyCopilotOpsContext, BulkSourceIndex>();
+
+function bulkSourceRows(ctx: ApplyCopilotOpsContext): BulkSourceRow[] {
+  const cached = bulkSourceIndexCache.get(ctx);
+  if (cached) return cached.rows;
+  const raw = (ctx.sourcePool?.length
+    ? ctx.sourcePool
+    : (ctx.clips ?? []).map((clip, index) => ({ ...clip, clip_index: clip.clip_index ?? index }))) as Array<Record<string, unknown>>;
+  const rows = raw.map((row, index) => {
+    const kind: BulkSourceRow["kind"] =
+      row.kind === "image" || row.kind === "video" ? row.kind : null;
+    const status = typeof row.status === "string" ? row.status : undefined;
+    const mediaStatus = typeof row.media_status === "string" ? row.media_status : undefined;
+    const ready = row.ready !== false && (row.ready === true || ((!status || status === "ready") && (!mediaStatus || mediaStatus === "ready")));
+    const duration = row.source_duration_s ?? row.duration_s;
+    return {
+      clip_index: typeof row.clip_index === "number" ? row.clip_index : index,
+      media_id: String(row.media_id ?? row.id ?? row.clip_index ?? index),
+      kind,
+      generation: typeof row.generation === "string" ? row.generation : null,
+      duration_s: typeof duration === "number" && Number.isFinite(duration) ? duration : null,
+      used: row.used === true,
+      ready,
+      gcs_path: typeof row.gcs_path === "string" ? row.gcs_path : (typeof row.source_gcs_path === "string" ? row.source_gcs_path : null),
+    };
+  });
+  bulkSourceIndexCache.set(ctx, {
+    rows,
+    byClipIndex: new Map(rows.map((row) => [row.clip_index, row])),
+    byMediaId: new Map(rows.map((row) => [row.media_id, row])),
+  });
+  return rows;
+}
+
+function bulkSourceIndex(ctx: ApplyCopilotOpsContext): BulkSourceIndex {
+  bulkSourceRows(ctx);
+  return bulkSourceIndexCache.get(ctx)!;
+}
+
+function bulkSourceKind(ctx: ApplyCopilotOpsContext, clipIndex: number): BulkSourceRow["kind"] {
+  return bulkSourceIndex(ctx).byClipIndex.get(clipIndex)?.kind ??
+    ctx.clips?.find((clip) => clip.clip_index === clipIndex)?.kind ?? null;
+}
+
+function bulkSourceForSlot(ctx: ApplyCopilotOpsContext, slot: DraftSlot): BulkSourceRow | null {
+  return bulkSourceIndex(ctx).byClipIndex.get(slot.clipIndex) ?? null;
+}
+
+function bulkAssetRef(ctx: ApplyCopilotOpsContext, id: string): MotionAssetRef | null {
+  const asset = (ctx.poolAssets ?? []).find(
+    (candidate) => candidate.id === id && candidate.kind === "image" && candidate.status === "ready",
+  );
+  if (asset) return { asset_id: asset.id, gcs_path: asset.gcs_path };
+  const row = bulkSourceIndex(ctx).byMediaId.get(id);
+  if (row?.kind !== "image" || !row.ready) return null;
+  return row?.gcs_path ? { asset_id: row.media_id, gcs_path: row.gcs_path } : null;
+}
+
+function groupedImageIds(
+  ids: string[],
+  presetId: "card_stack" | "film_strip",
+): Array<{ asset_ids: string[]; preset_id: "card_stack" | "film_strip" }> | null {
+  const { min, max } = BULK_PRESET_ASSET_LIMITS[presetId];
+  if (ids.length < min) return null;
+  const groups: Array<{ asset_ids: string[]; preset_id: "card_stack" | "film_strip" }> = [];
+  for (let offset = 0; offset < ids.length;) {
+    const remaining = ids.length - offset;
+    const count = remaining > max && remaining - max < min ? remaining - min : Math.min(max, remaining);
+    if (count < min || count > max) return null;
+    groups.push({ asset_ids: ids.slice(offset, offset + count), preset_id: presetId });
+    offset += count;
+  }
+  return groups;
+}
+
+function bulkSelectionRows(rows: BulkSourceRow[]): Array<{ id: string; kind: "image" | "video" | null; generation: string | null }> {
+  return rows.map((row) => ({ id: row.media_id, kind: row.kind, generation: row.generation }));
+}
+
+function baselineBulkTargets(
+  ctx: ApplyCopilotOpsContext,
+  op: Extract<CopilotOp, { op: "add_unused_sources" | "set_media_duration" | "stack_images" }>,
+): BulkSourceRow[] {
+  const rows = bulkSourceRows(ctx);
+  const active = ctx.slots.filter((slot) => !slot.removed);
+  const usedIndexes = new Set(active.map((slot) => slot.clipIndex));
+  if (op.op === "add_unused_sources") {
+    return rows.filter((row) => row.ready && row.kind !== null && !usedIndexes.has(row.clip_index) && (op.selector.media_kind === "all" || row.kind === op.selector.media_kind));
+  }
+  return active
+    .map((slot) => rows.find((row) => row.clip_index === slot.clipIndex) ?? null)
+    .filter((row): row is BulkSourceRow => row !== null && row.ready && row.kind !== null)
+    .filter((row) => op.selector.media_kind === "all" || row.kind === op.selector.media_kind);
+}
+
+function bulkIntegrityProblem(
+  ctx: ApplyCopilotOpsContext,
+  op: Extract<CopilotOp, { op: "add_unused_sources" | "set_media_duration" | "stack_images" }>,
+): string | null {
+  const integrity = op.integrity;
+  if (!integrity) return "the all-selector integrity record is missing; refresh and try again";
+  const rows = bulkSourceRows(ctx);
+  const rawRows = (ctx.sourcePool?.length ? ctx.sourcePool : (ctx.clips ?? [])) as Array<Record<string, unknown>>;
+  const targets = baselineBulkTargets(ctx, op);
+  const actualSourceDigest = bulkSourcePoolDigest(rawRows);
+  const actualSelectionDigest = bulkSelectionDigest(bulkSelectionRows(targets));
+  const revision = ctx.snapshot.guided_revision;
+  const integrityStateHash = integrity.state_hash ?? null;
+  const revisionStateHash = revision?.state_hash ?? null;
+  if (
+    revision &&
+    (integrity.revision_number !== revision.revision_number ||
+      integrity.base_generation !== revision.base_generation ||
+      integrityStateHash !== revisionStateHash)
+  ) {
+    return "the guided editor revision changed after Kria read it; refresh and try again";
+  }
+  if (integrity.source_count !== rows.length || integrity.source_digest !== actualSourceDigest) {
+    return "the source pool changed after Kria read it; refresh and try again";
+  }
+  if (integrity.timeline_count !== ctx.slots.filter((slot) => !slot.removed).length) {
+    return "the timeline changed after Kria read it; refresh and try again";
+  }
+  if (integrity.target_count !== targets.length || integrity.selection_digest !== actualSelectionDigest) {
+    return "the complete all-selection changed after Kria read it; refresh and try again";
+  }
+  return null;
+}
+
+function bulkOpRank(raw: unknown): number {
+  if (raw == null || typeof raw !== "object") return 3;
+  const name = String((raw as Record<string, unknown>).op ?? "");
+  if (name === "add_unused_sources") return 0;
+  if (name === "set_media_duration") return 1;
+  if (name === "stack_images") return 2;
+  return 3;
+}
+
 function slotFingerprintMatches(
   slots: DraftSlot[],
   grid: number[],
@@ -515,6 +683,9 @@ function labelForOp(op: CopilotOp): string {
   if (op.op === "set_text_timing") return `Text ${op.bar_index + 1} timing`;
   if (op.op === "add_text") return "Add text";
   if (op.op === "remove_text") return `Remove text ${op.bar_index + 1}`;
+  if (op.op === "add_unused_sources") return "Add unused ready sources";
+  if (op.op === "set_media_duration") return `All ${op.selector.media_kind} durations`;
+  if (op.op === "stack_images") return "Stack images";
   if (op.op === "set_clip_duration") return `Clip ${op.slot_index + 1} duration`;
   if (op.op === "set_clip_in") return `Clip ${op.slot_index + 1} in`;
   if (op.op === "trim_clip_start") return `Trim clip ${op.slot_index + 1} start`;
@@ -861,7 +1032,12 @@ export function applyCopilotOps(
   // not linkage because independent requests may legitimately add one overlay
   // and unrelated effects together.
   const validBundleOps: CopilotOp[] = [];
-  for (const raw of rawOps) {
+  const orderedRawOps = rawOps
+    .map((raw, index) => ({ raw, index, rank: bulkOpRank(raw) }))
+    .sort((left, right) => left.rank - right.rank || left.index - right.index)
+    .map(({ raw }) => raw);
+
+  for (const raw of orderedRawOps) {
     const result = validateCopilotOp(raw, ctx.snapshot);
     if (result.ok) validBundleOps.push(result.op);
   }
@@ -939,7 +1115,7 @@ export function applyCopilotOps(
     );
   }
 
-  for (const raw of rawOps) {
+  for (const raw of orderedRawOps) {
     const validation = validateCopilotOp(raw, ctx.snapshot);
     if (!validation.ok) {
       rejected.push(reject(validation.rejection.op ?? "unknown", validation.rejection.op ?? "Unknown op", "invalid_op", validation.rejection.message));
@@ -1242,6 +1418,201 @@ export function applyCopilotOps(
       }
       textActions.push({ type: "DELETE_BAR", id: bar.id });
       applied.push({ label: `Remove text ${op.bar_index + 1}`, from: bar.text, to: "removed" });
+    } else if (op.op === "add_unused_sources") {
+      const integrityProblem = bulkIntegrityProblem(ctx, op);
+      if (integrityProblem) {
+        rejected.push(reject(op.op, labelForOp(op), "stale", integrityProblem));
+        continue;
+      }
+      const rows = bulkSourceRows(ctx).filter((row) => row.ready && row.kind !== null);
+      const current = currentSlots();
+      const usedIndexes = new Set(current.filter((slot) => !slot.removed).map((slot) => slot.clipIndex));
+      const usedMediaIds = new Set(current.filter((slot) => !slot.removed).map((slot) => bulkSourceForSlot(ctx, slot)?.media_id).filter(Boolean));
+      const eligible = rows.filter((row) =>
+        !usedIndexes.has(row.clip_index) && !usedMediaIds.has(row.media_id) &&
+        (op.selector.media_kind === "all" || row.kind === op.selector.media_kind),
+      );
+      if (eligible.some((row) => !row.generation) || new Set(eligible.map((row) => row.media_id)).size !== eligible.length) {
+        rejected.push(reject(op.op, labelForOp(op), "invalid_op", "Every added source must have one unique media ID and an exact ready generation; no sources were staged."));
+        continue;
+      }
+      const unboundedVideo = eligible.find(
+        (row) => row.kind === "video" && (row.duration_s == null || row.duration_s < 0.1),
+      );
+      if (unboundedVideo) {
+        rejected.push(reject(
+          op.op,
+          labelForOp(op),
+          "invalid_op",
+          `Ready video ${unboundedVideo.media_id} has no valid source duration, so Kria cannot add every requested source safely; no sources were staged. Retry after source analysis finishes or select images only.`,
+        ));
+        continue;
+      }
+      const activeCount = current.filter((slot) => !slot.removed).length;
+      const availableSlots = BULK_MAX_SLOTS - activeCount;
+      if (eligible.length > availableSlots) {
+        rejected.push(reject(
+          op.op,
+          labelForOp(op),
+          "unsupported",
+          `The current edit has ${activeCount} slots, so only ${Math.max(0, availableSlots)} additional timeline slots fit under the ${BULK_MAX_SLOTS}-slot Save limit; all ${eligible.length} ready unused sources were requested. Narrow by media kind or count, or remove existing content.`,
+        ));
+        continue;
+      }
+      const added = eligible.map((row) => ({
+        key: ctx.makeSlotKey?.({ key: row.media_id, slotId: null, clipIndex: row.clip_index, inS: 0, durationBeats: null, durationS: row.kind === "image" ? 3 : Math.max(0.1, Math.min(3, row.duration_s ?? 3)), removed: false, momentDescription: null }) ?? nextAddedKey(),
+        slotId: null,
+        clipIndex: row.clip_index,
+        inS: 0,
+        durationBeats: null,
+        durationS: row.kind === "image" ? 3 : Math.max(0.1, Math.min(3, row.duration_s ?? 3)),
+        removed: false,
+        momentDescription: null,
+        transitionAfter: "cut" as const,
+        transitionDurationS: null,
+        lookPreset: "none" as const,
+        lookAdjustments: null,
+      }));
+      workingSlots = [...current, ...added];
+      nextSlots = workingSlots;
+      timelineMutated = true;
+      applied.push({ label: "Add unused ready sources", from: "not on timeline", to: `${eligible.length} source${eligible.length === 1 ? "" : "s"}` });
+    } else if (op.op === "set_media_duration") {
+      const integrityProblem = bulkIntegrityProblem(ctx, op);
+      if (integrityProblem) {
+        rejected.push(reject(op.op, labelForOp(op), "stale", integrityProblem));
+        continue;
+      }
+      const current = currentSlots();
+      const selector = op.selector;
+      const targetKind = selector.media_kind === "all" ? null : selector.media_kind;
+      const targets = current
+        .map((slot, index) => ({ slot, index, kind: bulkSourceKind(ctx, slot.clipIndex) }))
+        .filter(({ slot, kind }) => !slot.removed && (targetKind === null || kind === targetKind));
+      if (targets.length === 0) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", `No eligible ${selector.media_kind} clips are present on the timeline.`));
+        continue;
+      }
+      const unavailableVideo = targets.find(({ slot, kind }) => {
+        if (kind !== "video") return false;
+        const sourceDuration = bulkSourceRows(ctx).find((row) => row.clip_index === slot.clipIndex)?.duration_s;
+        return sourceDuration == null || slot.inS + op.duration_s > sourceDuration + 1e-6;
+      });
+      if (unavailableVideo) {
+        const sourceDuration = bulkSourceRows(ctx).find(
+          (row) => row.clip_index === unavailableVideo.slot.clipIndex,
+        )?.duration_s;
+        const available = sourceDuration == null
+          ? "unknown"
+          : `${round(Math.max(0, sourceDuration - unavailableVideo.slot.inS))}s`;
+        rejected.push(reject(
+          op.op,
+          labelForOp(op),
+          "unsupported",
+          `Every selected video must support exactly ${op.duration_s}s, but clip ${unavailableVideo.slot.clipIndex + 1} has ${available} available from its current in-point. Choose a shorter duration or select images only; no changes were staged.`,
+        ));
+        continue;
+      }
+      const patches = targets.map(({ slot, index }) => ({
+        slot,
+        index,
+        patch: applyClipTimingInput({
+          inS: slot.inS,
+          durationS: op.duration_s,
+          // Images are static frames and may stretch. The preflight above
+          // proves every video can preserve the exact requested duration.
+          sourceDurationS: bulkSourceKind(ctx, slot.clipIndex) === "image"
+            ? null
+            : bulkSourceRows(ctx).find((row) => row.clip_index === slot.clipIndex)?.duration_s ?? null,
+        }),
+      }));
+      const candidate = current.map((slot, index) => {
+        const patch = patches.find((item) => item.index === index)?.patch;
+        return patch ? { ...slot, ...patch } : slot;
+      });
+      const total = sequentialSlotLayout(candidate, grid).totalDurationS;
+      if (total > BULK_MAX_DURATION_S + 1e-6) {
+        rejected.push(reject(op.op, labelForOp(op), "unsupported", `Setting all ${selector.media_kind} durations to ${op.duration_s}s would exceed the ${BULK_MAX_DURATION_S}-second timeline limit.`));
+        continue;
+      }
+      workingSlots = candidate;
+      nextSlots = candidate;
+      timelineMutated = true;
+      applied.push({ label: `All ${selector.media_kind} durations`, from: `${targets.length} clips`, to: `${round(op.duration_s)}s each`, count: targets.length });
+    } else if (op.op === "stack_images") {
+      const integrityProblem = bulkIntegrityProblem(ctx, op);
+      if (integrityProblem) {
+        rejected.push(reject(op.op, labelForOp(op), "stale", integrityProblem));
+        continue;
+      }
+      const current = currentSlots();
+      const selectedSlots = current.filter((slot) => !slot.removed && bulkSourceKind(ctx, slot.clipIndex) === "image");
+      const selectedRows = selectedSlots.map((slot) => bulkSourceForSlot(ctx, slot));
+      if (selectedRows.some((row) => !row || !row.ready || row.kind !== "image")) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "One or more requested images is no longer ready in the source catalog."));
+        continue;
+      }
+      const selectedIds = selectedRows.map((row) => row!.media_id);
+      const uniqueIds = [...new Set(selectedIds)];
+      if (uniqueIds.length !== selectedIds.length) {
+        rejected.push(reject(op.op, labelForOp(op), "invalid_op", "the image selection contains duplicate asset IDs; each image may be stacked only once"));
+        continue;
+      }
+      const presetId = op.preset_id ?? "card_stack";
+      const groups = groupedImageIds(uniqueIds, presetId);
+      if (!groups) {
+        const minimum = BULK_PRESET_ASSET_LIMITS[presetId].min;
+        rejected.push(reject(op.op, labelForOp(op), "unsupported", `${presetId === "film_strip" ? "Film Strip" : "Card Stack"} requires at least ${minimum} ready images; no partial image group was staged.`));
+        continue;
+      }
+      const firstSelectedIndex = current.findIndex((slot) => !slot.removed && bulkSourceKind(ctx, slot.clipIndex) === "image");
+      const selectedKeys = new Set(selectedSlots.map((slot) => slot.key));
+      const reorderedSlots = [
+        ...current.slice(0, firstSelectedIndex).filter((slot) => !selectedKeys.has(slot.key)),
+        ...selectedSlots,
+        ...current.slice(firstSelectedIndex).filter((slot) => !selectedKeys.has(slot.key)),
+      ];
+      const layout = sequentialSlotLayout(reorderedSlots, grid);
+      const selectedSlotIndexes = selectedSlots.map((slot) => reorderedSlots.findIndex((candidate) => candidate.key === slot.key));
+      const scenes: MotionPresetInstance[] = [];
+      let invalidGroup = false;
+      let groupOffset = 0;
+      for (const group of groups) {
+        const { min, max } = BULK_PRESET_ASSET_LIMITS[group.preset_id];
+        if (group.asset_ids.length < min || group.asset_ids.length > max) { invalidGroup = true; break; }
+        const assets = group.asset_ids.map((id) => bulkAssetRef(ctx, id));
+        if (assets.some((asset) => !asset)) { invalidGroup = true; break; }
+        const firstIndex = selectedSlotIndexes[groupOffset];
+        const lastIndex = selectedSlotIndexes[groupOffset + group.asset_ids.length - 1];
+        const firstWindow = layout.windows[firstIndex];
+        const lastWindow = layout.windows[lastIndex];
+        if (firstWindow?.startS == null || lastWindow?.startS == null) { invalidGroup = true; break; }
+        const startFrame = Math.round(firstWindow.startS * 30);
+        const endFrame = Math.max(startFrame + 1, Math.round((lastWindow.startS + lastWindow.durationS) * 30));
+        const scene = createCreatorBlockInstance({ id: ctx.makeMotionId?.() ?? defaultMotionId(), presetId: group.preset_id, startFrame, endFrameExclusive: endFrame, assets: assets as MotionAssetRef[] });
+        scenes.push(scene);
+        groupOffset += group.asset_ids.length;
+      }
+      if (invalidGroup || scenes.length === 0) {
+        rejected.push(reject(op.op, labelForOp(op), "invalid_op", "Image grouping exceeds Card Stack/Film Strip asset limits."));
+        continue;
+      }
+      const selectedAssetIds = new Set(uniqueIds);
+      const preservedScenes = workingMotionScenes.filter((scene) =>
+        !creatorBlockAssetRefs(scene).some((asset) => selectedAssetIds.has(asset.asset_id)),
+      );
+      const candidate = [...preservedScenes, ...scenes];
+      const validationResult = validateMotionInstances(candidate, Math.ceil(layout.totalDurationS * 30));
+      if (!validationResult.ok) {
+        rejected.push(reject(op.op, labelForOp(op), "invalid_op", validationResult.errors.join("; ")));
+        continue;
+      }
+      workingMotionScenes = candidate;
+      nextMotionScenes = candidate;
+      workingSlots = reorderedSlots;
+      nextSlots = reorderedSlots;
+      timelineMutated = true;
+      applied.push({ label: "Stack images", from: `${uniqueIds.length} images`, to: `${scenes.length} media group${scenes.length === 1 ? "" : "s"}` });
     } else if (op.op === "set_clip_duration") {
       const snap = slotSnapAt(ctx.snapshot, op.slot_index);
       const slots = currentSlots();
@@ -2508,6 +2879,29 @@ export function applyCopilotOps(
     if (op.op !== "repeat_last_edit" && applied.length > appliedCountBeforeOp) {
       appliedOps.push(op);
     }
+  }
+
+  const hasBulkOps = orderedRawOps.some((raw) => raw != null && typeof raw === "object" && ["add_unused_sources", "set_media_duration", "stack_images"].includes(String((raw as Record<string, unknown>).op ?? "")));
+  if (hasBulkOps) {
+    const finalSlots = nextSlots ?? workingSlots;
+    const activeCount = finalSlots.filter((slot) => !slot.removed).length;
+    const finalDuration = sequentialSlotLayout(finalSlots, grid).totalDurationS;
+    if (activeCount > BULK_MAX_SLOTS) {
+      rejected.push(reject("bulk_preflight", "Bulk media edit", "unsupported", `The complete edit has ${activeCount} slots, exceeding the ${BULK_MAX_SLOTS}-slot Save limit; no changes were staged.`));
+    }
+    if (finalDuration > BULK_MAX_DURATION_S + 1e-6) {
+      rejected.push(reject("bulk_preflight", "Bulk media edit", "unsupported", `The complete edit would be ${round(finalDuration)} seconds, exceeding the ${BULK_MAX_DURATION_S}-second output limit; shorten media or remove content.`));
+    }
+  }
+
+  if (hasBulkOps && rejected.length > 0) {
+    return {
+      textActions: [],
+      nextSlots: null,
+      applied: [],
+      rejected,
+      appliedOps: [],
+    };
   }
 
   return {

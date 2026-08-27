@@ -146,6 +146,15 @@ export interface CopilotClipLike {
   durationS?: number | null;
   moment?: string | null;
   moment_description?: string | null;
+  clip_index?: number;
+  media_id?: string | null;
+  generation?: string | null;
+  kind?: "image" | "video" | null;
+  used?: boolean;
+  signed_url?: string | null;
+  status?: string;
+  media_status?: string;
+  gcs_path?: string | null;
 }
 
 export interface CopilotTextSnapshotBar {
@@ -195,6 +204,9 @@ export interface CopilotSlotSnapshot {
     | "golden_hour"
     | "faded_analog";
   mutation_fingerprint?: string;
+  media_id?: string | null;
+  media_kind?: "image" | "video" | null;
+  generation?: string | null;
 }
 
 export interface CopilotCameraEffectSnapshot {
@@ -440,6 +452,27 @@ export interface CopilotSnapshot {
   total_duration_s: number;
   max_duration_s: 60;
   remaining_duration_s: number;
+  /** Legacy input accepted by server parsing; new snapshots intentionally
+   * omit the full source list and expose only aggregate integrity metadata. */
+  source_pool?: Array<{
+    clip_index: number;
+    media_id: string;
+    kind: "image" | "video" | null;
+    generation: string | null;
+    duration_s: number | null;
+    used: boolean;
+    ready: boolean;
+    status?: string;
+    media_status?: string;
+    gcs_path?: string | null;
+  }>;
+  source_pool_summary?: {
+    digest: string;
+    total_count: number;
+    ready_unused_count: number;
+    ready_unused_by_kind: { image: number; video: number };
+    selectors: Record<string, { target_count: number; selection_digest: string }>;
+  };
   /** Beat positions projected into assembled-output seconds (grid variants only). */
   beat_marks?: number[];
   /** Spoken words + pauses (assembled-output seconds). Omitted when the variant
@@ -564,6 +597,9 @@ export interface BuildCopilotSnapshotOptions extends AllowedOpFamilyOptions {
   /** Real video duration (seconds) — the total_duration_s fallback for
    * slot-less variants (subtitled talk-to-camera), whose layout total is 0. */
   videoDurationS?: number | null;
+  /** Full TimelineResponse.source_pool; unlike poolAssets this is not a
+   * paginated visual-assets list and must remain complete for "all" edits. */
+  sourcePool?: Array<Record<string, unknown>>;
   sfxPlacements?: SoundEffectPlacement[];
   sfxCatalog?: SoundEffectSummary[];
   /** Server-derived spoken-word/pause map. Pass null (not the map) while the
@@ -687,6 +723,58 @@ function sourceDurationForSlot(slot: DraftSlot, clips: CopilotClipLike[]): numbe
   const clip = clips[slot.clipIndex];
   const source = clip?.source_duration_s ?? clip?.duration_s ?? clip?.durationS ?? null;
   return typeof source === "number" && Number.isFinite(source) ? source : null;
+}
+
+function pairedFnvDigest(value: unknown, prefix: string): string {
+  const json = JSON.stringify(value);
+  let left = 2166136261;
+  let right = 3339675911;
+  for (let index = 0; index < json.length; index += 1) {
+    const code = json.charCodeAt(index);
+    left = Math.imul(left ^ code, 16777619);
+    right = Math.imul(right ^ code, 2246822519);
+  }
+  return `${prefix}-${(left >>> 0).toString(16).padStart(8, "0")}${(right >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+export function bulkSourcePoolDigest(rows: Array<Record<string, unknown>>): string {
+  return pairedFnvDigest(rows.map((row, index) => ({
+    id: String(row.media_id ?? row.id ?? row.clip_index ?? index),
+    kind: row.kind ?? row.media_kind ?? null,
+    generation: row.generation ?? null,
+    gcs_path: row.gcs_path ?? row.source_gcs_path ?? null,
+  })), "sp1");
+}
+
+export function bulkSelectionDigest(rows: Array<{ id: string; kind: "image" | "video" | null; generation: string | null }>): string {
+  return pairedFnvDigest(rows, "sel1");
+}
+
+function normalizedSourcePool(
+  clips: CopilotClipLike[],
+  sourcePool?: Array<Record<string, unknown>>,
+): NonNullable<CopilotSnapshot["source_pool"]> {
+  const rows = (sourcePool?.length ? sourcePool : clips.map((clip, index) => ({ ...clip, clip_index: clip.clip_index ?? index }))) as Array<Record<string, unknown>>;
+  const usedMediaIds = new Set(clips.filter((clip) => clip.used).map((clip) => clip.media_id).filter(Boolean));
+  const usedClipIndexes = new Set(clips.filter((clip) => clip.used).map((clip) => clip.clip_index));
+  return rows.map((row, index) => {
+    const kind = row.kind === "image" || row.kind === "video" ? row.kind : null;
+    const status = typeof row.status === "string" ? row.status : undefined;
+    const mediaStatus = typeof row.media_status === "string" ? row.media_status : undefined;
+    const mediaId = String(row.media_id ?? row.id ?? row.clip_index ?? index);
+    const duration = row.source_duration_s ?? row.duration_s;
+    return {
+      clip_index: typeof row.clip_index === "number" ? row.clip_index : index,
+      media_id: mediaId,
+      kind,
+      generation: typeof row.generation === "string" ? row.generation : null,
+      duration_s: typeof duration === "number" && Number.isFinite(duration) ? roundCopilotNumber(duration) : null,
+      used: row.used === true || usedMediaIds.has(mediaId) || usedClipIndexes.has(typeof row.clip_index === "number" ? row.clip_index : index),
+      ready: row.ready !== false && (row.ready === true || ((!status || status === "ready") && (!mediaStatus || mediaStatus === "ready"))),
+      ...(status ? { status } : {}),
+      ...(mediaStatus ? { media_status: mediaStatus } : {}),
+    };
+  });
 }
 
 function truncate(value: string | null | undefined, max: number): string | null {
@@ -818,6 +906,7 @@ export function buildCopilotSnapshot(
   const snapSlots: CopilotSlotSnapshot[] = slots.map((slot, index) => {
     const win = layout.windows[index];
     const durationS = roundCopilotNumber(win?.durationS ?? slot.durationS ?? 0);
+    const source = clips.find((clip) => clip.clip_index === slot.clipIndex) ?? clips[slot.clipIndex];
     const outputStartS = win?.startS == null ? null : roundCopilotNumber(win.startS);
     return {
       index,
@@ -842,6 +931,9 @@ export function buildCopilotSnapshot(
         ? {}
         : { transition_duration_s: roundCopilotNumber(slot.transitionDurationS) }),
       look_preset: slot.lookPreset ?? "none",
+      media_id: source?.media_id ?? null,
+      media_kind: source?.kind ?? null,
+      generation: source?.generation ?? null,
     };
   });
 
@@ -875,6 +967,33 @@ export function buildCopilotSnapshot(
       ? Math.max(0, options.videoDurationS)
       : 0;
   const total = roundCopilotNumber(layoutTotal > 0 ? layoutTotal : fallbackTotal);
+  const poolRows = normalizedSourcePool(clips, options.sourcePool);
+  const sourceRowsForDigest = (options.sourcePool?.length
+    ? options.sourcePool
+    : clips.map((clip, index) => ({ ...clip, clip_index: clip.clip_index ?? index }))) as Array<Record<string, unknown>>;
+  // Local staged additions/removals are authoritative before Save; the
+  // persisted source-pool `used` bit still describes the committed revision.
+  const activeClipIndexes = new Set(
+    slots.filter((slot) => !slot.removed).map((slot) => slot.clipIndex),
+  );
+  const timelinePoolRows = slots
+    .filter((slot) => !slot.removed)
+    .map((slot) => poolRows.find((row) => row.clip_index === slot.clipIndex) ?? null)
+    .filter((row): row is NonNullable<typeof row> => row !== null && row.ready && row.kind !== null);
+  const unusedPoolRows = poolRows.filter(
+    (row) => row.ready && !activeClipIndexes.has(row.clip_index) && row.kind !== null,
+  );
+  const readyUnusedCount = unusedPoolRows.length;
+  const selectors: Record<string, { target_count: number; selection_digest: string }> = {};
+  for (const [scope, rows] of [["timeline", timelinePoolRows], ["unused_sources", unusedPoolRows]] as const) {
+    for (const mediaKind of ["all", "image", "video"] as const) {
+      const selected = rows.filter((row) => mediaKind === "all" || row.kind === mediaKind);
+      selectors[`${scope}:${mediaKind}`] = {
+        target_count: selected.length,
+        selection_digest: bulkSelectionDigest(selected.map((row) => ({ id: row.media_id, kind: row.kind, generation: row.generation }))),
+      };
+    }
+  }
   const snapshot: CopilotSnapshot = {
     text_bars: textBars,
     slots: snapSlots,
@@ -882,6 +1001,18 @@ export function buildCopilotSnapshot(
     total_duration_s: total,
     max_duration_s: 60,
     remaining_duration_s: roundCopilotNumber(Math.max(0, 60 - total)),
+    ...(options.sourcePool?.length ? {
+      source_pool_summary: {
+        digest: bulkSourcePoolDigest(sourceRowsForDigest),
+        total_count: poolRows.length,
+        ready_unused_count: readyUnusedCount,
+        ready_unused_by_kind: {
+          image: unusedPoolRows.filter((row) => row.kind === "image").length,
+          video: unusedPoolRows.filter((row) => row.kind === "video").length,
+        },
+        selectors,
+      },
+    } : {}),
     allowed_op_families: allowedFamilies,
     ...(options.guidedRevision ? { guided_revision: options.guidedRevision } : {}),
   };
@@ -1001,8 +1132,15 @@ export function buildCopilotSnapshot(
         kind: entry.kind as "text" | "media",
         default_duration_s: roundCopilotNumber(entry.default_duration_frames / 30),
         min_assets: entry.min_assets,
-        defaults: JSON.parse(JSON.stringify(entry.defaults)) as Record<string, unknown>,
-        parameters: JSON.parse(JSON.stringify(entry.parameters)) as CopilotMotionCatalogSnapshot["parameters"],
+        defaults: (() => {
+          const defaults = JSON.parse(JSON.stringify(entry.defaults)) as Record<string, unknown>;
+          if (defaults.asset_ids === undefined && defaults.assets !== undefined) defaults.asset_ids = defaults.assets;
+          delete defaults.assets;
+          return defaults;
+        })(),
+        parameters: (JSON.parse(JSON.stringify(entry.parameters)) as CopilotMotionCatalogSnapshot["parameters"])
+          .filter((parameter, index, all) => parameter.key !== "assets" || !all.some((candidate) => candidate.key === "asset_ids"))
+          .map((parameter) => parameter.key === "assets" ? { ...parameter, key: "asset_ids" } : parameter),
         controls: entry.controls.map((definition) => ({
             key: definition.key,
             type: definition.type as "number" | "enum" | "boolean",

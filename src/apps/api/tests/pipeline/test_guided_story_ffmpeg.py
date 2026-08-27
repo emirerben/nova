@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -12,6 +13,7 @@ from PIL import Image, ImageDraw
 
 from app.pipeline.canvas import Canvas
 from app.pipeline.guided_story import (
+    _render_image_moment,
     _render_moments,
     compile_execution_plan,
     render_execution_plan,
@@ -128,6 +130,45 @@ def test_real_ffmpeg_guided_v2_renders_image_and_video_looks(
         probe = probe_video(output)
         assert (probe.width, probe.height, probe.codec) == (320, 180, "h264")
         assert probe.duration_s == pytest.approx(1.0, abs=0.15)
+
+
+def test_real_ffmpeg_guided_photo_is_static_by_default(tmp_path: Path) -> None:
+    image = tmp_path / "photo.jpg"
+    output = tmp_path / "static.mp4"
+    _image(image, (70, 130, 210), "STATIC PHOTO")
+
+    _render_image_moment(
+        str(image),
+        str(output),
+        duration_s=1.0,
+        layout="fullscreen",
+        canvas=Canvas(320, 180),
+    )
+
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-i",
+            str(output),
+            "-an",
+            "-filter_complex",
+            (
+                "[0:v]select=eq(n\\,0),setpts=N/FRAME_RATE/TB[first];"
+                "[0:v]select=eq(n\\,29),setpts=N/FRAME_RATE/TB[last];"
+                "[first][last]ssim"
+            ),
+            "-f",
+            "null",
+            "-",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    match = re.search(r"All:([0-9.]+)", result.stderr)
+    assert match is not None
+    assert float(match.group(1)) > 0.999
 
 
 def test_real_ffmpeg_many_quick_photos_keep_exact_frame_budget(
