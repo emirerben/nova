@@ -99,5 +99,11 @@ Bulk-media regression rubric:
 - `all` is an integrity contract. If capacity, readiness, duplicate, timing,
   or block limits prevent complete coverage, the honest result is a precise
   clarification with zero operations—not a subset and never `applied`.
+- Guided Save has a hard 50-active-slot limit. For a snapshot with 17 active
+  slots and 104 ready unused sources, adding all is impossible: only 33 more
+  slots fit. Treat that exact capacity clarification as required behavior, not
+  an invented constraint. Also expect the reply to disclose any independently
+  conflicting Card Stack/Film Strip block or active-union limit represented by
+  the snapshot.
 
 Passing threshold: average >= 3.5 with no structural failures.

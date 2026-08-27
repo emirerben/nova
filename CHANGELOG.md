@@ -6,14 +6,22 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - **Mobile creators can now edit against a direct thumbnail timeline.** A fixed center playhead, tap-to-seek clip selection, 44px source In/Out handles, pinch zoom, visible zoom controls, and Fit make precise trimming practical on phone-sized screens.
+- **Text can now be created, edited, and positioned directly in the video preview.** The title receives focus immediately, stays draggable within the canvas, and preserves one-step undo without forcing creators into a form sheet.
 - **A real-media mobile QA route now covers the complete core gesture loop.** The guarded fixture exercises touch trimming, ripple behavior, split, mute, delete, undo, scrubbing, and Save at both supported mobile viewports.
 
 ### Changed
 - **Pocket editing keeps clip actions above an icon-led shadcn tool dock.** Split, Mute, Replace, Move, Reset, and Delete remain discoverable without shrinking touch targets or hiding capability reasons.
+- **Every mobile tool now opens a working editor state.** Captions, sounds, visuals, overlays, styles, and Kria expose functional actions while detailed changes stay in one shadcn sheet at a time.
 - **Mobile Save still uses Nova's existing atomic editor commit and render path.** Timeline slots, source bounds, beat timing, conflict handling, and feature gates keep their current contracts.
 
 ### Fixed
 - **Trim gestures now create exactly one undo step and ripple later clips from the canonical timeline.** Transition-overlap taps select the visible incoming clip, pinch zoom preserves its fixed-playhead anchor, and keyboard users retain a native seek control after touch gestures.
+- **Timeline thumbnails now match each clip's source window without stale or distorted frames.** Current requests clear old imagery immediately, source-plus-clip decoding avoids cross-editor cancellation, and pooled media resources are released after each decode queue drains.
+
+## [0.55.0.1] — 2026-08-27
+
+### Fixed
+- **Kria now keeps an impossible “add all” edit intact across follow-up clarifications.** Vague replies no longer guess a duration or stage a valid subset, image references cannot broaden to videos or unrelated clips, and the final response reports the exact timeline and Creator Block limits with zero partial mutations.
 
 ## [0.55.0.0] — 2026-08-27
 

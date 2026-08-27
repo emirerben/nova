@@ -389,6 +389,44 @@ describe("useEditCopilot", () => {
       }),
     );
   });
+
+  it("does not stage partial ops while a bulk clarification plan is pending", async () => {
+    const applyOps = jest.fn(() =>
+      appliedResult({
+        applied: [{ label: "All image durations", from: "8 clips", to: "0.2s each" }],
+      }),
+    );
+    mockEditCopilotTurn.mockResolvedValueOnce(
+      response({
+        // Defensive split-deploy shape: the API must normally use
+        // outcome=clarification, but pending_actions is the stronger atomicity
+        // signal and must prevent partial local application either way.
+        outcome: "proposed",
+        ops: [{
+          op: "set_media_duration",
+          selector: { scope: "timeline", media_kind: "image", quantifier: "all" },
+          duration_s: 0.2,
+        }],
+        pending_actions: [{ op: "add_unused_sources" }],
+        reply: "The complete request needs one more detail.",
+      }),
+    );
+    const { result } = renderCopilot({ applyOps });
+
+    await act(async () => {
+      await result.current.send("all of them and make them 0.2 seconds each");
+    });
+
+    expect(applyOps).not.toHaveBeenCalled();
+    expect(result.current.messages[1].applied).toEqual([]);
+    expect(result.current.messages[1].text).toBe(
+      "The complete request needs one more detail.",
+    );
+    expect(result.current.messages[1].pending_actions).toEqual([
+      { op: "add_unused_sources" },
+    ]);
+  });
+
   it("queues one follow-up and sends it with a post-apply snapshot", async () => {
     const first = deferred<EditCopilotTurnResponse>();
     mockEditCopilotTurn

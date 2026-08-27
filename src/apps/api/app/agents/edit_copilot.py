@@ -27,11 +27,12 @@ from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-08-27-v33"
+EDIT_COPILOT_PROMPT_VERSION = "2026-08-27-v34"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt prose ("up to 12", twice) and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
 _MAX_OPS = 12
+_GUIDED_TIMELINE_MAX_SLOTS = 50
 # Renderer-side guard only — the producer (snapshot.ts COPILOT_BEAT_MARKS_MAX)
 # stride-caps to the same count before sending, preserving late-video marks.
 _BEAT_MARKS_SHOWN_MAX = 60
@@ -1396,11 +1397,30 @@ def _sanitize_clarification_context(value: object) -> dict[str, Any] | None:
 _REFERENT_PRONOUN_RE = re.compile(r"\b(?:them|those|these|all\s+of\s+(?:them|those|these))\b", re.I)
 _PENDING_NEGATION_RE = re.compile(r"\b(?:do\s+not|don't|skip|without|except)\b", re.I)
 _DURATION_ANSWER_RE = re.compile(r"\b(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b", re.I)
+_VAGUE_DURATION_RE = re.compile(
+    r"\b(?:shorter|shorten|shorten(?:ed|ing)?|make\s+.+\s+short)\b", re.I
+)
+_IMAGE_WORD_RE = re.compile(r"\bimages?\b", re.I)
+_VIDEO_WORD_RE = re.compile(r"\bvideos?\b", re.I)
+_CLIP_WORD_RE = re.compile(r"\bclips?\b", re.I)
+
+
+def _continues_pending_bulk(utterance: str) -> bool:
+    """Recognize an answer to a bulk clarification without matching generic clip edits."""
+    if _REFERENT_PRONOUN_RE.search(utterance):
+        return True
+    names_images = bool(_IMAGE_WORD_RE.search(utterance))
+    requests_stack = bool(re.search(r"\bstack(?:ing)?\b", utterance, re.I))
+    requests_bulk_duration = bool(
+        _VAGUE_DURATION_RE.search(utterance)
+        and (_IMAGE_WORD_RE.search(utterance) or _VIDEO_WORD_RE.search(utterance))
+    )
+    return (names_images and requests_stack) or requests_bulk_duration
 
 
 def _prior_referent_context(input: EditCopilotInput) -> dict[str, Any] | None:  # noqa: A002
     """Resolve a pronoun answer from the last structured clarification turn."""
-    if not _REFERENT_PRONOUN_RE.search(input.utterance):
+    if not _continues_pending_bulk(input.utterance):
         return None
     for turn in reversed(input.prior_turns):
         if not isinstance(turn, dict) or turn.get("role") != "assistant":
@@ -1411,10 +1431,8 @@ def _prior_referent_context(input: EditCopilotInput) -> dict[str, Any] | None:  
     return None
 
 
-def _prior_pending_actions(input: EditCopilotInput) -> list[dict[str, Any]]:  # noqa: A002
-    """Return the last assistant-authored normalized bulk plan for a pronoun answer."""
-    if not _REFERENT_PRONOUN_RE.search(input.utterance):
-        return []
+def _last_pending_actions(input: EditCopilotInput) -> list[dict[str, Any]]:  # noqa: A002
+    """Return the last assistant-authored normalized bulk plan."""
     for turn in reversed(input.prior_turns):
         if not isinstance(turn, dict) or turn.get("role") != "assistant":
             continue
@@ -1426,6 +1444,29 @@ def _prior_pending_actions(input: EditCopilotInput) -> list[dict[str, Any]]:  # 
         if actions:
             return actions
     return []
+
+
+def _prior_pending_actions(input: EditCopilotInput) -> list[dict[str, Any]]:  # noqa: A002
+    """Return pending actions only for a direct answer to the bulk clarification."""
+    if not _continues_pending_bulk(input.utterance):
+        return []
+    return _last_pending_actions(input)
+
+
+def _merge_pending_actions(
+    inherited: list[dict[str, Any]], current: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Carry forward a clarification plan while letting newer fields win."""
+    merged = list(inherited)
+    positions = {str(action.get("op")): index for index, action in enumerate(merged)}
+    for action in current:
+        name = str(action.get("op"))
+        if name in positions:
+            merged[positions[name]] = action
+        else:
+            positions[name] = len(merged)
+            merged.append(action)
+    return merged[:3]
 
 
 def _apply_prior_referent(
@@ -1486,27 +1527,182 @@ def _merge_prior_pending_actions(
     return merged, unresolved
 
 
-def _bulk_capacity_clarification(ops: list[dict], snapshot: dict) -> str | None:
+def _language_bulk_selector(utterance: str) -> dict[str, str] | None:
+    """Infer only an explicitly named media kind for a clarification turn."""
+    if _IMAGE_WORD_RE.search(utterance):
+        kind = "image"
+    elif _VIDEO_WORD_RE.search(utterance):
+        kind = "video"
+    elif _CLIP_WORD_RE.search(utterance):
+        kind = "all"
+    else:
+        return None
+    return {"scope": "timeline", "media_kind": kind, "quantifier": "all"}
+
+
+def _bulk_clarification_context(
+    ops: list[dict], utterance: str, pending_actions: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Build a safe typed referent for server/model clarification responses."""
+    selector = _language_bulk_selector(utterance)
+    if selector is None:
+        for action in pending_actions:
+            candidate = action.get("selector")
+            if isinstance(candidate, dict):
+                selector = _bulk_selector({"selector": candidate})
+                if selector is not None:
+                    break
+    if selector is None:
+        for op in ops:
+            candidate = op.get("selector") if isinstance(op, dict) else None
+            if isinstance(candidate, dict):
+                selector = _bulk_selector({"selector": candidate})
+                if selector is not None and selector["scope"] == "timeline":
+                    break
+    if selector is None:
+        return None
+    referent = {
+        "image": "images",
+        "video": "videos",
+        "all": "clips",
+    }.get(selector["media_kind"])
+    return {"selector": selector, **({"referent": referent} if referent else {})}
+
+
+def _bulk_pending_for_clarification(
+    ops: list[dict],
+    utterance: str,
+    existing: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Preserve the compact bulk plan when a clarification is synthesized."""
+    candidates: list[dict[str, Any]] = [dict(action) for action in existing]
+    names = {str(action.get("op")) for action in candidates}
+    language_selector = _language_bulk_selector(utterance)
+    for op in ops:
+        name = str(op.get("op") or "")
+        if name not in _BULK_OPS or name in names:
+            continue
+        candidates.append(dict(op))
+        names.add(name)
+    if (
+        "add_unused_sources" not in names
+        and re.search(r"\b(?:unused|unsued|uploaded|sources?)\b", utterance, re.I)
+        and re.search(r"\b(?:add|include|use|all)\b", utterance, re.I)
+    ):
+        candidates.append(
+            {
+                "op": "add_unused_sources",
+                "selector": {
+                    "scope": "unused_sources",
+                    "media_kind": "all",
+                    "quantifier": "all",
+                },
+            }
+        )
+        names.add("add_unused_sources")
+    if "stack_images" not in names and re.search(r"\bstack(?:ing)?\b", utterance, re.I):
+        candidates.append(
+            {
+                "op": "stack_images",
+                "selector": {
+                    "scope": "timeline",
+                    "media_kind": "image",
+                    "quantifier": "all",
+                },
+            }
+        )
+        names.add("stack_images")
+    if (
+        "set_media_duration" not in names
+        and _VAGUE_DURATION_RE.search(utterance)
+        and language_selector is not None
+    ):
+        candidates.append({"op": "set_media_duration", "selector": language_selector})
+    return _sanitize_pending_actions(
+        candidates,
+        fallback_selector=language_selector,
+    )
+
+
+def _bulk_capacity_clarification(
+    ops: list[dict],
+    snapshot: dict,
+    *,
+    pending_actions: list[dict[str, Any]] | None = None,
+    utterance: str = "",
+) -> str | None:
     """Fail closed when a compact `all` bundle cannot fit the guided editor."""
-    add = next((op for op in ops if op.get("op") == "add_unused_sources"), None)
+    plan = [*ops, *(pending_actions or [])]
+    add = next((op for op in plan if op.get("op") == "add_unused_sources"), None)
     if add is None:
         return None
     integrity = add.get("integrity") if isinstance(add.get("integrity"), dict) else {}
     current_slots = integrity.get("timeline_count")
     requested = integrity.get("target_count")
-    if not isinstance(current_slots, int) or not isinstance(requested, int):
+    if isinstance(current_slots, bool) or not isinstance(current_slots, int):
+        current_slots = sum(
+            1
+            for row in snapshot.get("slots", [])
+            if isinstance(row, dict) and not row.get("removed")
+        )
+    if isinstance(requested, bool) or not isinstance(requested, int) or requested <= 0:
+        selector = add.get("selector") if isinstance(add.get("selector"), dict) else {}
+        summary = snapshot.get("source_pool_summary")
+        selectors = summary.get("selectors") if isinstance(summary, dict) else None
+        selector_summary = (
+            selectors.get(f"{selector.get('scope')}:{selector.get('media_kind')}")
+            if isinstance(selectors, dict)
+            else None
+        )
+        requested = (
+            selector_summary.get("target_count") if isinstance(selector_summary, dict) else None
+        )
+        if (
+            isinstance(requested, bool) or not isinstance(requested, int) or requested <= 0
+        ) and selector.get("scope") == "unused_sources":
+            if selector.get("media_kind") == "all" and isinstance(summary, dict):
+                requested = summary.get("ready_unused_count")
+            else:
+                requested = len(
+                    _bulk_target_rows(snapshot, selector, operation="add_unused_sources")
+                )
+    if isinstance(current_slots, bool) or not isinstance(current_slots, int):
         return None
-    available = max(0, 50 - current_slots)
+    if isinstance(requested, bool) or not isinstance(requested, int) or requested <= 0:
+        return None
+    available = max(0, _GUIDED_TIMELINE_MAX_SLOTS - current_slots)
     if requested <= available:
         return None
 
     summary = snapshot.get("source_pool_summary")
     selectors = summary.get("selectors") if isinstance(summary, dict) else None
     unused_images = 0
+    add_media_kind = add.get("selector", {}).get("media_kind")
     if isinstance(selectors, dict):
         image_summary = selectors.get("unused_sources:image")
-        if isinstance(image_summary, dict) and isinstance(image_summary.get("target_count"), int):
+        if (
+            isinstance(image_summary, dict)
+            and isinstance(image_summary.get("target_count"), int)
+            and not isinstance(image_summary.get("target_count"), bool)
+        ):
             unused_images = image_summary["target_count"]
+    if unused_images == 0 and add_media_kind in {"image", "all"} and isinstance(summary, dict):
+        by_kind = summary.get("ready_unused_by_kind")
+        if (
+            isinstance(by_kind, dict)
+            and isinstance(by_kind.get("image"), int)
+            and not isinstance(by_kind.get("image"), bool)
+        ):
+            unused_images = by_kind["image"]
+    if unused_images == 0 and add_media_kind in {"image", "all"}:
+        image_selector = {
+            "scope": "unused_sources",
+            "media_kind": "image",
+            "quantifier": "all",
+        }
+        unused_images = len(
+            _bulk_target_rows(snapshot, image_selector, operation="add_unused_sources")
+        )
     current_images = sum(
         1
         for row in snapshot.get("slots", [])
@@ -1514,38 +1710,71 @@ def _bulk_capacity_clarification(ops: list[dict], snapshot: dict) -> str | None:
         and not row.get("removed")
         and (row.get("media_kind") or row.get("kind")) == "image"
     )
-    add_media_kind = add.get("selector", {}).get("media_kind")
     image_count = current_images + (unused_images if add_media_kind in {"image", "all"} else 0)
-    stacks_requested = any(op.get("op") == "stack_images" for op in ops)
+    stacks_requested = any(op.get("op") == "stack_images" for op in plan)
     duration = next(
         (
             float(op["duration_s"])
-            for op in ops
+            for op in plan
             if op.get("op") == "set_media_duration"
             and op.get("selector", {}).get("media_kind") in {"image", "all"}
             and isinstance(op.get("duration_s"), (int, float))
         ),
         None,
     )
-    card_groups = math.ceil(image_count / 6) if image_count else 0
+    duration_match = _DURATION_ANSWER_RE.search(utterance)
+    if duration is None and duration_match is not None:
+        duration = float(duration_match.group(1))
+    motion = snapshot.get("motion")
+    limits = motion.get("limits") if isinstance(motion, dict) else None
+    if not isinstance(limits, dict):
+        limits = {}
+    max_blocks = limits.get("max_blocks")
+    max_blocks = (
+        max_blocks
+        if isinstance(max_blocks, int) and not isinstance(max_blocks, bool) and max_blocks > 0
+        else 8
+    )
+    max_card_assets = limits.get("max_card_stack_assets")
+    max_card_assets = (
+        max_card_assets
+        if isinstance(max_card_assets, int)
+        and not isinstance(max_card_assets, bool)
+        and max_card_assets > 0
+        else 6
+    )
+    max_film_assets = limits.get("max_film_strip_assets")
+    max_film_assets = (
+        max_film_assets
+        if isinstance(max_film_assets, int)
+        and not isinstance(max_film_assets, bool)
+        and max_film_assets > 0
+        else 8
+    )
+    max_active_union = _safe_finite_float(limits.get("max_active_union_s"))
+    if max_active_union is None or max_active_union <= 0:
+        max_active_union = 8.0
+    card_groups = math.ceil(image_count / max_card_assets) if image_count else 0
+    block_limit_label = "eight-block" if max_blocks == 8 else f"{max_blocks}-block"
     detail = (
         f"The current {current_slots}-slot edit leaves room for only {available} additional "
-        f"slots under the 50-slot Save limit, but all {requested} ready unused sources "
+        f"slots under the {_GUIDED_TIMELINE_MAX_SLOTS}-slot Save limit, but all "
+        f"{requested} ready unused sources "
         "were requested."
     )
-    if stacks_requested and image_count and card_groups > 8:
+    if stacks_requested and image_count and card_groups > max_blocks:
         detail += (
             f" The resulting {image_count} images would also require {card_groups} Card "
-            "Stacks at six images each, exceeding the eight-block limit."
+            f"Stacks at {max_card_assets} images each, exceeding the {block_limit_label} limit."
         )
     if stacks_requested and image_count and duration is not None:
         active_span = image_count * duration
-        film_groups = math.ceil(image_count / 8)
-        if active_span > 8:
+        film_groups = math.ceil(image_count / max_film_assets)
+        if active_span > max_active_union:
             detail += (
                 f" Film Strip would use {film_groups} blocks, but its {active_span:g}-second "
-                "active span also exceeds the 8-second motion budget, so it does not solve "
-                "this request."
+                f"active span also exceeds the {max_active_union:g}-second motion budget, "
+                "so it does not solve this request."
             )
     return (
         detail + f" Choose a media kind and count of at most {available} while retaining the "
@@ -1956,12 +2185,32 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             prior_referent_context.get("selector") if prior_referent_context is not None else None
         )
         prior_pending_actions = _prior_pending_actions(input)
+        # A direct media reference ("the images") can continue the pending
+        # plan just like a pronoun.  A comparative duration ("make them
+        # shorter") is not a value; never accept the model's guessed number
+        # for it, since doing so can stage the wrong targets before the user
+        # answers the clarification.
+        bulk_duration_needs_clarification = bool(
+            prior_pending_actions
+            and _VAGUE_DURATION_RE.search(input.utterance)
+            and _DURATION_ANSWER_RE.search(input.utterance) is None
+            and any(
+                str(action.get("op")) in {"stack_images", "set_media_duration"}
+                for action in prior_pending_actions
+            )
+        )
         raw_ops = _apply_prior_referent(
             raw_ops,
             prior_referent_selector,
             prior_pending_actions,
         )
-        if intent == "edit" and not bool(data.get("needs_clarification", False)):
+        if bulk_duration_needs_clarification:
+            raw_ops = []
+        if (
+            intent == "edit"
+            and not bool(data.get("needs_clarification", False))
+            and not bulk_duration_needs_clarification
+        ):
             raw_ops, missing_pending_names = _merge_prior_pending_actions(
                 raw_ops,
                 prior_pending_actions,
@@ -2068,15 +2317,57 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
 
         ops, no_effect_reply = _drop_normalized_no_effect_ops(ops, input.variant_snapshot)
 
-        capacity_reply = _bulk_capacity_clarification(ops, input.variant_snapshot)
+        capacity_pending_seed = _bulk_pending_for_clarification(
+            ops,
+            input.utterance,
+            _merge_pending_actions(
+                prior_pending_actions,
+                _sanitize_pending_actions(
+                    data.get("pending_actions"),
+                    fallback_selector=prior_referent_selector,
+                ),
+            ),
+        )
+        capacity_reply = _bulk_capacity_clarification(
+            ops,
+            input.variant_snapshot,
+            pending_actions=capacity_pending_seed,
+            utterance=input.utterance,
+        )
+        capacity_pending_actions: list[dict[str, Any]] = []
+        capacity_context: dict[str, Any] | None = None
         if capacity_reply is not None:
+            # A capacity clarification is still a clarification of this exact
+            # bulk plan. Preserve the canonical operations so a later answer
+            # can complete the plan instead of silently dropping add_unused_sources.
+            capacity_pending_actions = _bulk_pending_for_clarification(
+                ops,
+                input.utterance,
+                capacity_pending_seed,
+            )
+            capacity_context = _bulk_clarification_context(
+                ops, input.utterance, capacity_pending_actions
+            )
             ops = []
+
+        bulk_pending_actions: list[dict[str, Any]] = []
+        bulk_context: dict[str, Any] | None = None
+        if bulk_duration_needs_clarification:
+            bulk_pending_actions = _bulk_pending_for_clarification(
+                [], input.utterance, prior_pending_actions
+            )
+            bulk_context = _bulk_clarification_context([], input.utterance, bulk_pending_actions)
 
         reply = str(data.get("reply") or "").strip()
         if no_effect_reply is not None:
             reply = no_effect_reply
         if capacity_reply is not None:
             reply = capacity_reply
+        if bulk_duration_needs_clarification:
+            reply = (
+                "Which images would you like to stack together, "
+                "and how short should the duration be?"
+            )
         if not reply:
             reply = "Got it. What else should we change?"
 
@@ -2087,6 +2378,8 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
 
         needs_clarification = bool(data.get("needs_clarification", False))
         if capacity_reply is not None:
+            needs_clarification = True
+        if bulk_duration_needs_clarification:
             needs_clarification = True
         if state.confidence < _CONFIDENCE_CLARIFY_THRESHOLD:
             needs_clarification = True
@@ -2118,23 +2411,33 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             outcome = "no_effect"
 
         clarification_context = (
-            prior_referent_context
+            bulk_context
+            or capacity_context
+            or prior_referent_context
             or _sanitize_clarification_context(data.get("clarification_context"))
             if needs_clarification
             else None
         )
-        pending_actions = (
-            _sanitize_pending_actions(
-                prior_pending_actions or data.get("pending_actions"),
+        pending_actions = []
+        if needs_clarification:
+            current_pending = _sanitize_pending_actions(
+                data.get("pending_actions"),
                 fallback_selector=(
                     clarification_context.get("selector")
                     if clarification_context is not None
                     else None
                 ),
             )
-            if needs_clarification
-            else []
-        )
+            # Keep an earlier capacity-blocked action when a subsequent
+            # clarification adds only the newly discussed bulk actions. A
+            # negated request explicitly opts out of carrying that plan.
+            inherited_pending = _prior_pending_actions(input)
+            if _PENDING_NEGATION_RE.search(input.utterance):
+                inherited_pending = []
+            pending_actions = _merge_pending_actions(
+                bulk_pending_actions or capacity_pending_actions or inherited_pending,
+                current_pending,
+            )
 
         try:
             return EditCopilotOutput(

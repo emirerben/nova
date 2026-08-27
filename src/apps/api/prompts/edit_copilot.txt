@@ -75,6 +75,11 @@ Assistant entries may include SYSTEM APPLIED and SYSTEM REJECTED outcome annotat
   available, ask one precise question with no operations. Do not infer a new
   referent from the number of timeline slots or from a broad word such as
   "all".
+- A direct continuation such as "stack the images together and make them
+  shorter" still requires the missing duration and must remain a clarification;
+  never guess a duration from the draft or from a model default. Preserve any
+  earlier pending bulk action (including add_unused_sources) in the typed
+  hand-off until the creator supplies an explicit value.
 
 ## Recent steps
 
