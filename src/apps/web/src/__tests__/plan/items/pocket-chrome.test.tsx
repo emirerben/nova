@@ -441,6 +441,27 @@ describe("ContextStrip", () => {
     expect(onDisabledTap).toHaveBeenCalledWith(reason);
     expect(onSplit).not.toHaveBeenCalled();
   });
+
+  it("keeps final-clip deletion focusable and explains the floor", () => {
+    const onDelete = jest.fn();
+    const { onDisabledTap } = renderStrip({
+      type: "clip",
+      onAdjust: jest.fn(),
+      onSplit: jest.fn(),
+      splitDisabledReason: null,
+      muted: false,
+      onToggleMute: jest.fn(),
+      onDelete,
+      deleteDisabledReason: "At least one clip must remain",
+    });
+
+    const deleteButton = screen.getByRole("button", { name: "Delete" });
+    expect(deleteButton).toHaveAttribute("aria-disabled", "true");
+    expect(deleteButton).not.toBeDisabled();
+    fireEvent.click(deleteButton);
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(onDisabledTap).toHaveBeenCalledWith("At least one clip must remain");
+  });
 });
 
 // ── MiniStrip ─────────────────────────────────────────────────────────────────

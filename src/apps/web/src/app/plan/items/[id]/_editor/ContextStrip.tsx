@@ -50,6 +50,7 @@ export type StripSelection =
       muted: boolean;
       onToggleMute: () => void;
       onDelete: () => void;
+      deleteDisabledReason?: string | null;
     };
 
 export interface ContextStripProps {
@@ -114,7 +115,12 @@ function pillsForSelection(selection: StripSelection): Pill[] {
           label: selection.muted ? "Unmute" : "Mute",
           onPress: selection.onToggleMute,
         },
-        { label: "Delete", onPress: selection.onDelete, destructive: true },
+        {
+          label: "Delete",
+          onPress: selection.onDelete,
+          destructive: true,
+          disabledReason: selection.deleteDisabledReason ?? undefined,
+        },
       ];
   }
 }

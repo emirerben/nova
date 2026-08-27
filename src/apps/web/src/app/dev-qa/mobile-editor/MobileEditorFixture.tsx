@@ -1,8 +1,17 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import { ChevronLeft, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatTimecode } from "@/lib/timeline/time-format";
 import { ContextStrip } from "@/app/plan/items/[id]/_editor/ContextStrip";
 import {
@@ -32,6 +41,54 @@ const INITIAL_WINDOWS: ClipWindow[] = [
   { id: "istanbul", inS: 6.7, durationS: 3.8, label: "Istanbul night" },
 ];
 
+type FixturePanel =
+  | { kind: "precision" }
+  | { kind: "tool"; tool: DockTool }
+  | null;
+
+const TOOL_COPY: Record<
+  DockTool,
+  { title: string; description: string; actions: string[] }
+> = {
+  nova: {
+    title: "Kria",
+    description: "Review a proposed edit before accepting or rejecting it.",
+    actions: ["Review proposal", "Accept edit", "Reject edit"],
+  },
+  text: {
+    title: "Text",
+    description: "Add titles, place them, and apply a reusable preset.",
+    actions: ["Add text", "Smart place", "Choose preset"],
+  },
+  captions: {
+    title: "Captions",
+    description:
+      "Edit cue copy and timing, then style or retranscribe all cues.",
+    actions: ["Edit cue", "Style all", "Retranscribe"],
+  },
+  visuals: {
+    title: "Visuals",
+    description: "Add source media, montage blocks, sequences, or text cards.",
+    actions: ["Add media", "Add montage", "Add text card"],
+  },
+  sounds: {
+    title: "Sounds",
+    description:
+      "Place sound effects, change the music window, and balance the mix.",
+    actions: ["Add SFX", "Change music", "Adjust mix"],
+  },
+  overlays: {
+    title: "Overlays",
+    description: "Upload an overlay, retime it, and adjust its placement.",
+    actions: ["Upload overlay", "Adjust timing", "Position overlay"],
+  },
+  styles: {
+    title: "Styles",
+    description: "Apply an edit-wide Look or refine a clip and its transition.",
+    actions: ["Apply Look", "Adjust clip Look", "Set transition"],
+  },
+};
+
 function projectSegments(windows: ClipWindow[]): MiniStripSegment[] {
   let cursor = 0;
   return windows.map((clip) => {
@@ -60,10 +117,29 @@ export default function MobileEditorFixture() {
   const [currentTimeS, setCurrentTimeS] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
-  const [activeTool, setActiveTool] = useState<DockTool | null>(null);
+  const [panel, setPanel] = useState<FixturePanel>(null);
+  const [look, setLook] = useState("Clean");
+  const [transition, setTransition] = useState("Cut");
+  const [toolAction, setToolAction] = useState("");
   const [receipt, setReceipt] = useState("Draft · local QA fixture");
   const segments = useMemo(() => projectSegments(windows), [windows]);
   const totalDurationS = segments.at(-1)?.endS ?? 0;
+  const selectedIndex = windows.findIndex((clip) => clip.id === selectedId);
+  const selectedWindow = selectedIndex >= 0 ? windows[selectedIndex] : null;
+  const selectedSegment = selectedIndex >= 0 ? segments[selectedIndex] : null;
+  const splitOffsetS = selectedSegment
+    ? currentTimeS - selectedSegment.startS
+    : Number.NaN;
+  const splitDisabledReason =
+    !selectedWindow ||
+    !selectedSegment ||
+    splitOffsetS < 0.1 ||
+    selectedWindow.durationS - splitOffsetS < 0.1
+      ? "Move the playhead inside the selected clip to split"
+      : null;
+  const deleteDisabledReason =
+    windows.length <= 1 ? "At least one clip must remain" : null;
+  const activeTool = panel?.kind === "tool" ? panel.tool : null;
 
   const seekTo = (seconds: number) => {
     const next = Math.min(totalDurationS, Math.max(0, seconds));
@@ -85,6 +161,30 @@ export default function MobileEditorFixture() {
       ),
     );
     setReceipt("Unsaved trim");
+  };
+
+  const nudgeSelectedTrim = (edge: "in" | "out") => {
+    if (!selectedWindow) return;
+    const nextDuration = Math.max(0.1, selectedWindow.durationS - 0.1);
+    if (nextDuration === selectedWindow.durationS) {
+      setReceipt("The clip is already at its minimum duration");
+      return;
+    }
+    record();
+    setWindows((current) =>
+      current.map((clip) =>
+        clip.id === selectedWindow.id
+          ? {
+              ...clip,
+              inS: edge === "in" ? clip.inS + 0.1 : clip.inS,
+              durationS: nextDuration,
+            }
+          : clip,
+      ),
+    );
+    setReceipt(
+      edge === "in" ? "Source In moved +0.1s" : "Source Out moved −0.1s",
+    );
   };
 
   const splitSelected = () => {
@@ -144,10 +244,16 @@ export default function MobileEditorFixture() {
         data-selected-id={selectedId}
         data-current-time={currentTimeS}
         data-receipt={receipt}
+        data-panel={panel?.kind === "tool" ? panel.tool : panel?.kind ?? ""}
+        data-look={look}
+        data-transition={transition}
+        data-tool-action={toolAction}
       />
       <header className="flex items-center gap-2 border-b border-border px-3">
-        <Button type="button" variant="ghost" size="icon" aria-label="Back to video">
-          <ChevronLeft aria-hidden="true" />
+        <Button asChild variant="ghost" size="icon" aria-label="Back to video">
+          <Link href="/plan">
+            <ChevronLeft aria-hidden="true" />
+          </Link>
         </Button>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium">Summer in three cities</p>
@@ -233,12 +339,16 @@ export default function MobileEditorFixture() {
         <ContextStrip
           selection={{
             type: "clip",
-            onAdjust: () => setReceipt("Precision sheet · Trim / Look / Transition"),
+            onAdjust: () => {
+              setPanel({ kind: "precision" });
+              setReceipt("Precision controls opened");
+            },
             onSplit: splitSelected,
-            splitDisabledReason: null,
+            splitDisabledReason,
             muted,
             onToggleMute: () => setMuted((current) => !current),
             onDelete: deleteSelected,
+            deleteDisabledReason,
           }}
           onDisabledTap={(reason) => setReceipt(reason)}
           className="border-t border-border px-2 py-1"
@@ -249,12 +359,158 @@ export default function MobileEditorFixture() {
           disabledTools={{}}
           novaEnabled
           onToggleTool={(tool) => {
-            setActiveTool((current) => (current === tool ? null : tool));
-            setReceipt(`${tool === "nova" ? "Kria" : tool} tools selected`);
+            const closing = panel?.kind === "tool" && panel.tool === tool;
+            setPanel(closing ? null : { kind: "tool", tool });
+            setReceipt(
+              closing
+                ? `${tool === "nova" ? "Kria" : TOOL_COPY[tool].title} tools closed`
+                : `${TOOL_COPY[tool].title} tools opened`,
+            );
           }}
           onDisabledTap={(reason) => setReceipt(reason)}
         />
       </section>
+
+      <Sheet
+        open={panel !== null}
+        onOpenChange={(open) => {
+          if (!open) setPanel(null);
+        }}
+      >
+        <SheetContent
+          side="bottom"
+          className="max-h-[62dvh] overflow-y-auto p-0 pb-[max(16px,env(safe-area-inset-bottom))]"
+        >
+          {panel?.kind === "precision" && selectedWindow ? (
+            <>
+              <SheetHeader className="border-b border-border px-4 pb-3 pt-4 text-left">
+                <SheetTitle className="text-base text-balance">
+                  Clip {selectedIndex + 1} adjustments
+                </SheetTitle>
+                <SheetDescription className="text-pretty">
+                  Refine source timing, Look, and the outgoing transition.
+                </SheetDescription>
+              </SheetHeader>
+              <Tabs defaultValue="trim" className="px-4 pt-3">
+                <TabsList className="grid h-11 w-full grid-cols-3">
+                  <TabsTrigger value="trim" className="min-h-11">
+                    Trim
+                  </TabsTrigger>
+                  <TabsTrigger value="look" className="min-h-11">
+                    Look
+                  </TabsTrigger>
+                  <TabsTrigger value="transition" className="min-h-11">
+                    Transition
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent value="trim" className="mt-4 space-y-3">
+                  <div className="grid grid-cols-3 gap-2 rounded-lg border border-border p-3 text-center">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Source In</p>
+                      <p className="mt-1 text-sm font-medium tabular-nums">
+                        {formatTimecode(selectedWindow.inS)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Source Out</p>
+                      <p className="mt-1 text-sm font-medium tabular-nums">
+                        {formatTimecode(
+                          selectedWindow.inS + selectedWindow.durationS,
+                        )}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Output</p>
+                      <p className="mt-1 text-sm font-medium tabular-nums">
+                        {formatTimecode(selectedWindow.durationS)}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11"
+                      onClick={() => nudgeSelectedTrim("in")}
+                    >
+                      In +0.1s
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11"
+                      onClick={() => nudgeSelectedTrim("out")}
+                    >
+                      Out −0.1s
+                    </Button>
+                  </div>
+                </TabsContent>
+                <TabsContent value="look" className="mt-4 grid grid-cols-3 gap-2">
+                  {["Clean", "Warm", "Film"].map((option) => (
+                    <Button
+                      key={option}
+                      type="button"
+                      variant={look === option ? "secondary" : "outline"}
+                      className="min-h-11"
+                      aria-pressed={look === option}
+                      onClick={() => {
+                        setLook(option);
+                        setReceipt(`${option} Look applied`);
+                      }}
+                    >
+                      {option}
+                    </Button>
+                  ))}
+                </TabsContent>
+                <TabsContent value="transition" className="mt-4 grid grid-cols-3 gap-2">
+                  {["Cut", "Dissolve", "Dip"].map((option) => (
+                    <Button
+                      key={option}
+                      type="button"
+                      variant={transition === option ? "secondary" : "outline"}
+                      className="min-h-11"
+                      aria-pressed={transition === option}
+                      onClick={() => {
+                        setTransition(option);
+                        setReceipt(`${option} transition applied`);
+                      }}
+                    >
+                      {option}
+                    </Button>
+                  ))}
+                </TabsContent>
+              </Tabs>
+            </>
+          ) : panel?.kind === "tool" ? (
+            <>
+              <SheetHeader className="border-b border-border px-4 pb-3 pt-4 text-left">
+                <SheetTitle className="text-base text-balance">
+                  {TOOL_COPY[panel.tool].title}
+                </SheetTitle>
+                <SheetDescription className="text-pretty">
+                  {TOOL_COPY[panel.tool].description}
+                </SheetDescription>
+              </SheetHeader>
+              <div className="grid gap-2 px-4 pt-4">
+                {TOOL_COPY[panel.tool].actions.map((action, index) => (
+                  <Button
+                    key={action}
+                    type="button"
+                    variant={index === 0 ? "secondary" : "outline"}
+                    className="min-h-11 justify-start"
+                    onClick={() => {
+                      setToolAction(`${panel.tool}:${action}`);
+                      setReceipt(`${action} selected`);
+                    }}
+                  >
+                    {action}
+                  </Button>
+                ))}
+              </div>
+            </>
+          ) : null}
+        </SheetContent>
+      </Sheet>
     </main>
   );
 }

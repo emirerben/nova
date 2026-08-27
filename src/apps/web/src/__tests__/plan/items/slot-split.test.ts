@@ -1,4 +1,5 @@
 import {
+  canSplitSlotAt,
   splitSlotAt,
   deleteSlotEnforceFloor,
   activeSlotCount,
@@ -20,6 +21,17 @@ function slot(over: Partial<DraftSlot> = {}): DraftSlot {
 }
 
 describe("splitSlotAt (seconds mode)", () => {
+  it("reports the exact playhead positions where a split can happen", () => {
+    const slots = [slot({ durationS: 4 })];
+
+    expect(canSplitSlotAt(slots, [], "s1", 0)).toBe(false);
+    expect(canSplitSlotAt(slots, [], "s1", 0.04)).toBe(false);
+    expect(canSplitSlotAt(slots, [], "s1", 0.1)).toBe(true);
+    expect(canSplitSlotAt(slots, [], "s1", 2)).toBe(true);
+    expect(canSplitSlotAt(slots, [], "s1", 3.9)).toBe(true);
+    expect(canSplitSlotAt(slots, [], "s1", 4)).toBe(false);
+  });
+
   it("cuts one slot into two from the same source at the playhead", () => {
     // single slot, window = [0, 4]. Cut at 1.5s.
     const slots = [slot()];

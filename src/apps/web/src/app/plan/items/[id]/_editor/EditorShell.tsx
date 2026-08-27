@@ -206,7 +206,12 @@ import {
   buildTimedTextSequence,
   TEXT_ELEMENTS_API_MAX,
 } from "./editor-text-composition";
-import { splitSlotAt, deleteSlotEnforceFloor, activeSlotCount } from "./slot-split";
+import {
+  activeSlotCount,
+  canSplitSlotAt,
+  deleteSlotEnforceFloor,
+  splitSlotAt,
+} from "./slot-split";
 import {
   applyManualClipTimingPatch,
   applyTextTimingInput,
@@ -1490,6 +1495,8 @@ export default function EditorShell({
     operationDisabledReason(capabilities?.clips?.trim) ?? clipDisabledReason;
   const clipAddDisabledReason =
     operationDisabledReason(capabilities?.clips?.add) ?? clipDisabledReason;
+  const clipRemoveDisabledReason =
+    operationDisabledReason(capabilities?.clips?.remove) ?? clipDisabledReason;
   const clipReorderDisabledReason =
     operationDisabledReason(capabilities?.clips?.reorder) ?? clipDisabledReason;
   const clipSplitDisabledReason =
@@ -5936,21 +5943,40 @@ export default function EditorShell({
   );
 
   // Transport enablement (plan §6).
+  const splitBaseTime = outputToBaseTimeRef.current(currentTime);
+  const selectedTextCanSplitAtPlayhead =
+    selection?.kind === "text" &&
+    !!selectedBar &&
+    !isLyricBar(selectedBar) &&
+    Math.round(splitBaseTime * 10) / 10 > selectedBar.start_s + 0.2 - 1e-9 &&
+    Math.round(splitBaseTime * 10) / 10 < selectedBar.end_s - 0.2 + 1e-9;
+  const selectedClipCanSplitAtPlayhead =
+    selection?.kind === "clip" &&
+    canSplitSlotAt(slots, clip.state.grid, selection.id, splitBaseTime);
   const canSplit =
-    (selection?.kind === "text" && !!selectedBar && !isLyricBar(selectedBar)) ||
+    selectedTextCanSplitAtPlayhead ||
     (selection?.kind === "clip" &&
       splitClipsAllowed &&
-      (!guidedStoryV2 || selectedClip?.sourceKind === "video"));
-  const splitReason =
-    selection?.kind === "music"
-      ? "Music fits the cut automatically"
-      : selection?.kind === "text" && selectedBar && isLyricBar(selectedBar)
-        ? "Lyric timing is locked to the vocal."
-      : selection?.kind === "clip" && !splitClipsAllowed
-        ? clipSplitDisabledReason ?? "This variant's clips can't be split"
-        : selection?.kind === "clip" && guidedStoryV2 && selectedClip?.sourceKind !== "video"
-          ? "Images can be resized, but they can’t be split."
-        : undefined;
+      (!guidedStoryV2 || selectedClip?.sourceKind === "video") &&
+      selectedClipCanSplitAtPlayhead);
+  let splitReason: string | undefined;
+  if (selection?.kind === "music") {
+    splitReason = "Music fits the cut automatically";
+  } else if (selection?.kind === "text" && selectedBar && isLyricBar(selectedBar)) {
+    splitReason = "Lyric timing is locked to the vocal.";
+  } else if (selection?.kind === "text" && !selectedTextCanSplitAtPlayhead) {
+    splitReason = "Move the playhead over the text to split it.";
+  } else if (selection?.kind === "clip" && !splitClipsAllowed) {
+    splitReason = clipSplitDisabledReason ?? "This variant's clips can't be split";
+  } else if (
+    selection?.kind === "clip" &&
+    guidedStoryV2 &&
+    selectedClip?.sourceKind !== "video"
+  ) {
+    splitReason = "Images can be resized, but they can’t be split.";
+  } else if (selection?.kind === "clip" && !selectedClipCanSplitAtPlayhead) {
+    splitReason = "Move the playhead inside this clip to split.";
+  }
   const canDelete =
     (selection?.kind === "text" && !!selectedBar && !isLyricBar(selectedBar)) ||
     (selection?.kind === "clip" && clipRemoveAllowed && activeSlotCount(slots) > 1) ||
@@ -5960,6 +5986,11 @@ export default function EditorShell({
     (selection?.kind === "motion" && motionScenesAllowed) ||
     (selection?.kind === "carousel" && carouselCapable && carouselMoment !== null) ||
     selection?.kind === "camera";
+  const selectedClipDeleteDisabledReason = !clipRemoveAllowed
+    ? (clipRemoveDisabledReason ?? "This variant's clips can't be deleted")
+    : activeSlotCount(slots) <= 1
+      ? "At least one clip must remain"
+      : null;
 
   // ── Keyboard: Escape ladder + Delete with focus guard (plan §5/§9) ──────────
   useEffect(() => {
@@ -7117,6 +7148,7 @@ export default function EditorShell({
                 setVideoMuted((m) => !m);
               },
               onDelete: deleteSelected,
+              deleteDisabledReason: selectedClipDeleteDisabledReason,
             };
           }
           return null;

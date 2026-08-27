@@ -485,7 +485,7 @@ export function MiniStrip({
         <div className="min-w-0 flex-1" aria-live="polite">
           {selectedSegment ? (
             <p className="truncate text-xs tabular-nums text-foreground">
-              <span className="font-medium">Selected clip</span>{" "}
+              <span className="sr-only">Selected clip </span>
               <span className="text-muted-foreground">
                 In {formatTimecode(selectedSegment.sourceStartS ?? 0)} · Out{" "}
                 {formatTimecode(

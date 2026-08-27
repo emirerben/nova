@@ -30,6 +30,30 @@ export interface SlotDeleteResult {
   didDelete: boolean;
 }
 
+/**
+ * Whether `key` can be split at assembled-time `atS` without changing state.
+ * Keep UI affordance gating on the exact same rounded math as splitSlotAt so
+ * a visible Split action never turns into a silent no-op at a clip boundary.
+ */
+export function canSplitSlotAt(
+  slots: DraftSlot[],
+  grid: number[],
+  key: string,
+  atS: number,
+): boolean {
+  const idx = slots.findIndex((s) => s.key === key);
+  if (idx === -1) return false;
+  const slot = slots[idx];
+  if (slot.removed || slot.durationBeats != null) return false;
+
+  const win = slotWindows(slots, grid)[idx];
+  if (win.startS == null || win.durationS <= 0) return false;
+
+  const localOffset = Math.round((atS - win.startS) * 10) / 10;
+  const rightDuration = Math.round((win.durationS - localOffset) * 10) / 10;
+  return localOffset >= MIN_SLOT_SPLIT_S && rightDuration >= MIN_SLOT_SPLIT_S;
+}
+
 /** Count of slots still contributing footage (drives the ≥1 floor). */
 export function activeSlotCount(slots: DraftSlot[]): number {
   return slots.filter((s) => !s.removed).length;
@@ -52,20 +76,13 @@ export function splitSlotAt(
   const idx = slots.findIndex((s) => s.key === key);
   if (idx === -1) return { slots, didSplit: false };
   const slot = slots[idx];
-  if (slot.removed || slot.durationBeats != null) {
-    return { slots, didSplit: false };
-  }
+  if (!canSplitSlotAt(slots, grid, key, atS)) return { slots, didSplit: false };
 
-  const windows = slotWindows(slots, grid);
-  const win = windows[idx];
-  if (win.startS == null || win.durationS <= 0) return { slots, didSplit: false };
-
+  const win = slotWindows(slots, grid)[idx];
+  if (win.startS == null) return { slots, didSplit: false };
   const localOffset = Math.round((atS - win.startS) * 10) / 10;
   const leftDur = localOffset;
   const rightDur = Math.round((win.durationS - localOffset) * 10) / 10;
-  if (leftDur < MIN_SLOT_SPLIT_S || rightDur < MIN_SLOT_SPLIT_S) {
-    return { slots, didSplit: false };
-  }
 
   const left: DraftSlot = { ...slot, durationS: leftDur, durationBeats: null };
   const right: DraftSlot = {

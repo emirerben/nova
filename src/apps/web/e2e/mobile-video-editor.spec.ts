@@ -93,3 +93,117 @@ test("filmstrip dragging scrubs without changing the selected source window", as
   expect(await qaData<QaWindow[]>(page, "data-windows")).toEqual(before);
   expect(await qaNumber(page, "data-current-time")).toBeGreaterThan(beforeTime);
 });
+
+test("transport, zoom, clip actions, and boundary reasons all respond", async ({ page }) => {
+  await expect(page.getByRole("link", { name: "Back to video" })).toHaveAttribute(
+    "href",
+    "/plan",
+  );
+
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.locator("#qa-state")).toHaveAttribute(
+    "data-receipt",
+    "Saved · rendering started",
+  );
+
+  await page.getByRole("button", { name: "Play video" }).click();
+  await expect(page.getByRole("button", { name: "Pause video" })).toBeVisible();
+  await page.getByRole("button", { name: "Pause video" }).click();
+
+  const firstClip = page.getByRole("button", { name: /Clip 1,/ });
+  const initialWidth = (await firstClip.boundingBox())?.width ?? 0;
+  await page.getByRole("button", { name: "Zoom timeline in" }).click();
+  expect((await firstClip.boundingBox())?.width ?? 0).toBeGreaterThan(initialWidth);
+  await page.getByRole("button", { name: "Fit timeline" }).click();
+
+  const split = page.getByRole("button", { name: "Split" });
+  await expect(split).toHaveAttribute("aria-disabled", "true");
+  await split.evaluate((button: HTMLButtonElement) => button.click());
+  await expect(page.locator("#qa-state")).toHaveAttribute(
+    "data-receipt",
+    "Move the playhead inside the selected clip to split",
+  );
+
+  await page
+    .getByRole("button", { name: /Clip 2,/ })
+    .click({ position: { x: 55, y: 24 } });
+  await expect(split).not.toHaveAttribute("aria-disabled", "true");
+  await split.click();
+  expect((await qaData<QaWindow[]>(page, "data-windows"))).toHaveLength(4);
+
+  await page.getByRole("button", { name: "Mute" }).click();
+  await expect(page.getByRole("button", { name: "Unmute" })).toBeVisible();
+  await page.getByRole("button", { name: "Unmute" }).click();
+
+  await page.getByRole("button", { name: "Delete" }).click();
+  expect((await qaData<QaWindow[]>(page, "data-windows"))).toHaveLength(3);
+  await page.getByRole("button", { name: "Undo" }).click();
+  expect((await qaData<QaWindow[]>(page, "data-windows"))).toHaveLength(4);
+});
+
+test("precision sheet trims and applies Look and transition choices", async ({ page }) => {
+  await page.getByRole("button", { name: "Adjust" }).click();
+  const dialog = page.getByRole("dialog", { name: "Clip 1 adjustments" });
+  await expect(dialog).toBeVisible();
+
+  const before = await qaData<QaWindow[]>(page, "data-windows");
+  await dialog.getByRole("button", { name: "In +0.1s" }).click();
+  const after = await qaData<QaWindow[]>(page, "data-windows");
+  expect(after[0].inS).toBeCloseTo(before[0].inS + 0.1, 6);
+  expect(after[0].durationS).toBeCloseTo(before[0].durationS - 0.1, 6);
+
+  await dialog.getByRole("tab", { name: "Look" }).click();
+  await dialog.getByRole("button", { name: "Film" }).click();
+  await expect(page.locator("#qa-state")).toHaveAttribute("data-look", "Film");
+
+  await dialog.getByRole("tab", { name: "Transition" }).click();
+  await dialog.getByRole("button", { name: "Dissolve" }).click();
+  await expect(page.locator("#qa-state")).toHaveAttribute(
+    "data-transition",
+    "Dissolve",
+  );
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await expect(dialog).toBeHidden();
+});
+
+test("every icon tool opens one shadcn sheet and its primary action works", async ({ page }) => {
+  const tools = [
+    ["Kria", "Review proposal"],
+    ["Text", "Add text"],
+    ["Captions", "Edit cue"],
+    ["Visuals", "Add media"],
+    ["Sounds", "Add SFX"],
+    ["Overlays", "Upload overlay"],
+    ["Styles", "Apply Look"],
+  ] as const;
+
+  for (const [tool, action] of tools) {
+    await page.getByRole("button", { name: `${tool} tool` }).click();
+    const dialog = page.getByRole("dialog", { name: tool });
+    await expect(dialog).toBeVisible();
+    expect(await page.getByRole("dialog").count()).toBe(1);
+    await dialog.getByRole("button", { name: action }).click();
+    await expect(page.locator("#qa-state")).toHaveAttribute(
+      "data-tool-action",
+      `${tool === "Kria" ? "nova" : tool.toLowerCase()}:${action}`,
+    );
+    await dialog.getByRole("button", { name: "Close" }).click();
+    await expect(dialog).toBeHidden();
+  }
+});
+
+test("Delete preserves one clip and exposes the reason without removing focus", async ({ page }) => {
+  const deleteButton = page.getByRole("button", { name: "Delete" });
+  await deleteButton.click();
+  await deleteButton.click();
+  expect((await qaData<QaWindow[]>(page, "data-windows"))).toHaveLength(1);
+  await expect(deleteButton).toHaveAttribute("aria-disabled", "true");
+  await deleteButton.focus();
+  await expect(deleteButton).toBeFocused();
+  await deleteButton.evaluate((button: HTMLButtonElement) => button.click());
+  await expect(page.locator("#qa-state")).toHaveAttribute(
+    "data-receipt",
+    "At least one clip must remain",
+  );
+  expect((await qaData<QaWindow[]>(page, "data-windows"))).toHaveLength(1);
+});
