@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.55.0.1] — 2026-08-27
+
+### Fixed
+- **Kria now keeps an impossible “add all” edit intact across follow-up clarifications.** Vague replies no longer guess a duration or stage a valid subset, image references cannot broaden to videos or unrelated clips, and the final response reports the exact timeline and Creator Block limits with zero partial mutations.
+
 ## [0.55.0.0] — 2026-08-27
 
 ### Added
