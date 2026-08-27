@@ -19,7 +19,9 @@ from app.pipeline.guided_story import (
 from app.pipeline.probe import probe_video
 from app.schemas.edit_proposal import (
     EditProposalSnapshot,
+    FastMontageCut,
     MediaRef,
+    MixedMediaTimingProfile,
     StoryBeat,
     canonical_media_digest,
 )
@@ -128,6 +130,94 @@ def test_real_ffmpeg_guided_v2_renders_image_and_video_looks(
         assert probe.duration_s == pytest.approx(1.0, abs=0.15)
 
 
+def test_real_ffmpeg_many_quick_photos_keep_exact_frame_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.pipeline import guided_story
+
+    raw = _snapshot()
+    snapshot = EditProposalSnapshot.model_validate(raw["approved_proposal"])
+    snapshot.direction = "fast_montage"
+    snapshot.pace = "fast"
+    snapshot.duration_s = 15
+    snapshot.mixed_media_timing = MixedMediaTimingProfile(
+        image_hold="very_fast",
+        video_hold="longer",
+        boundary_style="cut",
+    )
+    snapshot.output_orientation = "portrait"
+    photo_ids = ["food", "town", "food-detail", "dessert", "street"] + [
+        f"photo-extra-{index}" for index in range(15)
+    ]
+    snapshot.media.extend(
+        MediaRef(
+            lane="asset",
+            media_id=media_id,
+            gcs_path=f"users/test/{media_id}.jpg",
+            generation=f"extra-{index}",
+            kind="image",
+            aspect=1.7778,
+        )
+        for index, media_id in enumerate(photo_ids[5:])
+    )
+    snapshot.fast_cuts = [
+        FastMontageCut(
+            cut_id=f"photo-{index}",
+            media_id=media_id,
+            source_start_s=0.0,
+            source_end_s=0.65,
+            output_duration_s=0.65,
+            role="hook" if index == 0 else "build",
+        )
+        for index, media_id in enumerate(photo_ids)
+    ] + [
+        FastMontageCut(
+            cut_id="video-payoff",
+            media_id="coast",
+            source_start_s=0.0,
+            source_end_s=2.0,
+            output_duration_s=2.0,
+            role="payoff",
+        )
+    ]
+    raw["approved_proposal"] = snapshot.model_dump(mode="json")
+    raw["media_digest"] = canonical_media_digest(snapshot.media)
+    raw["media_identities"] = [
+        {
+            "lane": ref.lane,
+            "media_id": ref.media_id,
+            "gcs_path": ref.gcs_path,
+            "generation": ref.generation,
+            "kind": ref.kind,
+        }
+        for ref in snapshot.media
+    ]
+    plan = compile_execution_plan(raw, track=None)
+
+    image = tmp_path / "photo.jpg"
+    video = tmp_path / "video.mp4"
+    _image(image, (220, 120, 40), "QUICK PHOTO")
+    _video(video, size="640x360")
+    canvas = Canvas(180, 320)
+    monkeypatch.setattr(guided_story, "PORTRAIT", canvas)
+
+    outputs, receipts = _render_moments(
+        plan,
+        {**{media_id: str(image) for media_id in photo_ids}, "coast": str(video)},
+        str(tmp_path),
+    )
+
+    assert len(outputs) == 21
+    assert sum(receipt["output_duration_s"] for receipt in receipts) == pytest.approx(
+        15.0, abs=0.01
+    )
+    assert all(
+        0.5 <= receipt["output_duration_s"] <= 0.8
+        for receipt in receipts
+        if receipt["kind"] == "image"
+    )
+
+
 def _image(path: Path, color: tuple[int, int, int], label: str) -> None:
     image = Image.new("RGB", (640, 360), color)
     ImageDraw.Draw(image).text((40, 40), label, fill="white")
@@ -147,7 +237,7 @@ def _transparent_image(path: Path) -> None:
     image.save(path, format="WEBP", lossless=True)
 
 
-def _video(path: Path, *, size: str = "360x640") -> None:
+def _video(path: Path, *, size: str = "360x640", duration_s: float = 5.5) -> None:
     subprocess.run(
         [
             "ffmpeg",
@@ -160,7 +250,7 @@ def _video(path: Path, *, size: str = "360x640") -> None:
             "-i",
             "sine=frequency=440:sample_rate=44100",
             "-t",
-            "5.5",
+            str(duration_s),
             "-c:v",
             "libx264",
             "-pix_fmt",
@@ -177,7 +267,11 @@ def _video(path: Path, *, size: str = "360x640") -> None:
     )
 
 
-def _snapshot(*, analyzed_aspect: float | None = None) -> dict:
+def _snapshot(
+    *,
+    analyzed_aspect: float | None = None,
+    creator_pinned_portrait: bool = False,
+) -> dict:
     media = [
         MediaRef(
             lane="asset",
@@ -242,9 +336,19 @@ def _snapshot(*, analyzed_aspect: float | None = None) -> dict:
         direction="guided_story",
         goal="A small Corfu travel story",
         pace="balanced",
-        duration_s=15,
+        duration_s=9 if creator_pinned_portrait else 15,
         title="Corfu in small moments",
         media=media,
+        mixed_media_timing=(
+            MixedMediaTimingProfile(
+                image_hold="very_fast",
+                video_hold="longer",
+                boundary_style="cut",
+            )
+            if creator_pinned_portrait
+            else None
+        ),
+        output_orientation="portrait" if creator_pinned_portrait else None,
         story_beats=[
             StoryBeat(
                 beat_id="food",
@@ -288,14 +392,21 @@ def _snapshot(*, analyzed_aspect: float | None = None) -> dict:
 
 
 @pytest.mark.parametrize(
-    ("with_music", "orientation"),
-    [(False, "portrait"), (True, "portrait"), (False, "landscape")],
+    ("with_music", "orientation", "creator_pinned_portrait"),
+    [
+        (False, "portrait", False),
+        (True, "portrait", False),
+        (False, "landscape", False),
+        (False, "portrait", True),
+        (True, "portrait", True),
+    ],
 )
 def test_real_ffmpeg_mixed_story_has_text_audio_and_exact_receipt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     with_music: bool,
     orientation: str,
+    creator_pinned_portrait: bool,
 ) -> None:
     from app import storage
     from app.pipeline import guided_story
@@ -312,7 +423,10 @@ def test_real_ffmpeg_mixed_story_has_text_audio_and_exact_receipt(
     _image(dessert, (200, 90, 120), "DESSERT")
     _image(town, (170, 130, 80), "TOWN")
     _image(street, (140, 110, 75), "STREET")
-    _video(coast, size="640x360" if orientation == "landscape" else "360x640")
+    _video(
+        coast,
+        size=("640x360" if orientation == "landscape" or creator_pinned_portrait else "360x640"),
+    )
     shutil.copy2(coast, swim)
     sources = {
         "users/test/food.heic": food,
@@ -402,11 +516,32 @@ def test_real_ffmpeg_mixed_story_has_text_audio_and_exact_receipt(
         }
 
     plan = compile_execution_plan(
-        _snapshot(analyzed_aspect=1.7778 if orientation == "landscape" else None),
+        _snapshot(
+            analyzed_aspect=(
+                1.7778 if orientation == "landscape" or creator_pinned_portrait else None
+            ),
+            creator_pinned_portrait=creator_pinned_portrait,
+        ),
         track=track_payload,
     )
     assert plan["output_orientation"] == orientation
-    assert plan["transition_policy"]["type"] == "crossfade"
+    assert plan["transition_policy"]["type"] == ("none" if creator_pinned_portrait else "crossfade")
+    if creator_pinned_portrait:
+        assert plan["mixed_media_timing"] == {
+            "image_hold": "very_fast",
+            "video_hold": "longer",
+            "boundary_style": "cut",
+        }
+        assert all(
+            0.5 <= moment["duration_s"] <= 0.8
+            for moment in plan["story_timeline"]
+            if moment["kind"] == "image"
+        )
+        assert all(
+            1.5 <= moment["duration_s"] <= 3.0
+            for moment in plan["story_timeline"]
+            if moment["kind"] == "video"
+        )
     assert all(element["stroke_width"] == 0 for element in plan["text_elements"])
     if not with_music and orientation == "portrait":
         image_moment = next(row for row in plan["story_timeline"] if row["kind"] == "image")
@@ -467,7 +602,8 @@ def test_real_ffmpeg_mixed_story_has_text_audio_and_exact_receipt(
         "h264",
         True,
     )
-    assert probe.duration_s == pytest.approx(15, abs=0.3)
+    assert receipt["actual_duration_s"] == pytest.approx(plan["resolved_duration_s"], abs=0.15)
+    assert probe.duration_s == pytest.approx(plan["resolved_duration_s"], abs=0.15)
     base = next(uploads.glob("base_1_guided_story_*.mp4"))
     base_probe = probe_video(str(base))
     assert (base_probe.width, base_probe.height) == (canvas.width, canvas.height)

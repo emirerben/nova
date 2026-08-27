@@ -21,6 +21,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.agents._schemas.text_element import TextElement
 from app.config import settings
 from app.pipeline.canvas import LANDSCAPE, PORTRAIT, Canvas
+from app.pipeline.duration_contract import (
+    STRICT_MIXED_MEDIA_DURATION_TOLERANCE_S,
+    STRICT_MIXED_MEDIA_MAX_CFR_OVERRUN_S,
+)
 from app.pipeline.probe import probe_video
 from app.schemas.edit_proposal import (
     GUIDED_STORY_MIN_MOMENT_S,
@@ -297,6 +301,88 @@ class GuidedStoryRenderReceipt(BaseModel):
 
 def _round_frame(seconds: float) -> float:
     return round(max(_FRAME_S, round(seconds / _FRAME_S) * _FRAME_S), 3)
+
+
+def _quantize_quick_mixed_timeline(
+    moments: list[dict[str, Any]],
+    beat_windows: list[dict[str, Any]],
+    *,
+    target_s: float,
+) -> float:
+    """Compile quick mixed-media holds to an exact, source-safe frame budget."""
+
+    fps = int(round(1.0 / _FRAME_S))
+    target_frames = max(1, int(round(float(target_s) * fps)))
+    frame_counts: list[int] = []
+    image_headroom: list[tuple[float, int]] = []
+    original_video_end_s: dict[int, float] = {}
+    floor_video_frames: dict[int, int] = {}
+    for index, moment in enumerate(moments):
+        desired_frames = float(moment["duration_s"]) * fps
+        frames = max(1, int(math.floor(desired_frames + 1e-6)))
+        if moment["kind"] == "image":
+            minimum_frames = int(math.ceil(0.5 * fps - 1e-6))
+            maximum_frames = int(math.floor(0.8 * fps + 1e-6))
+            frames = min(maximum_frames, max(minimum_frames, frames))
+            image_headroom.append((desired_frames - math.floor(desired_frames), index))
+        else:
+            original_video_end_s[index] = float(moment["source_end_s"])
+            floor_video_frames[index] = frames
+            if 1.5 - 0.001 <= float(moment["duration_s"]) < 1.5:
+                # Proposal source/output windows allow 1ms numeric tolerance.
+                # The near-minimum source still contains the 45th frame.
+                frames = int(math.ceil(1.5 * fps - 1e-6))
+        frame_counts.append(frames)
+
+    remaining_frames = target_frames - sum(frame_counts)
+    if remaining_frames < 0:
+        raise GuidedStoryError(
+            "guided_story_duration_impossible",
+            "The approved mixed-media timing exceeds its frame budget.",
+        )
+    # Videos stay floored to their approved source spans. Assign fractional
+    # frame remainder only to photos, where a longer hold cannot stretch or
+    # overlap source footage. Largest fractional remainders stay closest to
+    # the creator-approved durations.
+    for _fraction, index in sorted(image_headroom, reverse=True):
+        if remaining_frames <= 0:
+            break
+        maximum_frames = int(math.floor(0.8 * fps + 1e-6))
+        addition = min(remaining_frames, maximum_frames - frame_counts[index])
+        frame_counts[index] += addition
+        remaining_frames -= addition
+    if remaining_frames:
+        raise GuidedStoryError(
+            "guided_story_duration_impossible",
+            "The approved mixed-media timing cannot fit an exact source-safe frame budget.",
+        )
+
+    cursor_frames = 0
+    for index, (moment, frames) in enumerate(zip(moments, frame_counts, strict=True)):
+        duration_s = frames / fps
+        start_s = cursor_frames / fps
+        cursor_frames += frames
+        end_s = cursor_frames / fps
+        moment["duration_s"] = round(duration_s, 6)
+        moment["output_start_s"] = round(start_s, 6)
+        moment["output_end_s"] = round(end_s, 6)
+        if moment["kind"] == "video" and frames > floor_video_frames[index]:
+            moment["source_end_s"] = original_video_end_s[index]
+        else:
+            moment["source_end_s"] = round(float(moment["source_start_s"]) + duration_s, 6)
+
+    windows_by_id = {window["beat_id"]: window for window in beat_windows}
+    moments_by_beat: dict[str, list[dict[str, Any]]] = {}
+    for moment in moments:
+        moments_by_beat.setdefault(str(moment["beat_id"]), []).append(moment)
+    for beat_id, beat_moments in moments_by_beat.items():
+        window = windows_by_id[beat_id]
+        start_s = float(beat_moments[0]["output_start_s"])
+        end_s = float(beat_moments[-1]["output_end_s"])
+        window["start_s"] = round(start_s, 6)
+        window["end_s"] = round(end_s, 6)
+        window["resolved_duration_s"] = round(end_s - start_s, 6)
+    return cursor_frames / fps
 
 
 def _selected_media_ids(snapshot: EditProposalSnapshot) -> list[str]:
@@ -1017,7 +1103,16 @@ def _compile_execution_plan_version(
     proposal_version, media_digest, snapshot = validate_guided_snapshot(guided_snapshot)
     policy = _DIRECTION_POLICY[snapshot.direction]
     mixed_timing = snapshot.mixed_media_timing
+    selected_ids = _selected_media_ids(snapshot)
+    by_id = {ref.media_id: ref for ref in snapshot.media}
+    selected_kinds = {by_id[media_id].kind for media_id in selected_ids if media_id in by_id}
     quick_mixed_timing = uses_quick_photo_long_video_timing(mixed_timing)
+    if quick_mixed_timing and selected_kinds != {"image", "video"}:
+        # The typed contract describes a relationship between photos and
+        # videos. If the retained timeline has only one kind, preserve the
+        # legacy renderer instead of enforcing a false mixed-media receipt.
+        mixed_timing = None
+        quick_mixed_timing = False
     transition_type = (
         "none"
         if quick_mixed_timing
@@ -1028,8 +1123,6 @@ def _compile_execution_plan_version(
     transition_duration_s = (
         0.0 if quick_mixed_timing else 0.2 if snapshot.pace == "relaxed" else 0.12
     )
-    selected_ids = _selected_media_ids(snapshot)
-    by_id = {ref.media_id: ref for ref in snapshot.media}
     if not selected_ids:
         raise GuidedStoryError("guided_story_snapshot_invalid", "The approved edit has no media.")
     if compiler_version >= 3:
@@ -1113,6 +1206,12 @@ def _compile_execution_plan_version(
             raise GuidedStoryError(
                 "guided_story_duration_impossible",
                 "Fast montage cut durations do not match the approved duration.",
+            )
+        if quick_mixed_timing:
+            cursor = _quantize_quick_mixed_timeline(
+                moments,
+                beat_windows,
+                target_s=cursor,
             )
         normalized_track = _music_payload(track, duration_s=cursor)
         try:
@@ -1244,6 +1343,12 @@ def _compile_execution_plan_version(
     if abs(cursor - float(snapshot.duration_s)) > 0.05:
         raise GuidedStoryError(
             "guided_story_duration_impossible", "The approved story timing could not be resolved."
+        )
+    if quick_mixed_timing:
+        cursor = _quantize_quick_mixed_timeline(
+            moments,
+            beat_windows,
+            target_s=cursor,
         )
 
     normalized_track = _music_payload(track, duration_s=cursor)
@@ -1710,6 +1815,52 @@ def _attach_silent_aac(source: str, output: str) -> None:
         )
 
 
+def _enforce_strict_story_duration(source: str, output: str, *, target_s: float) -> str:
+    """Clamp only a bounded positive mux/CFR overrun; never stretch content."""
+
+    actual_s = float(probe_video(source).duration_s)
+    delta_s = actual_s - float(target_s)
+    if abs(delta_s) <= STRICT_MIXED_MEDIA_DURATION_TOLERANCE_S:
+        return source
+    if delta_s < 0 or delta_s > STRICT_MIXED_MEDIA_MAX_CFR_OVERRUN_S:
+        raise GuidedStoryError(
+            "guided_story_receipt_mismatch",
+            "The rendered story duration no longer matches its approved plan.",
+        )
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-i",
+            source,
+            "-t",
+            f"{target_s:.6f}",
+            "-map",
+            "0",
+            "-c",
+            "copy",
+            "-movflags",
+            "+faststart",
+            "-y",
+            output,
+        ],
+        capture_output=True,
+        timeout=180,
+        check=False,
+    )
+    if (
+        result.returncode != 0
+        or not os.path.exists(output)
+        or os.path.getsize(output) == 0
+        or abs(float(probe_video(output).duration_s) - float(target_s))
+        > STRICT_MIXED_MEDIA_DURATION_TOLERANCE_S
+    ):
+        raise GuidedStoryError(
+            "guided_story_receipt_mismatch",
+            "The rendered story duration no longer matches its approved plan.",
+        )
+    return output
+
+
 def _download_selected(plan: dict[str, Any], tmpdir: str) -> tuple[dict[str, str], list[dict]]:
     from PIL import Image, ImageOps  # noqa: PLC0415
 
@@ -1940,6 +2091,7 @@ def _render_video_moment(
     canvas: Canvas = PORTRAIT,
     look_preset: str = "none",
     look_adjustments: dict[str, float] | None = None,
+    exact_duration: bool = False,
 ) -> None:
     from app.pipeline.reframe import reframe_and_export  # noqa: PLC0415
 
@@ -1962,6 +2114,7 @@ def _render_video_moment(
             canvas=canvas,
             look_preset=look_preset,
             look_adjustments=look_adjustments,
+            exact_duration=exact_duration,
         )
     except Exception as exc:  # noqa: BLE001
         raise GuidedStoryError(
@@ -1975,6 +2128,11 @@ def _render_moments(
     outputs: list[str] = []
     receipts: list[dict] = []
     canvas = _story_canvas(str(plan["output_orientation"]))
+    raw_timing = plan.get("mixed_media_timing")
+    mixed_timing = (
+        MixedMediaTimingProfile.model_validate(raw_timing) if raw_timing is not None else None
+    )
+    exact_mixed_duration = uses_quick_photo_long_video_timing(mixed_timing)
     for index, moment in enumerate(plan["story_timeline"]):
         output = os.path.join(tmpdir, f"moment_{index:02d}.mp4")
         if moment["kind"] == "image":
@@ -1997,6 +2155,7 @@ def _render_moments(
                 canvas=canvas,
                 look_preset=moment.get("look_preset", "none"),
                 look_adjustments=moment.get("look_adjustments"),
+                exact_duration=exact_mixed_duration,
             )
         probe = probe_video(output)
         if (
@@ -2053,9 +2212,16 @@ def _verify_receipt(
     probe = probe_video(final_path)
     canvas = _story_canvas(str(plan["output_orientation"]))
     audio_codec = _audio_codec(final_path)
-    duration_ok = abs(probe.duration_s - float(plan["resolved_duration_s"])) <= max(
-        0.2, len(moment_receipts) * 0.04
+    raw_timing = plan.get("mixed_media_timing")
+    mixed_timing = (
+        MixedMediaTimingProfile.model_validate(raw_timing) if raw_timing is not None else None
     )
+    duration_tolerance_s = (
+        STRICT_MIXED_MEDIA_DURATION_TOLERANCE_S
+        if uses_quick_photo_long_video_timing(mixed_timing)
+        else max(0.2, len(moment_receipts) * 0.04)
+    )
+    duration_ok = abs(probe.duration_s - float(plan["resolved_duration_s"])) <= duration_tolerance_s
     verified = bool(
         expected_beats == actual_beats
         and expected_moments == actual_moments
@@ -2328,7 +2494,12 @@ def validate_ready_result(
         and staged_moments == expected_moment_stages
         and staged_text == receipt.actual_text_ids
         and receipt.expected_duration_s == typed_plan.resolved_duration_s
-        and abs(receipt.actual_duration_s - typed_plan.resolved_duration_s) <= 0.2
+        and abs(receipt.actual_duration_s - typed_plan.resolved_duration_s)
+        <= (
+            STRICT_MIXED_MEDIA_DURATION_TOLERANCE_S
+            if uses_quick_photo_long_video_timing(typed_plan.mixed_media_timing)
+            else 0.2
+        )
         and receipt.output_orientation == typed_plan.output_orientation
         and receipt.output.width == _story_canvas(typed_plan.output_orientation).width
         and receipt.output.height == _story_canvas(typed_plan.output_orientation).height
@@ -2427,6 +2598,7 @@ def _mix_pinned_music(
     track: Any,
     *,
     output_duration_s: float | None = None,
+    strict_duration: bool = False,
 ) -> None:
     """Mix only the immutable track object captured in the execution plan."""
 
@@ -2463,6 +2635,7 @@ def _mix_pinned_music(
             require_audio=True,
             audio_generation=str(music["generation"]),
             force_video_duration=True,
+            target_video_duration_s=output_duration_s if strict_duration else None,
             audio_gain=float(music.get("level", 1.0)),
         )
     except Exception as exc:  # noqa: BLE001
@@ -2615,6 +2788,11 @@ def render_execution_plan(
     )
     from app.tasks.template_orchestrate import _concat_demuxer  # noqa: PLC0415
 
+    raw_timing = plan.get("mixed_media_timing")
+    mixed_timing = (
+        MixedMediaTimingProfile.model_validate(raw_timing) if raw_timing is not None else None
+    )
+    strict_mixed_duration = uses_quick_photo_long_video_timing(mixed_timing)
     local_by_id, media_receipts = _download_selected(plan, tmpdir)
     moment_paths, moment_receipts = _render_moments(plan, local_by_id, tmpdir)
     assembled = os.path.join(tmpdir, "guided_story_assembled.mp4")
@@ -2694,6 +2872,7 @@ def render_execution_plan(
             music,
             track,
             output_duration_s=float(plan["resolved_duration_s"]),
+            strict_duration=strict_mixed_duration,
         )
         music_applied = True
     else:
@@ -2711,6 +2890,12 @@ def render_execution_plan(
         attempt_id=attempt_id,
         tmpdir=tmpdir,
     )
+    if strict_mixed_duration:
+        clean_base = _enforce_strict_story_duration(
+            clean_base,
+            os.path.join(tmpdir, "guided_story_base_duration_capped.mp4"),
+            target_s=float(plan["resolved_duration_s"]),
+        )
 
     final_path = os.path.join(tmpdir, "guided_story_final.mp4")
     elements = [TextElement.model_validate(row) for row in plan["text_elements"]]
@@ -2750,6 +2935,12 @@ def render_execution_plan(
         attempt_id=attempt_id,
         tmpdir=tmpdir,
     )
+    if strict_mixed_duration:
+        final_path = _enforce_strict_story_duration(
+            final_path,
+            os.path.join(tmpdir, "guided_story_final_duration_capped.mp4"),
+            target_s=float(plan["resolved_duration_s"]),
+        )
     receipt = _verify_receipt(
         plan,
         media_receipts,

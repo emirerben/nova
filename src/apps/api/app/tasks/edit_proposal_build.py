@@ -1113,6 +1113,7 @@ def _run_draft_attempt(
                 else fallback_cuts
             ),
             mixed_media_timing=brief.mixed_media_timing,
+            output_orientation=brief.output_orientation,
         )
         if fallback_used:
             # Never auto-approve a deterministic recovery that the strict
