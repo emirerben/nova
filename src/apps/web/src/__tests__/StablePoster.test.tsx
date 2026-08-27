@@ -61,6 +61,40 @@ describe("StablePoster", () => {
     expect(container.querySelector("img")).toHaveAttribute("src", expect.stringContaining("sig=B"));
   });
 
+  it("does not retry every signature refresh after the retry also fails", () => {
+    const { container, rerender, getByText } = render(
+      <StablePoster
+        src="https://storage.example.com/poster.jpg?sig=A"
+        identity="jobs/job-1/output.mp4"
+        alt="poster"
+        fallback={<span>poster unavailable</span>}
+      />,
+    );
+
+    fireEvent.error(container.querySelector("img")!);
+    rerender(
+      <StablePoster
+        src="https://storage.example.com/poster.jpg?sig=B"
+        identity="jobs/job-1/output.mp4"
+        alt="poster"
+        fallback={<span>poster unavailable</span>}
+      />,
+    );
+    fireEvent.error(container.querySelector("img")!);
+
+    rerender(
+      <StablePoster
+        src="https://storage.example.com/poster.jpg?sig=C"
+        identity="jobs/job-1/output.mp4"
+        alt="poster"
+        fallback={<span>poster unavailable</span>}
+      />,
+    );
+
+    expect(container.querySelector("img")).toBeNull();
+    expect(getByText("poster unavailable")).toBeInTheDocument();
+  });
+
   it("clears a held poster when the identity changes without a poster", () => {
     const { container, rerender, getByText } = render(
       <StablePoster

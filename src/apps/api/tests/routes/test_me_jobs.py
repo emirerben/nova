@@ -204,6 +204,71 @@ def test_list_uses_ready_jobclip_video_and_poster_without_downloading_video(monk
     assert item["poster_url"] == f"signed://{clip.thumbnail_path}"
 
 
+def test_list_falls_through_to_next_ready_clip_when_lowest_rank_path_is_unowned(
+    monkeypatch,
+) -> None:
+    user = _user()
+    job = _job(user_id=user.id, status="clips_ready", mode=None, job_type="default")
+    unowned = MagicMock(
+        id=uuid.uuid4(),
+        job_id=job.id,
+        rank=1,
+        render_status="ready",
+        video_path=f"{uuid.uuid4()}/{job.id}/clip.mp4",
+        thumbnail_path=None,
+    )
+    owned = MagicMock(
+        id=uuid.uuid4(),
+        job_id=job.id,
+        rank=2,
+        render_status="ready",
+        video_path=f"{user.id}/{job.id}/task-runs/run/clip_2.mp4",
+        thumbnail_path=f"{user.id}/{job.id}/task-runs/run/clip_2.jpg",
+    )
+    monkeypatch.setattr("app.routes.me.signed_get_url", lambda path, ttl: f"signed://{path}")
+    db = _db([_scalars([job]), _rows([]), _scalars([]), _scalars([unowned, owned])])
+    _override(user, db)
+
+    response = client.get("/me/jobs")
+
+    assert response.status_code == 200
+    item = response.json()["jobs"][0]
+    assert item["output_url"] == f"signed://{owned.video_path}"
+    assert item["poster_url"] == f"signed://{owned.thumbnail_path}"
+
+
+def test_list_signs_source_matched_variant_poster_and_ignores_forged_poster(monkeypatch) -> None:
+    user = _user()
+    job = _job(
+        user_id=user.id,
+        status="variants_ready",
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "song_text",
+                    "rank": 1,
+                    "render_status": "ready",
+                    "video_path": f"generative-jobs/{uuid.uuid4()}/wrong.mp4",
+                }
+            ]
+        },
+    )
+    # Match the selected output to this job, but leave the poster path forged so
+    # the API must omit it rather than signing an arbitrary object.
+    job.assembly_plan["variants"][0]["video_path"] = f"generative-jobs/{job.id}/output.mp4"
+    job.assembly_plan["variants"][0]["poster_path"] = "users/other/private.jpg"
+    monkeypatch.setattr("app.routes.me.signed_get_url", lambda path, ttl: f"signed://{path}")
+    db = _db([_scalars([job]), _rows([]), _scalars([]), _scalars([])])
+    _override(user, db)
+
+    response = client.get("/me/jobs")
+
+    assert response.status_code == 200
+    item = response.json()["jobs"][0]
+    assert item["output_url"] == f"signed://generative-jobs/{job.id}/output.mp4"
+    assert item["poster_url"] is None
+
+
 def test_list_query_excludes_manual_drafts() -> None:
     user = _user()
     db = _db([_scalars([])])
@@ -233,7 +298,10 @@ def test_delete_job_removes_terminal_job_and_dispatches_exact_owned_paths(monkey
     )
     job.id = job_id
     job.raw_storage_path = f"{user.id}/{job_id}/first.mp4"
-    job.assembly_plan = {"output_path": f"jobs/{job_id}/task-runs/run/output.mp4"}
+    job.assembly_plan = {
+        "output_path": f"jobs/{job_id}/task-runs/run/output.mp4",
+        "poster_path": f"jobs/{job_id}/task-runs/run/output.mp4.poster.jpg",
+    }
     clip = MagicMock(video_path=f"jobs/{job_id}/clip.mp4", thumbnail_path=None)
     publication = MagicMock(
         user_id=user.id,
@@ -270,6 +338,7 @@ def test_delete_job_removes_terminal_job_and_dispatches_exact_owned_paths(monkey
     assert deletion.object_paths == [
         f"jobs/{job_id}/clip.mp4",
         f"jobs/{job_id}/task-runs/run/output.mp4",
+        f"jobs/{job_id}/task-runs/run/output.mp4.poster.jpg",
         f"{user.id}/{job_id}/first.mp4",
         f"{user.id}/{job_id}/second.mp4",
     ]
@@ -277,6 +346,7 @@ def test_delete_job_removes_terminal_job_and_dispatches_exact_owned_paths(monkey
     assert _job_storage_paths(job, [clip], [publication], user_id=user.id) == [
         f"jobs/{job_id}/clip.mp4",
         f"jobs/{job_id}/task-runs/run/output.mp4",
+        f"jobs/{job_id}/task-runs/run/output.mp4.poster.jpg",
         f"{user.id}/{job_id}/first.mp4",
         f"{user.id}/{job_id}/second.mp4",
     ]

@@ -1,6 +1,7 @@
 """Extract source-matched poster JPEGs from browser-visible videos.
 
-Single FFmpeg subprocess call (NEVER MoviePy / VideoFileClip — see CLAUDE.md).
+Each seek attempt uses one FFmpeg subprocess (NEVER MoviePy / VideoFileClip —
+see CLAUDE.md); extraction tries up to six offsets within a 90-second budget.
 The template helper writes to ``templates/<id>/poster.jpg``.  Job-output
 helpers write a deterministic ``<video-object>.poster.jpg`` sibling and return
 that relative key so callers can persist it without storing a signed URL.

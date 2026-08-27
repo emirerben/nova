@@ -29,6 +29,7 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 
 from app.auth import CurrentUser
 from app.config import settings
@@ -68,6 +69,7 @@ _JOB_READY = PLAN_ITEM_JOB_READY
 _JOB_FAILED = PLAN_ITEM_JOB_FAILED
 _DEFAULT_LIMIT = 24
 _MAX_LIMIT = 60
+_MAX_PREVIEW_CLIPS = 50
 OPEN_IN_EDITOR_NOT_READY_DETAIL = "Video is not ready to open in the editor."
 OPEN_IN_EDITOR_LINK_CONFLICT_DETAIL = "Video is linked to a different plan item."
 DELETE_JOB_NOT_TERMINAL_DETAIL = "This video is still being prepared or posted."
@@ -678,8 +680,19 @@ async def list_my_jobs(
             (
                 await db.execute(
                     select(JobClip)
+                    .options(
+                        load_only(
+                            JobClip.id,
+                            JobClip.job_id,
+                            JobClip.rank,
+                            JobClip.render_status,
+                            JobClip.video_path,
+                            JobClip.thumbnail_path,
+                            JobClip.created_at,
+                        )
+                    )
                     .join(ranked_clips, JobClip.id == ranked_clips.c.clip_id)
-                    .where(ranked_clips.c.clip_rank == 1)
+                    .where(ranked_clips.c.clip_rank <= _MAX_PREVIEW_CLIPS)
                 )
             )
             .scalars()

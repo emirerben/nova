@@ -69,6 +69,18 @@ export default function LibraryTile({
   const [isDeleting, setIsDeleting] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const keepButtonRef = useRef<HTMLButtonElement>(null);
+  const fallbackVideoRef = useRef<HTMLVideoElement>(null);
+
+  function playFallbackVideo() {
+    void fallbackVideoRef.current?.play().catch(() => undefined);
+  }
+
+  function pauseFallbackVideo() {
+    const video = fallbackVideoRef.current;
+    if (!video) return;
+    video.pause();
+    video.currentTime = 0;
+  }
 
   async function handleDelete() {
     setIsDeleting(true);
@@ -113,12 +125,15 @@ export default function LibraryTile({
           className="h-full w-full object-cover"
           fallback={
             <video
+              ref={fallbackVideoRef}
               src={job.output_url ?? undefined}
               muted
-              autoPlay
               loop
               playsInline
-              preload="metadata"
+              preload="auto"
+              onPointerEnter={playFallbackVideo}
+              onPointerLeave={pauseFallbackVideo}
+              onTouchStart={playFallbackVideo}
               aria-label="Your video preview"
               className="h-full w-full object-cover"
             />

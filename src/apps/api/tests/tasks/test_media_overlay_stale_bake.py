@@ -108,6 +108,7 @@ def test_unchanged_list_is_written_back(monkeypatch):
     assert v["render_status"] == "ready"
     assert v["output_url"] == "gs://bucket/v1.mp4?sig=overlaid"
     assert v["poster_path"] == "gs://bucket/v1.mp4.poster.jpg"
+    assert v["pre_overlay_poster_path"] == ("gs://bucket/v1.mp4_pre_overlay.poster.jpg")
     assert v["media_overlays_render_dirty"] is False
 
 
@@ -155,3 +156,23 @@ def test_stale_generation_leaves_dirty_state_untouched(monkeypatch):
     v = job.assembly_plan["variants"][0]
     assert v["media_overlays_render_dirty"] is True
     assert v["render_generation_id"] == "winner"
+
+
+def test_stale_generation_cleans_unreferenced_generated_posters(monkeypatch):
+    variant = _variant([_card()])
+    variant["render_generation_id"] = "winner"
+    job = _FakeJob(variant)
+    _patch_common(monkeypatch, job)
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        gb,
+        "_delete_generated_poster_objects_if_unreferenced",
+        lambda _job_id, paths, **_kwargs: deleted.extend(paths),
+    )
+
+    _run(job, render_gen_id="stale")
+
+    assert deleted == [
+        "gs://bucket/v1.mp4.poster.jpg",
+        "gs://bucket/v1.mp4_pre_overlay.poster.jpg",
+    ]

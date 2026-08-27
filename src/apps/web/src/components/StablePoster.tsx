@@ -31,10 +31,10 @@ export function StablePoster({
     identity: null,
     src: null,
   });
+  const retriedIdentityRef = useRef<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [, setRetryNonce] = useState(0);
   const effectiveIdentity = stableVideoSourceIdentity(src, identity);
-  const sourceChanged = Boolean(src && src !== heldRef.current.src);
 
   // A source can disappear when a new render is selected. Never let the old
   // poster bleed into that new identity while the matching poster is absent.
@@ -46,15 +46,30 @@ export function StablePoster({
   } else if (
     src &&
     (heldRef.current.src === null ||
-      effectiveIdentity !== heldRef.current.identity ||
-      (failed && sourceChanged))
+      effectiveIdentity !== heldRef.current.identity)
   ) {
     heldRef.current = { identity: effectiveIdentity, src };
   }
 
+  const previousIdentityRef = useRef<string | null>(null);
   useEffect(() => {
-    setFailed(false);
-  }, [effectiveIdentity, src]);
+    if (previousIdentityRef.current !== effectiveIdentity) {
+      previousIdentityRef.current = effectiveIdentity;
+      retriedIdentityRef.current = null;
+      setFailed(false);
+    } else if (
+      failed &&
+      src &&
+      src !== heldRef.current.src &&
+      retriedIdentityRef.current !== effectiveIdentity
+    ) {
+      // A new signed URL gets one retry after an image error, but subsequent
+      // signature churn does not keep re-requesting a permanently missing key.
+      retriedIdentityRef.current = effectiveIdentity;
+      heldRef.current = { identity: effectiveIdentity, src };
+      setFailed(false);
+    }
+  }, [effectiveIdentity, failed, src]);
 
   const heldSrc = heldRef.current.src ?? src ?? null;
   if (!heldSrc || failed) return <>{fallback}</>;
@@ -63,7 +78,12 @@ export function StablePoster({
     // A refreshed signature is available in the latest props. Adopt it once
     // before falling back, so a transient expiry does not permanently hide a
     // healthy poster.
-    if (src && src !== heldRef.current.src) {
+    if (
+      src &&
+      src !== heldRef.current.src &&
+      retriedIdentityRef.current !== effectiveIdentity
+    ) {
+      retriedIdentityRef.current = effectiveIdentity;
       heldRef.current = { ...heldRef.current, src };
       setFailed(false);
       setRetryNonce((value) => value + 1);
@@ -73,5 +93,5 @@ export function StablePoster({
     onError?.(event);
   };
 
-  return <img {...rest} src={heldSrc} onError={handleError} />;
+  return <img {...rest} src={heldSrc} alt={rest.alt ?? ""} onError={handleError} />;
 }

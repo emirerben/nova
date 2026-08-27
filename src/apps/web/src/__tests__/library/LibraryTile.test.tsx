@@ -166,7 +166,7 @@ it("keeps a playable fallback when a ready job has no poster", () => {
 
   expect(container.querySelector("img")).toBeNull();
   expect(container.querySelector("video")).toHaveAttribute("src", baseJob.output_url);
-  expect(container.querySelector("video")).toHaveAttribute("autoplay");
+  expect(container.querySelector("video")).not.toHaveAttribute("autoplay");
 });
 
 it("shows a Rendering badge while a video is still processing", () => {

@@ -40,6 +40,26 @@ from app.tasks.auto_music_orchestrate import (
 JOB_ID = str(uuid.uuid4())
 
 
+def test_video_poster_upload_failure_is_fail_open(monkeypatch):
+    import app.tasks.auto_music_orchestrate as task
+
+    monkeypatch.setattr(
+        task,
+        "upload_video_poster",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("poster unavailable")),
+    )
+
+    assert (
+        task._try_upload_video_poster(
+            "/tmp/output.mp4",
+            "auto-music-jobs/job/output.mp4",
+            job_id=JOB_ID,
+            rank=1,
+        )
+        is None
+    )
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 

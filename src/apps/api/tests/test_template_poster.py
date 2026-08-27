@@ -17,9 +17,11 @@ from app.services.template_poster import (
     MIN_POSTER_LUMA,
     POSTER_SEEK_ATTEMPTS_S,
     PosterExtractionError,
+    _extract_attempt,
     extract_poster_bytes,
     generate_and_upload,
     generate_and_upload_from_gcs,
+    upload_video_poster,
 )
 
 _FAKE_JPEG = b"\xff\xd8\xff\xe0fake-jpeg-payload\xff\xd9"
@@ -266,3 +268,58 @@ def test_generate_and_upload_from_gcs_downloads_exact_video_key(monkeypatch):
 
     assert result == "generative-jobs/job-1/output.mp4.poster.jpg"
     assert downloaded["path"] == "generative-jobs/job-1/output.mp4"
+
+
+def test_generate_and_upload_from_gcs_is_fail_open_when_poster_extraction_fails(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.template_poster.download_to_file",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        "app.services.template_poster.upload_video_poster",
+        lambda *_args: (_ for _ in ()).throw(PosterExtractionError("bad video")),
+    )
+
+    assert generate_and_upload_from_gcs("generative-jobs/job-1/output.mp4") is None
+
+
+def test_extract_attempt_accepts_showinfo_luma_statistics():
+    result = _ok_attempt()
+    result.stderr = b"[Parsed_showinfo_1] mean:[123 128 128] stdev:[42 3 4]"
+    with patch("app.services.template_poster.subprocess.run", return_value=result):
+        attempt = _extract_attempt("/tmp/template.mp4", 0.5)
+
+    assert attempt.luma_mean == 123.0
+    assert attempt.luma_stddev == 42.0
+
+
+def test_extract_poster_stops_after_total_budget_before_next_attempt(monkeypatch):
+    times = iter([0.0, 0.0, 0.0, 91.0])
+    calls = []
+
+    def fail(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise PosterExtractionError("ffmpeg failed")
+
+    monkeypatch.setattr("app.services.template_poster.time.monotonic", lambda: next(times))
+    monkeypatch.setattr("app.services.template_poster._extract_attempt", fail)
+
+    with pytest.raises(PosterExtractionError, match="exceeded 90s total budget"):
+        extract_poster_bytes("/tmp/template.mp4")
+    assert len(calls) == 1
+
+
+def test_upload_video_poster_rejects_missing_local_source(monkeypatch):
+    monkeypatch.setattr("app.services.template_poster.extract_poster_bytes", lambda _: b"jpeg")
+
+    with pytest.raises(PosterExtractionError, match="source does not exist"):
+        upload_video_poster("/tmp/does-not-exist.mp4", "jobs/job/output.mp4")
+
+
+def test_generate_and_upload_from_gcs_is_fail_open_on_download_error(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.template_poster.download_to_file",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("storage unavailable")),
+    )
+
+    assert generate_and_upload_from_gcs("jobs/job/output.mp4", job_id="job") is None

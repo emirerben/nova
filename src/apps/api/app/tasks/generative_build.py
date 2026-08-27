@@ -4311,6 +4311,7 @@ def _run_media_overlay_pass(
         output_url: str,
         poster_path: str | None,
         pre_clean: str | None,
+        pre_overlay_poster_path: str | None,
         clear: bool,
     ) -> tuple[bool, bool, bool, bool]:
         """Return (accepted, will_reapply_sfx, stale_metadata, cancelled)."""
@@ -4362,6 +4363,7 @@ def _run_media_overlay_pass(
                     stale_write_skipped = True
                 if pre_clean is not None:
                     variant["pre_media_overlay_video_path"] = pre_clean
+                    variant["pre_overlay_poster_path"] = pre_overlay_poster_path
                 if not stale_write_skipped:
                     variant["media_overlays_render_dirty"] = False
                 variant["output_url"] = output_url
@@ -4401,13 +4403,25 @@ def _run_media_overlay_pass(
             job_id=job_id,
             source_kind="generative_output_overlay_clear",
         )
+        pre_overlay_poster_path = existing.get("pre_overlay_poster_path") if clean_path else None
+        if clean_path and not pre_overlay_poster_path:
+            pre_overlay_poster_path = generate_and_upload_from_gcs(
+                clean_path,
+                job_id=job_id,
+                source_kind="generative_pre_overlay",
+            )
         accepted, will_reapply_sfx, _, _cancelled = _persist_result(
             output_url=signed_url,
             poster_path=poster_path,
-            pre_clean=None,
+            pre_clean=clean_path,
+            pre_overlay_poster_path=pre_overlay_poster_path,
             clear=True,
         )
         if accepted is False:
+            _delete_generated_poster_objects_if_unreferenced(
+                job_id,
+                [poster_path, pre_overlay_poster_path],
+            )
             return
         record_pipeline_event(
             "media_overlay",
@@ -4482,16 +4496,26 @@ def _run_media_overlay_pass(
         job_id=job_id,
         source_kind="generative_output_overlay",
     )
+    pre_overlay_poster_path = generate_and_upload_from_gcs(
+        pre_clean,
+        job_id=job_id,
+        source_kind="generative_pre_overlay",
+    )
     accepted, will_reapply_sfx, stale_write_skipped, cancelled = _persist_result(
         output_url=new_url,
         poster_path=poster_path,
         pre_clean=pre_clean,
+        pre_overlay_poster_path=pre_overlay_poster_path,
         clear=False,
     )
     if accepted is False:
         # The compositor overwrites the already-persisted video_path, so it did
         # not allocate a new output object. Only the optional clean snapshot is
         # a task-created key that can safely be deleted on cancellation.
+        _delete_generated_poster_objects_if_unreferenced(
+            job_id,
+            [poster_path, pre_overlay_poster_path],
+        )
         if cancelled and created_pre_clean:
             _delete_cancelled_job_objects(job_id, [created_pre_clean])
         return
