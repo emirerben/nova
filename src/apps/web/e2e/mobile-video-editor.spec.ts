@@ -133,10 +133,17 @@ test("filmstrip samples the exact source window and follows touch every frame", 
     initialRangeKey!,
   );
   await page.getByRole("button", { name: "Zoom timeline in" }).click();
-  await page.getByRole("button", { name: "Zoom timeline in" }).click();
   await expect(firstStrip).not.toHaveAttribute(
     "data-source-range-key",
     initialRangeKey!,
+  );
+  const firstZoomRangeKey = await firstStrip.getAttribute(
+    "data-source-range-key",
+  );
+  await page.getByRole("button", { name: "Zoom timeline in" }).click();
+  await expect(firstStrip).not.toHaveAttribute(
+    "data-source-range-key",
+    firstZoomRangeKey!,
   );
   const nextRangeKey = await firstStrip.getAttribute("data-source-range-key");
   const renderedDuringDecode = await firstStrip.getAttribute(
