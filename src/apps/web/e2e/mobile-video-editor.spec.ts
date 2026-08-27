@@ -243,6 +243,16 @@ test("Text inserts on screen and focuses editing immediately", async ({ page }) 
     "data-text",
     "Three cities, one summer",
   );
+  await dialog.getByRole("button", { name: "Bottom" }).click();
+  await dialog.getByRole("button", { name: "Editorial" }).click();
+  await expect(page.locator("#qa-state")).toHaveAttribute(
+    "data-text-position",
+    "Bottom",
+  );
+  await expect(page.locator("#qa-state")).toHaveAttribute(
+    "data-text-preset",
+    "Editorial",
+  );
   await dialog.getByRole("button", { name: "Done" }).click();
   await expect(dialog).toBeHidden();
   await expect(page.getByTestId("pocket-dock")).toBeVisible();
@@ -251,31 +261,183 @@ test("Text inserts on screen and focuses editing immediately", async ({ page }) 
   );
 });
 
-test("every remaining icon tool opens one shadcn sheet and its primary action works", async ({
+test("every remaining tool action opens a real editor state in one shadcn sheet", async ({
   page,
 }) => {
   const tools = [
-    ["Kria", "Review proposal"],
-    ["Captions", "Edit cue"],
-    ["Visuals", "Add media"],
-    ["Sounds", "Add SFX"],
-    ["Overlays", "Upload overlay"],
-    ["Styles", "Apply Look"],
+    ["Kria", ["Review proposal", "Accept edit", "Reject edit"]],
+    ["Captions", ["Edit cue", "Style all", "Retranscribe"]],
+    ["Visuals", ["Add media", "Add montage", "Add text card"]],
+    ["Sounds", ["Add SFX", "Change music", "Adjust mix"]],
+    ["Overlays", ["Upload overlay", "Adjust timing", "Position overlay"]],
+    ["Styles", ["Apply Look", "Adjust clip Look", "Set transition"]],
   ] as const;
 
-  for (const [tool, action] of tools) {
+  for (const [tool, actions] of tools) {
     await page.getByRole("button", { name: `${tool} tool` }).click();
-    const dialog = page.getByRole("dialog", { name: tool });
-    await expect(dialog).toBeVisible();
+    await expect(page.getByRole("dialog", { name: tool })).toBeVisible();
     expect(await page.getByRole("dialog").count()).toBe(1);
-    await dialog.getByRole("button", { name: action }).click();
-    await expect(page.locator("#qa-state")).toHaveAttribute(
-      "data-tool-action",
-      `${tool === "Kria" ? "nova" : tool.toLowerCase()}:${action}`,
-    );
+    for (const action of actions) {
+      await page
+        .getByRole("dialog", { name: tool })
+        .getByRole("button", { name: action, exact: true })
+        .click();
+      await expect(page.getByRole("dialog", { name: action })).toBeVisible();
+      await expect(page.locator("#qa-state")).toHaveAttribute(
+        "data-tool-action",
+        `${tool === "Kria" ? "nova" : tool.toLowerCase()}:${action}`,
+      );
+      expect(await page.getByRole("dialog").count()).toBe(1);
+      await page
+        .getByRole("dialog", { name: action })
+        .getByRole("button", { name: `Back to ${tool}` })
+        .click();
+    }
+    const dialog = page.getByRole("dialog", { name: tool });
     await dialog.getByRole("button", { name: "Close" }).click();
     await expect(dialog).toBeHidden();
   }
+});
+
+test("Sounds inserts SFX, changes music, and adjusts mix", async ({ page }) => {
+  await page.getByRole("button", { name: "Sounds tool" }).click();
+  await page.getByRole("dialog", { name: "Sounds" }).getByRole("button", { name: "Add SFX" }).click();
+  await page.getByRole("dialog", { name: "Add SFX" }).getByRole("button", { name: "Whoosh" }).click();
+  await expect(page.locator("#qa-state")).toHaveAttribute("data-sfx", '["Whoosh"]');
+  await page.getByRole("button", { name: "Back to Sounds" }).click();
+
+  await page.getByRole("button", { name: "Change music" }).click();
+  await page.getByRole("button", { name: "Golden Hour" }).click();
+  await expect(page.locator("#qa-state")).toHaveAttribute("data-music-track", "Golden Hour");
+  await page.getByRole("button", { name: "Back to Sounds" }).click();
+
+  await page.getByRole("button", { name: "Adjust mix" }).click();
+  const slider = page.getByRole("slider", { name: "Music level" });
+  const historyBeforeMix = await qaNumber(page, "data-history-len");
+  await slider.focus();
+  await slider.press("ArrowLeft");
+  expect(await qaNumber(page, "data-music-gain")).toBe(69);
+  expect(await qaNumber(page, "data-history-len")).toBe(historyBeforeMix + 1);
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(page.locator("#qa-state")).toHaveAttribute("data-music-gain", "70");
+  await expect(page.locator("#qa-state")).toHaveAttribute(
+    "data-music-track",
+    "Golden Hour",
+  );
+});
+
+test("Captions edits copy, applies a style, and retranscribes", async ({ page }) => {
+  await page.getByRole("button", { name: "Captions tool" }).click();
+  await page.getByRole("button", { name: "Edit cue" }).click();
+  await page.getByRole("textbox", { name: "Caption cue text" }).fill("Meet me in Istanbul");
+  await expect(page.locator("#qa-state")).toHaveAttribute(
+    "data-caption",
+    "Meet me in Istanbul",
+  );
+  await page.getByRole("button", { name: "Back to Captions" }).click();
+  await page.getByRole("button", { name: "Style all" }).click();
+  await page.getByRole("button", { name: "Lime" }).click();
+  await expect(page.locator("#qa-state")).toHaveAttribute("data-caption-style", "Lime");
+  await page.getByRole("button", { name: "Back to Captions" }).click();
+  await page.getByRole("button", { name: "Retranscribe" }).click();
+  await page.getByRole("button", { name: "Retranscribe captions" }).click();
+  await expect(page.locator("#qa-state")).toHaveAttribute(
+    "data-caption-status",
+    "Retranscribed",
+  );
+  await page.getByRole("button", { name: "Done" }).click();
+  await expect(page.getByTestId("qa-caption-overlay")).toHaveText(
+    "Lisbon, Corfu, then Istanbul.",
+  );
+});
+
+test("Visuals, overlays, and styles create visible editable state", async ({ page }) => {
+  await page.getByRole("button", { name: "Visuals tool" }).click();
+  await page.getByRole("button", { name: "Add media" }).click();
+  await page.getByRole("button", { name: "Bridge photo" }).click();
+  await expect(page.locator("#qa-state")).toHaveAttribute("data-visuals", '["Bridge photo"]');
+  await page.getByRole("button", { name: "Back to Visuals" }).click();
+  await page.getByRole("button", { name: "Add montage" }).click();
+  await page.getByRole("button", { name: "Add 3-shot montage" }).click();
+  await expect(page.locator("#qa-state")).toHaveAttribute(
+    "data-visuals",
+    '["Bridge photo","3-shot montage"]',
+  );
+  await page.getByRole("button", { name: "Back to Visuals" }).click();
+  await page.getByRole("button", { name: "Add text card" }).click();
+  await page.getByRole("button", { name: "Add text card" }).click();
+  await expect(page.getByTestId("qa-text-overlay")).toHaveText(
+    "Three cities, one summer",
+  );
+  await page.getByRole("button", { name: "Close" }).click();
+
+  await page.getByRole("button", { name: "Overlays tool" }).click();
+  await page.getByRole("button", { name: "Upload overlay" }).click();
+  const historyBeforeUpload = await qaNumber(page, "data-history-len");
+  await page.getByLabel("Choose overlay file").setInputFiles({
+    name: "travel-badge.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("fixture-overlay"),
+  });
+  await expect(page.getByTestId("qa-media-overlay")).toHaveText(
+    "travel-badge.png",
+  );
+  expect(await qaNumber(page, "data-history-len")).toBe(
+    historyBeforeUpload + 1,
+  );
+  await page.getByRole("button", { name: "Use sample overlay" }).click();
+  await expect(page.getByTestId("qa-media-overlay")).toHaveText("Nova travel badge");
+  await page.getByRole("button", { name: "Back to Overlays" }).click();
+  await page.getByRole("button", { name: "Adjust timing" }).click();
+  const durationSlider = page.getByRole("slider", { name: "Overlay duration" });
+  await durationSlider.focus();
+  await durationSlider.press("Home");
+  await expect(page.locator("#qa-state")).toHaveAttribute(
+    "data-overlay",
+    /"durationS":0.5/,
+  );
+  await page.getByRole("button", { name: "Back to Overlays" }).click();
+  await page.getByRole("button", { name: "Position overlay" }).click();
+  await page.getByRole("button", { name: "Right" }).click();
+  await expect(page.locator("#qa-state")).toHaveAttribute(
+    "data-overlay",
+    /"position":"Right"/,
+  );
+  await page.getByRole("button", { name: "Close" }).click();
+
+  await page.getByRole("button", { name: "Styles tool" }).click();
+  await page.getByRole("button", { name: "Apply Look" }).click();
+  await page.getByRole("button", { name: "Film" }).click();
+  await expect(page.locator("#qa-state")).toHaveAttribute("data-look", "Film");
+  await page.getByRole("button", { name: "Back to Styles" }).click();
+  await page.getByRole("button", { name: "Adjust clip Look" }).click();
+  await page.getByRole("button", { name: "Warm" }).click();
+  await expect(page.locator("#qa-state")).toHaveAttribute("data-clip-look", "Warm");
+  await page.getByRole("button", { name: "Back to Styles" }).click();
+  await page.getByRole("button", { name: "Set transition" }).click();
+  await page.getByRole("button", { name: "Dissolve" }).click();
+  await expect(page.locator("#qa-state")).toHaveAttribute("data-transition", "Dissolve");
+});
+
+test("Kria review accepts an undoable proposed edit", async ({ page }) => {
+  const before = await qaData<QaWindow[]>(page, "data-windows");
+  await page.getByRole("button", { name: "Kria tool" }).click();
+  await page.getByRole("button", { name: "Review proposal" }).click();
+  await page.getByRole("button", { name: "Accept edit" }).click();
+  const after = await qaData<QaWindow[]>(page, "data-windows");
+  expect(after[0].durationS).toBeCloseTo(before[0].durationS - 0.2, 6);
+  await expect(page.locator("#qa-state")).toHaveAttribute("data-kria-status", "Proposal applied");
+  await page.getByRole("button", { name: "Undo" }).click();
+  expect(await qaData<QaWindow[]>(page, "data-windows")).toEqual(before);
+
+  await page.getByRole("button", { name: "Kria tool" }).click();
+  await page.getByRole("button", { name: "Reject edit" }).click();
+  await page.getByRole("button", { name: "Reject proposal" }).click();
+  await expect(page.locator("#qa-state")).toHaveAttribute(
+    "data-kria-status",
+    "Proposal rejected",
+  );
 });
 
 test("Delete preserves one clip and exposes the reason without removing focus", async ({ page }) => {
