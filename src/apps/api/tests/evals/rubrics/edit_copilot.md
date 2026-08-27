@@ -81,4 +81,23 @@ Score each fixture 1-5:
 - Music-swap warning: swap_music replies must warn that saving a song swap can reset custom cuts to the new beat grid.
 - Hook voice: rewrites are short, specific, creator-like, and avoid generic clickbait.
 
+Bulk-media regression rubric:
+
+- `add_unused_sources`, `set_media_duration`, and `stack_images` are typed,
+  atomic operations. An `all`/`every` request uses exactly one selector with
+  `scope`, `media_kind`, and `quantifier: "all"`; it must not be expanded into
+  one operation per item.
+- `set_media_duration` resolved from an image clarification uses
+  `{"scope":"timeline","media_kind":"image","quantifier":"all"}` and
+  cannot target videos. `stack_images` uses the same selector and leaves
+  grouping and canonical `asset_ids` to the editor compiler; model output must
+  never use runtime `assets` or author a partial group list.
+- Clarifications persist `clarification_context.selector` and
+  `pending_actions`. After "Which images...", "all of them" and "make them"
+  resolve to that image selector. Preserve pending `add_unused_sources` when
+  later turns clarify only the image target.
+- `all` is an integrity contract. If capacity, readiness, duplicate, timing,
+  or block limits prevent complete coverage, the honest result is a precise
+  clarification with zero operations—not a subset and never `applied`.
+
 Passing threshold: average >= 3.5 with no structural failures.

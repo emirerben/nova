@@ -184,6 +184,8 @@ export interface EditCopilotTurn {
   content: string;
   applied?: string[];
   rejected?: string[];
+  clarification_context?: Record<string, unknown> | null;
+  pending_actions?: Array<Record<string, unknown>>;
 }
 
 export interface EditCopilotTurnResponse {
@@ -197,6 +199,8 @@ export interface EditCopilotTurnResponse {
   suggestions: string[];
   needs_clarification: boolean;
   outcome?: CopilotOutcome;
+  clarification_context?: Record<string, unknown> | null;
+  pending_actions?: Array<Record<string, unknown>>;
   rejection_reasons?: Array<{
     op: string;
     reason: "unknown_operation" | "capability_unavailable" | "missing_required" | "invalid_value" | "stale_target";
@@ -206,6 +210,7 @@ export interface EditCopilotTurnResponse {
 
 export type EditCopilotExecutionOutcome =
   | "applied"
+  | "staged"
   | "no_effect"
   | "rejected"
   | "stale"
@@ -243,7 +248,7 @@ export function editCopilotTurn(
     `/plan-items/${itemId}/variants/${variantId}/copilot/turn`,
     {
       method: "POST",
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, client_contract_version: 2 }),
     },
   );
 }

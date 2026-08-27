@@ -63,6 +63,10 @@ export interface CopilotMessage {
    *  receipt rows, and never renders an Undo affordance (non-undoable
    *  contract — undoVersion is never set alongside this). */
   isRenderTurn?: boolean;
+  /** Structured referent captured by a clarification turn (for example,
+   * `images`), so a later “all of them” cannot drift to all clips. */
+  clarification_context?: Record<string, unknown> | null;
+  pending_actions?: Array<Record<string, unknown>>;
 }
 
 export interface QueuedCopilotMessage {
@@ -79,6 +83,11 @@ export interface UseEditCopilotOptions {
    * buildCopilotSnapshot's options — see snapshot.ts. */
   buildSnapshot: (context?: CopilotSnapshotContext) => CopilotSnapshot;
   applyOps: (
+    ops: CopilotOp[],
+    snapshot: CopilotSnapshot,
+  ) => ApplyCopilotOpsResult;
+  /** Bulk/Director edits are all-or-zero: the hook uses this when present. */
+  applyOpsAtomic?: (
     ops: CopilotOp[],
     snapshot: CopilotSnapshot,
   ) => ApplyCopilotOpsResult;
@@ -207,7 +216,7 @@ function executionOutcome(
 ): EditCopilotExecutionOutcome {
   if (response.outcome === "stale") return "stale";
   if (response.outcome === "failed") return "failed";
-  if (result.applied.length > 0) return "applied";
+  if (result.applied.length > 0) return "staged";
   if (result.rejected.length > 0 || response.outcome === "unsupported") return "rejected";
   return "no_effect";
 }
@@ -247,7 +256,7 @@ function executionReceiptBody(
     // Applied changes are still a local, unsaved draft at this point. Claiming
     // the old server revision as the after hash would be false; the eventual
     // saved artifact can link this receipt once it has a canonical hash.
-    after_revision_hash: outcome === "applied" ? null : beforeRevisionHash,
+    after_revision_hash: outcome === "staged" ? null : beforeRevisionHash,
   };
 }
 
@@ -361,7 +370,7 @@ export function outcomeAuthoritativeReply({
       ? explanation
       : truth;
   }
-  const appliedReceipt = `Applied: ${applied.join("; ")}.`;
+  const appliedReceipt = `Staged: ${applied.join("; ")}. Save to render the new video.`;
   return rejected.length > 0
     ? `${appliedReceipt}\n\nCouldn't apply: ${rejected.join("; ")}`
     : appliedReceipt;
@@ -379,6 +388,8 @@ export function messagesToCopilotTurns(
     ...(message.role === "assistant" && message.rejected?.length
       ? { rejected: message.rejected }
       : {}),
+    ...(message.clarification_context ? { clarification_context: message.clarification_context } : {}),
+    ...(message.pending_actions?.length ? { pending_actions: message.pending_actions } : {}),
   }));
 }
 
@@ -496,7 +507,7 @@ export function useEditCopilot(
         : response.needs_clarification;
       const applyResult = shouldClarify
         ? { textActions: [], nextSlots: null, applied: [], rejected: [] }
-        : optsRef.current.applyOps(response.ops, snapshot);
+      : (optsRef.current.applyOpsAtomic ?? optsRef.current.applyOps)(response.ops, snapshot);
       if (abandonedTurnsRef.current.has(turnId)) {
         abandonedTurnsRef.current.delete(turnId);
         return;
@@ -515,7 +526,7 @@ export function useEditCopilot(
           response.receipt_id,
           executionReceiptBody(response, applyResult, snapshot),
         );
-        if (applyMeta?.undoVersion != null && response.outcome === "applied") {
+        if (applyMeta?.undoVersion != null && (response.outcome === "proposed" || response.outcome === "staged" || response.outcome === "applied")) {
           optsRef.current.onReceiptStaged?.(response.receipt_id, applyMeta.undoVersion);
         }
       }
@@ -545,6 +556,8 @@ export function useEditCopilot(
           suggestions: response.suggestions,
           undoVersion: applyMeta?.undoVersion,
           isRenderTurn: applyMeta?.isRenderTurn,
+          clarification_context: response.clarification_context ?? null,
+          pending_actions: response.pending_actions ?? [],
         },
       ];
       messagesRef.current = nextMessages;

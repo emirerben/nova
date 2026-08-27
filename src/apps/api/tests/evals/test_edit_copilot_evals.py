@@ -28,6 +28,89 @@ def test_story_native_goldens_pin_the_current_prompt_version() -> None:
     )
 
 
+def _kria_fixture(name: str):
+    path = next(path for path in FIXTURE_PATHS if path.stem == name)
+    return load_fixture(path)
+
+
+def test_kria_bulk_followup_replays_typed_image_selector() -> None:
+    """The fourth turn must preserve the image referent and stay bulk/atomic."""
+    fixture = _kria_fixture("kria_bulk_followup_satisfiable")
+    result = run_eval(fixture)
+    assert result.passed, f"{result.fixture_id}: {result.summary()} {result.error}"
+    assert result.output is not None
+
+    ops = result.output["ops"]
+    assert {op["op"] for op in ops} == {
+        "add_unused_sources",
+        "set_media_duration",
+        "stack_images",
+    }
+    duration_ops = [op for op in ops if op["op"] == "set_media_duration"]
+    assert len(duration_ops) == 1
+    assert duration_ops[0]["selector"] == {
+        "scope": "timeline",
+        "media_kind": "image",
+        "quantifier": "all",
+    }
+    assert duration_ops[0]["duration_s"] == 0.2
+
+    stack = next(op for op in ops if op["op"] == "stack_images")
+    assert stack["selector"] == {
+        "scope": "timeline",
+        "media_kind": "image",
+        "quantifier": "all",
+    }
+    assert "groups" not in stack
+    assert "asset_ids" not in stack
+    assert "assets" not in stack
+
+    input_slots = fixture.input["variant_snapshot"]["slots"]
+    assert len(input_slots) == 17
+    assert sum(slot["media_kind"] == "video" for slot in input_slots) == 9
+    assert sum(slot["media_kind"] == "image" for slot in input_slots) == 8
+    video_durations = {
+        slot["index"]: slot["duration_s"] for slot in input_slots if slot["media_kind"] == "video"
+    }
+    assert video_durations  # the regression is specifically mixed media
+    assert all(
+        op.get("selector") != {"scope": "timeline", "media_kind": "video", "quantifier": "all"}
+        for op in duration_ops
+    )
+    pending = fixture.input["prior_turns"][-1]["pending_actions"]
+    assert {action["op"] for action in pending} == {
+        "add_unused_sources",
+        "stack_images",
+        "set_media_duration",
+    }
+
+
+def test_kria_bulk_followup_replays_honest_impossible_all() -> None:
+    """An unrepresentable all-source request must be a zero-op clarification."""
+    fixture = _kria_fixture("kria_bulk_followup_impossible_all")
+    assert fixture.input["variant_snapshot"]["motion"]["unused_ready_source_count"] > 100
+    clarification = fixture.input["prior_turns"][-1]
+    assert clarification["clarification_context"]["selector"] == {
+        "scope": "timeline",
+        "media_kind": "image",
+        "quantifier": "all",
+    }
+
+    result = run_eval(fixture)
+    assert result.passed, f"{result.fixture_id}: {result.summary()} {result.error}"
+    assert result.output is not None
+    assert result.output["ops"] == []
+    assert result.output["needs_clarification"] is True
+    assert result.output["outcome"] == "clarification"
+    assert "104" in result.output["reply"]
+    assert "33 additional" in result.output["reply"]
+    assert "10 Card Stacks" in result.output["reply"]
+    assert "eight-block limit" in result.output["reply"]
+    assert "Film Strip" in result.output["reply"]
+    assert "12-second" in result.output["reply"]
+    assert "8-second motion" in result.output["reply"]
+
+
 @pytest.mark.skipif(
     not FIXTURE_PATHS,
     reason=(

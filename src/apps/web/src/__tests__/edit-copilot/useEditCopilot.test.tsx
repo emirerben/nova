@@ -165,6 +165,16 @@ describe("messagesToCopilotTurns", () => {
       },
     ]);
   });
+
+  it("persists the image referent and pending bulk actions across clarification turns", () => {
+    const context = { referent: "images", selector: { scope: "timeline", media_kind: "image", quantifier: "all" } };
+    const pending = [{ op: "stack_images", selector: context.selector }, { op: "set_media_duration", selector: context.selector }];
+    expect(messagesToCopilotTurns([
+      { id: "a", role: "assistant", text: "Which images, and how short?", clarification_context: context, pending_actions: pending },
+    ])).toEqual([
+      { role: "assistant", content: "Which images, and how short?", clarification_context: context, pending_actions: pending },
+    ]);
+  });
 });
 
 describe("outcomeAuthoritativeReply", () => {
@@ -184,7 +194,7 @@ describe("outcomeAuthoritativeReply", () => {
       applied: ["Caption text replaced: Kriya → Kria · 14 matches in 12 lines"],
       rejected: ["Clip 2: changed since request"],
     })).toBe(
-      "Applied: Caption text replaced: Kriya → Kria · 14 matches in 12 lines.\n\nCouldn't apply: Clip 2: changed since request",
+      "Staged: Caption text replaced: Kriya → Kria · 14 matches in 12 lines. Save to render the new video.\n\nCouldn't apply: Clip 2: changed since request",
     );
   });
 
@@ -283,7 +293,7 @@ describe("useEditCopilot", () => {
     mockEditCopilotTurn.mockResolvedValueOnce(
       response({
         receipt_id: "proposal-receipt",
-        outcome: "applied",
+        outcome: "staged",
         reply: "Done",
       }),
     );
@@ -320,7 +330,7 @@ describe("useEditCopilot", () => {
       "variant-1",
       "proposal-receipt",
       expect.objectContaining({
-        outcome: "applied",
+        outcome: "staged",
         before_revision_hash: "state-before",
         after_revision_hash: null,
         rejection_reasons: [
@@ -328,7 +338,7 @@ describe("useEditCopilot", () => {
         ],
       }),
     );
-    expect(result.current.messages[1].text).toContain("Applied: Size");
+    expect(result.current.messages[1].text).toContain("Staged: Size");
   });
 
   it("stages the durable proposal only when the applied turn has an undo version", async () => {
@@ -798,6 +808,6 @@ describe("useEditCopilot", () => {
     const assistantMessage = result.current.messages[1];
     expect(assistantMessage.isRenderTurn).toBeUndefined();
     expect(assistantMessage.undoVersion).toBe(5);
-    expect(assistantMessage.text).toBe("Applied: Size: 64, now 54.");
+    expect(assistantMessage.text).toBe("Staged: Size: 64, now 54. Save to render the new video.");
   });
 });

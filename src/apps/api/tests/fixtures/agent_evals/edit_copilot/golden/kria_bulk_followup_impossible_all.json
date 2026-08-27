@@ -1,0 +1,76 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-08-27-v33",
+  "input": {
+    "utterance": "all of them and make them 0.2 seconds each",
+    "prior_turns": [
+      {"role": "user", "content": "Add all of the unsued clips as well. Stack multiple images together rather than splitting each between a video"},
+      {"role": "user", "content": "stack the images together and make the shorter"},
+      {"role": "assistant", "content": "Which images would you like to stack together, and how short should the duration be?", "clarification_context": {"referent": "images", "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"}}, "pending_actions": [{"op": "add_unused_sources"}, {"op": "stack_images"}, {"op": "set_media_duration"}]}
+    ],
+    "variant_snapshot": {
+      "allowed_op_families": ["motion", "clip"],
+      "total_duration_s": 24.033,
+      "source_pool_summary": {
+        "digest": "sp1-production-scale",
+        "total_count": 121,
+        "ready_unused_count": 104,
+        "ready_unused_by_kind": {"image": 52, "video": 52},
+        "selectors": {
+          "unused_sources:all": {"target_count": 104, "selection_digest": "sel1-unused-all"},
+          "unused_sources:image": {"target_count": 52, "selection_digest": "sel1-unused-images"},
+          "unused_sources:video": {"target_count": 52, "selection_digest": "sel1-unused-videos"}
+        }
+      },
+      "slots": [
+        {"index": 0, "media_kind": "video", "duration_s": 2.9},
+        {"index": 1, "id": "image_1", "media_kind": "image", "asset_id": "image_1", "duration_s": 1.2},
+        {"index": 2, "media_kind": "video", "duration_s": 2.1},
+        {"index": 3, "id": "image_2", "media_kind": "image", "asset_id": "image_2", "duration_s": 1.4},
+        {"index": 4, "media_kind": "video", "duration_s": 1.8},
+        {"index": 5, "id": "image_3", "media_kind": "image", "asset_id": "image_3", "duration_s": 1.1},
+        {"index": 6, "media_kind": "video", "duration_s": 2.5},
+        {"index": 7, "id": "image_4", "media_kind": "image", "asset_id": "image_4", "duration_s": 1.3},
+        {"index": 8, "media_kind": "video", "duration_s": 2.0},
+        {"index": 9, "id": "image_5", "media_kind": "image", "asset_id": "image_5", "duration_s": 1.0},
+        {"index": 10, "media_kind": "video", "duration_s": 1.7},
+        {"index": 11, "id": "image_6", "media_kind": "image", "asset_id": "image_6", "duration_s": 1.1},
+        {"index": 12, "media_kind": "video", "duration_s": 2.3},
+        {"index": 13, "id": "image_7", "media_kind": "image", "asset_id": "image_7", "duration_s": 1.2},
+        {"index": 14, "media_kind": "video", "duration_s": 2.2},
+        {"index": 15, "id": "image_8", "media_kind": "image", "asset_id": "image_8", "duration_s": 1.1},
+        {"index": 16, "media_kind": "video", "duration_s": 2.6}
+      ],
+      "motion": {
+        "available": true,
+        "limits": {"max_blocks": 8, "max_active_union_s": 8, "max_card_stack_assets": 6, "max_film_strip_assets": 8},
+        "catalog": [
+          {"preset_id": "card_stack", "label": "Card Stack", "kind": "media", "min_assets": 2, "max_assets": 6},
+          {"preset_id": "film_strip", "label": "Film Strip", "kind": "media", "min_assets": 3, "max_assets": 8}
+        ],
+        "blocks": [],
+        "asset_pool": [{"id": "image_1", "kind": "image", "status": "ready"}, {"id": "image_2", "kind": "image", "status": "ready"}, {"id": "image_3", "kind": "image", "status": "ready"}, {"id": "image_4", "kind": "image", "status": "ready"}, {"id": "image_5", "kind": "image", "status": "ready"}, {"id": "image_6", "kind": "image", "status": "ready"}, {"id": "image_7", "kind": "image", "status": "ready"}, {"id": "image_8", "kind": "image", "status": "ready"}],
+        "unused_ready_source_count": 104,
+        "unused_ready_source_ids": ["unused_001", "unused_002", "unused_003", "unused_004", "unused_005", "unused_006", "unused_007", "unused_008"]
+      }
+    }
+  },
+  "raw_text": "{\"intent\":\"clarify\",\"ops\":[],\"confidence\":0.99,\"reply\":\"The current 17-slot edit leaves room for only 33 additional slots under the 50-slot Save limit, but all 104 ready unused sources were requested. The resulting 60 images would also require 10 Card Stacks at six images each, exceeding the eight-block limit. Film Strip would use eight blocks, but its 12-second active span also exceeds the 8-second motion budget, so it does not solve this request. Choose a media kind and count of at most 33 while retaining the current edit, or remove existing content first.\",\"suggestions\":[\"Choose media kind and count\",\"Remove existing content\"],\"needs_clarification\":true,\"clarification_context\":{\"referent\":\"images\",\"selector\":{\"scope\":\"timeline\",\"media_kind\":\"image\",\"quantifier\":\"all\"}},\"pending_actions\":[{\"op\":\"add_unused_sources\"},{\"op\":\"stack_images\"},{\"op\":\"set_media_duration\"}]}",
+  "output": {
+    "intent": "clarify",
+    "ops": [],
+    "confidence": 0.99,
+    "reply": "The current 17-slot edit leaves room for only 33 additional slots under the 50-slot Save limit, but all 104 ready unused sources were requested. The resulting 60 images would also require 10 Card Stacks at six images each, exceeding the eight-block limit. Film Strip would use eight blocks, but its 12-second active span also exceeds the 8-second motion budget, so it does not solve this request. Choose a media kind and count of at most 33 while retaining the current edit, or remove existing content first.",
+    "suggestions": ["Choose media kind and count", "Remove existing content"],
+    "needs_clarification": true,
+    "clarification_context": {"referent": "images", "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"}},
+    "pending_actions": [{"op": "add_unused_sources"}, {"op": "stack_images"}, {"op": "set_media_duration"}],
+    "outcome": "clarification",
+    "rejection_reasons": []
+  },
+  "meta": {
+    "source": "hand_authored_regression",
+    "case": "exact Kria four-turn mixed-media follow-up with impossible all-source capacity",
+    "assertions": {"zero_partial_mutations": true, "honest_constraint_clarification": true, "unused_source_count": 104, "videos_unchanged": true}
+  }
+}

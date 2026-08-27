@@ -45,6 +45,21 @@ describe("editor return signal", () => {
     expect(parsed?.priorFinishedAt).toBeNull();
   });
 
+  it("carries the staged timeline duration into render verification", () => {
+    const href = buildPlanItemEditorReturnHref("item-1", {
+      variantId: "song_text",
+      generation: "gen-124",
+      priorFinishedAt: null,
+      renderStarted: true,
+      expectedDurationS: 10.6,
+      revisionHash: "rev-124",
+    });
+    const parsed = parsePlanItemEditorReturnSignal(new URLSearchParams(href.split("?")[1]));
+    expect(parsed?.expectedDurationS).toBe(10.6);
+    expect(parsed?.revisionHash).toBe("rev-124");
+    expect(parsed?.key).toContain(":10.6");
+  });
+
   it("strips only editor return params and preserves other params", () => {
     expect(
       stripPlanItemEditorReturnParams(

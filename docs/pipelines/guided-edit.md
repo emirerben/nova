@@ -377,7 +377,8 @@ remains authorized but is not required in the output. Photos and videos become s
 or supporting-card moments. The downloaded bytes stay untouched for the source receipt; every photo
 is separately decoded, EXIF-corrected, and normalized to a render-safe JPEG or alpha-preserving PNG
 before FFmpeg applies its still-image loop. This is required for HEIC/HEIF, whose dedicated FFmpeg
-demuxer rejects the image2-only loop option. Photos receive a subtle zoom, relaxed/balanced story directions use
+demuxer rejects the image2-only loop option. Photos hold as static frames by default; an explicit
+image-motion treatment may opt a pinned edit into motion. Relaxed/balanced story directions use
 duration-compensated crossfades, and fast montages use hard cuts. Video source audio is muted and the
 finished base receives either the pinned track or silent stereo AAC. The approved title and thoughts
 become editable TextElements on a clean text-free base. New plans use Fraunces for titles and DM Sans
@@ -444,6 +445,15 @@ not stretch or loop; images are timed stills; all segments normalize to 30 fps; 
 overlap is capped by the smaller of the requested duration, 0.3 seconds, or 30 percent of either
 neighbor. The approved source pool is revalidated against owned, ready media records and exact
 storage generations on Save and render. New uploads require a new approval.
+
+Copilot bulk edits use typed all-selectors instead of one operation per media item. The
+`add_unused_sources` operation targets ready unused uploads, `set_media_duration` targets all
+timeline images, videos, or clips, and `stack_images` groups all selected timeline images into
+valid Card Stack or Film Strip windows. The editor resolves the complete selection, validates
+source readiness, duplicate protection, slot/duration/motion limits, and revision digests before
+staging the bundle; any conflict rejects the whole bundle with no partial mutation. The timeline
+shows the staged result immediately, while Save renders the committed revision and verifies its
+receipt against the staged duration and revision hash.
 
 Timed text, SFX, media overlays, visual blocks, and motion blocks are projected from stable segment
 anchors into the revised output clock. Fully removed intervals become persisted, restorable

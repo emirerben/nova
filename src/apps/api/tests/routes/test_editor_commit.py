@@ -444,6 +444,9 @@ def test_guided_v2_conventional_save_projects_timeline_audio_and_orientation(mon
     assert revision["audio"]["end_s"] == pytest.approx(12.0)
     assert revision["segments"][0]["transition_after"] == "dip_to_black"
     assert revision["revision_number"] == 2
+    assert prep["expected_duration_s"] == pytest.approx(
+        max(segment["output_end_s"] for segment in revision["segments"])
+    )
 
 
 def test_guided_timeline_response_preserves_source_pool_and_tombstones() -> None:

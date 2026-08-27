@@ -1738,6 +1738,11 @@ def check_edit_copilot(output: Any) -> list[str]:
         "add_motion_block",
         "patch_motion_block",
         "remove_motion_block",
+        # Typed bulk media operations.  These replace per-item enumeration for
+        # all/every requests and are intentionally counted as one top-level op.
+        "add_unused_sources",
+        "set_media_duration",
+        "stack_images",
         "undo_last_edit",
         "repeat_last_edit",
     }
@@ -1751,6 +1756,7 @@ def check_edit_copilot(output: Any) -> list[str]:
         failures.append("reply is empty")
     valid_outcomes = {
         "applied",
+        "proposed",
         "clarification",
         "no_effect",
         "unsupported",
@@ -1759,11 +1765,17 @@ def check_edit_copilot(output: Any) -> list[str]:
     }
     if output.outcome not in valid_outcomes:
         failures.append(f"outcome={output.outcome!r} is not a stable Copilot outcome")
-    if output.outcome == "applied" and not output.ops:
-        failures.append("outcome='applied' must carry at least one valid op")
+    if output.outcome in {"applied", "proposed"} and not output.ops:
+        failures.append(f"outcome={output.outcome!r} must carry at least one valid op")
     if len(output.suggestions) > 5:
         failures.append(f"suggestions has {len(output.suggestions)} items (max 5)")
-    ordinary_op_count = sum(op.get("op") != "replace_caption_text" for op in output.ops)
+    atomic_ops = {
+        "replace_caption_text",
+        "add_unused_sources",
+        "set_media_duration",
+        "stack_images",
+    }
+    ordinary_op_count = sum(op.get("op") not in atomic_ops for op in output.ops)
     bulk_caption_op_count = sum(op.get("op") == "replace_caption_text" for op in output.ops)
     if ordinary_op_count > _EDIT_COPILOT_MAX_OPS:
         failures.append(f"ops has {ordinary_op_count} ordinary items (max {_EDIT_COPILOT_MAX_OPS})")
@@ -1771,6 +1783,97 @@ def check_edit_copilot(output: Any) -> list[str]:
         failures.append("ops has more than one replace_caption_text item (max 1)")
     if output.needs_clarification and output.ops:
         failures.append("needs_clarification=true must return ops=[]")
+
+    # Bulk operations must remain typed and atomic.  Keep these checks in the
+    # eval floor so a cassette cannot silently regress to scalar enumeration or
+    # the runtime-only ``assets`` spelling before the application path sees it.
+    for idx, op in enumerate(output.ops):
+        if not isinstance(op, dict):
+            continue
+        name = op.get("op")
+        if name in {"set_media_duration", "stack_images"}:
+            selector = op.get("selector")
+            if selector is None:
+                failures.append(f"op {idx}: {name} requires a typed selector")
+            elif not isinstance(selector, dict):
+                failures.append(f"op {idx}: {name} selector must be a typed object")
+            else:
+                expected_scope = "timeline"
+                if selector.get("scope") != expected_scope:
+                    failures.append(
+                        f"op {idx}: {name} selector scope must be timeline, "
+                        f"got {selector.get('scope')!r}"
+                    )
+                if selector.get("media_kind") not in {"image", "video", "all"}:
+                    failures.append(
+                        f"op {idx}: {name} selector media_kind must be image/video/all, "
+                        f"got {selector.get('media_kind')!r}"
+                    )
+                if selector.get("quantifier") != "all":
+                    failures.append(
+                        f"op {idx}: {name} selector quantifier must be all, "
+                        f"got {selector.get('quantifier')!r}"
+                    )
+        if name == "set_media_duration":
+            duration_s = op.get("duration_s")
+            if not isinstance(duration_s, (int, float)) or duration_s <= 0:
+                failures.append(f"op {idx}: set_media_duration duration_s must be positive")
+        if name == "stack_images":
+            if "assets" in op or "assets" in (op.get("params") or {}):
+                failures.append(f"op {idx}: stack_images must use compiler asset_ids, not assets")
+            if "groups" in op or "asset_ids" in op or "asset_ids" in (op.get("params") or {}):
+                failures.append(
+                    f"op {idx}: stack_images selector must not author groups or asset IDs"
+                )
+        if name == "add_unused_sources":
+            selector = op.get("selector")
+            if not isinstance(selector, dict):
+                failures.append(f"op {idx}: add_unused_sources requires a typed source selector")
+            else:
+                if selector.get("scope") != "unused_sources":
+                    failures.append(
+                        f"op {idx}: add_unused_sources selector scope must be unused_sources"
+                    )
+                if selector.get("media_kind") != "all":
+                    failures.append(f"op {idx}: add_unused_sources selector media_kind must be all")
+                if selector.get("quantifier") != "all":
+                    failures.append(f"op {idx}: add_unused_sources selector quantifier must be all")
+
+    # A model/runtime adapter may surface completeness explicitly.  A false
+    # completeness bit is never compatible with ``applied``; this catches the
+    # old “first 12 survived, remainder was dropped” outcome without coupling
+    # the validator to one particular schema spelling.
+    if output.outcome in {"applied", "proposed"}:
+        for field_name in ("coverage_complete", "all_targets_covered", "integrity_complete"):
+            if getattr(output, field_name, True) is False:
+                failures.append(f"outcome={output.outcome!r} cannot claim incomplete {field_name}")
+        rejection_reasons = getattr(output, "rejection_reasons", []) or []
+        if any("partial" in str(reason).casefold() for reason in rejection_reasons):
+            failures.append(
+                f"outcome={output.outcome!r} cannot carry a partial-fulfillment rejection"
+            )
+
+    clarification_context = getattr(output, "clarification_context", None)
+    if clarification_context is not None:
+        if not isinstance(clarification_context, dict):
+            failures.append("clarification_context must be an object when present")
+        else:
+            selector = clarification_context.get("selector")
+            if not isinstance(selector, dict):
+                failures.append("clarification_context.selector must be a typed object")
+            elif (
+                selector.get("scope") not in {"timeline", "unused_sources"}
+                or selector.get("media_kind") not in {"image", "video", "all"}
+                or selector.get("quantifier") != "all"
+                or "kind" in selector
+            ):
+                failures.append(
+                    "clarification_context.selector must use the canonical "
+                    "scope/media_kind/quantifier contract"
+                )
+    pending_actions = getattr(output, "pending_actions", None)
+    if pending_actions is not None and not isinstance(pending_actions, list):
+        failures.append("pending_actions must be a list when present")
 
     for idx, op in enumerate(output.ops):
         name = op.get("op") if isinstance(op, dict) else None

@@ -19,7 +19,7 @@ from app.models import EditInteractionReceipt
 from app.routes._copilot import CopilotTurnBody, CopilotTurnResponse
 from app.services.training_eligibility import evaluate_training_eligibility_async
 
-ExecutionOutcome = Literal["applied", "no_effect", "rejected", "stale", "failed"]
+ExecutionOutcome = Literal["applied", "staged", "no_effect", "rejected", "stale", "failed"]
 
 
 class ExecutionRejectionReason(BaseModel):
@@ -267,11 +267,11 @@ async def stage_copilot_save_links(
     variant_id: str,
     revision_hash: str,
 ) -> int:
-    """Append conservative links from applied Copilot turns to one atomic Save.
+    """Append conservative links from staged Copilot turns to one atomic Save.
 
     The browser sends only the latest turn whose undo token still equals the
     editor's live history version. We additionally require its execution event
-    to have arrived with ``applied``. Missing/raced audit evidence is skipped;
+    to have arrived with ``staged``. Missing/raced audit evidence is skipped;
     Save correctness never depends on training telemetry.
     """
     if not proposal_ids or not revision_hash:
@@ -286,7 +286,7 @@ async def stage_copilot_save_links(
                     EditInteractionReceipt.plan_item_id == plan_item_id,
                     EditInteractionReceipt.job_id == job_id,
                     EditInteractionReceipt.variant_id == variant_id,
-                    EditInteractionReceipt.proposal_outcome == "applied",
+                    EditInteractionReceipt.proposal_outcome.in_(("proposed", "applied")),
                 )
             )
         )
@@ -301,7 +301,7 @@ async def stage_copilot_save_links(
                 .where(
                     EditInteractionReceipt.proposal_receipt_id == proposal.id,
                     EditInteractionReceipt.event_kind == "execution",
-                    EditInteractionReceipt.execution_outcome == "applied",
+                    EditInteractionReceipt.execution_outcome.in_(("staged", "applied")),
                 )
                 .order_by(EditInteractionReceipt.created_at.desc())
                 .limit(1)

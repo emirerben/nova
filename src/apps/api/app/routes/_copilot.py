@@ -33,6 +33,10 @@ class CopilotTurnBody(BaseModel):
     message: str = Field(default="", max_length=2000)
     turns: list[dict] = Field(default_factory=list, max_length=12)
     snapshot: dict = Field(default_factory=dict)
+    # Contract v2 distinguishes a server proposal from a locally staged edit.
+    # Default to v1 so an already-open pre-v2 browser remains compatible while
+    # frontend and API deploy independently.
+    client_contract_version: int = Field(default=1, ge=1, le=2)
 
     @field_validator("message", mode="before")
     @classmethod
@@ -53,10 +57,12 @@ class CopilotTurnResponse(BaseModel):
     needs_clarification: bool = False
     outcome: CopilotOutcome = "no_effect"
     rejection_reasons: list[dict[str, str]] = []
+    clarification_context: dict | None = None
+    pending_actions: list[dict] = []
 
 
 _SUCCESS_WORDS = re.compile(
-    r"\b(done|stored|changed|updated|applied|edited|trimmed|removed|swapped|made|set)\b",
+    r"\b(done|stored|changed|updated|applied|staged|edited|trimmed|removed|swapped|made|set)\b",
     re.IGNORECASE,
 )
 _NEGATED_SUCCESS = re.compile(
@@ -69,11 +75,19 @@ def _claims_success(reply: str) -> bool:
     return bool(_SUCCESS_WORDS.search(reply) and not _NEGATED_SUCCESS.search(reply))
 
 
-def _honest_outcome(output: EditCopilotOutput, ops: list[dict]) -> tuple[CopilotOutcome, str]:
+def _honest_outcome(
+    output: EditCopilotOutput,
+    ops: list[dict],
+    *,
+    supports_proposed: bool = True,
+) -> tuple[CopilotOutcome, str]:
     """Derive a stable outcome and prevent success prose for empty edits."""
     reasons = output.rejection_reasons
     if ops:
-        outcome = "applied"
+        # This endpoint only proposes operations. The browser reports
+        # ``staged`` after its atomic validator/applier succeeds, and Save
+        # later links that receipt to the committed revision as ``applied``.
+        outcome = "proposed" if supports_proposed else "applied"
     elif any(item.get("reason") == "stale_target" for item in reasons):
         outcome = "stale"
     elif output.intent == "reject" or any(
@@ -88,7 +102,13 @@ def _honest_outcome(output: EditCopilotOutput, ops: list[dict]) -> tuple[Copilot
         outcome = "no_effect"
 
     reply = output.reply.strip()
+    if outcome == "proposed":
+        if reply and not _claims_success(reply):
+            return outcome, reply
+        return outcome, "I prepared this edit for the editor to validate and stage."
     if outcome == "applied":
+        # Compatibility response for pre-v2 browser bundles during a split
+        # deploy. Those clients own the historical local-apply wording.
         return outcome, reply
     if outcome == "clarification":
         if reply and not _claims_success(reply):
@@ -157,7 +177,11 @@ async def run_copilot_turn(
     # intent="reject"/"describe"/"clarify" WITH ops must not have them applied
     # while the reply text says nothing was done (adversarial review F5).
     ops = [] if (output.needs_clarification or output.intent != "edit") else output.ops
-    outcome, reply = _honest_outcome(output, ops)
+    outcome, reply = _honest_outcome(
+        output,
+        ops,
+        supports_proposed=body.client_contract_version >= 2,
+    )
     return CopilotTurnResponse(
         intent=output.intent,
         ops=ops,
@@ -167,4 +191,8 @@ async def run_copilot_turn(
         needs_clarification=outcome == "clarification",
         outcome=outcome,
         rejection_reasons=output.rejection_reasons,
+        clarification_context=(
+            output.clarification_context if outcome == "clarification" else None
+        ),
+        pending_actions=(output.pending_actions if outcome == "clarification" else []),
     )

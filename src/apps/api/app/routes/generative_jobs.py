@@ -1048,6 +1048,7 @@ class EditorCommitResponse(BaseModel):
     sections: EditorCommitSections
     revision_number: int | None = None
     revision_hash: str | None = None
+    expected_duration_s: float | None = Field(default=None, ge=0)
 
 
 def _is_generated_effect_source(value: object) -> bool:
@@ -8218,6 +8219,20 @@ def prepare_editor_commit(
         break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
 
+    if guided_revision is not None:
+        expected_duration_s = max(
+            float(
+                segment.get("output_end_s")
+                or float(segment.get("output_start_s") or 0.0)
+                + float(segment.get("duration_s") or 0.0)
+            )
+            for segment in guided_revision.get("segments") or []
+        )
+    elif resolved_slots is not None:
+        expected_duration_s = _active_timeline_duration_s(resolved_slots)
+    else:
+        expected_duration_s = float(updated.get("duration_s") or variant.get("duration_s") or 0.0)
+
     return {
         "generation": new_gen or payload.base_generation,
         "guided_revision": guided_revision if guided_v2 else None,
@@ -8227,6 +8242,7 @@ def prepare_editor_commit(
             if guided_v2 and guided_revision is not None
             else None
         ),
+        "expected_duration_s": round(expected_duration_s, 6),
         "has_render_section": has_render_section,
         "timeline_override": (
             frozen_music_slots

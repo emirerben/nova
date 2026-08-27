@@ -30,6 +30,10 @@ base and reapply motion before their text layer.
   ready image pool. Save and export revalidate ownership, exact path, status,
   image kind, dimensions, and storage prefix; URLs and video assets are never
   accepted as scene parameters.
+- Copilot-facing catalog defaults and parameters use canonical `asset_ids`. The
+  editor/runtime adapter resolves those IDs to the validated `{asset_id,
+  gcs_path}` pairs above; runtime-only `assets` conversion stays behind that
+  adapter and is not part of the Creator Block contract.
 - Raw SVG, arbitrary paths, shader source, scripts, and user-authored scene
   graphs are not accepted. Trusted SVG assets are compiled into immutable path
   data in `src/packages/motion-runtime/src/presets.ts`.

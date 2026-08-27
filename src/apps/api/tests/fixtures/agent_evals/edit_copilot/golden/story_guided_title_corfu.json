@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-08-23-v30",
+  "prompt_version": "2026-08-27-v33",
   "input": {
     "utterance": "change the title to 'corfu'",
     "prior_turns": [],
@@ -21,7 +21,7 @@
     "reply": "I changed the title to corfu.",
     "suggestions": [],
     "needs_clarification": false,
-    "outcome": "applied",
+    "outcome": "proposed",
     "rejection_reasons": []
   },
   "meta": {"source": "redacted_production_regression", "case": "semantic guided title alias"}

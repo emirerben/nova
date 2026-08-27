@@ -409,7 +409,7 @@
       },
       "parameters": [
         {
-          "key": "assets",
+          "key": "asset_ids",
           "type": "asset_list",
           "required": true,
           "min_items": 2,
@@ -461,7 +461,7 @@
         }
       ],
       "defaults": {
-        "assets": []
+        "asset_ids": []
       },
       "motion_defaults": {
         "speed": 1,
@@ -483,7 +483,7 @@
       },
       "parameters": [
         {
-          "key": "assets",
+          "key": "asset_ids",
           "type": "asset_list",
           "required": true,
           "min_items": 3,
@@ -535,7 +535,7 @@
         }
       ],
       "defaults": {
-        "assets": []
+        "asset_ids": []
       },
       "motion_defaults": {
         "speed": 1,

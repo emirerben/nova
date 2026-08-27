@@ -35,6 +35,69 @@ function slot(over: Partial<DraftSlot> = {}): DraftSlot {
 }
 
 describe("buildCopilotSnapshot", () => {
+  it("keeps the complete source pool client-side while exposing only safe aggregate integrity metadata", () => {
+    const sourcePool = [
+      { clip_index: 0, media_id: "video-0", kind: "video" as const, generation: "g1", duration_s: 5, used: true, status: "ready" },
+      { clip_index: 1, media_id: "image-1", kind: "image" as const, generation: "g1", duration_s: 2, used: false, status: "ready" },
+    ];
+    const snapshot = buildCopilotSnapshot(
+      [],
+      [slot()],
+      sourcePool,
+      { text_elements: true, timeline: true, motion_scenes: true },
+      [],
+      { sourcePool, motionScenesEnabled: true },
+    );
+    expect(snapshot.source_pool).toBeUndefined();
+    expect(snapshot.source_pool_summary?.total_count).toBe(2);
+    expect(snapshot.source_pool_summary?.ready_unused_count).toBe(1);
+    expect(snapshot.source_pool_summary?.selectors["timeline:video"].target_count).toBe(1);
+    expect(snapshot.source_pool_summary?.selectors["unused_sources:image"].target_count).toBe(1);
+    expect(JSON.stringify(snapshot)).not.toContain("gcs_path");
+    expect(snapshot.motion?.catalog.find((entry) => entry.preset_id === "card_stack")?.parameters.some((parameter) => parameter.key === "asset_ids")).toBe(true);
+    expect(snapshot.motion?.catalog.find((entry) => entry.preset_id === "card_stack")?.parameters.some((parameter) => parameter.key === "assets")).toBe(false);
+  });
+
+  it("summarizes a 100-plus source pool without leaking or truncating its catalog", () => {
+    const sourcePool = Array.from({ length: 121 }, (_, index) => ({
+      clip_index: index,
+      media_id: `media-${index}`,
+      kind: (index % 2 ? "image" : "video") as "image" | "video",
+      generation: "g1",
+      duration_s: 2,
+      used: index < 17,
+      status: "ready",
+    }));
+    const activeSlots = Array.from({ length: 17 }, (_, index) => slot({
+      key: `slot-${index}`,
+      slotId: `slot-${index}`,
+      clipIndex: index,
+    }));
+    const snapshot = buildCopilotSnapshot([], activeSlots, sourcePool, { text_elements: true, timeline: true }, [], { sourcePool });
+    expect(snapshot.source_pool).toBeUndefined();
+    expect(snapshot.source_pool_summary?.total_count).toBe(121);
+    expect(snapshot.source_pool_summary?.ready_unused_count).toBe(104);
+    expect(JSON.stringify(snapshot).length).toBeLessThanOrEqual(COPILOT_SNAPSHOT_MAX_BYTES);
+  });
+
+  it("uses the live staged timeline rather than the persisted source used bit", () => {
+    const sourcePool = [
+      { clip_index: 0, media_id: "staged", kind: "image" as const, generation: "g1", used: false, status: "ready" },
+      { clip_index: 1, media_id: "removed", kind: "image" as const, generation: "g1", used: true, status: "ready" },
+    ];
+    const snapshot = buildCopilotSnapshot(
+      [],
+      [slot({ clipIndex: 0 })],
+      sourcePool,
+      { text_elements: true, timeline: true },
+      [],
+      { sourcePool },
+    );
+    expect(snapshot.source_pool_summary?.ready_unused_count).toBe(1);
+    expect(snapshot.source_pool_summary?.selectors["timeline:image"].target_count).toBe(1);
+    expect(snapshot.source_pool_summary?.selectors["unused_sources:image"].target_count).toBe(1);
+  });
+
   it("excludes narrated captions but preserves the flag", () => {
     const snapshot = buildCopilotSnapshot(
       [
