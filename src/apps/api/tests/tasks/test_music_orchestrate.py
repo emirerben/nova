@@ -20,6 +20,26 @@ TRACK_ID = "test-track-id-0001"
 JOB_ID = str(uuid.uuid4())
 
 
+def test_video_poster_upload_failure_is_fail_open(monkeypatch):
+    import app.tasks.music_orchestrate as task
+
+    monkeypatch.setattr(
+        task,
+        "upload_video_poster",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("poster unavailable")),
+    )
+
+    assert (
+        task._try_upload_video_poster(
+            "/tmp/output.mp4",
+            "music-jobs/job/output.mp4",
+            job_id=JOB_ID,
+            source_kind="music_output",
+        )
+        is None
+    )
+
+
 # ── analyze_music_track_task ──────────────────────────────────────────────────
 
 

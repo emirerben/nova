@@ -40,6 +40,10 @@ export interface LibraryJob {
   /** Lowest-rank failed variant category when no output was produced. */
   error_class?: string | null;
   output_url: string | null;
+  /** Fresh-signed JPEG poster for the selected playable object, when backfilled. */
+  poster_url?: string | null;
+  /** Stable render identity so an in-place reburn cannot keep a stale poster. */
+  poster_identity?: string | null;
   /** Fresh attachment-signed URL when the job retains its owned GCS path. */
   download_url?: string | null;
   output_variant_id: string | null;

@@ -105,9 +105,15 @@ export interface GenerativeVariant {
   music_preview_start_s?: number | null;
   style_set_id: string | null;
   output_url: string | null;
+  poster_path?: string | null;
+  poster_url?: string | null;
   /** Attachment-signed URL for native, streaming download (never used by video playback). */
   download_url?: string | null;
   video_path: string | null;
+  base_poster_path?: string | null;
+  base_poster_url?: string | null;
+  pre_overlay_poster_path?: string | null;
+  pre_overlay_poster_url?: string | null;
   render_status: "ready" | "rendering" | "failed" | null;
   ok: boolean;
   error: string | null;

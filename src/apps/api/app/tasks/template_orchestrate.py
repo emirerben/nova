@@ -101,11 +101,11 @@ from app.services.job_phases import (
 )
 from app.services.template_poster import (
     PosterExtractionError,
+    poster_object_path,
+    upload_video_poster,
 )
-from app.services.template_poster import (
-    generate_and_upload as generate_poster,
-)
-from app.storage import copy_object_signed_url, download_to_file, upload_public_read
+from app.services.template_poster import generate_and_upload as generate_poster
+from app.storage import copy_object, copy_object_signed_url, download_to_file, upload_public_read
 from app.tasks._job_cancel_fence import (
     active_job_for_update,
     delete_task_owned_outputs,
@@ -114,6 +114,29 @@ from app.tasks._job_cancel_fence import (
 from app.worker import celery_app
 
 log = structlog.get_logger()
+
+
+def _try_upload_video_poster(
+    local_video_path: str,
+    video_object_path: str,
+    *,
+    job_id: str,
+    source_kind: str,
+) -> str | None:
+    """Poster generation is fail-open for an otherwise valid render."""
+    try:
+        return upload_video_poster(local_video_path, video_object_path)
+    except Exception as exc:  # noqa: BLE001 - poster is a derived asset
+        log.warning(
+            "video_poster_upload_failed",
+            job_id=job_id,
+            source_kind=source_kind,
+            video_path=video_object_path,
+            error_class=type(exc).__name__,
+            error=str(exc)[:300],
+        )
+        return None
+
 
 # Consolidated label configuration — all visual tuning for text overlays.
 # Gemini doesn't return text_size/font_style/text_color reliably,
@@ -1380,6 +1403,19 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         except Exception:
             delete_task_owned_outputs(job_id, [gcs_output_path, gcs_base_path])
             raise
+        poster_path = _try_upload_video_poster(
+            output_path,
+            gcs_output_path,
+            job_id=job_id,
+            source_kind="template_output",
+        )
+        base_poster_path = _try_upload_video_poster(
+            base_path,
+            gcs_base_path,
+            job_id=job_id,
+            source_kind="template_base",
+        )
+        created_outputs.extend(path for path in (poster_path, base_poster_path) if path)
 
         record_phase(
             job_id,
@@ -1404,7 +1440,9 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
                         **plan_data,
                         "output_url": video_url,
                         "output_path": gcs_output_path,
+                        "poster_path": poster_path,
                         "base_output_url": base_video_url,
+                        "base_poster_path": base_poster_path,
                         "platform_copy": platform_copy.model_dump(),
                         "copy_status": copy_status,
                     }
@@ -1621,6 +1659,19 @@ def _run_rerender(
         except Exception:
             delete_task_owned_outputs(job_id, [gcs_output_path, gcs_base_path])
             raise
+        poster_path = _try_upload_video_poster(
+            output_path,
+            gcs_output_path,
+            job_id=job_id,
+            source_kind="template_rerender_output",
+        )
+        base_poster_path = _try_upload_video_poster(
+            base_path,
+            gcs_base_path,
+            job_id=job_id,
+            source_kind="template_rerender_base",
+        )
+        created_outputs.extend(path for path in (poster_path, base_poster_path) if path)
 
         # Finalize — keep locked steps plus output metadata
         finalized = False
@@ -1637,7 +1688,9 @@ def _run_rerender(
                         **plan,
                         "output_url": video_url,
                         "output_path": gcs_output_path,
+                        "poster_path": poster_path,
                         "base_output_url": base_video_url,
+                        "base_poster_path": base_poster_path,
                         "platform_copy": platform_copy.model_dump(),
                         "copy_status": copy_status,
                     }
@@ -7256,6 +7309,32 @@ def _run_single_video_job(
             except Exception:
                 delete_task_owned_outputs(job_id, [gcs_output_path, gcs_base_path])
                 raise
+        poster_path = _try_upload_video_poster(
+            final_path,
+            gcs_output_path,
+            job_id=job_id,
+            source_kind="single_video_output",
+        )
+        base_poster_path = poster_object_path(gcs_base_path) if poster_path else None
+        if poster_path and base_poster_path:
+            try:
+                copy_object(poster_path, base_poster_path)
+            except Exception as exc:  # noqa: BLE001 — poster remains fail-open
+                log.warning(
+                    "video_base_poster_copy_failed",
+                    job_id=job_id,
+                    source_kind="single_video_base",
+                    poster_path=base_poster_path,
+                    error_class=type(exc).__name__,
+                    error=str(exc)[:300],
+                )
+                base_poster_path = _try_upload_video_poster(
+                    final_path,
+                    gcs_base_path,
+                    job_id=job_id,
+                    source_kind="single_video_base",
+                )
+        created_outputs.extend(path for path in (poster_path, base_poster_path) if path)
 
         record_phase(
             job_id,
@@ -7316,7 +7395,9 @@ def _run_single_video_job(
             "body_window": {"start_s": body_start, "end_s": body_end},
             "output_url": video_url,
             "output_path": gcs_output_path,
+            "poster_path": poster_path,
             "base_output_url": base_video_url,
+            "base_poster_path": base_poster_path,
             "platform_copy": platform_copy.model_dump(),
             "copy_status": copy_status,
             # Audio health: empty list means VO + music both rendered;
