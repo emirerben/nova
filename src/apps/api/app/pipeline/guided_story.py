@@ -1186,7 +1186,7 @@ def _compile_execution_plan_version(
                     "output_start_s": start_s,
                     "output_end_s": end_s,
                     "duration_s": resolved_duration_s,
-                    "image_motion": "subtle_zoom_in" if ref.kind == "image" else None,
+                    "image_motion": None,
                     "beat_align": bool(cut.beat_align),
                     "beat_time_s": beat_time_s,
                     "required": True,
@@ -1326,7 +1326,7 @@ def _compile_execution_plan_version(
                     "output_start_s": round(cursor, 3),
                     "output_end_s": round(cursor + render_s, 3),
                     "duration_s": round(render_s, 3),
-                    "image_motion": "subtle_zoom_in" if ref.kind == "image" else None,
+                    "image_motion": None,
                     "required": True,
                 }
             )
@@ -1622,7 +1622,7 @@ def compile_guided_runtime_plan(
                 base = {
                     "topic": "Edited story moment",
                     "layout": "fullscreen",
-                    "image_motion": "subtle_zoom_in" if source.kind == "image" else None,
+                    "image_motion": None,
                     "required": True,
                 }
             start = float(segment["output_start_s"])
@@ -2004,6 +2004,7 @@ def _render_image_moment(
     duration_s: float,
     layout: str,
     canvas: Canvas,
+    image_motion: Literal["subtle_zoom_in"] | None = None,
     look_preset: str = "none",
     look_adjustments: dict[str, float] | None = None,
 ) -> None:
@@ -2026,7 +2027,7 @@ def _render_image_moment(
         adjustments=look_adjustments,
     )
     look_suffix = f",{look_filter}" if look_filter else ""
-    if layout == "supporting_card":
+    if layout == "supporting_card" and image_motion == "subtle_zoom_in":
         card_width = int(width * 0.82)
         card_height = int(height * 0.72)
         vf = (
@@ -2043,12 +2044,33 @@ def _render_image_moment(
             f"[blur][card]overlay=(W-w)/2:(H-h)/2:shortest=1,"
             f"setsar=1,fps={fps}{look_suffix},format=yuv420p[v]"
         )
-    else:
+    elif layout == "supporting_card":
+        card_width = int(width * 0.82)
+        card_height = int(height * 0.72)
+        vf = (
+            f"[0:v]split=2[bg0][fg0];"
+            f"[bg0]scale={width * 2}:{height * 2}:force_original_aspect_ratio=increase,"
+            f"crop={width * 2}:{height * 2},scale={width}:{height}:flags=lanczos,"
+            f"boxblur=30:2[blur];"
+            f"[fg0]scale={card_width * 2}:{card_height * 2}:"
+            f"force_original_aspect_ratio=decrease,"
+            f"pad={card_width * 2}:{card_height * 2}:(ow-iw)/2:(oh-ih)/2:color=black,"
+            f"scale={card_width}:{card_height}:flags=lanczos[card];"
+            f"[blur][card]overlay=(W-w)/2:(H-h)/2:shortest=1,"
+            f"setsar=1,fps={fps}{look_suffix},format=yuv420p[v]"
+        )
+    elif image_motion == "subtle_zoom_in":
         vf = (
             f"[0:v]scale={width * 2}:{height * 2}:force_original_aspect_ratio=increase,"
             f"crop={width * 2}:{height * 2},"
             f"zoompan=z='{zoom}':{zoom_xy}:d={total_frames}:fps={fps}:s={width}x{height},"
             f"setsar=1{look_suffix},format=yuv420p[v]"
+        )
+    else:
+        vf = (
+            f"[0:v]scale={width * 2}:{height * 2}:force_original_aspect_ratio=increase,"
+            f"crop={width * 2}:{height * 2},scale={width}:{height}:flags=lanczos,"
+            f"setsar=1,fps={fps}{look_suffix},format=yuv420p[v]"
         )
     cmd = [
         "ffmpeg",
@@ -2142,6 +2164,7 @@ def _render_moments(
                 duration_s=float(moment["duration_s"]),
                 layout=moment["layout"],
                 canvas=canvas,
+                image_motion=moment.get("image_motion"),
                 look_preset=moment.get("look_preset", "none"),
                 look_adjustments=moment.get("look_adjustments"),
             )

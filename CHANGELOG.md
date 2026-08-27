@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.53.0.5] — 2026-08-27
+
+### Fixed
+- **Photos in new Kria edits now hold still instead of slowly zooming by default.** Guided and fast mixed-media timelines compile still images without motion, and the renderer skips zoom processing unless an existing timeline explicitly requests it.
+
 ## [0.53.0.4] — 2026-08-27
 
 ### Fixed
