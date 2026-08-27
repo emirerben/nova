@@ -1,12 +1,18 @@
 import catalogJson from "../creator-blocks.catalog.json" with { type: "json" };
+import {
+  MOTION_MAX_ACTIVE_FRAMES,
+  MOTION_MAX_COMPLEXITY_MULTIPLIER,
+  MOTION_FPS,
+  MOTION_MAX_INSTANCE_FRAMES,
+  MOTION_MAX_INSTANCES,
+  MOTION_MAX_WEIGHTED_ACTIVE_FRAMES,
+} from "./limits.ts";
 
 export const MOTION_SCHEMA_VERSION = 3 as const;
-export const MOTION_FPS = 30 as const;
-export const MOTION_MAX_INSTANCES = 8 as const;
-export const MOTION_MAX_INSTANCE_FRAMES = 8 * MOTION_FPS;
-export const MOTION_MAX_ACTIVE_FRAMES = 8 * MOTION_FPS;
-/** Weighted frame-work budget; one maximum-cost scene may occupy the full 8s window. */
-export const MOTION_MAX_WEIGHTED_ACTIVE_FRAMES = MOTION_MAX_ACTIVE_FRAMES * 4;
+/** Weighted frame-work budget; maximum-cost scenes may occupy the full 12s union. */
+export { MOTION_MAX_ACTIVE_FRAMES, MOTION_MAX_COMPLEXITY_MULTIPLIER,
+  MOTION_FPS, MOTION_MAX_INSTANCE_FRAMES, MOTION_MAX_INSTANCES,
+  MOTION_MAX_WEIGHTED_ACTIVE_FRAMES };
 
 export const CANVASKIT_VERSION = "0.40.0";
 export const CANVASKIT_JS_SHA256 =
@@ -20,15 +26,18 @@ export const CREATOR_MOTION_RUNTIME_HASH_V2 =
   "motion-v2:ck0.40.0:b2556106:2abfa191:creator-blocks-v1";
 export const CREATOR_MOTION_RUNTIME_HASH_V3 =
   "motion-v3:ck0.40.0:b2556106:2abfa191:creator-blocks-v2";
-export const MOTION_RUNTIME_HASH =
+export const CREATOR_MOTION_RUNTIME_HASH_V4 =
   "motion-v4:ck0.40.0:b2556106:2abfa191:creator-blocks-v3";
+export const MOTION_RUNTIME_HASH =
+  "motion-v5:ck0.40.0:b2556106:2abfa191:creator-blocks-v4-capacity";
 
-/** Compatibility aliases retained for clients compiled against runtime v3. */
+/** Compatibility aliases retained for clients compiled against prior runtimes. */
 export const LEGACY_MOTION_RUNTIME_HASH = ROUTE_TRACE_RUNTIME_HASH_V1;
-export const PREVIOUS_MOTION_RUNTIME_HASH = CREATOR_MOTION_RUNTIME_HASH_V3;
+export const PREVIOUS_MOTION_RUNTIME_HASH = CREATOR_MOTION_RUNTIME_HASH_V4;
 export const COMPATIBLE_CREATOR_MOTION_RUNTIME_HASHES = Object.freeze([
   CREATOR_MOTION_RUNTIME_HASH_V2,
   CREATOR_MOTION_RUNTIME_HASH_V3,
+  CREATOR_MOTION_RUNTIME_HASH_V4,
   MOTION_RUNTIME_HASH,
 ] as const);
 

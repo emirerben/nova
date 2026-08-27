@@ -5,6 +5,9 @@ import schema from "../../../../../packages/motion-runtime/motion-scene.schema.j
 import {
   COMPATIBLE_CREATOR_MOTION_RUNTIME_HASHES,
   CREATOR_BLOCK_CATALOG,
+  CREATOR_MOTION_RUNTIME_HASH_V2,
+  CREATOR_MOTION_RUNTIME_HASH_V3,
+  CREATOR_MOTION_RUNTIME_HASH_V4,
   MOTION_MAX_WEIGHTED_ACTIVE_FRAMES,
   MOTION_RUNTIME_HASH,
   activeMotionComplexity,
@@ -73,6 +76,8 @@ describe("generated Creator Block v2 contract", () => {
     expect(schema.$id).toBe("https://nova.video/schemas/motion-scene-v3.json");
     expect(schema.$defs.kinetic_word_v1.properties.preset_version.const).toBe(1);
     expect(schema.$defs.kinetic_word.properties.preset_version.const).toBe(2);
+    expect(schema.$defs.frame_start.maximum).toBe(60 * 30 - 1);
+    expect(schema.$defs.frame_end.maximum).toBe(60 * 30);
 
     const legacy: KineticWordInstanceV1 = {
       id: "legacy",
@@ -254,9 +259,13 @@ describe("generated Creator Block v2 contract", () => {
     expect(validateMotionInstances(legacy).ok).toBe(true);
   });
 
-  it("publishes the v2/v3/v4 persisted compatibility set with v4 current", () => {
-    expect(COMPATIBLE_CREATOR_MOTION_RUNTIME_HASHES).toHaveLength(3);
-    expect(COMPATIBLE_CREATOR_MOTION_RUNTIME_HASHES).toContain(MOTION_RUNTIME_HASH);
-    expect(MOTION_RUNTIME_HASH).toContain("motion-v4:");
+  it("publishes the v2/v3/v4/v5 persisted compatibility set with v5 current", () => {
+    expect(COMPATIBLE_CREATOR_MOTION_RUNTIME_HASHES).toEqual([
+      CREATOR_MOTION_RUNTIME_HASH_V2,
+      CREATOR_MOTION_RUNTIME_HASH_V3,
+      CREATOR_MOTION_RUNTIME_HASH_V4,
+      MOTION_RUNTIME_HASH,
+    ]);
+    expect(MOTION_RUNTIME_HASH).toContain("motion-v5:");
   });
 });

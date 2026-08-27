@@ -14,20 +14,24 @@ import jsonschema
 import structlog
 
 from app import storage
+from app.services.editor_limits import (
+    MOTION_FPS,
+    MOTION_MAX_ACTIVE_FRAMES,
+    MOTION_MAX_COMPLEXITY_UNITS,
+    MOTION_MAX_INSTANCE_FRAMES,
+    MOTION_MAX_INSTANCES,
+)
 
 log = structlog.get_logger()
 
-MOTION_FPS = 30
-MOTION_MAX_ACTIVE_FRAMES = 8 * MOTION_FPS
-MOTION_MAX_INSTANCE_FRAMES = 8 * MOTION_FPS
-MOTION_MAX_COMPLEXITY_UNITS = 960
 LEGACY_MOTION_RUNTIME_HASH = "motion-v1:ck0.40.0:b2556106:2abfa191:route-trace-v1"
 MOTION_RUNTIME_V2_HASH = "motion-v2:ck0.40.0:b2556106:2abfa191:creator-blocks-v1"
 MOTION_RUNTIME_V3_HASH = "motion-v3:ck0.40.0:b2556106:2abfa191:creator-blocks-v2"
-PREVIOUS_MOTION_RUNTIME_HASH = MOTION_RUNTIME_V3_HASH
-MOTION_RUNTIME_HASH = "motion-v4:ck0.40.0:b2556106:2abfa191:creator-blocks-v3"
+MOTION_RUNTIME_V4_HASH = "motion-v4:ck0.40.0:b2556106:2abfa191:creator-blocks-v3"
+PREVIOUS_MOTION_RUNTIME_HASH = MOTION_RUNTIME_V4_HASH
+MOTION_RUNTIME_HASH = "motion-v5:ck0.40.0:b2556106:2abfa191:creator-blocks-v4-capacity"
 COMPATIBLE_MOTION_RUNTIME_HASHES = frozenset(
-    {MOTION_RUNTIME_V2_HASH, MOTION_RUNTIME_V3_HASH, MOTION_RUNTIME_HASH}
+    {MOTION_RUNTIME_V2_HASH, MOTION_RUNTIME_V3_HASH, MOTION_RUNTIME_V4_HASH, MOTION_RUNTIME_HASH}
 )
 _TIMEOUT_S = 600
 _MAX_MOTION_ASSET_BYTES = 25 * 1024 * 1024
@@ -145,6 +149,8 @@ def validate_motion_instances(
     duration_frames: int | None = None,
 ) -> list[dict]:
     """Validate the canonical schema plus cross-field timeline invariants."""
+    if isinstance(value, list) and len(value) > MOTION_MAX_INSTANCES:
+        raise ValueError(f"motion_scenes supports at most {MOTION_MAX_INSTANCES} instances")
     if isinstance(value, list):
         for index, raw in enumerate(value):
             if not isinstance(raw, dict):

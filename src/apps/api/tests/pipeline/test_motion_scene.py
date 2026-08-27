@@ -17,6 +17,7 @@ from app.pipeline.motion_scene import (
     apply_motion_scenes,
     validate_motion_instances,
 )
+from app.services.editor_limits import MOTION_MAX_COMPLEXITY_MULTIPLIER
 
 
 def _scene(**overrides) -> dict:
@@ -76,7 +77,7 @@ def test_motion_contract_accepts_bounded_preset_and_normalizes_colors() -> None:
             "palette": {"primary": "#8B5CF6", "accent": "#D9FF43"},
         }
     ]
-    assert MOTION_RUNTIME_HASH.startswith("motion-v4:ck0.40.0:")
+    assert MOTION_RUNTIME_HASH.startswith("motion-v5:ck0.40.0:")
 
 
 def test_motion_contract_accepts_evolving_type_v2_with_reference_defaults() -> None:
@@ -147,25 +148,32 @@ def test_motion_contract_uses_exclusive_end_and_bounded_active_union() -> None:
     with pytest.raises(ValueError, match=f"maximum is {MOTION_MAX_ACTIVE_FRAMES}"):
         validate_motion_instances(
             [
-                _scene(id="first", start_frame=0, end_frame_exclusive=MOTION_MAX_ACTIVE_FRAMES),
-                _scene(id="last", start_frame=300, end_frame_exclusive=301),
+                _scene(id="first", start_frame=0, end_frame_exclusive=240),
+                _scene(
+                    id="last",
+                    start_frame=240,
+                    end_frame_exclusive=MOTION_MAX_ACTIVE_FRAMES + 1,
+                ),
             ]
         )
 
 
 def test_motion_contract_weighted_complexity_accepts_boundary_and_rejects_overlap() -> None:
-    evolving = _evolving_scene(end_frame_exclusive=MOTION_MAX_ACTIVE_FRAMES)
-    validated = validate_motion_instances([evolving])
-    assert len(validated) == 1
-    assert MOTION_MAX_COMPLEXITY_UNITS == MOTION_MAX_ACTIVE_FRAMES * 4
+    first = _evolving_scene(end_frame_exclusive=180)
+    second = _evolving_scene(id="evolving-2", start_frame=180, end_frame_exclusive=360)
+    validated = validate_motion_instances([first, second])
+    assert len(validated) == 2
+    assert (
+        MOTION_MAX_COMPLEXITY_UNITS == MOTION_MAX_ACTIVE_FRAMES * MOTION_MAX_COMPLEXITY_MULTIPLIER
+    )
 
     overlapping_legacy = _scene(
         id="legacy-overlap",
         start_frame=0,
-        end_frame_exclusive=MOTION_MAX_ACTIVE_FRAMES,
+        end_frame_exclusive=1,
     )
     with pytest.raises(ValueError, match="weighted complexity units"):
-        validate_motion_instances([evolving, overlapping_legacy])
+        validate_motion_instances([first, second, overlapping_legacy])
 
 
 def test_motion_contract_back_to_back_weighted_scenes_do_not_overlap() -> None:
@@ -176,6 +184,39 @@ def test_motion_contract_back_to_back_weighted_scenes_do_not_overlap() -> None:
         end_frame_exclusive=240,
     )
     assert len(validate_motion_instances([first, second])) == 2
+
+
+def test_motion_contract_accepts_production_scale_image_stacks() -> None:
+    def card(index: int) -> dict:
+        return {
+            "id": f"card-{index}",
+            "preset_id": "card_stack",
+            "preset_version": 2,
+            "start_frame": index * 36,
+            "end_frame_exclusive": (index + 1) * 36,
+            "palette": {"primary": "#0C0C0E", "accent": "#C7FF3D"},
+            "intensity": 0.72,
+            "params": {
+                "assets": [
+                    {
+                        "asset_id": f"image-{index}-{asset}",
+                        "gcs_path": f"users/test/{index}-{asset}.jpg",
+                    }
+                    for asset in range(6 if index < 9 else 4)
+                ]
+            },
+            "motion": {"version": 2, "speed": 1, "easing": "ease-in-out-cubic", "hold_frames": 0},
+        }
+
+    scenes = [card(index) for index in range(10)]
+    assert len(validate_motion_instances(scenes, duration_frames=1800)) == 10
+    assert MOTION_MAX_ACTIVE_FRAMES == 360
+
+
+def test_motion_contract_rejects_more_than_new_instance_limit() -> None:
+    scenes = [_scene(id=f"route-{index}") for index in range(13)]
+    with pytest.raises(ValueError, match="at most 12"):
+        validate_motion_instances(scenes)
 
 
 def test_motion_contract_accepts_creator_text_and_media_params() -> None:

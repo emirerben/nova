@@ -14,7 +14,7 @@ import {
 const LONG_TASK_MS = 50;
 
 function maximumPreviewScenes(): MotionPresetInstance[] {
-  return Array.from({ length: 2 }, (_, index) => {
+  return Array.from({ length: 3 }, (_, index) => {
     const scene = createCreatorBlockInstance({
       id: `browser-preview-evolving-${index}`,
       presetId: "evolving_type",
@@ -74,7 +74,7 @@ export default function MotionPreviewPerformanceFixture() {
         }
         const scenes = maximumPreviewScenes();
         if (
-          !validateMotionInstances(scenes, 240).ok ||
+          !validateMotionInstances(scenes, 360).ok ||
           activeMotionComplexity(scenes) !== MOTION_MAX_WEIGHTED_ACTIVE_FRAMES
         ) {
           throw new Error("Preview benchmark scene is not at the accepted complexity limit");

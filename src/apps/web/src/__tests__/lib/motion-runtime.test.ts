@@ -63,7 +63,7 @@ describe("shared motion runtime", () => {
     expect(
       validateMotionInstances([
         { ...scene, id: "long", end_frame_exclusive: 240 },
-        { ...scene, id: "over-budget", start_frame: 300, end_frame_exclusive: 301 },
+        { ...scene, id: "over-budget", start_frame: 300, end_frame_exclusive: 421 },
       ]).ok,
     ).toBe(false);
   });
@@ -390,7 +390,7 @@ describe("shared motion runtime", () => {
       surface!.delete();
     }
     expect(MOTION_RUNTIME_HASH).toBe(
-      "motion-v4:ck0.40.0:b2556106:2abfa191:creator-blocks-v3",
+      "motion-v5:ck0.40.0:b2556106:2abfa191:creator-blocks-v4-capacity",
     );
   }, 30_000);
 

@@ -14,7 +14,7 @@ const LONG_TASK_MS = 50;
 const MAX_REPEATED_LONG_TASKS = 1;
 
 function maximumPreviewScenes(): MotionPresetInstance[] {
-  return Array.from({ length: 2 }, (_, index) => {
+  return Array.from({ length: 3 }, (_, index) => {
     const scene = createCreatorBlockInstance({
       id: `preview-evolving-${index}`,
       presetId: "evolving_type",
@@ -55,7 +55,7 @@ jest.retryTimes(2, { logErrorsBeforeRetry: true });
 describe("Creator Block browser preview performance", () => {
   it("does not produce repeated >50ms draws at the maximum active-scene budget", async () => {
     const scenes = maximumPreviewScenes();
-    expect(validateMotionInstances(scenes, 240).ok).toBe(true);
+    expect(validateMotionInstances(scenes, 360).ok).toBe(true);
     expect(activeMotionComplexity(scenes)).toBe(MOTION_MAX_WEIGHTED_ACTIVE_FRAMES);
 
     const CanvasKit = await CanvasKitInit({
@@ -77,7 +77,7 @@ describe("Creator Block browser preview performance", () => {
           CanvasKit,
           surface!.getCanvas(),
           scenes,
-          (index * 5) % 120,
+          (index * 5) % 360,
           360,
           640,
           resources,

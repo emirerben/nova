@@ -7,7 +7,12 @@ import {
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import type { MediaOverlay, OverlaySuggestion, PoolAsset, SoundEffectPlacement } from "@/lib/plan-api";
-import { createCreatorBlockInstance } from "@nova/motion-runtime";
+import {
+  CREATOR_MOTION_RUNTIME_HASH_V4,
+  EDITOR_MAX_TIMELINE_SLOTS,
+  MOTION_RUNTIME_HASH,
+  createCreatorBlockInstance,
+} from "@nova/motion-runtime";
 
 function bar(over: Partial<TextElementBar> = {}): TextElementBar {
   return {
@@ -35,6 +40,28 @@ function slot(over: Partial<DraftSlot> = {}): DraftSlot {
 }
 
 describe("buildCopilotSnapshot", () => {
+  it("fails closed to the legacy slot cap until the API advertises the capacity runtime", () => {
+    const legacy = buildCopilotSnapshot(
+      [],
+      [slot()],
+      [{ source_duration_s: 8 }],
+      { timeline: true, motion_runtime_hash: CREATOR_MOTION_RUNTIME_HASH_V4 },
+    );
+    const current = buildCopilotSnapshot(
+      [],
+      [slot()],
+      [{ source_duration_s: 8 }],
+      {
+        timeline: true,
+        timeline_max_slots: EDITOR_MAX_TIMELINE_SLOTS,
+        motion_runtime_hash: MOTION_RUNTIME_HASH,
+      },
+    );
+
+    expect(legacy.editor_limits?.max_timeline_slots).toBe(50);
+    expect(current.editor_limits?.max_timeline_slots).toBe(EDITOR_MAX_TIMELINE_SLOTS);
+  });
+
   it("keeps the complete source pool client-side while exposing only safe aggregate integrity metadata", () => {
     const sourcePool = [
       { clip_index: 0, media_id: "video-0", kind: "video" as const, generation: "g1", duration_s: 5, used: true, status: "ready" },
@@ -1041,7 +1068,10 @@ describe("Creator Block snapshot", () => {
       [],
       {
         motionScenesEnabled: true,
-        motionScenes: [motionScene],
+        motionScenes: Array.from({ length: 12 }, (_, index) => ({
+          ...motionScene,
+          id: `motion-${index + 1}`,
+        })),
         poolAssets: [
           asset({
             id: "ready-image",
@@ -1058,7 +1088,14 @@ describe("Creator Block snapshot", () => {
     );
 
     expect(snapshot.allowed_op_families).toContain("motion");
+    expect(snapshot.motion?.limits).toEqual({
+      max_blocks: 12,
+      max_active_union_s: 12,
+      max_card_stack_assets: 6,
+      max_film_strip_assets: 8,
+    });
     expect(snapshot.motion?.catalog).toHaveLength(8);
+    expect(snapshot.motion?.blocks).toHaveLength(12);
     expect(snapshot.motion?.catalog.every((entry) => entry.preset_version === 2)).toBe(true);
     expect(snapshot.motion?.blocks[0]).toMatchObject({
       id: "motion-1",

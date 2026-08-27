@@ -23,14 +23,11 @@ DEFAULT_MAX_SECONDS = 180.0
 DEFAULT_MAX_PEAK_BYTES = int(2.5 * 1024**3)
 
 
-def _maximum_complexity_scene() -> dict:
-    """Max-content full-window Evolving block: exactly 960 weighted frame units."""
-    return {
-        "id": "verify-evolving",
+def _maximum_complexity_scenes() -> list[dict]:
+    """Back-to-back max-content Evolving blocks: exactly 1440 weighted units."""
+    common = {
         "preset_id": "evolving_type",
         "preset_version": 2,
-        "start_frame": 0,
-        "end_frame_exclusive": 240,
         "palette": {"primary": "#000000", "accent": "#FFFFFF"},
         "intensity": 1,
         "params": {
@@ -55,12 +52,21 @@ def _maximum_complexity_scene() -> dict:
             "hold_frames": 74,
         },
     }
+    return [
+        {**common, "id": "verify-evolving-1", "start_frame": 0, "end_frame_exclusive": 180},
+        {
+            **common,
+            "id": "verify-evolving-2",
+            "start_frame": 180,
+            "end_frame_exclusive": 360,
+        },
+    ]
 
 
 def _maximum_media_scenes() -> list[dict]:
-    """Eight weight-3 Film Strips for 36 frames: 864 units and 64 unique images."""
+    """Twelve weight-3 Film Strips for 36 frames: 1296 units and 96 images."""
     scenes: list[dict] = []
-    for scene_index in range(8):
+    for scene_index in range(12):
         assets = [
             {
                 "asset_id": f"benchmark-{scene_index}-{asset_index}",
@@ -137,14 +143,14 @@ def main() -> None:
     parser.add_argument("--max-peak-bytes", type=int, default=DEFAULT_MAX_PEAK_BYTES)
     args = parser.parse_args()
 
-    evolving = validate_motion_instances([_maximum_complexity_scene()], duration_frames=240)
-    media = validate_motion_instances(_maximum_media_scenes(), duration_frames=240)
+    evolving = validate_motion_instances(_maximum_complexity_scenes(), duration_frames=360)
+    media = validate_motion_instances(_maximum_media_scenes(), duration_frames=360)
     results: list[dict] = []
     with tempfile.TemporaryDirectory(prefix="nova_motion_performance_") as tmpdir:
         root = Path(tmpdir)
         prepared_assets = _write_benchmark_assets(root, media)
         cases = (
-            ("evolving_max_content", evolving, 240, None),
+            ("evolving_max_content", evolving, 360, None),
             ("film_strip_max_resources", media, 36, prepared_assets),
         )
         for name, scenes, expected_frames, asset_paths in cases:

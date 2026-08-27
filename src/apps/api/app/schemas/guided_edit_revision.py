@@ -16,11 +16,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.pipeline.look_presets import normalize_look_adjustments, normalize_look_preset
 from app.schemas.edit_proposal import MAX_EDIT_PROPOSAL_MEDIA
+from app.services.editor_limits import EDITOR_MAX_TIMELINE_SLOTS, MOTION_FPS
 
-MAX_GUIDED_EDITOR_SEGMENTS = 60
+MAX_GUIDED_EDITOR_SEGMENTS = EDITOR_MAX_TIMELINE_SLOTS
 MAX_GUIDED_EDITOR_DURATION_S = 60.0
 MIN_GUIDED_EDITOR_SEGMENT_S = 0.1
-GUIDED_EDITOR_FPS = 30
+GUIDED_EDITOR_FPS = MOTION_FPS
 GUIDED_EDITOR_FRAME_S = 1.0 / GUIDED_EDITOR_FPS
 GUIDED_EDITOR_SCHEMA_VERSION = 1
 GUIDED_EDITOR_RENDERER_VERSION = "guided-story-editor-v2"
