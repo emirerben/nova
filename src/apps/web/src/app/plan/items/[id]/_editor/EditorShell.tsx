@@ -210,6 +210,7 @@ import { splitSlotAt, deleteSlotEnforceFloor, activeSlotCount } from "./slot-spl
 import {
   applyManualClipTimingPatch,
   applyTextTimingInput,
+  minimumClipDurationForSlot,
   outputTimeForSlotBoundary,
   rangesDiffer,
   sequentialSlotLayout,
@@ -7110,24 +7111,57 @@ export default function EditorShell({
           }
           return null;
         })();
-  // Captions render at the canvas bottom — flip the strip to the top so the
-  // quick actions never cover the cue they act on.
-  const pocketStripOnTop =
-    pocketStripSelection?.type === "caption" || pocketStripSelection?.type === "clip";
+  // Captions render at the canvas bottom — flip their quick actions to the top.
+  // Clip actions live with the direct-manipulation timeline below the preview.
+  const pocketStripOnTop = pocketStripSelection?.type === "caption";
+  const miniStripClipByIndex = new Map(
+    clip.clips.map((source) => [source.clip_index, source]),
+  );
   const miniStripSegments: MiniStripSegment[] = pocketActive
     ? virtualPreview.timeline.entries.flatMap((entry) => {
-        if (entry.kind !== "clip") return [];
-        const startS = entry.startS;
-        const endS = entry.startS + entry.durationS;
-        const hasMarks =
-          visibleTextBars.some((b) => b.start_s < endS && b.end_s > startS) ||
-          localMotionScenes.some(
-            (scene) =>
-              scene.start_frame / MOTION_FPS < endS &&
-              scene.end_frame_exclusive / MOTION_FPS > startS,
-          );
-        return [{ id: entry.slotKey, startS, endS, hasMarks }];
-      })
+            if (entry.kind !== "clip") return [];
+            const startS = entry.startS;
+            const endS = entry.startS + entry.durationS;
+            const hasMarks =
+              visibleTextBars.some(
+                (bar) => bar.start_s < endS && bar.end_s > startS,
+              ) ||
+              localMotionScenes.some(
+                (scene) =>
+                  scene.start_frame / MOTION_FPS < endS &&
+                  scene.end_frame_exclusive / MOTION_FPS > startS,
+              );
+            const slot = slots[entry.slotIndex];
+            const source = miniStripClipByIndex.get(entry.clipIndex);
+            const trimReason = readOnly
+              ? readOnlyReason
+              : clipEditingLocked
+                ? clipTimingDisabledReason
+                : null;
+            return [
+              {
+                id: entry.slotKey,
+                startS,
+                endS,
+                hasMarks,
+                sourceUrl: entry.sourceUrl,
+                sourceId: entry.clipIndex,
+                sourceStartS: entry.inS,
+                sourceDurationS:
+                  source?.duration_s ??
+                  clipSourceDurations[entry.slotKey] ??
+                  null,
+                minDurationS: minimumClipDurationForSlot({
+                  grid: clip.state.grid,
+                  offsetBeats:
+                    slotLayout.windows[entry.slotIndex]?.offsetBeats,
+                }),
+                label:
+                  slot?.momentDescription ?? `Clip ${entry.slotIndex + 1}`,
+                trimDisabledReason: trimReason,
+              },
+            ];
+          })
     : [];
   const carouselMiniStripEntry = virtualPreview.timeline.entries.find(
     (entry) => entry.kind === "carousel",
@@ -7471,7 +7505,9 @@ export default function EditorShell({
               POCKET_UI
                 ? pocketSheetOpen && pocket.detent === "half"
                   ? "46dvh - 128px"
-                  : "100dvh - 260px"
+                  : pocketStripSelection?.type === "clip"
+                    ? "100dvh - 398px"
+                    : "100dvh - 350px"
                 : "100dvh - 152px"
             }
             canvas={activeCanvas}
@@ -7500,7 +7536,7 @@ export default function EditorShell({
               <RedoIcon className="h-5 w-5" />
             </Button>
           )}
-          {pocketStripSelection && (
+          {pocketStripSelection && pocketStripSelection.type !== "clip" && (
             <div
               className={`absolute left-1/2 z-20 -translate-x-1/2 ${
                 pocketStripOnTop ? "top-3" : "bottom-3"
@@ -7927,9 +7963,10 @@ export default function EditorShell({
               duration={previewDuration}
               onPlayPause={togglePlay}
               onScrub={seekTo}
+              compact
             />
             {!pocketSheetOpen && miniStripSegments.length > 0 && (
-              <div className="bg-white px-4 pb-2">
+              <div className="bg-white">
                 <MiniStrip
                   segments={miniStripSegments}
                   durationS={virtualPreview.timeline.totalDurationS || timelineDuration || previewDuration}
@@ -7966,6 +8003,12 @@ export default function EditorShell({
                   }
                   onScrubStart={pausePlayback}
                   onScrub={seekTo}
+                  onTrimStart={recordTimelineDrag}
+                  onPreviewTrim={(id, patch) => {
+                    if (selectedClip?.slot.key !== id) return;
+                    previewSelectedClipTiming(patch);
+                  }}
+                  onDisabledTap={notify}
                   onSelectClip={(id, seconds) => {
                     selectElement("clip", id);
                     seekTo(seconds);
@@ -7977,6 +8020,13 @@ export default function EditorShell({
                   }}
                 />
               </div>
+            )}
+            {!pocketSheetOpen && pocketStripSelection?.type === "clip" && (
+              <ContextStrip
+                selection={pocketStripSelection}
+                onDisabledTap={notify}
+                className="border-t border-border bg-background px-2 py-1"
+              />
             )}
             {!pocketSheetOpen && (
               <ToolDock
@@ -8668,17 +8718,25 @@ function LightTransport({
   duration,
   onPlayPause,
   onScrub,
+  compact = false,
 }: {
   playing: boolean;
   currentTime: number;
   duration: number;
   onPlayPause: () => void;
   onScrub: (seconds: number) => void;
+  compact?: boolean;
 }) {
   const safeDuration = Math.max(0, duration);
   const safeTime = Math.min(safeDuration || currentTime, Math.max(0, currentTime));
   return (
-    <div className="border-t border-border bg-background px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3">
+    <div
+      className={
+        compact
+          ? "border-t border-border bg-background px-3 py-2"
+          : "border-t border-border bg-background px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3"
+      }
+    >
       <div className="mx-auto flex max-w-[720px] items-center gap-3">
         <Button
           type="button"
@@ -8686,9 +8744,14 @@ function LightTransport({
           aria-label={playing ? "Pause video" : "Play video"}
           aria-pressed={playing}
           onClick={onPlayPause}
-          className="flex-none text-[13px]"
+          variant={compact ? "ghost" : "default"}
+          className={compact ? "size-11 flex-none" : "flex-none"}
         >
-          {playing ? "❚❚" : "▶"}
+          {playing ? (
+            <PauseIcon className="h-5 w-5" />
+          ) : (
+            <PlayIcon className="h-5 w-5" />
+          )}
         </Button>
         {/* Native range (DESIGN.md §15 — "Scrub video" keeps a raw <input
             type=range>; Slider's discrete-thumb model doesn't fit continuous
@@ -8703,11 +8766,13 @@ function LightTransport({
           value={safeDuration > 0 ? safeTime : 0}
           disabled={safeDuration <= 0}
           onChange={(e) => onScrub(Number(e.target.value))}
-          className="h-11 min-w-0 flex-1 cursor-pointer accent-lime-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-40"
+          className="h-11 min-w-0 flex-1 cursor-pointer accent-lime-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-40"
         />
         <span
           aria-label="Playback position"
-          className="w-[92px] flex-none text-right text-sm tabular-nums text-muted-foreground"
+          className={`flex-none text-sm tabular-nums text-muted-foreground ${
+            compact ? "w-[76px] text-right text-xs" : "w-[92px] text-right"
+          }`}
         >
           {formatTimecode(currentTime)}{" "}
           <span className="text-muted-foreground/60">/ {formatTimecode(duration)}</span>

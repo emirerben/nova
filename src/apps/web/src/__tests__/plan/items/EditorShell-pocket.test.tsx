@@ -27,8 +27,10 @@ delete process.env.NEXT_PUBLIC_EDIT_COPILOT_ENABLED;
  *     POCKET inspector sheet ("Edit text"), NOT the legacy LightEditSheet —
  *     the legacy-only "Close text editor" close button never appears.
  *  5. Closing the inspector keeps the selection and surfaces the
- *     "pocket-context-strip" (Edit / Style / Timing / Delete pills); the Edit
- *     pill re-opens the inspector sheet.
+ *     "pocket-context-strip" (Edit / Style / Timing / Delete actions); Edit
+ *     re-opens the inspector sheet.
+ *  6. Selecting a clip exposes direct trim handles and places clip actions
+ *     between the thumbnail timeline and icon dock; trim reaches atomic Save.
  */
 
 import "@testing-library/jest-dom";
@@ -230,10 +232,59 @@ describe("EditorShell — pocket editor flag ON (light mode)", () => {
 
     // Clips exist in the harness fixture ⇒ the ministrip renders.
     expect(screen.getByTestId("pocket-ministrip")).toBeInTheDocument();
+    expect(screen.getByRole("slider", { name: "Scrub video" })).toHaveClass(
+      "h-11",
+    );
 
     // Nothing is open/selected yet: no sheet, no context strip.
     expect(screen.queryByTestId("pocket-sheet")).toBeNull();
     expect(screen.queryByTestId("pocket-context-strip")).toBeNull();
+  });
+
+  it("trims a selected clip directly and keeps clip actions above the icon dock", async () => {
+    await renderShell(makeVariant());
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Clip 1, 0.0–5.0 seconds" }),
+    );
+
+    const strip = screen.getByTestId("pocket-context-strip");
+    const timeline = screen.getByTestId("pocket-ministrip");
+    const dock = screen.getByTestId("pocket-dock");
+    expect(
+      timeline.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      strip.compareDocumentPosition(dock) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(within(strip).getByRole("button", { name: "Split" })).toBeInTheDocument();
+    expect(within(strip).getByRole("button", { name: "Mute" })).toBeInTheDocument();
+    expect(within(strip).getByRole("button", { name: "Delete" })).toBeInTheDocument();
+
+    fireEvent.keyDown(screen.getByRole("button", { name: /Trim clip end/ }), {
+      key: "ArrowRight",
+    });
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+
+    mockCommitEditorSession.mockResolvedValue({
+      ok: true,
+      generation: "gen-trimmed",
+      sections: {},
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+    await waitFor(() => expect(mockCommitEditorSession).toHaveBeenCalled());
+    expect(mockCommitEditorSession.mock.calls[0][2].timeline_slots).toEqual([
+      expect.objectContaining({
+        // The legacy fixture has no persisted slotId; Pocket preserves that
+        // contract rather than leaking its local React key into the payload.
+        slot_id: null,
+        clip_index: 0,
+        in_s: 0,
+        duration_s: 5.1,
+      }),
+    ]);
   });
 
   it("moves Carousel from the Visuals discovery sheet into the shared inspector", async () => {
