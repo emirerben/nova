@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.55.0.2] — 2026-08-27
+
+### Fixed
+- **Kria can now complete the production-scale “add all” mixed-media follow-up instead of stopping at artificial editor limits.** Guided edits support up to 120 timeline slots and 12 Creator Blocks across a 12-second active window; the exact 103-slot request keeps existing video timing, makes all 58 images 0.2 seconds, stacks them exactly once, and trims only newly added videos enough to remain under 60 seconds.
+
 ## [0.55.0.1] — 2026-08-27
 
 ### Fixed
