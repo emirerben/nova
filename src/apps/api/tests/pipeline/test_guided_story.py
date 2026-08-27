@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.agents._schemas.text_element import TextElement
+from app.pipeline.canvas import Canvas
 from app.pipeline.generative_overlays import build_overlays_from_text_elements
 from app.pipeline.guided_story import (
     GuidedStoryError,
@@ -18,6 +19,7 @@ from app.pipeline.guided_story import (
     _enforce_strict_story_duration,
     _mix_pinned_music,
     _quantize_quick_mixed_timeline,
+    _render_image_moment,
     _render_moments,
     _render_video_moment,
     _upload_verified_outputs,
@@ -217,6 +219,9 @@ def test_compiler_uses_only_beat_selected_media_and_hits_target_duration() -> No
         "fullscreen",
         "supporting_card",
     }
+    assert all(
+        row["image_motion"] is None for row in plan["story_timeline"] if row["kind"] == "image"
+    )
     # Title and first thought occupy different vertical positions, so both can
     # remain readable for the full first beat.  Delaying the thought until the
     # title ended reduced short montage labels to a single frame.
@@ -613,6 +618,11 @@ def test_mixed_media_profile_compiles_to_hard_cut_execution_plan() -> None:
     ]
     assert all(0.5 <= duration <= 0.8 for duration in image_durations)
     assert all(1.5 <= duration <= 3.0 for duration in video_durations)
+    assert all(
+        moment["image_motion"] is None
+        for moment in plan["story_timeline"]
+        if moment["kind"] == "image"
+    )
     assert plan["resolved_duration_s"] == pytest.approx(4, abs=0.05)
     assert validate_execution_plan(plan, raw) == plan
 
@@ -953,7 +963,7 @@ def test_runtime_compiles_approved_unused_image_and_video_sources() -> None:
     by_id = {moment["moment_id"]: moment for moment in runtime["story_timeline"]}
 
     assert by_id["added-image"]["layout"] == "fullscreen"
-    assert by_id["added-image"]["image_motion"] == "subtle_zoom_in"
+    assert by_id["added-image"]["image_motion"] is None
     assert by_id["added-video"]["layout"] == "fullscreen"
     assert by_id["added-video"]["image_motion"] is None
 
@@ -1193,6 +1203,7 @@ def test_render_moments_forwards_segment_looks_to_image_and_video_renderers(
     assert calls[0][0] == "image"
     assert calls[0][1]["duration_s"] == image_moment["duration_s"]
     assert calls[0][1]["layout"] == image_moment["layout"]
+    assert calls[0][1]["image_motion"] == image_moment["image_motion"]
     assert calls[0][1]["look_preset"] == "olive_film"
     assert calls[1][0] == "video"
     assert calls[1][1]["look_preset"] == "smoky_split_tone"
@@ -1217,6 +1228,40 @@ def test_render_moments_forwards_segment_looks_to_image_and_video_renderers(
 
     assert calls[1][0] == "video"
     assert calls[1][1]["exact_duration"] is True
+
+
+@pytest.mark.parametrize("layout", ["fullscreen", "supporting_card"])
+def test_render_image_moment_is_static_unless_motion_is_explicit(
+    layout: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    commands: list[list[str]] = []
+
+    def capture(cmd, **_kwargs):
+        commands.append(cmd)
+        return SimpleNamespace(returncode=0, stderr=b"")
+
+    monkeypatch.setattr("app.pipeline.guided_story.subprocess.run", capture)
+
+    _render_image_moment(
+        "photo.jpg",
+        "static.mp4",
+        duration_s=0.8,
+        layout=layout,
+        canvas=Canvas(360, 640),
+    )
+    _render_image_moment(
+        "photo.jpg",
+        "zoom.mp4",
+        duration_s=0.8,
+        layout=layout,
+        canvas=Canvas(360, 640),
+        image_motion="subtle_zoom_in",
+    )
+
+    static_filter = commands[0][commands[0].index("-filter_complex") + 1]
+    zoom_filter = commands[1][commands[1].index("-filter_complex") + 1]
+    assert "zoompan=" not in static_filter
+    assert "zoompan=" in zoom_filter
 
 
 def test_compiler_gives_short_video_its_available_time_and_redistributes_beat() -> None:
