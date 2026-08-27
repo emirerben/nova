@@ -3124,6 +3124,41 @@ export default function EditorShell({
     ],
   );
 
+  const editTextBar = useCallback(
+    (id: string, text: string) => {
+      if (readOnly) return;
+      const target = state.bars.find((bar) => bar.id === id);
+      if (!target) return;
+      if (!isCaptionBar(target) && !textElementsAllowed) return;
+      history.record(`text:${id}`);
+      if (isCaptionBar(target)) {
+        setCaptionDirty(true);
+      } else if (lyricsOptionalActive || !isLyricBar(target)) {
+        setTextDirty(true);
+      }
+      dispatch({
+        type: "PATCH_BAR",
+        id,
+        patch: motionPatchForText(target, text, previewDuration),
+      });
+    },
+    [
+      history,
+      lyricsOptionalActive,
+      previewDuration,
+      readOnly,
+      state.bars,
+      textElementsAllowed,
+    ],
+  );
+
+  const editSelectedText = useCallback(
+    (text: string) => {
+      if (selectedBar) editTextBar(selectedBar.id, text);
+    },
+    [editTextBar, selectedBar],
+  );
+
   const beginTextMotionGesture = useCallback(() => {
     if (!readOnly) history.record();
   }, [history, readOnly]);
@@ -4287,9 +4322,8 @@ export default function EditorShell({
     const id = addTextAtPlayhead();
     if (!id) return;
     setActiveTool(null);
-    dispatchPocket({ type: "OPEN_INSPECTOR" });
-    focusContent();
-  }, [addTextAtPlayhead, focusContent]);
+    dispatchPocket({ type: "CLOSE_SHEET" });
+  }, [addTextAtPlayhead]);
 
   const splitAndPlaceText = useCallback(
     (text: string): boolean => {
@@ -7104,8 +7138,14 @@ export default function EditorShell({
             return {
               type: "text" as const,
               onEdit: () => {
-                dispatchPocket({ type: "OPEN_INSPECTOR" });
-                focusContent();
+                dispatchPocket({ type: "CLOSE_SHEET" });
+                requestAnimationFrame(() => {
+                  document
+                    .querySelector<HTMLElement>(
+                      `[data-text-id="${selectedBar.id}"] [role="textbox"]`,
+                    )
+                    ?.focus({ preventScroll: true });
+                });
               },
               onStyle: () => {
                 setInspectorTab("presets");
@@ -7529,6 +7569,9 @@ export default function EditorShell({
               setLightSheetOpen(false);
             }}
             onPatchBar={patchBar}
+            onEditText={POCKET_UI ? editTextBar : undefined}
+            inlineTextEditing={POCKET_UI}
+            textEditable={POCKET_UI && !readOnly && textElementsAllowed}
             onPatchOverlay={POCKET_UI ? patchOverlay : undefined}
             onPreviewVisualBlock={POCKET_UI ? previewVisualMediaBlock : undefined}
             onPatchVisualBlock={POCKET_UI ? commitVisualMediaBlock : undefined}
@@ -7897,26 +7940,7 @@ export default function EditorShell({
           sampleWord={sampleWord}
           appliedPresetId={appliedPresetId}
           contentRef={contentRef}
-          onEditText={(text) => {
-            if (
-              selectedBar &&
-              !readOnly &&
-              (textElementsAllowed || isCaptionBar(selectedBar))
-            ) {
-              // Coalesce keystrokes on one bar into a single undo step.
-              history.record(`text:${selectedBar.id}`);
-              if (isCaptionBar(selectedBar)) {
-                setCaptionDirty(true);
-              } else if (lyricsOptionalActive || !isLyricBar(selectedBar)) {
-                setTextDirty(true);
-              }
-              dispatch({
-                type: "PATCH_BAR",
-                id: selectedBar.id,
-                patch: motionPatchForText(selectedBar, text, previewDuration),
-              });
-            }
-          }}
+          onEditText={editSelectedText}
           onPatch={(patch) => {
             if (selectedBar) patchBar(selectedBar.id, patch);
           }}
@@ -8187,21 +8211,7 @@ export default function EditorShell({
         dirty={dirty}
         readOnly={readOnly}
         onClose={() => setLightSheetOpen(false)}
-        onEditText={(text) => {
-          if (selectedBar && !readOnly) {
-            history.record(`text:${selectedBar.id}`);
-            if (isCaptionBar(selectedBar)) {
-              setCaptionDirty(true);
-            } else if (lyricsOptionalActive || !isLyricBar(selectedBar)) {
-              setTextDirty(true);
-            }
-            dispatch({
-              type: "PATCH_BAR",
-              id: selectedBar.id,
-              patch: motionPatchForText(selectedBar, text, previewDuration),
-            });
-          }
-        }}
+        onEditText={editSelectedText}
         onPickPreset={pickPreset}
         onSave={() => void handleSave()}
       />
@@ -8349,25 +8359,7 @@ export default function EditorShell({
             sampleWord={sampleWord}
             appliedPresetId={appliedPresetId}
             contentRef={contentRef}
-            onEditText={(text) => {
-              if (
-                selectedBar &&
-                !readOnly &&
-                (textElementsAllowed || isCaptionBar(selectedBar))
-              ) {
-                history.record(`text:${selectedBar.id}`);
-                if (isCaptionBar(selectedBar)) {
-                  setCaptionDirty(true);
-                } else if (lyricsOptionalActive || !isLyricBar(selectedBar)) {
-                  setTextDirty(true);
-                }
-                dispatch({
-                  type: "PATCH_BAR",
-                  id: selectedBar.id,
-                  patch: motionPatchForText(selectedBar, text, previewDuration),
-                });
-              }
-            }}
+            onEditText={editSelectedText}
             onPatch={(patch) => {
               if (selectedBar) patchBar(selectedBar.id, patch);
             }}

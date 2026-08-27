@@ -10,8 +10,8 @@
  *  - selection box (lime stroke) + 4 corner handles (white core, 1px ink halo)
  *  - drag = move (x_frac / y_frac), corner-drag = scale (size_px)
  *  - click video/empty = deselect; overlap hit-test topmost + click-cycling
- *  - double-click focuses the inspector textarea (select-all) — no
- *    contenteditable on canvas, ever
+ *  - Pocket: selected text edits in place; desktop double-click keeps the
+ *    inspector textarea contract
  *  - hover: cursor pointer + 1px zinc-400/60 ghost outline
  *  - selecting during playback never pauses
  * Fullscreen button bottom-right ONLY — the "Basic mode" pill is CUT (D7).
@@ -256,6 +256,9 @@ export default function EditorCanvas({
   captionTapSelect = false,
   onClearSelection,
   onPatchBar,
+  onEditText,
+  inlineTextEditing = false,
+  textEditable = false,
   onPatchOverlay,
   onPreviewVisualBlock,
   onPatchVisualBlock,
@@ -321,6 +324,10 @@ export default function EditorCanvas({
   captionTapSelect?: boolean;
   onClearSelection: () => void;
   onPatchBar: (id: string, patch: Partial<Omit<TextElementBar, "id" | "role">>) => void;
+  onEditText?: (id: string, text: string) => void;
+  /** Pocket only: selected non-lyric text becomes an on-canvas editor. */
+  inlineTextEditing?: boolean;
+  textEditable?: boolean;
   onPatchOverlay?: (id: string, patch: Partial<MediaOverlay>) => void;
   onPreviewVisualBlock?: (id: string, patch: Partial<Extract<VisualBlock, { kind: "media" }>>) => void;
   onPatchVisualBlock?: (id: string, patch: Partial<Extract<VisualBlock, { kind: "media" }>>) => void;
@@ -380,6 +387,7 @@ export default function EditorCanvas({
   const viewportRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const overlayRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const inlineTextEditorRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const mediaOverlayRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const virtualDeckAContainerRef = useRef<HTMLDivElement>(null);
   const virtualDeckBContainerRef = useRef<HTMLDivElement>(null);
@@ -400,6 +408,23 @@ export default function EditorCanvas({
   const [dragOverride, setDragOverride] = useState<DragOverride | null>(null);
   const reducedMotion = usePrefersReducedMotion();
   const settleAuthoredMotion = !playbackClock && reducedMotion;
+
+  useEffect(() => {
+    if (!inlineTextEditing || !selectedTextId || !textEditable) return;
+    const frame = window.requestAnimationFrame(() => {
+      const editor = inlineTextEditorRefs.current.get(selectedTextId);
+      if (!editor) return;
+      editor.focus({ preventScroll: true });
+      const selection = window.getSelection();
+      if (!selection) return;
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [inlineTextEditing, selectedTextId, textEditable]);
+
   const renderedIdentity = variant.base_video_url
     ? stableVideoSourceIdentity(variant.base_video_url, variant.base_video_path ?? undefined)
     : `${variant.variant_id}:${variant.render_finished_at ?? ""}`;
@@ -1641,6 +1666,13 @@ export default function EditorCanvas({
                       : 0;
                   const isSelected = selectedTextId === layout.id;
                   const isLyric = bar?.role === "lyric_line";
+                  const isInlineEditable =
+                    isSelected &&
+                    inlineTextEditing &&
+                    textEditable &&
+                    !isLyric &&
+                    !isCaptionBar(bar) &&
+                    onEditText != null;
                   const isHovered = hoveredId === layout.id && !isSelected;
                   const isFlashing = flashTextIds?.has(layout.id) ?? false;
                   const zIndex =
@@ -1740,10 +1772,58 @@ export default function EditorCanvas({
                       onDoubleClick={(e) => {
                         e.stopPropagation();
                         onSelectText(layout.id);
-                        onFocusContent();
+                        if (inlineTextEditing && !isCaptionBar(bar)) {
+                          window.requestAnimationFrame(() => {
+                            inlineTextEditorRefs.current
+                              .get(layout.id)
+                              ?.focus({ preventScroll: true });
+                          });
+                        } else {
+                          onFocusContent();
+                        }
                       }}
                     >
-                      {effect === "staggered-slice" ? (
+                      {isInlineEditable ? (
+                        <div
+                          ref={(el) => {
+                            if (el) {
+                              inlineTextEditorRefs.current.set(layout.id, el);
+                              if (
+                                document.activeElement !== el &&
+                                el.textContent !== layout.text
+                              ) {
+                                el.textContent = layout.text;
+                              }
+                            } else {
+                              inlineTextEditorRefs.current.delete(layout.id);
+                            }
+                          }}
+                          role="textbox"
+                          aria-label="Text content"
+                          aria-multiline="true"
+                          contentEditable
+                          suppressContentEditableWarning
+                          spellCheck
+                          className="min-w-[1ch] cursor-text select-text whitespace-pre-wrap rounded-[2px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+                          style={textElementContentStyle({
+                            layout,
+                            fontSize: `${motionFontPx}px`,
+                            strokeWidth: strokePx > 0 ? `${strokePx}px` : null,
+                            canvasPixelCssSize: `${stageSize.h / canvas.h}px`,
+                          })}
+                          onInput={(event) => {
+                            onEditText?.(
+                              layout.id,
+                              event.currentTarget.textContent ?? "",
+                            );
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key !== "Escape") return;
+                            event.preventDefault();
+                            event.currentTarget.blur();
+                          }}
+                        />
+                      ) : effect === "staggered-slice" ? (
                         <StaggeredSliceText
                           text={layout.text}
                           tLocal={frameTime - layout.start_s}

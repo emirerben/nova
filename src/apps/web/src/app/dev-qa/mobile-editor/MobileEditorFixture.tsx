@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useState } from "react";
-import { ChevronLeft, RotateCcw } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronLeft, Move, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -44,11 +44,12 @@ const INITIAL_WINDOWS: ClipWindow[] = [
   { id: "istanbul", inS: 6.7, durationS: 3.8, label: "Istanbul night" },
 ];
 
+type SheetDockTool = Exclude<DockTool, "text">;
+
 type FixturePanel =
   | { kind: "precision" }
-  | { kind: "text" }
-  | { kind: "tool"; tool: DockTool }
-  | { kind: "action"; tool: DockTool; action: string }
+  | { kind: "tool"; tool: SheetDockTool }
+  | { kind: "action"; tool: SheetDockTool; action: string }
   | null;
 
 interface FixtureSnapshot {
@@ -57,7 +58,13 @@ interface FixtureSnapshot {
   look: string;
   clipLook: string;
   transition: string;
-  textDraft: { id: string; text: string; position: string; preset: string } | null;
+  textDraft: {
+    id: string;
+    text: string;
+    xPct: number;
+    yPct: number;
+    preset: string;
+  } | null;
   caption: { text: string; style: string; status: string };
   musicTrack: string;
   musicGain: number;
@@ -72,18 +79,13 @@ const SFX_OPTIONS = ["Camera click", "Whoosh", "Soft impact"];
 const LOOK_OPTIONS = ["Clean", "Warm", "Film"];
 
 const TOOL_COPY: Record<
-  DockTool,
+  SheetDockTool,
   { title: string; description: string; actions: string[] }
 > = {
   nova: {
     title: "Kria",
     description: "Review a proposed edit before accepting or rejecting it.",
     actions: ["Review proposal", "Accept edit", "Reject edit"],
-  },
-  text: {
-    title: "Text",
-    description: "Add titles, place them, and apply a reusable preset.",
-    actions: ["Add text", "Smart place", "Choose preset"],
   },
   captions: {
     title: "Captions",
@@ -136,6 +138,23 @@ function projectSegments(windows: ClipWindow[]): MiniStripSegment[] {
 
 export default function MobileEditorFixture() {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const previewCanvasRef = useRef<HTMLDivElement>(null);
+  const textEditorRef = useRef<HTMLDivElement | null>(null);
+  const textFrameRef = useRef<HTMLDivElement>(null);
+  const pendingTextFocusRef = useRef(false);
+  const textEditRecordedRef = useRef(false);
+  const textDragRef = useRef<{
+    pointerId: number;
+    startClientX: number;
+    startClientY: number;
+    startXPct: number;
+    startYPct: number;
+    minXPct: number;
+    maxXPct: number;
+    minYPct: number;
+    maxYPct: number;
+    moved: boolean;
+  } | null>(null);
   const captionEditRecordedRef = useRef(false);
   const [windows, setWindows] = useState(INITIAL_WINDOWS);
   const [history, setHistory] = useState<FixtureSnapshot[]>([]);
@@ -151,9 +170,11 @@ export default function MobileEditorFixture() {
   const [textDraft, setTextDraft] = useState<{
     id: string;
     text: string;
-    position: string;
+    xPct: number;
+    yPct: number;
     preset: string;
   } | null>(null);
+  const [textSelected, setTextSelected] = useState(false);
   const [caption, setCaption] = useState({
     text: "Three cities. One unforgettable summer.",
     style: "Clean",
@@ -188,12 +209,28 @@ export default function MobileEditorFixture() {
       : null;
   const deleteDisabledReason =
     windows.length <= 1 ? "At least one clip must remain" : null;
-  const activeTool =
-    panel?.kind === "text"
-      ? "text"
-      : panel?.kind === "tool" || panel?.kind === "action"
-        ? panel.tool
-        : null;
+  const activeTool = textSelected
+    ? "text"
+    : panel?.kind === "tool" || panel?.kind === "action"
+      ? panel.tool
+      : null;
+
+  useEffect(() => {
+    if (!textDraft || !textSelected || !pendingTextFocusRef.current) return;
+    pendingTextFocusRef.current = false;
+    const frame = window.requestAnimationFrame(() => {
+      const editor = textEditorRef.current;
+      if (!editor) return;
+      editor.focus();
+      const selection = window.getSelection();
+      if (!selection) return;
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [textDraft, textSelected]);
 
   const seekTo = (seconds: number) => {
     const next = Math.min(totalDurationS, Math.max(0, seconds));
@@ -303,6 +340,7 @@ export default function MobileEditorFixture() {
     setClipLook(previous.clipLook);
     setTransition(previous.transition);
     setTextDraft(previous.textDraft);
+    setTextSelected(Boolean(previous.textDraft));
     setCaption(previous.caption);
     setMusicTrack(previous.musicTrack);
     setMusicGain(previous.musicGain);
@@ -320,15 +358,94 @@ export default function MobileEditorFixture() {
     setTextDraft({
       id: crypto.randomUUID(),
       text,
-      position: "Center",
+      xPct: 50,
+      yPct: 50,
       preset,
     });
-    setPanel({ kind: "text" });
+    pendingTextFocusRef.current = true;
+    textEditRecordedRef.current = false;
+    setTextSelected(true);
+    setPanel(null);
     setToolAction("text:Add text");
-    setReceipt("Text added · edit it now");
+    setReceipt("Text added · type on screen or drag the move handle");
   };
 
-  const openToolAction = (tool: DockTool, action: string) => {
+  const moveTextByKeyboard = (dxPct: number, dyPct: number) => {
+    if (!textDraft) return;
+    record();
+    setTextDraft((current) =>
+      current
+        ? {
+            ...current,
+            xPct: Math.min(94, Math.max(6, current.xPct + dxPct)),
+            yPct: Math.min(94, Math.max(6, current.yPct + dyPct)),
+          }
+        : current,
+    );
+    setReceipt("Text moved · Undo available");
+  };
+
+  const startTextDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!textDraft) return;
+    const preview = previewCanvasRef.current?.getBoundingClientRect();
+    const frame = textFrameRef.current?.getBoundingClientRect();
+    if (!preview || !frame || preview.width <= 0 || preview.height <= 0) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const halfWidthPct = (frame.width / preview.width) * 50;
+    const halfHeightPct = (frame.height / preview.height) * 50;
+    textDragRef.current = {
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startXPct: textDraft.xPct,
+      startYPct: textDraft.yPct,
+      minXPct: Math.min(50, halfWidthPct + 2),
+      maxXPct: Math.max(50, 98 - halfWidthPct),
+      minYPct: Math.min(50, halfHeightPct + 2),
+      maxYPct: Math.max(50, 98 - halfHeightPct),
+      moved: false,
+    };
+    setTextSelected(true);
+  };
+
+  const moveTextDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = textDragRef.current;
+    const preview = previewCanvasRef.current?.getBoundingClientRect();
+    if (!drag || drag.pointerId !== event.pointerId || !preview) return;
+    const dx = event.clientX - drag.startClientX;
+    const dy = event.clientY - drag.startClientY;
+    if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+    if (!drag.moved) {
+      record();
+      drag.moved = true;
+      window.getSelection()?.removeAllRanges();
+    }
+    event.preventDefault();
+    const xPct = drag.startXPct + (dx / preview.width) * 100;
+    const yPct = drag.startYPct + (dy / preview.height) * 100;
+    setTextDraft((current) =>
+      current
+        ? {
+            ...current,
+            xPct: Math.min(drag.maxXPct, Math.max(drag.minXPct, xPct)),
+            yPct: Math.min(drag.maxYPct, Math.max(drag.minYPct, yPct)),
+          }
+        : current,
+    );
+    setReceipt("Moving text…");
+  };
+
+  const finishTextDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = textDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    textDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    if (drag.moved) setReceipt("Text moved · Undo available");
+  };
+
+  const openToolAction = (tool: SheetDockTool, action: string) => {
     captionEditRecordedRef.current = false;
     setToolAction(`${tool}:${action}`);
     setPanel({ kind: "action", tool, action });
@@ -377,7 +494,7 @@ export default function MobileEditorFixture() {
     </div>
   );
 
-  const renderActionContent = (tool: DockTool, action: string) => {
+  const renderActionContent = (tool: SheetDockTool, action: string) => {
     if (tool === "nova") {
       if (action === "Review proposal") {
         return (
@@ -690,7 +807,8 @@ export default function MobileEditorFixture() {
         data-transition={transition}
         data-tool-action={toolAction}
         data-text={textDraft?.text ?? ""}
-        data-text-position={textDraft?.position ?? ""}
+        data-text-x={textDraft?.xPct ?? ""}
+        data-text-y={textDraft?.yPct ?? ""}
         data-text-preset={textDraft?.preset ?? ""}
         data-caption={caption.text}
         data-caption-style={caption.style}
@@ -726,84 +844,174 @@ export default function MobileEditorFixture() {
       </header>
 
       <section className="relative flex min-h-0 items-center justify-center overflow-hidden bg-muted/30 p-3">
-        <video
-          ref={videoRef}
-          src={SOURCE_URL}
-          muted={muted}
-          playsInline
-          className="h-full max-w-full rounded-xl border border-border bg-black object-cover shadow-sm"
+        <div
+          ref={previewCanvasRef}
+          data-testid="qa-preview-canvas"
+          className="relative h-full max-w-full overflow-hidden rounded-xl bg-black shadow-sm"
           style={{ aspectRatio: "9 / 16" }}
-          onPlay={() => setPlaying(true)}
-          onPause={() => setPlaying(false)}
-          onTimeUpdate={(event) => setCurrentTimeS(event.currentTarget.currentTime)}
-        />
-        {textDraft && (
+        >
+          <video
+            ref={videoRef}
+            src={SOURCE_URL}
+            muted={muted}
+            playsInline
+            className="h-full w-full rounded-xl border border-border bg-black object-cover"
+            onPlay={() => setPlaying(true)}
+            onPause={() => setPlaying(false)}
+            onTimeUpdate={(event) =>
+              setCurrentTimeS(event.currentTarget.currentTime)
+            }
+          />
+          {textDraft && (
+            <div
+              ref={textFrameRef}
+              data-testid="qa-text-frame"
+              data-selected={textSelected}
+              role="group"
+              aria-label="Text overlay"
+              className={`absolute max-w-[82%] -translate-x-1/2 -translate-y-1/2 touch-none rounded-md px-2 py-1 text-center text-2xl font-semibold text-white [text-shadow:0_1px_4px_rgb(0_0_0/0.9)] ${
+                textDraft.preset === "Editorial" ? "font-display" : ""
+              } ${
+                textSelected
+                  ? "cursor-grab border border-dashed border-white/90 bg-black/15 shadow-[0_0_0_1px_rgb(0_0_0/0.35)] active:cursor-grabbing"
+                  : "border border-transparent"
+              }`}
+              style={{
+                left: `${textDraft.xPct}%`,
+                top: `${textDraft.yPct}%`,
+                letterSpacing:
+                  textDraft.preset === "Impact" ? "0.04em" : undefined,
+                textTransform:
+                  textDraft.preset === "Impact" ? "uppercase" : undefined,
+              }}
+              onPointerDown={startTextDrag}
+              onPointerMove={moveTextDrag}
+              onPointerUp={finishTextDrag}
+              onPointerCancel={finishTextDrag}
+            >
+              <div
+                ref={(element) => {
+                  textEditorRef.current = element;
+                  if (
+                    element &&
+                    document.activeElement !== element &&
+                    element.textContent !== textDraft.text
+                  ) {
+                    element.textContent = textDraft.text;
+                  }
+                }}
+                data-testid="qa-text-overlay"
+                data-text-id={textDraft.id}
+                role="textbox"
+                aria-label="Text content"
+                aria-multiline="true"
+                contentEditable
+                suppressContentEditableWarning
+                spellCheck
+                className="min-w-20 whitespace-pre-wrap break-words rounded-sm px-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+                onFocus={() => {
+                  setTextSelected(true);
+                }}
+                onBlur={() => {
+                  textEditRecordedRef.current = false;
+                }}
+                onInput={(event) => {
+                  if (!textEditRecordedRef.current) {
+                    record();
+                    textEditRecordedRef.current = true;
+                  }
+                  const text = event.currentTarget.textContent ?? "";
+                  setTextDraft((current) =>
+                    current ? { ...current, text } : current,
+                  );
+                  setReceipt("Editing text on screen");
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    event.currentTarget.blur();
+                    setTextSelected(false);
+                    setReceipt("Text placed");
+                    return;
+                  }
+                  if (!event.altKey) return;
+                  const directions: Record<string, [number, number]> = {
+                    ArrowLeft: [-2, 0],
+                    ArrowRight: [2, 0],
+                    ArrowUp: [0, -2],
+                    ArrowDown: [0, 2],
+                  };
+                  const direction = directions[event.key];
+                  if (!direction) return;
+                  event.preventDefault();
+                  moveTextByKeyboard(...direction);
+                }}
+              />
+              {textSelected && (
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute -right-2 -top-2 grid size-5 place-items-center rounded-full border border-white bg-black/75 text-white shadow"
+                >
+                  <Move className="size-3" />
+                </span>
+              )}
+            </div>
+          )}
           <div
-            data-testid="qa-text-overlay"
-            data-text-id={textDraft.id}
-            className={`pointer-events-none absolute left-1/2 max-w-[72%] -translate-x-1/2 -translate-y-1/2 text-center text-2xl font-semibold text-white [text-shadow:0_1px_4px_rgb(0_0_0/0.9)] ${
-              textDraft.preset === "Editorial" ? "font-display" : ""
+            data-testid="qa-caption-overlay"
+            className={`pointer-events-none absolute bottom-5 left-1/2 max-w-[76%] -translate-x-1/2 rounded bg-black/75 px-2 py-1 text-center text-sm font-medium text-white ${
+              caption.style === "Editorial" ? "font-display" : ""
             }`}
             style={{
-              top:
-                textDraft.position === "Top"
-                  ? "28%"
-                  : textDraft.position === "Bottom"
-                    ? "70%"
-                    : "50%",
-              letterSpacing: textDraft.preset === "Impact" ? "0.04em" : undefined,
-              textTransform: textDraft.preset === "Impact" ? "uppercase" : undefined,
+              backgroundColor:
+                caption.style === "Lime" ? "#a3e635" : undefined,
+              color: caption.style === "Lime" ? "#18181b" : undefined,
             }}
           >
-            {textDraft.text || "Text"}
+            {caption.text}
           </div>
-        )}
-        <div
-          data-testid="qa-caption-overlay"
-          className={`pointer-events-none absolute bottom-5 left-1/2 max-w-[76%] -translate-x-1/2 rounded bg-black/75 px-2 py-1 text-center text-sm font-medium text-white ${
-            caption.style === "Editorial" ? "font-display" : ""
-          }`}
-          style={{
-            backgroundColor: caption.style === "Lime" ? "#a3e635" : undefined,
-            color: caption.style === "Lime" ? "#18181b" : undefined,
-          }}
-        >
-          {caption.text}
-        </div>
-        <div className="pointer-events-none absolute right-4 top-4 flex max-w-[70%] flex-wrap justify-end gap-1">
-          <span className="rounded-full bg-background/90 px-2 py-1 text-[10px] font-medium text-foreground shadow-sm">
-            ♪ {musicTrack} · {musicGain}%
-          </span>
-          {sfx.map((effect) => (
+          <div className="pointer-events-none absolute right-4 top-4 flex max-w-[70%] flex-wrap justify-end gap-1">
             <span
-              key={effect}
-              className="rounded-full bg-background/90 px-2 py-1 text-[10px] text-foreground shadow-sm"
+              className="rounded-full bg-background/90 px-2 py-1 text-[10px] font-medium text-foreground shadow-sm"
             >
-              SFX · {effect}
+              ♪ {musicTrack} · {musicGain}%
             </span>
-          ))}
-          {visuals.map((visual) => (
+            {sfx.map((effect) => (
+              <span
+                key={effect}
+                className="rounded-full bg-background/90 px-2 py-1 text-[10px] text-foreground shadow-sm"
+              >
+                SFX · {effect}
+              </span>
+            ))}
+            {visuals.map((visual) => (
+              <span
+                key={visual}
+                className="rounded-full bg-background/90 px-2 py-1 text-[10px] text-foreground shadow-sm"
+              >
+                Visual · {visual}
+              </span>
+            ))}
+          </div>
+          {overlay && (
             <span
-              key={visual}
-              className="rounded-full bg-background/90 px-2 py-1 text-[10px] text-foreground shadow-sm"
+              data-testid="qa-media-overlay"
+              className="pointer-events-none absolute rounded-md border border-white/70 bg-black/70 px-2 py-1 text-xs font-semibold text-white shadow"
+              style={{
+                left:
+                  overlay.position === "Left"
+                    ? "20%"
+                    : overlay.position === "Right"
+                      ? "70%"
+                      : "50%",
+                top: "34%",
+                transform: "translate(-50%, -50%)",
+              }}
             >
-              Visual · {visual}
+              {overlay.name}
             </span>
-          ))}
+          )}
         </div>
-        {overlay && (
-          <span
-            data-testid="qa-media-overlay"
-            className="pointer-events-none absolute rounded-md border border-white/70 bg-black/70 px-2 py-1 text-xs font-semibold text-white shadow"
-            style={{
-              left: overlay.position === "Left" ? "20%" : overlay.position === "Right" ? "70%" : "50%",
-              top: "34%",
-              transform: "translate(-50%, -50%)",
-            }}
-          >
-            {overlay.name}
-          </span>
-        )}
         {history.length > 0 && (
           <Button
             type="button"
@@ -891,12 +1099,14 @@ export default function MobileEditorFixture() {
               addText();
               return;
             }
-            const closing = panel?.kind === "tool" && panel.tool === tool;
-            setPanel(closing ? null : { kind: "tool", tool });
+            const sheetTool: SheetDockTool = tool;
+            setTextSelected(false);
+            const closing = panel?.kind === "tool" && panel.tool === sheetTool;
+            setPanel(closing ? null : { kind: "tool", tool: sheetTool });
             setReceipt(
               closing
-                ? `${tool === "nova" ? "Kria" : TOOL_COPY[tool].title} tools closed`
-                : `${TOOL_COPY[tool].title} tools opened`,
+                ? `${sheetTool === "nova" ? "Kria" : TOOL_COPY[sheetTool].title} tools closed`
+                : `${TOOL_COPY[sheetTool].title} tools opened`,
             );
           }}
           onDisabledTap={(reason) => setReceipt(reason)}
@@ -1014,89 +1224,6 @@ export default function MobileEditorFixture() {
                   ))}
                 </TabsContent>
               </Tabs>
-            </>
-          ) : panel?.kind === "text" && textDraft ? (
-            <>
-              <SheetHeader className="border-b border-border px-4 pb-3 pt-4 text-left">
-                <SheetTitle className="text-base text-balance">
-                  Edit text
-                </SheetTitle>
-                <SheetDescription className="text-pretty">
-                  Type directly, then close this sheet to keep editing.
-                </SheetDescription>
-              </SheetHeader>
-              <div className="grid gap-3 px-4 pt-4">
-                <Textarea
-                  autoFocus
-                  aria-label="Text content"
-                  value={textDraft.text}
-                  className="min-h-24 text-base"
-                  onChange={(event) => {
-                    const text = event.currentTarget.value;
-                    setTextDraft((current) =>
-                      current ? { ...current, text } : current,
-                    );
-                    setReceipt("Unsaved text");
-                  }}
-                />
-                <div className="space-y-2">
-                  <p className="text-xs font-medium text-muted-foreground">Position</p>
-                  <div className="grid grid-cols-3 gap-2">
-                    {["Top", "Center", "Bottom"].map((position) => (
-                      <Button
-                        key={position}
-                        type="button"
-                        variant={
-                          textDraft.position === position ? "secondary" : "outline"
-                        }
-                        className="min-h-11"
-                        aria-pressed={textDraft.position === position}
-                        onClick={() => {
-                          record();
-                          setTextDraft((current) =>
-                            current ? { ...current, position } : current,
-                          );
-                          setReceipt(`Text moved to ${position.toLowerCase()}`);
-                        }}
-                      >
-                        {position}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <p className="text-xs font-medium text-muted-foreground">Preset</p>
-                  <div className="grid grid-cols-3 gap-2">
-                    {["Title", "Editorial", "Impact"].map((preset) => (
-                      <Button
-                        key={preset}
-                        type="button"
-                        variant={
-                          textDraft.preset === preset ? "secondary" : "outline"
-                        }
-                        className="min-h-11"
-                        aria-pressed={textDraft.preset === preset}
-                        onClick={() => {
-                          record();
-                          setTextDraft((current) =>
-                            current ? { ...current, preset } : current,
-                          );
-                          setReceipt(`${preset} text preset applied`);
-                        }}
-                      >
-                        {preset}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-                <Button
-                  type="button"
-                  className="min-h-11"
-                  onClick={() => setPanel(null)}
-                >
-                  Done
-                </Button>
-              </div>
             </>
           ) : panel?.kind === "action" ? (
             <>

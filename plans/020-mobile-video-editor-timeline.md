@@ -72,6 +72,9 @@ separate Paper file **Nova — Mobile Video Editor**.
 - Clip quick actions live in a horizontally scrollable shadcn button toolbar
   directly above the persistent icon-and-label tool dock. The word **Delete**
   stays explicit.
+- Text is inserted directly into the preview as a selected, editable overlay.
+  Users type in place and drag the selected frame to position it; Style and
+  Timing remain secondary sheets rather than the primary text-entry path.
 - Half/full sheets, focusable disabled actions with reasons, safe-area padding,
   reduced motion, and the existing >=44px touch target contract remain intact.
 - The top-right action remains **Save**. Save atomically commits the draft and
@@ -89,7 +92,9 @@ separate Paper file **Nova — Mobile Video Editor**.
    live In/Out feedback, trim rails, scroll-to-scrub, pinch/button zoom, and Fit.
 5. Move the clip quick-action toolbar out of the preview and above the dock.
    Text/caption/overlay toolbars retain their preview-relative behavior.
-6. Refresh Pocket documentation and focused tests. No backend or public schema
+6. Make Pocket text content directly editable on canvas while preserving the
+   existing drag, undo, capability, and atomic Save contracts.
+7. Refresh Pocket documentation and focused tests. No backend or public schema
    changes are permitted.
 
 ### Data flow
@@ -164,7 +169,7 @@ CODE PATHS                                      USER FLOWS
   |-- selected/non-selected rendering
   `-- disabled handle reason                    [+] Continue existing editor flows
                                                    |-- split/mute/delete/undo
-[+] EditorShell wiring                              |-- text/captions sheets
+[+] EditorShell wiring                              |-- on-canvas text + caption sheets
   |-- canonical entries -> pixels                   |-- sound/visual/overlay sheets
   |-- source identity/window -> Filmstrip           `-- Save/render/conflict
   |-- effective move -> one history snapshot

@@ -14,16 +14,12 @@ delete process.env.NEXT_PUBLIC_EDIT_COPILOT_ENABLED;
  *     at minimum, plus visuals / overlays / styles); nova is absent while the
  *     copilot flag is off.
  *  2. "pocket-ministrip" renders when the clip timeline carries slots.
- *  3. Tapping pocket-dock-text immediately inserts one text bar and opens the
- *     focused "Edit text" inspector; the intermediate Text tool drawer is
- *     deliberately skipped. Escape keeps the authored bar and returns to the
- *     timeline.
- *  4. Legacy displacement: double-tapping a canvas text element opens the
- *     POCKET inspector sheet ("Edit text"), NOT the legacy LightEditSheet —
- *     the legacy-only "Close text editor" close button never appears.
- *  5. Closing the inspector keeps the selection and surfaces the
- *     "pocket-context-strip" (Edit / Style / Timing / Delete actions); Edit
- *     re-opens the inspector sheet.
+ *  3. Tapping pocket-dock-text inserts one text bar directly on the canvas,
+ *     focuses its contentEditable, and keeps the timeline and dock visible.
+ *  4. Double-tapping existing text focuses that same on-canvas editor instead
+ *     of opening either the Pocket inspector or legacy LightEditSheet.
+ *  5. Text selection surfaces the context strip (Edit / Style / Timing /
+ *     Delete); Edit returns focus to the canvas while Style opens detail UI.
  *  6. Selecting a clip exposes direct trim handles and places clip actions
  *     between the thumbnail timeline and icon dock; trim reaches atomic Save.
  */
@@ -376,23 +372,19 @@ describe("EditorShell — pocket editor flag ON (light mode)", () => {
     fireEvent.click(screen.getByTestId("pocket-dock-text"));
     await settle();
 
-    const sheet = screen.getByTestId("pocket-sheet");
-    expect(screen.getByRole("dialog", { name: "Edit text" })).toBe(sheet);
-    expect(within(sheet).queryByRole("button", { name: "Add text" })).toBeNull();
-    const content = within(sheet).getByRole("textbox", { name: "Text content" });
-    expect(content).toHaveValue("Add a title");
+    expect(screen.queryByTestId("pocket-sheet")).toBeNull();
+    const content = screen.getByRole("textbox", { name: "Text content" });
+    expect(content).toHaveTextContent("Add a title");
     expect(content).toHaveFocus();
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
 
-    expect(screen.queryByTestId("pocket-dock")).toBeNull();
-    expect(screen.queryByTestId("pocket-ministrip")).toBeNull();
-
-    // Escape closes the sheet; the cluster returns.
-    fireEvent.keyDown(document, { key: "Escape" });
-    await settle();
-    expect(screen.queryByTestId("pocket-sheet")).toBeNull();
     expect(screen.getByTestId("pocket-dock")).toBeInTheDocument();
     expect(screen.getByTestId("pocket-ministrip")).toBeInTheDocument();
+
+    content.textContent = "Edit me here";
+    fireEvent.input(content);
+    await settle();
+    expect(content).toHaveTextContent("Edit me here");
   });
 
   it("dock sounds tool opens the Sounds sheet; its Close button closes it", async () => {
@@ -412,7 +404,7 @@ describe("EditorShell — pocket editor flag ON (light mode)", () => {
     expect(screen.getByTestId("pocket-dock")).toBeInTheDocument();
   });
 
-  it("double-tapping canvas text routes to the pocket inspector sheet, not the LightEditSheet", async () => {
+  it("double-tapping canvas text focuses its on-canvas editor without a sheet", async () => {
     await renderShell(makeTextVariant());
 
     const textEl = document.querySelector('[data-text-id="title-1"]');
@@ -421,26 +413,19 @@ describe("EditorShell — pocket editor flag ON (light mode)", () => {
     fireEvent.doubleClick(textEl as Element);
     await settle();
 
-    // Pocket inspector sheet opens, titled for the text selection.
-    const sheet = screen.getByTestId("pocket-sheet");
-    expect(screen.getByRole("dialog", { name: "Edit text" })).toBe(sheet);
-    expect(within(sheet).getByRole("heading", { name: "Edit text" })).toBeInTheDocument();
-
-    // Legacy LightEditSheet is displaced — its unique close affordance never renders.
+    const content = screen.getByRole("textbox", { name: "Text content" });
+    expect(content).toHaveFocus();
+    expect(screen.queryByTestId("pocket-sheet")).toBeNull();
     expect(screen.queryByRole("button", { name: "Close text editor" })).toBeNull();
   });
 
-  it("closing the inspector keeps the selection and surfaces the context strip; Edit re-opens it", async () => {
+  it("keeps Edit on canvas while Style opens the detailed text sheet", async () => {
     await renderShell(makeTextVariant());
 
     fireEvent.doubleClick(document.querySelector('[data-text-id="title-1"]') as Element);
     await settle();
-    const sheet = screen.getByTestId("pocket-sheet");
-    fireEvent.click(within(sheet).getAllByRole("button", { name: "Close" })[0]);
-    await settle();
     expect(screen.queryByTestId("pocket-sheet")).toBeNull();
 
-    // Selection persists ⇒ the floating context strip appears over the canvas.
     const strip = screen.getByTestId("pocket-context-strip");
     expect(screen.getByRole("toolbar", { name: "Selection actions" })).toBe(strip);
     expect(within(strip).getByRole("button", { name: "Edit" })).toBeInTheDocument();
@@ -448,11 +433,16 @@ describe("EditorShell — pocket editor flag ON (light mode)", () => {
     expect(within(strip).getByRole("button", { name: "Timing" })).toBeInTheDocument();
     expect(within(strip).getByRole("button", { name: "Delete" })).toBeInTheDocument();
 
-    // The primary pill re-opens the inspector sheet for the same selection.
+    const content = screen.getByRole("textbox", { name: "Text content" });
+    content.blur();
     fireEvent.click(within(strip).getByRole("button", { name: "Edit" }));
     await settle();
+    expect(content).toHaveFocus();
+    expect(screen.queryByTestId("pocket-sheet")).toBeNull();
+
+    fireEvent.click(within(strip).getByRole("button", { name: "Style" }));
+    await settle();
     expect(screen.getByRole("dialog", { name: "Edit text" })).toBeInTheDocument();
-    // …and the strip hides while a sheet is open (one surface at a time).
     expect(screen.queryByTestId("pocket-context-strip")).toBeNull();
   });
 });

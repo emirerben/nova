@@ -8,16 +8,26 @@ import {
 
 type QaWindow = { id: string; inS: number; durationS: number };
 
-async function dragOnTarget(target: Locator, dx: number) {
+async function dragOnTarget(target: Locator, dx: number, dy = 0) {
   const box = await target.boundingBox();
   if (!box) throw new Error("Timeline target is not visible");
   const start = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
   await target.evaluate(
     (element, point) => {
-      for (const [type, x] of [
-        ["pointerdown", point.x],
-        ["pointermove", point.x + point.dx],
-        ["pointerup", point.x + point.dx],
+      for (const [type, x, y] of [
+        ["pointerdown", point.x, point.y],
+        [
+          "pointermove",
+          point.x + point.dx * 0.33,
+          point.y + point.dy * 0.33,
+        ],
+        [
+          "pointermove",
+          point.x + point.dx * 0.66,
+          point.y + point.dy * 0.66,
+        ],
+        ["pointermove", point.x + point.dx, point.y + point.dy],
+        ["pointerup", point.x + point.dx, point.y + point.dy],
       ] as const) {
         element.dispatchEvent(
           new PointerEvent(type, {
@@ -25,7 +35,7 @@ async function dragOnTarget(target: Locator, dx: number) {
             cancelable: true,
             composed: true,
             clientX: x,
-            clientY: point.y,
+            clientY: y,
             pointerId: 29,
             pointerType: "touch",
             isPrimary: true,
@@ -33,7 +43,7 @@ async function dragOnTarget(target: Locator, dx: number) {
         );
       }
     },
-    { ...start, dx },
+    { ...start, dx, dy },
   );
 }
 
@@ -116,6 +126,28 @@ test("filmstrip samples the exact source window and follows touch every frame", 
     );
   });
 
+  const initialRangeKey = await firstStrip.getAttribute("data-source-range-key");
+  expect(initialRangeKey).not.toBeNull();
+  await expect(firstStrip).toHaveAttribute(
+    "data-rendered-range-key",
+    initialRangeKey!,
+  );
+  await page.getByRole("button", { name: "Zoom timeline in" }).click();
+  await page.getByRole("button", { name: "Zoom timeline in" }).click();
+  await expect(firstStrip).not.toHaveAttribute(
+    "data-source-range-key",
+    initialRangeKey!,
+  );
+  const nextRangeKey = await firstStrip.getAttribute("data-source-range-key");
+  const renderedDuringDecode = await firstStrip.getAttribute(
+    "data-rendered-range-key",
+  );
+  expect([null, nextRangeKey]).toContain(renderedDuringDecode);
+  await expect(firstStrip).toHaveAttribute(
+    "data-rendered-range-key",
+    nextRangeKey!,
+  );
+
   const viewport = page.getByTestId("pocket-timeline-viewport");
   const scrollSamples = await viewport.evaluate(async (element) => {
     const box = element.getBoundingClientRect();
@@ -174,9 +206,18 @@ test("transport, zoom, clip actions, and boundary reasons all respond", async ({
   const firstClip = page.getByRole("button", { name: /Clip 1,/ });
   const initialWidth = (await firstClip.boundingBox())?.width ?? 0;
   await page.getByRole("button", { name: "Zoom timeline in" }).click();
-  expect((await firstClip.boundingBox())?.width ?? 0).toBeGreaterThan(initialWidth);
+  await expect
+    .poll(async () => (await firstClip.boundingBox())?.width ?? 0)
+    .toBeGreaterThan(initialWidth);
   await page.getByRole("button", { name: "Fit timeline" }).click();
 
+  // Playback can advance by a device-dependent fraction before Pause lands.
+  // Reset the media clock to the first-frame boundary before its reason check;
+  // the selected clip's 44px trim handle deliberately owns the left-edge tap.
+  await page.locator("video").evaluate((video: HTMLVideoElement) => {
+    video.currentTime = 0;
+    video.dispatchEvent(new Event("timeupdate"));
+  });
   const split = page.getByRole("button", { name: "Split" });
   await expect(split).toHaveAttribute("aria-disabled", "true");
   await split.evaluate((button: HTMLButtonElement) => button.click());
@@ -227,14 +268,16 @@ test("precision sheet trims and applies Look and transition choices", async ({ p
   await expect(dialog).toBeHidden();
 });
 
-test("Text inserts on screen and focuses editing immediately", async ({ page }) => {
+test("Text edits directly on the preview and drags in one undoable gesture", async ({
+  page,
+}) => {
   await page.getByRole("button", { name: "Text tool" }).click();
-  const dialog = page.getByRole("dialog", { name: "Edit text" });
-  const content = dialog.getByRole("textbox", { name: "Text content" });
-  await expect(dialog).toBeVisible();
+  const content = page.getByRole("textbox", { name: "Text content" });
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(content).toBeFocused();
   await expect(page.getByTestId("qa-text-overlay")).toHaveText("Add a title");
 
+  await content.click();
   await content.fill("Three cities, one summer");
   await expect(page.getByTestId("qa-text-overlay")).toHaveText(
     "Three cities, one summer",
@@ -243,21 +286,47 @@ test("Text inserts on screen and focuses editing immediately", async ({ page }) 
     "data-text",
     "Three cities, one summer",
   );
-  await dialog.getByRole("button", { name: "Bottom" }).click();
-  await dialog.getByRole("button", { name: "Editorial" }).click();
-  await expect(page.locator("#qa-state")).toHaveAttribute(
-    "data-text-position",
-    "Bottom",
+  await content.fill("");
+  await expect(page.getByTestId("qa-text-overlay")).toBeEmpty();
+  await expect(page.locator("#qa-state")).toHaveAttribute("data-text", "");
+  await content.fill("Three cities, one summer");
+  const frame = page.getByTestId("qa-text-frame");
+  const preview = page.getByTestId("qa-preview-canvas");
+  const xBefore = await qaNumber(page, "data-text-x");
+  const yBefore = await qaNumber(page, "data-text-y");
+  const historyBeforeDrag = await qaNumber(page, "data-history-len");
+  await dragOnTarget(frame, 800, 1200);
+  expect(await qaNumber(page, "data-text-x")).toBeGreaterThan(xBefore);
+  expect(await qaNumber(page, "data-text-y")).toBeGreaterThan(yBefore);
+  expect(await qaNumber(page, "data-history-len")).toBe(
+    historyBeforeDrag + 1,
   );
-  await expect(page.locator("#qa-state")).toHaveAttribute(
-    "data-text-preset",
-    "Editorial",
+
+  const frameBox = await frame.boundingBox();
+  const previewBox = await preview.boundingBox();
+  expect(frameBox).not.toBeNull();
+  expect(previewBox).not.toBeNull();
+  expect(frameBox!.x).toBeGreaterThanOrEqual(previewBox!.x);
+  expect(frameBox!.x + frameBox!.width).toBeLessThanOrEqual(
+    previewBox!.x + previewBox!.width,
   );
-  await dialog.getByRole("button", { name: "Done" }).click();
-  await expect(dialog).toBeHidden();
-  await expect(page.getByTestId("pocket-dock")).toBeVisible();
+  expect(frameBox!.y).toBeGreaterThanOrEqual(previewBox!.y);
+  expect(frameBox!.y + frameBox!.height).toBeLessThanOrEqual(
+    previewBox!.y + previewBox!.height,
+  );
+
+  await page.getByRole("button", { name: "Undo" }).click();
+  expect(await qaNumber(page, "data-text-x")).toBeCloseTo(xBefore, 4);
+  expect(await qaNumber(page, "data-text-y")).toBeCloseTo(yBefore, 4);
   await expect(page.getByTestId("qa-text-overlay")).toHaveText(
     "Three cities, one summer",
+  );
+
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(page.getByTestId("qa-text-overlay")).toHaveText("Add a title");
+  await expect(page.locator("#qa-state")).toHaveAttribute(
+    "data-text",
+    "Add a title",
   );
 });
 
@@ -370,7 +439,6 @@ test("Visuals, overlays, and styles create visible editable state", async ({ pag
   await expect(page.getByTestId("qa-text-overlay")).toHaveText(
     "Three cities, one summer",
   );
-  await page.getByRole("button", { name: "Close" }).click();
 
   await page.getByRole("button", { name: "Overlays tool" }).click();
   await page.getByRole("button", { name: "Upload overlay" }).click();
