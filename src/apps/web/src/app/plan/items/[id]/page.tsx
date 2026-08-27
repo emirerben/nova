@@ -2526,7 +2526,7 @@ export default function PlanItemPage() {
               </div>
             )}
 
-            {allVariantsFailed && MAIN_CREATOR_AGENT_ENABLED && (
+            {(showReleaseDesk || allVariantsFailed) && MAIN_CREATOR_AGENT_ENABLED && (
               <div className="mb-6">
                 <MainCreatorAgentPanel itemId={itemId} />
               </div>

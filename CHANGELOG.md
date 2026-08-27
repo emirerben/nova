@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.53.0.4] — 2026-08-27
+
+### Fixed
+- **Finished videos can now start a new Kria direction without losing their existing render or re-uploading media.** The release desk keeps Create with Kria available after a successful result, including the terminal-session restart control that opens a fresh creative request.
+
 ## [0.53.0.3] — 2026-08-27
 
 ### Fixed
