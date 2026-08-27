@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.54.0.1] — 2026-08-27
+## [0.55.0.0] — 2026-08-27
 
 ### Added
 - **Kria can now stage complete “all” and “every” mixed-media edits in one atomic action.** Ready unused sources can be added together, image, video, or all-clip durations can be changed with typed selectors, and images can be gathered into valid Card Stack or Film Strip groups without silently dropping targets.
