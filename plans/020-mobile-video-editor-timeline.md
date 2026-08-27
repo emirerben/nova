@@ -2,7 +2,7 @@
 
 ## Status
 
-In progress. Autoship branch: `codex/mobile-video-editor-timeline`.
+Completed. Autoship branch: `codex/mobile-video-editor-timeline`.
 
 ## Goal
 
@@ -193,19 +193,19 @@ introduced.
 
 ## Tasks
 
-- [ ] Lock plan and timeline verification contract.
-- [ ] Implement thumbnail timeline, fixed playhead, trim, and zoom.
-- [ ] Place shadcn clip actions above the icon-led dock.
-- [ ] Add regression tests and update the Pocket design contract.
-- [ ] Run timeline, frontend, and preship gates.
-- [ ] Start localhost, provide the test route, ship a PR, and stop at approval.
+- [x] Lock plan and timeline verification contract.
+- [x] Implement thumbnail timeline, fixed playhead, trim, and zoom.
+- [x] Place shadcn clip actions above the icon-led dock.
+- [x] Add regression tests and update the Pocket design contract.
+- [x] Run timeline, frontend, and preship gates.
+- [x] Start localhost, provide the test route, ship a PR, and stop at approval.
 
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | Not run | Product direction was explicitly approved in the Paper specification. |
-| Codex Review | `/codex review` | Independent 2nd opinion | 0 | Not run | Diff review runs after implementation. |
+| Adversarial Review | delegated Luna agents | Independent 2nd opinion | 2 | Clear | Luna passes found four interaction defects; all were fixed and regression-tested. |
 | Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | Clear | 0 open issues, 0 critical gaps; reuse canonical preview, filmstrip, and trim math. |
 | Design Review | `/plan-design-review` | UI/UX gaps | 1 | Clear | Paper flow plus CapCut screenshot/recording and three delegated audits are the source. |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | Not needed | No new developer-facing workflow or public interface. |

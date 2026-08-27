@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.56.0.0] — 2026-08-27
+
+### Added
+- **Mobile creators can now edit against a direct thumbnail timeline.** A fixed center playhead, tap-to-seek clip selection, 44px source In/Out handles, pinch zoom, visible zoom controls, and Fit make precise trimming practical on phone-sized screens.
+- **A real-media mobile QA route now covers the complete core gesture loop.** The guarded fixture exercises touch trimming, ripple behavior, split, mute, delete, undo, scrubbing, and Save at both supported mobile viewports.
+
+### Changed
+- **Pocket editing keeps clip actions above an icon-led shadcn tool dock.** Split, Mute, Replace, Move, Reset, and Delete remain discoverable without shrinking touch targets or hiding capability reasons.
+- **Mobile Save still uses Nova's existing atomic editor commit and render path.** Timeline slots, source bounds, beat timing, conflict handling, and feature gates keep their current contracts.
+
+### Fixed
+- **Trim gestures now create exactly one undo step and ripple later clips from the canonical timeline.** Transition-overlap taps select the visible incoming clip, pinch zoom preserves its fixed-playhead anchor, and keyboard users retain a native seek control after touch gestures.
+
 ## [0.55.0.0] — 2026-08-27
 
 ### Added
