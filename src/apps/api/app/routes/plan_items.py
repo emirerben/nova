@@ -768,6 +768,10 @@ class PlanItemEdit(BaseModel):
     speech_cleanup_notice_ack_id: str | None = None
 
 
+class SourceAudioMixRequest(BaseModel):
+    mix: Literal["interleaved", "source_a", "source_b"]
+
+
 class GenerateItemBody(BaseModel):
     speech_cleanup_action: Literal["retry_required", "disable_and_create"] | None = None
     expected_job_id: str | None = Field(default=None, min_length=1, max_length=64)
@@ -2352,6 +2356,9 @@ def _snapshot_from_edit_guide_revision(  # noqa: ANN001
         story_beats=beats,
         fast_cuts=current.fast_cuts if revision.direction == "fast_montage" else None,
         mixed_media_timing=current.mixed_media_timing,
+        intercut_comparison=(
+            current.intercut_comparison if revision.direction == "fast_montage" else None
+        ),
         output_orientation=output_orientation,
     )
 
@@ -3053,6 +3060,11 @@ async def edit_proposal_conversation_turn(
                     idea=idea,
                     theme=theme,
                     mixed_media_timing=requested_mixed_media_timing,
+                    intercut_comparison=(
+                        brief.intercut_comparison
+                        if result.revision.direction == "fast_montage"
+                        else None
+                    ),
                 )
             else:
                 revised_snapshot = _snapshot_from_edit_guide_revision(
@@ -3088,6 +3100,7 @@ async def edit_proposal_conversation_turn(
             duration_s=revised_snapshot.duration_s,
             creator_request=brief.creator_request,
             mixed_media_timing=revised_snapshot.mixed_media_timing,
+            intercut_comparison=revised_snapshot.intercut_comparison,
             output_orientation=brief.output_orientation,
         )
 
@@ -3330,6 +3343,9 @@ async def confirm_item_edit_direction(
         pace=hypothesis.pace,
         duration_s=hypothesis.duration_s,
         mixed_media_timing=current.brief.mixed_media_timing,
+        intercut_comparison=(
+            current.brief.intercut_comparison if hypothesis.direction == "fast_montage" else None
+        ),
         output_orientation=current.brief.output_orientation,
     )
     ensure_clip_media_ids(item)
@@ -5290,6 +5306,47 @@ async def set_item_orientation(
         variant_id=variant_id,
         orientation=body.orientation,
     )
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.put(
+    "/{item_id}/variants/{variant_id}/source-audio-mix",
+    response_model=PlanItemResponse,
+)
+async def set_source_audio_mix(
+    item_id: str,
+    variant_id: str,
+    body: SourceAudioMixRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Switch a prepared intercut audio bed without rerendering its visuals."""
+
+    item = await _load_owned_item(item_id, user.id, db, for_update=True)
+    job = (
+        await db.get(Job, item.current_job_id, with_for_update=True)
+        if item.current_job_id
+        else None
+    )
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
+    variants = list((job.assembly_plan or {}).get("variants") or [])
+    variant = next((row for row in variants if row.get("variant_id") == variant_id), None)
+    options = variant.get("source_audio_options") if isinstance(variant, dict) else None
+    if not isinstance(options, list) or not any(
+        isinstance(option, dict) and option.get("mix") == body.mix for option in options
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="source_audio_mix_unavailable",
+        )
+    assert isinstance(variant, dict)
+    variant["source_audio_mix"] = body.mix
+    assembly = dict(job.assembly_plan or {})
+    assembly["variants"] = variants
+    job.assembly_plan = assembly
+    flag_modified(job, "assembly_plan")
+    await db.commit()
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
 

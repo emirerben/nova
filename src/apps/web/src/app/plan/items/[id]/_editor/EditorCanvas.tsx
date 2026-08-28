@@ -265,6 +265,8 @@ export default function EditorCanvas({
   onDuration,
   onPlayingChange,
   onReloadSource,
+  sourceAudioMix = "interleaved",
+  sourceAudioOptions = [],
   virtualPreview,
   carouselMoment,
   carouselClips = [],
@@ -334,6 +336,13 @@ export default function EditorCanvas({
   /** Re-fetch the variant (re-signs an expired preview URL) on the error tile's
    * Retry — the shell re-runs getPlanItem (plan §9 canvas error state). */
   onReloadSource?: () => void;
+  sourceAudioMix?: "interleaved" | "source_a" | "source_b" | null;
+  sourceAudioOptions?: Array<{
+    mix: "interleaved" | "source_a" | "source_b";
+    audio_path: string;
+    audio_url: string;
+    duration_s: number;
+  }>;
   virtualPreview?: VirtualPreviewController | null;
   /** Staged/persisted carousel-moment config — drives the placeholder block
    *  preview (CarouselBlockPreview) mounted when the playhead is inside its
@@ -573,6 +582,31 @@ export default function EditorCanvas({
   };
 
   const src = variant.base_video_url ?? variant.output_url ?? null;
+  const sourceAudioRef = useRef<HTMLAudioElement | null>(null);
+  const selectedSourceAudio = useMemo(
+    () => sourceAudioOptions.find((option) => option.mix === (sourceAudioMix ?? "interleaved")),
+    [sourceAudioMix, sourceAudioOptions],
+  );
+  useEffect(() => {
+    const audio = sourceAudioRef.current;
+    if (!audio || !selectedSourceAudio || selectedSourceAudio.mix === "interleaved") {
+      audio?.pause();
+      return;
+    }
+    audio.src = selectedSourceAudio.audio_url;
+    audio.load();
+    audio.currentTime = Math.max(0, committedCurrentTime);
+    audio.muted = false;
+    if (playing) void audio.play().catch(() => {});
+    else audio.pause();
+  }, [committedCurrentTime, playing, selectedSourceAudio]);
+  useEffect(() => {
+    const audio = sourceAudioRef.current;
+    if (!audio || !selectedSourceAudio || selectedSourceAudio.mix === "interleaved") return;
+    if (Math.abs(audio.currentTime - committedCurrentTime) > 0.15) {
+      audio.currentTime = Math.max(0, committedCurrentTime);
+    }
+  }, [committedCurrentTime, selectedSourceAudio]);
   const hasPreview = Boolean(src || virtualPreview);
   const virtualVideoARef = virtualPreview?.videoAProps.ref;
   const virtualVideoBRef = virtualPreview?.videoBProps.ref;
@@ -1467,6 +1501,14 @@ export default function EditorCanvas({
               >
                 No preview for this variant yet
               </div>
+            )}
+            {selectedSourceAudio && selectedSourceAudio.mix !== "interleaved" && (
+              <audio
+                ref={sourceAudioRef}
+                data-testid="intercut-source-audio-preview"
+                preload="auto"
+                className="hidden"
+              />
             )}
 
             {!virtualPreview &&

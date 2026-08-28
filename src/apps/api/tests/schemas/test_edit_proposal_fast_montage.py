@@ -6,6 +6,7 @@ from app.schemas.edit_proposal import (
     EditProposal,
     EditProposalSnapshot,
     FastMontageCut,
+    IntercutComparisonPlan,
     MediaRef,
     MixedMediaTimingProfile,
     ProposalGuidance,
@@ -144,6 +145,94 @@ def test_fast_montage_cut_total_must_match_proposal_duration() -> None:
                     role="hook",
                 )
             ],
+        )
+
+
+def test_intercut_comparison_requires_round_robin_cuts_and_persistent_source_text() -> None:
+    snapshot = _snapshot(
+        duration_s=4,
+        media=[
+            MediaRef(
+                lane="clip",
+                media_id="clip-1",
+                gcs_path="users/u/a.mp4",
+                generation="1",
+                kind="video",
+                duration_s=4,
+            ),
+            MediaRef(
+                lane="clip",
+                media_id="clip-2",
+                gcs_path="users/u/b.mp4",
+                generation="1",
+                kind="video",
+                duration_s=4,
+            ),
+        ],
+        fast_cuts=[
+            FastMontageCut(
+                cut_id=f"cut-{index}",
+                media_id=("clip-1" if index % 2 == 0 else "clip-2"),
+                source_start_s=(index // 2),
+                source_end_s=(index // 2) + 1,
+                output_duration_s=1,
+                role="hook" if index == 0 else "payoff" if index == 3 else "build",
+            )
+            for index in range(4)
+        ],
+        intercut_comparison=IntercutComparisonPlan(
+            source_count=2,
+            source_media_ids=["clip-1", "clip-2"],
+            segment_duration_s=1,
+            comparison_texts=[
+                {"media_id": "clip-1", "text": "The same release"},
+                {"media_id": "clip-2", "text": "A different night"},
+            ],
+        ),
+    )
+
+    assert snapshot.intercut_comparison is not None
+    assert len(snapshot.intercut_comparison.comparison_texts) == 2
+
+
+def test_intercut_comparison_rejects_non_round_robin_source_order() -> None:
+    with pytest.raises(ValidationError, match="round-robin"):
+        _snapshot(
+            duration_s=4,
+            media=[
+                MediaRef(
+                    lane="clip",
+                    media_id="clip-1",
+                    gcs_path="users/u/a.mp4",
+                    generation="1",
+                    kind="video",
+                    duration_s=4,
+                ),
+                MediaRef(
+                    lane="clip",
+                    media_id="clip-2",
+                    gcs_path="users/u/b.mp4",
+                    generation="1",
+                    kind="video",
+                    duration_s=4,
+                ),
+            ],
+            fast_cuts=[
+                FastMontageCut(
+                    cut_id=f"cut-{index}",
+                    media_id="clip-1" if index < 2 else "clip-2",
+                    source_start_s=index % 2,
+                    source_end_s=(index % 2) + 1,
+                    output_duration_s=1,
+                    role="hook" if index == 0 else "payoff" if index == 3 else "build",
+                )
+                for index in range(4)
+            ],
+            intercut_comparison=IntercutComparisonPlan(
+                source_count=2,
+                source_media_ids=["clip-1", "clip-2"],
+                segment_duration_s=1,
+            ),
         )
 
 

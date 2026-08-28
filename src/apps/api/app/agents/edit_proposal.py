@@ -18,6 +18,8 @@ from app.schemas.edit_proposal import (
     GUIDED_STORY_MIN_MOMENT_S,
     MAX_EDIT_PROPOSAL_MEDIA,
     FastMontageCut,
+    IntercutComparisonBrief,
+    IntercutComparisonPlan,
     MixedMediaTimingProfile,
     mixed_media_hold_bounds,
     uses_quick_photo_long_video_timing,
@@ -157,6 +159,7 @@ class EditProposalAgentInput(BaseModel):
     # footage can actually support before invoking the agent.
     target_duration_s: int = Field(ge=3, le=60)
     mixed_media_timing: MixedMediaTimingProfile | None = None
+    intercut_comparison: IntercutComparisonBrief | None = None
     media: list[EditProposalMedia] = Field(min_length=1, max_length=MAX_EDIT_PROPOSAL_MEDIA)
 
 
@@ -202,12 +205,26 @@ def shortlist_edit_proposal_media(
             )
         )
 
+    eligible_ids = {media.media_id for _index, media in eligible}
+    required_ids = {
+        media.media_id
+        for media in input.media
+        if input.intercut_comparison is not None
+        and media.media_id in input.intercut_comparison.source_media_ids
+        and media.media_id in eligible_ids
+    }
+    selected: list[EditProposalMedia] = [
+        media for media in input.media if media.media_id in required_ids
+    ][:EDIT_PROPOSAL_AGENT_MEDIA_LIMIT]
+    if selected:
+        for key in list(buckets):
+            buckets[key] = [row for row in buckets[key] if row[1].media_id not in required_ids]
+
     ordered_keys = [
         key
         for key in (("clip", "video"), ("asset", "image"), ("asset", "video"), ("clip", "image"))
         if buckets.get(key)
     ]
-    selected: list[EditProposalMedia] = []
     while ordered_keys and len(selected) < EDIT_PROPOSAL_AGENT_MEDIA_LIMIT:
         remaining_keys: list[tuple[str, str]] = []
         for key in ordered_keys:
@@ -320,6 +337,81 @@ def _resolve_model_media_references(
                 used.add(media_id)
                 previous = media_id
 
+    raw_intercut = payload.get("intercut_comparison")
+    if isinstance(raw_intercut, dict):
+        raw_sources = raw_intercut.get("source_media_ids")
+        resolved_sources: list[str] = []
+        if isinstance(raw_sources, list):
+            for raw_id in raw_sources:
+                media_id = alias_to_id.get(str(raw_id)) or (
+                    str(raw_id) if str(raw_id) in id_to_alias else None
+                )
+                if media_id is not None and media_id not in resolved_sources:
+                    resolved_sources.append(media_id)
+            requested_sources = (
+                [
+                    media_id
+                    for media_id in input.intercut_comparison.source_media_ids
+                    if media_id in resolved_sources
+                ]
+                if input.intercut_comparison is not None
+                else []
+            )
+            raw_intercut["source_media_ids"] = requested_sources or resolved_sources
+        else:
+            raw_intercut["source_media_ids"] = []
+            resolved_sources = []
+        canonical_sources = list(raw_intercut["source_media_ids"])
+        raw_texts = raw_intercut.get("comparison_texts")
+        if isinstance(raw_texts, list):
+            normalized_texts: list[dict] = []
+            for index, raw_text in enumerate(raw_texts):
+                if isinstance(raw_text, str):
+                    if index < len(canonical_sources) and raw_text.strip():
+                        normalized_texts.append(
+                            {"media_id": canonical_sources[index], "text": raw_text.strip()}
+                        )
+                    continue
+                if not isinstance(raw_text, dict):
+                    continue
+                raw_id = str(raw_text.get("media_id") or "")
+                resolved_id = alias_to_id.get(raw_id) or (raw_id if raw_id in id_to_alias else None)
+                if resolved_id is None and index < len(canonical_sources):
+                    resolved_id = canonical_sources[index]
+                if resolved_id is not None:
+                    normalized_texts.append({**raw_text, "media_id": resolved_id})
+            raw_intercut["comparison_texts"] = normalized_texts
+        raw_audio_modes = raw_intercut.get("audio_modes")
+        if isinstance(raw_audio_modes, list):
+            normalized_modes: list[str] = []
+            for raw_mode in raw_audio_modes:
+                mode = str(raw_mode)
+                if mode == "interleaved":
+                    resolved_mode = mode
+                else:
+                    raw_alias = mode.removeprefix("source_").removesuffix("_only")
+                    source_id = alias_to_id.get(raw_alias) or (
+                        raw_alias if raw_alias in id_to_alias else None
+                    )
+                    if source_id is None:
+                        resolved_mode = mode
+                    else:
+                        source_index = (
+                            canonical_sources.index(source_id)
+                            if source_id in canonical_sources
+                            else -1
+                        )
+                        resolved_mode = (
+                            "source_a"
+                            if source_index == 0
+                            else "source_b"
+                            if source_index == 1
+                            else mode
+                        )
+                if resolved_mode not in normalized_modes:
+                    normalized_modes.append(resolved_mode)
+            raw_intercut["audio_modes"] = normalized_modes
+
     if repairs:
         log.warning("edit_proposal.media_references_repaired", count=repairs)
     return payload
@@ -341,6 +433,7 @@ class EditProposalAgentOutput(BaseModel):
     # omit this field and continue through the old story-beat compiler.
     fast_cuts: list[FastMontageCut] | None = Field(default=None, max_length=80)
     mixed_media_timing: MixedMediaTimingProfile | None = None
+    intercut_comparison: IntercutComparisonPlan | None = None
 
 
 class _RawFastMontageCut(BaseModel):
@@ -651,6 +744,18 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 "(prefer 0.65s), videos about 1.5-3.0s (prefer 2.0s when source allows), "
                 "and every boundary must be a hard cut. Preserve the exact total duration."
             )
+        intercut_note = ""
+        if input.intercut_comparison is not None:
+            config = input.intercut_comparison
+            intercut_note = (
+                "INTERCUT COMPARISON PROGRAM: build a source-aware comparison using exactly "
+                f"{config.source_count} distinct video sources. Alternate them in round-robin "
+                f"order with exactly {config.segment_duration_s:.3f}s per cut. Return an "
+                "intercut_comparison object with source_media_ids, the same segment_duration_s, "
+                "sequence_mode=round_robin, text_mode=persistent_per_source, the requested "
+                "audio_modes, and one concise comparison_texts line per source. The server will "
+                "validate source windows; do not stretch or loop footage."
+            )
         source_floor = minimum_required_sources(
             len(prompt_media),
             target_duration_s=input.target_duration_s,
@@ -684,6 +789,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             target_duration_s=str(input.target_duration_s),
             fast_timing_note=fast_timing_note,
             mixed_timing_note=mixed_timing_note,
+            intercut_note=intercut_note,
             footage_note=footage_note,
             media_json=json.dumps([row.model_dump() for row in prompt_media], ensure_ascii=False),
             source_floor_note=source_floor_note,
@@ -712,6 +818,18 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
             output = EditProposalAgentOutput.model_validate(payload)
         except Exception as exc:  # noqa: BLE001
             raise SchemaError(f"edit_proposal: invalid output — {exc}") from exc
+        if input.intercut_comparison is not None:
+            plan = output.intercut_comparison
+            if plan is None:
+                raise SchemaError("edit_proposal: intercut comparison plan is required")
+            if plan.source_count != input.intercut_comparison.source_count:
+                raise SchemaError("edit_proposal: intercut source count changed")
+            if abs(plan.segment_duration_s - input.intercut_comparison.segment_duration_s) > 0.001:
+                raise SchemaError("edit_proposal: intercut segment duration changed")
+            if input.intercut_comparison.source_media_ids and not set(
+                input.intercut_comparison.source_media_ids
+            ) <= set(plan.source_media_ids):
+                raise SchemaError("edit_proposal: requested intercut sources were not preserved")
         allowed = {m.media_id for m in input.media}
         media_by_id = {media.media_id: media for media in input.media}
         used: set[str] = set()

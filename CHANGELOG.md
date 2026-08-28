@@ -7,6 +7,9 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Fresh Kria requests no longer inherit obsolete clarification selectors.** Only the latest assistant turn can supply structured referent and pending-action context, so an earlier add-all capacity clarification cannot retarget a new image-only 0.2-second slideshow request or atomically reject an otherwise valid draft.
 
+### Added
+- **Kria can now author source-aware intercut comparison edits.** Natural-language requests to alternate moments across multiple videos produce a typed round-robin plan with persistent per-source text, source-safe timing, original audio preservation, and instant A+B, source A, or source B audio previews in the editor.
+
 ## [0.56.0.4] — 2026-08-28
 
 ### Fixed
@@ -22,7 +25,6 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Fly deploys can acquire the production mutation guard again.** Guard Machines are created from the unique deployment tag and still verified against the fleet's exact immutable digest, avoiding the invalid double-digest image reference that blocked the Kria backend rollout.
 - **“Stack the images together” now creates the intended fastest slideshow.** Kria gathers every selected image into consecutive individual 0.2-second clips, preserves video timing, and creates no Card Stack, Film Strip, zoom, or Ken Burns motion unless the creator explicitly asks for that Creator Block.
-
 ## [0.56.0.1] — 2026-08-28
 
 ### Fixed

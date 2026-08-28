@@ -18,12 +18,89 @@ from app.schemas.edit_proposal import (
     GUIDED_STORY_MIN_MOMENT_S,
     EditProposalSnapshot,
     FastMontageCut,
+    IntercutComparisonBrief,
+    IntercutComparisonPlan,
     MediaRef,
     MixedMediaTimingProfile,
     StoryBeat,
     mixed_media_hold_bounds,
     uses_quick_photo_long_video_timing,
 )
+
+
+def clamp_intercut_target_duration_s(
+    media: list[MediaRef],
+    duration_s: int | float,
+    program: IntercutComparisonBrief,
+) -> int:
+    """Fit a round-robin comparison to the shortest selected video source."""
+
+    by_id = {ref.media_id: ref for ref in media}
+    selected = [by_id[media_id] for media_id in program.source_media_ids if media_id in by_id]
+    selected = [ref for ref in selected if ref.kind == "video" and ref.duration_s]
+    if len(selected) < program.source_count:
+        selected = [ref for ref in media if ref.kind == "video" and ref.duration_s][
+            : program.source_count
+        ]
+    if len(selected) < program.source_count:
+        raise ValueError("intercut comparison requires enough video sources")
+    segment_ms = round(program.segment_duration_s * 1000)
+    shortest_ms = min(round(float(ref.duration_s or 0.0) * 1000) for ref in selected)
+    cycles = shortest_ms // (segment_ms * program.source_count)
+    capacity_s = cycles * program.source_count * program.segment_duration_s
+    if capacity_s < program.source_count * program.segment_duration_s:
+        raise ValueError("intercut comparison sources are too short for one full sequence")
+    requested = max(3.0, min(60.0, float(duration_s)))
+    return max(
+        4,
+        int(min(requested, capacity_s) // program.source_count * program.source_count),
+    )
+
+
+def deterministic_intercut_cuts(
+    media: list[MediaRef],
+    duration_s: int,
+    program: IntercutComparisonBrief,
+) -> tuple[list[FastMontageCut], list[str]]:
+    """Produce a safe cadence fallback while leaving source choice configurable."""
+
+    by_id = {ref.media_id: ref for ref in media}
+    source_ids = [
+        media_id
+        for media_id in program.source_media_ids
+        if media_id in by_id and by_id[media_id].kind == "video"
+    ]
+    if len(source_ids) < program.source_count:
+        source_ids = [ref.media_id for ref in media if ref.kind == "video" and ref.duration_s][
+            : program.source_count
+        ]
+    if len(source_ids) < program.source_count:
+        raise ValueError("intercut comparison requires enough video sources")
+    cuts: list[FastMontageCut] = []
+    expected_count = int(round(duration_s / program.segment_duration_s))
+    for index in range(expected_count):
+        source_index = index % program.source_count
+        source_id = source_ids[source_index]
+        source_start = (index // program.source_count) * program.segment_duration_s
+        source_end = source_start + program.segment_duration_s
+        if source_end > float(by_id[source_id].duration_s or 0.0) + 0.001:
+            break
+        cuts.append(
+            FastMontageCut(
+                cut_id=f"intercut-{index + 1}",
+                media_id=source_id,
+                source_start_s=round(source_start, 3),
+                source_end_s=round(source_end, 3),
+                output_duration_s=program.segment_duration_s,
+                role=(
+                    "hook" if index == 0 else "payoff" if index == expected_count - 1 else "build"
+                ),
+            )
+        )
+    if len(cuts) < 2 or abs(sum(cut.output_duration_s for cut in cuts) - duration_s) > 0.001:
+        raise ValueError("intercut comparison could not produce a complete cadence")
+    return cuts, source_ids
+
 
 log = structlog.get_logger()
 
@@ -353,6 +430,7 @@ def plan_direction_snapshot(
     pace: str,
     duration_s: int,
     mixed_media_timing: MixedMediaTimingProfile | None = None,
+    intercut_comparison: IntercutComparisonBrief | None = None,
     idea: str = "",
     theme: str = "",
     job_id: str | None = None,
@@ -380,7 +458,9 @@ def plan_direction_snapshot(
         for ref in source.media
     ]
     planning_duration_s = (
-        clamp_fast_montage_target_duration_s(media, duration_s, mixed_media_timing)
+        clamp_intercut_target_duration_s(media, duration_s, intercut_comparison)
+        if intercut_comparison is not None
+        else clamp_fast_montage_target_duration_s(media, duration_s, mixed_media_timing)
         if direction == "fast_montage"
         else max(3, min(60, int(duration_s)))
     )
@@ -396,6 +476,7 @@ def plan_direction_snapshot(
                 pace=pace,
                 target_duration_s=planning_duration_s,
                 mixed_media_timing=mixed_media_timing,
+                intercut_comparison=intercut_comparison,
                 media=media,
             ),
             ctx=RunContext(job_id=job_id) if job_id else None,
@@ -412,11 +493,17 @@ def plan_direction_snapshot(
         used_fallback = True
     cuts = (
         output.fast_cuts
+        if output is not None and direction == "fast_montage" and intercut_comparison is None
+        else deterministic_intercut_cuts(media, planning_duration_s, intercut_comparison)[0]
+        if output is None and intercut_comparison is not None
+        else output.fast_cuts
         if output is not None and direction == "fast_montage"
         else deterministic_fast_cuts(source.media, planning_duration_s, mixed_media_timing)
         if direction == "fast_montage"
         else None
     )
+    if intercut_comparison is not None and output is not None and not output.intercut_comparison:
+        raise ValueError("intercut comparison planner returned no typed program")
     if direction == "fast_montage":
         if not cuts:
             raise ValueError("fast montage planner returned no source-aware cuts")
@@ -448,6 +535,20 @@ def plan_direction_snapshot(
             "story_beats": beats,
             "fast_cuts": cuts,
             "mixed_media_timing": mixed_media_timing,
+            "intercut_comparison": (
+                output.intercut_comparison
+                if output is not None and output.intercut_comparison is not None
+                else IntercutComparisonPlan(
+                    **{
+                        **intercut_comparison.model_dump(mode="json"),
+                        "source_media_ids": deterministic_intercut_cuts(
+                            media, planning_duration_s, intercut_comparison
+                        )[1],
+                    }
+                )
+                if intercut_comparison is not None
+                else None
+            ),
         }
     )
     result = EditProposalSnapshot.model_validate(planned.model_dump(mode="json"))

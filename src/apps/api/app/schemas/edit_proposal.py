@@ -44,6 +44,58 @@ EDIT_CONVERSATION_MAX_TURNS = 20
 CREATOR_SELECTED_ORIENTATION_REASON = "The creator selected this output format."
 
 
+class IntercutComparisonBrief(BaseModel):
+    """AI-authored capability request for a source-aware comparison edit."""
+
+    source_count: int = Field(default=2, ge=2, le=4)
+    source_media_ids: list[str] = Field(default_factory=list, max_length=4)
+    segment_duration_s: float = Field(default=1.0, ge=0.4, le=3.0)
+    sequence_mode: Literal["round_robin"] = "round_robin"
+    text_mode: Literal["persistent_per_source"] = "persistent_per_source"
+    audio_modes: list[Literal["interleaved", "source_a", "source_b"]] = Field(
+        default_factory=lambda: ["interleaved", "source_a", "source_b"],
+        min_length=1,
+        max_length=3,
+    )
+
+    @model_validator(mode="after")
+    def validate_audio_modes(self) -> IntercutComparisonBrief:
+        if len(set(self.audio_modes)) != len(self.audio_modes):
+            raise ValueError("intercut comparison audio modes must be unique")
+        if len(self.source_media_ids) > self.source_count:
+            raise ValueError("intercut comparison has too many source IDs")
+        if any(not value.strip() for value in self.source_media_ids):
+            raise ValueError("intercut comparison source IDs must not be empty")
+        return self
+
+
+class SourceComparisonText(BaseModel):
+    """One persistent, source-specific line for an intercut comparison."""
+
+    media_id: str = Field(min_length=1, max_length=100)
+    text: str = Field(min_length=1, max_length=120)
+
+
+class IntercutComparisonPlan(IntercutComparisonBrief):
+    """Validated execution intent selected by the proposal specialist."""
+
+    source_media_ids: list[str] = Field(min_length=2, max_length=4)
+    comparison_texts: list[SourceComparisonText] = Field(default_factory=list, max_length=4)
+
+    @model_validator(mode="after")
+    def validate_sources_and_text(self) -> IntercutComparisonPlan:
+        if len(self.source_media_ids) != self.source_count:
+            raise ValueError("intercut comparison source count must match source IDs")
+        if len(set(self.source_media_ids)) != len(self.source_media_ids):
+            raise ValueError("intercut comparison source IDs must be unique")
+        text_ids = [entry.media_id for entry in self.comparison_texts]
+        if len(text_ids) != len(set(text_ids)):
+            raise ValueError("intercut comparison text sources must be unique")
+        if not set(text_ids) <= set(self.source_media_ids):
+            raise ValueError("intercut comparison text references an unknown source")
+        return self
+
+
 class MixedMediaTimingProfile(BaseModel):
     """Typed timing intent for mixed photo/video edits.
 
@@ -219,6 +271,7 @@ class EditProposalSnapshot(BaseModel):
     story_beats: list[StoryBeat] = Field(min_length=1, max_length=20)
     fast_cuts: list[FastMontageCut] | None = Field(default=None, min_length=1, max_length=80)
     mixed_media_timing: MixedMediaTimingProfile | None = None
+    intercut_comparison: IntercutComparisonPlan | None = None
     output_orientation: OutputOrientation | None = None
     output_orientation_reason: str = Field(default="", max_length=240)
 
@@ -311,6 +364,25 @@ class EditProposalSnapshot(BaseModel):
             cut_duration_s = sum(cut.output_duration_s for cut in self.fast_cuts)
             if abs(cut_duration_s - self.duration_s) > 0.15:
                 raise ValueError("fast montage cut durations must match the proposal duration")
+        if self.intercut_comparison is not None:
+            if self.direction != "fast_montage":
+                raise ValueError("intercut comparisons require fast montage direction")
+            if not self.fast_cuts:
+                raise ValueError("intercut comparisons require fast cuts")
+            source_ids = set(self.intercut_comparison.source_media_ids)
+            cut_ids = {cut.media_id for cut in self.fast_cuts}
+            if not cut_ids <= source_ids:
+                raise ValueError("intercut cuts must use only comparison sources")
+            if any(by_id[media_id].kind != "video" for media_id in source_ids):
+                raise ValueError("intercut comparisons require video sources")
+            for index, cut in enumerate(self.fast_cuts):
+                expected = self.intercut_comparison.source_media_ids[
+                    index % self.intercut_comparison.source_count
+                ]
+                if cut.media_id != expected:
+                    raise ValueError("intercut cuts must follow the configured round-robin order")
+                if abs(cut.output_duration_s - self.intercut_comparison.segment_duration_s) > 0.001:
+                    raise ValueError("intercut cuts must use the configured segment duration")
         if self.output_orientation is None:
             orientation, reason = infer_story_output_orientation(self)
             self.output_orientation = orientation
@@ -444,6 +516,10 @@ class ProposalBrief(BaseModel):
     duration_s: int = Field(default=24, ge=3, le=60)
     creator_request: str = Field(default="", max_length=1000)
     mixed_media_timing: MixedMediaTimingProfile | None = None
+    intercut_comparison: IntercutComparisonBrief | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     # Main Creator can pin the short-form delivery canvas without changing
     # ordinary guided-edit orientation inference. None preserves legacy briefs.
     output_orientation: OutputOrientation | None = None

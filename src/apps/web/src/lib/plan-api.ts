@@ -2318,6 +2318,13 @@ export interface PlanItemVariant {
   proposal_version?: number | null;
   media_digest?: string | null;
   render_receipt?: Record<string, unknown> | null;
+  source_audio_mix?: "interleaved" | "source_a" | "source_b" | null;
+  source_audio_options?: Array<{
+    mix: "interleaved" | "source_a" | "source_b";
+    audio_path: string;
+    audio_url: string;
+    duration_s: number;
+  }> | null;
   motion_scenes?: MotionPresetInstance[] | null;
   motion_runtime_hash?: string | null;
   motion_applied_runtime_hash?: string | null;
@@ -2527,6 +2534,18 @@ export function retimeVisualBlock(
 export async function getPlanItemVariants(jobId: string): Promise<PlanItemVariant[]> {
   const res = await request<{ variants: PlanItemVariant[] }>(`/generative-jobs/${jobId}/status`);
   return res.variants ?? [];
+}
+
+/** Switch a prepared intercut source-audio bed; this never rerenders video. */
+export function setPlanItemSourceAudioMix(
+  itemId: string,
+  variantId: string,
+  mix: "interleaved" | "source_a" | "source_b",
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/variants/${variantId}/source-audio-mix`, {
+    method: "PUT",
+    body: JSON.stringify({ mix }),
+  });
 }
 
 // ── Lyrics-optional "elements" model ────────────────────────────────────────

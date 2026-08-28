@@ -50,7 +50,7 @@ def _input() -> MainCreatorInput:
     )
 
 
-def _raw(*, audio_strategy: str, selected: list[str]) -> str:
+def _raw(*, audio_strategy: str, selected: list[str], intercut: dict | None = None) -> str:
     return json.dumps(
         {
             "action": {
@@ -59,6 +59,7 @@ def _raw(*, audio_strategy: str, selected: list[str]) -> str:
                     "direction": "guided_story",
                     "edit_format": "montage",
                     "audio_strategy": audio_strategy,
+                    "intercut_comparison": intercut,
                     "render_program": "guided",
                     "selected_media_ids": selected,
                     "rationale": "Build a concise visual arc.",
@@ -113,6 +114,30 @@ def test_main_creator_recognizes_mixed_media_timing_request() -> None:
         "video_hold": "longer",
         "boundary_style": "cut",
     }
+
+
+def test_main_creator_keeps_typed_intercut_capability_for_guided_original_audio() -> None:
+    agent_input = _input()
+    source_ids = [media.media_id for media in agent_input.capability_manifest.media[:2]]
+    output = MainCreatorAgent(None).parse(  # type: ignore[arg-type]
+        _raw(
+            audio_strategy="original_audio",
+            selected=[],
+            intercut={
+                "source_count": 2,
+                "source_media_ids": source_ids,
+                "segment_duration_s": 1.0,
+                "sequence_mode": "round_robin",
+                "text_mode": "persistent_per_source",
+                "audio_modes": ["interleaved", "source_a", "source_b"],
+            },
+        ),
+        agent_input,
+    )
+
+    assert isinstance(output.action, ProposeStrategy)
+    assert output.action.strategy.intercut_comparison is not None
+    assert output.action.strategy.intercut_comparison.source_media_ids == source_ids
 
 
 def test_main_creator_repairs_native_mixed_media_timing_to_guided() -> None:

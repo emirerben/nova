@@ -10,7 +10,7 @@ from app.agents.edit_proposal import (
     minimum_required_sources,
     shortlist_edit_proposal_media,
 )
-from app.schemas.edit_proposal import MixedMediaTimingProfile
+from app.schemas.edit_proposal import IntercutComparisonBrief, MixedMediaTimingProfile
 
 
 def _input(count: int = 7) -> EditProposalAgentInput:
@@ -112,6 +112,86 @@ def test_fast_montage_uses_cut_sources_for_mixed_media_variety() -> None:
         "media-1",
         "media-2",
     ]
+
+
+def test_intercut_parse_normalizes_provider_alias_shapes() -> None:
+    agent_input = EditProposalAgentInput(
+        direction="fast_montage",
+        pace="fast",
+        target_duration_s=4,
+        intercut_comparison=IntercutComparisonBrief(
+            source_count=2,
+            source_media_ids=["match-a", "match-b"],
+            segment_duration_s=1,
+            audio_modes=["interleaved", "source_a", "source_b"],
+        ),
+        media=[
+            EditProposalMedia(media_id="match-a", lane="clip", kind="video", duration_s=4),
+            EditProposalMedia(media_id="match-b", lane="clip", kind="video", duration_s=4),
+        ],
+    )
+    payload = {
+        "title": "Same feeling",
+        "duration_s": 4,
+        "story_beats": [],
+        "fast_cuts": [
+            {
+                "cut_id": f"cut-{index + 1}",
+                "media_id": "m001" if index % 2 == 0 else "m002",
+                "source_start_s": index // 2,
+                "source_end_s": index // 2 + 1,
+                "output_duration_s": 1,
+                "role": "hook" if index == 0 else "payoff" if index == 3 else "build",
+            }
+            for index in range(4)
+        ],
+        "intercut_comparison": {
+            "source_media_ids": ["m002", "m001"],
+            "segment_duration_s": 1,
+            "sequence_mode": "round_robin",
+            "text_mode": "persistent_per_source",
+            "comparison_texts": ["Match A feeling", "Match B feeling"],
+            "audio_modes": ["interleaved", "source_m001_only", "source_m002_only"],
+        },
+    }
+
+    output = EditProposalAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(payload), agent_input
+    )
+
+    assert output.intercut_comparison is not None
+    assert output.intercut_comparison.source_media_ids == ["match-a", "match-b"]
+    assert [text.media_id for text in output.intercut_comparison.comparison_texts] == [
+        "match-a",
+        "match-b",
+    ]
+    assert [text.text for text in output.intercut_comparison.comparison_texts] == [
+        "Match A feeling",
+        "Match B feeling",
+    ]
+    assert output.intercut_comparison.audio_modes == ["interleaved", "source_a", "source_b"]
+
+
+def test_intercut_shortlist_preserves_requested_sources() -> None:
+    media = [
+        EditProposalMedia(media_id=f"clip-{index}", lane="clip", kind="video", duration_s=4)
+        for index in range(40)
+    ]
+    agent_input = EditProposalAgentInput(
+        direction="fast_montage",
+        pace="fast",
+        target_duration_s=6,
+        intercut_comparison=IntercutComparisonBrief(
+            source_count=2,
+            source_media_ids=["clip-38", "clip-39"],
+        ),
+        media=media,
+    )
+
+    shortlisted = shortlist_edit_proposal_media(agent_input)
+
+    assert [item.media_id for item in shortlisted[:2]] == ["clip-38", "clip-39"]
+    assert len(shortlisted) == 32
 
 
 def test_mixed_timing_source_floor_fits_low_target_and_minimum_holds() -> None:
