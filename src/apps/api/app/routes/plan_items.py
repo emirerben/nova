@@ -769,7 +769,7 @@ class PlanItemEdit(BaseModel):
 
 
 class SourceAudioMixRequest(BaseModel):
-    mix: Literal["interleaved", "source_a", "source_b"]
+    mix: str = Field(min_length=1, max_length=80)
 
 
 class GenerateItemBody(BaseModel):
@@ -2356,9 +2356,10 @@ def _snapshot_from_edit_guide_revision(  # noqa: ANN001
         story_beats=beats,
         fast_cuts=current.fast_cuts if revision.direction == "fast_montage" else None,
         mixed_media_timing=current.mixed_media_timing,
-        intercut_comparison=(
-            current.intercut_comparison if revision.direction == "fast_montage" else None
+        montage_text_bindings=(
+            current.montage_text_bindings if revision.direction == "fast_montage" else []
         ),
+        montage_audio=current.montage_audio if revision.direction == "fast_montage" else None,
         output_orientation=output_orientation,
     )
 
@@ -3060,10 +3061,8 @@ async def edit_proposal_conversation_turn(
                     idea=idea,
                     theme=theme,
                     mixed_media_timing=requested_mixed_media_timing,
-                    intercut_comparison=(
-                        brief.intercut_comparison
-                        if result.revision.direction == "fast_montage"
-                        else None
+                    montage_audio=(
+                        brief.montage_audio if result.revision.direction == "fast_montage" else None
                     ),
                 )
             else:
@@ -3100,7 +3099,8 @@ async def edit_proposal_conversation_turn(
             duration_s=revised_snapshot.duration_s,
             creator_request=brief.creator_request,
             mixed_media_timing=revised_snapshot.mixed_media_timing,
-            intercut_comparison=revised_snapshot.intercut_comparison,
+            montage_text_bindings=revised_snapshot.montage_text_bindings,
+            montage_audio=revised_snapshot.montage_audio,
             output_orientation=brief.output_orientation,
         )
 
@@ -3343,8 +3343,8 @@ async def confirm_item_edit_direction(
         pace=hypothesis.pace,
         duration_s=hypothesis.duration_s,
         mixed_media_timing=current.brief.mixed_media_timing,
-        intercut_comparison=(
-            current.brief.intercut_comparison if hypothesis.direction == "fast_montage" else None
+        montage_audio=(
+            current.brief.montage_audio if hypothesis.direction == "fast_montage" else None
         ),
         output_orientation=current.brief.output_orientation,
     )
@@ -5320,7 +5320,7 @@ async def set_source_audio_mix(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> PlanItemResponse:
-    """Switch a prepared intercut audio bed without rerendering its visuals."""
+    """Switch a prepared source-audio bed without rerendering its visuals."""
 
     item = await _load_owned_item(item_id, user.id, db, for_update=True)
     job = (

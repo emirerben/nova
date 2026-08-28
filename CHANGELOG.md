@@ -2,13 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.56.0.6] — 2026-08-28
+
+### Changed
+- **Kria's source-aware montage authoring is now generic.** The AI owns the ordered timeline, source reuse, timing, text bindings, and audio intent; no intercut-specific subtype or fixed sequence is required.
+
 ## [0.56.0.5] — 2026-08-28
 
 ### Fixed
 - **Fresh Kria requests no longer inherit obsolete clarification selectors.** Only the latest assistant turn can supply structured referent and pending-action context, so an earlier add-all capacity clarification cannot retarget a new image-only 0.2-second slideshow request or atomically reject an otherwise valid draft.
 
 ### Added
-- **Kria can now author source-aware intercut comparison edits.** Natural-language requests to alternate moments across multiple videos produce a typed round-robin plan with persistent per-source text, source-safe timing, original audio preservation, and instant A+B, source A, or source B audio previews in the editor.
+- **Kria can now author source-aware montage edits.** Natural-language requests that compare or combine multiple videos give Kria control of the ordered cuts, source reuse, timing, persistent source text, and original-audio intent; the editor can expose prepared source-bed previews without a hardcoded sequence recipe.
 
 ## [0.56.0.4] — 2026-08-28
 

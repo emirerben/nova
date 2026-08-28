@@ -10,7 +10,7 @@ from app.agents.edit_proposal import (
     minimum_required_sources,
     shortlist_edit_proposal_media,
 )
-from app.schemas.edit_proposal import IntercutComparisonBrief, MixedMediaTimingProfile
+from app.schemas.edit_proposal import MixedMediaTimingProfile, MontageAudioPlan
 
 
 def _input(count: int = 7) -> EditProposalAgentInput:
@@ -114,20 +114,20 @@ def test_fast_montage_uses_cut_sources_for_mixed_media_variety() -> None:
     ]
 
 
-def test_intercut_parse_normalizes_provider_alias_shapes() -> None:
+def test_montage_parse_normalizes_aliases_without_imposing_sequence() -> None:
     agent_input = EditProposalAgentInput(
         direction="fast_montage",
         pace="fast",
         target_duration_s=4,
-        intercut_comparison=IntercutComparisonBrief(
-            source_count=2,
+        montage_audio=MontageAudioPlan(
+            preserve_source_audio=True,
+            preview_source_beds=True,
             source_media_ids=["match-a", "match-b"],
-            segment_duration_s=1,
-            audio_modes=["interleaved", "source_a", "source_b"],
         ),
         media=[
             EditProposalMedia(media_id="match-a", lane="clip", kind="video", duration_s=4),
             EditProposalMedia(media_id="match-b", lane="clip", kind="video", duration_s=4),
+            EditProposalMedia(media_id="match-c", lane="clip", kind="video", duration_s=4),
         ],
     )
     payload = {
@@ -137,42 +137,45 @@ def test_intercut_parse_normalizes_provider_alias_shapes() -> None:
         "fast_cuts": [
             {
                 "cut_id": f"cut-{index + 1}",
-                "media_id": "m001" if index % 2 == 0 else "m002",
-                "source_start_s": index // 2,
-                "source_end_s": index // 2 + 1,
+                "media_id": ["m001", "m002", "m003", "m001"][index],
+                "source_start_s": 0 if index != 3 else 1,
+                "source_end_s": 1 if index != 3 else 2,
                 "output_duration_s": 1,
                 "role": "hook" if index == 0 else "payoff" if index == 3 else "build",
             }
             for index in range(4)
         ],
-        "intercut_comparison": {
+        "montage_audio": {
+            "preserve_source_audio": True,
+            "preview_source_beds": True,
             "source_media_ids": ["m002", "m001"],
-            "segment_duration_s": 1,
-            "sequence_mode": "round_robin",
-            "text_mode": "persistent_per_source",
-            "comparison_texts": ["Match A feeling", "Match B feeling"],
-            "audio_modes": ["interleaved", "source_m001_only", "source_m002_only"],
         },
+        "montage_text_bindings": ["Match A feeling", "Match B feeling"],
     }
 
     output = EditProposalAgent(None).parse(  # type: ignore[arg-type]
         json.dumps(payload), agent_input
     )
 
-    assert output.intercut_comparison is not None
-    assert output.intercut_comparison.source_media_ids == ["match-a", "match-b"]
-    assert [text.media_id for text in output.intercut_comparison.comparison_texts] == [
+    assert output.montage_audio is not None
+    assert output.montage_audio.source_media_ids == ["match-b", "match-a"]
+    assert [binding.media_id for binding in output.montage_text_bindings] == [
         "match-a",
         "match-b",
     ]
-    assert [text.text for text in output.intercut_comparison.comparison_texts] == [
+    assert [binding.text for binding in output.montage_text_bindings] == [
         "Match A feeling",
         "Match B feeling",
     ]
-    assert output.intercut_comparison.audio_modes == ["interleaved", "source_a", "source_b"]
+    assert [cut.media_id for cut in output.fast_cuts or []] == [
+        "match-a",
+        "match-b",
+        "match-c",
+        "match-a",
+    ]
 
 
-def test_intercut_shortlist_preserves_requested_sources() -> None:
+def test_montage_shortlist_remains_evidence_ranked_without_pinned_sequence_sources() -> None:
     media = [
         EditProposalMedia(media_id=f"clip-{index}", lane="clip", kind="video", duration_s=4)
         for index in range(40)
@@ -181,8 +184,8 @@ def test_intercut_shortlist_preserves_requested_sources() -> None:
         direction="fast_montage",
         pace="fast",
         target_duration_s=6,
-        intercut_comparison=IntercutComparisonBrief(
-            source_count=2,
+        montage_audio=MontageAudioPlan(
+            preserve_source_audio=True,
             source_media_ids=["clip-38", "clip-39"],
         ),
         media=media,

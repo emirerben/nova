@@ -157,7 +157,8 @@ class GuidedStoryExecutionPlan(BaseModel):
     text_elements: list[TextElement]
     transition_policy: GuidedStoryTransitionPolicy
     mixed_media_timing: MixedMediaTimingProfile | None = None
-    intercut_comparison: dict[str, Any] | None = None
+    montage_text_bindings: list[dict[str, Any]] = Field(default_factory=list)
+    montage_audio: dict[str, Any] | None = None
     typography: GuidedStoryTypography
     music: GuidedStoryMusic | None = None
     # Optional post-approval runtime projection.  Canonical approved plans
@@ -967,10 +968,8 @@ def _text_elements(
 ) -> list[dict]:
     total_s = float(snapshot.duration_s)
     title_end = min(total_s, 3.2 if snapshot.direction != "fast_montage" else 2.2)
-    if snapshot.intercut_comparison is not None and snapshot.fast_cuts:
-        text_by_source = {
-            entry.media_id: entry.text for entry in snapshot.intercut_comparison.comparison_texts
-        }
+    if snapshot.montage_text_bindings and snapshot.fast_cuts:
+        text_by_source = {entry.media_id: entry.text for entry in snapshot.montage_text_bindings}
         elements: list[dict] = []
         for cut, window in zip(snapshot.fast_cuts, beat_windows, strict=True):
             text = text_by_source.get(cut.media_id)
@@ -978,7 +977,7 @@ def _text_elements(
                 continue
             elements.append(
                 TextElement(
-                    id=f"intercut-text-{cut.cut_id}",
+                    id=f"montage-text-{cut.cut_id}",
                     text=text,
                     start_s=float(window["start_s"]),
                     end_s=float(window["end_s"]),
@@ -1403,9 +1402,12 @@ def _compile_execution_plan_version(
             story_timeline=moments,
             beat_windows=beat_windows,
             mixed_media_timing=mixed_timing,
-            intercut_comparison=(
-                snapshot.intercut_comparison.model_dump(mode="json")
-                if snapshot.intercut_comparison is not None
+            montage_text_bindings=[
+                binding.model_dump(mode="json") for binding in snapshot.montage_text_bindings
+            ],
+            montage_audio=(
+                snapshot.montage_audio.model_dump(mode="json")
+                if snapshot.montage_audio is not None
                 else None
             ),
             text_elements=_text_elements(
@@ -2219,7 +2221,7 @@ def _render_moments(
                 look_preset=moment.get("look_preset", "none"),
                 look_adjustments=moment.get("look_adjustments"),
                 exact_duration=exact_mixed_duration,
-                preserve_audio=bool(plan.get("intercut_comparison")),
+                preserve_audio=bool((plan.get("montage_audio") or {}).get("preserve_source_audio")),
             )
         probe = probe_video(output)
         if (
@@ -2655,7 +2657,7 @@ def _upload_verified_outputs(
         raise
 
 
-def _build_intercut_audio_options(
+def _build_montage_audio_options(
     plan: dict[str, Any],
     local_by_id: dict[str, str],
     assembled: str,
@@ -2664,21 +2666,28 @@ def _build_intercut_audio_options(
     tmpdir: str,
     attempt_id: str | None,
 ) -> list[dict[str, Any]]:
-    """Prepare reusable audio-only choices for an intercut visual timeline."""
+    """Prepare reusable audio-only choices for an authored montage timeline."""
 
-    comparison = plan.get("intercut_comparison")
-    if not isinstance(comparison, dict):
+    audio_plan = plan.get("montage_audio")
+    if not isinstance(audio_plan, dict) or not audio_plan.get("preview_source_beds"):
         return []
-    source_ids = list(comparison.get("source_media_ids") or [])
-    if len(source_ids) < 2:
+    source_ids = list(audio_plan.get("source_media_ids") or [])
+    if not source_ids:
+        source_ids = list(
+            dict.fromkeys(
+                moment["media_id"]
+                for moment in plan.get("story_timeline", [])
+                if moment.get("kind") == "video"
+            )
+        )
+    if not source_ids:
         return []
-    requested_mixes = set(comparison.get("audio_modes") or ("interleaved", "source_a", "source_b"))
     from app.storage import upload_public_read  # noqa: PLC0415
 
     duration_s = float(plan["resolved_duration_s"])
     attempt_suffix = hashlib.sha256(str(attempt_id or "preview").encode()).hexdigest()[:16]
     options: list[dict[str, Any]] = []
-    interleaved = os.path.join(tmpdir, "intercut_audio_interleaved.m4a")
+    interleaved = os.path.join(tmpdir, "montage_audio_interleaved.m4a")
     command = [
         "ffmpeg",
         "-y",
@@ -2698,14 +2707,13 @@ def _build_intercut_audio_options(
     ]
     result = subprocess.run(command, capture_output=True, timeout=120, check=False)
     if result.returncode == 0 and os.path.exists(interleaved):
-        if "interleaved" in requested_mixes:
-            options.append({"mix": "interleaved", "local_path": interleaved})
+        options.append({"mix": "interleaved", "local_path": interleaved, "label": "Interleaved"})
 
-    for index, source_id in enumerate(source_ids[:2]):
+    for index, source_id in enumerate(source_ids):
         source = local_by_id.get(source_id)
         if not source:
             continue
-        output = os.path.join(tmpdir, f"intercut_audio_source_{index}.m4a")
+        output = os.path.join(tmpdir, f"montage_audio_source_{index}.m4a")
         command = [
             "ffmpeg",
             "-y",
@@ -2732,15 +2740,26 @@ def _build_intercut_audio_options(
             output,
         ]
         result = subprocess.run(command, capture_output=True, timeout=120, check=False)
-        mix = f"source_{'a' if index == 0 else 'b'}"
-        if result.returncode == 0 and os.path.exists(output) and mix in requested_mixes:
-            options.append({"mix": mix, "local_path": output})
+        # Keep source_a/source_b for the existing two-source API contract;
+        # additional sources use stable positional IDs without any editorial
+        # assumption about their meaning.
+        mix = f"source_{chr(ord('a') + index)}" if index < 26 else f"source_{index + 1}"
+        if result.returncode == 0 and os.path.exists(output):
+            label = f"Source {index + 1}"
+            options.append(
+                {
+                    "mix": mix,
+                    "local_path": output,
+                    "label": label,
+                    "source_media_id": source_id,
+                }
+            )
 
     published: list[dict[str, Any]] = []
     for option in options:
         mix = str(option["mix"])
         path = str(option["local_path"])
-        object_path = f"generative-jobs/{job_id}/intercut_audio_{mix}_{attempt_suffix}.m4a"
+        object_path = f"generative-jobs/{job_id}/montage_audio_{mix}_{attempt_suffix}.m4a"
         url = upload_public_read(path, object_path, content_type="audio/mp4")
         published.append(
             {
@@ -2748,6 +2767,12 @@ def _build_intercut_audio_options(
                 "audio_path": object_path,
                 "audio_url": url,
                 "duration_s": duration_s,
+                **({"label": option["label"]} if option.get("label") else {}),
+                **(
+                    {"source_media_id": option["source_media_id"]}
+                    if option.get("source_media_id")
+                    else {}
+                ),
             }
         )
     return published
@@ -3025,8 +3050,8 @@ def render_execution_plan(
             expected_duration_s=float(plan["resolved_duration_s"]),
             canvas=canvas,
         )
-    if plan.get("intercut_comparison"):
-        plan["source_audio_options"] = _build_intercut_audio_options(
+    if (plan.get("montage_audio") or {}).get("preview_source_beds"):
+        plan["source_audio_options"] = _build_montage_audio_options(
             plan,
             local_by_id,
             assembled,

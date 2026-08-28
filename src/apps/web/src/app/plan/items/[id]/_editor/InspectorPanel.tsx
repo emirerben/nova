@@ -361,14 +361,16 @@ export default function InspectorPanel({
   backgroundMusic?: EditorCommitBackgroundMusic | null;
   backgroundMusicTrackDurationS?: number | null;
   onPatchMix?: (level: number) => void;
-  sourceAudioMix?: "interleaved" | "source_a" | "source_b" | null;
+  sourceAudioMix?: string | null;
   sourceAudioOptions?: Array<{
-    mix: "interleaved" | "source_a" | "source_b";
+    mix: string;
+    label?: string;
+    source_media_id?: string;
     audio_path: string;
     audio_url: string;
     duration_s: number;
   }>;
-  onSourceAudioMix?: (mix: "interleaved" | "source_a" | "source_b") => void;
+  onSourceAudioMix?: (mix: string) => void;
   onPickMusic?: (trackId: string) => void;
   onRemoveMusic?: () => void;
   onPatchBackgroundMusic?: (patch: Partial<EditorCommitBackgroundMusic>) => void;
@@ -674,14 +676,16 @@ function MixInspector({
   backgroundMusic?: EditorCommitBackgroundMusic | null;
   backgroundMusicTrackDurationS?: number | null;
   onPatch?: (level: number) => void;
-  sourceAudioMix?: "interleaved" | "source_a" | "source_b" | null;
+  sourceAudioMix?: string | null;
   sourceAudioOptions: Array<{
-    mix: "interleaved" | "source_a" | "source_b";
+    mix: string;
+    label?: string;
+    source_media_id?: string;
     audio_path: string;
     audio_url: string;
     duration_s: number;
   }>;
-  onSourceAudioMix?: (mix: "interleaved" | "source_a" | "source_b") => void;
+  onSourceAudioMix?: (mix: string) => void;
   onPickMusic?: (trackId: string) => void;
   onRemoveMusic?: () => void;
   onPatchBackgroundMusic?: (patch: Partial<EditorCommitBackgroundMusic>) => void;
@@ -732,7 +736,7 @@ function MixInspector({
                   onClick={() => onSourceAudioMix?.(option.mix)}
                   className={(sourceAudioMix ?? "interleaved") === option.mix ? "min-h-9 rounded-md bg-white px-2 text-[11px] font-semibold shadow-sm" : "min-h-9 rounded-md px-2 text-[11px] text-[#71717a]"}
                 >
-                  {option.mix === "interleaved" ? "A + B" : option.mix === "source_a" ? "Match A" : "Match B"}
+                  {option.label ?? (option.mix === "interleaved" ? "Interleaved" : `Source ${option.mix.replace("source_", "")}`)}
                 </Button>
               ))}
             </div>

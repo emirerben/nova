@@ -5,54 +5,11 @@ from app.agents.edit_proposal import EditProposalAgentOutput
 from app.schemas.edit_proposal import (
     EditProposalSnapshot,
     FastMontageCut,
-    IntercutComparisonBrief,
     MediaRef,
     MixedMediaTimingProfile,
     StoryBeat,
 )
 from app.services import edit_direction_planner
-
-
-def test_intercut_fallback_is_round_robin_and_fits_shortest_source() -> None:
-    media = [
-        MediaRef(
-            lane="clip",
-            media_id="match-a",
-            gcs_path="users/test/match-a.mp4",
-            generation="1",
-            kind="video",
-            duration_s=6.63,
-        ),
-        MediaRef(
-            lane="clip",
-            media_id="match-b",
-            gcs_path="users/test/match-b.mp4",
-            generation="1",
-            kind="video",
-            duration_s=26.43,
-        ),
-    ]
-    brief = IntercutComparisonBrief(
-        source_count=2,
-        source_media_ids=["match-a", "match-b"],
-        segment_duration_s=1,
-    )
-
-    target = edit_direction_planner.clamp_intercut_target_duration_s(media, 12, brief)
-    cuts, source_ids = edit_direction_planner.deterministic_intercut_cuts(media, target, brief)
-
-    assert target == 6
-    assert source_ids == ["match-a", "match-b"]
-    assert [cut.media_id for cut in cuts] == ["match-a", "match-b"] * 3
-    assert [(cut.source_start_s, cut.source_end_s) for cut in cuts] == [
-        (0, 1),
-        (0, 1),
-        (1, 2),
-        (1, 2),
-        (2, 3),
-        (2, 3),
-    ]
-    assert cuts[-1].role == "payoff"
 
 
 class FailingAgent:

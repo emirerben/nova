@@ -336,9 +336,11 @@ export default function EditorCanvas({
   /** Re-fetch the variant (re-signs an expired preview URL) on the error tile's
    * Retry — the shell re-runs getPlanItem (plan §9 canvas error state). */
   onReloadSource?: () => void;
-  sourceAudioMix?: "interleaved" | "source_a" | "source_b" | null;
+  sourceAudioMix?: string | null;
   sourceAudioOptions?: Array<{
-    mix: "interleaved" | "source_a" | "source_b";
+    mix: string;
+    label?: string;
+    source_media_id?: string;
     audio_path: string;
     audio_url: string;
     duration_s: number;

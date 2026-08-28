@@ -24,7 +24,7 @@ from app.schemas.edit_proposal import (
     recognize_mixed_media_timing,
 )
 
-MAIN_CREATOR_PROMPT_VERSION = "2026-08-28-v8"
+MAIN_CREATOR_PROMPT_VERSION = "2026-08-28-v9"
 
 
 class MainCreatorInput(BaseModel):

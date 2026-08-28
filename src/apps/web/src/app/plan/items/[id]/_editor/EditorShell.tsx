@@ -826,7 +826,7 @@ export default function EditorShell({
   const [cameraEffectsDirty, setCameraEffectsDirty] = useState(false);
   const [mixLevel, setMixLevel] = useState<number | null>(null);
   const [mixDirty, setMixDirty] = useState(false);
-  const [sourceAudioMix, setSourceAudioMix] = useState<"interleaved" | "source_a" | "source_b">("interleaved");
+  const [sourceAudioMix, setSourceAudioMix] = useState<string>("interleaved");
   const [textDirty, setTextDirty] = useState(false);
   const [captionDirty, setCaptionDirty] = useState(false);
   const [lyricsEnabled, setLyricsEnabled] = useState(false);
@@ -4104,7 +4104,7 @@ export default function EditorShell({
   );
 
   const patchSourceAudioMix = useCallback(
-    async (mix: "interleaved" | "source_a" | "source_b") => {
+    async (mix: string) => {
       if (readOnly || !variant?.source_audio_options?.some((option) => option.mix === mix)) return;
       const previous = sourceAudioMix;
       setSourceAudioMix(mix);

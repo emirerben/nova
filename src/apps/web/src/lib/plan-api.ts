@@ -2318,9 +2318,11 @@ export interface PlanItemVariant {
   proposal_version?: number | null;
   media_digest?: string | null;
   render_receipt?: Record<string, unknown> | null;
-  source_audio_mix?: "interleaved" | "source_a" | "source_b" | null;
+  source_audio_mix?: string | null;
   source_audio_options?: Array<{
-    mix: "interleaved" | "source_a" | "source_b";
+    mix: string;
+    label?: string;
+    source_media_id?: string;
     audio_path: string;
     audio_url: string;
     duration_s: number;
@@ -2536,11 +2538,11 @@ export async function getPlanItemVariants(jobId: string): Promise<PlanItemVarian
   return res.variants ?? [];
 }
 
-/** Switch a prepared intercut source-audio bed; this never rerenders video. */
+/** Switch a prepared source-audio bed; this never rerenders video. */
 export function setPlanItemSourceAudioMix(
   itemId: string,
   variantId: string,
-  mix: "interleaved" | "source_a" | "source_b",
+  mix: string,
 ): Promise<PlanItem> {
   return request<PlanItem>(`/plan-items/${itemId}/variants/${variantId}/source-audio-mix`, {
     method: "PUT",

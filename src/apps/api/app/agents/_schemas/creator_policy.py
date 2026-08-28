@@ -29,10 +29,19 @@ def effective_render_program(
         raise ValueError(f"edit format {strategy_format!r} is unavailable")
     if format_capability is not None and not format_capability.available:
         raise ValueError(f"edit format {strategy_format!r} is unavailable")
-    intercut_comparison = strategy.intercut_comparison is not None
+    montage_audio_requires_guided = bool(
+        strategy.montage_audio is not None
+        and (
+            strategy.montage_audio.preserve_source_audio
+            or strategy.montage_audio.preview_source_beds
+        )
+    )
     native_required = (
         manifest.has_voiceover
-        or (strategy.audio_strategy in {"original_audio", "voiceover"} and not intercut_comparison)
+        or (
+            strategy.audio_strategy in {"original_audio", "voiceover"}
+            and not montage_audio_requires_guided
+        )
         or strategy_format in AUDIO_LED_EDIT_FORMATS
         or not guided_edit_applicable(strategy_format, has_voiceover=manifest.has_voiceover)
     )
@@ -45,14 +54,13 @@ def effective_render_program(
     mixed_media_timing_requires_specialist = bool(
         strategy.mixed_media_timing is not None and {"image", "video"}.issubset(media_kinds)
     )
-    intercut_comparison_requires_specialist = intercut_comparison
-    if (mixed_media_timing_requires_specialist or intercut_comparison_requires_specialist) and not (
+    if (mixed_media_timing_requires_specialist or montage_audio_requires_guided) and not (
         guided and guided.available
     ):
         reason = (
             "mixed-media timing requires the guided proposal capability"
             if mixed_media_timing_requires_specialist
-            else "the requested structured timing requires the guided proposal capability"
+            else "source-aware montage audio requires the guided proposal capability"
         )
         raise MixedMediaTimingUnavailableError(reason)
     if (
@@ -61,7 +69,7 @@ def effective_render_program(
         and (
             strategy.render_program == "guided"
             or mixed_media_timing_requires_specialist
-            or intercut_comparison_requires_specialist
+            or montage_audio_requires_guided
         )
     ):
         return "guided"
@@ -87,22 +95,21 @@ def normalize_creator_strategy_media(
         raise ValueError("strategy selected_media_ids must reference manifest media")
 
     selected_media_ids: list[str] = []
-    if strategy.intercut_comparison is not None:
-        intercut_ids = list(dict.fromkeys(strategy.intercut_comparison.source_media_ids))
-        unknown_intercut = [media_id for media_id in intercut_ids if media_id not in manifest_ids]
-        if unknown_intercut and not repair_model_output:
-            raise ValueError("intercut comparison sources must reference manifest media")
-        valid_intercut = [media_id for media_id in intercut_ids if media_id in manifest_ids]
-        if repair_model_output and len(valid_intercut) < strategy.intercut_comparison.source_count:
-            valid_intercut = [
-                media.media_id
-                for media in manifest.media
-                if media.kind == "video" and not media.media_id.startswith("asset-")
-            ][: strategy.intercut_comparison.source_count]
+    if strategy.montage_audio is not None:
+        audio_ids = list(dict.fromkeys(strategy.montage_audio.source_media_ids))
+        unknown_audio = [media_id for media_id in audio_ids if media_id not in manifest_ids]
+        if unknown_audio and not repair_model_output:
+            raise ValueError("montage audio sources must reference manifest media")
+        valid_audio = [media_id for media_id in audio_ids if media_id in manifest_ids]
+        if any(
+            next(media for media in manifest.media if media.media_id == media_id).kind != "video"
+            for media_id in valid_audio
+        ):
+            raise ValueError("montage audio sources must be videos")
         strategy = strategy.model_copy(
             update={
-                "intercut_comparison": strategy.intercut_comparison.model_copy(
-                    update={"source_media_ids": valid_intercut}
+                "montage_audio": strategy.montage_audio.model_copy(
+                    update={"source_media_ids": valid_audio}
                 )
             }
         )

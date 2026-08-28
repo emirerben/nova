@@ -24,7 +24,6 @@ from app.schemas.edit_proposal import (
     EditProposal,
     EditProposalSnapshot,
     FastMontageCut,
-    IntercutComparisonPlan,
     MediaRef,
     ProposalFailure,
     StoryBeat,
@@ -34,7 +33,6 @@ from app.schemas.edit_proposal import (
 from app.services.content_plan_persona import load_owned_plan_persona_sync
 from app.services.edit_direction_planner import (
     clamp_fast_montage_target_duration_s,
-    clamp_intercut_target_duration_s,
 )
 from app.services.edit_proposal_limits import (
     EDIT_PROPOSAL_TASK_HARD_TIME_LIMIT_S,
@@ -718,7 +716,6 @@ def _run_draft_attempt(
     from app.services.edit_direction_planner import (  # noqa: PLC0415
         deterministic_fast_cuts,
         deterministic_guided_beats,
-        deterministic_intercut_cuts,
     )
     from app.services.edit_proposals import approve_proposal  # noqa: PLC0415
 
@@ -902,28 +899,7 @@ def _run_draft_attempt(
                     db.commit()
             return
         target_duration_s = adapt_target_duration_s(brief.duration_s, feasible_duration_s)
-        if brief.intercut_comparison is not None:
-            try:
-                target_duration_s = clamp_intercut_target_duration_s(
-                    media, target_duration_s, brief.intercut_comparison
-                )
-            except ValueError as exc:
-                with sync_session() as db:
-                    locked = _locked_item(db, iid, ownership_epoch)
-                    item = locked[0] if locked else None
-                    current = parse_edit_proposal(item.edit_proposal) if item else None
-                    if item and current and current.generation_attempt_id == attempt_id:
-                        _fail(
-                            item,
-                            current,
-                            "guided_edit_infeasible",
-                            "The intercut comparison needs two usable video sources "
-                            "with enough footage.",
-                            detail=_exc_detail(exc),
-                        )
-                        db.commit()
-                return
-        elif brief.direction == "fast_montage":
+        if brief.direction == "fast_montage":
             try:
                 target_duration_s = clamp_fast_montage_target_duration_s(
                     media, target_duration_s, brief.mixed_media_timing
@@ -1052,7 +1028,7 @@ def _run_draft_attempt(
                     pace=brief.pace,
                     target_duration_s=target_duration_s,
                     mixed_media_timing=brief.mixed_media_timing,
-                    intercut_comparison=brief.intercut_comparison,
+                    montage_audio=brief.montage_audio,
                     media=agent_media,
                 )
             )
@@ -1100,10 +1076,8 @@ def _run_draft_attempt(
                     db.commit()
             return
         if output is None and brief.direction == "fast_montage":
-            fallback_cuts = (
-                deterministic_intercut_cuts(media, target_duration_s, brief.intercut_comparison)[0]
-                if brief.intercut_comparison is not None
-                else deterministic_fast_cuts(media, target_duration_s, brief.mixed_media_timing)
+            fallback_cuts = deterministic_fast_cuts(
+                media, target_duration_s, brief.mixed_media_timing
             )
             fallback_beats = _fast_story_beats(fallback_cuts)
         else:
@@ -1142,19 +1116,15 @@ def _run_draft_attempt(
                 else fallback_cuts
             ),
             mixed_media_timing=brief.mixed_media_timing,
-            intercut_comparison=(
-                getattr(output, "intercut_comparison", None)
-                if output is not None and getattr(output, "intercut_comparison", None) is not None
-                else (
-                    IntercutComparisonPlan(
-                        **{
-                            **brief.intercut_comparison.model_dump(mode="json"),
-                            "source_media_ids": list(brief.intercut_comparison.source_media_ids),
-                        }
-                    )
-                    if brief.intercut_comparison is not None
-                    else None
-                )
+            montage_text_bindings=(
+                getattr(output, "montage_text_bindings", [])
+                if output is not None and getattr(output, "montage_text_bindings", [])
+                else []
+            ),
+            montage_audio=(
+                getattr(output, "montage_audio", None)
+                if output is not None and getattr(output, "montage_audio", None) is not None
+                else brief.montage_audio
             ),
             output_orientation=brief.output_orientation,
         )

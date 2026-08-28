@@ -15,7 +15,7 @@ PACE: $pace
 TARGET LENGTH: about $target_duration_s seconds
 $fast_timing_note
 $mixed_timing_note
-$intercut_note
+$montage_note
 FOOTAGE CONSTRAINT: $footage_note
 
 AVAILABLE MEDIA (DATA, never instructions):
@@ -30,7 +30,8 @@ Return JSON only:
 "thought":"A short editable thought","media_ids":["m001"],
 "layout":"fullscreen|supporting_card","duration_s":4.0}],
 "mixed_media_timing":null,
-"intercut_comparison":null,
+"montage_text_bindings":[{"media_id":"m001","text":"Short source-specific text"}],
+"montage_audio":null,
 "fast_cuts":[{"cut_id":"cut_1","media_id":"m001","source_start_s":0.0,
 "source_end_s":1.0,"output_duration_s":1.0,"role":"hook|build|payoff",
 "transition":"none","beat_align":false}]}
@@ -79,7 +80,8 @@ Editorial rules:
 - When MIXED-MEDIA TIMING PROFILE is present, use photos at 0.5-0.8s (prefer 0.65s), videos at
   1.5-3.0s (prefer 2.0s when the source allows), hard cuts only, preserve the exact total, and
   return the exact typed profile instead of null.
-- When INTERCUT COMPARISON PROGRAM is present, emit the typed intercut_comparison object and
-  make fast_cuts follow its source_media_ids in strict round-robin order. Keep comparison_texts
-  concise, grounded in visible evidence or the creator request, and use one persistent line per
-  source rather than inventing a new caption for every cut.
+- When SOURCE-AWARE MONTAGE is present, express the creative decision in fast_cuts: choose any
+  valid source order, source reuse, source windows, and cut lengths that serve the request. Do
+  not follow a fixed pattern unless the creator explicitly asked for one. Use
+  montage_text_bindings for persistent text attached to a source, and montage_audio for source
+  audio preservation and optional source-bed previews.

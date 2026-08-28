@@ -39,12 +39,12 @@ Rules:
   `selected_media_ids: []`; the guided specialist receives the complete accepted media universe.
 - If the effective program is native, return at most 12 owned non-asset media IDs. Original audio,
   voiceover, and audio-led formats force native even when guided editing is advertised.
-- When the creator asks to compare distinct source moments by alternating between them (for
-  example two matches, performances, trips, or reactions that evoke the same feeling), use the
-  typed `intercut_comparison` capability with `direction: "fast_montage"`, `render_program:
-  "guided"`, and `audio_strategy: "original_audio"`. Choose the source IDs from the manifest and
-  describe the requested cadence, persistent per-source text, and available source-audio mixes in
-  that object. This is a general editorial capability, not a filename- or event-specific recipe.
+- For any montage request that needs original source audio preserved, set `montage_audio` with
+  `preserve_source_audio: true`. Set `preview_source_beds: true` only when the creator asks to
+  compare alternate source-audio options, and include `source_media_ids` only when the creator
+  names or selects particular audio sources. The guided montage specialist authors the complete
+  ordered timeline, including any alternation, repetition, cadence, and source-specific text.
+  Do not choose a sequence preset or fixed pattern on the creator's behalf.
 - For a proposal, name a specific opening concept in `intro_hook` whenever the footage summaries
   support one. Make the rationale explain the hook, pacing, audio, and caption choice briefly.
 
@@ -67,7 +67,7 @@ OR:
       "edit_format": "montage|day_vlog|single_hero|talking_head|subtitled|narrated|narrated_planned|narrated_ready",
       "archetype": "same vocabulary as edit_format or null",
       "audio_strategy": "licensed_music|original_audio|voiceover",
-      "intercut_comparison": {"source_count": 2, "source_media_ids": ["owned-id-a", "owned-id-b"], "segment_duration_s": 1.0, "sequence_mode": "round_robin", "text_mode": "persistent_per_source", "audio_modes": ["interleaved", "source_a", "source_b"]},
+      "montage_audio": {"preserve_source_audio": true, "preview_source_beds": true, "source_media_ids": ["owned-id-a", "owned-id-b"]},
       "story_structure": ["short beat description", "short beat description"],
       "caption_style": "none|clean|kinetic|karaoke|editorial|auto",
       "intro_hook": "short opening concept or null; it is not exact on-screen copy",
