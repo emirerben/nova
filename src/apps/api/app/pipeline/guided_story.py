@@ -2244,7 +2244,12 @@ def _verify_receipt(
         if uses_quick_photo_long_video_timing(mixed_timing)
         else max(0.2, len(moment_receipts) * 0.04)
     )
-    duration_ok = abs(probe.duration_s - float(plan["resolved_duration_s"])) <= duration_tolerance_s
+    actual_video_duration_s = float(
+        getattr(probe, "video_stream_duration_s", None) or probe.duration_s
+    )
+    duration_ok = (
+        abs(actual_video_duration_s - float(plan["resolved_duration_s"])) <= duration_tolerance_s
+    )
     verified = bool(
         expected_beats == actual_beats
         and expected_moments == actual_moments
@@ -2275,7 +2280,7 @@ def _verify_receipt(
         "image_count": len({r["media_id"] for r in moment_receipts if r["kind"] == "image"}),
         "video_count": len({r["media_id"] for r in moment_receipts if r["kind"] == "video"}),
         "expected_duration_s": plan["resolved_duration_s"],
-        "actual_duration_s": round(float(probe.duration_s), 3),
+        "actual_duration_s": round(actual_video_duration_s, 3),
         "output_orientation": plan["output_orientation"],
         "output_orientation_reason": plan["output_orientation_reason"],
         "music_applied": music_applied,
@@ -2368,9 +2373,12 @@ def verify_guided_text_reburn(
     audio_codec = _audio_codec(final_path)
     output_hash = _sha256(final_path)
     canvas = _story_canvas(previous.output_orientation)
+    actual_video_duration_s = float(
+        getattr(probe, "video_stream_duration_s", None) or probe.duration_s
+    )
     verified = bool(
         expected_ids == actual_ids
-        and abs(float(probe.duration_s) - duration_s) <= 0.2
+        and abs(actual_video_duration_s - duration_s) <= 0.2
         and probe.width == canvas.width
         and probe.height == canvas.height
         and probe.codec == "h264"
@@ -2395,7 +2403,7 @@ def verify_guided_text_reburn(
             "approved_text_ids": previous.approved_text_ids or previous.expected_text_ids,
             "text_stages": text_evidence,
             "text_edited_after_approval": True,
-            "actual_duration_s": round(float(probe.duration_s), 3),
+            "actual_duration_s": round(actual_video_duration_s, 3),
             "output": {
                 "width": probe.width,
                 "height": probe.height,
