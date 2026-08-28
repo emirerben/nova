@@ -72,6 +72,7 @@ from app.services.content_plan_persona import (
     PlanPersonaOwnershipError,
     load_owned_plan_persona,
 )
+from app.services.editor_limits import EDITOR_MAX_TIMELINE_SLOTS
 from app.services.generative_upload_paths import (
     DIRECT_CLIP_PREFIX,
     DIRECT_VOICEOVER_PREFIX,
@@ -753,7 +754,7 @@ class LyricSeedsResponse(BaseModel):
 
 # ── Timeline editor schemas ────────────────────────────────────────────────────
 
-_TIMELINE_MAX_SLOTS = 50
+_TIMELINE_MAX_SLOTS = EDITOR_MAX_TIMELINE_SLOTS
 # Server-side guardrails on a user-edited timeline. Positive durations are
 # required below; beat timelines retain a natural one-beat minimum and no-grid
 # timelines retain half-second snapping. The ceiling matches the product's
@@ -831,9 +832,13 @@ class TimelineEditRequest(BaseModel):
     @field_validator("slots")
     @classmethod
     def validate_slot_count(cls, v: list[TimelineSlotEdit]) -> list[TimelineSlotEdit]:
-        # Payload cap: a 9:16 sub-60s edit never needs more than 50 cuts.
-        if len(v) > _TIMELINE_MAX_SLOTS:
-            raise ValueError(f"Maximum {_TIMELINE_MAX_SLOTS} timeline slots allowed")
+        # Removed rows are wire tombstones, not active output slots. Keep the
+        # active capacity aligned with the browser/compiler while still
+        # bounding total request size against pathological tombstone payloads.
+        if sum(not slot.removed for slot in v) > _TIMELINE_MAX_SLOTS:
+            raise ValueError(f"Maximum {_TIMELINE_MAX_SLOTS} active timeline slots allowed")
+        if len(v) > _TIMELINE_MAX_SLOTS * 2:
+            raise ValueError(f"Maximum {_TIMELINE_MAX_SLOTS * 2} timeline rows allowed")
         return v
 
 
@@ -1018,8 +1023,10 @@ class EditorCommitRequest(BaseModel):
     def validate_commit_slot_count(
         cls, v: list[TimelineSlotEdit] | None
     ) -> list[TimelineSlotEdit] | None:
-        if v is not None and len(v) > _TIMELINE_MAX_SLOTS:
-            raise ValueError(f"Maximum {_TIMELINE_MAX_SLOTS} timeline slots allowed")
+        if v is not None and sum(not slot.removed for slot in v) > _TIMELINE_MAX_SLOTS:
+            raise ValueError(f"Maximum {_TIMELINE_MAX_SLOTS} active timeline slots allowed")
+        if v is not None and len(v) > _TIMELINE_MAX_SLOTS * 2:
+            raise ValueError(f"Maximum {_TIMELINE_MAX_SLOTS * 2} timeline rows allowed")
         return v
 
 
@@ -2089,8 +2096,9 @@ def dispatch_retext(
     return receipt
 
 
-# A caption edit may never bloat the JSONB / slow the libass burn unbounded; the
-# sibling timeline editor caps at 50 slots, narration rarely exceeds a few dozen lines.
+# A caption edit may never bloat the JSONB / slow the libass burn unbounded.
+# The sibling timeline editor has its own shared slot cap; narration rarely
+# exceeds a few dozen lines.
 _MAX_CAPTION_CUES = 300
 
 
@@ -5361,6 +5369,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             return {
                 "text_elements": text_editable,
                 "timeline": bool(revision is not None),
+                "timeline_max_slots": _TIMELINE_MAX_SLOTS,
                 "split_clips": bool(revision is not None),
                 "clips": clips,
                 "music_operations": music_operations,
@@ -5451,6 +5460,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             ),
             "text_elements": text_editable,
             "timeline": False,
+            "timeline_max_slots": _TIMELINE_MAX_SLOTS,
             "split_clips": False,
             "automatic_cut": False,
             "automatic_cut_reason": reason,
@@ -5578,6 +5588,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             and _text_elements_allowed(variant)
         ),
         "timeline": timeline_ok,
+        "timeline_max_slots": _TIMELINE_MAX_SLOTS,
         # Splitting a clip is a timeline-override operation — same eligibility.
         "split_clips": timeline_ok,
         "automatic_cut": automatic_cut,
@@ -6659,7 +6670,7 @@ def _guided_v2_revision_for_write(
     active = [slot for slot in payload.slots if not slot.removed]
     if not active:
         raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_EMPTY")
-    if len(active) > 60:
+    if len(active) > _TIMELINE_MAX_SLOTS:
         raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_TOO_LONG")
     segments: list[dict[str, Any]] = []
     cursor = 0.0

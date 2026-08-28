@@ -11,7 +11,9 @@ import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import type { MediaOverlay, OverlaySuggestion, PoolAsset, SoundEffectPlacement, VisualBlock } from "@/lib/plan-api";
 import { barsToCaptionCues } from "@/app/plan/items/[id]/_editor/editor-bars";
 import {
+  CREATOR_MOTION_RUNTIME_HASH_V4,
   creatorBlockDurationFramesV2,
+  MOTION_RUNTIME_HASH,
   type MotionPresetInstance,
 } from "@nova/motion-runtime";
 
@@ -239,18 +241,218 @@ describe("applyCopilotOps", () => {
       used: index < 17,
       status: "ready",
     }));
-    const snapshot = buildCopilotSnapshot([], slots, sourcePool, { text_elements: true, timeline: true }, [], { sourcePool });
+    const capabilities = {
+      text_elements: true,
+      timeline: true,
+      timeline_max_slots: 120,
+      motion_runtime_hash: MOTION_RUNTIME_HASH,
+    };
+    const snapshot = buildCopilotSnapshot([], slots, sourcePool, capabilities, [], { sourcePool });
     const result = applyCopilotOpsAtomic([
       { op: "add_unused_sources", selector: { scope: "unused_sources", media_kind: "all", quantifier: "all" }, integrity: bulkIntegrity(snapshot, slots, sourcePool, "unused_sources", "all") },
       { op: "set_media_duration", selector: { scope: "timeline", media_kind: "image", quantifier: "all" }, duration_s: 0.2, integrity: bulkIntegrity(snapshot, slots, sourcePool, "timeline", "image") },
     ], {
       bars: [], slots, clips: sourcePool, sourcePool, snapshot,
-      capabilities: { text_elements: true, timeline: true },
+      capabilities,
       videoDurationS: 30,
     });
     expect(result.applied).toEqual([]);
     expect(result.nextSlots).toBeNull();
-    expect(result.rejected[0]?.detail).toContain("only 33 additional timeline slots");
+    expect(result.rejected[0]?.detail).toContain("only 103 additional timeline slots");
+  });
+
+  it("fails closed at 50 slots while the API still advertises the v4 runtime", () => {
+    const slots = Array.from({ length: 49 }, (_, index) => slot({
+      key: `slot-${index}`,
+      slotId: `slot-${index}`,
+      clipIndex: index,
+      durationS: 0.1,
+    }));
+    const sourcePool = Array.from({ length: 51 }, (_, index) => ({
+      clip_index: index,
+      media_id: `media-${index}`,
+      kind: "image" as const,
+      signed_url: null,
+      generation: "g1",
+      duration_s: 1,
+      used: index < 49,
+      status: "ready",
+    }));
+    const capabilities = {
+      text_elements: true,
+      timeline: true,
+      motion_runtime_hash: CREATOR_MOTION_RUNTIME_HASH_V4,
+    };
+    const snapshot = buildCopilotSnapshot([], slots, sourcePool, capabilities, [], { sourcePool });
+    const result = applyCopilotOpsAtomic([
+      { op: "add_unused_sources", selector: { scope: "unused_sources", media_kind: "all", quantifier: "all" }, integrity: bulkIntegrity(snapshot, slots, sourcePool, "unused_sources", "all") },
+    ], {
+      bars: [], slots, clips: sourcePool, sourcePool, snapshot, capabilities,
+      videoDurationS: 60,
+    });
+
+    expect(result.nextSlots).toBeNull();
+    expect(result.rejected[0]?.detail).toContain("only 1 additional timeline slots fit under the 50-slot Save limit");
+  });
+
+  it("fits the production-scale 103-slot mixed edit without changing existing videos", () => {
+    const slots = Array.from({ length: 17 }, (_, index) => slot({
+      key: `slot-${index}`,
+      slotId: `slot-${index}`,
+      clipIndex: index,
+      durationS: index % 2 === 0 ? [2, 2, 2, 2, 2, 2, 2, 2, 2.8][index / 2] : ([0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.8][(index - 1) / 2]),
+    }));
+    const sourcePool = [
+      ...Array.from({ length: 17 }, (_, index) => ({
+        clip_index: index,
+        media_id: `media-${index}`,
+        kind: (index % 2 === 0 ? "video" : "image") as "video" | "image",
+        signed_url: null,
+        generation: "g1",
+        duration_s: index % 2 === 0 ? [2, 2, 2, 2, 2, 2, 2, 2, 2.8][index / 2] : 1,
+        used: true,
+        status: "ready",
+        gcs_path: `users/test/${index}.${index % 2 === 0 ? "mp4" : "jpg"}`,
+      })),
+      ...Array.from({ length: 50 }, (_, offset) => ({
+        clip_index: 17 + offset,
+        media_id: `unused-image-${offset}`,
+        kind: "image" as const,
+        signed_url: null,
+        generation: "g1",
+        duration_s: 1,
+        used: false,
+        status: "ready",
+        gcs_path: `users/test/unused-${offset}.jpg`,
+      })),
+      ...Array.from({ length: 36 }, (_, offset) => ({
+        clip_index: 67 + offset,
+        media_id: `unused-video-${offset}`,
+        kind: "video" as const,
+        signed_url: null,
+        generation: "g1",
+        duration_s: 1,
+        used: false,
+        status: "ready",
+        gcs_path: `users/test/unused-${offset}.mp4`,
+      })),
+    ];
+    const capabilities = {
+      text_elements: true,
+      timeline: true,
+      timeline_max_slots: 120,
+      motion_scenes: true,
+      motion_runtime_hash: MOTION_RUNTIME_HASH,
+    };
+    const snapshot = buildCopilotSnapshot([], slots, sourcePool, capabilities, [], { sourcePool, motionScenesEnabled: true });
+    const result = applyCopilotOpsAtomic([
+      { op: "add_unused_sources", selector: { scope: "unused_sources", media_kind: "all", quantifier: "all" }, integrity: bulkIntegrity(snapshot, slots, sourcePool, "unused_sources", "all") },
+      { op: "set_media_duration", selector: { scope: "timeline", media_kind: "image", quantifier: "all" }, duration_s: 0.2, integrity: bulkIntegrity(snapshot, slots, sourcePool, "timeline", "image") },
+      { op: "stack_images", selector: { scope: "timeline", media_kind: "image", quantifier: "all" }, integrity: bulkIntegrity(snapshot, slots, sourcePool, "timeline", "image") },
+    ], {
+      bars: [], slots, clips: sourcePool, sourcePool, snapshot,
+      capabilities,
+      motionScenes: [], videoDurationS: 60,
+    });
+    expect(result.rejected).toEqual([]);
+    expect(result.nextSlots).toHaveLength(103);
+    expect(result.nextSlots?.filter((entry) => (entry.clipIndex < 17 && entry.clipIndex % 2 === 1) || (entry.clipIndex >= 17 && entry.clipIndex < 67)).every((entry) => entry.durationS === 0.2)).toBe(true);
+    expect(result.nextSlots?.filter((entry) => entry.clipIndex < 17 && entry.clipIndex % 2 === 0).map((entry) => entry.durationS)).toEqual([2, 2, 2, 2, 2, 2, 2, 2, 2.8]);
+    expect(result.nextSlots?.filter((entry) => entry.clipIndex >= 67).every((entry) => (entry.durationS ?? 0) >= 0.1)).toBe(true);
+    const totalDuration = result.nextSlots?.reduce((total, entry) => total + (entry.durationS ?? 0), 0) ?? Infinity;
+    expect(totalDuration).toBeLessThanOrEqual(60 + 1e-6);
+    expect(totalDuration).toBeCloseTo(59.2, 6);
+    const addedVideoDurations = result.nextSlots?.filter((entry) => entry.clipIndex >= 67).map((entry) => entry.durationS ?? 0) ?? [];
+    expect(new Set(addedVideoDurations)).toEqual(new Set([0.8]));
+    expect(totalDuration + addedVideoDurations.length / 30).toBeGreaterThan(60);
+    const finalKinds = result.nextSlots?.map((entry) => sourcePool[entry.clipIndex]?.kind);
+    expect(finalKinds?.slice(1, 59).every((kind) => kind === "image")).toBe(true);
+    expect(result.nextMotionScenes).toHaveLength(10);
+    const covered = result.nextMotionScenes?.flatMap((scene) => (scene as MotionPresetInstance & { params: { assets: Array<{ asset_id: string }> } }).params.assets.map((asset) => asset.asset_id)) ?? [];
+    expect(covered).toHaveLength(58);
+    expect(new Set(covered).size).toBe(58);
+    expect(result.nextMotionScenes?.map((scene) => (scene as MotionPresetInstance & { params: { assets: unknown[] } }).params.assets.length)).toEqual([6, 6, 6, 6, 6, 6, 6, 6, 6, 4]);
+    expect(result.nextMotionScenes?.every((scene) => scene.preset_id === "card_stack")).toBe(true);
+    expect(result.nextMotionScenes?.every((scene) => (scene.end_frame_exclusive - scene.start_frame) <= 360)).toBe(true);
+    expect(result.nextMotionScenes?.every((scene) => {
+      const params = (scene as MotionPresetInstance & { params: Record<string, unknown> }).params;
+      return !("image_motion" in params || "zoom" in params || "ken_burns" in params);
+    })).toBe(true);
+  });
+
+  it("fails atomically when every newly-added video still exceeds the 60-second floor", () => {
+    const slots = [
+      slot({ key: "existing-video", slotId: "existing-video", clipIndex: 0, durationS: 55 }),
+      slot({ key: "existing-image", slotId: "existing-image", clipIndex: 1, durationS: 1 }),
+    ];
+    const sourcePool = [
+      { clip_index: 0, media_id: "existing-video", kind: "video" as const, signed_url: null, generation: "g1", duration_s: 55, used: true, status: "ready", gcs_path: "users/test/existing.mp4" },
+      { clip_index: 1, media_id: "existing-image", kind: "image" as const, signed_url: null, generation: "g1", duration_s: 1, used: true, status: "ready", gcs_path: "users/test/existing.jpg" },
+      ...Array.from({ length: 86 }, (_, offset) => ({
+        clip_index: offset + 2,
+        media_id: `unused-video-${offset}`,
+        kind: "video" as const,
+        signed_url: null,
+        generation: "g1",
+        duration_s: 1,
+        used: false,
+        status: "ready",
+        gcs_path: `users/test/unused-${offset}.mp4`,
+      })),
+    ];
+    const capabilities = {
+      text_elements: true,
+      timeline: true,
+      timeline_max_slots: 120,
+      motion_runtime_hash: MOTION_RUNTIME_HASH,
+    };
+    const snapshot = buildCopilotSnapshot([], slots, sourcePool, capabilities, [], { sourcePool });
+    const result = applyCopilotOpsAtomic([
+      { op: "add_unused_sources", selector: { scope: "unused_sources", media_kind: "all", quantifier: "all" }, integrity: bulkIntegrity(snapshot, slots, sourcePool, "unused_sources", "all") },
+      { op: "set_media_duration", selector: { scope: "timeline", media_kind: "image", quantifier: "all" }, duration_s: 0.2, integrity: bulkIntegrity(snapshot, slots, sourcePool, "timeline", "image") },
+    ], {
+      bars: [], slots, clips: sourcePool, sourcePool, snapshot,
+      capabilities,
+      videoDurationS: 60,
+    });
+    expect(result.applied).toEqual([]);
+    expect(result.nextSlots).toBeNull();
+    expect(result.rejected.some((entry) => entry.detail.includes("60-second output limit"))).toBe(true);
+  });
+
+  it("does not auto-fit newly-added videos when an explicit video selector is present", () => {
+    const slots = [
+      slot({ key: "existing-video", slotId: "existing-video", clipIndex: 0, durationS: 55 }),
+      slot({ key: "existing-image", slotId: "existing-image", clipIndex: 1, durationS: 1 }),
+    ];
+    const sourcePool = [
+      { clip_index: 0, media_id: "existing-video", kind: "video" as const, signed_url: null, generation: "g1", duration_s: 55, used: true, status: "ready", gcs_path: "users/test/existing.mp4" },
+      { clip_index: 1, media_id: "existing-image", kind: "image" as const, generation: "g1", duration_s: 1, used: true, status: "ready", signed_url: null, gcs_path: "users/test/existing.jpg" },
+      ...Array.from({ length: 20 }, (_, offset) => ({
+        clip_index: offset + 2,
+        media_id: `unused-video-${offset}`,
+        kind: "video" as const,
+        signed_url: null,
+        generation: "g1",
+        duration_s: 1,
+        used: false,
+        status: "ready",
+        gcs_path: `users/test/unused-${offset}.mp4`,
+      })),
+    ];
+    const snapshot = buildCopilotSnapshot([], slots, sourcePool, { text_elements: true, timeline: true }, [], { sourcePool });
+    const result = applyCopilotOpsAtomic([
+      { op: "add_unused_sources", selector: { scope: "unused_sources", media_kind: "all", quantifier: "all" }, integrity: bulkIntegrity(snapshot, slots, sourcePool, "unused_sources", "all") },
+      { op: "set_media_duration", selector: { scope: "timeline", media_kind: "image", quantifier: "all" }, duration_s: 0.2, integrity: bulkIntegrity(snapshot, slots, sourcePool, "timeline", "image") },
+      { op: "set_media_duration", selector: { scope: "timeline", media_kind: "video", quantifier: "all" }, duration_s: 1, integrity: bulkIntegrity(snapshot, slots, sourcePool, "timeline", "video") },
+    ], {
+      bars: [], slots, clips: sourcePool, sourcePool, snapshot,
+      capabilities: { text_elements: true, timeline: true },
+      videoDurationS: 60,
+    });
+    expect(result.applied).toEqual([]);
+    expect(result.nextSlots).toBeNull();
+    expect(result.rejected.some((entry) => entry.detail.includes("60-second"))).toBe(true);
   });
 
   it("accepts a server null state hash for a guided revision whose hash is absent", () => {

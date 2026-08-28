@@ -15,11 +15,13 @@ base and reapply motion before their text layer.
 
 ## Contract
 
-- The public payload is `motion_scenes`: at most eight versioned preset
+- The public payload is `motion_scenes`: at most twelve versioned preset
   instances. It accepts preset IDs, integer 30 fps frame windows, two palette
   colors, intensity, and preset-specific parameters. Each instance is at most
-  eight seconds and the union of all active windows is at most eight seconds;
-  blocks may be placed anywhere in the video.
+  eight seconds and the union of all active windows is at most twelve seconds;
+  blocks may be placed anywhere in the video. The guided editor accepts at
+  most 120 timeline slots. These limits are one shared contract in
+  `motion-limits.json`, consumed by the browser, API, and renderer.
 - `creator-blocks.catalog.json` is authoritative for the nine Creator Blocks,
   their immutable IDs, preset versions, typed controls, timing phases, safe
   ranges, asset requirements, AI exposure, and complexity weights. The strict
@@ -41,9 +43,9 @@ base and reapply motion before their text layer.
   and CanvasKit payload hashes. The editor sends it with every dirty motion
   section. The API rejects a mismatched runtime before changing variant state.
   The legacy v1 hash is accepted only for persisted `route_trace` scenes. The
-  known persisted Creator runtimes v2, v3, and v4 are accepted so a visual fix
-  does not strand saved edits; they render with the current runtime and the next
-  successful dirty motion save normalizes the global hash to v4. Preset version,
+  known persisted Creator runtimes v2, v3, v4, and v5 are accepted so a visual
+  fix does not strand saved edits; they render with the current runtime and the
+  next successful dirty motion save normalizes the global hash to v5. Preset version,
   not the global hash, owns visual compatibility. Older or unknown hashes fail
   closed.
 - Browser and worker parity covers the RGBA motion layer for an identical
@@ -162,9 +164,10 @@ read/write roots, a process timeout, and the same schema limits enforced by the
 API. It emits transparent PNGs only for contiguous active intervals; separated
 intervals retain their exact frame offsets without rendering transparent gap
 frames. Overlapping blocks share one interval and are evaluated together.
-The 240-frame active-union limit is paired with a 960 weighted-frame budget,
-so overlapping expensive scenes cannot bypass resource validation. Existing
-preset-v1 scenes retain legacy weight 1.
+The 360-frame active-union limit is paired with a 1440 weighted-frame budget
+and an 8-unit concurrent-complexity ceiling. This preserves the full sequential
+budget while preventing a third simultaneous Evolving Type block from causing
+repeated browser long tasks. Existing preset-v1 scenes retain legacy weight 1.
 FFmpeg composites those segments with `preset=fast` and caches the result below
 authored text. The cache key includes the clean-base generation, runtime hash,
 normalized scenes, and exact referenced asset generations.

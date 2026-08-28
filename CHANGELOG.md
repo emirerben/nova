@@ -11,6 +11,10 @@ All notable changes to this project will be documented in this file.
 - **Historical ready videos now receive durable, source-matched posters without re-rendering.** The repair covers every browser-visible output shape, proves database writes and storage publication under row locks, repairs interrupted runs, and excludes synthetic or non-library jobs.
 - **Later renders and account cleanup no longer leak immutable backfill posters.** Durable cleanup receipts survive storage failures and concurrency, protect rollback assets, and are reconciled by a bounded indexed maintenance sweep.
 - **The production repair can run only against the exact revision live on every Fly Machine.** Deploy and backfill workflows serialize safely, resume cancelled repair Machines, reject mixed releases or altered execution contracts, and finish with a strict zero-work audit; use the [video-poster backfill runbook](docs/runbooks/video-poster-backfill.md) to run or recover it.
+## [0.55.0.2] — 2026-08-27
+
+### Fixed
+- **Kria can now complete the production-scale “add all” mixed-media follow-up instead of stopping at artificial editor limits.** Guided edits support up to 120 timeline slots and 12 Creator Blocks across a 12-second active window; the exact 103-slot request keeps existing video timing, makes all 58 images 0.2 seconds, stacks them exactly once, and trims only newly added videos enough to remain under 60 seconds.
 
 ## [0.55.0.1] — 2026-08-27
 

@@ -95,6 +95,40 @@ def test_revision_rejects_source_window_past_pinned_generation_duration() -> Non
         )
 
 
+def test_revision_accepts_120_segments_and_rejects_121() -> None:
+    sources = [
+        {
+            "media_id": f"image-{index}",
+            "lane": "asset",
+            "gcs_path": f"users/u/plan/i/image-{index}.jpg",
+            "generation": "1",
+            "kind": "image",
+        }
+        for index in range(121)
+    ]
+    segments = [
+        {
+            "segment_id": f"segment-{index}",
+            "media_id": f"image-{index}",
+            "duration_s": 0.1,
+            "output_start_s": index / 10,
+            "output_end_s": (index + 1) / 10,
+        }
+        for index in range(121)
+    ]
+
+    assert (
+        len(
+            GuidedEditorRevision.model_validate(
+                _revision(sources=sources, segments=segments[:120])
+            ).segments
+        )
+        == 120
+    )
+    with pytest.raises(ValueError, match="at most 120 items"):
+        GuidedEditorRevision.model_validate(_revision(sources=sources, segments=segments))
+
+
 def test_music_window_preserves_track_offset_and_clamps_length_to_story() -> None:
     normalized = normalize_guided_editor_revision(
         _revision(
