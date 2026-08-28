@@ -55,7 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     # Acquisition may finish a cancelled 5h backfill before atomically taking
     # the same stable Machine name. The deploy command itself remains bounded
-    # to 35m, inside the created-only deploy guard's server-side lease.
+    # to 35m, inside the dormant deploy guard's server-side lease.
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -207,7 +207,12 @@ jobs:
             --arg sha "$EXPECTED_SHA" '
               [.[] | select(.name == $name)]
               | length == 1
-                and .[0].state == "created"
+                and ((.[0].state == "created") or (
+                  .[0].state == "stopped"
+                  and ([.[0].events[]?
+                    | select(.type == "start" or .type == "exit")]
+                    | length == 0)
+                ))
                 and .[0].image_ref.digest
                   == ((.[0].config.metadata // .[0].incomplete_config.metadata)
                     .nova_image_digest)
@@ -221,7 +226,10 @@ jobs:
                   | has("fly_process_group")) | not)
                 and ((.[0].config // .[0].incomplete_config).restart.policy == "no")
                 and ((.[0].config // .[0].incomplete_config).init.cmd == ["/bin/false"])
-            ' <<<"$machines_json"
+            ' <<<"$machines_json" >/dev/null || {
+              echo "::error::deploy guard is not exact, dormant, and unexecuted"
+              exit 1
+            }
           deployed_digest="$(
             jq -er '
               [.[]
@@ -242,7 +250,10 @@ jobs:
                     | has("fly_process_group"))
                 )]
             | length >= 1 and all(.image_ref.digest == $digest)
-          ' <<<"$machines_json"
+          ' <<<"$machines_json" >/dev/null || {
+            echo "::error::managed production Machines do not all match the verified digest"
+            exit 1
+          }
 
           image_json="$(flyctl image show --app nova-video --json)"
           deployed_sha="$(
