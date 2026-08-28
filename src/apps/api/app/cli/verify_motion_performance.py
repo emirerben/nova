@@ -24,7 +24,7 @@ DEFAULT_MAX_PEAK_BYTES = int(2.5 * 1024**3)
 
 
 def _maximum_complexity_scenes() -> list[dict]:
-    """Back-to-back max-content Evolving blocks: exactly 1440 weighted units."""
+    """Full weighted budget at the proven two-heavy-block concurrency cap."""
     common = {
         "preset_id": "evolving_type",
         "preset_version": 2,
@@ -53,18 +53,24 @@ def _maximum_complexity_scenes() -> list[dict]:
         },
     }
     return [
-        {**common, "id": "verify-evolving-1", "start_frame": 0, "end_frame_exclusive": 180},
+        {**common, "id": "verify-evolving-1", "start_frame": 0, "end_frame_exclusive": 120},
         {
             **common,
             "id": "verify-evolving-2",
-            "start_frame": 180,
-            "end_frame_exclusive": 360,
+            "start_frame": 0,
+            "end_frame_exclusive": 120,
+        },
+        {
+            **common,
+            "id": "verify-evolving-3",
+            "start_frame": 120,
+            "end_frame_exclusive": 240,
         },
     ]
 
 
 def _maximum_media_scenes() -> list[dict]:
-    """Twelve weight-3 Film Strips for 36 frames: 1296 units and 96 images."""
+    """Twelve Film Strips in six pairs: 1296 units, 96 images, peak weight 6."""
     scenes: list[dict] = []
     for scene_index in range(12):
         assets = [
@@ -81,8 +87,8 @@ def _maximum_media_scenes() -> list[dict]:
                 "id": f"verify-film-{scene_index}",
                 "preset_id": "film_strip",
                 "preset_version": 2,
-                "start_frame": 0,
-                "end_frame_exclusive": 36,
+                "start_frame": (scene_index // 2) * 36,
+                "end_frame_exclusive": (scene_index // 2 + 1) * 36,
                 "palette": {"primary": "#0C0C0E", "accent": "#C7FF3D"},
                 "intensity": 1,
                 "params": {"assets": assets},
@@ -150,8 +156,8 @@ def main() -> None:
         root = Path(tmpdir)
         prepared_assets = _write_benchmark_assets(root, media)
         cases = (
-            ("evolving_max_content", evolving, 360, None),
-            ("film_strip_max_resources", media, 36, prepared_assets),
+            ("evolving_max_content", evolving, 240, None),
+            ("film_strip_max_resources", media, 216, prepared_assets),
         )
         for name, scenes, expected_frames, asset_paths in cases:
             case_tmpdir = root / name

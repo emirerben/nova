@@ -1,6 +1,7 @@
 import catalogJson from "../creator-blocks.catalog.json" with { type: "json" };
 import {
   MOTION_MAX_ACTIVE_FRAMES,
+  MOTION_MAX_CONCURRENT_COMPLEXITY,
   MOTION_MAX_COMPLEXITY_MULTIPLIER,
   MOTION_FPS,
   MOTION_MAX_INSTANCE_FRAMES,
@@ -10,9 +11,15 @@ import {
 
 export const MOTION_SCHEMA_VERSION = 3 as const;
 /** Weighted frame-work budget; maximum-cost scenes may occupy the full 12s union. */
-export { MOTION_MAX_ACTIVE_FRAMES, MOTION_MAX_COMPLEXITY_MULTIPLIER,
-  MOTION_FPS, MOTION_MAX_INSTANCE_FRAMES, MOTION_MAX_INSTANCES,
-  MOTION_MAX_WEIGHTED_ACTIVE_FRAMES };
+export {
+  MOTION_MAX_ACTIVE_FRAMES,
+  MOTION_MAX_CONCURRENT_COMPLEXITY,
+  MOTION_MAX_COMPLEXITY_MULTIPLIER,
+  MOTION_FPS,
+  MOTION_MAX_INSTANCE_FRAMES,
+  MOTION_MAX_INSTANCES,
+  MOTION_MAX_WEIGHTED_ACTIVE_FRAMES,
+};
 
 export const CANVASKIT_VERSION = "0.40.0";
 export const CANVASKIT_JS_SHA256 =
@@ -488,6 +495,29 @@ export function activeMotionComplexity(
   return weightedFrames;
 }
 
+export function peakMotionComplexity(
+  instances: readonly Pick<
+    MotionPresetInstance,
+    "preset_id" | "preset_version" | "start_frame" | "end_frame_exclusive"
+  >[],
+): number {
+  const deltas = new Map<number, number>();
+  for (const instance of instances) {
+    const weight = instance.preset_version !== 2 || instance.preset_id === "route_trace"
+      ? 1
+      : (runtimeEntries.get(instance.preset_id)?.complexity_weight ?? MOTION_MAX_INSTANCES + 1);
+    deltas.set(instance.start_frame, (deltas.get(instance.start_frame) ?? 0) + weight);
+    deltas.set(instance.end_frame_exclusive, (deltas.get(instance.end_frame_exclusive) ?? 0) - weight);
+  }
+  let activeWeight = 0;
+  let peak = 0;
+  for (const [, delta] of [...deltas.entries()].sort((a, b) => a[0] - b[0])) {
+    activeWeight += delta;
+    peak = Math.max(peak, activeWeight);
+  }
+  return peak;
+}
+
 export function validateMotionInstances(value: unknown, durationFrames?: number): MotionValidationResult {
   const errors: string[] = [];
   if (!Array.isArray(value)) return { ok: false, errors: ["motion_scenes must be an array"] };
@@ -583,6 +613,13 @@ export function validateMotionInstances(value: unknown, durationFrames?: number)
     errors.push(
       `motion_scenes has ${weightedFrames} weighted active frames; ` +
       `maximum is ${MOTION_MAX_WEIGHTED_ACTIVE_FRAMES}`,
+    );
+  }
+  const peakComplexity = peakMotionComplexity(timings);
+  if (peakComplexity > MOTION_MAX_CONCURRENT_COMPLEXITY) {
+    errors.push(
+      `motion_scenes has concurrent complexity ${peakComplexity}; ` +
+      `maximum is ${MOTION_MAX_CONCURRENT_COMPLEXITY}`,
     );
   }
   return { ok: errors.length === 0, errors };

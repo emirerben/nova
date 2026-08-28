@@ -40,6 +40,7 @@ def _limits() -> dict[str, int]:
         "motion_max_instances",
         "motion_max_instance_seconds",
         "motion_max_active_seconds",
+        "motion_max_concurrent_complexity",
         "motion_max_complexity_multiplier",
     )
     if any(type(raw.get(key)) is not int or raw[key] <= 0 for key in required):
@@ -52,5 +53,6 @@ MOTION_FPS = _limits()["motion_fps"]
 MOTION_MAX_INSTANCES = _limits()["motion_max_instances"]
 MOTION_MAX_INSTANCE_FRAMES = _limits()["motion_max_instance_seconds"] * MOTION_FPS
 MOTION_MAX_ACTIVE_FRAMES = _limits()["motion_max_active_seconds"] * MOTION_FPS
+MOTION_MAX_CONCURRENT_COMPLEXITY = _limits()["motion_max_concurrent_complexity"]
 MOTION_MAX_COMPLEXITY_MULTIPLIER = _limits()["motion_max_complexity_multiplier"]
 MOTION_MAX_COMPLEXITY_UNITS = MOTION_MAX_ACTIVE_FRAMES * MOTION_MAX_COMPLEXITY_MULTIPLIER

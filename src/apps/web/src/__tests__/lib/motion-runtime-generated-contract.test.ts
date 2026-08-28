@@ -9,8 +9,10 @@ import {
   CREATOR_MOTION_RUNTIME_HASH_V3,
   CREATOR_MOTION_RUNTIME_HASH_V4,
   MOTION_MAX_WEIGHTED_ACTIVE_FRAMES,
+  MOTION_MAX_CONCURRENT_COMPLEXITY,
   MOTION_RUNTIME_HASH,
   activeMotionComplexity,
+  peakMotionComplexity,
   createCreatorBlockInstance,
   creatorBlockControl,
   creatorBlockDurationFramesV2,
@@ -237,6 +239,22 @@ describe("generated Creator Block v2 contract", () => {
     }));
     expect(activeMotionComplexity(scenes)).toBeGreaterThan(MOTION_MAX_WEIGHTED_ACTIVE_FRAMES);
     expect(validateMotionInstances(scenes)).toEqual(expect.objectContaining({ ok: false }));
+  });
+
+  it("rejects three simultaneous Evolving Type blocks at the browser concurrency cap", () => {
+    const scenes = Array.from({ length: 3 }, (_, index) => createCreatorBlockInstance({
+      id: `concurrent-${index}`,
+      presetId: "evolving_type",
+      startFrame: 0,
+      endFrameExclusive: 120,
+    }));
+    expect(activeMotionComplexity(scenes)).toBe(MOTION_MAX_WEIGHTED_ACTIVE_FRAMES);
+    expect(peakMotionComplexity(scenes)).toBe(12);
+    expect(MOTION_MAX_CONCURRENT_COMPLEXITY).toBe(8);
+    expect(validateMotionInstances(scenes)).toEqual(expect.objectContaining({
+      ok: false,
+      errors: expect.arrayContaining([expect.stringContaining("concurrent complexity 12")]),
+    }));
   });
 
   it("keeps persisted v1 media scenes at legacy complexity weight", () => {

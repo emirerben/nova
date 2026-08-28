@@ -8,6 +8,7 @@ import pytest
 from app.pipeline.motion_scene import (
     MOTION_MAX_ACTIVE_FRAMES,
     MOTION_MAX_COMPLEXITY_UNITS,
+    MOTION_MAX_CONCURRENT_COMPLEXITY,
     MOTION_RUNTIME_HASH,
     MotionSceneError,
     _normalize_motion_asset,
@@ -174,6 +175,16 @@ def test_motion_contract_weighted_complexity_accepts_boundary_and_rejects_overla
     )
     with pytest.raises(ValueError, match="weighted complexity units"):
         validate_motion_instances([first, second, overlapping_legacy])
+
+
+def test_motion_contract_rejects_browser_heavy_concurrent_complexity() -> None:
+    scenes = [
+        _evolving_scene(id=f"evolving-{index}", end_frame_exclusive=120) for index in range(3)
+    ]
+
+    assert MOTION_MAX_CONCURRENT_COMPLEXITY == 8
+    with pytest.raises(ValueError, match="concurrent complexity 12; maximum is 8"):
+        validate_motion_instances(scenes, duration_frames=360)
 
 
 def test_motion_contract_back_to_back_weighted_scenes_do_not_overlap() -> None:

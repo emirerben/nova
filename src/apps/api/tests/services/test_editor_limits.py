@@ -9,6 +9,7 @@ def test_editor_limits_are_loaded_from_shared_runtime_contract() -> None:
     assert editor_limits.EDITOR_MAX_TIMELINE_SLOTS == 120
     assert editor_limits.MOTION_MAX_INSTANCES == 12
     assert editor_limits.MOTION_MAX_ACTIVE_FRAMES == 360
+    assert editor_limits.MOTION_MAX_CONCURRENT_COMPLEXITY == 8
     assert editor_limits.MOTION_MAX_COMPLEXITY_UNITS == 1440
 
 
@@ -32,6 +33,7 @@ def test_limit_loader_rejects_boolean_values(
     limits.write_text(
         '{"motion_fps":true,"timeline_max_slots":120,"motion_max_instances":12,'
         '"motion_max_instance_seconds":8,"motion_max_active_seconds":12,'
+        '"motion_max_concurrent_complexity":8,'
         '"motion_max_complexity_multiplier":4}'
     )
     monkeypatch.setattr(editor_limits, "_limits_path", lambda: limits)

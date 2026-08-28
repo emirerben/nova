@@ -164,9 +164,10 @@ read/write roots, a process timeout, and the same schema limits enforced by the
 API. It emits transparent PNGs only for contiguous active intervals; separated
 intervals retain their exact frame offsets without rendering transparent gap
 frames. Overlapping blocks share one interval and are evaluated together.
-The 360-frame active-union limit is paired with a 1440 weighted-frame budget,
-so overlapping expensive scenes cannot bypass resource validation. Existing
-preset-v1 scenes retain legacy weight 1.
+The 360-frame active-union limit is paired with a 1440 weighted-frame budget
+and an 8-unit concurrent-complexity ceiling. This preserves the full sequential
+budget while preventing a third simultaneous Evolving Type block from causing
+repeated browser long tasks. Existing preset-v1 scenes retain legacy weight 1.
 FFmpeg composites those segments with `preset=fast` and caches the result below
 authored text. The cache key includes the clean-base generation, runtime hash,
 normalized scenes, and exact referenced asset generations.

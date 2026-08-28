@@ -9,6 +9,8 @@ export const MOTION_MAX_INSTANCE_FRAMES =
   limitsJson.motion_max_instance_seconds * MOTION_FPS;
 export const MOTION_MAX_ACTIVE_FRAMES =
   limitsJson.motion_max_active_seconds * MOTION_FPS;
+export const MOTION_MAX_CONCURRENT_COMPLEXITY =
+  limitsJson.motion_max_concurrent_complexity;
 export const MOTION_MAX_COMPLEXITY_MULTIPLIER =
   limitsJson.motion_max_complexity_multiplier;
 export const MOTION_MAX_WEIGHTED_ACTIVE_FRAMES =

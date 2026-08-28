@@ -18,6 +18,7 @@ from app.services.editor_limits import (
     MOTION_FPS,
     MOTION_MAX_ACTIVE_FRAMES,
     MOTION_MAX_COMPLEXITY_UNITS,
+    MOTION_MAX_CONCURRENT_COMPLEXITY,
     MOTION_MAX_INSTANCE_FRAMES,
     MOTION_MAX_INSTANCES,
 )
@@ -143,6 +144,27 @@ def _weighted_motion_complexity(items: list[dict]) -> int:
     return total
 
 
+def _peak_motion_complexity(items: list[dict]) -> int:
+    events: dict[int, int] = {}
+    weights = _creator_complexity_weights()
+    for item in items:
+        weight = (
+            weights.get(str(item.get("preset_id")), MOTION_MAX_CONCURRENT_COMPLEXITY + 1)
+            if item.get("preset_version") == 2
+            else 1
+        )
+        start = int(item["start_frame"])
+        end = int(item["end_frame_exclusive"])
+        events[start] = events.get(start, 0) + weight
+        events[end] = events.get(end, 0) - weight
+    peak = 0
+    active_weight = 0
+    for frame in sorted(events):
+        active_weight += events[frame]
+        peak = max(peak, active_weight)
+    return peak
+
+
 def validate_motion_instances(
     value: object,
     *,
@@ -233,6 +255,12 @@ def validate_motion_instances(
         raise ValueError(
             f"motion_scenes has {complexity} weighted complexity units; "
             f"maximum is {MOTION_MAX_COMPLEXITY_UNITS}"
+        )
+    peak_complexity = _peak_motion_complexity(cleaned)
+    if peak_complexity > MOTION_MAX_CONCURRENT_COMPLEXITY:
+        raise ValueError(
+            f"motion_scenes has concurrent complexity {peak_complexity}; "
+            f"maximum is {MOTION_MAX_CONCURRENT_COMPLEXITY}"
         )
     return cleaned
 

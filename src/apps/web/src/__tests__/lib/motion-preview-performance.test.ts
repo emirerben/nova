@@ -5,7 +5,8 @@ import { createMotionResources, drawMotionFrame } from "@nova/motion-runtime/can
 import {
   activeMotionComplexity,
   createCreatorBlockInstance,
-  MOTION_MAX_WEIGHTED_ACTIVE_FRAMES,
+  MOTION_MAX_CONCURRENT_COMPLEXITY,
+  peakMotionComplexity,
   validateMotionInstances,
   type MotionPresetInstance,
 } from "@nova/motion-runtime";
@@ -14,7 +15,7 @@ const LONG_TASK_MS = 50;
 const MAX_REPEATED_LONG_TASKS = 1;
 
 function maximumPreviewScenes(): MotionPresetInstance[] {
-  return Array.from({ length: 3 }, (_, index) => {
+  return Array.from({ length: 2 }, (_, index) => {
     const scene = createCreatorBlockInstance({
       id: `preview-evolving-${index}`,
       presetId: "evolving_type",
@@ -56,7 +57,8 @@ describe("Creator Block browser preview performance", () => {
   it("does not produce repeated >50ms draws at the maximum active-scene budget", async () => {
     const scenes = maximumPreviewScenes();
     expect(validateMotionInstances(scenes, 360).ok).toBe(true);
-    expect(activeMotionComplexity(scenes)).toBe(MOTION_MAX_WEIGHTED_ACTIVE_FRAMES);
+    expect(activeMotionComplexity(scenes)).toBe(960);
+    expect(peakMotionComplexity(scenes)).toBe(MOTION_MAX_CONCURRENT_COMPLEXITY);
 
     const CanvasKit = await CanvasKitInit({
       locateFile: () => `${process.cwd()}/node_modules/canvaskit-wasm/bin/canvaskit.wasm`,
