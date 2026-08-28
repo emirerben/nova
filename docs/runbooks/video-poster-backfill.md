@@ -126,9 +126,15 @@ After the backfill is green, validate a signed-in mobile-sized Library session:
 
 - initial grid load mounts zero `<video src>` elements and makes no MP4 request;
 - ready tiles return a decodable `image/jpeg` poster;
+- missing or failed posters coalesce into `POST /me/jobs/posters/refresh`
+  requests of at most 200 owner-scoped job IDs; the no-store response returns
+  only poster URL, stable identity, and `ready` / `repairing` / `unavailable`
+  status, and omits missing or foreign jobs;
 - a posterless tile makes `GET /me/jobs/{job_id}/playback-url` only after Play;
 - the returned fresh URL mounts exactly one preview, and starting another stops
   the previous one;
+- a poster refresh that settles while a preview is playing does not unmount or
+  replace that active video;
 - Stop unmounts the video and restores focus; a failed or 15-second stalled
   attempt returns to Retry without reusing a list-time or prior signed URL.
 
