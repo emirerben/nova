@@ -1060,12 +1060,16 @@ def test_first_guided_music_pin_failure_has_stable_code(monkeypatch) -> None:
     assert exc.value.code == "guided_story_music_missing"
 
 
-def test_guided_revision_music_lookup_binds_text_id_not_uuid(monkeypatch) -> None:
-    """A UUID-shaped MusicTrack id must still be bound as TEXT on revision rerender."""
+def _patch_guided_revision_harness(
+    monkeypatch,
+    *,
+    runtime_plan,
+    render,
+    track_id=None,
+) -> tuple[str, list[tuple[object, object]]]:
     from app.pipeline import guided_story
 
     job_id = "12345678-1234-5678-1234-567812345678"
-    track_id = "87654321-4321-8765-4321-876543218765"
     job = SimpleNamespace(
         id=uuid.UUID(job_id),
         user_id=uuid.uuid4(),
@@ -1076,12 +1080,17 @@ def test_guided_revision_music_lookup_binds_text_id_not_uuid(monkeypatch) -> Non
         },
     )
     item = SimpleNamespace(clip_assignments=[])
-    track = SimpleNamespace(
-        id=track_id,
-        analysis_status="ready",
-        published_at=object(),
-        archived_at=None,
-        audio_gcs_path="music/track.m4a",
+    snapshot = SimpleNamespace(media=[])
+    track = (
+        SimpleNamespace(
+            id=track_id,
+            analysis_status="ready",
+            published_at=object(),
+            archived_at=None,
+            audio_gcs_path="music/track.m4a",
+        )
+        if track_id is not None
+        else None
     )
     lookups: list[tuple[object, object]] = []
 
@@ -1100,15 +1109,6 @@ def test_guided_revision_music_lookup_binds_text_id_not_uuid(monkeypatch) -> Non
                 return track
             return item
 
-    snapshot = SimpleNamespace(media=[])
-    runtime_plan = {
-        "music": {
-            "track_id": track_id,
-            "title": "Track",
-            "audio_gcs_path": track.audio_gcs_path,
-            "generation": "42",
-        }
-    }
     monkeypatch.setattr(gb, "_sync_session", _Session)
     monkeypatch.setattr(
         guided_story,
@@ -1122,17 +1122,33 @@ def test_guided_revision_music_lookup_binds_text_id_not_uuid(monkeypatch) -> Non
         "compile_guided_runtime_plan",
         lambda *_args: runtime_plan,
     )
-    monkeypatch.setattr(
-        guided_story,
-        "render_execution_plan",
-        lambda *_args, **_kwargs: {"video_path": "output.mp4"},
-    )
+    monkeypatch.setattr(guided_story, "render_execution_plan", render)
     monkeypatch.setattr(
         guided_story,
         "validate_ready_result",
         lambda _plan, result, **_kwargs: result,
     )
     monkeypatch.setattr(gb, "_update_variant_entry", lambda *_args, **_kwargs: True)
+    return job_id, lookups
+
+
+def test_guided_revision_music_lookup_binds_text_id_not_uuid(monkeypatch) -> None:
+    """A UUID-shaped MusicTrack id must still be bound as TEXT on revision rerender."""
+    track_id = "87654321-4321-8765-4321-876543218765"
+    runtime_plan = {
+        "music": {
+            "track_id": track_id,
+            "title": "Track",
+            "audio_gcs_path": "music/track.m4a",
+            "generation": "42",
+        }
+    }
+    job_id, lookups = _patch_guided_revision_harness(
+        monkeypatch,
+        runtime_plan=runtime_plan,
+        track_id=track_id,
+        render=lambda *_args, **_kwargs: {"video_path": "output.mp4"},
+    )
 
     gb._rerender_guided_story_revision(
         job_id,
@@ -1144,6 +1160,69 @@ def test_guided_revision_music_lookup_binds_text_id_not_uuid(monkeypatch) -> Non
     music_lookup = next(model_pk for model_pk in lookups if model_pk[0] is gb.MusicTrack)
     assert music_lookup[1] == track_id
     assert isinstance(music_lookup[1], str)
+
+
+def test_guided_revision_invalid_music_id_fails_before_lookup_or_render(monkeypatch) -> None:
+    from app.pipeline import guided_story
+
+    runtime_plan = {
+        "music": {
+            "track_id": "not-a-uuid",
+            "title": "Track",
+            "audio_gcs_path": "music/track.m4a",
+            "generation": "42",
+        }
+    }
+    rendered = []
+
+    def _render(*_args, **_kwargs):
+        rendered.append(True)
+        raise AssertionError("invalid music must fail before rendering")
+
+    job_id, lookups = _patch_guided_revision_harness(
+        monkeypatch,
+        runtime_plan=runtime_plan,
+        render=_render,
+    )
+
+    with pytest.raises(guided_story.GuidedStoryError) as exc_info:
+        gb._rerender_guided_story_revision(
+            job_id,
+            {"variant_id": "guided_story"},
+            revision={"revision_number": 2},
+            render_gen_id="render-1",
+        )
+
+    assert exc_info.value.code == "guided_story_music_missing"
+    assert not any(model is gb.MusicTrack for model, _primary_key in lookups)
+    assert rendered == []
+
+
+def test_guided_revision_without_music_skips_track_lookup_and_renders_without_track(
+    monkeypatch,
+) -> None:
+    runtime_plan = {"music": None}
+    render_args: dict[str, object] = {}
+
+    def _render(*_args, **kwargs):
+        render_args["track"] = kwargs["track"]
+        return {"video_path": "output.mp4"}
+
+    job_id, lookups = _patch_guided_revision_harness(
+        monkeypatch,
+        runtime_plan=runtime_plan,
+        render=_render,
+    )
+
+    gb._rerender_guided_story_revision(
+        job_id,
+        {"variant_id": "guided_story"},
+        revision={"revision_number": 2},
+        render_gen_id="render-1",
+    )
+
+    assert not any(model is gb.MusicTrack for model, _primary_key in lookups)
+    assert render_args["track"] is None
 
 
 def test_redelivery_finalizes_verified_guided_result_without_rerender(monkeypatch) -> None:
