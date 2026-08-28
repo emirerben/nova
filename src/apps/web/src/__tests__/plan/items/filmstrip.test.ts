@@ -2,6 +2,7 @@ import { describe, expect, it } from "@jest/globals";
 import {
   FILMSTRIP_MAX_SEEKS,
   FILMSTRIP_TILE_W,
+  allocateFilmstripDensityBudget,
   allocateFilmstripSeekBudget,
   filmstripCoverCrop,
   filmstripDecodeKey,
@@ -21,7 +22,7 @@ describe("editor source filmstrip helpers", () => {
       zoomBucket: 4,
     });
 
-    expect(key).toBe("slot-2:7:3.333:1.667:4");
+    expect(key).toBe("slot-2:7:3.333:1.667:4:224x40");
   });
 
   it("changes the decode key for source-window edits", () => {
@@ -87,6 +88,7 @@ describe("editor source filmstrip helpers", () => {
     expect(filmstripZoomBucket(FILMSTRIP_TILE_W * 6, 3)).toBe(3);
     expect(filmstripZoomBucket(FILMSTRIP_TILE_W * 0.4, 3)).toBe(1);
     expect(filmstripZoomBucket(FILMSTRIP_TILE_W, 0)).toBe(0);
+    expect(filmstripZoomBucket(FILMSTRIP_TILE_W * 3, 8, 8)).toBe(8);
   });
 
   it("allocates visible tiles for a prod-shaped 17-slot song timeline", () => {
@@ -94,6 +96,15 @@ describe("editor source filmstrip helpers", () => {
 
     expect(budgets).toHaveLength(17);
     expect(budgets.every((value) => value > 0)).toBe(true);
+  });
+
+  it("matches desktop-density sampling for a three-clip mobile timeline", () => {
+    expect(allocateFilmstripDensityBudget([173, 149, 182], 1)).toEqual([
+      8, 8, 8,
+    ]);
+    expect(
+      allocateFilmstripDensityBudget(new Array(17).fill(FILMSTRIP_TILE_W), 1),
+    ).toEqual(new Array(17).fill(1));
   });
 
   it("falls back to duration text when the caller passes an empty label", () => {
@@ -113,15 +124,18 @@ describe("editor source filmstrip helpers", () => {
     ).toEqual([4.1, 5.1, 6.1]);
   });
 
-  it("clamps final samples to the drawable source bound", () => {
-    expect(
-      filmstripSampleTimes({
-        sourceStartS: 10.9,
-        durationS: 1,
-        sourceDurationS: 11.21,
-        tiles: 2,
-      }),
-    ).toEqual([11.15, 11.16]);
+  it("redistributes final samples across the drawable source bound", () => {
+    const samples = filmstripSampleTimes({
+      sourceStartS: 10.9,
+      durationS: 1,
+      sourceDurationS: 11.21,
+      tiles: 3,
+    });
+    expect(samples[0]).toBeCloseTo(10.943333, 6);
+    expect(samples[1]).toBeCloseTo(11.03, 6);
+    expect(samples[2]).toBeCloseTo(11.116667, 6);
+    expect(samples[1]).toBeGreaterThan(samples[0]);
+    expect(samples[2]).toBeGreaterThan(samples[1]);
   });
 
   it("center-crops source frames instead of distorting them", () => {

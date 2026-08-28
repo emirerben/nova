@@ -22,7 +22,8 @@ export const FILMSTRIP_MAX_SEEKS = 24;
 /** Target on-screen width of one thumbnail (drives the zoom bucket). */
 export const FILMSTRIP_TILE_W = 56;
 
-const TILE_H = 40;
+const DEFAULT_TILE_H = 40;
+const IDLE_DECODER_TTL_MS = 15_000;
 
 interface FilmstripRequest {
   src: string | null;
@@ -32,6 +33,8 @@ interface FilmstripRequest {
   durationS: number;
   sourceDurationS: number | null;
   tiles: number;
+  rasterWidthPx: number;
+  rasterHeightPx: number;
   cacheKey: string;
 }
 
@@ -40,7 +43,12 @@ const MAX_RASTER_CACHE_ENTRIES = 96;
 const latestRequestByPoolKey = new Map<string, string>();
 const clipVideos = new Map<
   string,
-  { video: HTMLVideoElement; queue: Promise<void>; refs: number }
+  {
+    video: HTMLVideoElement;
+    queue: Promise<void>;
+    refs: number;
+    releaseTimer: number | null;
+  }
 >();
 
 export function filmstripPoolKey(src: string, clipId: string): string {
@@ -54,11 +62,16 @@ function roundKeyTiming(value: number): string {
 export function filmstripZoomBucket(
   widthPx: number,
   maxSeekCount = FILMSTRIP_MAX_SEEKS,
+  minSeekCount = 0,
 ): number {
   if (widthPx <= 0 || maxSeekCount <= 0) return 0;
+  const boundedMinimum = Math.max(0, Math.min(maxSeekCount, minSeekCount));
   return Math.max(
     1,
-    Math.min(maxSeekCount, Math.round(widthPx / FILMSTRIP_TILE_W)),
+    Math.min(
+      maxSeekCount,
+      Math.max(boundedMinimum, Math.round(widthPx / FILMSTRIP_TILE_W)),
+    ),
   );
 }
 
@@ -68,12 +81,16 @@ export function filmstripDecodeKey({
   inS,
   durationS,
   zoomBucket,
+  rasterWidthPx = zoomBucket * FILMSTRIP_TILE_W,
+  rasterHeightPx = DEFAULT_TILE_H,
 }: {
   clipId: string;
   sourceId: string | number;
   inS: number;
   durationS: number;
   zoomBucket: number;
+  rasterWidthPx?: number;
+  rasterHeightPx?: number;
 }): string {
   return [
     clipId,
@@ -81,6 +98,7 @@ export function filmstripDecodeKey({
     roundKeyTiming(inS),
     roundKeyTiming(durationS),
     zoomBucket,
+    `${Math.max(1, Math.round(rasterWidthPx))}x${Math.max(1, Math.round(rasterHeightPx))}`,
   ].join(":");
 }
 
@@ -108,14 +126,14 @@ export function filmstripSampleTimes({
     sourceDurationS != null
       ? Math.max(0, sourceDurationS - 0.05)
       : Math.max(0, sourceStartS + durationS - 0.05);
+  const windowStartS = Math.max(0, Math.min(sourceStartS, maxTime));
+  const windowEndS = Math.max(
+    windowStartS,
+    Math.min(sourceStartS + durationS, maxTime),
+  );
+  const drawableDurationS = windowEndS - windowStartS;
   return Array.from({ length: tiles }, (_, index) =>
-    Math.max(
-      0,
-      Math.min(
-        sourceStartS + ((index + 0.5) / tiles) * durationS,
-        maxTime,
-      ),
-    ),
+    windowStartS + ((index + 0.5) / tiles) * drawableDurationS,
   );
 }
 
@@ -177,10 +195,29 @@ export function allocateFilmstripSeekBudget(
   return allocated;
 }
 
+/** Match the desktop editor's dense sampling without exceeding the track cap. */
+export function allocateFilmstripDensityBudget(
+  widthsPx: number[],
+  zoom: number,
+  budget = FILMSTRIP_MAX_SEEKS,
+): number[] {
+  const activeCount = widthsPx.filter((width) => width > 0).length;
+  if (activeCount === 0 || budget <= 0) return widthsPx.map(() => 0);
+  const perClipCap = Math.max(1, Math.floor(budget / activeCount));
+  const safeZoom = Number.isFinite(zoom) ? Math.max(0.1, zoom) : 1;
+  const zoomDensity = Math.max(1, Math.round(safeZoom * 10));
+  const perClipBudget = Math.min(perClipCap, zoomDensity);
+  return widthsPx.map((width) => (width > 0 ? perClipBudget : 0));
+}
+
 function pooledClipVideo(src: string, clipId: string) {
   const poolKey = filmstripPoolKey(src, clipId);
   const existing = clipVideos.get(poolKey);
   if (existing) {
+    if (existing.releaseTimer != null) {
+      window.clearTimeout(existing.releaseTimer);
+      existing.releaseTimer = null;
+    }
     existing.refs += 1;
     return existing;
   }
@@ -188,21 +225,40 @@ function pooledClipVideo(src: string, clipId: string) {
   video.muted = true;
   video.playsInline = true;
   video.preload = "auto";
-  const entry = { video, queue: Promise.resolve(), refs: 1 };
+  const entry = {
+    video,
+    queue: Promise.resolve(),
+    refs: 1,
+    releaseTimer: null,
+  };
   clipVideos.set(poolKey, entry);
   return entry;
 }
 
 function releaseClipVideo(
   poolKey: string,
-  entry: { video: HTMLVideoElement; queue: Promise<void>; refs: number },
+  entry: {
+    video: HTMLVideoElement;
+    queue: Promise<void>;
+    refs: number;
+    releaseTimer: number | null;
+  },
 ) {
   entry.refs -= 1;
-  if (entry.refs > 0 || clipVideos.get(poolKey) !== entry) return;
-  clipVideos.delete(poolKey);
-  entry.video.pause();
-  entry.video.removeAttribute("src");
-  entry.video.load();
+  if (
+    entry.refs > 0 ||
+    entry.releaseTimer != null ||
+    clipVideos.get(poolKey) !== entry
+  ) {
+    return;
+  }
+  entry.releaseTimer = window.setTimeout(() => {
+    if (entry.refs > 0 || clipVideos.get(poolKey) !== entry) return;
+    clipVideos.delete(poolKey);
+    entry.video.pause();
+    entry.video.removeAttribute("src");
+    entry.video.load();
+  }, IDLE_DECODER_TTL_MS);
 }
 
 function waitForLoadedData(video: HTMLVideoElement): Promise<void> {
@@ -252,6 +308,25 @@ function seekVideo(video: HTMLVideoElement, seconds: number): Promise<void> {
   });
 }
 
+function waitForDrawableFrame(video: HTMLVideoElement): Promise<void> {
+  if (typeof video.requestVideoFrameCallback !== "function") {
+    return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    let callbackId = 0;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      if (callbackId) video.cancelVideoFrameCallback(callbackId);
+      resolve();
+    };
+    const timeout = window.setTimeout(finish, 120);
+    callbackId = video.requestVideoFrameCallback(() => finish());
+  });
+}
+
 function enqueueClipDecode(
   src: string,
   clipId: string,
@@ -295,7 +370,9 @@ export default function Filmstrip({
   durationS,
   sourceDurationS,
   widthPx,
+  heightPx = DEFAULT_TILE_H,
   maxSeekCount = FILMSTRIP_MAX_SEEKS,
+  minSeekCount = 0,
   label,
 }: {
   src: string | null;
@@ -306,15 +383,21 @@ export default function Filmstrip({
   sourceDurationS?: number | null;
   /** Rendered clip width, bucketed into a bounded seek count. */
   widthPx: number;
+  /** Actual rendered strip height; prevents CSS from stretching frame crops. */
+  heightPx?: number;
   /** Seek budget allocated to this clip by the parent track. */
   maxSeekCount?: number;
+  /** Optional dense floor, still capped by maxSeekCount. */
+  minSeekCount?: number;
   /** Fallback label (clip duration + moment description). */
   label?: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [failed, setFailed] = useState(false);
 
-  const tiles = filmstripZoomBucket(widthPx, maxSeekCount);
+  const tiles = filmstripZoomBucket(widthPx, maxSeekCount, minSeekCount);
+  const rasterWidthPx = Math.max(1, Math.round(widthPx));
+  const rasterHeightPx = Math.max(1, Math.round(heightPx));
   const request = useMemo<FilmstripRequest>(
     () => ({
       src,
@@ -324,15 +407,29 @@ export default function Filmstrip({
       durationS,
       sourceDurationS: sourceDurationS ?? null,
       tiles,
+      rasterWidthPx,
+      rasterHeightPx,
       cacheKey: filmstripDecodeKey({
         clipId,
         sourceId,
         inS: sourceStartS,
         durationS,
         zoomBucket: tiles,
+        rasterWidthPx,
+        rasterHeightPx,
       }),
     }),
-    [clipId, durationS, sourceDurationS, sourceId, sourceStartS, src, tiles],
+    [
+      clipId,
+      durationS,
+      rasterHeightPx,
+      rasterWidthPx,
+      sourceDurationS,
+      sourceId,
+      sourceStartS,
+      src,
+      tiles,
+    ],
   );
   const activeRequest = request;
   const sampleTimes = useMemo(
@@ -381,26 +478,17 @@ export default function Filmstrip({
       return;
     }
 
-    const renderedWidth = Math.max(1, activeRequest.tiles * FILMSTRIP_TILE_W);
-    canvas.width = Math.round(renderedWidth * dpr);
-    canvas.height = TILE_H * dpr;
+    const renderedWidth = activeRequest.rasterWidthPx;
+    const renderedHeight = activeRequest.rasterHeightPx;
     if (typeof window.CanvasRenderingContext2D === "undefined") {
       setFailed(true);
       return;
     }
-    const pendingCtx = canvas.getContext("2d");
-    if (!pendingCtx) {
-      setFailed(true);
-      return;
-    }
-    pendingCtx.scale(dpr, dpr);
-    pendingCtx.fillStyle = "#e4e4e7";
-    pendingCtx.fillRect(0, 0, renderedWidth, TILE_H);
-    delete canvas.dataset.renderedTiles;
-    delete canvas.dataset.renderedRangeKey;
+    const hadRenderedRaster = Boolean(canvas.dataset.renderedRangeKey);
+    canvas.dataset.loadingRangeKey = activeRequest.cacheKey;
 
     const failTimer = window.setTimeout(() => {
-      if (!cancelled) setFailed(true);
+      if (!cancelled && !hadRenderedRaster) setFailed(true);
     }, 6000);
 
     void enqueueClipDecode(
@@ -424,65 +512,60 @@ export default function Filmstrip({
 
         const rendered = document.createElement("canvas");
         rendered.width = Math.round(renderedWidth * dpr);
-        rendered.height = TILE_H * dpr;
+        rendered.height = Math.round(renderedHeight * dpr);
         const ctx = rendered.getContext("2d");
-        const visibleCtx = canvas.getContext("2d");
-        if (!ctx || !visibleCtx) {
+        if (!ctx) {
           throw new Error("filmstrip canvas unavailable");
         }
-        canvas.width = rendered.width;
-        canvas.height = rendered.height;
         ctx.scale(dpr, dpr);
-        visibleCtx.scale(dpr, dpr);
         ctx.fillStyle = "#e4e4e7";
-        ctx.fillRect(0, 0, renderedWidth, TILE_H);
-        visibleCtx.fillStyle = "#e4e4e7";
-        visibleCtx.fillRect(0, 0, renderedWidth, TILE_H);
+        ctx.fillRect(0, 0, renderedWidth, renderedHeight);
+        const averageTileWidth = renderedWidth / activeRequest.tiles;
         const crop = filmstripCoverCrop({
           sourceWidth: video.videoWidth,
           sourceHeight: video.videoHeight,
-          targetWidth: FILMSTRIP_TILE_W,
-          targetHeight: TILE_H,
+          targetWidth: averageTileWidth,
+          targetHeight: renderedHeight,
         });
 
         for (let i = 0; i < sampleTimes.length; i += 1) {
           if (isStale()) return;
           await seekVideo(video, sampleTimes[i]);
+          await waitForDrawableFrame(video);
           if (isStale()) return;
           if (video.videoWidth <= 0 || video.videoHeight <= 0) {
             throw new Error("filmstrip source has no drawable video frame");
           }
+          const tileLeft = Math.round((i / activeRequest.tiles) * renderedWidth);
+          const tileRight = Math.round(
+            ((i + 1) / activeRequest.tiles) * renderedWidth,
+          );
+          const tileWidth = Math.max(1, tileRight - tileLeft);
           ctx.drawImage(
             video,
             crop.sx,
             crop.sy,
             crop.sw,
             crop.sh,
-            i * FILMSTRIP_TILE_W,
+            tileLeft,
             0,
-            FILMSTRIP_TILE_W,
-            TILE_H,
+            tileWidth,
+            renderedHeight,
           );
-          visibleCtx.drawImage(
-            video,
-            crop.sx,
-            crop.sy,
-            crop.sw,
-            crop.sh,
-            i * FILMSTRIP_TILE_W,
-            0,
-            FILMSTRIP_TILE_W,
-            TILE_H,
-          );
-          canvas.dataset.renderedTiles = `${i + 1}`;
-          canvas.dataset.renderedRangeKey = activeRequest.cacheKey;
         }
 
+        if (isStale()) return;
         cacheRaster(activeRequest.cacheKey, rendered);
+        if (!copyCanvas(rendered, canvas)) {
+          throw new Error("filmstrip canvas unavailable");
+        }
+        canvas.dataset.renderedTiles = `${activeRequest.tiles}`;
+        canvas.dataset.renderedRangeKey = activeRequest.cacheKey;
+        delete canvas.dataset.loadingRangeKey;
       },
     )
       .catch(() => {
-        if (!cancelled) setFailed(true);
+        if (!cancelled && !hadRenderedRaster) setFailed(true);
       })
       .finally(() => {
         if (!cancelled) window.clearTimeout(failTimer);
@@ -493,6 +576,9 @@ export default function Filmstrip({
       window.clearTimeout(failTimer);
       if (latestRequestByPoolKey.get(poolKey) === activeRequest.cacheKey) {
         latestRequestByPoolKey.delete(poolKey);
+      }
+      if (canvas.dataset.loadingRangeKey === activeRequest.cacheKey) {
+        delete canvas.dataset.loadingRangeKey;
       }
     };
   }, [activeRequest, sampleTimes]);
@@ -524,7 +610,7 @@ export default function Filmstrip({
       data-source-range-key={activeRequest.cacheKey}
       data-sample-times={sampleTimes.map(roundKeyTiming).join(",")}
       aria-hidden
-      className="h-full w-full rounded object-cover [contain:paint]"
+      className="h-full w-full rounded bg-zinc-200 object-cover [contain:paint]"
       style={{ imageRendering: "auto" }}
     />
   );
