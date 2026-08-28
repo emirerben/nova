@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.56.0.4] — 2026-08-28
+
+### Fixed
+- **Guided Story bulk drafts keep their approved text identity through Save.** The conventional editor no longer adds a legacy synthetic intro tombstone to an unchanged guided title, so the complete 103-clip slideshow can pass the canonical revision identity check without weakening protection against unapproved text IDs.
+
 ## [0.56.0.3] — 2026-08-28
 
 ### Fixed
