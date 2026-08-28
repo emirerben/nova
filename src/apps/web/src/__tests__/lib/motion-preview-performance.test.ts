@@ -5,7 +5,8 @@ import { createMotionResources, drawMotionFrame } from "@nova/motion-runtime/can
 import {
   activeMotionComplexity,
   createCreatorBlockInstance,
-  MOTION_MAX_WEIGHTED_ACTIVE_FRAMES,
+  MOTION_MAX_CONCURRENT_COMPLEXITY,
+  peakMotionComplexity,
   validateMotionInstances,
   type MotionPresetInstance,
 } from "@nova/motion-runtime";
@@ -55,8 +56,9 @@ jest.retryTimes(2, { logErrorsBeforeRetry: true });
 describe("Creator Block browser preview performance", () => {
   it("does not produce repeated >50ms draws at the maximum active-scene budget", async () => {
     const scenes = maximumPreviewScenes();
-    expect(validateMotionInstances(scenes, 240).ok).toBe(true);
-    expect(activeMotionComplexity(scenes)).toBe(MOTION_MAX_WEIGHTED_ACTIVE_FRAMES);
+    expect(validateMotionInstances(scenes, 360).ok).toBe(true);
+    expect(activeMotionComplexity(scenes)).toBe(960);
+    expect(peakMotionComplexity(scenes)).toBe(MOTION_MAX_CONCURRENT_COMPLEXITY);
 
     const CanvasKit = await CanvasKitInit({
       locateFile: () => `${process.cwd()}/node_modules/canvaskit-wasm/bin/canvaskit.wasm`,
@@ -77,7 +79,7 @@ describe("Creator Block browser preview performance", () => {
           CanvasKit,
           surface!.getCanvas(),
           scenes,
-          (index * 5) % 120,
+          (index * 5) % 360,
           360,
           640,
           resources,

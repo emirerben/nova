@@ -24,15 +24,21 @@ from app.agents._schemas.text_element import _ALLOWED_EFFECTS, _ALLOWED_FONTS, _
 from app.agents.music_matcher import _sanitize_text
 from app.config import settings
 from app.pipeline.prompt_loader import load_prompt
+from app.services.editor_limits import (
+    EDITOR_MAX_TIMELINE_SLOTS,
+    MOTION_FPS,
+    MOTION_MAX_ACTIVE_FRAMES,
+    MOTION_MAX_INSTANCES,
+)
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-08-27-v34"
+EDIT_COPILOT_PROMPT_VERSION = "2026-08-27-v35"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt prose ("up to 12", twice) and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
 _MAX_OPS = 12
-_GUIDED_TIMELINE_MAX_SLOTS = 50
+_GUIDED_TIMELINE_MAX_SLOTS = EDITOR_MAX_TIMELINE_SLOTS
 # Renderer-side guard only — the producer (snapshot.ts COPILOT_BEAT_MARKS_MAX)
 # stride-caps to the same count before sending, preserving late-video marks.
 _BEAT_MARKS_SHOWN_MAX = 60
@@ -1733,7 +1739,7 @@ def _bulk_capacity_clarification(
     max_blocks = (
         max_blocks
         if isinstance(max_blocks, int) and not isinstance(max_blocks, bool) and max_blocks > 0
-        else 8
+        else MOTION_MAX_INSTANCES
     )
     max_card_assets = limits.get("max_card_stack_assets")
     max_card_assets = (
@@ -1753,7 +1759,7 @@ def _bulk_capacity_clarification(
     )
     max_active_union = _safe_finite_float(limits.get("max_active_union_s"))
     if max_active_union is None or max_active_union <= 0:
-        max_active_union = 8.0
+        max_active_union = MOTION_MAX_ACTIVE_FRAMES / MOTION_FPS
     card_groups = math.ceil(image_count / max_card_assets) if image_count else 0
     block_limit_label = "eight-block" if max_blocks == 8 else f"{max_blocks}-block"
     detail = (
@@ -3506,7 +3512,7 @@ def _motion_active_union_valid(name: str, payload: dict, blocks: list) -> bool:
         if start is not None and end is not None and end > start:
             intervals.append((start, end))
     if name == "add_motion_block":
-        if len(intervals) >= 8:
+        if len(intervals) >= MOTION_MAX_INSTANCES:
             return False
         start = _as_float(payload.get("start_s"))
         end = _as_float(payload.get("end_s"))
@@ -3527,7 +3533,7 @@ def _motion_active_union_valid(name: str, payload: dict, blocks: list) -> bool:
             current_start, current_end = start, end
     if current_start is not None:
         total += (current_end or current_start) - current_start
-    return total <= 8.0 + 1e-6
+    return total <= MOTION_MAX_ACTIVE_FRAMES / MOTION_FPS + 1e-6
 
 
 def _clean_user_text(value: object, *, max_chars: int = 500) -> str | None:

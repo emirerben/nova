@@ -142,9 +142,11 @@ def _req(slots: list[dict]) -> gj.TimelineEditRequest:
 # ── Request schema ───────────────────────────────────────────────────────────────
 
 
-def test_edit_request_rejects_over_50_slots():
+def test_edit_request_accepts_120_slots_and_rejects_121():
+    slots = [{"clip_index": 0, "in_s": 0.0, "duration_s": 0.1}] * 120
+    assert len(_req(slots).slots) == 120
     with pytest.raises(ValidationError):
-        _req([{"clip_index": 0, "in_s": 0.0, "duration_s": 1.0}] * 51)
+        _req([*slots, {"clip_index": 0, "in_s": 0.0, "duration_s": 0.1}])
 
 
 def test_slot_edit_defaults():

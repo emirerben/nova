@@ -6,7 +6,8 @@ import { createMotionResources, drawMotionFrame, type MotionResources } from "@n
 import {
   activeMotionComplexity,
   createCreatorBlockInstance,
-  MOTION_MAX_WEIGHTED_ACTIVE_FRAMES,
+  MOTION_MAX_CONCURRENT_COMPLEXITY,
+  peakMotionComplexity,
   validateMotionInstances,
   type MotionPresetInstance,
 } from "@nova/motion-runtime";
@@ -74,8 +75,9 @@ export default function MotionPreviewPerformanceFixture() {
         }
         const scenes = maximumPreviewScenes();
         if (
-          !validateMotionInstances(scenes, 240).ok ||
-          activeMotionComplexity(scenes) !== MOTION_MAX_WEIGHTED_ACTIVE_FRAMES
+          !validateMotionInstances(scenes, 360).ok ||
+          activeMotionComplexity(scenes) !== 960 ||
+          peakMotionComplexity(scenes) !== MOTION_MAX_CONCURRENT_COMPLEXITY
         ) {
           throw new Error("Preview benchmark scene is not at the accepted complexity limit");
         }

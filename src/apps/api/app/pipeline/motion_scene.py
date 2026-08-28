@@ -14,20 +14,25 @@ import jsonschema
 import structlog
 
 from app import storage
+from app.services.editor_limits import (
+    MOTION_FPS,
+    MOTION_MAX_ACTIVE_FRAMES,
+    MOTION_MAX_COMPLEXITY_UNITS,
+    MOTION_MAX_CONCURRENT_COMPLEXITY,
+    MOTION_MAX_INSTANCE_FRAMES,
+    MOTION_MAX_INSTANCES,
+)
 
 log = structlog.get_logger()
 
-MOTION_FPS = 30
-MOTION_MAX_ACTIVE_FRAMES = 8 * MOTION_FPS
-MOTION_MAX_INSTANCE_FRAMES = 8 * MOTION_FPS
-MOTION_MAX_COMPLEXITY_UNITS = 960
 LEGACY_MOTION_RUNTIME_HASH = "motion-v1:ck0.40.0:b2556106:2abfa191:route-trace-v1"
 MOTION_RUNTIME_V2_HASH = "motion-v2:ck0.40.0:b2556106:2abfa191:creator-blocks-v1"
 MOTION_RUNTIME_V3_HASH = "motion-v3:ck0.40.0:b2556106:2abfa191:creator-blocks-v2"
-PREVIOUS_MOTION_RUNTIME_HASH = MOTION_RUNTIME_V3_HASH
-MOTION_RUNTIME_HASH = "motion-v4:ck0.40.0:b2556106:2abfa191:creator-blocks-v3"
+MOTION_RUNTIME_V4_HASH = "motion-v4:ck0.40.0:b2556106:2abfa191:creator-blocks-v3"
+PREVIOUS_MOTION_RUNTIME_HASH = MOTION_RUNTIME_V4_HASH
+MOTION_RUNTIME_HASH = "motion-v5:ck0.40.0:b2556106:2abfa191:creator-blocks-v4-capacity"
 COMPATIBLE_MOTION_RUNTIME_HASHES = frozenset(
-    {MOTION_RUNTIME_V2_HASH, MOTION_RUNTIME_V3_HASH, MOTION_RUNTIME_HASH}
+    {MOTION_RUNTIME_V2_HASH, MOTION_RUNTIME_V3_HASH, MOTION_RUNTIME_V4_HASH, MOTION_RUNTIME_HASH}
 )
 _TIMEOUT_S = 600
 _MAX_MOTION_ASSET_BYTES = 25 * 1024 * 1024
@@ -139,12 +144,35 @@ def _weighted_motion_complexity(items: list[dict]) -> int:
     return total
 
 
+def _peak_motion_complexity(items: list[dict]) -> int:
+    events: dict[int, int] = {}
+    weights = _creator_complexity_weights()
+    for item in items:
+        weight = (
+            weights.get(str(item.get("preset_id")), MOTION_MAX_CONCURRENT_COMPLEXITY + 1)
+            if item.get("preset_version") == 2
+            else 1
+        )
+        start = int(item["start_frame"])
+        end = int(item["end_frame_exclusive"])
+        events[start] = events.get(start, 0) + weight
+        events[end] = events.get(end, 0) - weight
+    peak = 0
+    active_weight = 0
+    for frame in sorted(events):
+        active_weight += events[frame]
+        peak = max(peak, active_weight)
+    return peak
+
+
 def validate_motion_instances(
     value: object,
     *,
     duration_frames: int | None = None,
 ) -> list[dict]:
     """Validate the canonical schema plus cross-field timeline invariants."""
+    if isinstance(value, list) and len(value) > MOTION_MAX_INSTANCES:
+        raise ValueError(f"motion_scenes supports at most {MOTION_MAX_INSTANCES} instances")
     if isinstance(value, list):
         for index, raw in enumerate(value):
             if not isinstance(raw, dict):
@@ -227,6 +255,12 @@ def validate_motion_instances(
         raise ValueError(
             f"motion_scenes has {complexity} weighted complexity units; "
             f"maximum is {MOTION_MAX_COMPLEXITY_UNITS}"
+        )
+    peak_complexity = _peak_motion_complexity(cleaned)
+    if peak_complexity > MOTION_MAX_CONCURRENT_COMPLEXITY:
+        raise ValueError(
+            f"motion_scenes has concurrent complexity {peak_complexity}; "
+            f"maximum is {MOTION_MAX_CONCURRENT_COMPLEXITY}"
         )
     return cleaned
 

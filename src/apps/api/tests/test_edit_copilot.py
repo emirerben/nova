@@ -1048,10 +1048,10 @@ def test_production_scale_pronoun_followup_returns_exact_capacity_clarification(
     assert out.ops == []
     assert out.outcome == "clarification"
     assert out.needs_clarification is True
-    assert "33 additional" in out.reply
-    assert "10 Card Stacks" in out.reply
-    assert "12-second" in out.reply
-    assert "8-second motion" in out.reply
+    assert "103 additional" in out.reply
+    assert "120-slot Save limit" in out.reply
+    assert "10 Card Stacks" not in out.reply
+    assert "8-second motion" not in out.reply
 
 
 def test_model_clarification_recomputes_all_bulk_constraints_from_pending_actions() -> None:
@@ -1089,10 +1089,9 @@ def test_model_clarification_recomputes_all_bulk_constraints_from_pending_action
     assert out.ops == []
     assert out.outcome == "clarification"
     assert "104 ready unused sources" in out.reply
-    assert "10 Card Stacks" in out.reply
-    assert "Film Strip" in out.reply
-    assert "12-second active span" in out.reply
-    assert "8-second motion budget" in out.reply
+    assert "103 additional" in out.reply
+    assert "120-slot Save limit" in out.reply
+    assert "8-second motion budget" not in out.reply
 
 
 @pytest.mark.parametrize(
@@ -1142,8 +1141,8 @@ def test_bulk_capacity_clarification_falls_back_for_nonpositive_motion_limits(
 
     assert out.outcome == "clarification"
     assert out.ops == []
-    assert "10 Card Stacks" in out.reply
-    assert "12-second active span" in out.reply
+    assert "103 additional" in out.reply
+    assert "120-slot Save limit" in out.reply
 
 
 def test_unrelated_named_clip_edit_does_not_inherit_pending_bulk_actions() -> None:
@@ -1229,7 +1228,7 @@ def test_capacity_clarification_preserves_pending_add_across_followup_clarificat
             "status": "ready",
             "used": False,
         }
-        for index in range(86)
+        for index in range(104)
     ]
 
     add = {
@@ -1329,7 +1328,7 @@ def test_capacity_clarification_preserves_pending_add_across_followup_clarificat
     )
     assert fourth.outcome == "clarification"
     assert fourth.ops == []
-    assert "86 ready unused sources" in fourth.reply
+    assert "104 ready unused sources" in fourth.reply
     assert "add_unused_sources" in {action["op"] for action in fourth.pending_actions}
 
 
@@ -3159,7 +3158,7 @@ def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
     # prompt-change rule.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-27-v34"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-27-v35"
 
 
 def _motion_snapshot() -> dict:
@@ -3255,7 +3254,7 @@ def test_creator_block_ops_reject_unknown_assets_params_and_active_budget() -> N
             "op": "add_motion_block",
             "preset_id": "kinetic_word",
             "start_s": 4,
-            "end_s": 11,
+            "end_s": 13,
             "params": {"text": "TOO MUCH"},
         },
     ]

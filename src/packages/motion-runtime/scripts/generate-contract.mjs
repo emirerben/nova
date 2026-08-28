@@ -6,8 +6,10 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const catalogPath = resolve(root, "creator-blocks.catalog.json");
 const schemaPath = resolve(root, "motion-scene.schema.json");
 const aiPath = resolve(root, "creator-blocks.ai.json");
+const limitsPath = resolve(root, "motion-limits.json");
 const checkOnly = process.argv.includes("--check");
 const catalog = JSON.parse(readFileSync(catalogPath, "utf8"));
+const limits = JSON.parse(readFileSync(limitsPath, "utf8"));
 
 function fail(message) {
   throw new Error(`Creator Block catalog: ${message}`);
@@ -200,11 +202,12 @@ function creatorSchema(entry, version) {
 }
 
 function generateSchema() {
+  const maxTimelineFrames = 60 * limits.motion_fps;
   const refs = [{ $ref: "#/$defs/route_trace_v1" }];
   const definitions = {
     id: { type: "string", minLength: 1, maxLength: 80, pattern: "^[A-Za-z0-9_-]+$" },
-    frame_start: { type: "integer", minimum: 0, maximum: 1799 },
-    frame_end: { type: "integer", minimum: 1, maximum: 1800 },
+    frame_start: { type: "integer", minimum: 0, maximum: maxTimelineFrames - 1 },
+    frame_end: { type: "integer", minimum: 1, maximum: maxTimelineFrames },
     palette: {
       type: "object",
       additionalProperties: false,
@@ -254,7 +257,7 @@ function generateSchema() {
     $id: "https://nova.video/schemas/motion-scene-v3.json",
     title: "Nova motion preset instances v3",
     type: "array",
-    maxItems: 8,
+    maxItems: limits.motion_max_instances,
     items: { oneOf: refs },
     $defs: definitions,
   };
