@@ -427,6 +427,121 @@ describe("useEditCopilot", () => {
     ]);
   });
 
+  it("carries a locally rejected atomic bulk plan into the follow-up turn", async () => {
+    const integrity = {
+      revision_number: 7,
+      base_generation: "gen-7",
+      state_hash: "state-7",
+      source_digest: "sp1-source",
+      source_count: 121,
+      timeline_count: 17,
+      target_count: 104,
+      selection_digest: "sel1-unused",
+    };
+    const pendingPlan = [
+      {
+        op: "add_unused_sources" as const,
+        selector: { scope: "unused_sources" as const, media_kind: "all" as const, quantifier: "all" as const },
+        integrity,
+      },
+      {
+        op: "stack_images" as const,
+        selector: { scope: "timeline" as const, media_kind: "image" as const, quantifier: "all" as const },
+        integrity: { ...integrity, target_count: 8, selection_digest: "sel1-images" },
+      },
+    ];
+    mockEditCopilotTurn
+      .mockResolvedValueOnce(response({ outcome: "proposed", ops: pendingPlan }))
+      .mockResolvedValueOnce(response({
+        outcome: "clarification",
+        needs_clarification: true,
+        reply: "The complete request still exceeds the timeline limits.",
+      }));
+    const applyOpsAtomic = jest.fn(() =>
+      appliedResult({
+        rejected: [{
+          op: "bulk_media_edit",
+          label: "Bulk media edit",
+          reason: "invalid_op",
+          detail: "the complete edit exceeds the 60-second output limit",
+        }],
+      }),
+    );
+    const { result } = renderCopilot({ applyOpsAtomic });
+
+    await act(async () => {
+      await result.current.send("Add all unused clips and stack the images");
+    });
+    expect(result.current.messages[1].pending_actions).toEqual(pendingPlan);
+
+    await act(async () => {
+      await result.current.send("stack the images together and make them shorter");
+    });
+    expect(mockEditCopilotTurn.mock.calls[1][2].turns).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "assistant", pending_actions: pendingPlan }),
+      ]),
+    );
+  });
+
+  it.each([
+    {
+      name: "an ordinary rejected operation",
+      ops: [{ op: "remove_text" as const, bar_index: 0 }],
+      applied: [],
+    },
+    {
+      name: "a non-atomic partial bulk result",
+      ops: [{
+        op: "stack_images" as const,
+        selector: { scope: "timeline" as const, media_kind: "image" as const, quantifier: "all" as const },
+      }],
+      applied: [{ label: "Unexpected partial edit", from: "before", to: "after" }],
+    },
+  ])("does not create a pending bulk plan for $name", async ({ ops, applied }) => {
+    mockEditCopilotTurn.mockResolvedValueOnce(response({ outcome: "proposed", ops }));
+    const applyOpsAtomic = jest.fn(() =>
+      appliedResult({
+        applied,
+        rejected: [{
+          op: "client_apply",
+          label: "Client apply",
+          reason: "invalid_op",
+          detail: "the operation was rejected",
+        }],
+      }),
+    );
+    const { result } = renderCopilot({ applyOpsAtomic });
+
+    await act(async () => {
+      await result.current.send("make this edit");
+    });
+
+    expect(result.current.messages[1].pending_actions).toEqual([]);
+  });
+
+  it("does not retain a successful bulk operation as pending", async () => {
+    mockEditCopilotTurn.mockResolvedValueOnce(response({
+      outcome: "proposed",
+      ops: [{
+        op: "stack_images",
+        selector: { scope: "timeline", media_kind: "image", quantifier: "all" },
+      }],
+    }));
+    const applyOpsAtomic = jest.fn(() =>
+      appliedResult({
+        applied: [{ label: "Image slideshow", from: "alternating", to: "consecutive" }],
+      }),
+    );
+    const { result } = renderCopilot({ applyOpsAtomic });
+
+    await act(async () => {
+      await result.current.send("stack all images");
+    });
+
+    expect(result.current.messages[1].pending_actions).toEqual([]);
+  });
+
   it("queues one follow-up and sends it with a post-apply snapshot", async () => {
     const first = deferred<EditCopilotTurnResponse>();
     mockEditCopilotTurn

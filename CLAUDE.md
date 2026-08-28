@@ -240,7 +240,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - App name: nova-video
 - Region: iad
 - Production URL: https://nova-video.fly.dev
-- Deploy workflow: `fly deploy` from repo root (or GitHub Actions CD)
+- Deploy workflow: **Fly Deploy** only; no bare `fly deploy`. Runbook: `docs/runbooks/video-poster-backfill.md`.
 - Deploy status command: `fly status --app nova-video`
 - Merge method: squash
 - Process groups: api (FastAPI/uvicorn) + worker (Celery)
@@ -253,7 +253,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 
 ### Custom deploy hooks
 - Pre-merge: none
-- Deploy trigger (API): `fly deploy` (manual) or GitHub Actions
+- Deploy trigger (API): **Fly Deploy** (push or manual rerun)
 - Deploy trigger (Frontend): push to `main` (Vercel auto-deploy) or `cd src/apps/web && vercel --prod`
 - Deploy status (API): `fly status --app nova-video`
 - Health check (API): https://nova-video.fly.dev/health

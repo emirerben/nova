@@ -1,15 +1,20 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-08-27-v34",
+  "prompt_version": "2026-08-28-v36",
   "input": {
     "utterance": "all of them and make them 0.2 seconds each",
     "prior_turns": [
       {"role": "user", "content": "Add all of the unsued clips as well. Stack multiple images together rather than splitting each between a video"},
       {"role": "user", "content": "stack the images together and make the shorter"},
-      {"role": "assistant", "content": "Which images would you like to stack together, and how short should the duration be?", "clarification_context": {"referent": "images", "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"}}, "pending_actions": [{"op": "add_unused_sources"}, {"op": "stack_images"}, {"op": "set_media_duration"}]}
+      {"role": "assistant", "content": "Which images would you like to stack together, and how short should the duration be?", "clarification_context": {"referent": "images", "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"}}, "pending_actions": [
+        {"op": "add_unused_sources", "selector": {"scope": "unused_sources", "media_kind": "all", "quantifier": "all"}, "integrity": {"revision_number": 7, "base_generation": "render-7", "state_hash": "state-7", "source_digest": "sp1-production-scale", "source_count": 121, "timeline_count": 17, "target_count": 104, "selection_digest": "sel1-unused-all"}},
+        {"op": "stack_images", "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"}, "integrity": {"revision_number": 7, "base_generation": "render-7", "state_hash": "state-7", "source_digest": "sp1-production-scale", "source_count": 121, "timeline_count": 17, "target_count": 8, "selection_digest": "sel1-ff29a665ff92c2c3"}},
+        {"op": "set_media_duration", "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"}, "integrity": {"revision_number": 7, "base_generation": "render-7", "state_hash": "state-7", "source_digest": "sp1-production-scale", "source_count": 121, "timeline_count": 17, "target_count": 8, "selection_digest": "sel1-ff29a665ff92c2c3"}}
+      ]}
     ],
     "variant_snapshot": {
       "allowed_op_families": ["motion", "clip"],
+      "guided_revision": {"revision_number": 7, "base_generation": "render-7", "state_hash": "state-7"},
       "total_duration_s": 24.033,
       "source_pool_summary": {
         "digest": "sp1-production-scale",
@@ -43,7 +48,7 @@
       ],
       "motion": {
         "available": true,
-        "limits": {"max_blocks": 8, "max_active_union_s": 8, "max_card_stack_assets": 6, "max_film_strip_assets": 8},
+        "limits": {"max_blocks": 12, "max_active_union_s": 12, "max_card_stack_assets": 6, "max_film_strip_assets": 8},
         "catalog": [
           {"preset_id": "card_stack", "label": "Card Stack", "kind": "media", "min_assets": 2, "max_assets": 6},
           {"preset_id": "film_strip", "label": "Film Strip", "kind": "media", "min_assets": 3, "max_assets": 8}
@@ -55,12 +60,12 @@
       }
     }
   },
-  "raw_text": "{\"intent\":\"clarify\",\"ops\":[],\"confidence\":0.99,\"reply\":\"The current 17-slot edit leaves room for only 33 additional slots under the 50-slot Save limit, but all 104 ready unused sources were requested. The resulting 60 images would also require 10 Card Stacks at six images each, exceeding the eight-block limit. Film Strip would use eight blocks, but its 12-second active span also exceeds the 8-second motion budget, so it does not solve this request. Choose a media kind and count of at most 33 while retaining the current edit, or remove existing content first.\",\"suggestions\":[\"Choose media kind and count\",\"Remove existing content\"],\"needs_clarification\":true,\"clarification_context\":{\"referent\":\"images\",\"selector\":{\"scope\":\"timeline\",\"media_kind\":\"image\",\"quantifier\":\"all\"}},\"pending_actions\":[{\"op\":\"add_unused_sources\"},{\"op\":\"stack_images\"},{\"op\":\"set_media_duration\"}]}",
+  "raw_text": "{\"intent\":\"clarify\",\"ops\":[],\"confidence\":0.99,\"reply\":\"The current 17-slot edit leaves room for only 103 additional slots under the 120-slot Save limit, but all 104 ready unused sources were requested. Choose a media kind and count of at most 103 while retaining the current edit, or remove existing content first.\",\"suggestions\":[\"Choose media kind and count\",\"Remove existing content\"],\"needs_clarification\":true,\"clarification_context\":{\"referent\":\"images\",\"selector\":{\"scope\":\"timeline\",\"media_kind\":\"image\",\"quantifier\":\"all\"}},\"pending_actions\":[{\"op\":\"add_unused_sources\"},{\"op\":\"stack_images\"},{\"op\":\"set_media_duration\"}]}",
   "output": {
     "intent": "clarify",
     "ops": [],
     "confidence": 0.99,
-    "reply": "The current 17-slot edit leaves room for only 33 additional slots under the 50-slot Save limit, but all 104 ready unused sources were requested. The resulting 60 images would also require 10 Card Stacks at six images each, exceeding the eight-block limit. Film Strip would use eight blocks, but its 12-second active span also exceeds the 8-second motion budget, so it does not solve this request. Choose a media kind and count of at most 33 while retaining the current edit, or remove existing content first.",
+    "reply": "The current 17-slot edit leaves room for only 103 additional slots under the 120-slot Save limit, but all 104 ready unused sources were requested. Choose a media kind and count of at most 103 while retaining the current edit, or remove existing content first.",
     "suggestions": ["Choose media kind and count", "Remove existing content"],
     "needs_clarification": true,
     "clarification_context": {"referent": "images", "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"}},

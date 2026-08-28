@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-08-27-v34",
+  "prompt_version": "2026-08-28-v36",
   "input": {
     "utterance": "all of them and make them 0.2 seconds each",
     "prior_turns": [
@@ -19,39 +19,50 @@
           "referent": "images",
           "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"}
         },
-        "pending_actions": [{"op": "add_unused_sources"}, {"op": "stack_images"}, {"op": "set_media_duration"}]
+        "pending_actions": [
+          {"op": "add_unused_sources", "selector": {"scope": "unused_sources", "media_kind": "all", "quantifier": "all"}, "integrity": {"revision_number": 7, "base_generation": "render-7", "state_hash": "state-7", "source_digest": "sp1-production-item-104", "source_count": 104, "timeline_count": 17, "target_count": 86, "selection_digest": "sel1-ready-unused-86"}},
+          {"op": "stack_images", "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"}, "integrity": {"revision_number": 7, "base_generation": "render-7", "state_hash": "state-7", "source_digest": "sp1-production-item-104", "source_count": 104, "timeline_count": 17, "target_count": 8, "selection_digest": "sel1-ff29a665ff92c2c3"}},
+          {"op": "set_media_duration", "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"}, "integrity": {"revision_number": 7, "base_generation": "render-7", "state_hash": "state-7", "source_digest": "sp1-production-item-104", "source_count": 104, "timeline_count": 17, "target_count": 8, "selection_digest": "sel1-ff29a665ff92c2c3"}}
+        ]
       }
     ],
     "variant_snapshot": {
       "allowed_op_families": ["motion", "clip"],
-      "total_duration_s": 17.0,
-      "source_pool": [
-        {"id": "unused_1", "kind": "image", "generation": "g1", "status": "ready", "used": false},
-        {"id": "unused_2", "kind": "image", "generation": "g2", "status": "ready", "used": false},
-        {"id": "unused_3", "kind": "image", "generation": "g3", "status": "ready", "used": false},
-        {"id": "unused_4", "kind": "image", "generation": "g4", "status": "ready", "used": false}
-      ],
+      "guided_revision": {"revision_number": 7, "base_generation": "render-7", "state_hash": "state-7"},
+      "total_duration_s": 23.8,
+      "source_pool_summary": {
+        "digest": "sp1-production-item-104",
+        "total_count": 104,
+        "ready_unused_count": 86,
+        "ready_unused_by_kind": {"image": 50, "video": 36},
+        "selectors": {
+          "unused_sources:all": {"target_count": 86, "selection_digest": "sel1-ready-unused-86"},
+          "unused_sources:image": {"target_count": 50, "selection_digest": "sel1-ready-unused-images-50"},
+          "unused_sources:video": {"target_count": 36, "selection_digest": "sel1-ready-unused-videos-36"}
+        }
+      },
       "slots": [
         {"index": 0, "media_kind": "video", "duration_s": 2.0},
-        {"index": 1, "id": "image_1", "media_kind": "image", "asset_id": "image_1", "duration_s": 1.0},
+        {"index": 1, "id": "image_1", "media_kind": "image", "asset_id": "image_1", "duration_s": 0.6},
         {"index": 2, "media_kind": "video", "duration_s": 2.0},
-        {"index": 3, "id": "image_2", "media_kind": "image", "asset_id": "image_2", "duration_s": 1.0},
+        {"index": 3, "id": "image_2", "media_kind": "image", "asset_id": "image_2", "duration_s": 0.6},
         {"index": 4, "media_kind": "video", "duration_s": 2.0},
-        {"index": 5, "id": "image_3", "media_kind": "image", "asset_id": "image_3", "duration_s": 1.0},
+        {"index": 5, "id": "image_3", "media_kind": "image", "asset_id": "image_3", "duration_s": 0.6},
         {"index": 6, "media_kind": "video", "duration_s": 2.0},
-        {"index": 7, "id": "image_4", "media_kind": "image", "asset_id": "image_4", "duration_s": 1.0},
+        {"index": 7, "id": "image_4", "media_kind": "image", "asset_id": "image_4", "duration_s": 0.6},
         {"index": 8, "media_kind": "video", "duration_s": 2.0},
-        {"index": 9, "id": "image_5", "media_kind": "image", "asset_id": "image_5", "duration_s": 1.0},
+        {"index": 9, "id": "image_5", "media_kind": "image", "asset_id": "image_5", "duration_s": 0.6},
         {"index": 10, "media_kind": "video", "duration_s": 2.0},
-        {"index": 11, "id": "image_6", "media_kind": "image", "asset_id": "image_6", "duration_s": 1.0},
+        {"index": 11, "id": "image_6", "media_kind": "image", "asset_id": "image_6", "duration_s": 0.6},
         {"index": 12, "media_kind": "video", "duration_s": 2.0},
-        {"index": 13, "id": "image_7", "media_kind": "image", "asset_id": "image_7", "duration_s": 1.0},
+        {"index": 13, "id": "image_7", "media_kind": "image", "asset_id": "image_7", "duration_s": 0.6},
         {"index": 14, "media_kind": "video", "duration_s": 2.0},
-        {"index": 15, "id": "image_8", "media_kind": "image", "asset_id": "image_8", "duration_s": 1.0},
-        {"index": 16, "media_kind": "video", "duration_s": 2.0}
+        {"index": 15, "id": "image_8", "media_kind": "image", "asset_id": "image_8", "duration_s": 0.8},
+        {"index": 16, "media_kind": "video", "duration_s": 2.8}
       ],
       "motion": {
         "available": true,
+        "limits": {"max_blocks": 12, "max_active_union_s": 12, "max_card_stack_assets": 6, "max_film_strip_assets": 8},
         "catalog": [
           {"preset_id": "card_stack", "label": "Card Stack", "kind": "media", "min_assets": 2, "max_assets": 6},
           {"preset_id": "film_strip", "label": "Film Strip", "kind": "media", "min_assets": 3, "max_assets": 8}
@@ -67,11 +78,11 @@
           {"id": "image_7", "kind": "image", "status": "ready"},
           {"id": "image_8", "kind": "image", "status": "ready"}
         ],
-        "unused_ready_source_ids": ["unused_1", "unused_2", "unused_3", "unused_4"]
+        "unused_ready_source_count": 86
       }
     }
   },
-  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"add_unused_sources\",\"selector\":{\"scope\":\"unused_sources\",\"media_kind\":\"all\",\"quantifier\":\"all\"}},{\"op\":\"stack_images\",\"selector\":{\"scope\":\"timeline\",\"media_kind\":\"image\",\"quantifier\":\"all\"}},{\"op\":\"set_media_duration\",\"selector\":{\"scope\":\"timeline\",\"media_kind\":\"image\",\"quantifier\":\"all\"},\"duration_s\":0.2}],\"confidence\":0.98,\"reply\":\"Staged the ready unused sources, grouped every image into valid stacks, and set only image duration to 0.2 seconds. Save to render the new video.\",\"suggestions\":[],\"needs_clarification\":false,\"clarification_context\":null,\"pending_actions\":[]}",
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"add_unused_sources\",\"selector\":{\"scope\":\"unused_sources\",\"media_kind\":\"all\",\"quantifier\":\"all\"}},{\"op\":\"stack_images\",\"selector\":{\"scope\":\"timeline\",\"media_kind\":\"image\",\"quantifier\":\"all\"}},{\"op\":\"set_media_duration\",\"selector\":{\"scope\":\"timeline\",\"media_kind\":\"image\",\"quantifier\":\"all\"},\"duration_s\":0.2}],\"confidence\":0.98,\"reply\":\"Staged every ready unused source, gathered all images into one fast consecutive slideshow, and set only images to 0.2 seconds. Save to render the new video.\",\"suggestions\":[],\"needs_clarification\":false,\"clarification_context\":null,\"pending_actions\":[]}",
   "output": {
     "intent": "edit",
     "ops": [
@@ -80,7 +91,7 @@
       {"op": "set_media_duration", "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"}, "duration_s": 0.2}
     ],
     "confidence": 0.98,
-    "reply": "Staged the ready unused sources, grouped every image into valid stacks, and set only image duration to 0.2 seconds. Save to render the new video.",
+    "reply": "Staged every ready unused source, gathered all images into one fast consecutive slideshow, and set only images to 0.2 seconds. Save to render the new video.",
     "suggestions": [],
     "needs_clarification": false,
     "clarification_context": null,
@@ -90,12 +101,17 @@
   },
   "meta": {
     "source": "hand_authored_regression",
-    "case": "exact Kria four-turn mixed-media follow-up; typed image referent and atomic bulk operations",
+    "case": "exact production Kria four-turn follow-up: 17 mixed slots plus 86 ready unused sources",
     "assertions": {
       "image_asset_ids_exactly_once": true,
       "videos_unchanged": true,
       "no_zoom_or_ken_burns": true,
-      "unused_sources_added_atomically": true
+      "unused_sources_added_atomically": true,
+      "ready_unused_count": 86,
+      "final_slot_count": 103,
+      "final_image_count": 58,
+      "individual_image_clips": true,
+      "motion_scene_count": 0
     }
   }
 }

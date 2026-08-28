@@ -81,6 +81,7 @@ _EXPECTED_CHAIN = {
     "0088": "0087",
     "0089": "0088",
     "0090": "0089",
+    "0091": "0090",
 }
 
 
@@ -92,7 +93,63 @@ def script_dir() -> ScriptDirectory:
 
 def test_single_alembic_head(script_dir: ScriptDirectory) -> None:
     heads = script_dir.get_heads()
-    assert heads == ["0090"], f"expected a single head 0090, got {heads}"
+    assert heads == ["0091"], f"expected a single head 0091, got {heads}"
+
+
+def test_video_poster_cleanup_sweep_index_matches_query_order() -> None:
+    index = next(
+        item
+        for item in models.Job.__table__.indexes
+        if item.name == "idx_jobs_video_poster_cleanup_sweep"
+    )
+
+    assert [column.name for column in index.columns] == ["updated_at", "id"]
+    predicate = str(index.dialect_options["postgresql"]["where"])
+    assert predicate == (
+        "jsonb_typeof(assembly_plan) = 'object' "
+        "AND assembly_plan ? '_poster_backfill_cleanup_receipts'"
+    )
+
+
+def test_video_poster_cleanup_index_migration_is_concurrent(monkeypatch) -> None:
+    migration = importlib.import_module("app.migrations.versions.0091_video_poster_cleanup_index")
+    events: list[object] = []
+
+    class AutocommitBlock:
+        def __enter__(self):
+            events.append("enter")
+
+        def __exit__(self, *_args):
+            events.append("exit")
+
+    class Context:
+        def autocommit_block(self):
+            return AutocommitBlock()
+
+    monkeypatch.setattr(migration.op, "get_context", lambda: Context())
+    monkeypatch.setattr(
+        migration.op,
+        "execute",
+        lambda statement: events.append(("execute", statement)),
+    )
+
+    migration.upgrade()
+
+    assert events[0] == "enter"
+    assert events[-1] == "exit"
+    assert len(events) == 4
+    assert "DROP INDEX CONCURRENTLY IF EXISTS" in events[1][1]
+    create_sql = events[2][1]
+    assert "CREATE INDEX CONCURRENTLY" in create_sql
+    assert "WHERE jsonb_typeof(assembly_plan) = 'object'" in create_sql
+
+    events.clear()
+    migration.downgrade()
+
+    assert events[0] == "enter"
+    assert events[-1] == "exit"
+    assert len(events) == 3
+    assert "DROP INDEX CONCURRENTLY IF EXISTS" in events[1][1]
 
 
 def test_edit_interaction_outcome_constants_cover_staged_lifecycle() -> None:

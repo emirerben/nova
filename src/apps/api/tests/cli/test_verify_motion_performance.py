@@ -8,24 +8,28 @@ from app.cli import verify_motion_performance as verifier
 from app.pipeline.motion_scene import validate_motion_instances
 
 
-def test_maximum_complexity_fixture_is_exactly_240_frames() -> None:
-    scene = verifier._maximum_complexity_scene()
-    assert scene["end_frame_exclusive"] - scene["start_frame"] == 240
-    assert scene["params"]["icon_count"] == 5
-    assert scene["params"]["morph_amplitude"] == 1
-    assert len(scene["params"]["headline"]) == 48
-    assert len(scene["params"]["subtitle"]) == 72
-    assert scene["params"]["typography_scale"] == 2
-    assert validate_motion_instances([scene], duration_frames=240) == [scene]
+def test_maximum_complexity_fixture_hits_weighted_and_concurrent_limits() -> None:
+    scenes = verifier._maximum_complexity_scenes()
+    assert [(scene["start_frame"], scene["end_frame_exclusive"]) for scene in scenes] == [
+        (0, 120),
+        (0, 120),
+        (120, 240),
+    ]
+    assert all(scene["params"]["icon_count"] == 5 for scene in scenes)
+    assert all(scene["params"]["morph_amplitude"] == 1 for scene in scenes)
+    assert all(len(scene["params"]["headline"]) == 48 for scene in scenes)
+    assert all(len(scene["params"]["subtitle"]) == 72 for scene in scenes)
+    assert all(scene["params"]["typography_scale"] == 2 for scene in scenes)
+    assert validate_motion_instances(scenes, duration_frames=360) == scenes
 
 
-def test_media_fixture_exercises_eight_blocks_and_sixty_four_unique_assets() -> None:
+def test_media_fixture_exercises_twelve_blocks_and_ninety_six_unique_assets() -> None:
     scenes = verifier._maximum_media_scenes()
     asset_ids = {asset["asset_id"] for scene in scenes for asset in scene["params"]["assets"]}
-    assert len(scenes) == 8
-    assert all(scene["end_frame_exclusive"] == 36 for scene in scenes)
-    assert len(asset_ids) == 64
-    assert validate_motion_instances(scenes, duration_frames=240) == scenes
+    assert len(scenes) == 12
+    assert max(scene["end_frame_exclusive"] for scene in scenes) == 216
+    assert len(asset_ids) == 96
+    assert validate_motion_instances(scenes, duration_frames=360) == scenes
 
 
 def test_benchmark_asset_is_deterministic_normalized_png() -> None:
@@ -60,10 +64,10 @@ def test_motion_performance_cli_enforces_time_and_memory_limits(
             [
                 {
                     "start_frame": 0,
-                    "end_frame_exclusive": 36 if len(scenes) == 8 else 240,
+                    "end_frame_exclusive": 216 if len(scenes) == 12 else 240,
                 }
             ],
-            36 if len(scenes) == 8 else 240,
+            216 if len(scenes) == 12 else 240,
         ),
     )
     monkeypatch.setattr(
@@ -80,7 +84,7 @@ def test_motion_performance_cli_enforces_time_and_memory_limits(
 
     report = json.loads((tmp_path / "performance.json").read_text())
     assert report["ok"] is passes
-    assert report["frame_count"] == 276
+    assert report["frame_count"] == 456
     assert [case["name"] for case in report["cases"]] == [
         "evolving_max_content",
         "film_strip_max_resources",

@@ -24,15 +24,21 @@ from app.agents._schemas.text_element import _ALLOWED_EFFECTS, _ALLOWED_FONTS, _
 from app.agents.music_matcher import _sanitize_text
 from app.config import settings
 from app.pipeline.prompt_loader import load_prompt
+from app.services.editor_limits import (
+    EDITOR_MAX_TIMELINE_SLOTS,
+    MOTION_FPS,
+    MOTION_MAX_ACTIVE_FRAMES,
+    MOTION_MAX_INSTANCES,
+)
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-08-27-v34"
+EDIT_COPILOT_PROMPT_VERSION = "2026-08-28-v36"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt prose ("up to 12", twice) and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
 _MAX_OPS = 12
-_GUIDED_TIMELINE_MAX_SLOTS = 50
+_GUIDED_TIMELINE_MAX_SLOTS = EDITOR_MAX_TIMELINE_SLOTS
 # Renderer-side guard only — the producer (snapshot.ts COPILOT_BEAT_MARKS_MAX)
 # stride-caps to the same count before sending, preserving late-video marks.
 _BEAT_MARKS_SHOWN_MAX = 60
@@ -1573,6 +1579,7 @@ def _bulk_pending_for_clarification(
     ops: list[dict],
     utterance: str,
     existing: list[dict[str, Any]],
+    snapshot: dict,
 ) -> list[dict[str, Any]]:
     """Preserve the compact bulk plan when a clarification is synthesized."""
     candidates: list[dict[str, Any]] = [dict(action) for action in existing]
@@ -1618,10 +1625,106 @@ def _bulk_pending_for_clarification(
         and language_selector is not None
     ):
         candidates.append({"op": "set_media_duration", "selector": language_selector})
-    return _sanitize_pending_actions(
+    sanitized = _sanitize_pending_actions(
         candidates,
         fallback_selector=language_selector,
     )
+    return [_stamp_pending_integrity(action, snapshot) for action in sanitized]
+
+
+def _bulk_pending_integrity_mismatch(
+    pending_actions: list[dict[str, Any]], snapshot: dict
+) -> str | None:
+    """Reject a replay when a persisted all-selector proof is no longer current."""
+    for action in pending_actions:
+        integrity = action.get("integrity")
+        if not isinstance(integrity, dict):
+            return "the saved all-selection proof is incomplete; refresh and try again"
+        required_numbers = ("source_count", "timeline_count", "target_count")
+        required_tokens = ("source_digest", "selection_digest")
+        if any(
+            not isinstance(integrity.get(key), int)
+            or isinstance(integrity.get(key), bool)
+            or integrity.get(key) < 0
+            for key in required_numbers
+        ) or any(
+            not isinstance(integrity.get(key), str) or not integrity.get(key)
+            for key in required_tokens
+        ):
+            return "the saved all-selection proof is incomplete; refresh and try again"
+        if not any(
+            isinstance(integrity.get(key), (str, int))
+            and not isinstance(integrity.get(key), bool)
+            and integrity.get(key) not in {"", None}
+            for key in ("revision_number", "base_generation", "state_hash")
+        ):
+            return "the saved all-selection proof is incomplete; refresh and try again"
+
+        selector = action.get("selector")
+        if not isinstance(selector, dict):
+            return "the saved all-selection proof is incomplete; refresh and try again"
+        targets = _bulk_target_rows(snapshot, selector, operation=str(action.get("op")))
+        authoritative_rows = _bulk_selector_has_authoritative_rows(snapshot, selector)
+        summary = snapshot.get("source_pool_summary")
+        selectors = summary.get("selectors") if isinstance(summary, dict) else None
+        selector_summary = (
+            selectors.get(f"{selector.get('scope')}:{selector.get('media_kind')}")
+            if isinstance(selectors, dict)
+            else None
+        )
+        summarized_count = (
+            selector_summary.get("target_count") if isinstance(selector_summary, dict) else None
+        )
+        observed_target_count = len(targets) if authoritative_rows else summarized_count
+        if not isinstance(observed_target_count, int) or isinstance(observed_target_count, bool):
+            return "the complete all-selection can no longer be verified; refresh and try again"
+        current = _snapshot_bulk_integrity(snapshot, observed_target_count)
+        for key in (
+            "revision_number",
+            "base_generation",
+            "state_hash",
+            "source_digest",
+            "source_count",
+            "timeline_count",
+            "target_count",
+        ):
+            recorded = integrity.get(key)
+            observed = current.get(key)
+            if recorded is not None and observed is None:
+                return "the complete all-selection can no longer be verified; refresh and try again"
+            if recorded is not None and recorded != observed:
+                if key in {"source_digest", "source_count"}:
+                    return "the source pool changed after Kria read it; refresh and try again"
+                if key == "target_count":
+                    return (
+                        "the complete all-selection changed after Kria read it; "
+                        "refresh and try again"
+                    )
+                return (
+                    "the guided editor revision changed after Kria read it; refresh and try again"
+                )
+
+        recorded_selection = integrity["selection_digest"]
+        observed_selection = (
+            selector_summary.get("selection_digest") if isinstance(selector_summary, dict) else None
+        )
+        if authoritative_rows:
+            observed_selection = _paired_fnv_digest(
+                [
+                    {
+                        "id": _bulk_row_id(row),
+                        "kind": _bulk_row_kind(row, snapshot),
+                        "generation": row.get("generation"),
+                    }
+                    for row in targets
+                ],
+                "sel1",
+            )
+        if not isinstance(observed_selection, str) or not observed_selection:
+            return "the complete all-selection can no longer be verified; refresh and try again"
+        if recorded_selection != observed_selection:
+            return "the complete all-selection changed after Kria read it; refresh and try again"
+    return None
 
 
 def _bulk_capacity_clarification(
@@ -1674,108 +1777,12 @@ def _bulk_capacity_clarification(
     if requested <= available:
         return None
 
-    summary = snapshot.get("source_pool_summary")
-    selectors = summary.get("selectors") if isinstance(summary, dict) else None
-    unused_images = 0
-    add_media_kind = add.get("selector", {}).get("media_kind")
-    if isinstance(selectors, dict):
-        image_summary = selectors.get("unused_sources:image")
-        if (
-            isinstance(image_summary, dict)
-            and isinstance(image_summary.get("target_count"), int)
-            and not isinstance(image_summary.get("target_count"), bool)
-        ):
-            unused_images = image_summary["target_count"]
-    if unused_images == 0 and add_media_kind in {"image", "all"} and isinstance(summary, dict):
-        by_kind = summary.get("ready_unused_by_kind")
-        if (
-            isinstance(by_kind, dict)
-            and isinstance(by_kind.get("image"), int)
-            and not isinstance(by_kind.get("image"), bool)
-        ):
-            unused_images = by_kind["image"]
-    if unused_images == 0 and add_media_kind in {"image", "all"}:
-        image_selector = {
-            "scope": "unused_sources",
-            "media_kind": "image",
-            "quantifier": "all",
-        }
-        unused_images = len(
-            _bulk_target_rows(snapshot, image_selector, operation="add_unused_sources")
-        )
-    current_images = sum(
-        1
-        for row in snapshot.get("slots", [])
-        if isinstance(row, dict)
-        and not row.get("removed")
-        and (row.get("media_kind") or row.get("kind")) == "image"
-    )
-    image_count = current_images + (unused_images if add_media_kind in {"image", "all"} else 0)
-    stacks_requested = any(op.get("op") == "stack_images" for op in plan)
-    duration = next(
-        (
-            float(op["duration_s"])
-            for op in plan
-            if op.get("op") == "set_media_duration"
-            and op.get("selector", {}).get("media_kind") in {"image", "all"}
-            and isinstance(op.get("duration_s"), (int, float))
-        ),
-        None,
-    )
-    duration_match = _DURATION_ANSWER_RE.search(utterance)
-    if duration is None and duration_match is not None:
-        duration = float(duration_match.group(1))
-    motion = snapshot.get("motion")
-    limits = motion.get("limits") if isinstance(motion, dict) else None
-    if not isinstance(limits, dict):
-        limits = {}
-    max_blocks = limits.get("max_blocks")
-    max_blocks = (
-        max_blocks
-        if isinstance(max_blocks, int) and not isinstance(max_blocks, bool) and max_blocks > 0
-        else 8
-    )
-    max_card_assets = limits.get("max_card_stack_assets")
-    max_card_assets = (
-        max_card_assets
-        if isinstance(max_card_assets, int)
-        and not isinstance(max_card_assets, bool)
-        and max_card_assets > 0
-        else 6
-    )
-    max_film_assets = limits.get("max_film_strip_assets")
-    max_film_assets = (
-        max_film_assets
-        if isinstance(max_film_assets, int)
-        and not isinstance(max_film_assets, bool)
-        and max_film_assets > 0
-        else 8
-    )
-    max_active_union = _safe_finite_float(limits.get("max_active_union_s"))
-    if max_active_union is None or max_active_union <= 0:
-        max_active_union = 8.0
-    card_groups = math.ceil(image_count / max_card_assets) if image_count else 0
-    block_limit_label = "eight-block" if max_blocks == 8 else f"{max_blocks}-block"
     detail = (
         f"The current {current_slots}-slot edit leaves room for only {available} additional "
         f"slots under the {_GUIDED_TIMELINE_MAX_SLOTS}-slot Save limit, but all "
         f"{requested} ready unused sources "
         "were requested."
     )
-    if stacks_requested and image_count and card_groups > max_blocks:
-        detail += (
-            f" The resulting {image_count} images would also require {card_groups} Card "
-            f"Stacks at {max_card_assets} images each, exceeding the {block_limit_label} limit."
-        )
-    if stacks_requested and image_count and duration is not None:
-        active_span = image_count * duration
-        film_groups = math.ceil(image_count / max_film_assets)
-        if active_span > max_active_union:
-            detail += (
-                f" Film Strip would use {film_groups} blocks, but its {active_span:g}-second "
-                f"active span also exceeds the {max_active_union:g}-second motion budget, "
-                "so it does not solve this request."
-            )
     return (
         detail + f" Choose a media kind and count of at most {available} while retaining the "
         "current edit, or remove existing content first."
@@ -1822,16 +1829,30 @@ def _sanitize_pending_actions(
         if selector is None:
             continue
         action["selector"] = selector
+        # Capacity-blocked plans are replayed across clarification turns. Keep
+        # the parser-stamped proof with the pending action so a later pronoun
+        # cannot silently re-resolve ``all`` against a different source pool.
+        # Only the canonical scalar fields are allowed through; the browser
+        # treats this record as a stale-check token and recomputes its own
+        # selection before staging.
+        raw_integrity = raw.get("integrity")
+        if isinstance(raw_integrity, dict):
+            integrity: dict[str, Any] = {}
+            for key in ("revision_number", "timeline_count", "target_count", "source_count"):
+                number = raw_integrity.get(key)
+                if isinstance(number, int) and not isinstance(number, bool) and number >= 0:
+                    integrity[key] = number
+            for key in ("base_generation", "state_hash", "source_digest", "selection_digest"):
+                token = raw_integrity.get(key)
+                if isinstance(token, str) and token:
+                    integrity[key] = token[:256]
+            if integrity:
+                action["integrity"] = integrity
         if name == "set_media_duration" and "duration_s" in raw:
             duration = _as_float(raw.get("duration_s"))
             if duration is None or not 0.1 <= duration <= 60.0:
                 continue
             action["duration_s"] = round(duration, 6)
-        if name == "stack_images" and raw.get("preset_id") in {
-            "card_stack",
-            "film_strip",
-        }:
-            action["preset_id"] = raw["preset_id"]
         sanitized.append(action)
     return sanitized
 
@@ -1847,6 +1868,16 @@ def _bulk_sources(snapshot: dict) -> list[dict]:
                 return rows
             empty = rows
     return empty
+
+
+def _bulk_source_catalog_present(snapshot: dict) -> bool:
+    return any(isinstance(snapshot.get(key), list) for key in ("source_pool", "sources", "clips"))
+
+
+def _bulk_selector_has_authoritative_rows(snapshot: dict, selector: dict[str, Any]) -> bool:
+    if selector.get("scope") == "timeline":
+        return isinstance(snapshot.get("slots"), list)
+    return _bulk_source_catalog_present(snapshot)
 
 
 def _bulk_row_id(row: dict) -> str | None:
@@ -1953,14 +1984,19 @@ def _snapshot_bulk_integrity(snapshot: dict, target_count: int) -> dict[str, Any
         if _bulk_row_id(row) is not None
     ]
     summary = snapshot.get("source_pool_summary")
+    has_source_catalog = _bulk_source_catalog_present(snapshot)
     stamped_source_digest = summary.get("digest") if isinstance(summary, dict) else None
     source_digest = (
-        stamped_source_digest
+        _paired_fnv_digest(source_identities, "sp1")
+        if has_source_catalog
+        else stamped_source_digest
         if isinstance(stamped_source_digest, str) and stamped_source_digest
         else _paired_fnv_digest(source_identities, "sp1")
     )
     source_count = (
-        summary.get("total_count")
+        len(sources)
+        if has_source_catalog
+        else summary.get("total_count")
         if isinstance(summary, dict) and isinstance(summary.get("total_count"), int)
         else len(sources)
     )
@@ -1976,6 +2012,58 @@ def _snapshot_bulk_integrity(snapshot: dict, target_count: int) -> dict[str, Any
             if isinstance(row, dict) and not row.get("removed")
         ),
         "target_count": target_count,
+    }
+
+
+def _stamp_pending_integrity(action: dict[str, Any], snapshot: dict) -> dict[str, Any]:
+    """Stamp parser-created incomplete actions before persisting a clarification."""
+    if isinstance(action.get("integrity"), dict):
+        return action
+    selector = action.get("selector")
+    if not isinstance(selector, dict):
+        return action
+    targets = _bulk_target_rows(snapshot, selector, operation=str(action.get("op")))
+    if _bulk_selector_has_authoritative_rows(snapshot, selector):
+        selection_digest = _paired_fnv_digest(
+            [
+                {
+                    "id": _bulk_row_id(row),
+                    "kind": _bulk_row_kind(row, snapshot),
+                    "generation": row.get("generation"),
+                }
+                for row in targets
+            ],
+            "sel1",
+        )
+        target_count = len(targets)
+    else:
+        summary = snapshot.get("source_pool_summary")
+        selectors = summary.get("selectors") if isinstance(summary, dict) else None
+        selector_summary = (
+            selectors.get(f"{selector.get('scope')}:{selector.get('media_kind')}")
+            if isinstance(selectors, dict)
+            else None
+        )
+        target_count = (
+            selector_summary.get("target_count") if isinstance(selector_summary, dict) else None
+        )
+        selection_digest = (
+            selector_summary.get("selection_digest") if isinstance(selector_summary, dict) else None
+        )
+    if (
+        not isinstance(target_count, int)
+        or isinstance(target_count, bool)
+        or target_count < 0
+        or not isinstance(selection_digest, str)
+        or not selection_digest
+    ):
+        return action
+    return {
+        **action,
+        "integrity": {
+            **_snapshot_bulk_integrity(snapshot, target_count),
+            "selection_digest": selection_digest,
+        },
     }
 
 
@@ -1996,11 +2084,10 @@ def _clean_bulk_operation(
         state.invalid_value()
         return None
     if name == "stack_images":
-        preset_id = payload.get("preset_id", "card_stack")
-        if preset_id not in {"card_stack", "film_strip"}:
-            state.invalid_value()
-            return None
-        payload["preset_id"] = preset_id
+        # Historical prompts attached a Creator Block preset here. The bulk
+        # operation now means consecutive individual slideshow clips; explicit
+        # Card Stack/Film Strip requests use add_motion_block instead.
+        payload.pop("preset_id", None)
     if name == "set_media_duration":
         duration = _as_float(payload.get("duration_s"))
         if duration is None or not 0.1 <= duration <= 60.0:
@@ -2012,7 +2099,11 @@ def _clean_bulk_operation(
     selector_summary = None
     if isinstance(summary, dict) and isinstance(summary.get("selectors"), dict):
         selector_summary = summary["selectors"].get(f"{selector['scope']}:{selector['media_kind']}")
-    if not targets and isinstance(selector_summary, dict):
+    if (
+        not targets
+        and not _bulk_selector_has_authoritative_rows(snapshot, selector)
+        and isinstance(selector_summary, dict)
+    ):
         target_count = selector_summary.get("target_count")
         selection_digest = selector_summary.get("selection_digest")
         if (
@@ -2231,6 +2322,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         ops: list[dict] = []
         ordinary_op_count = 0
         bulk_caption_op_count = 0
+        bulk_parse_failed = False
         ordinary_raw_count = sum(
             1
             for raw_op in raw_ops
@@ -2314,6 +2406,19 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                     bulk_caption_op_count += 1
                 elif raw_name not in _BULK_OPS:
                     ordinary_op_count += 1
+            elif raw_name in _BULK_OPS:
+                bulk_parse_failed = True
+
+        if bulk_parse_failed:
+            state.reject(
+                op="bundle",
+                reason="invalid_value",
+                detail=(
+                    "one or more bulk media actions could not resolve every eligible target; "
+                    "the complete bundle was rejected without partial operations"
+                ),
+            )
+            ops = []
 
         ops, no_effect_reply = _drop_normalized_no_effect_ops(ops, input.variant_snapshot)
 
@@ -2327,8 +2432,12 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                     fallback_selector=prior_referent_selector,
                 ),
             ),
+            input.variant_snapshot,
         )
-        capacity_reply = _bulk_capacity_clarification(
+        pending_integrity_error = _bulk_pending_integrity_mismatch(
+            prior_pending_actions, input.variant_snapshot
+        )
+        capacity_reply = pending_integrity_error or _bulk_capacity_clarification(
             ops,
             input.variant_snapshot,
             pending_actions=capacity_pending_seed,
@@ -2344,6 +2453,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 ops,
                 input.utterance,
                 capacity_pending_seed,
+                input.variant_snapshot,
             )
             capacity_context = _bulk_clarification_context(
                 ops, input.utterance, capacity_pending_actions
@@ -2354,7 +2464,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         bulk_context: dict[str, Any] | None = None
         if bulk_duration_needs_clarification:
             bulk_pending_actions = _bulk_pending_for_clarification(
-                [], input.utterance, prior_pending_actions
+                [], input.utterance, prior_pending_actions, input.variant_snapshot
             )
             bulk_context = _bulk_clarification_context([], input.utterance, bulk_pending_actions)
 
@@ -2388,7 +2498,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         # clarification hint, but the stable outcome must disclose what
         # actually happened. Otherwise an invalid operation is presented as a
         # question instead of the concrete execution failure.
-        if needs_clarification and not state.rejection_reasons:
+        if capacity_reply is not None or (needs_clarification and not state.rejection_reasons):
             outcome: CopilotOutcome = "clarification"
         elif ops:
             outcome = "proposed"
@@ -2420,14 +2530,17 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         )
         pending_actions = []
         if needs_clarification:
-            current_pending = _sanitize_pending_actions(
-                data.get("pending_actions"),
-                fallback_selector=(
-                    clarification_context.get("selector")
-                    if clarification_context is not None
-                    else None
-                ),
-            )
+            current_pending = [
+                _stamp_pending_integrity(action, input.variant_snapshot)
+                for action in _sanitize_pending_actions(
+                    data.get("pending_actions"),
+                    fallback_selector=(
+                        clarification_context.get("selector")
+                        if clarification_context is not None
+                        else None
+                    ),
+                )
+            ]
             # Keep an earlier capacity-blocked action when a subsequent
             # clarification adds only the newly discussed bulk actions. A
             # negated request explicitly opts out of carrying that plan.
@@ -3506,7 +3619,7 @@ def _motion_active_union_valid(name: str, payload: dict, blocks: list) -> bool:
         if start is not None and end is not None and end > start:
             intervals.append((start, end))
     if name == "add_motion_block":
-        if len(intervals) >= 8:
+        if len(intervals) >= MOTION_MAX_INSTANCES:
             return False
         start = _as_float(payload.get("start_s"))
         end = _as_float(payload.get("end_s"))
@@ -3527,7 +3640,7 @@ def _motion_active_union_valid(name: str, payload: dict, blocks: list) -> bool:
             current_start, current_end = start, end
     if current_start is not None:
         total += (current_end or current_start) - current_start
-    return total <= 8.0 + 1e-6
+    return total <= MOTION_MAX_ACTIVE_FRAMES / MOTION_FPS + 1e-6
 
 
 def _clean_user_text(value: object, *, max_chars: int = 500) -> str | None:

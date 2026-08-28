@@ -64,11 +64,18 @@ def test_kria_bulk_followup_replays_typed_image_selector() -> None:
     assert "groups" not in stack
     assert "asset_ids" not in stack
     assert "assets" not in stack
+    assert "preset_id" not in stack
+    assert "fast consecutive slideshow" in result.output["reply"]
+    assert fixture.meta["assertions"]["motion_scene_count"] == 0
 
     input_slots = fixture.input["variant_snapshot"]["slots"]
     assert len(input_slots) == 17
     assert sum(slot["media_kind"] == "video" for slot in input_slots) == 9
     assert sum(slot["media_kind"] == "image" for slot in input_slots) == 8
+    source_summary = fixture.input["variant_snapshot"]["source_pool_summary"]
+    assert source_summary["total_count"] == 104
+    assert source_summary["ready_unused_count"] == 86
+    assert source_summary["ready_unused_by_kind"] == {"image": 50, "video": 36}
     video_durations = {
         slot["index"]: slot["duration_s"] for slot in input_slots if slot["media_kind"] == "video"
     }
@@ -103,12 +110,11 @@ def test_kria_bulk_followup_replays_honest_impossible_all() -> None:
     assert result.output["needs_clarification"] is True
     assert result.output["outcome"] == "clarification"
     assert "104" in result.output["reply"]
-    assert "33 additional" in result.output["reply"]
-    assert "10 Card Stacks" in result.output["reply"]
-    assert "eight-block limit" in result.output["reply"]
-    assert "Film Strip" in result.output["reply"]
-    assert "12-second" in result.output["reply"]
-    assert "8-second motion" in result.output["reply"]
+    assert "103 additional" in result.output["reply"]
+    assert "120-slot Save limit" in result.output["reply"]
+    assert "10 Card Stacks" not in result.output["reply"]
+    assert "eight-block limit" not in result.output["reply"]
+    assert "8-second motion" not in result.output["reply"]
 
 
 @pytest.mark.skipif(

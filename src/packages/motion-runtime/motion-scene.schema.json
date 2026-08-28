@@ -3,7 +3,7 @@
   "$id": "https://nova.video/schemas/motion-scene-v3.json",
   "title": "Nova motion preset instances v3",
   "type": "array",
-  "maxItems": 8,
+  "maxItems": 12,
   "items": {
     "oneOf": [
       {

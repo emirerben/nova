@@ -46,7 +46,7 @@ def _engine_or_skip():
 
 
 @pytest.fixture(scope="module")
-def engine():
+def engine(_build_task_table_lock):
     eng = _engine_or_skip()
     # Ensure just the build_task table exists (idempotent — migrations may have
     # already created it). create_all only touches missing tables.

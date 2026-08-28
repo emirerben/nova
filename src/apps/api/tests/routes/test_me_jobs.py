@@ -181,6 +181,162 @@ def test_list_generating_job_has_no_preview_url() -> None:
     assert j["output_url"] is None
 
 
+def test_playback_url_refresh_is_owner_fenced_and_hides_foreign_jobs() -> None:
+    user = _user()
+    job_id = uuid.uuid4()
+    db = _db([_scalar(None)])
+    _override(user, db)
+
+    response = client.get(f"/me/jobs/{job_id}/playback-url")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Job not found"}
+    statement = db.execute.await_args.args[0]
+    compiled = statement.compile()
+    assert job_id in compiled.params.values()
+    assert user.id in compiled.params.values()
+    assert "jobs.user_id" in str(compiled)
+
+
+def test_playback_url_refresh_rejects_not_ready_job_without_signing(monkeypatch) -> None:
+    user = _user()
+    job = _job(
+        user_id=user.id,
+        status="processing",
+        assembly_plan={"output_path": f"jobs/{uuid.uuid4()}/unfinished.mp4"},
+    )
+    db = _db([_scalar(job)])
+    _override(user, db)
+    signer = MagicMock(return_value="https://fresh.example/should-not-be-used.mp4")
+    monkeypatch.setattr("app.routes.me.signed_get_url", signer)
+
+    response = client.get(f"/me/jobs/{job.id}/playback-url")
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Video preview is not ready."}
+    signer.assert_not_called()
+    assert db.execute.await_count == 1
+
+
+def test_playback_url_refresh_signs_current_owned_ready_preview(monkeypatch) -> None:
+    user = _user()
+    job = _job(
+        user_id=user.id,
+        status="variants_ready",
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "rank-two",
+                    "rank": 2,
+                    "render_status": "ready",
+                    "video_path": "generative-jobs/PLACEHOLDER/rank-two.mp4",
+                },
+                {
+                    "variant_id": "rank-one",
+                    "rank": 1,
+                    "render_status": "ready",
+                    "video_path": "generative-jobs/PLACEHOLDER/rank-one.mp4",
+                },
+            ]
+        },
+    )
+    selected_path = f"generative-jobs/{job.id}/rank-one.mp4"
+    job.assembly_plan["variants"][0]["video_path"] = f"generative-jobs/{job.id}/rank-two.mp4"
+    job.assembly_plan["variants"][1]["video_path"] = selected_path
+    db = _db([_scalar(job)])
+    _override(user, db)
+    signer = MagicMock(return_value="https://fresh.example/rank-one.mp4?signature=new")
+    monkeypatch.setattr("app.routes.me.signed_get_url", signer)
+
+    response = client.get(f"/me/jobs/{job.id}/playback-url")
+
+    assert response.status_code == 200
+    assert response.json() == {"video_url": "https://fresh.example/rank-one.mp4?signature=new"}
+    assert response.headers["cache-control"] == "no-store"
+    signer.assert_called_once_with(selected_path, 360)
+    assert db.execute.await_count == 1
+
+
+def test_playback_url_refresh_loads_ready_jobclip_when_job_has_no_plan_output(
+    monkeypatch,
+) -> None:
+    user = _user()
+    job = _job(user_id=user.id, status="clips_ready", mode=None, job_type="default")
+    clip = MagicMock(
+        id=uuid.uuid4(),
+        job_id=job.id,
+        rank=1,
+        created_at=datetime(2026, 5, 30, 12, 0, tzinfo=UTC),
+        render_status="ready",
+        video_path=f"{user.id}/{job.id}/task-runs/run/clip.mp4",
+        thumbnail_path=None,
+    )
+    db = _db([_scalar(job), _scalars([clip])])
+    _override(user, db)
+    signer = MagicMock(return_value="https://fresh.example/clip.mp4?signature=new")
+    monkeypatch.setattr("app.routes.me.signed_get_url", signer)
+
+    response = client.get(f"/me/jobs/{job.id}/playback-url")
+
+    assert response.status_code == 200
+    assert response.json() == {"video_url": "https://fresh.example/clip.mp4?signature=new"}
+    signer.assert_called_once_with(clip.video_path, 360)
+    assert db.execute.await_count == 2
+
+
+def test_playback_url_refresh_never_returns_stored_legacy_url(monkeypatch) -> None:
+    user = _user()
+    stale_url = "https://storage.example/output.mp4?X-Goog-Expires=1&expired=true"
+    job = _job(
+        user_id=user.id,
+        status="template_ready",
+        mode="template",
+        job_type="template",
+        assembly_plan={"output_url": stale_url},
+    )
+    db = _db([_scalar(job)])
+    _override(user, db)
+    signer = MagicMock(return_value=stale_url)
+    monkeypatch.setattr("app.routes.me.signed_get_url", signer)
+
+    response = client.get(f"/me/jobs/{job.id}/playback-url")
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Video preview is not ready."}
+    assert stale_url not in response.text
+    signer.assert_not_called()
+
+
+def test_playback_url_refresh_signing_failure_never_falls_back_to_stale_url(
+    monkeypatch,
+) -> None:
+    user = _user()
+    stale_url = "https://storage.example/output.mp4?X-Go-Expires=1&expired=true"
+    job = _job(
+        user_id=user.id,
+        status="template_ready",
+        mode="template",
+        job_type="template",
+        assembly_plan={
+            "output_path": "jobs/PLACEHOLDER/output.mp4",
+            "output_url": stale_url,
+        },
+    )
+    job.assembly_plan["output_path"] = f"jobs/{job.id}/output.mp4"
+    db = _db([_scalar(job)])
+    _override(user, db)
+    monkeypatch.setattr(
+        "app.routes.me.signed_get_url",
+        MagicMock(side_effect=RuntimeError("signer unavailable")),
+    )
+
+    response = client.get(f"/me/jobs/{job.id}/playback-url")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Video preview is temporarily unavailable."}
+    assert stale_url not in response.text
+
+
 def test_list_uses_ready_jobclip_video_and_poster_without_downloading_video(monkeypatch) -> None:
     user = _user()
     job = _job(user_id=user.id, status="clips_ready", mode=None, job_type="default")
@@ -421,6 +577,56 @@ def test_delete_job_normalizes_legacy_signed_paths_and_persistent_caches(monkeyp
         f"generative-jobs/{job_id}/preprocessed/hdr_000.mp4",
         f"{user.id}/{job_id}/source.mp4",
     }
+
+
+def test_delete_job_manifest_keeps_pending_poster_cleanup_receipts() -> None:
+    user = _user()
+    job = _job(user_id=user.id, status="done")
+    job_id = job.id
+    source = f"generative-jobs/{job_id}/output.mp4"
+    old_poster = f"{source}.poster.backfill-11111111-1111-1111-1111-111111111111.jpg"
+    replacement = f"{source}.poster.backfill-22222222-2222-2222-2222-222222222222.jpg"
+    job.assembly_plan = {
+        "output_path": source,
+        "poster_path": replacement,
+        "_poster_backfill_cleanup_receipts": [
+            {"old_path": old_poster, "replacement_path": replacement},
+            {
+                "old_path": f"generative-jobs/{uuid.uuid4()}/foreign.jpg",
+                "replacement_path": "../escape.jpg",
+            },
+            "malformed",
+        ],
+    }
+
+    assert _job_storage_paths(job, [], [], user_id=user.id) == [
+        source,
+        replacement,
+        old_poster,
+    ]
+
+
+def test_delete_job_manifest_keeps_legacy_single_cleanup_receipt() -> None:
+    user = _user()
+    job = _job(user_id=user.id, status="done")
+    job_id = job.id
+    source = f"generative-jobs/{job_id}/output.mp4"
+    old_poster = f"{source}.poster.backfill-11111111-1111-4111-8111-111111111111.jpg"
+    replacement = f"{source}.poster.backfill-22222222-2222-4222-8222-222222222222.jpg"
+    job.assembly_plan = {
+        "output_path": source,
+        "poster_path": replacement,
+        "_poster_backfill_cleanup_receipts": {
+            "old_path": old_poster,
+            "replacement_path": replacement,
+        },
+    }
+
+    assert _job_storage_paths(job, [], [], user_id=user.id) == [
+        source,
+        replacement,
+        old_poster,
+    ]
 
 
 def test_delete_job_rejects_invalid_id_without_touching_db() -> None:

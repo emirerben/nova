@@ -1,6 +1,5 @@
 """Failure path: 1 of 3 render tasks fails → job status = clips_ready_partial."""
 
-
 from app.tasks.orchestrate import finalize_job
 
 
@@ -55,3 +54,20 @@ class TestFinalizeJob:
         ]
         finalize_job(results, "00000000-0000-0000-0000-000000000001")
         assert mock_job.status == "processing_failed"
+
+    def test_uncertain_clip_commit_defers_terminal_status_write(self, mocker):
+        """A child COMMIT with an unknown outcome must not be overwritten by the chord."""
+        session_factory = mocker.patch("app.tasks.orchestrate._sync_session")
+        results = [
+            {"clip_id": "a", "success": True, "error": None},
+            {
+                "clip_id": "b",
+                "success": False,
+                "error": "finalization commit outcome is uncertain",
+                "finalization_uncertain": True,
+            },
+        ]
+
+        finalize_job(results, "00000000-0000-0000-0000-000000000001")
+
+        session_factory.assert_not_called()

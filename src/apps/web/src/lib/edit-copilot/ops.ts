@@ -170,7 +170,6 @@ export type CopilotOp =
   | {
       op: "stack_images";
       selector: BulkMediaSelector;
-      preset_id?: "card_stack" | "film_strip";
       integrity?: BulkIntegrity;
     }
   | { op: "set_clip_duration"; slot_index: number; duration_s: number }
@@ -1116,10 +1115,7 @@ export function validateCopilotOp(
       if (!selector || selector.scope !== "timeline" || selector.media_kind !== "image") {
         return reject("invalid_value", "stack_images requires an image timeline selector", opName);
       }
-      if (raw.preset_id !== undefined && raw.preset_id !== "card_stack" && raw.preset_id !== "film_strip") {
-        return reject("invalid_value", "stack_images preset_id must be card_stack or film_strip", opName);
-      }
-      return { ok: true, op: { op: opName, selector, ...(raw.preset_id ? { preset_id: raw.preset_id } : {}), ...(normalizeBulkIntegrity(raw.integrity) ? { integrity: normalizeBulkIntegrity(raw.integrity) } : {}) } };
+      return { ok: true, op: { op: opName, selector, ...(normalizeBulkIntegrity(raw.integrity) ? { integrity: normalizeBulkIntegrity(raw.integrity) } : {}) } };
     }
     case "set_clip_in": {
       if (!integerIndex(raw.slot_index) || !nonNegativeNumber(raw.in_s)) {

@@ -677,11 +677,42 @@ def test_guided_v2_capabilities_keep_legacy_lane_booleans_and_honest_reasons(
     assert caps["nova"]["trim_clip_start"] == {"editable": True, "reason": None}
     assert caps["nova"]["trim_output_start"] == {"editable": True, "reason": None}
     assert caps["nova"]["remove_music"] == {"editable": True, "reason": None}
+    assert caps["timeline_max_slots"] == 120
 
 
 def _commit_req(**kw) -> gj.EditorCommitRequest:
     kw.setdefault("base_generation", "2026-07-01T00:00:00Z")
     return gj.EditorCommitRequest(**kw)
+
+
+def test_editor_commit_request_accepts_120_active_slots_and_rejects_121() -> None:
+    slot = {"clip_index": 0, "in_s": 0.0, "duration_s": 0.1}
+
+    accepted = gj.EditorCommitRequest(
+        base_generation="g1",
+        timeline_slots=[{**slot, "slot_id": f"active-{index}"} for index in range(120)],
+    )
+    assert len(accepted.timeline_slots or []) == 120
+
+    with pytest.raises(ValidationError):
+        gj.EditorCommitRequest(
+            base_generation="g1",
+            timeline_slots=[{**slot, "slot_id": f"active-{index}"} for index in range(121)],
+        )
+
+
+def test_editor_commit_request_counts_only_active_slots_for_capacity() -> None:
+    slot = {"clip_index": 0, "in_s": 0.0, "duration_s": 0.1}
+    payload = gj.EditorCommitRequest(
+        base_generation="g1",
+        timeline_slots=[
+            *[{**slot, "slot_id": f"active-{index}"} for index in range(103)],
+            *[{**slot, "slot_id": f"removed-{index}", "removed": True} for index in range(18)],
+        ],
+    )
+
+    assert len(payload.timeline_slots or []) == 121
+    assert sum(not row.removed for row in payload.timeline_slots or []) == 103
 
 
 def test_editor_commit_openapi_exposes_media_visual_block_contract():
@@ -4566,6 +4597,7 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
         "overlay_upload_mode": "legacy",
         "text_elements": True,
         "timeline": True,
+        "timeline_max_slots": 120,
         "split_clips": True,
         "mix": True,  # fixture carries mix=0.5
         "sfx": True,
@@ -5432,7 +5464,8 @@ def test_editor_commit_accepts_legacy_hash_only_for_persisted_route_trace(monkey
 
 
 @pytest.mark.parametrize(
-    "persisted_hash_name", ["MOTION_RUNTIME_V2_HASH", "MOTION_RUNTIME_V3_HASH"]
+    "persisted_hash_name",
+    ["MOTION_RUNTIME_V2_HASH", "MOTION_RUNTIME_V3_HASH", "MOTION_RUNTIME_V4_HASH"],
 )
 def test_editor_commit_upgrades_known_creator_runtime_hash(monkeypatch, persisted_hash_name):
     from app.config import settings
@@ -5589,7 +5622,8 @@ def test_editor_motion_capability_fails_closed_for_unsupported_persisted_runtime
 
 
 @pytest.mark.parametrize(
-    "persisted_hash_name", ["MOTION_RUNTIME_V2_HASH", "MOTION_RUNTIME_V3_HASH"]
+    "persisted_hash_name",
+    ["MOTION_RUNTIME_V2_HASH", "MOTION_RUNTIME_V3_HASH", "MOTION_RUNTIME_V4_HASH"],
 )
 def test_editor_motion_capability_accepts_known_creator_runtime(monkeypatch, persisted_hash_name):
     from app.config import settings
@@ -5937,6 +5971,115 @@ def test_guided_timeline_projection_uses_left_segment_transition_and_parent_id(m
     assert result["segments"][0]["transition_duration_s"] == pytest.approx(0.2)
     # The overlap belongs to the transition AFTER new-first, not new-second.
     assert result["segments"][1]["output_start_s"] == pytest.approx(1.8)
+
+
+def test_guided_timeline_projection_accepts_production_scale_103_slot_commit(monkeypatch):
+    """The complete mixed-media draft survives conventional Save with exact text IDs."""
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "guided_story_editor_v2_enabled", True, raising=False)
+    title = {
+        **_VALID_ELEMENT,
+        "id": "guided-title",
+        "text": "Sports Montage",
+        "end_s": 2.2,
+    }
+    job = _job(
+        resolved_archetype="guided_story",
+        intro_text="Sports Montage",
+        text_elements=[title],
+    )
+    legacy_projection = gj.append_ai_text_tombstones(job.assembly_plan["variants"][0], [title])
+    assert [row["id"] for row in legacy_projection[:1]] == ["guided-title"]
+    assert len(legacy_projection) == 2
+    assert legacy_projection[1]["removed"] is True
+    sources = []
+    for index in range(103):
+        is_image = 1 <= index <= 58
+        sources.append(
+            {
+                "media_id": f"media-{index}",
+                "lane": "clip",
+                "gcs_path": f"slot-uploads/media-{index}.{'jpg' if is_image else 'mp4'}",
+                "generation": "g1",
+                "kind": "image" if is_image else "video",
+                "duration_s": 1.0 if is_image else 5.0,
+            }
+        )
+    current = {
+        "approval_proposal_version": 1,
+        "approval_media_digest": "a" * 64,
+        "revision_number": 4,
+        "sources": sources,
+        "segments": [
+            {
+                "segment_id": "approved-video",
+                "media_id": "media-0",
+                "source_start_s": 0.0,
+                "source_end_s": 2.0,
+                "duration_s": 2.0,
+                "output_start_s": 0.0,
+                "output_end_s": 2.0,
+            },
+            {
+                "segment_id": "approved-image",
+                "media_id": "media-1",
+                "source_start_s": 0.0,
+                "source_end_s": 1.0,
+                "duration_s": 1.0,
+                "output_start_s": 2.0,
+                "output_end_s": 3.0,
+            },
+        ],
+        "text_elements": [title],
+        "audio": {"mode": "none"},
+    }
+    monkeypatch.setattr(gj, "_guided_v2_revision", lambda *_args: current)
+
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            timeline_slots=[
+                gj.TimelineSlotEdit(
+                    slot_id=(
+                        "approved-video"
+                        if index == 0
+                        else "approved-image"
+                        if index == 1
+                        else f"slot-{index}"
+                    ),
+                    clip_index=index,
+                    in_s=0.0,
+                    duration_s=(
+                        0.2
+                        if 1 <= index <= 58
+                        else 2.8
+                        if index == 66
+                        else 2.0
+                        if index == 0 or 59 <= index <= 65
+                        else 0.8
+                    ),
+                    transition_after="cut",
+                    transition_duration_s=0,
+                )
+                for index in range(103)
+            ],
+            text_elements=[title],
+            guided_revision_number=4,
+        ),
+    )
+
+    updated = job.assembly_plan["variants"][0]
+    result = updated["guided_edit_revision"]
+    assert len(result["segments"]) == 103
+    assert sum(segment["duration_s"] for segment in result["segments"]) == pytest.approx(59.2)
+    assert all(segment["transition_after"] == "cut" for segment in result["segments"])
+    assert all(segment["transition_duration_s"] == 0 for segment in result["segments"])
+    assert [row["id"] for row in updated["text_elements"]] == ["guided-title"]
+    assert [row["id"] for row in result["text_elements"]] == ["guided-title"]
+    assert result["tombstones"] == []
 
 
 def test_guided_timeline_rejects_transition_when_feature_is_disabled(monkeypatch):

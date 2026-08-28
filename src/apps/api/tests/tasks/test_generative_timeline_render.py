@@ -13,6 +13,7 @@ from __future__ import annotations
 import types
 
 import pytest
+from billiard.exceptions import SoftTimeLimitExceeded
 
 import app.tasks.generative_build as gb
 
@@ -973,6 +974,39 @@ def test_collage_song_swap_takes_audio_only_path_without_timeline_reset(monkeypa
 
 
 @pytest.mark.parametrize("preset", ["masonry", "polaroid_wall"])
+def test_collage_audio_swap_soft_timeout_never_falls_back_to_full_render(monkeypatch, preset):
+    variant = _existing_variant(
+        variant_id="song_text",
+        rank=1,
+        text_mode="agent_text",
+        music_track_id="t1",
+        montage_preset=preset,
+        montage_preset_rendered=preset,
+        video_path=f"generative-jobs/{JOB_ID}/variant_1_song_text.mp4",
+        base_video_path=f"generative-jobs/{JOB_ID}/base_1_song_text.mp4",
+        user_timeline={"slots": [_tl_slot(1, in_s=2.0, duration_s=1.0)]},
+    )
+    _regen_setup(monkeypatch, variants=[variant], track=_track("t2"))
+    monkeypatch.setattr(
+        gb,
+        "_run_masonry_audio_only_song_swap",
+        lambda **_kw: (_ for _ in ()).throw(SoftTimeLimitExceeded()),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        gb,
+        "_ingest_clips",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("soft timeout must not enter fallback ingest")
+        ),
+        raising=False,
+    )
+
+    with pytest.raises(SoftTimeLimitExceeded):
+        gb._run_regenerate_variant(JOB_ID, "song_text", "t2", None, False)
+
+
+@pytest.mark.parametrize("preset", ["masonry", "polaroid_wall"])
 def test_collage_lyrics_swap_is_not_audio_only(preset: str) -> None:
     variant = _existing_variant(
         variant_id="song_lyrics",
@@ -1032,6 +1066,47 @@ def test_preserve_cuts_music_window_uses_audio_only_path(monkeypatch):
 
     assert called["audio_swap"] is True
     assert updates == [{"render_status": "rendering", "ok": False, "error": None}]
+
+
+def test_music_window_audio_swap_soft_timeout_never_falls_back_to_full_render(monkeypatch):
+    slots = [_tl_slot(1, in_s=2.0, duration_s=1.0)]
+    variant = _existing_variant(
+        variant_id="song_text",
+        rank=1,
+        text_mode="agent_text",
+        music_track_id="t1",
+        music_start_s=8.0,
+        music_window_video_duration_s=1.0,
+        video_path=f"generative-jobs/{JOB_ID}/variant_1_song_text.mp4",
+        base_video_path=f"generative-jobs/{JOB_ID}/base_1_song_text.mp4",
+        user_timeline={"slots": slots, "beat_grid": [0.0, 0.5, 1.0]},
+    )
+    _regen_setup(monkeypatch, variants=[variant], track=_track("t1"))
+    monkeypatch.setattr(
+        gb,
+        "_run_music_window_audio_only_swap",
+        lambda **_kw: (_ for _ in ()).throw(SoftTimeLimitExceeded()),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        gb,
+        "_ingest_clips",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("soft timeout must not enter fallback ingest")
+        ),
+        raising=False,
+    )
+
+    with pytest.raises(SoftTimeLimitExceeded):
+        gb._run_regenerate_variant(
+            JOB_ID,
+            "song_text",
+            None,
+            None,
+            False,
+            timeline_override=slots,
+            force_full_render=True,
+        )
 
 
 def test_music_window_audio_only_rejects_lyrics_and_changed_cuts():

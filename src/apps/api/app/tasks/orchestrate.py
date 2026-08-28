@@ -14,6 +14,7 @@ Pipeline:
     → set job.status = clips_ready | clips_ready_partial
 """
 
+import copy
 import os
 import tempfile
 import uuid
@@ -23,6 +24,7 @@ import structlog
 from celery import chord, group
 from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.config import settings
 from app.database import sync_session as _sync_session
@@ -38,7 +40,15 @@ from app.pipeline.score import TOP_N, select_candidates
 from app.pipeline.thumbnail import select_thumbnail
 from app.pipeline.validator import validate_output
 from app.services.media_filenames import safe_media_basename
+from app.services.video_poster_cleanup import (
+    append_video_poster_cleanup_receipt,
+    reconcile_video_poster_cleanup_receipts,
+)
 from app.storage import download_to_file, upload_bytes_public_read, upload_public_read
+from app.tasks._finalization_commit import (
+    FinalizationCommitState,
+    confirm_job_clip_finalization,
+)
 from app.tasks._job_cancel_fence import (
     active_job_for_update,
     delete_task_owned_outputs,
@@ -338,7 +348,7 @@ def render_clip(self, job_id: str, clip_db_id: str) -> dict:
         if job is None:
             return {"clip_id": clip_db_id, "success": False, "error": "cancelled"}
         clip = db.get(JobClip, uuid.UUID(clip_db_id), with_for_update=True)
-        if clip is None:
+        if clip is None or clip.job_id != job.id:
             return {"clip_id": clip_db_id, "success": False, "error": "DB record not found"}
 
         clip.render_status = "rendering"
@@ -362,6 +372,7 @@ def render_clip(self, job_id: str, clip_db_id: str) -> dict:
         db.commit()
 
     created_output_paths: list[str] = []
+    finalization_may_have_committed = False
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
             raw_local = os.path.join(tmpdir, "raw.mp4")
@@ -430,31 +441,133 @@ def render_clip(self, job_id: str, clip_db_id: str) -> dict:
             expires_at = datetime.now(UTC) + timedelta(days=1)
 
             finalized = False
-            with _sync_session() as db:
-                job = active_job_for_update(
-                    db,
-                    job_id,
-                    operation=f"legacy_render_clip_{clip_db_id}_finalize",
+            finalize_error = "cancelled"
+            poster_cleanup_journaled = False
+            finalize_commit_attempted = False
+            finalize_commit_error: Exception | None = None
+            try:
+                with _sync_session() as db:
+                    job = active_job_for_update(
+                        db,
+                        job_id,
+                        operation=f"legacy_render_clip_{clip_db_id}_finalize",
+                    )
+                    if job is not None:
+                        clip = db.get(JobClip, uuid.UUID(clip_db_id), with_for_update=True)
+                        if clip is not None and clip.job_id == job.id:
+                            if job.assembly_plan is not None and not isinstance(
+                                job.assembly_plan, dict
+                            ):
+                                # Never repair corrupt JSONB by replacing it with an
+                                # empty object.  Keep both the prior ready clip and
+                                # the exact forensic plan untouched; the chord can
+                                # surface this render as failed and the task-owned
+                                # uploads are removed below.
+                                finalize_error = "invalid assembly plan"
+                                log.error(
+                                    "legacy_render_clip_invalid_assembly_plan",
+                                    job_id=job_id,
+                                    clip_id=clip_db_id,
+                                    assembly_plan_type=type(job.assembly_plan).__name__,
+                                )
+                            else:
+                                plan = copy.deepcopy(job.assembly_plan or {})
+                                previous_thumbnail_path = clip.thumbnail_path
+                                clip.render_status = "ready"
+                                # Keep the existing admin/debug playback contract for
+                                # the MP4 URL. The /me library normalizes this GCS URL
+                                # back to its object key and re-signs it on every read.
+                                clip.video_path = video_url
+                                clip.thumbnail_path = thumb_gcs_path
+                                clip.duration_s = duration_s
+                                clip.file_size_bytes = file_size
+                                clip.platform_copy = platform_copy.model_dump()
+                                clip.copy_status = copy_status
+                                clip.storage_expires_at = expires_at
+                                poster_cleanup_journaled = append_video_poster_cleanup_receipt(
+                                    plan,
+                                    old_path=previous_thumbnail_path,
+                                    replacement_path=thumb_gcs_path,
+                                )
+                                if poster_cleanup_journaled:
+                                    job.assembly_plan = plan
+                                    flag_modified(job, "assembly_plan")
+                                finalize_commit_attempted = True
+                                finalization_may_have_committed = True
+                                try:
+                                    db.commit()
+                                    finalized = True
+                                except Exception as exc:  # noqa: BLE001 - ambiguous
+                                    # Catch inside the session so it closes before the
+                                    # independent proof read below.
+                                    finalize_commit_error = exc
+            except Exception as exc:
+                if not finalize_commit_attempted:
+                    raise
+                finalize_commit_error = finalize_commit_error or exc
+            if finalize_commit_error is not None:
+                commit_state = confirm_job_clip_finalization(
+                    _sync_session,
+                    job_id=job_id,
+                    clip_id=clip_db_id,
+                    expected_clip_fields={
+                        "render_status": "ready",
+                        "video_path": video_url,
+                        "thumbnail_path": thumb_gcs_path,
+                    },
+                    attempt_references=(*created_output_paths, video_url),
                 )
-                if job is not None:
-                    clip = db.get(JobClip, uuid.UUID(clip_db_id), with_for_update=True)
-                    if clip is not None:
-                        clip.render_status = "ready"
-                        # Keep the existing admin/debug playback contract for the
-                        # MP4 URL. The /me library normalizes this GCS URL back to
-                        # its object key and re-signs it on every read.
-                        clip.video_path = video_url
-                        clip.thumbnail_path = thumb_gcs_path
-                        clip.duration_s = duration_s
-                        clip.file_size_bytes = file_size
-                        clip.platform_copy = platform_copy.model_dump()
-                        clip.copy_status = copy_status
-                        clip.storage_expires_at = expires_at
-                        db.commit()
-                        finalized = True
+                if commit_state is FinalizationCommitState.CONFIRMED:
+                    finalized = True
+                    log.warning(
+                        "legacy_render_clip_finalize_commit_confirmed_after_error",
+                        job_id=job_id,
+                        clip_id=clip_db_id,
+                        error_class=type(finalize_commit_error).__name__,
+                    )
+                elif commit_state is FinalizationCommitState.UNKNOWN:
+                    # The commit may own live references. Keep the private
+                    # attempt objects and let redelivery/lifecycle repair the
+                    # row; never turn uncertainty into user-visible data loss.
+                    log.error(
+                        "legacy_render_clip_finalize_commit_inconclusive",
+                        job_id=job_id,
+                        clip_id=clip_db_id,
+                        error_class=type(finalize_commit_error).__name__,
+                    )
+                    return {
+                        "clip_id": clip_db_id,
+                        "success": False,
+                        "error": "finalization commit outcome is uncertain",
+                        "finalization_uncertain": True,
+                    }
+                else:
+                    finalization_may_have_committed = False
+                    raise finalize_commit_error
             if not finalized:
                 delete_task_owned_outputs(job_id, created_output_paths)
-                return {"clip_id": clip_db_id, "success": False, "error": "cancelled"}
+                return {"clip_id": clip_db_id, "success": False, "error": finalize_error}
+
+            if poster_cleanup_journaled:
+                try:
+                    reconcile_video_poster_cleanup_receipts(job_id)
+                except SoftTimeLimitExceeded:
+                    # Ready state, output paths, and the durable receipt were
+                    # already committed.  The Beat sweep must retry cleanup;
+                    # the outer render timeout handler must not delete this
+                    # successfully accepted clip or mark it failed.
+                    log.warning(
+                        "legacy_render_clip_poster_cleanup_soft_timeout_deferred",
+                        job_id=job_id,
+                        clip_id=clip_db_id,
+                    )
+                except Exception as cleanup_exc:  # noqa: BLE001 — receipt retries durably
+                    log.warning(
+                        "legacy_render_clip_poster_cleanup_deferred",
+                        job_id=job_id,
+                        clip_id=clip_db_id,
+                        error=str(cleanup_exc),
+                    )
 
             log.info("render_clip_done", clip_id=clip_db_id, video_url=video_url)
             return {
@@ -466,6 +579,20 @@ def render_clip(self, job_id: str, clip_db_id: str) -> dict:
 
         except SoftTimeLimitExceeded:
             log.error("render_clip_timeout", clip_id=clip_db_id)
+            if finalization_may_have_committed:
+                log.error(
+                    "legacy_render_clip_timeout_after_finalize_commit_attempt",
+                    job_id=job_id,
+                    clip_id=clip_db_id,
+                    confirmed=finalized,
+                )
+                return {
+                    "clip_id": clip_db_id,
+                    "success": finalized,
+                    "error": None if finalized else "finalization commit outcome is uncertain",
+                    **({"finalization_uncertain": True} if not finalized else {}),
+                    **({"output_paths": created_output_paths} if finalized else {}),
+                }
             delete_task_owned_outputs(job_id, created_output_paths)
             with _sync_session() as db:
                 job = active_job_for_update(
@@ -475,12 +602,26 @@ def render_clip(self, job_id: str, clip_db_id: str) -> dict:
                 )
                 if job is not None:
                     clip = db.get(JobClip, uuid.UUID(clip_db_id), with_for_update=True)
-                    if clip is not None:
+                    if clip is not None and clip.job_id == job.id:
                         clip.render_status = "failed"
                         clip.error_detail = "Clip render timed out (exceeded 540s soft limit)"
                         db.commit()
             return {"clip_id": clip_db_id, "success": False, "error": "render timeout"}
         except OperationalError as db_exc:
+            if finalization_may_have_committed:
+                log.error(
+                    "legacy_render_clip_db_error_after_finalize_commit_attempt",
+                    job_id=job_id,
+                    clip_id=clip_db_id,
+                    confirmed=finalized,
+                )
+                return {
+                    "clip_id": clip_db_id,
+                    "success": finalized,
+                    "error": None if finalized else "finalization commit outcome is uncertain",
+                    **({"finalization_uncertain": True} if not finalized else {}),
+                    **({"output_paths": created_output_paths} if finalized else {}),
+                }
             delete_task_owned_outputs(job_id, created_output_paths)
             # Transient Postgres outage — re-raise for Celery autoretry. The
             # chord callback (finalize_job) sees the eventual retry result;
@@ -495,6 +636,20 @@ def render_clip(self, job_id: str, clip_db_id: str) -> dict:
             raise
         except Exception as exc:
             log.error("render_clip_failed", clip_id=clip_db_id, error=str(exc))
+            if finalization_may_have_committed:
+                log.error(
+                    "legacy_render_clip_error_after_finalize_commit_attempt",
+                    job_id=job_id,
+                    clip_id=clip_db_id,
+                    confirmed=finalized,
+                )
+                return {
+                    "clip_id": clip_db_id,
+                    "success": finalized,
+                    "error": None if finalized else "finalization commit outcome is uncertain",
+                    **({"finalization_uncertain": True} if not finalized else {}),
+                    **({"output_paths": created_output_paths} if finalized else {}),
+                }
             delete_task_owned_outputs(job_id, created_output_paths)
             with _sync_session() as db:
                 job = active_job_for_update(
@@ -504,7 +659,7 @@ def render_clip(self, job_id: str, clip_db_id: str) -> dict:
                 )
                 if job is not None:
                     clip = db.get(JobClip, uuid.UUID(clip_db_id), with_for_update=True)
-                    if clip is not None:
+                    if clip is not None and clip.job_id == job.id:
                         clip.render_status = "failed"
                         clip.error_detail = str(exc)[:1000]
                         db.commit()
@@ -518,6 +673,7 @@ def finalize_job(render_results: list[dict], job_id: str) -> None:
 
     Sets job status: clips_ready | clips_ready_partial | processing_failed
     """
+    uncertain = [r for r in render_results if r.get("finalization_uncertain") is True]
     successes = [r for r in render_results if r.get("success")]
     failures = [r for r in render_results if not r.get("success")]
 
@@ -526,7 +682,21 @@ def finalize_job(render_results: list[dict], job_id: str) -> None:
         job_id=job_id,
         successes=len(successes),
         failures=len(failures),
+        uncertain=len(uncertain),
     )
+
+    if uncertain:
+        # At least one child may already have committed its ready clip while
+        # losing the COMMIT acknowledgement.  A chord-level failure/partial
+        # write would overwrite that potentially accepted state.  Leave the
+        # job non-terminal for the normal recovery path and retain every
+        # attempt-owned object until the ambiguity can be reconciled.
+        log.error(
+            "finalize_job_deferred_for_uncertain_clip_commit",
+            job_id=job_id,
+            uncertain_clip_ids=[result.get("clip_id") for result in uncertain],
+        )
+        return
 
     finalized_status: str | None = None
     with _sync_session() as db:

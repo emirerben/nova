@@ -1819,11 +1819,10 @@ def check_edit_copilot(output: Any) -> list[str]:
             if not isinstance(duration_s, (int, float)) or duration_s <= 0:
                 failures.append(f"op {idx}: set_media_duration duration_s must be positive")
         if name == "stack_images":
-            if "assets" in op or "assets" in (op.get("params") or {}):
-                failures.append(f"op {idx}: stack_images must use compiler asset_ids, not assets")
-            if "groups" in op or "asset_ids" in op or "asset_ids" in (op.get("params") or {}):
+            legacy_fields = ("groups", "asset_ids", "assets", "params", "preset_id")
+            if any(field in op for field in legacy_fields):
                 failures.append(
-                    f"op {idx}: stack_images selector must not author groups or asset IDs"
+                    f"op {idx}: stack_images must only carry its typed slideshow selector"
                 )
         if name == "add_unused_sources":
             selector = op.get("selector")

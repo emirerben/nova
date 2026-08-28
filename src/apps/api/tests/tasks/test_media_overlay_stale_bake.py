@@ -176,3 +176,32 @@ def test_stale_generation_cleans_unreferenced_generated_posters(monkeypatch):
         "gs://bucket/v1.mp4.poster.jpg",
         "gs://bucket/v1.mp4_pre_overlay.poster.jpg",
     ]
+
+
+def test_in_place_overlay_swap_retires_uuid_backfill_poster(monkeypatch):
+    variant = _variant([_card()])
+    old_poster = (
+        "generative-jobs/00000000-0000-0000-0000-000000000001/v1.mp4"
+        ".poster.backfill-11111111-1111-4111-8111-111111111111.jpg"
+    )
+    variant["poster_path"] = old_poster
+    job = _FakeJob(variant)
+    _patch_common(monkeypatch, job)
+    journaled: list[str] = []
+    monkeypatch.setattr(
+        gb,
+        "_reconcile_retired_variant_posters",
+        lambda _job_id, paths: journaled.extend(paths),
+    )
+
+    _run(job)
+
+    assert job.assembly_plan["variants"][0]["video_path"] == variant["video_path"]
+    assert job.assembly_plan["variants"][0]["poster_path"] != old_poster
+    assert old_poster in journaled
+    assert job.assembly_plan[gb.VIDEO_POSTER_BACKFILL_CLEANUP_FIELD] == [
+        {
+            "old_path": old_poster,
+            "replacement_path": job.assembly_plan["variants"][0]["poster_path"],
+        }
+    ]

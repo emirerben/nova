@@ -1,6 +1,7 @@
 """Per-user "my" surface — the video library + one-off → plan attach (Phase 1 spine).
 
 GET    /me/jobs                           — the signed-in user's videos (the library)
+GET    /me/jobs/{job_id}/playback-url     — refresh one owned ready preview URL
 DELETE /me/jobs/{job_id}                   — delete one terminal video and its local media
 POST   /me/jobs/{job_id}/add-to-plan      — pin a standalone video onto a plan day
 POST   /me/jobs/{job_id}/open-in-editor   — promote a ready first cut into the editor
@@ -20,7 +21,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
-from urllib.parse import unquote, urlparse
+from urllib.parse import urlparse
 
 import structlog
 from cryptography.fernet import Fernet, InvalidToken
@@ -55,7 +56,13 @@ from app.services.content_plan_persona import (
     load_owned_plan_persona,
 )
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
+from app.services.job_storage_paths import (
+    job_output_path,
+    normalize_job_storage_path,
+    owned_job_output_path,
+)
 from app.services.token_crypto import decrypt_token
+from app.services.video_poster_cleanup import VIDEO_POSTER_BACKFILL_CLEANUP_FIELD
 from app.storage import signed_download_url, signed_get_url
 
 log = structlog.get_logger()
@@ -73,15 +80,11 @@ _MAX_PREVIEW_CLIPS = 50
 OPEN_IN_EDITOR_NOT_READY_DETAIL = "Video is not ready to open in the editor."
 OPEN_IN_EDITOR_LINK_CONFLICT_DETAIL = "Video is linked to a different plan item."
 DELETE_JOB_NOT_TERMINAL_DETAIL = "This video is still being prepared or posted."
+PLAYBACK_NOT_READY_DETAIL = "Video preview is not ready."
+PLAYBACK_SIGNING_FAILED_DETAIL = "Video preview is temporarily unavailable."
 
 _DELETE_ACTIVE_TIKTOK_STATUSES = frozenset(
     {"queued", "snapshotting", "submitting", "processing", "submission_unknown"}
-)
-_DELETE_OUTPUT_PREFIXES = (
-    "generative-jobs/{job_id}/",
-    "jobs/{job_id}/",
-    "music-jobs/{job_id}/",
-    "auto-music-jobs/{job_id}/",
 )
 _DELETE_VARIANT_PATH_FIELDS = (
     "output_url",
@@ -353,24 +356,6 @@ def _legacy_browser_url(value: object) -> str | None:
     return value if parsed.scheme in {"http", "https"} and parsed.netloc else None
 
 
-def _owned_job_output_path(path: object, job: Job) -> str | None:
-    """Normalize a persisted object key and prove it belongs to this job.
-
-    Most newer pipelines use an explicit mode prefix (``generative-jobs`` or
-    ``music-jobs``). The default/auto uploader historically used
-    ``{user_id}/{job_id}/...``; accept that exact prefix so those rows can be
-    read and deleted without opening a broad user prefix.
-    """
-    candidate = _normalize_job_storage_path(path)
-    if candidate is None:
-        return None
-    if _job_output_path(candidate, job.id) is not None:
-        return candidate
-    if candidate.startswith(f"{job.user_id}/{job.id}/"):
-        return candidate
-    return None
-
-
 def _preview(job: Job, clips: list[JobClip] | None = None) -> _LibraryPreview | None:
     """Resolve the best playable object and its source-matched poster.
 
@@ -390,11 +375,11 @@ def _preview(job: Job, clips: list[JobClip] | None = None) -> _LibraryPreview | 
             if isinstance(variant, dict) and variant.get("render_status") == "ready"
         ]
         for index, variant in sorted(ready, key=lambda item: _variant_rank(item[1], item[0])):
-            video_path = _owned_job_output_path(
+            video_path = owned_job_output_path(
                 variant.get("video_path") or variant.get("output_url"), job
             )
             if video_path:
-                poster_path = _owned_job_output_path(variant.get("poster_path"), job)
+                poster_path = owned_job_output_path(variant.get("poster_path"), job)
                 render_identity = (
                     variant.get("render_generation_id")
                     or variant.get("render_finished_at")
@@ -418,13 +403,13 @@ def _preview(job: Job, clips: list[JobClip] | None = None) -> _LibraryPreview | 
                     legacy_url=legacy_url,
                 )
 
-    video_path = _owned_job_output_path(
+    video_path = owned_job_output_path(
         plan.get("output_path") or plan.get("video_path") or plan.get("output_url"), job
     )
     if video_path:
         return _LibraryPreview(
             video_path=video_path,
-            poster_path=_owned_job_output_path(plan.get("poster_path"), job),
+            poster_path=owned_job_output_path(plan.get("poster_path"), job),
             poster_identity=video_path,
             legacy_url=_legacy_browser_url(plan.get("output_url")),
         )
@@ -435,11 +420,11 @@ def _preview(job: Job, clips: list[JobClip] | None = None) -> _LibraryPreview | 
     for clip in sorted(clips or [], key=lambda item: (item.rank, str(item.id))):
         if clip.render_status != "ready":
             continue
-        video_path = _owned_job_output_path(clip.video_path, job)
+        video_path = owned_job_output_path(clip.video_path, job)
         if video_path:
             return _LibraryPreview(
                 video_path=video_path,
-                poster_path=_owned_job_output_path(clip.thumbnail_path, job),
+                poster_path=owned_job_output_path(clip.thumbnail_path, job),
                 poster_identity=video_path,
             )
     return None
@@ -592,6 +577,10 @@ class LibraryResponse(BaseModel):
     next_cursor: str | None
 
 
+class LibraryPlaybackResponse(BaseModel):
+    video_url: str
+
+
 @router.get("/jobs", response_model=LibraryResponse)
 async def list_my_jobs(
     user: CurrentUser,
@@ -715,38 +704,96 @@ async def list_my_jobs(
     )
 
 
-def _normalize_job_storage_path(path: object) -> str | None:
-    if not isinstance(path, str):
-        return None
-    candidate = path.strip().lstrip("/")
-    if "://" in candidate:
-        parsed = urlparse(candidate)
-        bucket_prefix = f"/{settings.storage_bucket}/"
-        if (
-            parsed.scheme != "https"
-            or parsed.netloc not in {"storage.googleapis.com", "storage.cloud.google.com"}
-            or not parsed.path.startswith(bucket_prefix)
-        ):
-            return None
-        candidate = unquote(parsed.path[len(bucket_prefix) :]).lstrip("/")
-    if not candidate or ".." in candidate.split("/"):
-        return None
-    return candidate
+@router.get("/jobs/{job_id}/playback-url", response_model=LibraryPlaybackResponse)
+async def refresh_library_playback_url(
+    job_id: str,
+    user: CurrentUser,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+) -> LibraryPlaybackResponse:
+    """Mint a fresh URL for the caller's currently selected ready preview.
 
+    The stored browser URL is deliberately never used as a fallback here: it
+    may be the expired URL that caused the refresh request. Only a currently
+    owned object path selected by the same resolver as the library grid can be
+    signed. Missing and foreign IDs intentionally share the same 404 response.
+    """
+    try:
+        jid = uuid.UUID(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad id") from exc
 
-def _job_output_path(path: object, job_id: uuid.UUID) -> str | None:
-    candidate = _normalize_job_storage_path(path)
-    if candidate is None:
-        return None
-    if any(
-        candidate.startswith(prefix.format(job_id=job_id)) for prefix in _DELETE_OUTPUT_PREFIXES
-    ):
-        return candidate
-    return None
+    job = (
+        await db.execute(select(Job).where(Job.id == jid, Job.user_id == user.id))
+    ).scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if job.status not in _JOB_READY:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=PLAYBACK_NOT_READY_DETAIL,
+        )
+
+    preview = _preview(job)
+    if preview is None:
+        clips = list(
+            (
+                await db.execute(
+                    select(JobClip)
+                    .options(
+                        load_only(
+                            JobClip.id,
+                            JobClip.job_id,
+                            JobClip.rank,
+                            JobClip.render_status,
+                            JobClip.video_path,
+                            JobClip.thumbnail_path,
+                            JobClip.created_at,
+                        )
+                    )
+                    .where(
+                        JobClip.job_id == jid,
+                        JobClip.render_status == "ready",
+                    )
+                    .order_by(JobClip.rank, JobClip.created_at, JobClip.id)
+                    .limit(_MAX_PREVIEW_CLIPS)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        preview = _preview(job, clips)
+
+    # A legacy URL without an owned object key cannot be refreshed safely.
+    if preview is None or not preview.video_path:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=PLAYBACK_NOT_READY_DETAIL,
+        )
+
+    try:
+        video_url = await run_in_threadpool(
+            signed_get_url,
+            preview.video_path,
+            PLAYBACK_URL_TTL_MIN,
+        )
+    except Exception as exc:  # noqa: BLE001 — never fall back to a stale stored URL
+        log.warning(
+            "library_playback_refresh_failed",
+            job_id=str(job.id),
+            output_path=preview.video_path,
+            error_class=type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=PLAYBACK_SIGNING_FAILED_DETAIL,
+        ) from exc
+    response.headers["Cache-Control"] = "no-store"
+    return LibraryPlaybackResponse(video_url=video_url)
 
 
 def _job_source_path(path: object, *, user_id: uuid.UUID, job_id: uuid.UUID) -> str | None:
-    candidate = _normalize_job_storage_path(path)
+    candidate = normalize_job_storage_path(path)
     if candidate is None:
         return None
     allowed_prefixes = (
@@ -797,7 +844,7 @@ def _job_storage_paths(
     paths: list[str] = []
 
     def add_output(value: object) -> None:
-        if path := _owned_job_output_path(value, job):
+        if path := owned_job_output_path(value, job):
             paths.append(path)
 
     for clip in clips:
@@ -814,6 +861,22 @@ def _job_storage_paths(
         "base_poster_path",
     ):
         add_output(plan.get(field))
+    raw_cleanup_receipts = plan.get(VIDEO_POSTER_BACKFILL_CLEANUP_FIELD)
+    cleanup_receipts = (
+        raw_cleanup_receipts
+        if isinstance(raw_cleanup_receipts, list)
+        else [raw_cleanup_receipts]
+        if isinstance(raw_cleanup_receipts, dict)
+        else []
+    )
+    for receipt in cleanup_receipts:
+        if not isinstance(receipt, dict):
+            continue
+        # Include both sides defensively. The replacement is normally also
+        # present in a regular poster field, while old_path may only exist
+        # in this durable journal after a transient object-delete failure.
+        add_output(receipt.get("old_path"))
+        add_output(receipt.get("replacement_path"))
     variants = plan.get("variants")
     if isinstance(variants, list):
         for variant in variants:
@@ -823,7 +886,7 @@ def _job_storage_paths(
                 value = variant.get(field)
                 add_output(value)
                 if field == "subject_matte_path":
-                    if matte_path := _owned_job_output_path(value, job):
+                    if matte_path := owned_job_output_path(value, job):
                         if matte_path.endswith(".mp4"):
                             paths.append(f"{matte_path}.json")
 
@@ -850,7 +913,7 @@ def _job_storage_paths(
             # Do not use the legacy ``{user_id}/{job_id}/`` compatibility
             # fallback here: that prefix is also used by plan/source uploads,
             # which linked-job deletion must preserve.
-            if path := _job_output_path(clip_path, job.id):
+            if path := job_output_path(clip_path, job.id):
                 paths.append(path)
     preprocessed_cache = candidates.get("preprocessed_source_cache")
     if isinstance(preprocessed_cache, dict):

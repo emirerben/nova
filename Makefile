@@ -115,7 +115,8 @@ verify-overlays:
 		api python -m app.cli.verify_overlays $(ARGS) --out /app/.overlay-verify
 
 # Maximum accepted Creator Block workload in the production image. The CLI
-# renders all 240 1080x1920 frames and fails above 180s or 2.5GB child RSS.
+# renders the 360-frame weighted ceiling plus the 12-block/96-asset ceiling,
+# and fails above 180s or 2.5GB child RSS.
 MOTION_VERIFY_OUT ?= .motion-verify
 MOTION_VERIFY_HOST_OUT := $(abspath $(MOTION_VERIFY_OUT))
 

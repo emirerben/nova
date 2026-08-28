@@ -17,6 +17,10 @@ import {
 import { sequentialSlotLayout } from "@/app/plan/items/[id]/_editor/editor-bar-drag";
 import type { CopilotOpFamily } from "./ops";
 import {
+  EDITOR_MAX_TIMELINE_SLOTS,
+  MOTION_FPS,
+  MOTION_MAX_ACTIVE_FRAMES,
+  MOTION_MAX_INSTANCES,
   creatorBlockEntry,
   type MotionPresetInstance,
 } from "@nova/motion-runtime";
@@ -452,6 +456,11 @@ export interface CopilotSnapshot {
   total_duration_s: number;
   max_duration_s: 60;
   remaining_duration_s: number;
+  /** Capacity advertised by the currently deployed API. A newer web build
+   * must fail closed while an older backend is still rolling out. */
+  editor_limits?: {
+    max_timeline_slots: number;
+  };
   /** Legacy input accepted by server parsing; new snapshots intentionally
    * omit the full source list and expose only aggregate integrity metadata. */
   source_pool?: Array<{
@@ -519,6 +528,12 @@ export interface CopilotSnapshot {
   visual_blocks?: CopilotVisualBlockSnapshot[];
   motion?: {
     available: boolean;
+    limits: {
+      max_blocks: number;
+      max_active_union_s: number;
+      max_card_stack_assets: number;
+      max_film_strip_assets: number;
+    };
     catalog: CopilotMotionCatalogSnapshot[];
     blocks: CopilotMotionBlockSnapshot[];
     asset_pool: Array<{ id: string; subject: string | null }>;
@@ -1001,6 +1016,14 @@ export function buildCopilotSnapshot(
     total_duration_s: total,
     max_duration_s: 60,
     remaining_duration_s: roundCopilotNumber(Math.max(0, 60 - total)),
+    editor_limits: {
+      max_timeline_slots:
+        typeof capabilities?.timeline_max_slots === "number" &&
+        Number.isInteger(capabilities.timeline_max_slots) &&
+        capabilities.timeline_max_slots > 0
+          ? Math.min(capabilities.timeline_max_slots, EDITOR_MAX_TIMELINE_SLOTS)
+          : 50,
+    },
     ...(options.sourcePool?.length ? {
       source_pool_summary: {
         digest: bulkSourcePoolDigest(sourceRowsForDigest),
@@ -1123,6 +1146,12 @@ export function buildCopilotSnapshot(
   if (allowed.has("motion")) {
     snapshot.motion = {
       available: true,
+      limits: {
+        max_blocks: MOTION_MAX_INSTANCES,
+        max_active_union_s: MOTION_MAX_ACTIVE_FRAMES / MOTION_FPS,
+        max_card_stack_assets: 6,
+        max_film_strip_assets: 8,
+      },
       catalog: creatorBlockAiCatalog.presets.filter(
         (entry) => entry.preset_id !== "evolving_type" || options.evolvingTypeEnabled,
       ).map((entry) => ({
@@ -1151,7 +1180,7 @@ export function buildCopilotSnapshot(
             ...(definition.values === undefined ? {} : { values: [...definition.values] }),
           })),
       })),
-      blocks: (options.motionScenes ?? []).slice(0, 8).map((scene) => ({
+      blocks: (options.motionScenes ?? []).slice(0, MOTION_MAX_INSTANCES).map((scene) => ({
         id: scene.id,
         preset_id: scene.preset_id,
         label: scene.preset_id === "route_trace" ? "Route trace" : creatorBlockEntry(scene.preset_id).label,

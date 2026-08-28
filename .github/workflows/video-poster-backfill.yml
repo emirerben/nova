@@ -1,0 +1,244 @@
+name: Video Poster Backfill
+
+# One-time repair for historical real-user videos. It is manual by design:
+# replaying a full-history GCS audit after every deploy would grow without
+# bound. The required SHA must match the immutable label on the live image.
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: "Exact deployed 40-character commit SHA to repair"
+        required: true
+        type: string
+      retry_failed_machine_id:
+        description: "Optional exact stopped failed Machine ID to acknowledge and retry"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  # Reuse the historical GitHub lock name. The launcher also CASes the same
+  # stable, app-unique Fly Machine name used by deploys.
+  group: fly-deploy-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Validate deployed revision input
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::expected_sha must be an exact lowercase 40-character commit SHA"
+            exit 1
+          }
+
+      - name: Install flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        with:
+          version: 0.4.94
+
+      # This gate intentionally runs before checking out input-selected code.
+      # Only a commit already proven live on every production Machine may be
+      # checked out and later receive the Fly token.
+      - name: Prove the requested revision is live
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          managed_fleet_has_required_processes() {
+            jq -e '
+              [.[]
+                | select(
+                    ((.config.metadata // .incomplete_config.metadata // {})
+                      | has("fly_process_group"))
+                  )] as $managed
+              | any($managed[];
+                  ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "api")
+                and any($managed[];
+                  ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "worker")
+                and any($managed[];
+                  ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "light")
+                and any($managed[];
+                  ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "autoplace")
+            ' >/dev/null
+          }
+          managed_fleet_has_transitional_states() {
+            jq -e '
+              [.[]
+                | select(
+                    ((.config.metadata // .incomplete_config.metadata // {})
+                      | has("fly_process_group"))
+                  )]
+              | any(.state == "starting" or .state == "stopping")
+            ' >/dev/null
+          }
+          managed_fleet_is_operationally_stable() {
+            jq -e '
+              [.[]
+                | select(
+                    ((.config.metadata // .incomplete_config.metadata // {})
+                      | has("fly_process_group"))
+                  )] as $managed
+              | any($managed[];
+                  ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "api"
+                    and .state == "started")
+                and any($managed[];
+                  ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "worker")
+                and any($managed[];
+                  ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "light"
+                    and .state == "started")
+                and any($managed[];
+                  ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "autoplace"
+                    and .state == "started")
+                and all($managed[];
+                  (.config // .incomplete_config // {}) as $config
+                  | (($config.metadata // {}).fly_process_group) as $group
+                  | ([.events[]? | select(.type == "exit")]
+                      | sort_by(.timestamp) | last | .request.exit_event) as $last_exit
+                  | ($group | type == "string" and length > 0)
+                    and (
+                      .state == "started"
+                      or (
+                        .state == "stopped"
+                        and (
+                          ($group == "api"
+                            and any(($config.services // [])[]?;
+                              .autostop == true or .autostop == "stop"))
+                          or ($group == "worker"
+                            and $last_exit.requested_stop == true
+                            and ($last_exit.oom_killed // false) == false
+                            and ($last_exit.restarting // false) == false)
+                        )
+                      )
+                    )
+                )
+            ' >/dev/null
+          }
+          for attempt in $(seq 1 20); do
+            machines_json="$(flyctl machine list --app nova-video --json)"
+            managed_count="$(jq '[.[] | select(((.config.metadata // .incomplete_config.metadata // {}) | has("fly_process_group")))] | length' <<<"$machines_json")"
+            digest_count="$(jq '[.[] | select(((.config.metadata // .incomplete_config.metadata // {}) | has("fly_process_group"))) | .image_ref.digest] | unique | length' <<<"$machines_json")"
+            [[ "$managed_count" -ge 1 && "$digest_count" == "1" ]] || {
+              echo "::error::managed production Machines do not expose one immutable digest"
+              exit 1
+            }
+            managed_fleet_has_required_processes <<<"$machines_json" || {
+              echo "::error::managed production Machines are missing a required api, worker, light, or autoplace process group"
+              exit 1
+            }
+            jq -e '
+              [.[]
+                | select(
+                    ((.config.metadata // .incomplete_config.metadata // {})
+                      | has("fly_process_group"))
+                  )]
+              | all(
+                  .state == "started" or .state == "stopped"
+                  or .state == "starting" or .state == "stopping"
+                )
+            ' <<<"$machines_json" >/dev/null || {
+              echo "::error::managed production Machines expose an unsafe lifecycle state"
+              exit 1
+            }
+            if managed_fleet_is_operationally_stable <<<"$machines_json"; then
+              break
+            fi
+            managed_fleet_has_transitional_states <<<"$machines_json" || {
+              echo "::error::managed production Machines do not satisfy the required stable process topology"
+              exit 1
+            }
+            [[ "$attempt" -lt 20 ]] || {
+              echo "::error::managed production Machines did not reach the required stable process topology"
+              exit 1
+            }
+            echo "Waiting for managed production Machines to settle ($attempt/20)..."
+            sleep 20
+          done
+          managed_digest="$(
+            jq -er '
+              [.[]
+                | select(
+                    ((.config.metadata // .incomplete_config.metadata // {})
+                      | has("fly_process_group"))
+                  )
+                | .image_ref.digest]
+              | unique
+              | if length == 1 then .[0] else empty end
+              | select(test("^sha256:[0-9a-f]{64}$"))
+            ' <<<"$machines_json"
+          )"
+          jq -e --arg digest "$managed_digest" '
+            [.[]
+              | select(
+                  ((.config.metadata // .incomplete_config.metadata // {})
+                    | has("fly_process_group"))
+                )]
+            | length >= 1 and all(.image_ref.digest == $digest)
+          ' <<<"$machines_json"
+
+          image_json="$(flyctl image show --app nova-video --json)"
+          revision_count="$(
+            jq \
+              --arg digest "$managed_digest" \
+              --arg label 'org.opencontainers.image.revision' '
+              [.[]
+                | select(.Digest == $digest)
+                | .Labels
+                | if type == "string" then fromjson else . end
+                | .[$label]]
+              | unique
+              | length
+            ' <<<"$image_json"
+          )"
+          deployed_sha="$(
+            jq -er \
+              --arg digest "$managed_digest" \
+              --arg label 'org.opencontainers.image.revision' '
+              [.[]
+                | select(.Digest == $digest)
+                | .Labels
+                | if type == "string" then fromjson else . end
+                | .[$label]]
+              | unique
+              | if length == 1 then .[0] else empty end
+              | select(type == "string" and test("^[0-9a-f]{40}$"))
+            ' <<<"$image_json"
+          )"
+          [[ "$revision_count" == "1" ]] || {
+            echo "::error::managed production Machines do not expose one revision"
+            exit 1
+          }
+          [[ "$deployed_sha" == "$EXPECTED_SHA" ]] || {
+            echo "::error::requested SHA is not the revision live on every production Machine"
+            exit 1
+          }
+          curl --fail --silent --show-error --retry 5 --retry-all-errors \
+            --connect-timeout 10 --max-time 30 \
+            https://nova-video.fly.dev/health >/dev/null
+
+      - name: Check out the exact deployed revision
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ inputs.expected_sha }}
+
+      - name: Verify checkout identity
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Backfill and verify real-user posters
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          RETRY_FAILED_MACHINE_ID: ${{ inputs.retry_failed_machine_id }}
+        run: |
+          bash scripts/run-video-poster-backfill.sh

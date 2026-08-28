@@ -2549,9 +2549,15 @@ export default function EditorShell({
       }),
     [previewSfxPlacements, projectCanvasRange],
   );
-  const previewDuration = virtualPreviewActive
-    ? virtualPreview.timeline.totalDurationS
-    : duration;
+  // `sequentialSlotLayout` is the canonical staged timeline. Even when the
+  // rendered MP4 is the only available visual preview, clip edits must keep
+  // the transport, ruler, and seek bounds on the staged total rather than the
+  // stale rendered duration. Save will replace the visual source.
+  const previewDuration = clipDirty
+    ? timelineDuration
+    : virtualPreviewActive
+      ? virtualPreview.timeline.totalDurationS
+      : duration;
   const smartPlacementCandidates = useMemo(() => {
     const targetBars = isMasonryVariant(variant)
       ? visibleTextBars.filter((bar) => bar.role !== "narrated_caption")
@@ -2590,14 +2596,18 @@ export default function EditorShell({
     }
     const rendered = videoRef.current;
     if (!rendered) return;
-    const clamped = Math.max(0, Math.min(duration || currentTime, currentTime));
+    const clamped = Math.max(0, Math.min(previewDuration || currentTime, currentTime));
+    if (Math.abs(currentTime - clamped) > 0.001) {
+      setCurrentTime(clamped);
+    }
     if (Math.abs(rendered.currentTime - clamped) > 0.15) {
       rendered.currentTime = clamped;
     }
   }, [
     currentTime,
-    duration,
+    previewDuration,
     seekVirtualPreview,
+    setCurrentTime,
     virtualPreview.timeline.totalDurationS,
     virtualPreviewActive,
   ]);
@@ -2612,8 +2622,7 @@ export default function EditorShell({
 
   const seekPlaybackTo = useCallback(
     (seconds: number) => {
-      const maxDuration = virtualPreviewActive ? virtualPreview.timeline.totalDurationS : duration;
-      const clamped = Math.max(0, Math.min(maxDuration || seconds, seconds));
+      const clamped = Math.max(0, Math.min(previewDuration || seconds, seconds));
       if (virtualPreviewActive) seekVirtualPreview(clamped);
       else {
         const v = videoRef.current;
@@ -2625,10 +2634,9 @@ export default function EditorShell({
       }
     },
     [
-      duration,
+      previewDuration,
       seekVirtualPreview,
       setCurrentTime,
-      virtualPreview.timeline.totalDurationS,
       virtualPreviewActive,
     ],
   );

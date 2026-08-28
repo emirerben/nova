@@ -2160,6 +2160,8 @@ export interface EditorCapabilities {
   };
   text_elements?: boolean;
   timeline?: boolean;
+  /** Active guided timeline capacity advertised by the deployed API. */
+  timeline_max_slots?: number;
   split_clips?: boolean;
   automatic_cut?: boolean;
   automatic_cut_reason?: string | null;

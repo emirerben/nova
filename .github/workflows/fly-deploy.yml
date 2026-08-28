@@ -30,36 +30,256 @@ on:
       - "**/*.md"
       - ".gitignore"
       - ".vercelignore"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      acknowledge_failed_backfill_machine_id:
+        description: "Optional exact stopped failed backfill Machine ID to release before a fix deploy"
+        required: false
+        default: ""
+        type: string
 
-# Cancel in-flight deploys when a newer push arrives so we don't ship a stale
-# image after a fast-follow fix lands. Fly's own state machine handles
-# concurrent deploys safely, but cancelling avoids burning a release machine.
+# Keep the historical GitHub lock name for queue compatibility. The workflow
+# also acquires one stable, unmanaged Fly Machine name before deploy; Machine
+# name uniqueness is the server-side CAS when a runner is cancelled or delayed.
 concurrency:
   group: fly-deploy-main
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
+    # ``workflow_dispatch`` lets an operator select any ref. Production must
+    # never deploy an unmerged feature branch, even when every digest/revision
+    # check below would otherwise be internally consistent for that branch.
+    if: github.ref == 'refs/heads/main'
     name: Deploy to Fly.io
     runs-on: ubuntu-latest
-    # 35 = headroom for two full deploy attempts (signature-gated retry in
-    # scripts/fly-deploy-with-retry.sh); typical runs are 5-8 min.
-    timeout-minutes: 35
+    # Acquisition may finish a cancelled 5h backfill before atomically taking
+    # the same stable Machine name. The deploy command itself remains bounded
+    # to 35m, inside the created-only deploy guard's server-side lease.
+    timeout-minutes: 360
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
       - name: Install flyctl
-        uses: superfly/flyctl-actions/setup-flyctl@master
+        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        with:
+          version: 0.4.94
+
+      - name: Acquire durable Fly mutation guard
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          EXPECTED_SHA: ${{ github.sha }}
+          ACKNOWLEDGE_FAILED_BACKFILL_MACHINE_ID: ${{ inputs.acknowledge_failed_backfill_machine_id }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF: ${{ github.ref }}
+        run: bash scripts/run-video-poster-backfill.sh --acquire-deploy-guard
 
       - name: Deploy
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           chmod +x scripts/fly-deploy-with-retry.sh
-          scripts/fly-deploy-with-retry.sh --remote-only
+          timeout --signal=TERM --kill-after=60s 2100s \
+            scripts/fly-deploy-with-retry.sh \
+            --remote-only \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}"
 
-      - name: Verify
+      - name: Verify exact deployed image, unmanaged guard, and health
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: flyctl status --app nova-video
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          guard_name='nova-video-production-mutation-guard'
+          guard_owner="${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}"
+          managed_fleet_has_required_processes() {
+            jq -e '
+              [.[]
+                | select(
+                    ((.config.metadata // .incomplete_config.metadata // {})
+                      | has("fly_process_group"))
+                  )] as $managed
+              | any($managed[];
+                  ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "api")
+                and any($managed[];
+                  ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "worker")
+                and any($managed[];
+                  ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "light")
+                and any($managed[];
+                  ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "autoplace")
+            ' >/dev/null
+          }
+          managed_fleet_has_transitional_states() {
+            jq -e '
+              [.[]
+                | select(
+                    ((.config.metadata // .incomplete_config.metadata // {})
+                      | has("fly_process_group"))
+                  )]
+              | any(.state == "starting" or .state == "stopping")
+            ' >/dev/null
+          }
+          managed_fleet_is_operationally_stable() {
+            jq -e '
+              [.[]
+                | select(
+                    ((.config.metadata // .incomplete_config.metadata // {})
+                      | has("fly_process_group"))
+                  )] as $managed
+              | any($managed[];
+                  ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "api"
+                    and .state == "started")
+                and any($managed[];
+                  ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "worker")
+                and any($managed[];
+                  ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "light"
+                    and .state == "started")
+                and any($managed[];
+                  ((.config.metadata // .incomplete_config.metadata).fly_process_group) == "autoplace"
+                    and .state == "started")
+                and all($managed[];
+                  (.config // .incomplete_config // {}) as $config
+                  | (($config.metadata // {}).fly_process_group) as $group
+                  | ([.events[]? | select(.type == "exit")]
+                      | sort_by(.timestamp) | last | .request.exit_event) as $last_exit
+                  | ($group | type == "string" and length > 0)
+                    and (
+                      .state == "started"
+                      or (
+                        .state == "stopped"
+                        and (
+                          ($group == "api"
+                            and any(($config.services // [])[]?;
+                              .autostop == true or .autostop == "stop"))
+                          or ($group == "worker"
+                            and $last_exit.requested_stop == true
+                            and ($last_exit.oom_killed // false) == false
+                            and ($last_exit.restarting // false) == false)
+                        )
+                      )
+                    )
+                )
+            ' >/dev/null
+          }
+          for attempt in $(seq 1 20); do
+            machines_json="$(flyctl machine list --app nova-video --json)"
+            managed_count="$(jq '[.[] | select(((.config.metadata // .incomplete_config.metadata // {}) | has("fly_process_group")))] | length' <<<"$machines_json")"
+            digest_count="$(jq '[.[] | select(((.config.metadata // .incomplete_config.metadata // {}) | has("fly_process_group"))) | .image_ref.digest] | unique | length' <<<"$machines_json")"
+            [[ "$managed_count" -ge 1 && "$digest_count" == "1" ]] || {
+              echo "::error::managed production Machines do not expose one immutable digest"
+              exit 1
+            }
+            managed_fleet_has_required_processes <<<"$machines_json" || {
+              echo "::error::managed production Machines are missing a required api, worker, light, or autoplace process group"
+              exit 1
+            }
+            jq -e '
+              [.[]
+                | select(
+                    ((.config.metadata // .incomplete_config.metadata // {})
+                      | has("fly_process_group"))
+                  )]
+              | all(
+                  .state == "started" or .state == "stopped"
+                  or .state == "starting" or .state == "stopping"
+                )
+            ' <<<"$machines_json" >/dev/null || {
+              echo "::error::managed production Machines expose an unsafe lifecycle state"
+              exit 1
+            }
+            if managed_fleet_is_operationally_stable <<<"$machines_json"; then
+              break
+            fi
+            managed_fleet_has_transitional_states <<<"$machines_json" || {
+              echo "::error::managed production Machines do not satisfy the required stable process topology"
+              exit 1
+            }
+            [[ "$attempt" -lt 20 ]] || {
+              echo "::error::managed production Machines did not reach the required stable process topology"
+              exit 1
+            }
+            echo "Waiting for managed production Machines to settle ($attempt/20)..."
+            sleep 20
+          done
+          jq -e \
+            --arg name "$guard_name" \
+            --arg owner "$guard_owner" \
+            --arg sha "$EXPECTED_SHA" '
+              [.[] | select(.name == $name)]
+              | length == 1
+                and .[0].state == "created"
+                and .[0].image_ref.digest
+                  == ((.[0].config.metadata // .[0].incomplete_config.metadata)
+                    .nova_image_digest)
+                and ((.[0].config.metadata // .[0].incomplete_config.metadata).nova_operation
+                  == "fly-deploy-guard")
+                and ((.[0].config.metadata // .[0].incomplete_config.metadata).nova_guard_owner
+                  == $owner)
+                and ((.[0].config.metadata // .[0].incomplete_config.metadata).nova_revision
+                  == $sha)
+                and (((.[0].config.metadata // .[0].incomplete_config.metadata)
+                  | has("fly_process_group")) | not)
+                and ((.[0].config // .[0].incomplete_config).restart.policy == "no")
+                and ((.[0].config // .[0].incomplete_config).init.cmd == ["/bin/false"])
+            ' <<<"$machines_json"
+          deployed_digest="$(
+            jq -er '
+              [.[]
+                | select(
+                    ((.config.metadata // .incomplete_config.metadata // {})
+                      | has("fly_process_group"))
+                  )
+                | .image_ref.digest]
+              | unique
+              | if length == 1 then .[0] else empty end
+              | select(test("^sha256:[0-9a-f]{64}$"))
+            ' <<<"$machines_json"
+          )"
+          jq -e --arg digest "$deployed_digest" '
+            [.[]
+              | select(
+                  ((.config.metadata // .incomplete_config.metadata // {})
+                    | has("fly_process_group"))
+                )]
+            | length >= 1 and all(.image_ref.digest == $digest)
+          ' <<<"$machines_json"
+
+          image_json="$(flyctl image show --app nova-video --json)"
+          deployed_sha="$(
+            jq -er \
+              --arg digest "$deployed_digest" \
+              --arg label 'org.opencontainers.image.revision' '
+              [.[]
+                | select(.Digest == $digest)
+                | .Labels
+                | if type == "string" then fromjson else . end
+                | .[$label]]
+              | unique
+              | if length == 1 then .[0] else empty end
+              | select(type == "string" and test("^[0-9a-f]{40}$"))
+            ' <<<"$image_json"
+          )"
+          [[ "$deployed_sha" == "$EXPECTED_SHA" ]]
+          flyctl status --app nova-video
+          curl --fail --silent --show-error --retry 5 --retry-all-errors \
+            --connect-timeout 10 --max-time 30 \
+            https://nova-video.fly.dev/health >/dev/null
+          printf '%s %s\n' "$EXPECTED_SHA" "$deployed_digest" \
+            >"$RUNNER_TEMP/nova-fly-deploy-verified"
+
+      - name: Release durable Fly mutation guard
+        if: always()
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          receipt="$RUNNER_TEMP/nova-fly-deploy-verified"
+          if [[ ! -f "$receipt" ]]; then
+            echo "::warning::Exact digest/revision/health verification did not finish; retaining the deploy guard until its validated reclaim deadline."
+            exit 0
+          fi
+          read -r verified_sha verified_digest <"$receipt"
+          [[ "$verified_sha" == "$EXPECTED_SHA" \
+            && "$verified_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          VERIFIED_DEPLOY_DIGEST="$verified_digest" \
+            bash scripts/run-video-poster-backfill.sh --release-deploy-guard

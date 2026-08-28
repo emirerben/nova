@@ -503,6 +503,29 @@ def object_metadata(object_path: str) -> ObjectMetadata:
     )
 
 
+def object_metadata_once(object_path: str, *, timeout_s: float) -> ObjectMetadata:
+    """Return metadata with one bounded GCS request and no SDK retry.
+
+    Maintenance audits own their retry/fail-closed policy. Disabling implicit
+    retries prevents one unavailable source from consuming the whole rollout
+    deadline while still proving the object has non-zero bytes.
+    """
+    if timeout_s <= 0:
+        raise ValueError("timeout_s must be positive")
+    bucket = _get_client().bucket(settings.storage_bucket)
+    blob = bucket.get_blob(object_path, timeout=timeout_s, retry=None)
+    if blob is None or blob.generation is None:
+        raise FileNotFoundError(object_path)
+    return ObjectMetadata(
+        path=object_path,
+        generation=str(blob.generation),
+        etag=blob.etag,
+        size=int(blob.size or 0),
+        content_type=blob.content_type or "video/mp4",
+        md5_hash=blob.md5_hash,
+    )
+
+
 def copy_object_generation(
     src_object_path: str,
     dst_object_path: str,
@@ -558,3 +581,32 @@ def object_exists(object_path: str) -> bool:
     bucket = _get_client().bucket(settings.storage_bucket)
     blob = bucket.blob(object_path)
     return blob.exists()
+
+
+def object_exists_once(object_path: str, *, timeout_s: float) -> bool:
+    """Check existence with one bounded GCS request and no automatic retry.
+
+    Durable callers already own retry policy. Disabling the SDK retry prevents
+    one slow object from consuming an entire Celery maintenance deadline.
+    """
+    if timeout_s <= 0:
+        raise ValueError("timeout_s must be positive")
+    bucket = _get_client().bucket(settings.storage_bucket)
+    blob = bucket.blob(object_path)
+    return blob.exists(timeout=timeout_s, retry=None)
+
+
+def delete_object_once(object_path: str, *, timeout_s: float) -> bool:
+    """Delete one object with a bounded request; missing is already complete.
+
+    Unlike ``delete_object_best_effort``, transport and task-timeout exceptions
+    propagate so a durable receipt can stay committed for the next sweep.
+    """
+    if timeout_s <= 0:
+        raise ValueError("timeout_s must be positive")
+    bucket = _get_client().bucket(settings.storage_bucket)
+    try:
+        bucket.blob(object_path).delete(timeout=timeout_s, retry=None)
+    except NotFound:
+        return True
+    return True

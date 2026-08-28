@@ -1,0 +1,9 @@
+{
+  "motion_fps": 30,
+  "timeline_max_slots": 120,
+  "motion_max_instances": 12,
+  "motion_max_instance_seconds": 8,
+  "motion_max_active_seconds": 12,
+  "motion_max_concurrent_complexity": 8,
+  "motion_max_complexity_multiplier": 4
+}

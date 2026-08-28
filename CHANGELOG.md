@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.56.0.0] — 2026-08-27
+## [Unreleased]
 
 ### Added
 - **Mobile creators can now edit against a direct thumbnail timeline.** A fixed center playhead, tap-to-seek clip selection, 44px source In/Out handles, pinch zoom, visible zoom controls, and Fit make precise trimming practical on phone-sized screens.
@@ -17,6 +17,43 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Trim gestures now create exactly one undo step and ripple later clips from the canonical timeline.** Transition-overlap taps select the visible incoming clip, pinch zoom preserves its fixed-playhead anchor, and keyboard users retain a native seek control after touch gestures.
 - **Timeline thumbnails now match each clip's source window without stale or distorted frames.** Current requests clear old imagery immediately, source-plus-clip decoding avoids cross-editor cancellation, and pooled media resources are released after each decode queue drains.
+
+## [0.56.0.4] — 2026-08-28
+
+### Fixed
+- **Guided Story bulk drafts keep their approved text identity through Save.** The conventional editor no longer adds a legacy synthetic intro tombstone to an unchanged guided title, so the complete 103-clip slideshow can pass the canonical revision identity check without weakening protection against unapproved text IDs.
+
+## [0.56.0.3] — 2026-08-28
+
+### Fixed
+- **Large guided slideshows now survive Save.** The editor serializes zero-duration hard cuts using the commit API's canonical null value, while the backend also accepts and normalizes older guided drafts that send `0`; animated transitions still require at least 0.1 seconds.
+
+## [0.56.0.2] — 2026-08-28
+
+### Fixed
+- **Fly deploys can acquire the production mutation guard again.** Guard Machines are created from the unique deployment tag and still verified against the fleet's exact immutable digest, avoiding the invalid double-digest image reference that blocked the Kria backend rollout.
+- **“Stack the images together” now creates the intended fastest slideshow.** Kria gathers every selected image into consecutive individual 0.2-second clips, preserves video timing, and creates no Card Stack, Film Strip, zoom, or Ken Burns motion unless the creator explicitly asks for that Creator Block.
+
+## [0.56.0.1] — 2026-08-28
+
+### Fixed
+- **Kria now completes the original bulk request after a browser-side constraint clarification.** Atomic add-all, image-duration, and stack actions retain their full typed plan and integrity proof across follow-ups; stale or incomplete selections return a precise clarification with zero partial edits.
+- **Staged clip edits now show their true duration before Save.** The editor transport, ruler, and seek bounds use the staged timeline total even while the old rendered MP4 remains the visual fallback, and Save is still required to render the new video.
+
+## [0.56.0.0] — 2026-08-28
+
+### Changed
+- **Posterless library tiles now load video only after an explicit Play action.** Mobile grids keep every MP4 unmounted until selected, allow only one active preview, expose a reliable Stop/retry flow, and release the decoder when playback ends.
+
+### Fixed
+- **Historical ready videos now receive durable, source-matched posters without re-rendering.** The repair covers every browser-visible output shape, proves database writes and storage publication under row locks, repairs interrupted runs, and excludes synthetic or non-library jobs.
+- **Later renders and account cleanup no longer leak immutable backfill posters.** Durable cleanup receipts survive storage failures and concurrency, protect rollback assets, and are reconciled by a bounded indexed maintenance sweep.
+- **The production repair can run only against the exact revision live on every Fly Machine.** Deploy and backfill workflows serialize safely, resume cancelled repair Machines, reject mixed releases or altered execution contracts, and finish with a strict zero-work audit; use the [video-poster backfill runbook](docs/runbooks/video-poster-backfill.md) to run or recover it.
+
+## [0.55.0.2] — 2026-08-27
+
+### Fixed
+- **Kria can now complete the production-scale “add all” mixed-media follow-up instead of stopping at artificial editor limits.** Guided edits support up to 120 timeline slots and 12 Creator Blocks across a 12-second active window; the exact 103-slot request keeps existing video timing, makes all 58 images 0.2 seconds, stacks them exactly once, and trims only newly added videos enough to remain under 60 seconds.
 
 ## [0.55.0.1] — 2026-08-27
 

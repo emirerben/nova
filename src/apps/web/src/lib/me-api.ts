@@ -77,6 +77,11 @@ export interface LibraryPage {
   next_cursor: string | null;
 }
 
+export interface JobPlaybackUrl {
+  /** Newly signed URL for an explicit playback attempt. */
+  video_url: string;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${ME_BASE}${path}`, {
     ...init,
@@ -105,6 +110,17 @@ export function listMyJobs(opts?: { limit?: number; cursor?: string }): Promise<
   if (opts?.cursor) qs.set("cursor", opts.cursor);
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return request<LibraryPage>(`/jobs${suffix}`);
+}
+
+/** Fetch a fresh signed URL immediately before playing one library video. */
+export function getMyJobPlaybackUrl(
+  jobId: string,
+  signal?: AbortSignal,
+): Promise<JobPlaybackUrl> {
+  return request<JobPlaybackUrl>(`/jobs/${jobId}/playback-url`, {
+    cache: "no-store",
+    signal,
+  });
 }
 
 /** Pin a standalone video onto a day in the signed-in user's content plan. */
