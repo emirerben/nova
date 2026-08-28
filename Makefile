@@ -191,7 +191,8 @@ verify-editor-timeline:
 		src/__tests__/lib/motion-runtime-generated-contract.test.ts \
 		src/lib/__tests__/carousel-timing.test.ts \
 		src/lib/timeline/__tests__/timeline-scale.test.ts && \
-		npx playwright test --project=desktop-editor)
+		npx playwright test --project=desktop-editor && \
+		npx playwright test --project=iphone13 --project=iphone14 mobile-video-editor.spec.ts)
 	(cd $(API_DIR) && $(API_LOCAL_PYTHON) -m pytest -q \
 		tests/pipeline/carousel/test_choreography.py \
 		tests/pipeline/carousel/test_segment_kill_switch.py \

@@ -206,10 +206,16 @@ import {
   buildTimedTextSequence,
   TEXT_ELEMENTS_API_MAX,
 } from "./editor-text-composition";
-import { splitSlotAt, deleteSlotEnforceFloor, activeSlotCount } from "./slot-split";
+import {
+  activeSlotCount,
+  canSplitSlotAt,
+  deleteSlotEnforceFloor,
+  splitSlotAt,
+} from "./slot-split";
 import {
   applyManualClipTimingPatch,
   applyTextTimingInput,
+  minimumClipDurationForSlot,
   outputTimeForSlotBoundary,
   rangesDiffer,
   sequentialSlotLayout,
@@ -240,7 +246,13 @@ import ToolDrawer from "./ToolDrawer";
 import Sheet from "./Sheet";
 import { ToolDock, type DockTool } from "./ToolDock";
 import { ContextStrip, type StripSelection } from "./ContextStrip";
-import { MiniStrip, type MiniStripSegment } from "./MiniStrip";
+import {
+  MiniStrip,
+  type MiniStripLane,
+  type MiniStripLaneItem,
+  type MiniStripLaneTimingPatch,
+  type MiniStripSegment,
+} from "./MiniStrip";
 import {
   initialPocketState,
   pocketReducer,
@@ -1489,6 +1501,8 @@ export default function EditorShell({
     operationDisabledReason(capabilities?.clips?.trim) ?? clipDisabledReason;
   const clipAddDisabledReason =
     operationDisabledReason(capabilities?.clips?.add) ?? clipDisabledReason;
+  const clipRemoveDisabledReason =
+    operationDisabledReason(capabilities?.clips?.remove) ?? clipDisabledReason;
   const clipReorderDisabledReason =
     operationDisabledReason(capabilities?.clips?.reorder) ?? clipDisabledReason;
   const clipSplitDisabledReason =
@@ -3124,6 +3138,41 @@ export default function EditorShell({
     ],
   );
 
+  const editTextBar = useCallback(
+    (id: string, text: string) => {
+      if (readOnly) return;
+      const target = state.bars.find((bar) => bar.id === id);
+      if (!target) return;
+      if (!isCaptionBar(target) && !textElementsAllowed) return;
+      history.record(`text:${id}`);
+      if (isCaptionBar(target)) {
+        setCaptionDirty(true);
+      } else if (lyricsOptionalActive || !isLyricBar(target)) {
+        setTextDirty(true);
+      }
+      dispatch({
+        type: "PATCH_BAR",
+        id,
+        patch: motionPatchForText(target, text, previewDuration),
+      });
+    },
+    [
+      history,
+      lyricsOptionalActive,
+      previewDuration,
+      readOnly,
+      state.bars,
+      textElementsAllowed,
+    ],
+  );
+
+  const editSelectedText = useCallback(
+    (text: string) => {
+      if (selectedBar) editTextBar(selectedBar.id, text);
+    },
+    [editTextBar, selectedBar],
+  );
+
   const beginTextMotionGesture = useCallback(() => {
     if (!readOnly) history.record();
   }, [history, readOnly]);
@@ -4244,13 +4293,13 @@ export default function EditorShell({
 
   const addTextAtPlayhead = useCallback(
     (preset: TextPreset = DEFAULT_TEXT_PRESET) => {
-      if (readOnly) return;
+      if (readOnly) return null;
       if (textElementsLocked) {
         // OV-1: the rail disables the Text/Styles buttons, but this callback
         // is also reachable via preset picks — same gate, honest toast. The
         // copy is text-specific (never the whole-shell "can't be edited").
         notify(textElementsLockedCopy(capabilities));
-        return;
+        return null;
       }
       history.record();
       setTextDirty(true);
@@ -4269,6 +4318,7 @@ export default function EditorShell({
           : bar;
       dispatch({ type: "ADD_TEXT", bar: authoredBar });
       selectText(bar.id);
+      return bar.id;
     },
     [
       currentTime,
@@ -4281,6 +4331,13 @@ export default function EditorShell({
       notify,
     ],
   );
+
+  const addPocketTextAtPlayhead = useCallback(() => {
+    const id = addTextAtPlayhead();
+    if (!id) return;
+    setActiveTool(null);
+    dispatchPocket({ type: "CLOSE_SHEET" });
+  }, [addTextAtPlayhead]);
 
   const splitAndPlaceText = useCallback(
     (text: string): boolean => {
@@ -5943,21 +6000,40 @@ export default function EditorShell({
   );
 
   // Transport enablement (plan §6).
+  const splitBaseTime = outputToBaseTimeRef.current(currentTime);
+  const selectedTextCanSplitAtPlayhead =
+    selection?.kind === "text" &&
+    !!selectedBar &&
+    !isLyricBar(selectedBar) &&
+    Math.round(splitBaseTime * 10) / 10 > selectedBar.start_s + 0.2 - 1e-9 &&
+    Math.round(splitBaseTime * 10) / 10 < selectedBar.end_s - 0.2 + 1e-9;
+  const selectedClipCanSplitAtPlayhead =
+    selection?.kind === "clip" &&
+    canSplitSlotAt(slots, clip.state.grid, selection.id, splitBaseTime);
   const canSplit =
-    (selection?.kind === "text" && !!selectedBar && !isLyricBar(selectedBar)) ||
+    selectedTextCanSplitAtPlayhead ||
     (selection?.kind === "clip" &&
       splitClipsAllowed &&
-      (!guidedStoryV2 || selectedClip?.sourceKind === "video"));
-  const splitReason =
-    selection?.kind === "music"
-      ? "Music fits the cut automatically"
-      : selection?.kind === "text" && selectedBar && isLyricBar(selectedBar)
-        ? "Lyric timing is locked to the vocal."
-      : selection?.kind === "clip" && !splitClipsAllowed
-        ? clipSplitDisabledReason ?? "This variant's clips can't be split"
-        : selection?.kind === "clip" && guidedStoryV2 && selectedClip?.sourceKind !== "video"
-          ? "Images can be resized, but they can’t be split."
-        : undefined;
+      (!guidedStoryV2 || selectedClip?.sourceKind === "video") &&
+      selectedClipCanSplitAtPlayhead);
+  let splitReason: string | undefined;
+  if (selection?.kind === "music") {
+    splitReason = "Music fits the cut automatically";
+  } else if (selection?.kind === "text" && selectedBar && isLyricBar(selectedBar)) {
+    splitReason = "Lyric timing is locked to the vocal.";
+  } else if (selection?.kind === "text" && !selectedTextCanSplitAtPlayhead) {
+    splitReason = "Move the playhead over the text to split it.";
+  } else if (selection?.kind === "clip" && !splitClipsAllowed) {
+    splitReason = clipSplitDisabledReason ?? "This variant's clips can't be split";
+  } else if (
+    selection?.kind === "clip" &&
+    guidedStoryV2 &&
+    selectedClip?.sourceKind !== "video"
+  ) {
+    splitReason = "Images can be resized, but they can’t be split.";
+  } else if (selection?.kind === "clip" && !selectedClipCanSplitAtPlayhead) {
+    splitReason = "Move the playhead inside this clip to split.";
+  }
   const canDelete =
     (selection?.kind === "text" && !!selectedBar && !isLyricBar(selectedBar)) ||
     (selection?.kind === "clip" && clipRemoveAllowed && activeSlotCount(slots) > 1) ||
@@ -5967,6 +6043,11 @@ export default function EditorShell({
     (selection?.kind === "motion" && motionScenesAllowed) ||
     (selection?.kind === "carousel" && carouselCapable && carouselMoment !== null) ||
     selection?.kind === "camera";
+  const selectedClipDeleteDisabledReason = !clipRemoveAllowed
+    ? (clipRemoveDisabledReason ?? "This variant's clips can't be deleted")
+    : activeSlotCount(slots) <= 1
+      ? "At least one clip must remain"
+      : null;
 
   // ── Keyboard: Escape ladder + Delete with focus guard (plan §5/§9) ──────────
   useEffect(() => {
@@ -7071,8 +7152,14 @@ export default function EditorShell({
             return {
               type: "text" as const,
               onEdit: () => {
-                dispatchPocket({ type: "OPEN_INSPECTOR" });
-                focusContent();
+                dispatchPocket({ type: "CLOSE_SHEET" });
+                requestAnimationFrame(() => {
+                  document
+                    .querySelector<HTMLElement>(
+                      `[data-text-id="${selectedBar.id}"] [role="textbox"]`,
+                    )
+                    ?.focus({ preventScroll: true });
+                });
               },
               onStyle: () => {
                 setInspectorTab("presets");
@@ -7124,32 +7211,299 @@ export default function EditorShell({
                 setVideoMuted((m) => !m);
               },
               onDelete: deleteSelected,
+              deleteDisabledReason: selectedClipDeleteDisabledReason,
             };
           }
           return null;
         })();
-  // Captions render at the canvas bottom — flip the strip to the top so the
-  // quick actions never cover the cue they act on.
-  const pocketStripOnTop =
-    pocketStripSelection?.type === "caption" || pocketStripSelection?.type === "clip";
+  // Captions render at the canvas bottom — flip their quick actions to the top.
+  // Clip actions live with the direct-manipulation timeline below the preview.
+  const pocketStripOnTop = pocketStripSelection?.type === "caption";
+  const miniStripClipByIndex = new Map(
+    clip.clips.map((source) => [source.clip_index, source]),
+  );
   const miniStripSegments: MiniStripSegment[] = pocketActive
     ? virtualPreview.timeline.entries.flatMap((entry) => {
-        if (entry.kind !== "clip") return [];
-        const startS = entry.startS;
-        const endS = entry.startS + entry.durationS;
-        const hasMarks =
-          visibleTextBars.some((b) => b.start_s < endS && b.end_s > startS) ||
-          localMotionScenes.some(
-            (scene) =>
-              scene.start_frame / MOTION_FPS < endS &&
-              scene.end_frame_exclusive / MOTION_FPS > startS,
-          );
-        return [{ id: entry.slotKey, startS, endS, hasMarks }];
-      })
+            if (entry.kind !== "clip") return [];
+            const startS = entry.startS;
+            const endS = entry.startS + entry.durationS;
+            const hasMarks =
+              visibleTextBars.some(
+                (bar) => bar.start_s < endS && bar.end_s > startS,
+              ) ||
+              localMotionScenes.some(
+                (scene) =>
+                  scene.start_frame / MOTION_FPS < endS &&
+                  scene.end_frame_exclusive / MOTION_FPS > startS,
+              );
+            const slot = slots[entry.slotIndex];
+            const source = miniStripClipByIndex.get(entry.clipIndex);
+            const trimReason = readOnly
+              ? readOnlyReason
+              : clipEditingLocked
+                ? clipTimingDisabledReason
+                : null;
+            return [
+              {
+                id: entry.slotKey,
+                startS,
+                endS,
+                hasMarks,
+                sourceUrl: entry.sourceUrl,
+                sourceId: entry.clipIndex,
+                sourceStartS: entry.inS,
+                sourceDurationS:
+                  source?.duration_s ??
+                  clipSourceDurations[entry.slotKey] ??
+                  null,
+                minDurationS: minimumClipDurationForSlot({
+                  grid: clip.state.grid,
+                  offsetBeats:
+                    slotLayout.windows[entry.slotIndex]?.offsetBeats,
+                }),
+                label:
+                  slot?.momentDescription ?? `Clip ${entry.slotIndex + 1}`,
+                trimDisabledReason: trimReason,
+              },
+            ];
+          })
     : [];
   const carouselMiniStripEntry = virtualPreview.timeline.entries.find(
     (entry) => entry.kind === "carousel",
   );
+  const pocketTimelineLanes: MiniStripLane[] = (() => {
+    const lanes: MiniStripLane[] = [];
+    const textItems = canvasTextBars
+      .filter((bar) => !isCaptionBar(bar))
+      .map((bar) => ({
+        id: bar.id,
+        kind: "text" as const,
+        startS: bar.start_s,
+        endS: bar.end_s,
+        label: bar.text.trim() || "Text",
+        resizeDisabledReason: readOnly
+          ? readOnlyReason
+          : isLyricBar(bar)
+            ? "Lyrics timing follows the song."
+            : !textElementsAllowed
+              ? (textDisabledReason ?? "Text timing is locked for this edit.")
+              : null,
+      }));
+    const captionItems = canvasTextBars
+      .filter((bar) => isCaptionBar(bar))
+      .map((bar) => ({
+        id: bar.id,
+        kind: "text" as const,
+        startS: bar.start_s,
+        endS: bar.end_s,
+        label: bar.text.trim() || "Caption",
+        resizeDisabledReason: readOnly
+          ? readOnlyReason
+          : !textElementsAllowed
+            ? (textDisabledReason ?? "Caption timing is locked for this edit.")
+            : null,
+      }));
+    const visualItems = canvasVisualBlocks.map((block) => ({
+      id: block.id,
+      kind: "visual" as const,
+      startS: block.start_s,
+      endS: block.end_s,
+      label:
+        block.kind === "montage"
+          ? "Montage"
+          : block.kind === "text_card"
+            ? "Text card"
+            : block.media_kind === "video"
+              ? "Video"
+              : "Image",
+      resizeDisabledReason: readOnly
+        ? readOnlyReason
+        : !visualBlocksAllowed
+          ? (visualBlocksDisabledReason ?? "Visual timing is locked for this edit.")
+          : null,
+    }));
+    const blockItems = [
+      ...canvasMotionScenes.map((scene) => ({
+        id: scene.id,
+        kind: "motion" as const,
+        startS: scene.start_frame / MOTION_FPS,
+        endS: scene.end_frame_exclusive / MOTION_FPS,
+        label:
+          scene.preset_id === "route_trace"
+            ? "Route trace"
+            : creatorBlockEntry(scene.preset_id).label,
+        resizeDisabledReason: readOnly
+          ? readOnlyReason
+          : !motionScenesAllowed ||
+              (scene.preset_id === "evolving_type" &&
+                !evolvingTypeExposureEnabled)
+            ? (motionScenesDisabledReason ?? "Effect timing is locked for this edit.")
+            : null,
+      })),
+      ...(carouselMiniStripEntry?.kind === "carousel"
+        ? [
+            {
+              id: CAROUSEL_SELECTION_ID,
+              kind: "carousel" as const,
+              startS: carouselMiniStripEntry.startS,
+              endS:
+                carouselMiniStripEntry.startS +
+                carouselMiniStripEntry.durationS,
+              label: "Carousel",
+              resizeDisabledReason: readOnly
+                ? readOnlyReason
+                : !carouselCapable
+                  ? (carouselReason ?? "Carousel timing is locked for this edit.")
+                  : null,
+            },
+          ]
+        : []),
+    ];
+    const cameraItems = canvasCameraEffects.map((effect) => ({
+      id: effect.id,
+      kind: "camera" as const,
+      startS: effect.start_s,
+      endS: effect.end_s,
+      label:
+        effect.token === "semantic_crop_pulse" ? "Crop pulse" : "Camera effect",
+      resizeDisabledReason: readOnly
+        ? readOnlyReason
+        : capabilities?.camera_effects === false
+          ? "Camera effects are unavailable for this edit."
+          : null,
+    }));
+    const sfxItems = canvasSfxPlacements.map((placement) => {
+      const trimStartS = placement.trim_start_s ?? 0;
+      const trimEndS =
+        placement.trim_end_s ?? placement.duration_s ?? trimStartS + 0.6;
+      return {
+        id: placement.id,
+        kind: "sfx" as const,
+        startS: placement.at_s,
+        endS: Math.min(
+          previewDuration,
+          placement.at_s + Math.max(0.1, trimEndS - trimStartS),
+        ),
+        label: placement.label?.trim() || "Sound effect",
+        resizeDisabledReason: readOnly
+          ? readOnlyReason
+          : !sfxAllowed
+            ? (sfxDisabledReason ?? "Sound effect timing is locked for this edit.")
+            : placement.trim_end_s == null && placement.duration_s == null
+              ? "This sound effect has no editable source duration."
+              : null,
+      };
+    });
+    const overlayItems = canvasOverlays.map((overlay) => ({
+      id: overlay.id,
+      kind: "overlay" as const,
+      startS: overlay.start_s,
+      endS: overlay.end_s,
+      label: overlay.kind === "video" ? "Video overlay" : "Image overlay",
+      resizeDisabledReason: readOnly
+        ? readOnlyReason
+        : !overlaysAllowed
+          ? (overlaysDisabledReason ?? "Overlay timing is locked for this edit.")
+          : null,
+    }));
+
+    if (textItems.length > 0) {
+      lanes.push({ id: "text", label: "Text", items: textItems });
+    }
+    if (captionItems.length > 0) {
+      lanes.push({ id: "captions", label: "Captions", items: captionItems });
+    }
+    if (visualItems.length > 0) {
+      lanes.push({ id: "visuals", label: "Visuals", items: visualItems });
+    }
+    if (blockItems.length > 0) {
+      lanes.push({ id: "blocks", label: "Blocks", items: blockItems });
+    }
+    if (cameraItems.length > 0) {
+      lanes.push({ id: "camera", label: "Camera", items: cameraItems });
+    }
+    if (sfxItems.length > 0) {
+      lanes.push({ id: "sfx", label: "Sound effects", items: sfxItems });
+    }
+    if (hasPlayableMusic) {
+      lanes.push({
+        id: "music",
+        label: soundLaneTitle,
+        items: [
+          {
+            id: "background",
+            kind: "music",
+            startS: 0,
+            endS: previewDuration,
+            label: soundBedLabel || "Music",
+            resizable: false,
+          },
+        ],
+      });
+    }
+    if (overlayItems.length > 0) {
+      lanes.push({ id: "overlays", label: "Overlays", items: overlayItems });
+    }
+    return lanes;
+  })();
+  const previewPocketLaneTiming = (
+    item: MiniStripLaneItem,
+    patch: MiniStripLaneTimingPatch,
+    handle: "left" | "right",
+  ) => {
+    if (item.kind === "music") return;
+    const start_s = Math.max(
+      0,
+      outputToBaseTimeRef.current(patch.startS),
+    );
+    const end_s = Math.max(
+      start_s + 0.1,
+      outputToBaseTimeRef.current(patch.endS),
+    );
+
+    if (item.kind === "text") {
+      const origin = state.bars.find((bar) => bar.id === item.id);
+      if (origin) {
+        previewTextTiming(item.id, { start_s, end_s }, handle, origin);
+      }
+    } else if (item.kind === "visual") {
+      previewVisualTiming(item.id, { start_s, end_s });
+    } else if (item.kind === "motion") {
+      const scene = localMotionScenes.find((candidate) => candidate.id === item.id);
+      if (scene) {
+        previewMotionTiming(
+          item.id,
+          { start_s, end_s },
+          {
+            id: scene.id,
+            label:
+              scene.preset_id === "route_trace"
+                ? "Route trace"
+                : creatorBlockEntry(scene.preset_id).label,
+            start_s: scene.start_frame / MOTION_FPS,
+            end_s: scene.end_frame_exclusive / MOTION_FPS,
+            sourceScene: scene,
+          },
+        );
+      }
+    } else if (item.kind === "carousel") {
+      if (carouselMoment && carouselCapable) {
+        applyCarouselMoment(
+          resizeCarouselTiming(
+            carouselMoment,
+            Math.max(0.1, patch.endS - patch.startS),
+            carouselClips.map((clip) => clip.clipIndex),
+          ),
+        );
+      }
+    } else if (item.kind === "sfx") {
+      previewSfxTiming(item.id, { at_s: start_s, end_s });
+    } else if (item.kind === "overlay") {
+      previewOverlayTiming(item.id, { start_s, end_s });
+    } else if (item.kind === "camera") {
+      previewCameraTiming(item.id, { start_s, end_s });
+    }
+  };
   const pocketTransportSlot = pocketActive ? (
     <div className="flex items-center gap-2">
       <Button
@@ -7208,6 +7562,9 @@ export default function EditorShell({
           layoutMode === "light"
             ? "56px minmax(0, 1fr) auto"
             : "56px minmax(0, 1fr) clamp(220px, 30dvh, 260px)",
+        // Keep the full-screen pocket header below iOS status bars/notches.
+        // `env()` resolves to zero on desktop and non-notched viewports.
+        paddingTop: "env(safe-area-inset-top)",
         // Half detent is non-modal (§3): canvas + transport squeeze above the
         // sheet so playback stays visible and controllable while editing.
         ...(pocketSheetOpen && pocket.detent === "half"
@@ -7462,6 +7819,9 @@ export default function EditorShell({
               setLightSheetOpen(false);
             }}
             onPatchBar={patchBar}
+            onEditText={POCKET_UI ? editTextBar : undefined}
+            inlineTextEditing={POCKET_UI}
+            textEditable={POCKET_UI && !readOnly && textElementsAllowed}
             onPatchOverlay={POCKET_UI ? patchOverlay : undefined}
             onPreviewVisualBlock={POCKET_UI ? previewVisualMediaBlock : undefined}
             onPatchVisualBlock={POCKET_UI ? commitVisualMediaBlock : undefined}
@@ -7489,7 +7849,9 @@ export default function EditorShell({
               POCKET_UI
                 ? pocketSheetOpen && pocket.detent === "half"
                   ? "46dvh - 128px"
-                  : "100dvh - 260px"
+                  : pocketStripSelection?.type === "clip"
+                    ? "100dvh - 398px"
+                    : "100dvh - 350px"
                 : "100dvh - 152px"
             }
             canvas={activeCanvas}
@@ -7518,7 +7880,7 @@ export default function EditorShell({
               <RedoIcon className="h-5 w-5" />
             </Button>
           )}
-          {pocketStripSelection && (
+          {pocketStripSelection && pocketStripSelection.type !== "clip" && (
             <div
               className={`absolute left-1/2 z-20 -translate-x-1/2 ${
                 pocketStripOnTop ? "top-3" : "bottom-3"
@@ -7828,26 +8190,7 @@ export default function EditorShell({
           sampleWord={sampleWord}
           appliedPresetId={appliedPresetId}
           contentRef={contentRef}
-          onEditText={(text) => {
-            if (
-              selectedBar &&
-              !readOnly &&
-              (textElementsAllowed || isCaptionBar(selectedBar))
-            ) {
-              // Coalesce keystrokes on one bar into a single undo step.
-              history.record(`text:${selectedBar.id}`);
-              if (isCaptionBar(selectedBar)) {
-                setCaptionDirty(true);
-              } else if (lyricsOptionalActive || !isLyricBar(selectedBar)) {
-                setTextDirty(true);
-              }
-              dispatch({
-                type: "PATCH_BAR",
-                id: selectedBar.id,
-                patch: motionPatchForText(selectedBar, text, previewDuration),
-              });
-            }
-          }}
+          onEditText={editSelectedText}
           onPatch={(patch) => {
             if (selectedBar) patchBar(selectedBar.id, patch);
           }}
@@ -7945,56 +8288,50 @@ export default function EditorShell({
               duration={previewDuration}
               onPlayPause={togglePlay}
               onScrub={seekTo}
+              compact
             />
             {!pocketSheetOpen && miniStripSegments.length > 0 && (
-              <div className="bg-white px-4 pb-2">
+              <div className="bg-white">
                 <MiniStrip
                   segments={miniStripSegments}
                   durationS={virtualPreview.timeline.totalDurationS || timelineDuration || previewDuration}
                   currentTimeS={currentTime}
                   playbackClock={playbackClock}
                   selectedClipId={selection?.kind === "clip" ? selection.id : null}
-                  marks={[
-                    ...localMotionScenes.map((scene) => ({
-                      id: scene.id,
-                      startS: scene.start_frame / MOTION_FPS,
-                      endS: scene.end_frame_exclusive / MOTION_FPS,
-                      label:
-                        scene.preset_id === "route_trace"
-                          ? "Route trace"
-                          : creatorBlockEntry(scene.preset_id).label,
-                    })),
-                    ...(carouselMiniStripEntry?.kind === "carousel"
-                      ? [
-                          {
-                            id: CAROUSEL_SELECTION_ID,
-                            startS: carouselMiniStripEntry.startS,
-                            endS:
-                              carouselMiniStripEntry.startS +
-                              carouselMiniStripEntry.durationS,
-                            label: "Carousel",
-                          },
-                        ]
-                      : []),
-                  ]}
-                  selectedMarkId={
-                    selection?.kind === "motion" || selection?.kind === "carousel"
-                      ? selection.id
+                  lanes={pocketTimelineLanes}
+                  selectedLaneItem={
+                    selection && selection.kind !== "clip"
+                      ? { kind: selection.kind, id: selection.id }
                       : null
                   }
                   onScrubStart={pausePlayback}
                   onScrub={seekTo}
+                  onTrimStart={recordTimelineDrag}
+                  onPreviewTrim={(id, patch) => {
+                    if (selectedClip?.slot.key !== id) return;
+                    previewSelectedClipTiming(patch);
+                  }}
+                  onDisabledTap={notify}
+                  onLaneResizeStart={recordTimelineDrag}
+                  onPreviewLaneTiming={previewPocketLaneTiming}
                   onSelectClip={(id, seconds) => {
                     selectElement("clip", id);
                     seekTo(seconds);
                   }}
-                  onSelectMark={(id, seconds) => {
-                    if (id === CAROUSEL_SELECTION_ID) selectCarousel();
-                    else selectElement("motion", id);
+                  onSelectLaneItem={(item, seconds) => {
+                    if (item.kind === "carousel") selectCarousel();
+                    else selectElement(item.kind, item.id);
                     seekTo(seconds);
                   }}
                 />
               </div>
+            )}
+            {!pocketSheetOpen && pocketStripSelection?.type === "clip" && (
+              <ContextStrip
+                selection={pocketStripSelection}
+                onDisabledTap={notify}
+                className="border-t border-border bg-background px-2 py-1"
+              />
             )}
             {!pocketSheetOpen && (
               <ToolDock
@@ -8011,6 +8348,8 @@ export default function EditorShell({
                   if (tool === "nova") {
                     dispatchPocket({ type: "CLOSE_SHEET" });
                     setActiveTool((cur) => (cur === "nova" ? null : "nova"));
+                  } else if (tool === "text") {
+                    addPocketTextAtPlayhead();
                   } else {
                     setActiveTool(null);
                     dispatchPocket({ type: "TOGGLE_TOOL", tool });
@@ -8102,21 +8441,7 @@ export default function EditorShell({
         dirty={dirty}
         readOnly={readOnly}
         onClose={() => setLightSheetOpen(false)}
-        onEditText={(text) => {
-          if (selectedBar && !readOnly) {
-            history.record(`text:${selectedBar.id}`);
-            if (isCaptionBar(selectedBar)) {
-              setCaptionDirty(true);
-            } else if (lyricsOptionalActive || !isLyricBar(selectedBar)) {
-              setTextDirty(true);
-            }
-            dispatch({
-              type: "PATCH_BAR",
-              id: selectedBar.id,
-              patch: motionPatchForText(selectedBar, text, previewDuration),
-            });
-          }
-        }}
+        onEditText={editSelectedText}
         onPickPreset={pickPreset}
         onSave={() => void handleSave()}
       />
@@ -8264,25 +8589,7 @@ export default function EditorShell({
             sampleWord={sampleWord}
             appliedPresetId={appliedPresetId}
             contentRef={contentRef}
-            onEditText={(text) => {
-              if (
-                selectedBar &&
-                !readOnly &&
-                (textElementsAllowed || isCaptionBar(selectedBar))
-              ) {
-                history.record(`text:${selectedBar.id}`);
-                if (isCaptionBar(selectedBar)) {
-                  setCaptionDirty(true);
-                } else if (lyricsOptionalActive || !isLyricBar(selectedBar)) {
-                  setTextDirty(true);
-                }
-                dispatch({
-                  type: "PATCH_BAR",
-                  id: selectedBar.id,
-                  patch: motionPatchForText(selectedBar, text, previewDuration),
-                });
-              }
-            }}
+            onEditText={editSelectedText}
             onPatch={(patch) => {
               if (selectedBar) patchBar(selectedBar.id, patch);
             }}
@@ -8686,17 +8993,25 @@ function LightTransport({
   duration,
   onPlayPause,
   onScrub,
+  compact = false,
 }: {
   playing: boolean;
   currentTime: number;
   duration: number;
   onPlayPause: () => void;
   onScrub: (seconds: number) => void;
+  compact?: boolean;
 }) {
   const safeDuration = Math.max(0, duration);
   const safeTime = Math.min(safeDuration || currentTime, Math.max(0, currentTime));
   return (
-    <div className="border-t border-border bg-background px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3">
+    <div
+      className={
+        compact
+          ? "border-t border-border bg-background px-3 py-2"
+          : "border-t border-border bg-background px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3"
+      }
+    >
       <div className="mx-auto flex max-w-[720px] items-center gap-3">
         <Button
           type="button"
@@ -8704,9 +9019,14 @@ function LightTransport({
           aria-label={playing ? "Pause video" : "Play video"}
           aria-pressed={playing}
           onClick={onPlayPause}
-          className="flex-none text-[13px]"
+          variant={compact ? "ghost" : "default"}
+          className={compact ? "size-11 flex-none" : "flex-none"}
         >
-          {playing ? "❚❚" : "▶"}
+          {playing ? (
+            <PauseIcon className="h-5 w-5" />
+          ) : (
+            <PlayIcon className="h-5 w-5" />
+          )}
         </Button>
         {/* Native range (DESIGN.md §15 — "Scrub video" keeps a raw <input
             type=range>; Slider's discrete-thumb model doesn't fit continuous
@@ -8721,11 +9041,13 @@ function LightTransport({
           value={safeDuration > 0 ? safeTime : 0}
           disabled={safeDuration <= 0}
           onChange={(e) => onScrub(Number(e.target.value))}
-          className="h-11 min-w-0 flex-1 cursor-pointer accent-lime-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-40"
+          className="h-11 min-w-0 flex-1 cursor-pointer accent-lime-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-40"
         />
         <span
           aria-label="Playback position"
-          className="w-[92px] flex-none text-right text-sm tabular-nums text-muted-foreground"
+          className={`flex-none text-sm tabular-nums text-muted-foreground ${
+            compact ? "w-[76px] text-right text-xs" : "w-[92px] text-right"
+          }`}
         >
           {formatTimecode(currentTime)}{" "}
           <span className="text-muted-foreground/60">/ {formatTimecode(duration)}</span>
