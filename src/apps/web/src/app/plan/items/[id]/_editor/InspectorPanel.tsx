@@ -87,6 +87,15 @@ import type { InspectorTab } from "./InspectorRail";
 import { normalizeEditableHex } from "./editor-color";
 import { FontSelect, HexInput } from "./inspector-fields";
 import {
+  EDITOR_TEXT_SIZE_MAX,
+  EDITOR_TEXT_SIZE_MIN,
+  EDITOR_TEXT_SIZE_OPTIONS,
+} from "./text-control-options";
+import {
+  CAPTION_SIZE_MAX,
+  CAPTION_SIZE_MIN,
+} from "./caption-control-options";
+import {
   applyClipSourceWindowDrag,
   CLIP_MIN_DURATION_S,
   type BarDragHandle,
@@ -138,9 +147,6 @@ const EDITABLE_ROW_FIELDS = new Set([
   "cue_size_px",
 ]);
 
-const EDITOR_TEXT_SIZE_MIN = 8;
-const EDITOR_TEXT_SIZE_MAX = 300;
-
 const TEXT_BEHIND_SUBJECT_UI_ENABLED =
   process.env.NEXT_PUBLIC_TEXT_BEHIND_SUBJECT_ENABLED === "true";
 const TEXT_MOTION_V2_UI_ENABLED =
@@ -158,13 +164,6 @@ export interface InspectorClipTiming {
   sourceDurationS: number | null;
   sourceUrl: string | null;
 }
-
-const SIZE_OPTIONS = (() => {
-  const out: number[] = [];
-  for (let s = 8; s <= 96; s += 8) out.push(s);
-  out.push(120, 160, 220, 300);
-  return out;
-})();
 
 function fieldLabel(key: string): string {
   return key.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
@@ -1900,8 +1899,8 @@ function TextInspector({
           <div className="mt-2 flex items-center gap-2">
             <Slider
               aria-label="This caption's font size"
-              min={36}
-              max={160}
+              min={CAPTION_SIZE_MIN}
+              max={CAPTION_SIZE_MAX}
               step={1}
               value={[cueEffectiveSizePx]}
               onValueChange={([value]) => onPatch({ cue_size_px: value })}
@@ -1948,7 +1947,7 @@ function TextInspector({
           </div>
           <div className="mt-2 flex items-center gap-2">
             <Select
-              value={SIZE_OPTIONS.includes(sizeValue) ? String(sizeValue) : "custom"}
+              value={EDITOR_TEXT_SIZE_OPTIONS.includes(sizeValue) ? String(sizeValue) : "custom"}
               onValueChange={(value) => {
                 const v = Number(value);
                 if (Number.isFinite(v) && v > 0) onPatch({ size_px: v, size_class: undefined });
@@ -1958,10 +1957,10 @@ function TextInspector({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {!SIZE_OPTIONS.includes(sizeValue) && (
+                {!EDITOR_TEXT_SIZE_OPTIONS.includes(sizeValue) && (
                   <SelectItem value="custom">{sizeValue}</SelectItem>
                 )}
-                {SIZE_OPTIONS.map((s) => (
+                {EDITOR_TEXT_SIZE_OPTIONS.map((s) => (
                   <SelectItem key={s} value={String(s)}>
                     {s}
                   </SelectItem>

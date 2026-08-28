@@ -359,14 +359,19 @@ Rules supplement §2.
   the title row). Motion = `t-modal` tokens, transform/opacity only; heights
   snap, never tween. Keyboard promotes half→full for its lifetime.
 - **Context strip** (`_editor/ContextStrip.tsx`): `role="toolbar"` selection
-  quick actions; 44px pills; the first pill per type is the ink primary
-  (text→Edit, caption→Edit cue, overlay→Edit, clip→Adjust); **Delete is always
-  the word Delete** (§9: never an icon or emoji). Caption and clip selections
-  flip the strip to the canvas top so it never covers what it acts on.
-- **Mini strip** (`_editor/MiniStrip.tsx`): 44px proportional clip segments
-  (alternating zinc-300/zinc-200), lime-600 playhead + presence dots + selected
-  outline; drag = scrub (one playhead, two views — always in sync with the
-  transport thumb), tap = select clip + seek. Filmstrip thumbnails are PR2.
+  quick actions use stock shadcn Buttons in one horizontally scrollable row;
+  the first action uses `secondary`, destructive wording stays explicit, and
+  **Delete is always the word Delete** (§9: never an icon or emoji). Clip
+  actions sit between the timeline and persistent tool dock; other selections
+  stay preview-relative.
+- **Pocket timeline** (`_editor/MiniStrip.tsx`, legacy name retained for flag
+stability): real `Filmstrip` thumbnails scroll beneath a fixed ink near-left
+playhead. Half-viewport leading/trailing padding lets first/last frames reach
+  the playhead. Tap = select + seek; one-finger body drag = scroll/scrub only;
+  source slip remains explicit in the inspector. A selected clip has a
+  non-color-only outline, live In/Out/duration receipt, and separate 44px edge
+  Buttons that reuse desktop trim math and record one Undo step per gesture.
+  Pinch zoom plus visible shadcn − / Fit / + controls cover precision and a11y.
 - **Icons** (`_editor/editor-icons.tsx`): stroke SVGs, 24px / 1.6 /
   `currentColor` — supersedes ToolRail's no-icon-set note for mobile chrome; raw
   unicode glyphs take emoji presentation on iOS Safari.
@@ -376,10 +381,10 @@ Rules supplement §2.
 - **Deviation (ledger-style):** LightTransport's shipped `accent-lime-500`
   predates D16 (fills = lime-600); new pocket fills are lime-600. Normalize the
   transport opportunistically.
-- **PR2 (declared, not silent):** full-screen mobile timeline takeover
-  (center-playhead, imperative rAF scroll, media budget, preview pane), sheet
-  section restructure (Eyebrow headers, default expansion, ≥44px inner-control
-  density), conflict choice-cards, Playwright touch e2e.
+- **Follow-up (declared, not silent):** expanded multi-lane mobile takeover,
+  sheet section restructure (Eyebrow headers, default expansion, ≥44px
+  inner-control density), conflict choice-cards, and real-device Playwright
+  touch fixtures. The core near-left-playhead thumbnail trim surface is shipped.
 
 ---
 

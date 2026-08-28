@@ -1,14 +1,14 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/cn";
 
 /**
- * ContextStrip — floating selection-action pills (mobile editor Lane A).
+ * ContextStrip — horizontally scrollable selection actions for Pocket.
  *
- * Renders a per-selection-type pill row above the dock. The first pill of
- * each type is the primary (ink-filled) action. Delete is ALWAYS the word
- * "Delete" — never an icon — so destructive intent stays unmistakable.
- * Disabled pills stay tappable (aria-disabled) and route to onDisabledTap.
+ * Stock shadcn Button variants keep component chrome consistent. Delete is
+ * ALWAYS the word "Delete" — never an icon — so destructive intent stays
+ * unmistakable. Disabled actions stay focusable and route to onDisabledTap.
  */
 
 export type StripSelection =
@@ -50,6 +50,7 @@ export type StripSelection =
       muted: boolean;
       onToggleMute: () => void;
       onDelete: () => void;
+      deleteDisabledReason?: string | null;
     };
 
 export interface ContextStripProps {
@@ -114,7 +115,12 @@ function pillsForSelection(selection: StripSelection): Pill[] {
           label: selection.muted ? "Unmute" : "Mute",
           onPress: selection.onToggleMute,
         },
-        { label: "Delete", onPress: selection.onDelete, destructive: true },
+        {
+          label: "Delete",
+          onPress: selection.onDelete,
+          destructive: true,
+          disabledReason: selection.deleteDisabledReason ?? undefined,
+        },
       ];
   }
 }
@@ -133,20 +139,19 @@ export function ContextStrip({
       role="toolbar"
       aria-label="Selection actions"
       data-testid="pocket-context-strip"
-      className={`flex gap-1.5${className ? ` ${className}` : ""}`}
+      className={cn(
+        "scrollbar-none flex min-h-12 max-w-full items-center gap-1 overflow-x-auto",
+        className,
+      )}
     >
       {pills.map((pill) => {
         const disabled = pill.disabledReason != null;
-        const tone = pill.primary
-          ? "bg-[#0c0c0e] text-white"
-          : pill.destructive
-            ? "border border-zinc-200 bg-white text-[#3f3f46]"
-            : "border border-zinc-200 bg-white text-[#0c0c0e]";
+        const variant = pill.primary ? "secondary" : "ghost";
         return (
           <Button
             key={pill.label}
             type="button"
-            variant="ghost"
+            variant={variant}
             aria-disabled={disabled ? true : undefined}
             onClick={() => {
               // Focusable-disabled: the tap still fires so the WHY surfaces.
@@ -156,9 +161,11 @@ export function ContextStrip({
               }
               pill.onPress();
             }}
-            className={`h-auto min-h-11 rounded-full px-4 text-[13px] font-semibold shadow-[0_3px_10px_rgba(12,12,14,0.1)] active:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 hover:bg-transparent ${tone}${
-              disabled ? " opacity-50" : ""
-            }`}
+            className={cn(
+              "h-11 shrink-0 rounded-md px-3 text-[13px] shadow-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 focus-visible:ring-0",
+              pill.destructive && "text-destructive hover:text-destructive",
+              disabled && "opacity-50",
+            )}
           >
             {pill.label}
           </Button>

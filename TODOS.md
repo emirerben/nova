@@ -449,7 +449,10 @@ Design + engineering plan: `~/.claude/plans/when-you-sign-in-abundant-marble.md`
 (full reviewed spec: §4 timeline, §3 sheet restructure, §14 eng corrections).
 PR1 shipped the capability-complete core behind `NEXT_PUBLIC_MOBILE_EDITOR_ENABLED`.
 
-- **Mobile timeline takeover (P1, L).** Full-screen center-playhead timeline
+- **Mobile timeline takeover (P1, L).** The core near-left-playhead thumbnail
+  timeline shipped in v0.56.0.0. The remaining follow-up is the full-screen
+  multi-lane takeover with Text/Captions, Video, SFX/Music, Visuals/Effects,
+  and Overlay lanes
   (lanes reuse `editor-bar-drag`/`text-timeline-reducer` — NOT
   `sfx-timeline-reducer`, an item-page-only store with its own undo stack).
   Eng-review constraints baked into the plan: playhead auto-scroll is imperative
@@ -462,14 +465,10 @@ PR1 shipped the capability-complete core behind `NEXT_PUBLIC_MOBILE_EDITOR_ENABL
 - **Sheet section restructure (P2, M).** Eyebrow-token collapsible headers,
   per-entry default expansion, timecode-tap-to-seek in cue/SFX lists, ≥44px
   density pass on InspectorPanel's h-8/h-9 inner controls (requires extracting
-  its file-local sub-inspectors WITH desktop snapshot pinning first), mini-strip
-  filmstrip thumbnails (deferred decode: post-canplay, bounded seeks, release
-  sources after raster).
-- **Playwright touch e2e (P2, M).** Mechanism decided in the plan: shared
-  `e2e/fixture-routes.ts` with `page.route` on the plan API's relative URLs +
-  `dev-qa/mobile-editor` fixture with a runtime flag override (`?pocket=0/1`) so
-  flag-on specs and the flag-off smoke share one webServer (NEXT_PUBLIC_* is
-  build-time). Jest render suites cover the contracts meanwhile.
+  its file-local sub-inspectors WITH desktop snapshot pinning first).
+- **Playwright touch e2e — completed.** v0.56.0.0 adds the guarded
+  `dev-qa/mobile-editor` fixture and real touch coverage for trim, ripple,
+  scrubbing, and fixed-playhead behavior at the supported phone viewports.
 - **Save-flow polish (P3, S).** Conflict tile → choice cards with consequences;
   alignment dialog restyled as a choice sheet; audio one-source rule for
   Sounds-sheet previews; first-run hint chips.
@@ -1557,11 +1556,8 @@ Surfaced by prod generative job `d30c61fe-dab3-417d-998a-3a81535f7b50`, which sa
 
 ### Mobile-native timeline editor
 **What:** A thumb-first, vertically-designed timeline editor for <1024px — not the desktop 5-column shell squeezed into a phone viewport.
-**Why:** D12 ships light-edit mode for <1024px (canvas + transport + tap-text-to-edit sheet only; no timeline/trim/split/zoom UI). Codex's review flagged that a squeezed desktop shell would be unusable on mobile, so a real mobile timeline is intentionally out of scope for the first ship and left as a separate design effort.
-**How:** Not designed yet. Trigger: light-edit mode usage data shows real demand for full mobile timeline editing (trim/split/zoom) before investing in a bespoke mobile IA.
-**Effort:** Unscoped — gated on usage data; needs its own design pass once triggered.
-**Priority:** P3
-**Depends on:** Editor shell shipped + light-edit mode (D12) live long enough to gather usage analytics.
+**Why:** The shipped Pocket surface now provides the direct thumbnail timeline, fixed near-left playhead, trim/split/zoom controls, and mobile-safe tool dock that this item originally deferred.
+**Status:** Completed in v0.56.0.0 (2026-08-27) via `plans/020-mobile-video-editor-timeline.md`. The remaining expanded multi-lane takeover, sheet density pass, and real-device fixtures stay tracked in the Pocket editor PR2 follow-ups above.
 
 ### Preset favorites server-side persistence
 **What:** Move the text-preset drawer's "Favorite" category from localStorage (v1) to the existing user-prefs endpoint, so favorited presets sync cross-device.

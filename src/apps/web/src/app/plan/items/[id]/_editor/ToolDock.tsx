@@ -8,11 +8,12 @@
  * focusable-disabled pattern (aria-disabled, NOT the disabled attribute) so a
  * tap still fires and can surface the reason via onDisabledTap.
  *
- * At 375–430px the 7-tool set (or 6 without Nova) doesn't fit a flex-1 row —
+ * At 360–430px the 7-tool set (or 6 without Nova) doesn't fit a flex-1 row —
  * label text forces each item's min-content width past its 1/7th share, and
  * the trailing tools (Overlays, Styles) clip or fall off-screen. Fixed-width
- * flex-none items in a horizontally scrollable, snap-x row keep every tool
- * reachable regardless of viewport width; the active tool auto-scrolls into
+ * 64px flex-none items leave part of the next tab visible at narrow widths,
+ * making horizontal discovery explicit while keeping a 44px+ target. The
+ * scrollable, snap-x row keeps every tool reachable; the active tool auto-scrolls into
  * view (instant unless the visitor allows motion — see motion-safe:scroll-smooth
  * on the nav).
  */
@@ -108,12 +109,12 @@ export function ToolDock({
               }
               onToggleTool(tool.id);
             }}
-            className={`flex h-auto min-h-[56px] w-[72px] flex-none snap-start flex-col items-center justify-center gap-0.5 rounded-none active:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+            className={`flex h-auto min-h-[56px] w-16 flex-none snap-start flex-col items-center justify-center gap-0.5 rounded-none active:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
               active ? "bg-transparent text-foreground hover:bg-transparent" : "bg-transparent text-muted-foreground hover:bg-transparent"
             }`}
           >
             <span className={enabled ? undefined : "opacity-50"}>
-              {tool.icon("h-5 w-5")}
+              {tool.icon("h-6 w-6")}
             </span>
             <span
               className={`text-[11px] font-medium ${
