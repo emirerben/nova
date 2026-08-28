@@ -157,6 +157,38 @@ def test_slot_edit_defaults():
     assert s.removed is False
 
 
+def test_editor_commit_accepts_production_scale_guided_zero_duration_cuts():
+    body = gj.EditorCommitRequest(
+        timeline_slots=[
+            {
+                "slot_id": f"slot-{index}",
+                "clip_index": index,
+                "in_s": 0.0,
+                "duration_s": 0.2 if index < 58 else 0.867,
+                "transition_after": "cut",
+                "transition_duration_s": 0,
+            }
+            for index in range(103)
+        ]
+    )
+
+    assert body.timeline_slots is not None
+    assert len(body.timeline_slots) == 103
+    assert all(slot.transition_after == "cut" for slot in body.timeline_slots)
+    assert all(slot.transition_duration_s is None for slot in body.timeline_slots)
+
+
+def test_zero_duration_remains_invalid_for_an_animated_transition():
+    with pytest.raises(ValidationError):
+        gj.TimelineSlotEdit(
+            clip_index=0,
+            in_s=0,
+            duration_s=1,
+            transition_after="crossfade",
+            transition_duration_s=0,
+        )
+
+
 # ── GET: eligibility matrix ──────────────────────────────────────────────────────
 
 

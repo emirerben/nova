@@ -35,7 +35,7 @@ from typing import Any, Literal
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -803,7 +803,7 @@ class TimelineSlotEdit(BaseModel):
     duration_s: float | None = None
     removed: bool = False
     transition_after: Literal["cut", "crossfade", "dip_to_black", "flash"] = "cut"
-    transition_duration_s: float | None = Field(default=None, ge=0.1, le=1.0)
+    transition_duration_s: float | None = Field(default=None, ge=0.0, le=1.0)
     # None means an older client omitted the field; resolution preserves the
     # current slot value in that case. Explicit "none" remains the clear action.
     look_preset: LookPreset | None = None
@@ -817,6 +817,20 @@ class TimelineSlotEdit(BaseModel):
         if value is None:
             raise ValueError("look_preset cannot be null")
         return value
+
+    @model_validator(mode="after")
+    def normalize_cut_transition_duration(self) -> TimelineSlotEdit:
+        """Accept the guided revision's canonical zero-duration hard cut.
+
+        Timeline drafts use ``0`` for cuts while the legacy commit payload used
+        ``None``. Normalize both representations here so a valid guided draft
+        cannot fail Save merely because it crossed that adapter boundary.
+        """
+        if self.transition_after == "cut":
+            self.transition_duration_s = None
+        elif self.transition_duration_s is not None and self.transition_duration_s < 0.1:
+            raise ValueError("animated transition duration must be at least 0.1 seconds")
+        return self
 
 
 class TimelineEditRequest(BaseModel):

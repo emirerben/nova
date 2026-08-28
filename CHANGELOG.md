@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.56.0.3] — 2026-08-28
+
+### Fixed
+- **Large guided slideshows now survive Save.** The editor serializes zero-duration hard cuts using the commit API's canonical null value, while the backend also accepts and normalizes older guided drafts that send `0`; animated transitions still require at least 0.1 seconds.
+
 ## [0.56.0.2] — 2026-08-28
 
 ### Fixed

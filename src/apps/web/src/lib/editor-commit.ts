@@ -398,7 +398,13 @@ export function buildEditorCommitRequest({
           duration_beats: s.durationBeats,
           removed: s.removed,
           transition_after: s.transitionAfter ?? "cut",
-          transition_duration_s: s.transitionDurationS ?? null,
+          // Guided revisions canonically represent a hard cut with a zero
+          // duration. The legacy editor-commit wire contract represents the
+          // same cut with null, so never leak the revision's 0 through Save.
+          transition_duration_s:
+            (s.transitionAfter ?? "cut") === "cut"
+              ? null
+              : (s.transitionDurationS ?? null),
           look_preset: s.lookPreset ?? "none",
           ...(s.lookAdjustments
             ? { look_adjustments: s.lookAdjustments }
