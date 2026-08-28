@@ -5974,10 +5974,26 @@ def test_guided_timeline_projection_uses_left_segment_transition_and_parent_id(m
 
 
 def test_guided_timeline_projection_accepts_production_scale_103_slot_commit(monkeypatch):
-    """The compact bulk draft must survive the actual Guided Story Save path."""
+    """The complete mixed-media draft survives conventional Save with exact text IDs."""
+    _arm(monkeypatch)
+    from app.config import settings
 
-    job = _job()
-    variant = job.assembly_plan["variants"][0]
+    monkeypatch.setattr(settings, "guided_story_editor_v2_enabled", True, raising=False)
+    title = {
+        **_VALID_ELEMENT,
+        "id": "guided-title",
+        "text": "Sports Montage",
+        "end_s": 2.2,
+    }
+    job = _job(
+        resolved_archetype="guided_story",
+        intro_text="Sports Montage",
+        text_elements=[title],
+    )
+    legacy_projection = gj.append_ai_text_tombstones(job.assembly_plan["variants"][0], [title])
+    assert [row["id"] for row in legacy_projection[:1]] == ["guided-title"]
+    assert len(legacy_projection) == 2
+    assert legacy_projection[1]["removed"] is True
     sources = []
     for index in range(103):
         is_image = 1 <= index <= 58
@@ -5996,20 +6012,44 @@ def test_guided_timeline_projection_accepts_production_scale_103_slot_commit(mon
         "approval_media_digest": "a" * 64,
         "revision_number": 4,
         "sources": sources,
-        "segments": [],
+        "segments": [
+            {
+                "segment_id": "approved-video",
+                "media_id": "media-0",
+                "source_start_s": 0.0,
+                "source_end_s": 2.0,
+                "duration_s": 2.0,
+                "output_start_s": 0.0,
+                "output_end_s": 2.0,
+            },
+            {
+                "segment_id": "approved-image",
+                "media_id": "media-1",
+                "source_start_s": 0.0,
+                "source_end_s": 1.0,
+                "duration_s": 1.0,
+                "output_start_s": 2.0,
+                "output_end_s": 3.0,
+            },
+        ],
+        "text_elements": [title],
         "audio": {"mode": "none"},
     }
     monkeypatch.setattr(gj, "_guided_v2_revision", lambda *_args: current)
 
-    result = gj._guided_v2_revision_for_write(
+    gj.prepare_editor_commit(
         job,
-        variant,
-        gj.TimelineEditRequest(
-            revision_number=4,
-            base_generation=gj.variant_render_baseline(variant),
-            slots=[
+        "song_text",
+        _commit_req(
+            timeline_slots=[
                 gj.TimelineSlotEdit(
-                    slot_id=f"slot-{index}",
+                    slot_id=(
+                        "approved-video"
+                        if index == 0
+                        else "approved-image"
+                        if index == 1
+                        else f"slot-{index}"
+                    ),
                     clip_index=index,
                     in_s=0.0,
                     duration_s=(
@@ -6026,13 +6066,20 @@ def test_guided_timeline_projection_accepts_production_scale_103_slot_commit(mon
                 )
                 for index in range(103)
             ],
+            text_elements=[title],
+            guided_revision_number=4,
         ),
     )
 
+    updated = job.assembly_plan["variants"][0]
+    result = updated["guided_edit_revision"]
     assert len(result["segments"]) == 103
     assert sum(segment["duration_s"] for segment in result["segments"]) == pytest.approx(59.2)
     assert all(segment["transition_after"] == "cut" for segment in result["segments"])
     assert all(segment["transition_duration_s"] == 0 for segment in result["segments"])
+    assert [row["id"] for row in updated["text_elements"]] == ["guided-title"]
+    assert [row["id"] for row in result["text_elements"]] == ["guided-title"]
+    assert result["tombstones"] == []
 
 
 def test_guided_timeline_rejects_transition_when_feature_is_disabled(monkeypatch):

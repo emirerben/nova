@@ -3532,6 +3532,7 @@ def validate_text_elements_payload(
     *,
     require_base: bool,
     strict_drop: bool = False,
+    append_projection_tombstones: bool = True,
 ) -> tuple[list[dict], bool]:
     """Shared text-element SECTION validation (PUT /text-elements + editor-commit E2).
 
@@ -3732,11 +3733,12 @@ def validate_text_elements_payload(
                     detail=complexity_error,
                 )
             validated = [e.model_dump() for e in coerced]
-            validated = append_ai_text_tombstones(variant, validated)
+            if append_projection_tombstones:
+                validated = append_ai_text_tombstones(variant, validated)
     elif variant.get("text_elements_user_edited"):
         # Explicit empty list = delete all generated AI text. Persist tombstones
         # so the read adapter does not resurrect projected bars on reload.
-        validated = append_ai_text_tombstones(variant, [])
+        validated = append_ai_text_tombstones(variant, []) if append_projection_tombstones else []
     return validated, _is_first_sequence_edit
 
 
@@ -7401,6 +7403,12 @@ def prepare_editor_commit(
             payload.text_elements,
             require_base=payload.timeline_slots is None and not text_requires_full_render,
             strict_drop=True,
+            # Guided v2 owns text identity and deletions in the canonical
+            # revision/tombstone document.  The legacy variant projection can
+            # synthesize a second intro identity for the same guided title,
+            # which makes an unchanged full-lane Save fail the revision's
+            # exact-ID guard.
+            append_projection_tombstones=not guided_v2,
         )
         if not guided_v2:
             _require_guided_story_text_ids(variant, validated_elements)
