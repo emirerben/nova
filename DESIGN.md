@@ -365,8 +365,8 @@ Rules supplement §2.
   actions sit between the timeline and persistent tool dock; other selections
   stay preview-relative.
 - **Pocket timeline** (`_editor/MiniStrip.tsx`, legacy name retained for flag
-  stability): real `Filmstrip` thumbnails scroll beneath a fixed ink center
-  playhead. Half-viewport leading/trailing padding lets first/last frames reach
+stability): real `Filmstrip` thumbnails scroll beneath a fixed ink near-left
+playhead. Half-viewport leading/trailing padding lets first/last frames reach
   the playhead. Tap = select + seek; one-finger body drag = scroll/scrub only;
   source slip remains explicit in the inspector. A selected clip has a
   non-color-only outline, live In/Out/duration receipt, and separate 44px edge
@@ -384,7 +384,7 @@ Rules supplement §2.
 - **Follow-up (declared, not silent):** expanded multi-lane mobile takeover,
   sheet section restructure (Eyebrow headers, default expansion, ≥44px
   inner-control density), conflict choice-cards, and real-device Playwright
-  touch fixtures. The core center-playhead thumbnail trim surface is shipped.
+  touch fixtures. The core near-left-playhead thumbnail trim surface is shipped.
 
 ---
 

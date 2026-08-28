@@ -449,7 +449,7 @@ Design + engineering plan: `~/.claude/plans/when-you-sign-in-abundant-marble.md`
 (full reviewed spec: §4 timeline, §3 sheet restructure, §14 eng corrections).
 PR1 shipped the capability-complete core behind `NEXT_PUBLIC_MOBILE_EDITOR_ENABLED`.
 
-- **Mobile timeline takeover (P1, L).** The core center-playhead thumbnail
+- **Mobile timeline takeover (P1, L).** The core near-left-playhead thumbnail
   timeline shipped in v0.56.0.0. The remaining follow-up is the full-screen
   multi-lane takeover with Text/Captions, Video, SFX/Music, Visuals/Effects,
   and Overlay lanes
@@ -1556,7 +1556,7 @@ Surfaced by prod generative job `d30c61fe-dab3-417d-998a-3a81535f7b50`, which sa
 
 ### Mobile-native timeline editor
 **What:** A thumb-first, vertically-designed timeline editor for <1024px — not the desktop 5-column shell squeezed into a phone viewport.
-**Why:** The shipped Pocket surface now provides the direct thumbnail timeline, fixed center playhead, trim/split/zoom controls, and mobile-safe tool dock that this item originally deferred.
+**Why:** The shipped Pocket surface now provides the direct thumbnail timeline, fixed near-left playhead, trim/split/zoom controls, and mobile-safe tool dock that this item originally deferred.
 **Status:** Completed in v0.56.0.0 (2026-08-27) via `plans/020-mobile-video-editor-timeline.md`. The remaining expanded multi-lane takeover, sheet density pass, and real-device fixtures stay tracked in the Pocket editor PR2 follow-ups above.
 
 ### Preset favorites server-side persistence
