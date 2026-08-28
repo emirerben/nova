@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.56.0.1] — 2026-08-28
+
+### Fixed
+- **Kria now completes the original bulk request after a browser-side constraint clarification.** Atomic add-all, image-duration, and stack actions retain their full typed plan and integrity proof across follow-ups; stale or incomplete selections return a precise clarification with zero partial edits.
+- **Staged clip edits now show their true duration before Save.** The editor transport, ruler, and seek bounds use the staged timeline total even while the old rendered MP4 remains the visual fallback, and Save is still required to render the new video.
+
 ## [0.56.0.0] — 2026-08-28
 
 ### Changed
@@ -11,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - **Historical ready videos now receive durable, source-matched posters without re-rendering.** The repair covers every browser-visible output shape, proves database writes and storage publication under row locks, repairs interrupted runs, and excludes synthetic or non-library jobs.
 - **Later renders and account cleanup no longer leak immutable backfill posters.** Durable cleanup receipts survive storage failures and concurrency, protect rollback assets, and are reconciled by a bounded indexed maintenance sweep.
 - **The production repair can run only against the exact revision live on every Fly Machine.** Deploy and backfill workflows serialize safely, resume cancelled repair Machines, reject mixed releases or altered execution contracts, and finish with a strict zero-work audit; use the [video-poster backfill runbook](docs/runbooks/video-poster-backfill.md) to run or recover it.
+
 ## [0.55.0.2] — 2026-08-27
 
 ### Fixed

@@ -19,11 +19,16 @@
           "referent": "images",
           "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"}
         },
-        "pending_actions": [{"op": "add_unused_sources"}, {"op": "stack_images"}, {"op": "set_media_duration"}]
+        "pending_actions": [
+          {"op": "add_unused_sources", "selector": {"scope": "unused_sources", "media_kind": "all", "quantifier": "all"}, "integrity": {"revision_number": 7, "base_generation": "render-7", "state_hash": "state-7", "source_digest": "sp1-production-item-104", "source_count": 104, "timeline_count": 17, "target_count": 86, "selection_digest": "sel1-ready-unused-86"}},
+          {"op": "stack_images", "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"}, "integrity": {"revision_number": 7, "base_generation": "render-7", "state_hash": "state-7", "source_digest": "sp1-production-item-104", "source_count": 104, "timeline_count": 17, "target_count": 8, "selection_digest": "sel1-ff29a665ff92c2c3"}},
+          {"op": "set_media_duration", "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"}, "integrity": {"revision_number": 7, "base_generation": "render-7", "state_hash": "state-7", "source_digest": "sp1-production-item-104", "source_count": 104, "timeline_count": 17, "target_count": 8, "selection_digest": "sel1-ff29a665ff92c2c3"}}
+        ]
       }
     ],
     "variant_snapshot": {
       "allowed_op_families": ["motion", "clip"],
+      "guided_revision": {"revision_number": 7, "base_generation": "render-7", "state_hash": "state-7"},
       "total_duration_s": 23.8,
       "source_pool_summary": {
         "digest": "sp1-production-item-104",
