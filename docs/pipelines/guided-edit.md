@@ -372,6 +372,18 @@ Without that profile, legacy fast-montage cuts remain capped at 1.2s and retain 
 behavior. Legacy fast-montage snapshots without `fast_cuts`
 remain readable and render through the older story-shaped contract.
 
+Source-aware montage is a generic capability layered onto `fast_cuts`, not an intercut-comparison
+format. When the creator asks for a multi-source montage, `EditProposalAgent` owns the creative
+timeline: source order, reuse, windows, and cut lengths remain model decisions within the strict
+duration, source-window, and hard-cut rules. `montage_text_bindings` attach persistent text to a
+source's cuts. `montage_audio` preserves the audio belonging to each selected video moment and can
+request reusable preview beds for the interleaved timeline or each named source. Before a
+multi-source video montage is saved, `MontageReviewAgent` watches the original source videos and
+reviews the exact proposed windows. Weak windows are passed back to the proposal agent for one
+generic replan; reviewer/provider failure is fail-open and leaves the first valid proposal intact.
+The reviewer is evidence for selection, not a hardcoded sequence or a guarantee of semantic
+highlight quality.
+
 The renderer exact-generation downloads every source selected by a beat. Unselected catalog media
 remains authorized but is not required in the output. Photos and videos become sequential full-screen
 or supporting-card moments. The downloaded bytes stay untouched for the source receipt; every photo
