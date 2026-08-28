@@ -28,6 +28,7 @@ import uuid
 from typing import Any
 
 import structlog
+from billiard.exceptions import SoftTimeLimitExceeded
 from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.agents._runtime import RefusalError
@@ -48,7 +49,15 @@ from app.services.music_sections import (
     refresh_recipe_cached_for_bounds,
 )
 from app.services.template_poster import upload_video_poster
+from app.services.video_poster_cleanup import (
+    append_retired_top_level_poster_receipts,
+    reconcile_video_poster_cleanup_receipts,
+)
 from app.storage import download_to_file
+from app.tasks._finalization_commit import (
+    FinalizationCommitState,
+    confirm_job_plan_finalization,
+)
 from app.tasks._job_cancel_fence import (
     active_job_for_update,
     delete_task_owned_outputs,
@@ -105,6 +114,39 @@ def _try_upload_video_poster(
             error=str(exc)[:300],
         )
         return None
+
+
+def _reconcile_retired_top_level_posters(job_id: str, journaled_paths: list[str]) -> None:
+    """Best-effort now; the committed receipt and Beat sweep own retries."""
+    if not journaled_paths:
+        return
+    try:
+        result = reconcile_video_poster_cleanup_receipts(job_id)
+    except SoftTimeLimitExceeded:
+        # The replacement render and durable cleanup receipt were committed
+        # before this best-effort pass.  Let Beat retry the receipt instead of
+        # allowing the task's outer timeout handler to overwrite ready state.
+        log.warning(
+            "top_level_video_poster_cleanup_soft_timeout_deferred",
+            job_id=job_id,
+            journaled=len(journaled_paths),
+        )
+        return
+    except Exception:  # noqa: BLE001 — the committed receipt is the retry guarantee
+        log.exception(
+            "top_level_video_poster_cleanup_reconcile_failed",
+            job_id=job_id,
+            journaled=len(journaled_paths),
+        )
+        return
+    if result.retained:
+        log.warning(
+            "top_level_video_poster_cleanup_pending_retry",
+            job_id=job_id,
+            journaled=len(journaled_paths),
+            retained=result.retained,
+            failures=result.failures,
+        )
 
 
 def _coerce_best_start_s(track_config: dict | None) -> float:
@@ -798,7 +840,9 @@ def _run_music_job(job_id: str) -> None:
             )
             if job is None:
                 return
-            job.assembly_plan = plan_data
+            # Retain the last committed output/poster and cleanup chain until
+            # this attempt atomically publishes their successor.
+            job.assembly_plan = {**(job.assembly_plan or {}), **plan_data}
             db.commit()
 
         # [9] FFmpeg assemble
@@ -896,6 +940,9 @@ def _run_music_job(job_id: str) -> None:
 
     # [12] Mark done
     finalized = False
+    finalize_commit_attempted = False
+    finalize_commit_error: Exception | None = None
+    journaled_poster_paths: list[str] = []
     try:
         with _sync_session() as db:
             job = active_job_for_update(
@@ -906,20 +953,68 @@ def _run_music_job(job_id: str) -> None:
             if job is not None:
                 job.status = "music_ready"
                 existing_plan = job.assembly_plan or {}
-                job.assembly_plan = {
+                next_plan = {
                     **existing_plan,
                     "output_url": output_url,
                     "output_path": output_gcs,
                     "poster_path": poster_path,
                 }
-                db.commit()
-                finalized = True
-    except Exception:
-        delete_task_owned_outputs(job_id, [path for path in (output_gcs, poster_path) if path])
-        raise
+                journaled_poster_paths = append_retired_top_level_poster_receipts(
+                    next_plan,
+                    existing_plan,
+                    next_plan,
+                )
+                job.assembly_plan = next_plan
+                finalize_commit_attempted = True
+                try:
+                    db.commit()
+                    finalized = True
+                except Exception as exc:  # noqa: BLE001 - COMMIT is ambiguous
+                    finalize_commit_error = exc
+    except Exception as exc:
+        if not finalize_commit_attempted:
+            delete_task_owned_outputs(
+                job_id,
+                [path for path in (output_gcs, poster_path) if path],
+            )
+            raise
+        finalize_commit_error = finalize_commit_error or exc
+    if finalize_commit_error is not None:
+        commit_state = confirm_job_plan_finalization(
+            _sync_session,
+            job_id=job_id,
+            expected_status="music_ready",
+            expected_plan_fields={
+                "output_url": output_url,
+                "output_path": output_gcs,
+                "poster_path": poster_path,
+            },
+            attempt_references=(output_url, output_gcs, poster_path),
+        )
+        if commit_state is FinalizationCommitState.CONFIRMED:
+            finalized = True
+            log.warning(
+                "music_job_finalize_commit_confirmed_after_error",
+                job_id=job_id,
+                error_class=type(finalize_commit_error).__name__,
+            )
+        elif commit_state is FinalizationCommitState.UNKNOWN:
+            log.error(
+                "music_job_finalize_commit_inconclusive",
+                job_id=job_id,
+                error_class=type(finalize_commit_error).__name__,
+            )
+            return
+        else:
+            delete_task_owned_outputs(
+                job_id,
+                [path for path in (output_gcs, poster_path) if path],
+            )
+            raise finalize_commit_error
     if not finalized:
         delete_task_owned_outputs(job_id, [path for path in (output_gcs, poster_path) if path])
         return
+    _reconcile_retired_top_level_posters(job_id, journaled_poster_paths)
 
     log.info("music_job_done", job_id=job_id)
 
@@ -1687,7 +1782,9 @@ def _run_templated_music_job(job_id: str) -> None:
             )
             if job is None:
                 return
-            job.assembly_plan = plan_data
+            # Retain the last committed output/poster and cleanup chain until
+            # this attempt atomically publishes their successor.
+            job.assembly_plan = {**(job.assembly_plan or {}), **plan_data}
             db.commit()
 
         # [6] FFmpeg concat — clips are already at output spec, no reframe.
@@ -1770,6 +1867,9 @@ def _run_templated_music_job(job_id: str) -> None:
 
     # [9] Mark done
     finalized = False
+    finalize_commit_attempted = False
+    finalize_commit_error: Exception | None = None
+    journaled_poster_paths: list[str] = []
     try:
         with _sync_session() as db:
             job = active_job_for_update(
@@ -1780,20 +1880,68 @@ def _run_templated_music_job(job_id: str) -> None:
             if job is not None:
                 job.status = "music_ready"
                 existing = job.assembly_plan or {}
-                job.assembly_plan = {
+                next_plan = {
                     **existing,
                     "output_url": output_url,
                     "output_path": output_gcs,
                     "poster_path": poster_path,
                 }
-                db.commit()
-                finalized = True
-    except Exception:
-        delete_task_owned_outputs(job_id, [path for path in (output_gcs, poster_path) if path])
-        raise
+                journaled_poster_paths = append_retired_top_level_poster_receipts(
+                    next_plan,
+                    existing,
+                    next_plan,
+                )
+                job.assembly_plan = next_plan
+                finalize_commit_attempted = True
+                try:
+                    db.commit()
+                    finalized = True
+                except Exception as exc:  # noqa: BLE001 - COMMIT is ambiguous
+                    finalize_commit_error = exc
+    except Exception as exc:
+        if not finalize_commit_attempted:
+            delete_task_owned_outputs(
+                job_id,
+                [path for path in (output_gcs, poster_path) if path],
+            )
+            raise
+        finalize_commit_error = finalize_commit_error or exc
+    if finalize_commit_error is not None:
+        commit_state = confirm_job_plan_finalization(
+            _sync_session,
+            job_id=job_id,
+            expected_status="music_ready",
+            expected_plan_fields={
+                "output_url": output_url,
+                "output_path": output_gcs,
+                "poster_path": poster_path,
+            },
+            attempt_references=(output_url, output_gcs, poster_path),
+        )
+        if commit_state is FinalizationCommitState.CONFIRMED:
+            finalized = True
+            log.warning(
+                "templated_music_job_finalize_commit_confirmed_after_error",
+                job_id=job_id,
+                error_class=type(finalize_commit_error).__name__,
+            )
+        elif commit_state is FinalizationCommitState.UNKNOWN:
+            log.error(
+                "templated_music_job_finalize_commit_inconclusive",
+                job_id=job_id,
+                error_class=type(finalize_commit_error).__name__,
+            )
+            return
+        else:
+            delete_task_owned_outputs(
+                job_id,
+                [path for path in (output_gcs, poster_path) if path],
+            )
+            raise finalize_commit_error
     if not finalized:
         delete_task_owned_outputs(job_id, [path for path in (output_gcs, poster_path) if path])
         return
+    _reconcile_retired_top_level_posters(job_id, journaled_poster_paths)
     log.info("templated_music_job_done", job_id=job_id)
 
 

@@ -18,6 +18,7 @@ import contextlib
 import types
 
 import pytest
+from celery.exceptions import SoftTimeLimitExceeded
 
 import app.tasks.custom_effects_render as cer
 import app.tasks.generative_build as gb
@@ -42,6 +43,7 @@ TAMPERED_EFFECT = {**VALID_EFFECT, "filters": [{"name": "drawtext", "params": {}
 class _FakeJob:
     def __init__(self, variants: list[dict]) -> None:
         self.assembly_plan = {"variants": list(variants)}
+        self.status = "variants_ready"
 
 
 def _variant(**overrides) -> dict:
@@ -228,6 +230,48 @@ def test_apply_custom_effect_reapplies_persisted_sfx_lane(monkeypatch: pytest.Mo
     # OV-7: render_status stays "rendering" — the reapply chain owns ready/failed.
     final = job.assembly_plan["variants"][0]
     assert final["render_status"] == "rendering"
+
+
+def test_poster_cleanup_soft_timeout_after_custom_effect_swap_marks_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A post-commit cleanup timeout must not republish an effect-only partial video."""
+    old_video = _variant()["video_path"]
+    old_poster = f"{old_video}.poster.backfill-11111111-1111-4111-8111-111111111111.jpg"
+    new_poster = f"generative-jobs/{JOB_ID}/custom-effect.poster.jpg"
+    job = _FakeJob(
+        [
+            _variant(
+                poster_path=old_poster,
+                sound_effects=[{"effect_id": "pop", "at_s": 1.0}],
+            )
+        ]
+    )
+    _patch_session(monkeypatch, job)
+    _stub_render_io(monkeypatch)
+    monkeypatch.setattr(gb, "_will_reapply_media_layers", lambda _variant: True)
+    monkeypatch.setattr(gb, "generate_and_upload_from_gcs", lambda *_a, **_k: new_poster)
+    monkeypatch.setattr(
+        gb,
+        "reconcile_video_poster_cleanup_receipts",
+        lambda _job_id: (_ for _ in ()).throw(SoftTimeLimitExceeded()),
+    )
+    reapply_calls: list[dict] = []
+    monkeypatch.setattr(
+        gb,
+        "_reapply_user_media_layers",
+        lambda **kw: reapply_calls.append(kw) or True,
+    )
+
+    cer.apply_custom_effect_render.run(JOB_ID, "original_text", VALID_EFFECT)
+
+    persisted = job.assembly_plan["variants"][0]
+    assert "_fx_" in persisted["video_path"]
+    assert persisted["poster_path"] == new_poster
+    assert persisted["custom_effects"][0]["id"] == VALID_EFFECT["id"]
+    assert persisted["render_status"] == "failed"
+    assert persisted["render_error"]
+    assert reapply_calls == []
 
 
 # ── reapply_persisted_custom_effect: REAPPLY-ON-REBURN for the caption/

@@ -199,6 +199,110 @@ def test_delete_object_best_effort_is_idempotent(failure, expected):  # noqa: AN
         assert storage.delete_object_best_effort("users/u/plan/i/pool/x") is expected
 
 
+def test_object_exists_once_uses_bounded_request_without_sdk_retry():
+    blob = MagicMock()
+    blob.exists.return_value = True
+    bucket = MagicMock()
+    bucket.blob.return_value = blob
+    client = MagicMock()
+    client.bucket.return_value = bucket
+
+    with patch.object(storage, "_get_client", return_value=client):
+        assert storage.object_exists_once("jobs/j/output.poster.jpg", timeout_s=3.0)
+
+    blob.exists.assert_called_once_with(timeout=3.0, retry=None)
+
+
+def test_object_exists_once_propagates_storage_outage():
+    blob = MagicMock()
+    blob.exists.side_effect = RuntimeError("HEAD unavailable")
+    bucket = MagicMock()
+    bucket.blob.return_value = blob
+    client = MagicMock()
+    client.bucket.return_value = bucket
+
+    with (
+        patch.object(storage, "_get_client", return_value=client),
+        pytest.raises(RuntimeError, match="HEAD unavailable"),
+    ):
+        storage.object_exists_once("jobs/j/output.poster.jpg", timeout_s=3.0)
+
+
+def test_object_metadata_once_uses_bounded_request_without_sdk_retry():
+    blob = MagicMock(
+        generation=7,
+        etag="etag",
+        size=123,
+        content_type="video/mp4",
+        md5_hash="hash",
+    )
+    bucket = MagicMock()
+    bucket.get_blob.return_value = blob
+    client = MagicMock()
+    client.bucket.return_value = bucket
+
+    with patch.object(storage, "_get_client", return_value=client):
+        metadata = storage.object_metadata_once("jobs/j/output.mp4", timeout_s=3.0)
+
+    bucket.get_blob.assert_called_once_with(
+        "jobs/j/output.mp4",
+        timeout=3.0,
+        retry=None,
+    )
+    assert metadata == storage.ObjectMetadata(
+        path="jobs/j/output.mp4",
+        generation="7",
+        etag="etag",
+        size=123,
+        content_type="video/mp4",
+        md5_hash="hash",
+    )
+
+
+def test_object_metadata_once_rejects_missing_or_empty_generation():
+    bucket = MagicMock()
+    bucket.get_blob.return_value = None
+    client = MagicMock()
+    client.bucket.return_value = bucket
+
+    with (
+        patch.object(storage, "_get_client", return_value=client),
+        pytest.raises(FileNotFoundError),
+    ):
+        storage.object_metadata_once("jobs/j/missing.mp4", timeout_s=3.0)
+
+
+@pytest.mark.parametrize("failure", [None, storage.NotFound("already gone")])
+def test_delete_object_once_is_bounded_and_missing_is_complete(failure):  # noqa: ANN001
+    blob = MagicMock()
+    if failure is not None:
+        blob.delete.side_effect = failure
+    bucket = MagicMock()
+    bucket.blob.return_value = blob
+    client = MagicMock()
+    client.bucket.return_value = bucket
+
+    with patch.object(storage, "_get_client", return_value=client):
+        assert storage.delete_object_once("jobs/j/output.poster.jpg", timeout_s=3.0)
+
+    blob.delete.assert_called_once_with(timeout=3.0, retry=None)
+
+
+def test_delete_object_once_propagates_storage_outage():
+    blob = MagicMock()
+    blob.delete.side_effect = RuntimeError("delete unavailable")
+    bucket = MagicMock()
+    bucket.blob.return_value = blob
+    client = MagicMock()
+    client.bucket.return_value = bucket
+
+    with (
+        patch.object(storage, "_get_client", return_value=client),
+        pytest.raises(RuntimeError, match="delete unavailable"),
+    ):
+        storage.delete_object_once("jobs/j/output.poster.jpg", timeout_s=3.0)
+
+
 def test_delete_object_generation_pins_exact_generation():
     blob = MagicMock()
     bucket = MagicMock()

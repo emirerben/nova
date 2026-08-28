@@ -38,13 +38,20 @@ keep the two in sync when either changes.
   these entries have no link back to a user, so account deletion can't find and
   purge them — the 24h TTL is what actually bounds the exposure.
 
-**Persists forever (not matched by any rule — auth landed, see "Re-evaluate
-when" below; account deletion is the removal path for these, see
-`routes/me.py::confirm_account_deletion` + `docs/legal/README.md`):**
+**Persists forever (not matched by any bucket rule — auth landed, see
+"Re-evaluate when" below; account deletion is the removal path for live assets,
+see `routes/me.py::confirm_account_deletion` + `docs/legal/README.md`):**
 - `users/{user_id}/*` — plan clips, plan-pool footage, activation seed batches
 - `generative-jobs/{job_id}/*` — rendered outputs + preprocessed sources
 - `music/*` — admin-curated music track library
 - `templates/*` — template assets (posters, audio)
+
+The application deletes one narrow superseded-asset class inside persistent job
+prefixes: immutable `*.poster.backfill-<uuid>.jpg` objects. A renderer journals a
+durable replacement receipt on the Job before changing the visible poster; the
+five-minute bounded maintenance sweep verifies the replacement and removes the
+old object. Do not delete or rewrite these receipts manually. See
+[`docs/runbooks/video-poster-backfill.md`](../docs/runbooks/video-poster-backfill.md).
 
 ### Apply
 

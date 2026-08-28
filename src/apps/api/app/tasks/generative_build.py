@@ -43,9 +43,10 @@ from datetime import datetime, timedelta
 from functools import wraps
 from itertools import cycle
 from types import SimpleNamespace
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 import structlog
+from billiard.exceptions import SoftTimeLimitExceeded
 from sqlalchemy.exc import OperationalError
 
 from app.agents._schemas.edit_format import (
@@ -84,6 +85,12 @@ from app.services.job_phases import (
 )
 from app.services.speech_cleanup import SpeechCleanupFailure
 from app.services.template_poster import generate_and_upload_from_gcs
+from app.services.video_poster_cleanup import (
+    VIDEO_POSTER_BACKFILL_CLEANUP_FIELD,
+    append_retired_variant_poster_receipts,
+    is_uuid_backfill_poster,
+    reconcile_video_poster_cleanup_receipts,
+)
 from app.worker import celery_app
 
 
@@ -952,6 +959,10 @@ def _delete_cancelled_job_objects(job_id: str, paths: list[str]) -> None:
             )
 
 
+def _is_uuid_backfill_poster(path: str) -> bool:
+    return is_uuid_backfill_poster(path)
+
+
 def _delete_generated_poster_objects_if_unreferenced(
     job_id: str,
     paths: list[str],
@@ -964,12 +975,19 @@ def _delete_generated_poster_objects_if_unreferenced(
     wins the row-lock race. Both attempts derive the same poster sibling; the
     losing attempt must not delete the winner's poster during cleanup.
     """
+    prefix = f"generative-jobs/{job_id}/"
+
+    def is_generated_poster(path: str) -> bool:
+        if path.endswith(".poster.jpg"):
+            return True
+        return _is_uuid_backfill_poster(path)
+
     exact_paths = {
         path
         for path in paths
         if isinstance(path, str)
-        and path.startswith(f"generative-jobs/{job_id}/")
-        and path.endswith(".poster.jpg")
+        and path.startswith(prefix)
+        and is_generated_poster(path)
         and ".." not in path
     }
     if not exact_paths:
@@ -1007,6 +1025,52 @@ def _delete_generated_poster_objects_if_unreferenced(
                 job = db.get(Job, job_uuid, with_for_update=True)
                 safe_paths = unreferenced_paths(job)
     _delete_cancelled_job_objects(job_id, list(safe_paths))
+
+
+def _reconcile_retired_variant_posters(job_id: str, journaled_paths: list[str]) -> None:
+    """Best-effort immediate cleanup; the durable Beat sweep owns retries."""
+    if not journaled_paths:
+        return
+    try:
+        result = reconcile_video_poster_cleanup_receipts(job_id)
+    except SoftTimeLimitExceeded:
+        # Most callers have more render work after their committed variant
+        # write. Preserve Celery's soft-stop so the outer task can persist a
+        # visible timeout before the hard limit kills the worker.
+        raise
+    except Exception:  # noqa: BLE001 — the committed receipt is the retry guarantee
+        log.exception(
+            "video_poster_cleanup_reconcile_failed",
+            job_id=job_id,
+            journaled=len(journaled_paths),
+        )
+        return
+    if result.retained:
+        log.warning(
+            "video_poster_cleanup_pending_retry",
+            job_id=job_id,
+            journaled=len(journaled_paths),
+            retained=result.retained,
+            failures=result.failures,
+        )
+
+
+def _reconcile_retired_variant_posters_after_terminal_commit(
+    job_id: str,
+    journaled_paths: list[str],
+) -> None:
+    """Defer a soft timeout only when no required render work remains."""
+    try:
+        _reconcile_retired_variant_posters(job_id, journaled_paths)
+    except SoftTimeLimitExceeded:
+        # Terminal ready state and the durable receipt are already committed.
+        # Re-raising would let the outer handler overwrite accepted output;
+        # the bounded Beat sweep owns this cleanup retry.
+        log.warning(
+            "video_poster_cleanup_soft_timeout_deferred_after_terminal_commit",
+            job_id=job_id,
+            journaled=len(journaled_paths),
+        )
 
 
 # Kill switch for the TextElement authoring layer (T3/T4 — plan-item-timeline).
@@ -2710,6 +2774,15 @@ def _claim_guided_story_attempt(
             "render_status": "pending",
             "ok": False,
         }
+        # A ready result can fail receipt validation and be rebuilt. Keep its
+        # committed asset references on the pending claim until the new result
+        # wins `_update_variant_entry`; that accepting transaction can then
+        # journal any displaced UUID poster atomically. Dropping these fields
+        # here would make the old poster unreachable before a receipt exists.
+        if existing is not None:
+            for field in _PENDING_VARIANT_ASSET_FIELDS:
+                if field in existing:
+                    pending[field] = existing[field]
         if index is None:
             variants.append(pending)
         else:
@@ -4077,6 +4150,7 @@ def _run_masonry_audio_only_song_swap(
         patch,
         expected_render_gen_id=expected_render_gen_id,
         outcome="masonry_audio_swap",
+        cleanup_followup="sfx_layer",
         cancelled_cleanup_paths=[
             patch[field]
             for field in path_fields
@@ -4206,6 +4280,7 @@ def _run_music_window_audio_only_swap(
         patch,
         expected_render_gen_id=expected_render_gen_id,
         outcome="music_window_audio_swap",
+        cleanup_followup="sfx_layer",
         cancelled_cleanup_paths=[
             patch[field]
             for field in path_fields
@@ -4319,17 +4394,20 @@ def _run_media_overlay_pass(
 
         from app.config import settings as _settings_ov  # noqa: PLC0415
 
+        journaled_poster_paths: list[str] = []
         with _sync_session() as db:
             locked_job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
             if locked_job is None:
                 return False, False, False, False
             if _cancelled_job_write_rejected(locked_job, operation="media_overlay_persist", db=db):
                 return False, False, False, True
-            variants = list((locked_job.assembly_plan or {}).get("variants") or [])
+            plan = copy.deepcopy(locked_job.assembly_plan or {})
+            variants = list(plan.get("variants") or [])
             stale_write_skipped = False
             for variant in variants:
                 if variant.get("variant_id") != variant_id:
                     continue
+                previous_variant = dict(variant)
                 current = variant.get("render_generation_id")
                 if (
                     expected_render_gen_id is not None
@@ -4375,17 +4453,27 @@ def _run_media_overlay_pass(
                 else:
                     variant["render_status"] = "ready"
                     variant["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
+                plan["variants"] = variants
+                journaled_poster_paths = append_retired_variant_poster_receipts(
+                    plan,
+                    previous_variant,
+                    variant,
+                )
                 break
             else:
                 return False, False, False, False
 
-            locked_job.assembly_plan = {
-                **(locked_job.assembly_plan or {}),
-                "variants": variants,
-            }
+            locked_job.assembly_plan = plan
             flag_modified(locked_job, "assembly_plan")
             db.commit()
-            return True, will_reapply_sfx, stale_write_skipped, False
+        if will_reapply_sfx:
+            _reconcile_retired_variant_posters(job_id, journaled_poster_paths)
+        else:
+            _reconcile_retired_variant_posters_after_terminal_commit(
+                job_id,
+                journaled_poster_paths,
+            )
+        return True, will_reapply_sfx, stale_write_skipped, False
 
     # ── Clear path: remove all cards ──────────────────────────────────────────
     if not cards:
@@ -4563,6 +4651,7 @@ def _finalize_overlay_deferred_terminal(
         },
         expected_render_gen_id=expected_render_gen_id,
         outcome="media_overlay_sfx_reapply_noop",
+        cleanup_followup="none",
     )
 
 
@@ -4576,6 +4665,24 @@ _MEDIA_SNAPSHOT_FIELDS = ("pre_media_overlay_video_path", "pre_sfx_video_path")
 # the margin leaves room to persist the failed/ready terminal before SIGKILL.
 _CAPTION_TASK_SOFT_TIME_LIMIT_S = 1740
 _REAPPLY_DEADLINE_MARGIN_S = 120
+
+# Asset references that a non-terminal ``pending`` replacement must retain from
+# the last accepted variant until a new output wins publication. Besides making
+# resume recovery useful, this keeps immutable UUID poster objects reachable so
+# the accepting replacement can journal their retirement atomically.
+_PENDING_VARIANT_ASSET_FIELDS = (
+    "video_path",
+    "output_url",
+    "poster_path",
+    "base_video_path",
+    "base_poster_path",
+    "pre_media_overlay_video_path",
+    "pre_overlay_poster_path",
+    "pre_sfx_video_path",
+    "subject_matte_path",
+    "visual_blocks_base_path",
+    "motion_base_path",
+)
 
 
 def _stage_media_snapshot_nulls(
@@ -4658,21 +4765,24 @@ def _null_and_free_media_snapshots(
     _free_media_snapshot_keys(_stage_media_snapshot_nulls(patch, current, fields=fields))
 
 
+def _will_reapply_sfx_layer(variant: dict) -> bool:
+    """True when the outermost persisted audio lane needs to be rebuilt."""
+    return (
+        (
+            bool(variant.get("background_music_treatment"))
+            or bool(variant.get("smart_music_treatment"))
+        )
+        and settings.smart_music_bed_enabled
+    ) or (bool(variant.get("sound_effects")) and settings.sound_effects_enabled)
+
+
 def _will_reapply_media_layers(variant: dict) -> bool:
     """True when _reapply_user_media_layers will run at least one pass for this
     variant — the OV-7 deferred-terminal condition: the caption terminals keep
     render_status="rendering" and let the reapply chain own the final
     ready/failed, so a poll never observes an effect-less "ready"."""
-    return (
-        (bool(variant.get("media_overlays")) and settings.media_overlays_enabled)
-        or (
-            (
-                bool(variant.get("background_music_treatment"))
-                or bool(variant.get("smart_music_treatment"))
-            )
-            and settings.smart_music_bed_enabled
-        )
-        or (bool(variant.get("sound_effects")) and settings.sound_effects_enabled)
+    return (bool(variant.get("media_overlays")) and settings.media_overlays_enabled) or (
+        _will_reapply_sfx_layer(variant)
     )
 
 
@@ -5099,6 +5209,7 @@ def _run_sfx_pass(
             },
             expected_render_gen_id=expected_render_gen_id,
             outcome="sfx_clear",
+            cleanup_followup="none",
         ):
             return
         record_pipeline_event(
@@ -5201,6 +5312,7 @@ def _run_sfx_pass(
         expected_render_gen_id=expected_render_gen_id,
         outcome="sfx_apply",
         cancelled_cleanup_paths=[created_pre_clean] if created_pre_clean else None,
+        cleanup_followup="none",
     ):
         return
     record_pipeline_event(
@@ -8411,6 +8523,7 @@ def _rerender_guided_story_orientation(
         result,
         expected_render_gen_id=render_gen_id,
         outcome="guided_story_orientation_complete",
+        cleanup_followup="none",
     ):
         _discard_generation_storage(result, job_id=job_id, generation=None)
         return
@@ -8555,6 +8668,7 @@ def _rerender_guided_story_revision(
         result,
         expected_render_gen_id=render_gen_id,
         outcome="guided_story_revision_complete",
+        cleanup_followup="none",
     ):
         _discard_generation_storage(result, job_id=job_id, generation=None)
         return
@@ -8820,6 +8934,7 @@ def _run_regenerate_variant(
                 {"render_status": "ready"},
                 expected_render_gen_id=render_gen_id,
                 outcome="caption_reject",
+                cleanup_followup="none",
             )
             return
         rank = int(existing.get("rank", 1))
@@ -8979,6 +9094,12 @@ def _run_regenerate_variant(
             if completed:
                 return
             return
+        except SoftTimeLimitExceeded:
+            # The swap may already have committed its new video and durable
+            # poster-cleanup receipt. Never swallow Celery's soft stop and enter
+            # a second full render before the outer task marks that partial
+            # publication failed.
+            raise
         except Exception as exc:  # noqa: BLE001
             log.warning(
                 "masonry_audio_only_swap_fallback_full_render",
@@ -9198,6 +9319,7 @@ def _run_regenerate_variant(
                 result,
                 expected_render_gen_id=render_gen_id,
                 outcome="reburn",
+                cleanup_followup="media_layers",
             ):
                 _discard_uncommitted_reburn_storage(
                     existing,
@@ -9250,6 +9372,7 @@ def _run_regenerate_variant(
                     },
                     expected_render_gen_id=render_gen_id,
                     outcome="reburn_reapply_noop",
+                    cleanup_followup="none",
                 )
             return
     # ── /Fast-reburn path ─────────────────────────────────────────────────────
@@ -9304,6 +9427,11 @@ def _run_regenerate_variant(
             if completed:
                 return
             return
+        except SoftTimeLimitExceeded:
+            # Same post-commit boundary as the collage fast path above: cleanup
+            # can time out before persisted SFX are reapplied, so fallback would
+            # leave a ready-but-incomplete swap visible until a hard kill.
+            raise
         except Exception as exc:  # noqa: BLE001
             log.warning(
                 "music_window_audio_only_swap_fallback_full_render",
@@ -9707,6 +9835,7 @@ def _run_regenerate_variant(
             result,
             expected_render_gen_id=render_gen_id,
             outcome="full_render",
+            cleanup_followup="media_layers",
         ):
             _discard_generation_storage(result, job_id=job_id, generation=render_gen_id)
             _free_uncommitted_storage_paths(
@@ -9775,6 +9904,7 @@ def _run_regenerate_variant(
             failure_patch,
             expected_render_gen_id=render_gen_id,
             outcome="full_render_failed",
+            cleanup_followup="none",
         )
         if not failure_accepted:
             _discard_generation_storage(result, job_id=job_id, generation=render_gen_id)
@@ -9865,6 +9995,8 @@ def _upsert_variant_entry(job_id: str, result: dict[str, Any]) -> bool:
     )
     result = enriched_result
     variant_id = result.get("variant_id")
+    journaled_poster_paths: list[str] = []
+    previous_variant: dict[str, Any] | None = None
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
@@ -9875,17 +10007,37 @@ def _upsert_variant_entry(job_id: str, result: dict[str, Any]) -> bool:
                 job_id, generated_poster_paths, locked_job=job
             )
             return False
-        plan = dict(job.assembly_plan or {})
+        plan = copy.deepcopy(job.assembly_plan or {})
         variants = list(plan.get("variants") or [])
         for i, v in enumerate(variants):
             if v.get("variant_id") == variant_id:
+                previous_variant = dict(v)
+                if result.get("render_status") == "pending":
+                    # Pending is an announcement/recovery state, not an output
+                    # publication boundary. Keep the last accepted assets live
+                    # until a concrete replacement can journal their retirement.
+                    result = {
+                        **{
+                            field: previous_variant[field]
+                            for field in _PENDING_VARIANT_ASSET_FIELDS
+                            if field in previous_variant and field not in result
+                        },
+                        **result,
+                    }
                 variants[i] = result
                 break
         else:
             variants.append(result)
         plan["variants"] = variants
+        if previous_variant is not None:
+            journaled_poster_paths = append_retired_variant_poster_receipts(
+                plan,
+                previous_variant,
+                result,
+            )
         job.assembly_plan = plan
         db.commit()
+    _reconcile_retired_variant_posters(job_id, journaled_poster_paths)
     return True
 
 
@@ -9992,6 +10144,8 @@ def _update_variant_entry(
     expected_render_gen_id: str | None = None,
     outcome: str | None = None,
     cancelled_cleanup_paths: list[str] | None = None,
+    cleanup_followup: Literal["required", "none", "media_layers", "sfx_layer"] = "required",
+    accepted_state: dict[str, bool] | None = None,
 ) -> bool:
     """Merge `patch` into the matching entry of Job.assembly_plan['variants'].
 
@@ -10004,8 +10158,20 @@ def _update_variant_entry(
     performed under the same row lock as the merge. This makes terminal render
     writes check-and-write atomic; legacy tokenless tasks pass None and always
     write as before. Returns False when the patch was discarded or the row was
-    missing.
+    missing. ``cleanup_followup`` states what render work remains after this
+    commit. Cleanup soft timeouts are deferred for leaf writes (``none``), and
+    conditionally for media/SFX follow-up based on the freshly locked merged
+    variant. Intermediate writes keep the default ``required`` propagation so
+    Celery can persist a visible timeout before the hard limit interrupts work.
+
+    When ``accepted_state`` is supplied, its ``accepted`` flag is set immediately
+    after the transaction commits and before poster cleanup can propagate a soft
+    timeout. Task-level exception handlers use that ordering to distinguish a
+    pre-swap failure (the previous playable video remains valid) from a post-swap
+    failure (the newly committed video is still missing required media layers).
     """
+    if cleanup_followup not in {"required", "none", "media_layers", "sfx_layer"}:
+        raise ValueError(f"invalid cleanup_followup: {cleanup_followup}")
     enriched_patch, generated_poster_paths = _attach_variant_posters(patch, job_id=job_id)
     patch.update(
         {
@@ -10016,6 +10182,9 @@ def _update_variant_entry(
     )
     patch = enriched_patch
     capture_generation: str | None = None
+    journaled_poster_paths: list[str] = []
+    accepted_variant: dict[str, Any] | None = None
+    commit_soft_timeout: SoftTimeLimitExceeded | None = None
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
@@ -10028,7 +10197,7 @@ def _update_variant_entry(
                 job_id, generated_poster_paths, locked_job=job
             )
             return False
-        plan = dict(job.assembly_plan or {})
+        plan = copy.deepcopy(job.assembly_plan or {})
         variants = list(plan.get("variants") or [])
         for i, v in enumerate(variants):
             if v.get("variant_id") == variant_id:
@@ -10050,7 +10219,12 @@ def _update_variant_entry(
                         job_id, generated_poster_paths, locked_job=job
                     )
                     return False
-                variants[i] = {**v, **{k: val for k, val in patch.items() if k != "variant_id"}}
+                updated_variant = {
+                    **v,
+                    **{k: val for k, val in patch.items() if k != "variant_id"},
+                }
+                variants[i] = updated_variant
+                accepted_variant = updated_variant
                 if (
                     variants[i].get("render_status") == "ready"
                     and variants[i].get("video_path")
@@ -10079,8 +10253,56 @@ def _update_variant_entry(
             )
             return False
         plan["variants"] = variants
+        journaled_poster_paths = append_retired_variant_poster_receipts(
+            plan,
+            v,
+            variants[i],
+        )
         job.assembly_plan = plan
-        db.commit()
+        try:
+            db.commit()
+            if accepted_state is not None:
+                accepted_state["accepted"] = True
+        except SoftTimeLimitExceeded as exc:
+            # A soft-limit signal can land after PostgreSQL accepted COMMIT but
+            # before the next Python bytecode sets ``accepted``. In that tiny
+            # window the caller must not restore the previous video as if this
+            # swap never landed. Leave this session first, then prove the exact
+            # token+patch from a new transaction below.
+            commit_soft_timeout = exc
+    if commit_soft_timeout is not None:
+        persisted = _variant_patch_persisted_after_ambiguous_commit(
+            job_id,
+            variant_id,
+            patch,
+            expected_render_gen_id=expected_render_gen_id,
+        )
+        if accepted_state is not None and persisted is not False:
+            # ``None`` means the fresh read itself failed. Fail closed: a
+            # potentially committed partial render must never be republished as
+            # ready merely because confirmation was unavailable.
+            accepted_state["accepted"] = True
+        raise commit_soft_timeout
+    defer_cleanup_timeout = (
+        cleanup_followup == "none"
+        or (
+            cleanup_followup == "media_layers"
+            and accepted_variant is not None
+            and not _will_reapply_media_layers(accepted_variant)
+        )
+        or (
+            cleanup_followup == "sfx_layer"
+            and accepted_variant is not None
+            and not _will_reapply_sfx_layer(accepted_variant)
+        )
+    )
+    if defer_cleanup_timeout:
+        _reconcile_retired_variant_posters_after_terminal_commit(
+            job_id,
+            journaled_poster_paths,
+        )
+    else:
+        _reconcile_retired_variant_posters(job_id, journaled_poster_paths)
     if capture_generation is not None:
         try:
             from app.tasks.edit_training_artifacts import (  # noqa: PLC0415
@@ -10095,6 +10317,58 @@ def _update_variant_entry(
                 variant_id=variant_id,
             )
     return True
+
+
+def _variant_patch_persisted_after_ambiguous_commit(
+    job_id: str,
+    variant_id: str,
+    patch: dict[str, Any],
+    *,
+    expected_render_gen_id: str | None,
+) -> bool | None:
+    """Fresh-read whether an interrupted COMMIT published this exact patch.
+
+    ``Session.commit()`` is not cancellation-safe: PostgreSQL may have committed
+    even when a Celery soft-limit exception interrupts the client immediately
+    afterwards. ``True`` proves the expected generation still owns the variant
+    and every patched field is visible. ``False`` proves it did not land (or was
+    superseded). ``None`` is deliberately inconclusive so callers can fail
+    closed instead of lying that an effect-less partial is ready.
+    """
+
+    try:
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id), populate_existing=True)
+            if job is None:
+                return False
+            variants = (job.assembly_plan or {}).get("variants") or []
+            variant = next(
+                (
+                    row
+                    for row in variants
+                    if isinstance(row, dict) and row.get("variant_id") == variant_id
+                ),
+                None,
+            )
+            if variant is None:
+                return False
+            if (
+                expected_render_gen_id is not None
+                and variant.get("render_generation_id") != expected_render_gen_id
+            ):
+                return False
+            return all(
+                key == "variant_id" or (key in variant and variant[key] == value)
+                for key, value in patch.items()
+            )
+    except Exception:  # noqa: BLE001 - ambiguity must fail closed, not mask timeout
+        log.exception(
+            "variant_commit_confirmation_failed",
+            job_id=job_id,
+            variant_id=variant_id,
+            expected_gen_id=expected_render_gen_id,
+        )
+        return None
 
 
 # ── Variant spec ──────────────────────────────────────────────────────────────
@@ -11447,7 +11721,12 @@ def _free_uncommitted_storage_paths(paths: list[str], *, job_id: str) -> None:
 
 
 def _free_retired_generation_outputs(previous: dict, result: dict, *, job_id: str) -> None:
-    """Retire the last generation's video/base only after its replacement lands."""
+    """Retire old videos after their replacement transaction lands.
+
+    Poster retirement is journaled by the accepting DB transaction and handled
+    by ``video_poster_cleanup``.  In particular, deterministic poster siblings
+    are shared writer destinations and must never be deleted here.
+    """
     prefix = f"generative-jobs/{job_id}/"
     keep = {
         result.get("video_path"),
@@ -11466,7 +11745,6 @@ def _free_retired_generation_outputs(previous: dict, result: dict, *, job_id: st
         path = previous.get(field)
         if isinstance(path, str) and path.startswith(prefix) and path not in keep:
             delete_object_best_effort(path)
-            delete_object_best_effort(f"{path}.poster.jpg")
 
 
 def _discard_uncommitted_reburn_storage(
@@ -16522,6 +16800,8 @@ def _run_rerender_caption_camera_effects(
         patch,
         expected_render_gen_id=render_gen_id,
         outcome="caption_camera_rerender",
+        cleanup_followup="media_layers",
+        accepted_state=terminal_state,
     ):
         _delete_cancelled_job_objects(job_id, [new_video_gcs, *camera_created_storage])
         for new_path, old_path in (
@@ -16553,6 +16833,7 @@ def _run_rerender_caption_camera_effects(
             },
             expected_render_gen_id=render_gen_id,
             outcome="caption_camera_rerender_reapply_noop",
+            cleanup_followup="none",
         )
     log.info(
         "caption_camera_rerender_done",
@@ -16696,6 +16977,8 @@ def _run_reburn_narrated_captions(
         patch,
         expected_render_gen_id=render_gen_id,
         outcome="caption_reburn",
+        cleanup_followup="media_layers",
+        accepted_state=terminal_state,
     ):
         # F3: superseded — the just-uploaded burn was never referenced; free it.
         _delete_cancelled_job_objects(job_id, [new_gcs, *caption_created_storage])
@@ -16736,6 +17019,7 @@ def _run_reburn_narrated_captions(
             },
             expected_render_gen_id=render_gen_id,
             outcome="caption_reburn_reapply_noop",
+            cleanup_followup="none",
         )
     log.info(
         "narrated_caption_reburn_done",
@@ -17027,6 +17311,8 @@ def _run_reburn_narrated_bed_level(
         patch,
         expected_render_gen_id=render_gen_id,
         outcome="bed_level_reburn",
+        cleanup_followup="media_layers",
+        accepted_state=terminal_state,
     ):
         # F3: superseded — the just-uploaded pair was never referenced; free both.
         delete_object_best_effort(new_video_gcs)
@@ -17057,6 +17343,7 @@ def _run_reburn_narrated_bed_level(
             },
             expected_render_gen_id=render_gen_id,
             outcome="bed_level_reburn_reapply_noop",
+            cleanup_followup="none",
         )
     log.info(
         "narrated_bed_level_reburn_done", job_id=job_id, variant_id=variant_id, bed_level=bed_level
@@ -17235,6 +17522,7 @@ def _run_retranscribe_subtitled(
                 {"render_status": "ready"},
                 expected_render_gen_id=render_gen_id,
                 outcome="subtitled_retranscribe_empty",
+                cleanup_followup="none",
             )
             return
         (
@@ -17353,6 +17641,8 @@ def _run_retranscribe_subtitled(
         patch,
         expected_render_gen_id=render_gen_id,
         outcome="subtitled_retranscribe",
+        cleanup_followup="media_layers",
+        accepted_state=terminal_state,
     ):
         # F3: superseded — the just-uploaded burn was never referenced; free it.
         _delete_cancelled_job_objects(job_id, [new_gcs, *retranscribe_created_storage])
@@ -17390,6 +17680,7 @@ def _run_retranscribe_subtitled(
             },
             expected_render_gen_id=render_gen_id,
             outcome="subtitled_retranscribe_reapply_noop",
+            cleanup_followup="none",
         )
     log.info(
         "subtitled_retranscribe_done",
@@ -18399,6 +18690,7 @@ def _publish_speech_cut_rerender(
 
     from app.pipeline.speech_cut_state import cut_revision  # noqa: PLC0415
 
+    journaled_poster_paths: list[str] = []
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
@@ -18436,6 +18728,13 @@ def _publish_speech_cut_rerender(
             break
         if not published:
             raise RuntimeError("speech cut publication variant disappeared")
+        raw_cleanup_receipts = plan.get(VIDEO_POSTER_BACKFILL_CLEANUP_FIELD)
+        if isinstance(raw_cleanup_receipts, list):
+            journaled_poster_paths = [
+                receipt["old_path"]
+                for receipt in raw_cleanup_receipts
+                if isinstance(receipt, dict) and isinstance(receipt.get("old_path"), str)
+            ]
         job.assembly_plan = {
             **plan,
             "silence_cut_disabled": _legacy_silence_disabled_after_operation(
@@ -18449,6 +18748,13 @@ def _publish_speech_cut_rerender(
         }
         flag_modified(job, "assembly_plan")
         db.commit()
+    # The successful publication removes rollback snapshots that may have kept
+    # an old UUID poster live during rendering. Reconcile only after that state
+    # transition commits; a killed process is covered by the Beat sweep.
+    _reconcile_retired_variant_posters_after_terminal_commit(
+        job_id,
+        journaled_poster_paths,
+    )
 
 
 def _compose_speech_cut_rerender(
@@ -18941,6 +19247,7 @@ def _set_status(
     # variants list here. Sibling regenerate/reapply tasks and the status route's
     # lazy overlay-preview backfill read-modify-write the same JSONB concurrently,
     # so without SELECT ... FOR UPDATE a stale read silently clobbers their state.
+    journaled_poster_paths: list[str] = []
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
@@ -18959,18 +19266,50 @@ def _set_status(
         if failure_reason:
             job.failure_reason = failure_reason
         if extra_plan is not None:
-            existing = job.assembly_plan or {}
+            existing = copy.deepcopy(job.assembly_plan or {})
             plan_patch = extra_plan
             if merge_finalized_variants and isinstance(extra_plan.get("variants"), list):
+                finalized_variants = _merge_finalized_variants(
+                    existing.get("variants"),
+                    extra_plan["variants"],
+                )
                 plan_patch = {
                     **extra_plan,
-                    "variants": _merge_finalized_variants(
-                        existing.get("variants"),
-                        extra_plan["variants"],
-                    ),
+                    "variants": finalized_variants,
                 }
-            job.assembly_plan = {**existing, **plan_patch}
+                live_by_id: dict[str, list[dict[str, Any]]] = {}
+                for row in existing.get("variants") or []:
+                    if not isinstance(row, dict) or not isinstance(row.get("variant_id"), str):
+                        continue
+                    live_by_id.setdefault(row["variant_id"], []).append(row)
+                next_plan = {**existing, **plan_patch}
+                for finalized in finalized_variants:
+                    if not isinstance(finalized, dict):
+                        continue
+                    variant_id = finalized.get("variant_id")
+                    for previous in live_by_id.get(variant_id, []):
+                        journaled_poster_paths.extend(
+                            append_retired_variant_poster_receipts(
+                                next_plan,
+                                previous,
+                                finalized,
+                            )
+                        )
+                job.assembly_plan = next_plan
+            else:
+                job.assembly_plan = {**existing, **plan_patch}
         db.commit()
+    if expected_speech_cut_operation_id and expected_speech_cut_attempt_id:
+        # Speech-cut ``_set_status`` is only an intermediate commit: compose and
+        # the receipt-publishing transaction still have to run. Let a cleanup
+        # soft timeout reach the task wrapper so it restores the exact last-good
+        # snapshot instead of publishing a half-finalized result.
+        _reconcile_retired_variant_posters(job_id, journaled_poster_paths)
+    else:
+        _reconcile_retired_variant_posters_after_terminal_commit(
+            job_id,
+            journaled_poster_paths,
+        )
     return True
 
 

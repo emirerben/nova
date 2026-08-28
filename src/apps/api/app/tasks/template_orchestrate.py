@@ -105,7 +105,15 @@ from app.services.template_poster import (
     upload_video_poster,
 )
 from app.services.template_poster import generate_and_upload as generate_poster
+from app.services.video_poster_cleanup import (
+    append_retired_top_level_poster_receipts,
+    reconcile_video_poster_cleanup_receipts,
+)
 from app.storage import copy_object, copy_object_signed_url, download_to_file, upload_public_read
+from app.tasks._finalization_commit import (
+    FinalizationCommitState,
+    confirm_job_plan_finalization,
+)
 from app.tasks._job_cancel_fence import (
     active_job_for_update,
     delete_task_owned_outputs,
@@ -136,6 +144,39 @@ def _try_upload_video_poster(
             error=str(exc)[:300],
         )
         return None
+
+
+def _reconcile_retired_top_level_posters(job_id: str, journaled_paths: list[str]) -> None:
+    """Best-effort now; the committed receipt and Beat sweep own retries."""
+    if not journaled_paths:
+        return
+    try:
+        result = reconcile_video_poster_cleanup_receipts(job_id)
+    except SoftTimeLimitExceeded:
+        # The replacement render and durable cleanup receipt were committed
+        # before this best-effort pass.  Let Beat retry the receipt instead of
+        # allowing the task's outer timeout handler to overwrite ready state.
+        log.warning(
+            "top_level_video_poster_cleanup_soft_timeout_deferred",
+            job_id=job_id,
+            journaled=len(journaled_paths),
+        )
+        return
+    except Exception:  # noqa: BLE001 — the committed receipt is the retry guarantee
+        log.exception(
+            "top_level_video_poster_cleanup_reconcile_failed",
+            job_id=job_id,
+            journaled=len(journaled_paths),
+        )
+        return
+    if result.retained:
+        log.warning(
+            "top_level_video_poster_cleanup_pending_retry",
+            job_id=job_id,
+            journaled=len(journaled_paths),
+            retained=result.retained,
+            failures=result.failures,
+        )
 
 
 # Consolidated label configuration — all visual tuning for text overlays.
@@ -1233,7 +1274,10 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
             )
             if job is None:
                 return
-            job.assembly_plan = plan_data
+            # Keep the last committed output/poster and any pending cleanup
+            # chain alive until this render atomically publishes its successor.
+            # Otherwise the finalizer has no durable proof of what it replaced.
+            job.assembly_plan = {**(job.assembly_plan or {}), **plan_data}
             db.commit()
 
         record_phase(
@@ -1427,6 +1471,9 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
 
         # [9] Finalize
         finalized = False
+        finalize_commit_attempted = False
+        finalize_commit_error: Exception | None = None
+        journaled_poster_paths: list[str] = []
         try:
             with _sync_session() as db:
                 job = active_job_for_update(
@@ -1436,7 +1483,8 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
                 )
                 if job is not None:
                     job.status = "template_ready"
-                    job.assembly_plan = {
+                    previous_plan = copy.deepcopy(job.assembly_plan or {})
+                    next_plan = {
                         **plan_data,
                         "output_url": video_url,
                         "output_path": gcs_output_path,
@@ -1446,14 +1494,65 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
                         "platform_copy": platform_copy.model_dump(),
                         "copy_status": copy_status,
                     }
-                    db.commit()
-                    finalized = True
-        except Exception:
-            delete_task_owned_outputs(job_id, created_outputs)
-            raise
+                    journaled_poster_paths = append_retired_top_level_poster_receipts(
+                        next_plan,
+                        previous_plan,
+                        next_plan,
+                    )
+                    job.assembly_plan = next_plan
+                    finalize_commit_attempted = True
+                    try:
+                        db.commit()
+                        finalized = True
+                    except Exception as exc:  # noqa: BLE001 - COMMIT is ambiguous
+                        finalize_commit_error = exc
+        except Exception as exc:
+            if not finalize_commit_attempted:
+                delete_task_owned_outputs(job_id, created_outputs)
+                raise
+            finalize_commit_error = finalize_commit_error or exc
+        if finalize_commit_error is not None:
+            commit_state = confirm_job_plan_finalization(
+                _sync_session,
+                job_id=job_id,
+                expected_status="template_ready",
+                expected_plan_fields={
+                    "output_url": video_url,
+                    "output_path": gcs_output_path,
+                    "poster_path": poster_path,
+                    "base_output_url": base_video_url,
+                    "base_poster_path": base_poster_path,
+                },
+                attempt_references=(
+                    video_url,
+                    gcs_output_path,
+                    poster_path,
+                    base_video_url,
+                    gcs_base_path,
+                    base_poster_path,
+                ),
+            )
+            if commit_state is FinalizationCommitState.CONFIRMED:
+                finalized = True
+                log.warning(
+                    "template_job_finalize_commit_confirmed_after_error",
+                    job_id=job_id,
+                    error_class=type(finalize_commit_error).__name__,
+                )
+            elif commit_state is FinalizationCommitState.UNKNOWN:
+                log.error(
+                    "template_job_finalize_commit_inconclusive",
+                    job_id=job_id,
+                    error_class=type(finalize_commit_error).__name__,
+                )
+                return
+            else:
+                delete_task_owned_outputs(job_id, created_outputs)
+                raise finalize_commit_error
         if not finalized:
             delete_task_owned_outputs(job_id, created_outputs)
             return
+        _reconcile_retired_top_level_posters(job_id, journaled_poster_paths)
 
         record_phase(
             job_id,
@@ -1675,6 +1774,9 @@ def _run_rerender(
 
         # Finalize — keep locked steps plus output metadata
         finalized = False
+        finalize_commit_attempted = False
+        finalize_commit_error: Exception | None = None
+        journaled_poster_paths: list[str] = []
         try:
             with _sync_session() as db:
                 job = active_job_for_update(
@@ -1684,7 +1786,8 @@ def _run_rerender(
                 )
                 if job is not None:
                     job.status = "template_ready"
-                    job.assembly_plan = {
+                    previous_plan = copy.deepcopy(job.assembly_plan or {})
+                    next_plan = {
                         **plan,
                         "output_url": video_url,
                         "output_path": gcs_output_path,
@@ -1694,14 +1797,65 @@ def _run_rerender(
                         "platform_copy": platform_copy.model_dump(),
                         "copy_status": copy_status,
                     }
-                    db.commit()
-                    finalized = True
-        except Exception:
-            delete_task_owned_outputs(job_id, created_outputs)
-            raise
+                    journaled_poster_paths = append_retired_top_level_poster_receipts(
+                        next_plan,
+                        previous_plan,
+                        next_plan,
+                    )
+                    job.assembly_plan = next_plan
+                    finalize_commit_attempted = True
+                    try:
+                        db.commit()
+                        finalized = True
+                    except Exception as exc:  # noqa: BLE001 - COMMIT is ambiguous
+                        finalize_commit_error = exc
+        except Exception as exc:
+            if not finalize_commit_attempted:
+                delete_task_owned_outputs(job_id, created_outputs)
+                raise
+            finalize_commit_error = finalize_commit_error or exc
+        if finalize_commit_error is not None:
+            commit_state = confirm_job_plan_finalization(
+                _sync_session,
+                job_id=job_id,
+                expected_status="template_ready",
+                expected_plan_fields={
+                    "output_url": video_url,
+                    "output_path": gcs_output_path,
+                    "poster_path": poster_path,
+                    "base_output_url": base_video_url,
+                    "base_poster_path": base_poster_path,
+                },
+                attempt_references=(
+                    video_url,
+                    gcs_output_path,
+                    poster_path,
+                    base_video_url,
+                    gcs_base_path,
+                    base_poster_path,
+                ),
+            )
+            if commit_state is FinalizationCommitState.CONFIRMED:
+                finalized = True
+                log.warning(
+                    "template_rerender_finalize_commit_confirmed_after_error",
+                    job_id=job_id,
+                    error_class=type(finalize_commit_error).__name__,
+                )
+            elif commit_state is FinalizationCommitState.UNKNOWN:
+                log.error(
+                    "template_rerender_finalize_commit_inconclusive",
+                    job_id=job_id,
+                    error_class=type(finalize_commit_error).__name__,
+                )
+                return
+            else:
+                delete_task_owned_outputs(job_id, created_outputs)
+                raise finalize_commit_error
         if not finalized:
             delete_task_owned_outputs(job_id, created_outputs)
             return
+        _reconcile_retired_top_level_posters(job_id, journaled_poster_paths)
 
         log.info("rerender_done", job_id=job_id, output_url=video_url)
 
@@ -7407,6 +7561,9 @@ def _run_single_video_job(
             "audio_health": audio_health,
         }
         finalized = False
+        finalize_commit_attempted = False
+        finalize_commit_error: Exception | None = None
+        journaled_poster_paths: list[str] = []
         try:
             with _sync_session() as db:
                 job = active_job_for_update(
@@ -7416,17 +7573,68 @@ def _run_single_video_job(
                 )
                 if job is not None:
                     job.status = "template_ready"
+                    previous_plan = copy.deepcopy(job.assembly_plan or {})
+                    journaled_poster_paths = append_retired_top_level_poster_receipts(
+                        plan_data,
+                        previous_plan,
+                        plan_data,
+                    )
                     job.assembly_plan = plan_data
                     if audio_health:
                         job.error_detail = f"audio assets unavailable: {','.join(audio_health)}"
-                    db.commit()
-                    finalized = True
-        except Exception:
-            delete_task_owned_outputs(job_id, created_outputs)
-            raise
+                    finalize_commit_attempted = True
+                    try:
+                        db.commit()
+                        finalized = True
+                    except Exception as exc:  # noqa: BLE001 - COMMIT is ambiguous
+                        finalize_commit_error = exc
+        except Exception as exc:
+            if not finalize_commit_attempted:
+                delete_task_owned_outputs(job_id, created_outputs)
+                raise
+            finalize_commit_error = finalize_commit_error or exc
+        if finalize_commit_error is not None:
+            commit_state = confirm_job_plan_finalization(
+                _sync_session,
+                job_id=job_id,
+                expected_status="template_ready",
+                expected_plan_fields={
+                    "output_url": video_url,
+                    "output_path": gcs_output_path,
+                    "poster_path": poster_path,
+                    "base_output_url": base_video_url,
+                    "base_poster_path": base_poster_path,
+                },
+                attempt_references=(
+                    video_url,
+                    gcs_output_path,
+                    poster_path,
+                    base_video_url,
+                    gcs_base_path,
+                    base_poster_path,
+                ),
+            )
+            if commit_state is FinalizationCommitState.CONFIRMED:
+                finalized = True
+                log.warning(
+                    "single_video_job_finalize_commit_confirmed_after_error",
+                    job_id=job_id,
+                    error_class=type(finalize_commit_error).__name__,
+                )
+            elif commit_state is FinalizationCommitState.UNKNOWN:
+                log.error(
+                    "single_video_job_finalize_commit_inconclusive",
+                    job_id=job_id,
+                    error_class=type(finalize_commit_error).__name__,
+                )
+                return
+            else:
+                delete_task_owned_outputs(job_id, created_outputs)
+                raise finalize_commit_error
         if not finalized:
             delete_task_owned_outputs(job_id, created_outputs)
             return
+        _reconcile_retired_top_level_posters(job_id, journaled_poster_paths)
 
         record_phase(
             job_id,

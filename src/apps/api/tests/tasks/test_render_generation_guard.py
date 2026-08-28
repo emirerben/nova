@@ -16,6 +16,7 @@ import contextlib
 import types
 
 import pytest
+from billiard.exceptions import SoftTimeLimitExceeded
 
 import app.tasks.generative_build as gb
 
@@ -52,6 +53,29 @@ def _variant(gen_id: str | None, **extra) -> dict:
         v["render_generation_id"] = gen_id
     v.update(extra)
     return v
+
+
+def test_nonterminal_cleanup_propagates_celery_soft_timeout(monkeypatch):
+    def raise_soft_timeout(_job_id):
+        raise SoftTimeLimitExceeded()
+
+    monkeypatch.setattr(gb, "reconcile_video_poster_cleanup_receipts", raise_soft_timeout)
+
+    with pytest.raises(SoftTimeLimitExceeded):
+        gb._reconcile_retired_variant_posters(JOB_ID, ["poster.jpg"])
+
+
+def test_terminal_cleanup_defers_celery_soft_timeout(monkeypatch):
+    monkeypatch.setattr(
+        gb,
+        "_reconcile_retired_variant_posters",
+        lambda _job_id, _paths: (_ for _ in ()).throw(SoftTimeLimitExceeded()),
+    )
+
+    gb._reconcile_retired_variant_posters_after_terminal_commit(
+        JOB_ID,
+        ["poster.jpg"],
+    )
 
 
 def _patch_sessions(monkeypatch, job):
@@ -292,6 +316,34 @@ def test_tokenless_sfx_pass_terminal_write_lands(monkeypatch):
     assert job.assembly_plan["variants"][0]["output_url"] == "https://signed/sfx-new"
 
 
+def test_sfx_terminal_cleanup_soft_timeout_keeps_accepted_ready_variant(monkeypatch):
+    video = f"generative-jobs/{JOB_ID}/variant_3_original_text.mp4"
+    old_poster = f"{video}.poster.backfill-11111111-1111-4111-8111-111111111111.jpg"
+    new_poster = f"{video}.poster.jpg"
+    job = _FakeJob([_variant("tok-cur", video_path=video, poster_path=old_poster)])
+    _arm_direct_passes(monkeypatch, job)
+    monkeypatch.setattr(gb, "generate_and_upload_from_gcs", lambda *_a, **_kw: new_poster)
+    monkeypatch.setattr(
+        gb,
+        "reconcile_video_poster_cleanup_receipts",
+        lambda _job_id: (_ for _ in ()).throw(SoftTimeLimitExceeded()),
+    )
+
+    gb._run_sfx_pass(
+        job_id=JOB_ID,
+        variant_id="original_text",
+        sfx_raw=[_sfx_placement()],
+        expected_render_gen_id="tok-cur",
+    )
+
+    persisted = job.assembly_plan["variants"][0]
+    assert persisted["render_status"] == "ready"
+    assert persisted["poster_path"] == new_poster
+    assert job.assembly_plan[gb.VIDEO_POSTER_BACKFILL_CLEANUP_FIELD] == [
+        {"old_path": old_poster, "replacement_path": new_poster}
+    ]
+
+
 def test_stale_media_overlay_pass_terminal_write_discarded(monkeypatch):
     job = _FakeJob([_variant("tok-new")])
     _arm_direct_passes(monkeypatch, job)
@@ -337,6 +389,36 @@ def test_tokenless_media_overlay_pass_terminal_write_lands(monkeypatch):
     )
 
     assert job.assembly_plan["variants"][0]["output_url"] == "https://signed/overlay-new"
+
+
+def test_media_overlay_terminal_cleanup_soft_timeout_keeps_accepted_ready_variant(
+    monkeypatch,
+):
+    video = f"generative-jobs/{JOB_ID}/variant_3_original_text.mp4"
+    old_poster = f"{video}.poster.backfill-11111111-1111-4111-8111-111111111111.jpg"
+    new_poster = f"{video}.poster.jpg"
+    job = _FakeJob([_variant("tok-cur", video_path=video, poster_path=old_poster)])
+    _arm_direct_passes(monkeypatch, job)
+    monkeypatch.setattr(gb, "generate_and_upload_from_gcs", lambda *_a, **_kw: new_poster)
+    monkeypatch.setattr(
+        gb,
+        "reconcile_video_poster_cleanup_receipts",
+        lambda _job_id: (_ for _ in ()).throw(SoftTimeLimitExceeded()),
+    )
+
+    gb._run_media_overlay_pass(
+        job_id=JOB_ID,
+        variant_id="original_text",
+        overlays_raw=[_media_overlay_card()],
+        expected_render_gen_id="tok-cur",
+    )
+
+    persisted = job.assembly_plan["variants"][0]
+    assert persisted["render_status"] == "ready"
+    assert persisted["poster_path"] == new_poster
+    assert job.assembly_plan[gb.VIDEO_POSTER_BACKFILL_CLEANUP_FIELD] == [
+        {"old_path": old_poster, "replacement_path": new_poster}
+    ]
 
 
 def test_stale_task_terminal_write_discarded(monkeypatch):
@@ -440,15 +522,425 @@ def test_accepted_full_render_retires_previous_generation_outputs(monkeypatch):
         "app.storage.delete_object_best_effort",
         lambda path: deleted.append(path) or True,
     )
-
     gb._free_retired_generation_outputs(previous, replacement, job_id=JOB_ID)
 
-    assert sorted(deleted) == sorted(
+    assert sorted(deleted) == sorted(previous.values())
+
+
+def test_accepted_full_render_retires_uuid_backfill_posters(monkeypatch):
+    old_video = f"generative-jobs/{JOB_ID}/variant_old.mp4"
+    old_poster = f"{old_video}.poster.backfill-11111111-1111-4111-8111-111111111111.jpg"
+    previous = {"video_path": old_video, "poster_path": old_poster}
+    replacement = {"video_path": f"generative-jobs/{JOB_ID}/variant_new.mp4"}
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        "app.storage.delete_object_best_effort",
+        lambda path: deleted.append(path) or True,
+    )
+    gb._free_retired_generation_outputs(previous, replacement, job_id=JOB_ID)
+
+    assert deleted == [old_video]
+
+
+def test_unreferenced_poster_cleanup_accepts_uuid_backfill_key(monkeypatch):
+    poster = (
+        f"generative-jobs/{JOB_ID}/variant.mp4.poster.backfill-"
+        "11111111-1111-4111-8111-111111111111.jpg"
+    )
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        gb,
+        "_delete_cancelled_job_objects",
+        lambda job_id, paths: deleted.extend(paths),
+    )
+
+    gb._delete_generated_poster_objects_if_unreferenced(
+        JOB_ID,
+        [poster],
+        locked_job=types.SimpleNamespace(assembly_plan={"variants": []}),
+    )
+
+    assert deleted == [poster]
+
+
+def test_same_video_poster_swap_retires_uuid_backfill_reference(monkeypatch):
+    video = f"generative-jobs/{JOB_ID}/variant.mp4"
+    old_poster = f"{video}.poster.backfill-11111111-1111-4111-8111-111111111111.jpg"
+    new_poster = f"{video}.poster.jpg"
+    job = _FakeJob([_variant("tok", video_path=video, poster_path=old_poster)])
+    _patch_sessions(monkeypatch, job)
+    journaled: list[str] = []
+    monkeypatch.setattr(
+        gb,
+        "_reconcile_retired_variant_posters",
+        lambda _job_id, paths: journaled.extend(paths),
+    )
+
+    assert gb._update_variant_entry(JOB_ID, "original_text", {"poster_path": new_poster})
+
+    assert job.assembly_plan["variants"][0]["video_path"] == video
+    assert job.assembly_plan["variants"][0]["poster_path"] == new_poster
+    assert journaled == [old_poster]
+    assert job.assembly_plan[gb.VIDEO_POSTER_BACKFILL_CLEANUP_FIELD] == [
+        {"old_path": old_poster, "replacement_path": new_poster}
+    ]
+
+
+def test_full_render_upsert_journals_uuid_poster_before_reconcile(monkeypatch):
+    old_video = f"generative-jobs/{JOB_ID}/variant_old.mp4"
+    old_poster = f"{old_video}.poster.backfill-11111111-1111-4111-8111-111111111111.jpg"
+    new_video = f"generative-jobs/{JOB_ID}/variant_new.mp4"
+    new_poster = f"{new_video}.poster.jpg"
+    job = _FakeJob([_variant("old-render", video_path=old_video, poster_path=old_poster)])
+    _patch_sessions(monkeypatch, job)
+    reconciled: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(
+        gb,
+        "_reconcile_retired_variant_posters",
+        lambda job_id, paths: reconciled.append((job_id, list(paths))),
+    )
+
+    replacement = _variant(
+        "new-render",
+        video_path=new_video,
+        poster_path=new_poster,
+        render_status="ready",
+    )
+    assert gb._upsert_variant_entry(JOB_ID, replacement)
+
+    assert job.assembly_plan["variants"] == [replacement]
+    assert job.assembly_plan[gb.VIDEO_POSTER_BACKFILL_CLEANUP_FIELD] == [
+        {"old_path": old_poster, "replacement_path": new_poster}
+    ]
+    assert reconciled == [(JOB_ID, [old_poster])]
+
+
+def test_full_render_upsert_cleanup_failure_keeps_durable_receipt(monkeypatch):
+    old_video = f"generative-jobs/{JOB_ID}/variant_old.mp4"
+    old_poster = f"{old_video}.poster.backfill-11111111-1111-4111-8111-111111111111.jpg"
+    new_video = f"generative-jobs/{JOB_ID}/variant_new.mp4"
+    new_poster = f"{new_video}.poster.jpg"
+    job = _FakeJob([_variant("old-render", video_path=old_video, poster_path=old_poster)])
+    _patch_sessions(monkeypatch, job)
+
+    def _fail_cleanup(_job_id):
+        raise RuntimeError("storage unavailable")
+
+    monkeypatch.setattr(gb, "reconcile_video_poster_cleanup_receipts", _fail_cleanup)
+    replacement = _variant(
+        "new-render",
+        video_path=new_video,
+        poster_path=new_poster,
+        render_status="ready",
+    )
+
+    assert gb._upsert_variant_entry(JOB_ID, replacement)
+
+    assert job.assembly_plan["variants"] == [replacement]
+    assert job.assembly_plan[gb.VIDEO_POSTER_BACKFILL_CLEANUP_FIELD] == [
+        {"old_path": old_poster, "replacement_path": new_poster}
+    ]
+
+
+def test_full_render_upsert_cleanup_soft_timeout_propagates_after_commit(monkeypatch):
+    old_video = f"generative-jobs/{JOB_ID}/variant_old.mp4"
+    old_poster = f"{old_video}.poster.backfill-11111111-1111-4111-8111-111111111111.jpg"
+    new_video = f"generative-jobs/{JOB_ID}/variant_new.mp4"
+    new_poster = f"{new_video}.poster.jpg"
+    job = _FakeJob([_variant("old-render", video_path=old_video, poster_path=old_poster)])
+    _patch_sessions(monkeypatch, job)
+    monkeypatch.setattr(
+        gb,
+        "reconcile_video_poster_cleanup_receipts",
+        lambda _job_id: (_ for _ in ()).throw(SoftTimeLimitExceeded()),
+    )
+    replacement = _variant(
+        "new-render",
+        video_path=new_video,
+        poster_path=new_poster,
+        render_status="ready",
+    )
+
+    with pytest.raises(SoftTimeLimitExceeded):
+        gb._upsert_variant_entry(JOB_ID, replacement)
+
+    # The intermediate write and its receipt are durable, but the task must
+    # still reach its outer timeout handler before Celery's hard kill.
+    assert job.assembly_plan["variants"] == [replacement]
+    assert job.assembly_plan[gb.VIDEO_POSTER_BACKFILL_CLEANUP_FIELD] == [
+        {"old_path": old_poster, "replacement_path": new_poster}
+    ]
+
+
+def test_pending_upsert_preserves_every_recoverable_asset_until_replacement(monkeypatch):
+    video = f"generative-jobs/{JOB_ID}/accepted.mp4"
+    poster = f"{video}.poster.backfill-11111111-1111-4111-8111-111111111111.jpg"
+    assets = {
+        field: f"generative-jobs/{JOB_ID}/{field}.bin" for field in gb._PENDING_VARIANT_ASSET_FIELDS
+    }
+    assets.update({"video_path": video, "poster_path": poster})
+    job = _FakeJob([_variant("old-generation", render_status="ready", **assets)])
+    _patch_sessions(monkeypatch, job)
+
+    assert gb._upsert_variant_entry(
+        JOB_ID,
+        {
+            "variant_id": "original_text",
+            "render_generation_id": "new-generation",
+            "render_status": "pending",
+            "ok": False,
+        },
+    )
+
+    persisted = job.assembly_plan["variants"][0]
+    assert persisted["render_status"] == "pending"
+    assert persisted["render_generation_id"] == "new-generation"
+    assert {field: persisted[field] for field in assets} == assets
+    assert gb.VIDEO_POSTER_BACKFILL_CLEANUP_FIELD not in job.assembly_plan
+
+
+def test_ambiguous_commit_confirms_exact_persisted_patch_before_reraising(monkeypatch):
+    job = _FakeJob([_variant("tok-current")])
+    calls = 0
+
+    class _Sess:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, model, pk, **kwargs):
+            return job if model is gb.Job else None
+
+        def commit(self):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                # Model PostgreSQL accepting COMMIT before Celery delivers the
+                # soft-limit signal to the client.
+                raise SoftTimeLimitExceeded()
+
+    monkeypatch.setattr(gb, "_sync_session", lambda: _Sess())
+    monkeypatch.setattr(gb, "_attach_variant_posters", lambda patch, **_kw: (dict(patch), []))
+    accepted = {"accepted": False}
+    patch = {"video_path": f"generative-jobs/{JOB_ID}/new.mp4", "render_status": "rendering"}
+
+    with pytest.raises(SoftTimeLimitExceeded):
+        gb._update_variant_entry(
+            JOB_ID,
+            "original_text",
+            patch,
+            expected_render_gen_id="tok-current",
+            accepted_state=accepted,
+        )
+
+    assert accepted["accepted"] is True
+    assert job.assembly_plan["variants"][0]["video_path"] == patch["video_path"]
+
+
+def test_ambiguous_commit_does_not_accept_patch_absent_from_fresh_read(monkeypatch):
+    staged = _FakeJob([_variant("tok-current")])
+    persisted = _FakeJob([_variant("tok-current")])
+    sessions = 0
+
+    class _Sess:
+        def __init__(self, job, *, interrupted=False):
+            self.job = job
+            self.interrupted = interrupted
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, model, pk, **kwargs):
+            return self.job if model is gb.Job else None
+
+        def commit(self):
+            if self.interrupted:
+                raise SoftTimeLimitExceeded()
+
+    def _session():
+        nonlocal sessions
+        sessions += 1
+        return _Sess(staged, interrupted=True) if sessions == 1 else _Sess(persisted)
+
+    monkeypatch.setattr(gb, "_sync_session", _session)
+    monkeypatch.setattr(gb, "_attach_variant_posters", lambda patch, **_kw: (dict(patch), []))
+    accepted = {"accepted": False}
+
+    with pytest.raises(SoftTimeLimitExceeded):
+        gb._update_variant_entry(
+            JOB_ID,
+            "original_text",
+            {"video_path": f"generative-jobs/{JOB_ID}/never-committed.mp4"},
+            expected_render_gen_id="tok-current",
+            accepted_state=accepted,
+        )
+
+    assert accepted["accepted"] is False
+    assert persisted.assembly_plan["variants"][0]["output_url"] == "https://signed/last-good"
+
+
+def test_fast_rerender_auto_poster_retires_uuid_backfill_reference(monkeypatch):
+    old_video = f"generative-jobs/{JOB_ID}/variant_old.mp4"
+    new_video = f"generative-jobs/{JOB_ID}/variant_fast.mp4"
+    old_poster = f"{old_video}.poster.backfill-11111111-1111-4111-8111-111111111111.jpg"
+    new_poster = f"{new_video}.poster.jpg"
+    job = _FakeJob([_variant("tok", video_path=old_video, poster_path=old_poster)])
+    _patch_sessions(monkeypatch, job)
+    monkeypatch.setattr(gb, "generate_and_upload_from_gcs", lambda *_a, **_kw: new_poster)
+    journaled: list[str] = []
+    monkeypatch.setattr(
+        gb,
+        "_reconcile_retired_variant_posters",
+        lambda _job_id, paths: journaled.extend(paths),
+    )
+
+    assert gb._update_variant_entry(JOB_ID, "original_text", {"video_path": new_video})
+
+    persisted = job.assembly_plan["variants"][0]
+    assert persisted["video_path"] == new_video
+    assert persisted["poster_path"] == new_poster
+    assert journaled == [old_poster]
+    assert job.assembly_plan[gb.VIDEO_POSTER_BACKFILL_CLEANUP_FIELD] == [
+        {"old_path": old_poster, "replacement_path": new_poster}
+    ]
+
+
+def test_finalize_journals_backfill_poster_that_lands_after_render_upsert(monkeypatch):
+    """A fail-open render can publish no poster, then race the backfill before finalize."""
+    video = f"generative-jobs/{JOB_ID}/variant_new.mp4"
+    backfill_poster = f"{video}.poster.backfill-11111111-1111-4111-8111-111111111111.jpg"
+    job = _FakeJob(
         [
-            *previous.values(),
-            *(f"{path}.poster.jpg" for path in previous.values()),
+            _variant(
+                "same-render",
+                video_path=video,
+                poster_path=backfill_poster,
+                render_status="ready",
+            )
         ]
     )
+    _patch_sessions(monkeypatch, job)
+    journaled: list[str] = []
+    monkeypatch.setattr(
+        gb,
+        "_reconcile_retired_variant_posters",
+        lambda _job_id, paths: journaled.extend(paths),
+    )
+
+    assert gb._set_status(
+        JOB_ID,
+        "variants_ready",
+        extra_plan={
+            "variants": [
+                {
+                    **job.assembly_plan["variants"][0],
+                    "poster_path": None,
+                }
+            ]
+        },
+        merge_finalized_variants=True,
+    )
+
+    assert job.assembly_plan["variants"][0]["poster_path"] is None
+    assert job.assembly_plan[gb.VIDEO_POSTER_BACKFILL_CLEANUP_FIELD] == [
+        {"old_path": backfill_poster, "replacement_path": video}
+    ]
+    assert journaled == [backfill_poster]
+
+
+def test_terminal_finalize_cleanup_soft_timeout_keeps_ready_state(monkeypatch):
+    video = f"generative-jobs/{JOB_ID}/variant_new.mp4"
+    old_poster = f"{video}.poster.backfill-11111111-1111-4111-8111-111111111111.jpg"
+    job = _FakeJob(
+        [_variant("same-render", video_path=video, poster_path=old_poster, render_status="ready")]
+    )
+    _patch_sessions(monkeypatch, job)
+    monkeypatch.setattr(
+        gb,
+        "reconcile_video_poster_cleanup_receipts",
+        lambda _job_id: (_ for _ in ()).throw(SoftTimeLimitExceeded()),
+    )
+
+    assert gb._set_status(
+        JOB_ID,
+        "variants_ready",
+        extra_plan={
+            "variants": [
+                {
+                    **job.assembly_plan["variants"][0],
+                    "poster_path": None,
+                }
+            ]
+        },
+        merge_finalized_variants=True,
+    )
+
+    assert job.status == "variants_ready"
+    assert job.assembly_plan["variants"][0]["poster_path"] is None
+    assert job.assembly_plan[gb.VIDEO_POSTER_BACKFILL_CLEANUP_FIELD] == [
+        {"old_path": old_poster, "replacement_path": video}
+    ]
+
+
+def test_finalize_journals_every_displaced_duplicate_variant_poster(monkeypatch):
+    old_videos = [f"generative-jobs/{JOB_ID}/duplicate-{index}.mp4" for index in range(2)]
+    old_posters = [
+        f"{video}.poster.backfill-{token}.jpg"
+        for video, token in zip(
+            old_videos,
+            (
+                "11111111-1111-4111-8111-111111111111",
+                "22222222-2222-4222-8222-222222222222",
+            ),
+            strict=True,
+        )
+    ]
+    live_variants = [
+        _variant(
+            "same-render",
+            video_path=video,
+            poster_path=poster,
+            render_status="ready",
+        )
+        for video, poster in zip(old_videos, old_posters, strict=True)
+    ]
+    job = _FakeJob(live_variants)
+    _patch_sessions(monkeypatch, job)
+    journaled: list[str] = []
+    monkeypatch.setattr(
+        gb,
+        "_reconcile_retired_variant_posters",
+        lambda _job_id, paths: journaled.extend(paths),
+    )
+    replacement_video = f"generative-jobs/{JOB_ID}/final.mp4"
+    replacement_poster = f"{replacement_video}.poster.jpg"
+
+    assert gb._set_status(
+        JOB_ID,
+        "variants_ready",
+        extra_plan={
+            "variants": [
+                _variant(
+                    "same-render",
+                    video_path=replacement_video,
+                    poster_path=replacement_poster,
+                    render_status="ready",
+                )
+            ]
+        },
+        merge_finalized_variants=True,
+    )
+
+    assert job.assembly_plan[gb.VIDEO_POSTER_BACKFILL_CLEANUP_FIELD] == [
+        {"old_path": old_posters[0], "replacement_path": replacement_poster},
+        {"old_path": old_posters[1], "replacement_path": replacement_poster},
+    ]
+    assert journaled == old_posters
 
 
 def test_current_task_terminal_write_lands(monkeypatch):

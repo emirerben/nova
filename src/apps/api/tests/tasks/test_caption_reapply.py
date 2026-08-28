@@ -142,6 +142,13 @@ def _patch_storage(monkeypatch, seen: dict, *, upload_hook=None):
 
 def _patch_reburn_io(monkeypatch, seen: dict, *, upload_hook=None):
     _patch_storage(monkeypatch, seen, upload_hook=upload_hook)
+    # Keep these unit tests hermetic: poster extraction and edit-training
+    # dispatch are independently covered and must not reach GCS/Redis here.
+    monkeypatch.setattr(gb, "generate_and_upload_from_gcs", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        "app.tasks.edit_training_artifacts.capture_edit_training_artifact.delay",
+        lambda *_a, **_k: None,
+    )
     monkeypatch.setattr(
         gb,
         "_burn_persisted_captions_onto_base",
@@ -877,6 +884,52 @@ def test_soft_time_limit_inside_reapply_marks_failed_not_ready(monkeypatch):
     v = job.assembly_plan["variants"][0]
     assert v["render_status"] == "failed"
     assert v["render_error"]
+
+
+def test_poster_cleanup_soft_timeout_after_caption_swap_marks_failed(monkeypatch):
+    """Cleanup can soft-timeout after the new burn commits but before lane reapply.
+
+    The task must remember that the swap was accepted at commit time. Restoring
+    ``ready`` here would publish the new burn without the persisted overlay/SFX.
+    """
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    _arm_flags(monkeypatch)
+    old_video = "generative-jobs/j/variant_1_narrated.mp4"
+    old_poster = f"{old_video}.poster.backfill-11111111-1111-4111-8111-111111111111.jpg"
+    new_poster = "generative-jobs/j/new-caption.poster.jpg"
+    variant = _narrated_variant(
+        video_path=old_video,
+        poster_path=old_poster,
+        media_overlays=[dict(_OVERLAYS[0])],
+        sound_effects=[dict(_SFX[0])],
+        render_generation_id="tok-1",
+    )
+    job = _make_job(assembly_plan={"variants": [variant]})
+    _patch_job_session(monkeypatch, job)
+    seen: dict = {}
+    _patch_reburn_io(monkeypatch, seen)
+    monkeypatch.setattr(gb, "generate_and_upload_from_gcs", lambda *_a, **_k: new_poster)
+    monkeypatch.setattr(
+        gb,
+        "reconcile_video_poster_cleanup_receipts",
+        lambda _job_id: (_ for _ in ()).throw(SoftTimeLimitExceeded()),
+    )
+    reapply_calls: list[dict] = []
+    monkeypatch.setattr(
+        gb,
+        "_reapply_user_media_layers",
+        lambda **kw: reapply_calls.append(kw) or True,
+    )
+
+    gb.reburn_narrated_captions.run(JOB_ID, "narrated", render_gen_id="tok-1")
+
+    persisted = job.assembly_plan["variants"][0]
+    assert "_cap_" in persisted["video_path"]
+    assert persisted["poster_path"] == new_poster
+    assert persisted["render_status"] == "failed"
+    assert persisted["render_error"]
+    assert reapply_calls == []
 
 
 # ── retranscribe empty-cues early return keeps the effect-bearing video ────────

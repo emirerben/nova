@@ -1,10 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { MoreHorizontal } from "lucide-react";
+import { MoreHorizontal, Play, Square } from "lucide-react";
 import { toast } from "sonner";
-import { deleteMyJob, MeApiError, type LibraryJob } from "@/lib/me-api";
+import {
+  deleteMyJob,
+  getMyJobPlaybackUrl,
+  MeApiError,
+  type LibraryJob,
+} from "@/lib/me-api";
 import { getTikTokPublication, shouldPollTikTokPublication, type TikTokPublication } from "@/lib/tiktok-api";
 import { jobFailureCopy } from "@/lib/job-failure-copy";
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +32,18 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/cn";
 import { StablePoster } from "@/components/StablePoster";
+
+export const PREVIEW_LOAD_TIMEOUT_MS = 15_000;
+const PREVIEW_ACTIVATED_EVENT = "nova:library-preview-activated";
+
+function playbackNeedsDirectGesture(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === "object" &&
+      "name" in error &&
+      error.name === "NotAllowedError",
+  );
+}
 
 /**
  * One 9:16 video in the library. Light editorial canvas (D20/D21).
@@ -60,27 +77,31 @@ export default function LibraryTile({
 
   const href = job.content_plan_item_id ? `/plan/items/${job.content_plan_item_id}` : null;
   const isFailed = job.status === "failed";
-  const isReady = job.status === "ready" && Boolean(job.output_url);
+  // A list-time signature can fail or expire while the durable video still
+  // exists. Readiness comes from job state; playback gets its own fresh URL.
+  const isReady = job.status === "ready";
   const isTerminal = job.status === "ready" || isFailed;
   const isTikTokActive = Boolean(latestPublication?.deletion_blocked);
   const canDelete = isTerminal && !isTikTokActive;
   const [menuOpen, setMenuOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [activePreviewUrl, setActivePreviewUrl] = useState<string | null>(null);
+  const [previewAttemptFailed, setPreviewAttemptFailed] = useState(false);
+  const [previewStatus, setPreviewStatus] = useState<
+    "idle" | "refreshing" | "loading" | "awaiting_gesture" | "playing"
+  >("idle");
   const triggerRef = useRef<HTMLButtonElement>(null);
   const keepButtonRef = useRef<HTMLButtonElement>(null);
-  const fallbackVideoRef = useRef<HTMLVideoElement>(null);
-
-  function playFallbackVideo() {
-    void fallbackVideoRef.current?.play().catch(() => undefined);
-  }
-
-  function pauseFallbackVideo() {
-    const video = fallbackVideoRef.current;
-    if (!video) return;
-    video.pause();
-    video.currentTime = 0;
-  }
+  const previewTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const stopPreviewRef = useRef<HTMLButtonElement | null>(null);
+  const directPlayRef = useRef<HTMLButtonElement | null>(null);
+  const previewVideoRef = useRef<HTMLVideoElement | null>(null);
+  const previewRequestGenerationRef = useRef(0);
+  const previewAbortControllerRef = useRef<AbortController | null>(null);
+  const previewAttemptDeadlineRef = useRef<number | null>(null);
+  const previewAttemptActiveRef = useRef(false);
+  const restorePreviewFocusRef = useRef(false);
 
   async function handleDelete() {
     setIsDeleting(true);
@@ -108,6 +129,294 @@ export default function LibraryTile({
     }
   }
 
+  const isFallbackPreviewActive = Boolean(!href && activePreviewUrl);
+  const clearPreviewAttemptDeadline = useCallback(() => {
+    if (previewAttemptDeadlineRef.current === null) return;
+    window.clearTimeout(previewAttemptDeadlineRef.current);
+    previewAttemptDeadlineRef.current = null;
+  }, []);
+  const deactivatePreview = useCallback((failed: boolean, restoreFocus: boolean) => {
+    previewRequestGenerationRef.current += 1;
+    previewAttemptActiveRef.current = false;
+    previewAbortControllerRef.current?.abort();
+    previewAbortControllerRef.current = null;
+    clearPreviewAttemptDeadline();
+    const video = previewVideoRef.current;
+    if (video) {
+      try {
+        video.pause();
+      } catch {
+        // A failed media element can reject imperative controls. State cleanup
+        // below still unmounts it and releases the resource.
+      }
+      previewVideoRef.current = null;
+    }
+    setPreviewAttemptFailed(failed);
+    restorePreviewFocusRef.current = restoreFocus;
+    setActivePreviewUrl(null);
+    setPreviewStatus("idle");
+  }, [clearPreviewAttemptDeadline]);
+  const failActivePreview = useCallback(() => {
+    deactivatePreview(true, true);
+  }, [deactivatePreview]);
+  const stopActivePreview = useCallback(() => {
+    deactivatePreview(false, true);
+  }, [deactivatePreview]);
+
+  const handlePreviewPlayRejection = useCallback(
+    (video: HTMLVideoElement, error: unknown) => {
+      if (previewVideoRef.current !== video) return;
+      if (playbackNeedsDirectGesture(error)) {
+        // iOS Safari (notably Low Power Mode) may reject the delayed play()
+        // after URL refresh because the original tap's activation has ended.
+        // Keep this fresh URL mounted and let a direct gesture resume it.
+        clearPreviewAttemptDeadline();
+        setPreviewStatus("awaiting_gesture");
+        return;
+      }
+      failActivePreview();
+    },
+    [clearPreviewAttemptDeadline, failActivePreview],
+  );
+
+  const attachPreviewVideo = useCallback(
+    (video: HTMLVideoElement | null) => {
+      const previousVideo = previewVideoRef.current;
+      if (!video && previousVideo) {
+        try {
+          previousVideo.pause();
+        } catch {
+          // The state transition still releases the element.
+        }
+      }
+      previewVideoRef.current = video;
+      if (!video) return;
+
+      setPreviewStatus("loading");
+      try {
+        void video.play().catch((error: unknown) => {
+          handlePreviewPlayRejection(video, error);
+        });
+      } catch (error) {
+        handlePreviewPlayRejection(video, error);
+      }
+    },
+    [handlePreviewPlayRejection],
+  );
+
+  const playPreviewFromDirectGesture = useCallback(() => {
+    const video = previewVideoRef.current;
+    if (!video) {
+      failActivePreview();
+      return;
+    }
+
+    // Keep play() in this click's synchronous call stack. Awaiting anything
+    // first loses Safari's user-activation grant and recreates the loop this
+    // control exists to break.
+    try {
+      const playback = video.play();
+      setPreviewStatus("loading");
+      void playback.catch(() => {
+        if (previewVideoRef.current === video) failActivePreview();
+      });
+    } catch {
+      failActivePreview();
+    }
+  }, [failActivePreview]);
+
+  const startPreview = useCallback(async () => {
+    // The list's output_url may already be expired, so it must never be
+    // mounted as a media source. The playback endpoint resolves the durable
+    // object (or rejects the attempt) at click time.
+    if (href || previewStatus === "refreshing") return;
+
+    window.dispatchEvent(
+      new CustomEvent(PREVIEW_ACTIVATED_EVENT, { detail: { jobId: job.id } }),
+    );
+    const requestGeneration = ++previewRequestGenerationRef.current;
+    previewAbortControllerRef.current?.abort();
+    const abortController = new AbortController();
+    previewAbortControllerRef.current = abortController;
+    clearPreviewAttemptDeadline();
+    previewAttemptDeadlineRef.current = window.setTimeout(() => {
+      if (requestGeneration === previewRequestGenerationRef.current) {
+        deactivatePreview(true, true);
+      }
+    }, PREVIEW_LOAD_TIMEOUT_MS);
+    previewAttemptActiveRef.current = true;
+    restorePreviewFocusRef.current = false;
+    setPreviewAttemptFailed(false);
+    setActivePreviewUrl(null);
+    setPreviewStatus("refreshing");
+
+    try {
+      const { video_url: videoUrl } = await getMyJobPlaybackUrl(
+        job.id,
+        abortController.signal,
+      );
+      if (requestGeneration !== previewRequestGenerationRef.current) return;
+      if (previewAbortControllerRef.current === abortController) {
+        previewAbortControllerRef.current = null;
+      }
+      if (typeof videoUrl !== "string" || videoUrl.length === 0) {
+        throw new Error("Playback URL response was empty");
+      }
+      setActivePreviewUrl(videoUrl);
+      setPreviewStatus("loading");
+    } catch {
+      if (requestGeneration === previewRequestGenerationRef.current) {
+        deactivatePreview(true, true);
+      }
+    }
+  }, [clearPreviewAttemptDeadline, deactivatePreview, href, job.id, previewStatus]);
+
+  useEffect(() => {
+    const stopOtherPreview = (event: Event) => {
+      const activatedJobId = (event as CustomEvent<{ jobId?: string }>).detail?.jobId;
+      if (activatedJobId === job.id || !previewAttemptActiveRef.current) return;
+      deactivatePreview(false, false);
+    };
+    window.addEventListener(PREVIEW_ACTIVATED_EVENT, stopOtherPreview);
+    return () => {
+      window.removeEventListener(PREVIEW_ACTIVATED_EVENT, stopOtherPreview);
+      previewRequestGenerationRef.current += 1;
+      previewAttemptActiveRef.current = false;
+      previewAbortControllerRef.current?.abort();
+      previewAbortControllerRef.current = null;
+      clearPreviewAttemptDeadline();
+    };
+  }, [clearPreviewAttemptDeadline, deactivatePreview, job.id]);
+
+  useEffect(() => {
+    if (isFallbackPreviewActive) {
+      if (previewStatus === "awaiting_gesture") {
+        directPlayRef.current?.focus();
+      } else {
+        stopPreviewRef.current?.focus();
+      }
+      return;
+    }
+    if (restorePreviewFocusRef.current) {
+      restorePreviewFocusRef.current = false;
+      previewTriggerRef.current?.focus();
+    }
+  }, [isFallbackPreviewActive, previewAttemptFailed, previewStatus]);
+
+  useEffect(() => {
+    if (!isFallbackPreviewActive || previewStatus !== "loading") return;
+
+    const timeout = window.setTimeout(failActivePreview, PREVIEW_LOAD_TIMEOUT_MS);
+    return () => window.clearTimeout(timeout);
+  }, [failActivePreview, isFallbackPreviewActive, previewStatus]);
+
+  const markPreviewPlaying = useCallback(() => {
+    clearPreviewAttemptDeadline();
+    setPreviewStatus("playing");
+  }, [clearPreviewAttemptDeadline]);
+
+  const fallbackMedia = isFallbackPreviewActive ? (
+    <div className="relative h-full w-full bg-zinc-100">
+      <video
+        ref={attachPreviewVideo}
+        src={activePreviewUrl ?? undefined}
+        muted
+        loop
+        playsInline
+        preload="metadata"
+        onPlaying={markPreviewPlaying}
+        onWaiting={() => {
+          if (previewStatus !== "awaiting_gesture") setPreviewStatus("loading");
+        }}
+        onAbort={failActivePreview}
+        onError={failActivePreview}
+        aria-label="Your video preview"
+        className="h-full w-full object-cover"
+      />
+      {previewStatus === "awaiting_gesture" ? (
+        <div className="absolute inset-0 flex items-center justify-center bg-zinc-100/95 p-4">
+          <Button
+            ref={directPlayRef}
+            type="button"
+            variant="secondary"
+            aria-label="Tap to play preview"
+            className="min-h-11 whitespace-normal bg-white text-[#0c0c0e] shadow-sm hover:bg-white"
+            onClick={playPreviewFromDirectGesture}
+          >
+            <Play className="mr-2 h-4 w-4" fill="currentColor" aria-hidden="true" />
+            Tap to play
+          </Button>
+        </div>
+      ) : previewStatus !== "playing" ? (
+        <div
+          role="status"
+          className="pointer-events-none absolute inset-0 flex items-center justify-center bg-zinc-100/95 text-sm font-medium text-[#3f3f46]"
+        >
+          Loading preview…
+        </div>
+      ) : null}
+      <Button
+        ref={stopPreviewRef}
+        type="button"
+        variant="secondary"
+        size="icon"
+        aria-label="Stop preview"
+        className="absolute left-2 top-2 z-20 h-11 w-11 rounded-full bg-white/95 text-[#0c0c0e] shadow-sm hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+        onClick={stopActivePreview}
+      >
+        <Square className="h-4 w-4" fill="currentColor" aria-hidden="true" />
+      </Button>
+    </div>
+  ) : (
+    <div className="h-full w-full bg-zinc-100 text-[#3f3f46]">
+      {href ? (
+        <div className="flex h-full w-full flex-col items-center justify-center gap-3 p-5 text-center">
+          <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white shadow-sm" aria-hidden="true">
+            <Play className="ml-0.5 h-5 w-5" fill="currentColor" />
+          </span>
+          <span className="text-sm font-medium">Open video</span>
+        </div>
+      ) : (
+        <Button
+          ref={previewTriggerRef}
+          type="button"
+          variant="ghost"
+          aria-label={
+            previewStatus === "refreshing"
+              ? "Loading preview"
+              : previewAttemptFailed
+                ? "Retry preview"
+                : "Play preview"
+          }
+          disabled={previewStatus === "refreshing"}
+          className="h-full min-h-11 w-full min-w-11 flex-col gap-3 whitespace-normal rounded-none p-5 text-center hover:bg-zinc-200/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-4px] focus-visible:outline-[#0c0c0e]"
+          onClick={() => void startPreview()}
+        >
+          <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white shadow-sm" aria-hidden="true">
+            <Play className="ml-0.5 h-5 w-5" fill="currentColor" />
+          </span>
+          <span className="rounded-md bg-white px-3 py-2 text-sm font-medium shadow-sm">
+            {previewStatus === "refreshing"
+              ? "Loading preview…"
+              : previewAttemptFailed
+                ? "Retry preview"
+                : "Play preview"}
+          </span>
+          {previewStatus === "refreshing" && (
+            <span role="status" className="whitespace-normal text-xs text-[#71717a]">
+              Getting a fresh preview…
+            </span>
+          )}
+          {previewAttemptFailed && (
+            <span role="status" className="whitespace-normal text-xs text-[#71717a]">
+              Preview unavailable. You can try again.
+            </span>
+          )}
+        </Button>
+      )}
+    </div>
+  );
+
   const media = (
     <div
       className={cn(
@@ -123,21 +432,7 @@ export default function LibraryTile({
           loading="lazy"
           decoding="async"
           className="h-full w-full object-cover"
-          fallback={
-            <video
-              ref={fallbackVideoRef}
-              src={job.output_url ?? undefined}
-              muted
-              loop
-              playsInline
-              preload="auto"
-              onPointerEnter={playFallbackVideo}
-              onPointerLeave={pauseFallbackVideo}
-              onTouchStart={playFallbackVideo}
-              aria-label="Your video preview"
-              className="h-full w-full object-cover"
-            />
-          }
+          fallback={fallbackMedia}
         />
       ) : isFailed ? (
         <div className="flex h-full w-full flex-col items-center justify-center gap-2 p-4 text-center">

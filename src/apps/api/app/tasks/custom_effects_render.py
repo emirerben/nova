@@ -258,6 +258,7 @@ def _run_apply_custom_effect(
             {"render_status": "ready", "render_error": f"invalid effect: {exc.reason}"[:500]},
             expected_render_gen_id=render_gen_id,
             outcome="custom_effect_rejected_at_execution",
+            cleanup_followup="none",
         )
         return
 
@@ -357,6 +358,8 @@ def _run_apply_custom_effect(
         patch,
         expected_render_gen_id=render_gen_id,
         outcome="custom_effect_render",
+        cleanup_followup="media_layers",
+        accepted_state=terminal_state,
     ):
         delete_object_best_effort(new_video_gcs)
         return
@@ -392,6 +395,7 @@ def _run_apply_custom_effect(
             },
             expected_render_gen_id=render_gen_id,
             outcome="custom_effect_render_reapply_noop",
+            cleanup_followup="none",
         )
 
 

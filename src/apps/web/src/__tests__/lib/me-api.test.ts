@@ -1,4 +1,10 @@
-import { addJobToPlan, deleteMyJob, listMyJobs, NotAuthenticatedError } from "@/lib/me-api";
+import {
+  addJobToPlan,
+  deleteMyJob,
+  getMyJobPlaybackUrl,
+  listMyJobs,
+  NotAuthenticatedError,
+} from "@/lib/me-api";
 
 function jsonResponse(status: number, body: unknown): Response {
   return {
@@ -33,6 +39,23 @@ describe("me-api client", () => {
     expect(url).toContain("/api/me/jobs?");
     expect(url).toContain("limit=5");
     expect(url).toContain("cursor=2026-05-30");
+  });
+
+  it("gets a newly signed playback URL for one job", async () => {
+    const playback = { video_url: "https://storage.example/video.mp4?sig=fresh" };
+    const fetchMock = jest.fn().mockResolvedValue(jsonResponse(200, playback));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const controller = new AbortController();
+
+    await expect(getMyJobPlaybackUrl("j1", controller.signal)).resolves.toEqual(playback);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/me/jobs/j1/playback-url",
+      expect.objectContaining({
+        cache: "no-store",
+        headers: expect.any(Object),
+        signal: controller.signal,
+      }),
+    );
   });
 
   it("addJobToPlan POSTs the day_index", async () => {

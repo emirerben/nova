@@ -3,8 +3,8 @@
 send_account_deletion_email  — fire-and-forget confirmation email (Resend), mirrors
                                 the pattern in tasks/email.py.
 purge_user_storage           — async GCS walk deleting everything under
-                                users/{user_id}/ and generative-jobs/{job_id}/ for
-                                each of the user's jobs, plus a best-effort delete
+                                users/{user_id}/ and every canonical/legacy output
+                                prefix for each owned job, plus a best-effort delete
                                 of each job's raw_storage_path (covers the legacy
                                 dev-user/ and {user_id}/{job_id}/ upload shapes that
                                 predate the users/ prefix — see infra/README.md).
@@ -20,14 +20,21 @@ deleted synchronously (cheap), the GCS bytes are swept here (potentially slow).
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import structlog
+from billiard.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import and_, delete, or_, select
 
 from app.config import settings
 from app.database import sync_session
 from app.models import JobStorageDeletion
+from app.services.job_storage_paths import JOB_OUTPUT_PREFIXES
+from app.services.video_poster_cleanup import (
+    jobs_with_video_poster_cleanup_receipts,
+    reconcile_video_poster_cleanup_receipts,
+)
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -36,6 +43,9 @@ _JOB_STORAGE_DELETION_LEASE = timedelta(minutes=10)
 _JOB_STORAGE_DELETION_RETRY_BASE_S = 60
 _JOB_STORAGE_DELETION_RETRY_MAX_S = 3600
 _JOB_STORAGE_DELETION_RETENTION = timedelta(days=30)
+# Cleanup service: 2 receipts/job × at most 3 GCS calls × 3s × 2 jobs =
+# 36s worst-case storage time, leaving headroom inside this task's 60s soft limit.
+_VIDEO_POSTER_CLEANUP_SWEEP_LIMIT = 2
 
 
 def cleanup_job_storage_paths(object_paths: list[str]) -> tuple[int, list[str]]:
@@ -144,10 +154,11 @@ def purge_user_storage(
     before dispatching this), so the ids passed in are the only record of what to
     clean up — they can't be re-derived from the database once this runs.
 
-    Sweeps three targets:
+    Sweeps three target sets:
       - users/{user_id}/            (plan clips, plan-pool, seed batches — never
                                        lifecycle-swept, see infra/gcs-lifecycle.json)
-      - generative-jobs/{job_id}/    for each job (lifecycle-exempt outputs + sources)
+      - every JOB_OUTPUT_PREFIXES entry plus the legacy
+        {user_id}/{job_id}/ namespace for each captured owned job id
       - each job's raw_storage_path directly (covers legacy dev-user/ and
         {user_id}/{job_id}/ shapes that predate the users/ prefix)
 
@@ -157,11 +168,25 @@ def purge_user_storage(
     """
     from app.storage import delete_object_best_effort, delete_prefix_best_effort  # noqa: PLC0415
 
-    user_deleted = delete_prefix_best_effort(f"users/{user_id}/")
+    canonical_user_id = str(uuid.UUID(user_id))
+    user_deleted = delete_prefix_best_effort(f"users/{canonical_user_id}/")
 
     job_deleted = 0
-    for job_id in job_ids:
-        job_deleted += delete_prefix_best_effort(f"generative-jobs/{job_id}/")
+    valid_job_ids: list[str] = []
+    for raw_job_id in job_ids:
+        try:
+            job_id = str(uuid.UUID(raw_job_id))
+        except (TypeError, ValueError, AttributeError):
+            log.error(
+                "purge_user_storage_invalid_job_id",
+                user_id=canonical_user_id,
+                job_id=raw_job_id,
+            )
+            continue
+        valid_job_ids.append(job_id)
+        for prefix_template in JOB_OUTPUT_PREFIXES:
+            job_deleted += delete_prefix_best_effort(prefix_template.format(job_id=job_id))
+        job_deleted += delete_prefix_best_effort(f"{canonical_user_id}/{job_id}/")
 
     raw_deleted = 0
     for path in raw_storage_paths:
@@ -170,8 +195,8 @@ def purge_user_storage(
 
     log.info(
         "purge_user_storage_done",
-        user_id=user_id,
-        job_count=len(job_ids),
+        user_id=canonical_user_id,
+        job_count=len(valid_job_ids),
         user_prefix_objects_deleted=user_deleted,
         job_prefix_objects_deleted=job_deleted,
         raw_paths_deleted=raw_deleted,
@@ -290,7 +315,7 @@ def purge_job_storage(outbox_id: str) -> dict:
     time_limit=90,
 )
 def sweep_job_storage_deletions(limit: int = 100) -> dict:
-    """Dispatch due manifests and recover work from lost broker/worker state."""
+    """Recover durable storage manifests and displaced-poster receipts."""
     now = datetime.now(UTC)
     due = or_(
         and_(
@@ -326,6 +351,10 @@ def sweep_job_storage_deletions(limit: int = 100) -> dict:
             ).rowcount
             or 0
         )
+        poster_job_ids = jobs_with_video_poster_cleanup_receipts(
+            db,
+            limit=min(max(limit, 0), _VIDEO_POSTER_CLEANUP_SWEEP_LIMIT),
+        )
         db.commit()
 
     dispatched = 0
@@ -342,8 +371,37 @@ def sweep_job_storage_deletions(limit: int = 100) -> dict:
                 error=str(exc),
             )
 
+    poster_receipts_scanned = 0
+    poster_receipts_deleted = 0
+    poster_receipts_pending = 0
+    poster_receipt_failures = 0
+    for job_id in poster_job_ids:
+        try:
+            cleanup_result = reconcile_video_poster_cleanup_receipts(job_id)
+        except SoftTimeLimitExceeded:
+            # Let Celery terminate the sweep immediately. Treating the soft
+            # deadline as an ordinary per-job failure would start another GCS
+            # reconciliation after the task's execution budget was exhausted.
+            raise
+        except Exception as exc:  # noqa: BLE001 — next Beat sweep retries
+            poster_receipt_failures += 1
+            log.error(
+                "video_poster_cleanup_sweep_failed",
+                job_id=str(job_id),
+                error=str(exc),
+            )
+            continue
+        poster_receipts_scanned += cleanup_result.receipts_seen
+        poster_receipts_deleted += cleanup_result.deleted
+        poster_receipts_pending += cleanup_result.retained
+        poster_receipt_failures += cleanup_result.failures
+
     return {
         "dispatched": dispatched,
         "dispatch_failed": dispatch_failed,
         "pruned": pruned,
+        "poster_receipts_scanned": poster_receipts_scanned,
+        "poster_receipts_deleted": poster_receipts_deleted,
+        "poster_receipts_pending": poster_receipts_pending,
+        "poster_receipt_failures": poster_receipt_failures,
     }

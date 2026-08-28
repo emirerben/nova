@@ -37,7 +37,7 @@ def _engine_or_skip():
 
 
 @pytest.fixture(scope="module")
-def engine():
+def engine(_build_task_table_lock):
     eng = _engine_or_skip()
     BuildTask.__table__.create(bind=eng, checkfirst=True)
     return eng

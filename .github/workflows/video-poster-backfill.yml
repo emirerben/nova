@@ -1,97 +1,59 @@
-name: Fly Deploy
+name: Video Poster Backfill
 
-# Deploys the API + worker process groups to Fly.io on every push to main.
-# Frontend deploys are handled separately by Vercel's GitHub integration.
-#
-# Setup: requires `FLY_API_TOKEN` repo secret. Generate with:
-#   flyctl auth token
-# Then add via Settings → Secrets and variables → Actions → New repository secret.
-#
-# The release_command in fly.toml runs migrations automatically, so they ship as
-# part of the deploy and need no separate step here. fly.toml is the source of
-# truth for WHICH revision it targets — normally `upgrade head`, but a staged
-# migration with a data precondition can pin it to an intermediate revision.
-# While it is pinned, TODOS.md carries a P0 to restore it: a green deploy alone
-# is not evidence that the newest migration actually applied.
-#
-# The Deploy step below wraps flyctl in scripts/fly-deploy-with-retry.sh,
-# which retries exactly once on the signature-gated release-machine startup
-# kill (SIGTERM, exit 143) tracked in issue #834 — any other failure still
-# fails the run immediately, visibly.
+# One-time repair for historical real-user videos. It is manual by design:
+# replaying a full-history GCS audit after every deploy would grow without
+# bound. The required SHA must match the immutable label on the live image.
 on:
-  push:
-    branches:
-      - main
-    # Skip deploy when the push only touches files that don't reach Fly:
-    # web app, docs, or workflow tweaks unrelated to the runtime image.
-    paths-ignore:
-      - "src/apps/web/**"
-      - "docs/**"
-      - "**/*.md"
-      - ".gitignore"
-      - ".vercelignore"
   workflow_dispatch:
     inputs:
-      acknowledge_failed_backfill_machine_id:
-        description: "Optional exact stopped failed backfill Machine ID to release before a fix deploy"
+      expected_sha:
+        description: "Exact deployed 40-character commit SHA to repair"
+        required: true
+        type: string
+      retry_failed_machine_id:
+        description: "Optional exact stopped failed Machine ID to acknowledge and retry"
         required: false
         default: ""
         type: string
 
-# Keep the historical GitHub lock name for queue compatibility. The workflow
-# also acquires one stable, unmanaged Fly Machine name before deploy; Machine
-# name uniqueness is the server-side CAS when a runner is cancelled or delayed.
 concurrency:
+  # Reuse the historical GitHub lock name. The launcher also CASes the same
+  # stable, app-unique Fly Machine name used by deploys.
   group: fly-deploy-main
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
-  deploy:
-    # ``workflow_dispatch`` lets an operator select any ref. Production must
-    # never deploy an unmerged feature branch, even when every digest/revision
-    # check below would otherwise be internally consistent for that branch.
+  backfill:
     if: github.ref == 'refs/heads/main'
-    name: Deploy to Fly.io
     runs-on: ubuntu-latest
-    # Acquisition may finish a cancelled 5h backfill before atomically taking
-    # the same stable Machine name. The deploy command itself remains bounded
-    # to 35m, inside the created-only deploy guard's server-side lease.
     timeout-minutes: 360
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Validate deployed revision input
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::expected_sha must be an exact lowercase 40-character commit SHA"
+            exit 1
+          }
 
       - name: Install flyctl
         uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         with:
           version: 0.4.94
 
-      - name: Acquire durable Fly mutation guard
+      # This gate intentionally runs before checking out input-selected code.
+      # Only a commit already proven live on every production Machine may be
+      # checked out and later receive the Fly token.
+      - name: Prove the requested revision is live
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-          EXPECTED_SHA: ${{ github.sha }}
-          ACKNOWLEDGE_FAILED_BACKFILL_MACHINE_ID: ${{ inputs.acknowledge_failed_backfill_machine_id }}
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
-          GITHUB_REF: ${{ github.ref }}
-        run: bash scripts/run-video-poster-backfill.sh --acquire-deploy-guard
-
-      - name: Deploy
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: |
-          chmod +x scripts/fly-deploy-with-retry.sh
-          timeout --signal=TERM --kill-after=60s 2100s \
-            scripts/fly-deploy-with-retry.sh \
-            --remote-only \
-            --label "org.opencontainers.image.revision=${GITHUB_SHA}"
-
-      - name: Verify exact deployed image, unmanaged guard, and health
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-          EXPECTED_SHA: ${{ github.sha }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: |
           set -euo pipefail
-          guard_name='nova-video-production-mutation-guard'
-          guard_owner="${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}"
           managed_fleet_has_required_processes() {
             jq -e '
               [.[]
@@ -201,28 +163,7 @@ jobs:
             echo "Waiting for managed production Machines to settle ($attempt/20)..."
             sleep 20
           done
-          jq -e \
-            --arg name "$guard_name" \
-            --arg owner "$guard_owner" \
-            --arg sha "$EXPECTED_SHA" '
-              [.[] | select(.name == $name)]
-              | length == 1
-                and .[0].state == "created"
-                and .[0].image_ref.digest
-                  == ((.[0].config.metadata // .[0].incomplete_config.metadata)
-                    .nova_image_digest)
-                and ((.[0].config.metadata // .[0].incomplete_config.metadata).nova_operation
-                  == "fly-deploy-guard")
-                and ((.[0].config.metadata // .[0].incomplete_config.metadata).nova_guard_owner
-                  == $owner)
-                and ((.[0].config.metadata // .[0].incomplete_config.metadata).nova_revision
-                  == $sha)
-                and (((.[0].config.metadata // .[0].incomplete_config.metadata)
-                  | has("fly_process_group")) | not)
-                and ((.[0].config // .[0].incomplete_config).restart.policy == "no")
-                and ((.[0].config // .[0].incomplete_config).init.cmd == ["/bin/false"])
-            ' <<<"$machines_json"
-          deployed_digest="$(
+          managed_digest="$(
             jq -er '
               [.[]
                 | select(
@@ -235,7 +176,7 @@ jobs:
               | select(test("^sha256:[0-9a-f]{64}$"))
             ' <<<"$machines_json"
           )"
-          jq -e --arg digest "$deployed_digest" '
+          jq -e --arg digest "$managed_digest" '
             [.[]
               | select(
                   ((.config.metadata // .incomplete_config.metadata // {})
@@ -245,9 +186,22 @@ jobs:
           ' <<<"$machines_json"
 
           image_json="$(flyctl image show --app nova-video --json)"
+          revision_count="$(
+            jq \
+              --arg digest "$managed_digest" \
+              --arg label 'org.opencontainers.image.revision' '
+              [.[]
+                | select(.Digest == $digest)
+                | .Labels
+                | if type == "string" then fromjson else . end
+                | .[$label]]
+              | unique
+              | length
+            ' <<<"$image_json"
+          )"
           deployed_sha="$(
             jq -er \
-              --arg digest "$deployed_digest" \
+              --arg digest "$managed_digest" \
               --arg label 'org.opencontainers.image.revision' '
               [.[]
                 | select(.Digest == $digest)
@@ -259,27 +213,32 @@ jobs:
               | select(type == "string" and test("^[0-9a-f]{40}$"))
             ' <<<"$image_json"
           )"
-          [[ "$deployed_sha" == "$EXPECTED_SHA" ]]
-          flyctl status --app nova-video
+          [[ "$revision_count" == "1" ]] || {
+            echo "::error::managed production Machines do not expose one revision"
+            exit 1
+          }
+          [[ "$deployed_sha" == "$EXPECTED_SHA" ]] || {
+            echo "::error::requested SHA is not the revision live on every production Machine"
+            exit 1
+          }
           curl --fail --silent --show-error --retry 5 --retry-all-errors \
             --connect-timeout 10 --max-time 30 \
             https://nova-video.fly.dev/health >/dev/null
-          printf '%s %s\n' "$EXPECTED_SHA" "$deployed_digest" \
-            >"$RUNNER_TEMP/nova-fly-deploy-verified"
 
-      - name: Release durable Fly mutation guard
-        if: always()
+      - name: Check out the exact deployed revision
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ inputs.expected_sha }}
+
+      - name: Verify checkout identity
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Backfill and verify real-user posters
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-          EXPECTED_SHA: ${{ github.sha }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          RETRY_FAILED_MACHINE_ID: ${{ inputs.retry_failed_machine_id }}
         run: |
-          receipt="$RUNNER_TEMP/nova-fly-deploy-verified"
-          if [[ ! -f "$receipt" ]]; then
-            echo "::warning::Exact digest/revision/health verification did not finish; retaining the deploy guard until its validated reclaim deadline."
-            exit 0
-          fi
-          read -r verified_sha verified_digest <"$receipt"
-          [[ "$verified_sha" == "$EXPECTED_SHA" \
-            && "$verified_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-          VERIFIED_DEPLOY_DIGEST="$verified_digest" \
-            bash scripts/run-video-poster-backfill.sh --release-deploy-guard
+          bash scripts/run-video-poster-backfill.sh

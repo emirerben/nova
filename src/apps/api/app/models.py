@@ -521,6 +521,15 @@ class Job(Base):
         Index("idx_jobs_failure_reason", "failure_reason"),
         Index("idx_jobs_created_at", "created_at"),
         Index("idx_jobs_content_plan_item_id", "content_plan_item_id"),
+        Index(
+            "idx_jobs_video_poster_cleanup_sweep",
+            "updated_at",
+            "id",
+            postgresql_where=text(
+                "jsonb_typeof(assembly_plan) = 'object' "
+                "AND assembly_plan ? '_poster_backfill_cleanup_receipts'"
+            ),
+        ),
     )
 
 
