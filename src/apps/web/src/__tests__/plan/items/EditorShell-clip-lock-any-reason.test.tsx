@@ -64,6 +64,7 @@ jest.mock("@/lib/generative-api", () => ({
 const mockCommitEditorSession = jest.fn();
 let mockTimelineLookPreset: "none" | "stadium_diffusion" = "none";
 let mockSecondSlotRemoved = false;
+let mockFirstSlotDurationS = 3;
 jest.mock("@/lib/editor-commit", () => ({
   ...jest.requireActual("@/lib/editor-commit"),
   commitEditorSession: (...args: unknown[]) => mockCommitEditorSession(...args),
@@ -107,7 +108,7 @@ jest.mock("@/app/plan/_components/useClipTimeline", () => ({
           clipIndex: 0,
           inS: 0,
           durationBeats: null,
-          durationS: 3,
+          durationS: mockFirstSlotDurationS,
           removed: false,
           momentDescription: null,
           lookPreset: mockTimelineLookPreset,
@@ -244,6 +245,7 @@ afterEach(() => {
   mockDesktopLayout = true;
   mockTimelineLookPreset = "none";
   mockSecondSlotRemoved = false;
+  mockFirstSlotDurationS = 3;
   window.sessionStorage.clear();
 });
 
@@ -283,6 +285,22 @@ describe("EditorShell — clip lane locks for ANY server timeline ineligibility"
 
     fireEvent.click(clipBar);
     expect(screen.getByRole("button", { name: "Delete selected" })).toBeEnabled();
+  });
+
+  it("uses the staged slot-layout duration in the transport when virtual preview is unavailable", async () => {
+    mockFirstSlotDurationS = 1;
+    await renderShell(makeVariant(EDITABLE_CAPABILITIES));
+    const renderedVideo = document.querySelector("video");
+    expect(renderedVideo).not.toBeNull();
+    Object.defineProperty(renderedVideo, "duration", { configurable: true, value: 24 });
+    fireEvent.loadedMetadata(renderedVideo as HTMLVideoElement);
+
+    expect(screen.getByLabelText("Playback position")).toHaveTextContent("0:00 / 0:04");
+    expect(screen.getByText("Clip changes preview after Save")).toBeInTheDocument();
+
+    renderedVideo!.currentTime = 23;
+    fireEvent.timeUpdate(renderedVideo as HTMLVideoElement);
+    expect(screen.getByLabelText("Playback position")).toHaveTextContent("0:04 / 0:04");
   });
 
   it("adds an uploaded source omitted from the rendered cut, with undo and save support", async () => {

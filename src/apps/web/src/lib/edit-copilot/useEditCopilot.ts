@@ -393,6 +393,21 @@ export function messagesToCopilotTurns(
   }));
 }
 
+function rejectedBulkPendingActions(
+  response: EditCopilotTurnResponse,
+  result: ApplyCopilotOpsResult,
+): Array<Record<string, unknown>> {
+  if (response.pending_actions?.length) return response.pending_actions;
+  if (result.rejected.length === 0 || result.applied.length > 0) return [];
+  return response.ops
+    .filter((op) =>
+      op.op === "add_unused_sources" ||
+      op.op === "set_media_duration" ||
+      op.op === "stack_images",
+    )
+    .map((op) => ({ ...op }));
+}
+
 export function useEditCopilot(
   opts: UseEditCopilotOptions,
 ): UseEditCopilotResult {
@@ -525,6 +540,13 @@ export function useEditCopilot(
         snapshot,
       );
       const outcome = summaries(applyResult);
+      // Server-side capacity checks deliberately stay compact, while the
+      // browser preflights the complete runtime timeline. If that atomic
+      // preflight rejects a bulk all-selector, carry the canonical operations
+      // (including their integrity stamps) into the next turn. Otherwise a
+      // clarification such as “make them 0.2 seconds” can silently forget the
+      // original add-all action after the draft correctly remained unchanged.
+      const pendingActions = rejectedBulkPendingActions(response, applyResult);
       if (response.receipt_id) {
         receiptReported = true;
         void reportCopilotExecution(
@@ -564,7 +586,7 @@ export function useEditCopilot(
           undoVersion: applyMeta?.undoVersion,
           isRenderTurn: applyMeta?.isRenderTurn,
           clarification_context: response.clarification_context ?? null,
-          pending_actions: response.pending_actions ?? [],
+          pending_actions: pendingActions,
         },
       ];
       messagesRef.current = nextMessages;

@@ -6,10 +6,15 @@
     "prior_turns": [
       {"role": "user", "content": "Add all of the unsued clips as well. Stack multiple images together rather than splitting each between a video"},
       {"role": "user", "content": "stack the images together and make the shorter"},
-      {"role": "assistant", "content": "Which images would you like to stack together, and how short should the duration be?", "clarification_context": {"referent": "images", "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"}}, "pending_actions": [{"op": "add_unused_sources"}, {"op": "stack_images"}, {"op": "set_media_duration"}]}
+      {"role": "assistant", "content": "Which images would you like to stack together, and how short should the duration be?", "clarification_context": {"referent": "images", "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"}}, "pending_actions": [
+        {"op": "add_unused_sources", "selector": {"scope": "unused_sources", "media_kind": "all", "quantifier": "all"}, "integrity": {"revision_number": 7, "base_generation": "render-7", "state_hash": "state-7", "source_digest": "sp1-production-scale", "source_count": 121, "timeline_count": 17, "target_count": 104, "selection_digest": "sel1-unused-all"}},
+        {"op": "stack_images", "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"}, "integrity": {"revision_number": 7, "base_generation": "render-7", "state_hash": "state-7", "source_digest": "sp1-production-scale", "source_count": 121, "timeline_count": 17, "target_count": 8, "selection_digest": "sel1-ff29a665ff92c2c3"}},
+        {"op": "set_media_duration", "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"}, "integrity": {"revision_number": 7, "base_generation": "render-7", "state_hash": "state-7", "source_digest": "sp1-production-scale", "source_count": 121, "timeline_count": 17, "target_count": 8, "selection_digest": "sel1-ff29a665ff92c2c3"}}
+      ]}
     ],
     "variant_snapshot": {
       "allowed_op_families": ["motion", "clip"],
+      "guided_revision": {"revision_number": 7, "base_generation": "render-7", "state_hash": "state-7"},
       "total_duration_s": 24.033,
       "source_pool_summary": {
         "digest": "sp1-production-scale",
