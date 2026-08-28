@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.56.0.2] — 2026-08-28
+
+### Fixed
+- **Fly deploys can acquire the production mutation guard again.** Guard Machines are created from the unique deployment tag and still verified against the fleet's exact immutable digest, avoiding the invalid double-digest image reference that blocked the Kria backend rollout.
+
 ## [0.56.0.1] — 2026-08-28
 
 ### Fixed
