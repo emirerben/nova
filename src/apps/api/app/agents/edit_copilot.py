@@ -33,7 +33,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-08-27-v35"
+EDIT_COPILOT_PROMPT_VERSION = "2026-08-28-v36"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt prose ("up to 12", twice) and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1777,108 +1777,12 @@ def _bulk_capacity_clarification(
     if requested <= available:
         return None
 
-    summary = snapshot.get("source_pool_summary")
-    selectors = summary.get("selectors") if isinstance(summary, dict) else None
-    unused_images = 0
-    add_media_kind = add.get("selector", {}).get("media_kind")
-    if isinstance(selectors, dict):
-        image_summary = selectors.get("unused_sources:image")
-        if (
-            isinstance(image_summary, dict)
-            and isinstance(image_summary.get("target_count"), int)
-            and not isinstance(image_summary.get("target_count"), bool)
-        ):
-            unused_images = image_summary["target_count"]
-    if unused_images == 0 and add_media_kind in {"image", "all"} and isinstance(summary, dict):
-        by_kind = summary.get("ready_unused_by_kind")
-        if (
-            isinstance(by_kind, dict)
-            and isinstance(by_kind.get("image"), int)
-            and not isinstance(by_kind.get("image"), bool)
-        ):
-            unused_images = by_kind["image"]
-    if unused_images == 0 and add_media_kind in {"image", "all"}:
-        image_selector = {
-            "scope": "unused_sources",
-            "media_kind": "image",
-            "quantifier": "all",
-        }
-        unused_images = len(
-            _bulk_target_rows(snapshot, image_selector, operation="add_unused_sources")
-        )
-    current_images = sum(
-        1
-        for row in snapshot.get("slots", [])
-        if isinstance(row, dict)
-        and not row.get("removed")
-        and (row.get("media_kind") or row.get("kind")) == "image"
-    )
-    image_count = current_images + (unused_images if add_media_kind in {"image", "all"} else 0)
-    stacks_requested = any(op.get("op") == "stack_images" for op in plan)
-    duration = next(
-        (
-            float(op["duration_s"])
-            for op in plan
-            if op.get("op") == "set_media_duration"
-            and op.get("selector", {}).get("media_kind") in {"image", "all"}
-            and isinstance(op.get("duration_s"), (int, float))
-        ),
-        None,
-    )
-    duration_match = _DURATION_ANSWER_RE.search(utterance)
-    if duration is None and duration_match is not None:
-        duration = float(duration_match.group(1))
-    motion = snapshot.get("motion")
-    limits = motion.get("limits") if isinstance(motion, dict) else None
-    if not isinstance(limits, dict):
-        limits = {}
-    max_blocks = limits.get("max_blocks")
-    max_blocks = (
-        max_blocks
-        if isinstance(max_blocks, int) and not isinstance(max_blocks, bool) and max_blocks > 0
-        else MOTION_MAX_INSTANCES
-    )
-    max_card_assets = limits.get("max_card_stack_assets")
-    max_card_assets = (
-        max_card_assets
-        if isinstance(max_card_assets, int)
-        and not isinstance(max_card_assets, bool)
-        and max_card_assets > 0
-        else 6
-    )
-    max_film_assets = limits.get("max_film_strip_assets")
-    max_film_assets = (
-        max_film_assets
-        if isinstance(max_film_assets, int)
-        and not isinstance(max_film_assets, bool)
-        and max_film_assets > 0
-        else 8
-    )
-    max_active_union = _safe_finite_float(limits.get("max_active_union_s"))
-    if max_active_union is None or max_active_union <= 0:
-        max_active_union = MOTION_MAX_ACTIVE_FRAMES / MOTION_FPS
-    card_groups = math.ceil(image_count / max_card_assets) if image_count else 0
-    block_limit_label = "eight-block" if max_blocks == 8 else f"{max_blocks}-block"
     detail = (
         f"The current {current_slots}-slot edit leaves room for only {available} additional "
         f"slots under the {_GUIDED_TIMELINE_MAX_SLOTS}-slot Save limit, but all "
         f"{requested} ready unused sources "
         "were requested."
     )
-    if stacks_requested and image_count and card_groups > max_blocks:
-        detail += (
-            f" The resulting {image_count} images would also require {card_groups} Card "
-            f"Stacks at {max_card_assets} images each, exceeding the {block_limit_label} limit."
-        )
-    if stacks_requested and image_count and duration is not None:
-        active_span = image_count * duration
-        film_groups = math.ceil(image_count / max_film_assets)
-        if active_span > max_active_union:
-            detail += (
-                f" Film Strip would use {film_groups} blocks, but its {active_span:g}-second "
-                f"active span also exceeds the {max_active_union:g}-second motion budget, "
-                "so it does not solve this request."
-            )
     return (
         detail + f" Choose a media kind and count of at most {available} while retaining the "
         "current edit, or remove existing content first."
@@ -1949,11 +1853,6 @@ def _sanitize_pending_actions(
             if duration is None or not 0.1 <= duration <= 60.0:
                 continue
             action["duration_s"] = round(duration, 6)
-        if name == "stack_images" and raw.get("preset_id") in {
-            "card_stack",
-            "film_strip",
-        }:
-            action["preset_id"] = raw["preset_id"]
         sanitized.append(action)
     return sanitized
 
@@ -2185,11 +2084,10 @@ def _clean_bulk_operation(
         state.invalid_value()
         return None
     if name == "stack_images":
-        preset_id = payload.get("preset_id", "card_stack")
-        if preset_id not in {"card_stack", "film_strip"}:
-            state.invalid_value()
-            return None
-        payload["preset_id"] = preset_id
+        # Historical prompts attached a Creator Block preset here. The bulk
+        # operation now means consecutive individual slideshow clips; explicit
+        # Card Stack/Film Strip requests use add_motion_block instead.
+        payload.pop("preset_id", None)
     if name == "set_media_duration":
         duration = _as_float(payload.get("duration_s"))
         if duration is None or not 0.1 <= duration <= 60.0:

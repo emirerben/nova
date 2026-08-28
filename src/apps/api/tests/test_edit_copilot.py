@@ -771,6 +771,8 @@ def test_exact_kria_four_turn_conversation_preserves_image_referent() -> None:
     assert "stack_images" in rendered
     assert "set_media_duration" in rendered
     assert "timeline" in rendered and "image" in rendered and "quantifier" in rendered
+    assert "individual timeline clips" in rendered
+    assert "MUST NOT create a" in rendered and "Card Stack" in rendered
 
     completed = agent.parse(
         json.dumps(
@@ -829,6 +831,7 @@ def test_exact_kria_four_turn_conversation_preserves_image_referent() -> None:
     assert completed.ops[0]["selector"]["media_kind"] == "all"
     assert completed.ops[1]["selector"]["media_kind"] == "image"
     assert completed.ops[2]["selector"]["media_kind"] == "image"
+    assert "preset_id" not in completed.ops[2]
 
     widened_clarification = agent.parse(
         json.dumps(
@@ -883,6 +886,27 @@ def test_exact_kria_four_turn_conversation_preserves_image_referent() -> None:
     assert widened_clarification.clarification_context == clarification.clarification_context
     assert widened_clarification.pending_actions[1]["selector"]["media_kind"] == "image"
     assert widened_clarification.pending_actions[2]["selector"]["media_kind"] == "image"
+
+
+def test_stack_images_discards_legacy_creator_block_preset() -> None:
+    parsed = _parse(
+        [
+            {
+                "op": "stack_images",
+                "selector": {
+                    "scope": "timeline",
+                    "media_kind": "image",
+                    "quantifier": "all",
+                },
+                "preset_id": "card_stack",
+            }
+        ],
+        snapshot=_bulk_snapshot(),
+    )
+
+    assert len(parsed.ops) == 1
+    assert parsed.ops[0]["op"] == "stack_images"
+    assert "preset_id" not in parsed.ops[0]
 
 
 @pytest.mark.parametrize("omitted_op", ["add_unused_sources", "set_media_duration"])
@@ -1106,7 +1130,7 @@ def test_model_clarification_recomputes_all_bulk_constraints_from_pending_action
         ("max_active_union_s", 0),
     ],
 )
-def test_bulk_capacity_clarification_falls_back_for_nonpositive_motion_limits(
+def test_slideshow_capacity_ignores_nonpositive_motion_limits(
     limit_name: str, invalid_value: int
 ) -> None:
     fixture_path = (
@@ -1146,6 +1170,8 @@ def test_bulk_capacity_clarification_falls_back_for_nonpositive_motion_limits(
     assert out.ops == []
     assert "103 additional" in out.reply
     assert "120-slot Save limit" in out.reply
+    assert "Card Stack" not in out.reply
+    assert "motion" not in out.reply.lower()
 
 
 def test_unrelated_named_clip_edit_does_not_inherit_pending_bulk_actions() -> None:
@@ -3475,12 +3501,14 @@ def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
     # arithmetic and fail-closed 50-slot guidance, then (2026-08-27-v33) for
     # the 8-second active Creator Block union constraint, then
     # (2026-08-27-v34) for durable pending bulk actions and deterministic
-    # missing-duration clarification — update
+    # missing-duration clarification, then (2026-08-27-v35) for expanded
+    # guided timeline capacity, then (2026-08-28-v36) to make stack_images a
+    # consecutive individual-clip slideshow with no implicit Creator Block — update
     # this pin whenever EDIT_COPILOT_PROMPT_VERSION moves, per the
     # prompt-change rule.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-27-v35"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-28-v36"
 
 
 def _motion_snapshot() -> dict:

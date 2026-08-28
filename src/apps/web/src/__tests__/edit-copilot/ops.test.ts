@@ -49,7 +49,7 @@ describe("edit-copilot op contract fixtures", () => {
 });
 
 describe("edit-copilot extended op validation", () => {
-  it("normalizes typed bulk selectors and keeps Card Stack asset IDs canonical", () => {
+  it("normalizes typed bulk selectors and strips legacy Creator Block parameters", () => {
     expect(validateCopilotOp({
       op: "add_unused_sources",
       selector: { scope: "unused_sources", media_kind: "all", quantifier: "all" },
@@ -63,6 +63,14 @@ describe("edit-copilot extended op validation", () => {
       op: "stack_images",
       selector: { scope: "timeline", media_kind: "image", quantifier: "all" },
     }, validationSnapshot)).toMatchObject({ ok: true });
+    expect(validateCopilotOp({
+      op: "stack_images",
+      selector: { scope: "timeline", media_kind: "image", quantifier: "all" },
+      preset_id: "card_stack",
+    }, validationSnapshot)).toEqual(expect.objectContaining({
+      ok: true,
+      op: expect.not.objectContaining({ preset_id: expect.anything() }),
+    }));
     expect(validateCopilotOp({
       op: "stack_images",
       selector: { scope: "unused_sources", media_kind: "image", quantifier: "all" },

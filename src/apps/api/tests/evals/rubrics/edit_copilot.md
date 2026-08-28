@@ -89,21 +89,21 @@ Bulk-media regression rubric:
   one operation per item.
 - `set_media_duration` resolved from an image clarification uses
   `{"scope":"timeline","media_kind":"image","quantifier":"all"}` and
-  cannot target videos. `stack_images` uses the same selector and leaves
-  grouping and canonical `asset_ids` to the editor compiler; model output must
-  never use runtime `assets` or author a partial group list.
+  cannot target videos. `stack_images` uses the same selector to gather images
+  into consecutive individual slideshow clips. It never authors groups,
+  assets, `preset_id`, or a Creator Block; explicit Card Stack/Film Strip
+  requests use `add_motion_block`.
 - Clarifications persist `clarification_context.selector` and
   `pending_actions`. After "Which images...", "all of them" and "make them"
   resolve to that image selector. Preserve pending `add_unused_sources` when
   later turns clarify only the image target.
-- `all` is an integrity contract. If capacity, readiness, duplicate, timing,
-  or block limits prevent complete coverage, the honest result is a precise
+- `all` is an integrity contract. If capacity, readiness, duplicate, or timing
+  limits prevent complete coverage, the honest result is a precise
   clarification with zero operations—not a subset and never `applied`.
-- Guided Save has a hard 50-active-slot limit. For a snapshot with 17 active
-  slots and 104 ready unused sources, adding all is impossible: only 33 more
+- Guided Save has a hard 120-active-slot limit. For a snapshot with 17 active
+  slots and 104 ready unused sources, adding all is impossible: only 103 more
   slots fit. Treat that exact capacity clarification as required behavior, not
-  an invented constraint. Also expect the reply to disclose any independently
-  conflicting Card Stack/Film Strip block or active-union limit represented by
-  the snapshot.
+  an invented constraint. Slideshow grouping does not consume Creator Block or
+  motion-union capacity.
 
 Passing threshold: average >= 3.5 with no structural failures.

@@ -530,7 +530,7 @@ describe("useEditCopilot", () => {
     }));
     const applyOpsAtomic = jest.fn(() =>
       appliedResult({
-        applied: [{ label: "Image stacks", from: "separate", to: "grouped" }],
+        applied: [{ label: "Image slideshow", from: "alternating", to: "consecutive" }],
       }),
     );
     const { result } = renderCopilot({ applyOpsAtomic });

@@ -64,6 +64,9 @@ def test_kria_bulk_followup_replays_typed_image_selector() -> None:
     assert "groups" not in stack
     assert "asset_ids" not in stack
     assert "assets" not in stack
+    assert "preset_id" not in stack
+    assert "fast consecutive slideshow" in result.output["reply"]
+    assert fixture.meta["assertions"]["motion_scene_count"] == 0
 
     input_slots = fixture.input["variant_snapshot"]["slots"]
     assert len(input_slots) == 17

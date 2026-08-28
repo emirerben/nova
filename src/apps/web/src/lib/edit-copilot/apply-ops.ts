@@ -460,10 +460,6 @@ function currentSlotIndex(slots: DraftSlot[], key: string): number {
 
 const LEGACY_BULK_MAX_SLOTS = 50;
 const BULK_MAX_DURATION_S = 60;
-const BULK_PRESET_ASSET_LIMITS = {
-  card_stack: { min: 2, max: 6 },
-  film_strip: { min: 3, max: 8 },
-} as const;
 
 type BulkSourceRow = {
   clip_index: number;
@@ -479,7 +475,6 @@ type BulkSourceRow = {
 type BulkSourceIndex = {
   rows: BulkSourceRow[];
   byClipIndex: Map<number, BulkSourceRow>;
-  byMediaId: Map<string, BulkSourceRow>;
 };
 
 const bulkSourceIndexCache = new WeakMap<ApplyCopilotOpsContext, BulkSourceIndex>();
@@ -511,7 +506,6 @@ function bulkSourceRows(ctx: ApplyCopilotOpsContext): BulkSourceRow[] {
   bulkSourceIndexCache.set(ctx, {
     rows,
     byClipIndex: new Map(rows.map((row) => [row.clip_index, row])),
-    byMediaId: new Map(rows.map((row) => [row.media_id, row])),
   });
   return rows;
 }
@@ -528,33 +522,6 @@ function bulkSourceKind(ctx: ApplyCopilotOpsContext, clipIndex: number): BulkSou
 
 function bulkSourceForSlot(ctx: ApplyCopilotOpsContext, slot: DraftSlot): BulkSourceRow | null {
   return bulkSourceIndex(ctx).byClipIndex.get(slot.clipIndex) ?? null;
-}
-
-function bulkAssetRef(ctx: ApplyCopilotOpsContext, id: string): MotionAssetRef | null {
-  const asset = (ctx.poolAssets ?? []).find(
-    (candidate) => candidate.id === id && candidate.kind === "image" && candidate.status === "ready",
-  );
-  if (asset) return { asset_id: asset.id, gcs_path: asset.gcs_path };
-  const row = bulkSourceIndex(ctx).byMediaId.get(id);
-  if (row?.kind !== "image" || !row.ready) return null;
-  return row?.gcs_path ? { asset_id: row.media_id, gcs_path: row.gcs_path } : null;
-}
-
-function groupedImageIds(
-  ids: string[],
-  presetId: "card_stack" | "film_strip",
-): Array<{ asset_ids: string[]; preset_id: "card_stack" | "film_strip" }> | null {
-  const { min, max } = BULK_PRESET_ASSET_LIMITS[presetId];
-  if (ids.length < min) return null;
-  const groups: Array<{ asset_ids: string[]; preset_id: "card_stack" | "film_strip" }> = [];
-  for (let offset = 0; offset < ids.length;) {
-    const remaining = ids.length - offset;
-    const count = remaining > max && remaining - max < min ? remaining - min : Math.min(max, remaining);
-    if (count < min || count > max) return null;
-    groups.push({ asset_ids: ids.slice(offset, offset + count), preset_id: presetId });
-    offset += count;
-  }
-  return groups;
 }
 
 function bulkSelectionRows(rows: BulkSourceRow[]): Array<{ id: string; kind: "image" | "video" | null; generation: string | null }> {
@@ -686,7 +653,7 @@ function labelForOp(op: CopilotOp): string {
   if (op.op === "remove_text") return `Remove text ${op.bar_index + 1}`;
   if (op.op === "add_unused_sources") return "Add unused ready sources";
   if (op.op === "set_media_duration") return `All ${op.selector.media_kind} durations`;
-  if (op.op === "stack_images") return "Stack images";
+  if (op.op === "stack_images") return "Group images";
   if (op.op === "set_clip_duration") return `Clip ${op.slot_index + 1} duration`;
   if (op.op === "set_clip_in") return `Clip ${op.slot_index + 1} in`;
   if (op.op === "trim_clip_start") return `Trim clip ${op.slot_index + 1} start`;
@@ -1588,13 +1555,6 @@ export function applyCopilotOps(
         rejected.push(reject(op.op, labelForOp(op), "invalid_op", "the image selection contains duplicate asset IDs; each image may be stacked only once"));
         continue;
       }
-      const presetId = op.preset_id ?? "card_stack";
-      const groups = groupedImageIds(uniqueIds, presetId);
-      if (!groups) {
-        const minimum = BULK_PRESET_ASSET_LIMITS[presetId].min;
-        rejected.push(reject(op.op, labelForOp(op), "unsupported", `${presetId === "film_strip" ? "Film Strip" : "Card Stack"} requires at least ${minimum} ready images; no partial image group was staged.`));
-        continue;
-      }
       const firstSelectedIndex = current.findIndex((slot) => !slot.removed && bulkSourceKind(ctx, slot.clipIndex) === "image");
       const selectedKeys = new Set(selectedSlots.map((slot) => slot.key));
       const reorderedSlots = [
@@ -1602,47 +1562,18 @@ export function applyCopilotOps(
         ...selectedSlots,
         ...current.slice(firstSelectedIndex).filter((slot) => !selectedKeys.has(slot.key)),
       ];
-      const layout = sequentialSlotLayout(reorderedSlots, grid);
-      const selectedSlotIndexes = selectedSlots.map((slot) => reorderedSlots.findIndex((candidate) => candidate.key === slot.key));
-      const scenes: MotionPresetInstance[] = [];
-      let invalidGroup = false;
-      let groupOffset = 0;
-      for (const group of groups) {
-        const { min, max } = BULK_PRESET_ASSET_LIMITS[group.preset_id];
-        if (group.asset_ids.length < min || group.asset_ids.length > max) { invalidGroup = true; break; }
-        const assets = group.asset_ids.map((id) => bulkAssetRef(ctx, id));
-        if (assets.some((asset) => !asset)) { invalidGroup = true; break; }
-        const firstIndex = selectedSlotIndexes[groupOffset];
-        const lastIndex = selectedSlotIndexes[groupOffset + group.asset_ids.length - 1];
-        const firstWindow = layout.windows[firstIndex];
-        const lastWindow = layout.windows[lastIndex];
-        if (firstWindow?.startS == null || lastWindow?.startS == null) { invalidGroup = true; break; }
-        const startFrame = Math.round(firstWindow.startS * 30);
-        const endFrame = Math.max(startFrame + 1, Math.round((lastWindow.startS + lastWindow.durationS) * 30));
-        const scene = createCreatorBlockInstance({ id: ctx.makeMotionId?.() ?? defaultMotionId(), presetId: group.preset_id, startFrame, endFrameExclusive: endFrame, assets: assets as MotionAssetRef[] });
-        scenes.push(scene);
-        groupOffset += group.asset_ids.length;
-      }
-      if (invalidGroup || scenes.length === 0) {
-        rejected.push(reject(op.op, labelForOp(op), "invalid_op", "Image grouping exceeds Card Stack/Film Strip asset limits."));
-        continue;
-      }
       const selectedAssetIds = new Set(uniqueIds);
       const preservedScenes = workingMotionScenes.filter((scene) =>
         !creatorBlockAssetRefs(scene).some((asset) => selectedAssetIds.has(asset.asset_id)),
       );
-      const candidate = [...preservedScenes, ...scenes];
-      const validationResult = validateMotionInstances(candidate, Math.ceil(layout.totalDurationS * 30));
-      if (!validationResult.ok) {
-        rejected.push(reject(op.op, labelForOp(op), "invalid_op", validationResult.errors.join("; ")));
-        continue;
+      if (preservedScenes.length !== workingMotionScenes.length) {
+        workingMotionScenes = preservedScenes;
+        nextMotionScenes = preservedScenes;
       }
-      workingMotionScenes = candidate;
-      nextMotionScenes = candidate;
       workingSlots = reorderedSlots;
       nextSlots = reorderedSlots;
       timelineMutated = true;
-      applied.push({ label: "Stack images", from: `${uniqueIds.length} images`, to: `${scenes.length} media group${scenes.length === 1 ? "" : "s"}` });
+      applied.push({ label: "Group images", from: `${uniqueIds.length} images`, to: `${uniqueIds.length} consecutive slideshow clips` });
     } else if (op.op === "set_clip_duration") {
       const snap = slotSnapAt(ctx.snapshot, op.slot_index);
       const slots = currentSlots();
