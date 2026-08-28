@@ -2,18 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.56.0.6] — 2026-08-28
+## [0.57.0.1] — 2026-08-28
+
+### Added
+- **Kria can now author generic source-aware montage edits.** Natural-language requests that combine multiple videos give the AI control of the ordered cuts, source reuse, timing, persistent source text, and original-audio intent without a hardcoded intercut recipe.
+- **Kria can now visually review its own multi-source montage windows before saving.** Weak moments are fed into one generic replan pass while provider failures remain fail-open.
+
+## [0.57.0.0] — 2026-08-28
+
+### Added
+- **Mobile creators can now edit against a direct thumbnail timeline.** A fixed near-left playhead, tap-to-seek clip selection, 44px source In/Out handles, pinch zoom, visible zoom controls, and Fit make precise trimming practical on phone-sized screens.
+- **Text can now be created, edited, and positioned directly in the video preview.** The title receives focus immediately, stays draggable within the canvas, and preserves one-step undo without forcing creators into a form sheet.
+- **A real-media mobile QA route now covers the complete core gesture loop.** The guarded fixture exercises touch trimming, ripple behavior, split, mute, delete, undo, scrubbing, and Save at both supported mobile viewports.
 
 ### Changed
-- **Kria's source-aware montage authoring is now generic.** The AI owns the ordered timeline, source reuse, timing, text bindings, and audio intent; no intercut-specific subtype or fixed sequence is required.
+- **Pocket editing keeps clip actions above an icon-led shadcn tool dock.** Split, Mute, Replace, Move, Reset, and Delete remain discoverable without shrinking touch targets or hiding capability reasons.
+- **Every mobile tool now opens a working editor state.** Captions, sounds, visuals, overlays, styles, and Kria expose functional actions while detailed changes stay in one shadcn sheet at a time.
+- **Uploaded visuals and overlays now appear as their actual media in the phone preview.** Creators can select and move overlays directly, then adjust source In/Out, scale, display mode, layer order, position, and duration with the same icon-led shadcn controls.
+- **Mobile Save still uses Nova's existing atomic editor commit and render path.** Timeline slots, source bounds, beat timing, conflict handling, and feature gates keep their current contracts.
+
+### Fixed
+- **Trim gestures now create exactly one undo step and ripple later clips from the canonical timeline.** Transition-overlap taps select the visible incoming clip, pinch zoom preserves its fixed-playhead anchor, and keyboard users retain a native seek control after touch gestures.
+- **Timeline thumbnails now match each clip's source window without stale or distorted frames.** Current requests clear old imagery immediately, decoding is globally bounded, raster memory is byte-capped, and playback/trim/resize updates are coalesced to display frames for smooth phone interaction.
+- **Mobile chrome now respects iPhone safe areas and the 44px touch contract.** The top bar clears status bars and notches, resize handles remain easy to acquire over video, and primary tool icons use the intended 24px size.
+
+## [0.56.0.6] — 2026-08-28
+
+### Fixed
+- **Saved guided edits with music now render successfully.** Revision rerenders validate UUID-shaped music identities but bind them using the text type stored by `MusicTrack`, preventing PostgreSQL's `text = uuid` error after a large Kria edit.
 
 ## [0.56.0.5] — 2026-08-28
 
 ### Fixed
 - **Fresh Kria requests no longer inherit obsolete clarification selectors.** Only the latest assistant turn can supply structured referent and pending-action context, so an earlier add-all capacity clarification cannot retarget a new image-only 0.2-second slideshow request or atomically reject an otherwise valid draft.
 
-### Added
-- **Kria can now author source-aware montage edits.** Natural-language requests that compare or combine multiple videos give Kria control of the ordered cuts, source reuse, timing, persistent source text, and original-audio intent; the editor can expose prepared source-bed previews without a hardcoded sequence recipe.
 
 ## [0.56.0.4] — 2026-08-28
 

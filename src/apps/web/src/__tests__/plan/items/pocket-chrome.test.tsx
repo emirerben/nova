@@ -7,17 +7,23 @@
  *  2. ToolDock — 7 tools with Nova / 6 without, active underline +
  *     aria-pressed, focusable-disabled tools route to onDisabledTap with a
  *     full-opacity readable label.
- *  3. ContextStrip — pill sets + primary pill per selection type, null
+ *  3. ContextStrip — shadcn action sets + primary action per selection type, null
  *     renders nothing, Delete is always the word "Delete", disabled Split
  *     routes to onDisabledTap.
- *  4. MiniStrip — miniStripTimeAtX clamping, sub-8px tap selects once +
- *     seeks, 8px+ drag scrubs (onScrubStart once, monotonic onScrub) without
- *     selecting.
+ *  4. MiniStrip — fixed-playhead padding, thumbnail clips, sub-8px tap,
+ *     scroll-to-scrub, zoom controls, and both 44px source trim handles.
  */
 
 import "@testing-library/jest-dom";
 import React from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 
 import {
   initialPocketState,
@@ -31,10 +37,16 @@ import {
 } from "@/app/plan/items/[id]/_editor/ContextStrip";
 import {
   MiniStrip,
+  POCKET_TIMELINE_BASE_PX_PER_SECOND,
+  POCKET_TIMELINE_PLAYHEAD_INSET_PX,
   miniStripTimeAtX,
+  pocketLaneAutoPanDirection,
+  pocketTimelineTimeAtTap,
+  resizeMiniStripLaneRange,
   type MiniStripSegment,
 } from "@/app/plan/items/[id]/_editor/MiniStrip";
 import { installPointerEventPolyfill } from "@/__tests__/utils/viewport-mocks";
+import { createEditorPlaybackClock } from "@/app/plan/items/[id]/_editor/editor-playback-clock";
 
 let restorePointerEvents: () => void;
 
@@ -300,7 +312,7 @@ describe("ContextStrip", () => {
       "Timing",
       "Delete",
     ]);
-    expect(pills[0].className).toContain("bg-[#0c0c0e]");
+    expect(pills[0].className).toContain("bg-secondary");
     fireEvent.click(pills[0]);
     expect(onEdit).toHaveBeenCalledTimes(1);
   });
@@ -310,7 +322,7 @@ describe("ContextStrip", () => {
     renderStrip({ type: "caption", onEditCue: jest.fn(), onAllCaptions });
     const pills = screen.getAllByRole("button");
     expect(pills.map((p) => p.textContent)).toEqual(["Edit cue", "All captions"]);
-    expect(pills[0].className).toContain("bg-[#0c0c0e]");
+    expect(pills[0].className).toContain("bg-secondary");
     fireEvent.click(pills[1]);
     expect(onAllCaptions).toHaveBeenCalledTimes(1);
   });
@@ -324,7 +336,7 @@ describe("ContextStrip", () => {
     });
     const pills = screen.getAllByRole("button");
     expect(pills.map((p) => p.textContent)).toEqual(["Edit", "Timing", "Delete"]);
-    expect(pills[0].className).toContain("bg-[#0c0c0e]");
+    expect(pills[0].className).toContain("bg-secondary");
   });
 
   it("motion selection: Edit (primary) / Timing / Delete", () => {
@@ -336,7 +348,7 @@ describe("ContextStrip", () => {
     });
     const pills = screen.getAllByRole("button");
     expect(pills.map((p) => p.textContent)).toEqual(["Edit", "Timing", "Delete"]);
-    expect(pills[0].className).toContain("bg-[#0c0c0e]");
+    expect(pills[0].className).toContain("bg-secondary");
   });
 
   it("carousel selection: Edit (primary) / Delete", () => {
@@ -346,7 +358,7 @@ describe("ContextStrip", () => {
 
     const pills = screen.getAllByRole("button");
     expect(pills.map((pill) => pill.textContent)).toEqual(["Edit", "Delete"]);
-    expect(pills[0].className).toContain("bg-[#0c0c0e]");
+    expect(pills[0].className).toContain("bg-secondary");
 
     fireEvent.click(pills[0]);
     fireEvent.click(pills[1]);
@@ -391,7 +403,7 @@ describe("ContextStrip", () => {
       "Mute",
       "Delete",
     ]);
-    expect(pills[0].className).toContain("bg-[#0c0c0e]");
+    expect(pills[0].className).toContain("bg-secondary");
     fireEvent.click(screen.getByRole("button", { name: "Mute" }));
     expect(onToggleMute).toHaveBeenCalledTimes(1);
     unmount();
@@ -400,7 +412,7 @@ describe("ContextStrip", () => {
     expect(screen.getByRole("button", { name: "Unmute" })).toBeInTheDocument();
   });
 
-  it("Delete is always the literal word Delete in ink-muted text on white", () => {
+  it("Delete is always explicit and uses the shadcn destructive tone", () => {
     renderStrip({
       type: "text",
       onEdit: jest.fn(),
@@ -410,8 +422,7 @@ describe("ContextStrip", () => {
     });
     const del = screen.getByRole("button", { name: "Delete" });
     expect(del.textContent).toBe("Delete");
-    expect(del.className).toContain("text-[#3f3f46]");
-    expect(del.className).toContain("bg-white");
+    expect(del.className).toContain("text-destructive");
   });
 
   it("disabled Split stays tappable and routes to onDisabledTap", () => {
@@ -434,6 +445,27 @@ describe("ContextStrip", () => {
     expect(onDisabledTap).toHaveBeenCalledTimes(1);
     expect(onDisabledTap).toHaveBeenCalledWith(reason);
     expect(onSplit).not.toHaveBeenCalled();
+  });
+
+  it("keeps final-clip deletion focusable and explains the floor", () => {
+    const onDelete = jest.fn();
+    const { onDisabledTap } = renderStrip({
+      type: "clip",
+      onAdjust: jest.fn(),
+      onSplit: jest.fn(),
+      splitDisabledReason: null,
+      muted: false,
+      onToggleMute: jest.fn(),
+      onDelete,
+      deleteDisabledReason: "At least one clip must remain",
+    });
+
+    const deleteButton = screen.getByRole("button", { name: "Delete" });
+    expect(deleteButton).toHaveAttribute("aria-disabled", "true");
+    expect(deleteButton).not.toBeDisabled();
+    fireEvent.click(deleteButton);
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(onDisabledTap).toHaveBeenCalledWith("At least one clip must remain");
   });
 });
 
@@ -465,6 +497,100 @@ describe("miniStripTimeAtX", () => {
   });
 });
 
+describe("pocketTimelineTimeAtTap", () => {
+  it("maps a tap through the left playhead inset and clamps to the canonical duration", () => {
+    expect(
+      pocketTimelineTimeAtTap({
+        scrollLeft: 96,
+        clientX: 70,
+        rectLeft: 0,
+        pixelsPerSecond: 48,
+        durationS: 10,
+      }),
+    ).toBeCloseTo(3, 5);
+    expect(
+      pocketTimelineTimeAtTap({
+        scrollLeft: 480,
+        clientX: 300,
+        rectLeft: 0,
+        pixelsPerSecond: 48,
+        durationS: 10,
+      }),
+    ).toBe(10);
+  });
+});
+
+describe("resizeMiniStripLaneRange", () => {
+  const item = { startS: 1.2, endS: 5.4 };
+
+  it("moves either edge in 100ms steps without moving the opposite edge", () => {
+    expect(
+      resizeMiniStripLaneRange({
+        item,
+        handle: "left",
+        deltaS: 1.26,
+        durationS: 10,
+      }),
+    ).toEqual({ startS: 2.5, endS: 5.4 });
+    expect(
+      resizeMiniStripLaneRange({
+        item,
+        handle: "right",
+        deltaS: -1.26,
+        durationS: 10,
+      }),
+    ).toEqual({ startS: 1.2, endS: 4.1 });
+  });
+
+  it("clamps to the project and preserves a 100ms minimum block", () => {
+    expect(
+      resizeMiniStripLaneRange({
+        item,
+        handle: "left",
+        deltaS: -20,
+        durationS: 10,
+      }),
+    ).toEqual({ startS: 0, endS: 5.4 });
+    expect(
+      resizeMiniStripLaneRange({
+        item,
+        handle: "left",
+        deltaS: 20,
+        durationS: 10,
+      }),
+    ).toEqual({ startS: 5.3, endS: 5.4 });
+    expect(
+      resizeMiniStripLaneRange({
+        item,
+        handle: "right",
+        deltaS: -20,
+        durationS: 10,
+      }),
+    ).toEqual({ startS: 1.2, endS: 1.3 });
+    expect(
+      resizeMiniStripLaneRange({
+        item,
+        handle: "right",
+        deltaS: 20,
+        durationS: 10,
+      }),
+    ).toEqual({ startS: 1.2, endS: 10 });
+  });
+});
+
+describe("pocketLaneAutoPanDirection", () => {
+  it("stays still inside the viewport and pans only at or beyond an edge", () => {
+    const viewport = { viewportLeft: 20, viewportRight: 380 };
+    expect(pocketLaneAutoPanDirection({ clientX: 200, ...viewport })).toBe(0);
+    expect(pocketLaneAutoPanDirection({ clientX: 21.1, ...viewport })).toBe(0);
+    expect(pocketLaneAutoPanDirection({ clientX: 378.9, ...viewport })).toBe(0);
+    expect(pocketLaneAutoPanDirection({ clientX: 20, ...viewport })).toBe(-1);
+    expect(pocketLaneAutoPanDirection({ clientX: -40, ...viewport })).toBe(-1);
+    expect(pocketLaneAutoPanDirection({ clientX: 380, ...viewport })).toBe(1);
+    expect(pocketLaneAutoPanDirection({ clientX: 440, ...viewport })).toBe(1);
+  });
+});
+
 describe("MiniStrip", () => {
   const segments: MiniStripSegment[] = [
     { id: "clip-a", startS: 0, endS: 4 },
@@ -490,9 +616,10 @@ describe("MiniStrip", () => {
       />,
     );
     const strip = screen.queryByTestId("pocket-ministrip");
-    if (strip) {
-      // jsdom has no layout — pin the gesture math to a 200px-wide strip.
-      strip.getBoundingClientRect = () =>
+    const viewport = screen.queryByTestId("pocket-timeline-viewport");
+    if (viewport) {
+      // jsdom has no layout — pin the gesture math to a 200px viewport.
+      viewport.getBoundingClientRect = () =>
         ({
           left: 0,
           top: 0,
@@ -504,8 +631,9 @@ describe("MiniStrip", () => {
           y: 0,
           toJSON: () => ({}),
         }) as DOMRect;
+      viewport.scrollLeft = 2 * POCKET_TIMELINE_BASE_PX_PER_SECOND;
     }
-    return { ...utils, strip, onScrubStart, onScrub, onSelectClip };
+    return { ...utils, strip, viewport, onScrubStart, onScrub, onSelectClip };
   }
 
   it("renders nothing when duration or segments are empty", () => {
@@ -518,17 +646,17 @@ describe("MiniStrip", () => {
   });
 
   it("sub-8px tap selects the clip under the finger once AND seeks there", () => {
-    const { strip, onScrub, onScrubStart, onSelectClip } = renderStrip();
-    fireEvent.pointerDown(strip!, { pointerId: 1, clientX: 50, clientY: 10 });
-    fireEvent.pointerMove(strip!, { pointerId: 1, clientX: 52, clientY: 10 });
-    fireEvent.pointerUp(strip!, { pointerId: 1, clientX: 52, clientY: 10 });
+    const { viewport, onScrub, onScrubStart, onSelectClip } = renderStrip();
+    fireEvent.pointerDown(viewport!, { pointerId: 1, clientX: 68, clientY: 10 });
+    fireEvent.pointerMove(viewport!, { pointerId: 1, clientX: 70, clientY: 10 });
+    fireEvent.pointerUp(viewport!, { pointerId: 1, clientX: 70, clientY: 10 });
 
-    // 52px of 200px over 10s = 2.6s → clip-a (0–4s).
+    // scrollLeft 96 + tap 70 - left inset 22 = 144px / 48 = 3s.
     expect(onSelectClip).toHaveBeenCalledTimes(1);
     expect(onSelectClip).toHaveBeenCalledWith("clip-a", expect.any(Number));
-    expect(onSelectClip.mock.calls[0][1]).toBeCloseTo(2.6, 5);
+    expect(onSelectClip.mock.calls[0][1]).toBeCloseTo(3, 5);
     expect(onScrub).toHaveBeenCalledTimes(1);
-    expect(onScrub.mock.calls[0][0]).toBeCloseTo(2.6, 5);
+    expect(onScrub.mock.calls[0][0]).toBeCloseTo(3, 5);
     expect(onScrubStart).not.toHaveBeenCalled();
 
     // The browser's synthetic click after the tap must NOT double-select.
@@ -547,45 +675,502 @@ describe("MiniStrip", () => {
     expect(onSelectClip).toHaveBeenCalledWith("clip-b", 4);
   });
 
-  it("drag beyond 8px scrubs (onScrubStart once, monotonic times) without selecting", () => {
-    const { strip, onScrub, onScrubStart, onSelectClip } = renderStrip();
-    fireEvent.pointerDown(strip!, { pointerId: 1, clientX: 10, clientY: 10 });
-    fireEvent.pointerMove(strip!, { pointerId: 1, clientX: 30, clientY: 10 });
-    fireEvent.pointerMove(strip!, { pointerId: 1, clientX: 60, clientY: 10 });
-    fireEvent.pointerMove(strip!, { pointerId: 1, clientX: 120, clientY: 10 });
-    fireEvent.pointerUp(strip!, { pointerId: 1, clientX: 120, clientY: 10 });
+  it("renders desktop-equivalent timed lanes and selects a lane item at its start", () => {
+    const onSelectLaneItem = jest.fn();
+    const { viewport, onSelectClip } = renderStrip({
+      lanes: [
+        {
+          id: "text",
+          label: "Text",
+          items: [
+            {
+              id: "title-1",
+              kind: "text",
+              startS: 1.2,
+              endS: 5.4,
+              label: "Add a title",
+            },
+          ],
+        },
+        {
+          id: "music",
+          label: "Music",
+          items: [
+            {
+              id: "background",
+              kind: "music",
+              startS: 0,
+              endS: 10,
+              label: "City Lights",
+            },
+          ],
+        },
+      ],
+      selectedLaneItem: { kind: "text", id: "title-1" },
+      onSelectLaneItem,
+    });
+
+    expect(screen.getByTestId("pocket-timeline-lane-text")).toBeInTheDocument();
+    expect(screen.getByTestId("pocket-timeline-lane-music")).toBeInTheDocument();
+    const textBar = screen.getByRole("button", {
+      name: "Text, Add a title, 1.2–5.4 seconds",
+    });
+    expect(textBar).toHaveAttribute("aria-pressed", "true");
+    expect(textBar.closest("[data-pocket-lane-kind]"))
+      .toHaveAttribute("data-pocket-lane-kind", "text");
+    fireEvent.pointerDown(textBar, {
+      pointerId: 54,
+      clientX: 60,
+      clientY: 100,
+    });
+    // Pointer capture retargets pointerup to the timeline viewport in browsers.
+    fireEvent.pointerUp(viewport!, {
+      pointerId: 54,
+      clientX: 60,
+      clientY: 100,
+    });
+    fireEvent.click(textBar);
+    expect(onSelectClip).not.toHaveBeenCalled();
+    expect(onSelectLaneItem).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "title-1", kind: "text" }),
+      1.2,
+    );
+  });
+
+  it("resizes a selected timed lane from both 44px edges and records once per drag", () => {
+    const onLaneResizeStart = jest.fn();
+    const onPreviewLaneTiming = jest.fn();
+    renderStrip({
+      lanes: [
+        {
+          id: "text",
+          label: "Text",
+          items: [
+            {
+              id: "title-1",
+              kind: "text",
+              startS: 1.2,
+              endS: 5.4,
+              label: "Add a title",
+            },
+          ],
+        },
+      ],
+      selectedLaneItem: { kind: "text", id: "title-1" },
+      onLaneResizeStart,
+      onPreviewLaneTiming,
+    });
+
+    const left = screen.getByRole("button", {
+      name: /Resize Add a title start/,
+    });
+    const right = screen.getByRole("button", {
+      name: /Resize Add a title end/,
+    });
+    expect(left).toHaveClass("h-11", "w-11");
+    expect(right).toHaveClass("h-11", "w-11");
+
+    fireEvent.pointerDown(left, { pointerId: 71, clientX: 100 });
+    fireEvent.pointerMove(left, { pointerId: 71, clientX: 124 });
+    fireEvent.pointerMove(left, { pointerId: 71, clientX: 148 });
+    fireEvent.pointerUp(left, { pointerId: 71, clientX: 148 });
+
+    expect(onLaneResizeStart).toHaveBeenCalledTimes(1);
+    expect(onPreviewLaneTiming).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: "title-1" }),
+      { startS: 2.2, endS: 5.4 },
+      "left",
+    );
+
+    fireEvent.pointerDown(right, { pointerId: 72, clientX: 200 });
+    fireEvent.pointerMove(right, { pointerId: 72, clientX: 152 });
+    fireEvent.pointerUp(right, { pointerId: 72, clientX: 152 });
+
+    expect(onLaneResizeStart).toHaveBeenCalledTimes(2);
+    expect(onPreviewLaneTiming).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: "title-1" }),
+      { startS: 1.2, endS: 4.4 },
+      "right",
+    );
+  });
+
+  it("resizes selected lane edges in 0.1s steps from the keyboard", () => {
+    const onLaneResizeStart = jest.fn();
+    const onPreviewLaneTiming = jest.fn();
+    renderStrip({
+      lanes: [
+        {
+          id: "text",
+          label: "Text",
+          items: [
+            {
+              id: "title-1",
+              kind: "text",
+              startS: 1.2,
+              endS: 5.4,
+              label: "Add a title",
+            },
+          ],
+        },
+      ],
+      selectedLaneItem: { kind: "text", id: "title-1" },
+      onLaneResizeStart,
+      onPreviewLaneTiming,
+    });
+
+    fireEvent.keyDown(
+      screen.getByRole("button", { name: /Resize Add a title start/ }),
+      { key: "ArrowRight" },
+    );
+    fireEvent.keyDown(
+      screen.getByRole("button", { name: /Resize Add a title end/ }),
+      { key: "ArrowLeft" },
+    );
+
+    expect(onLaneResizeStart).toHaveBeenCalledTimes(2);
+    expect(onPreviewLaneTiming).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ id: "title-1" }),
+      { startS: 1.3, endS: 5.4 },
+      "left",
+    );
+    expect(onPreviewLaneTiming).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ id: "title-1" }),
+      { startS: 1.2, endS: 5.3 },
+      "right",
+    );
+  });
+
+  it("keeps a disabled resize handle focusable and reports its reason", () => {
+    const onDisabledTap = jest.fn();
+    const onPreviewLaneTiming = jest.fn();
+    renderStrip({
+      lanes: [
+        {
+          id: "text",
+          label: "Text",
+          items: [
+            {
+              id: "locked-title",
+              kind: "text",
+              startS: 1,
+              endS: 4,
+              label: "Locked title",
+              resizeDisabledReason: "Text timing is locked",
+            },
+          ],
+        },
+      ],
+      selectedLaneItem: { kind: "text", id: "locked-title" },
+      onPreviewLaneTiming,
+      onDisabledTap,
+    });
+
+    const handle = screen.getByRole("button", {
+      name: /Resize Locked title start/,
+    });
+    expect(handle).toHaveAttribute("aria-disabled", "true");
+    expect(handle).not.toBeDisabled();
+    fireEvent.pointerDown(handle, { pointerId: 73, clientX: 100 });
+    expect(onDisabledTap).toHaveBeenCalledWith("Text timing is locked");
+    expect(onPreviewLaneTiming).not.toHaveBeenCalled();
+  });
+
+  it("scrolls the lane stack vertically from a bar without scrubbing or selecting", () => {
+    const onSelectLaneItem = jest.fn();
+    const { viewport, onScrub } = renderStrip({
+      lanes: ["text", "captions", "visuals", "music"].map((id, index) => ({
+        id,
+        label: id,
+        items: [
+          {
+            id: `${id}-${index}`,
+            kind: id === "music" ? ("music" as const) : ("text" as const),
+            startS: 0,
+            endS: 10,
+            label: id,
+          },
+        ],
+      })),
+      onSelectLaneItem,
+    });
+    const textBar = screen.getByRole("button", {
+      name: "text, text, 0.0–10.0 seconds",
+    });
+
+    fireEvent.pointerDown(textBar, {
+      pointerId: 55,
+      clientX: 60,
+      clientY: 110,
+    });
+    fireEvent.pointerMove(viewport!, {
+      pointerId: 55,
+      clientX: 62,
+      clientY: 40,
+    });
+    fireEvent.pointerUp(viewport!, {
+      pointerId: 55,
+      clientX: 62,
+      clientY: 40,
+    });
+
+    expect(viewport!.scrollTop).toBe(70);
+    expect(onScrub).not.toHaveBeenCalled();
+    expect(onSelectLaneItem).not.toHaveBeenCalled();
+  });
+
+  it("selects the visually topmost incoming clip inside a transition overlap", () => {
+    const { viewport, onSelectClip } = renderStrip({
+      durationS: 8,
+      segments: [
+        { id: "outgoing", startS: 0, endS: 5 },
+        { id: "incoming", startS: 4, endS: 8 },
+      ],
+    });
+    viewport!.scrollLeft = 4.5 * POCKET_TIMELINE_BASE_PX_PER_SECOND;
+    fireEvent.pointerDown(viewport!, {
+      pointerId: 21,
+      clientX: 22,
+      clientY: 10,
+    });
+    fireEvent.pointerUp(viewport!, {
+      pointerId: 21,
+      clientX: 22,
+      clientY: 10,
+    });
+    expect(onSelectClip).toHaveBeenCalledWith("incoming", 4.5);
+  });
+
+  it("drag beyond 8px updates the strip directly and coalesces seeks per frame", () => {
+    const { viewport, onScrub, onScrubStart, onSelectClip } = renderStrip();
+    fireEvent.pointerDown(viewport!, { pointerId: 1, clientX: 140, clientY: 10 });
+    fireEvent.pointerMove(viewport!, { pointerId: 1, clientX: 120, clientY: 10 });
+    fireEvent.pointerMove(viewport!, { pointerId: 1, clientX: 90, clientY: 10 });
+    fireEvent.pointerMove(viewport!, { pointerId: 1, clientX: 40, clientY: 10 });
+    fireEvent.pointerUp(viewport!, { pointerId: 1, clientX: 40, clientY: 10 });
 
     expect(onScrubStart).toHaveBeenCalledTimes(1);
     const times = onScrub.mock.calls.map(([t]) => t as number);
-    expect(times).toHaveLength(3); // one per move after crossing the slop
-    expect(times[0]).toBeCloseTo(1.5, 5);
-    expect(times[1]).toBeCloseTo(3, 5);
-    expect(times[2]).toBeCloseTo(6, 5);
-    for (let i = 1; i < times.length; i += 1) {
-      expect(times[i]).toBeGreaterThan(times[i - 1]);
-    }
+    expect(times).toHaveLength(1);
+    expect(times[0]).toBeCloseTo(196 / 48, 5);
     expect(onSelectClip).not.toHaveBeenCalled();
   });
 
   it("movement under the 8px slop before release stays a tap", () => {
-    const { strip, onScrubStart, onSelectClip } = renderStrip();
-    fireEvent.pointerDown(strip!, { pointerId: 1, clientX: 150, clientY: 10 });
-    fireEvent.pointerMove(strip!, { pointerId: 1, clientX: 154, clientY: 12 });
-    fireEvent.pointerUp(strip!, { pointerId: 1, clientX: 154, clientY: 12 });
+    const { viewport, onScrubStart, onSelectClip } = renderStrip();
+    viewport!.scrollLeft = 7 * POCKET_TIMELINE_BASE_PX_PER_SECOND;
+    fireEvent.pointerDown(viewport!, { pointerId: 1, clientX: 22, clientY: 10 });
+    fireEvent.pointerMove(viewport!, { pointerId: 1, clientX: 26, clientY: 12 });
+    fireEvent.pointerUp(viewport!, { pointerId: 1, clientX: 26, clientY: 12 });
     expect(onScrubStart).not.toHaveBeenCalled();
-    // 154/200 * 10 = 7.7s → clip-c.
+    // 7s at the left playhead + 4px / 48 = 7.08s → clip-c.
     expect(onSelectClip).toHaveBeenCalledWith("clip-c", expect.any(Number));
+  });
+
+  it("restores scroll-to-scrub after a cancelled pointer gesture", async () => {
+    const { viewport, onScrub, onScrubStart } = renderStrip();
+    fireEvent.pointerDown(viewport!, {
+      pointerId: 13,
+      clientX: 140,
+      clientY: 10,
+    });
+    fireEvent.pointerMove(viewport!, {
+      pointerId: 13,
+      clientX: 100,
+      clientY: 10,
+    });
+    fireEvent.pointerCancel(viewport!, { pointerId: 13 });
+
+    onScrub.mockClear();
+    onScrubStart.mockClear();
+    viewport!.scrollLeft = 144;
+    await waitFor(() => {
+      fireEvent.scroll(viewport!);
+      expect(onScrubStart).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(onScrub).toHaveBeenCalledWith(3);
+    });
+  });
+
+  it("does not misclassify decoded-frame playhead following as a user scrub", async () => {
+    const playbackClock = createEditorPlaybackClock(2);
+    const { viewport, onScrubStart } = renderStrip({ playbackClock });
+
+    act(() => playbackClock.publish(2.5));
+    await waitFor(() =>
+      expect(viewport!.scrollLeft).toBeCloseTo(
+        2.5 * POCKET_TIMELINE_BASE_PX_PER_SECOND,
+        5,
+      ),
+    );
+    fireEvent.scroll(viewport!);
+    expect(onScrubStart).not.toHaveBeenCalled();
   });
 
   it("marks the selected segment and renders presence dots + playhead", () => {
     const { strip } = renderStrip({ selectedClipId: "clip-b" });
-    const selected = screen.getByRole("button", { name: "Clip 2, 4.0–7.0 seconds" });
-    expect(selected.className).toContain("outline-lime-600");
+    const selected = screen.getByTestId("pocket-timeline-clip-clip-b");
+    expect(selected.querySelector('[class*="border-lime-600"]')).not.toBeNull();
     expect(selected.querySelector('[class*="bg-lime-600"]')).not.toBeNull(); // dot
     const unmarked = screen.getByRole("button", { name: "Clip 1, 0.0–4.0 seconds" });
     expect(unmarked.querySelector('[class*="bg-lime-600"]')).toBeNull();
     expect(
       strip!.querySelector('[data-testid="pocket-ministrip-playhead"]'),
     ).not.toBeNull();
+    expect(screen.getByTestId("pocket-ministrip-playhead")).toHaveStyle({
+      left: `${POCKET_TIMELINE_PLAYHEAD_INSET_PX}px`,
+    });
+  });
+
+  it("renders handle-safe left alignment and real filmstrip surfaces", () => {
+    renderStrip();
+    const first = screen.getByTestId("pocket-timeline-clip-clip-a");
+    expect(first.style.left).toBe("calc(22px + 0px)");
+    expect(within(first).getByTestId("editor-filmstrip")).toBeInTheDocument();
+  });
+
+  it("trims both source edges with 44px handles and records once per drag", () => {
+    const onTrimStart = jest.fn();
+    const onPreviewTrim = jest.fn();
+    renderStrip({
+      selectedClipId: "clip-b",
+      segments: segments.map((segment) =>
+        segment.id === "clip-b"
+          ? {
+              ...segment,
+              sourceStartS: 2,
+              sourceDurationS: 10,
+              minDurationS: 0.1,
+            }
+          : segment,
+      ),
+      onTrimStart,
+      onPreviewTrim,
+    });
+
+    const left = screen.getByRole("button", { name: /Trim clip start/ });
+    expect(left.className).toContain("w-11");
+    fireEvent.pointerDown(left, { pointerId: 7, clientX: 100, clientY: 20 });
+    fireEvent.pointerMove(left, { pointerId: 7, clientX: 124, clientY: 20 });
+    fireEvent.pointerMove(left, { pointerId: 7, clientX: 148, clientY: 20 });
+    fireEvent.pointerUp(left, { pointerId: 7, clientX: 148, clientY: 20 });
+
+    expect(onTrimStart).toHaveBeenCalledTimes(1);
+    expect(onPreviewTrim).toHaveBeenLastCalledWith("clip-b", {
+      inS: 3,
+      durationS: 2,
+      durationBeats: null,
+    });
+
+    onTrimStart.mockClear();
+    onPreviewTrim.mockClear();
+    const right = screen.getByRole("button", { name: /Trim clip end/ });
+    expect(right.className).toContain("w-11");
+    fireEvent.pointerDown(right, { pointerId: 8, clientX: 100, clientY: 20 });
+    fireEvent.pointerMove(right, { pointerId: 8, clientX: 124, clientY: 20 });
+    fireEvent.pointerUp(right, { pointerId: 8, clientX: 124, clientY: 20 });
+    expect(onTrimStart).toHaveBeenCalledTimes(1);
+    expect(onPreviewTrim).toHaveBeenCalledWith("clip-b", {
+      inS: 2,
+      durationS: 3.5,
+      durationBeats: null,
+    });
+  });
+
+  it("keeps disabled trim handles focusable and surfaces the reason", () => {
+    const onDisabledTap = jest.fn();
+    renderStrip({
+      selectedClipId: "clip-a",
+      segments: [{ ...segments[0], trimDisabledReason: "Locked to voiceover" }],
+      onPreviewTrim: jest.fn(),
+      onDisabledTap,
+    });
+    const handle = screen.getByRole("button", { name: /Trim clip start/ });
+    expect(handle).toHaveAttribute("aria-disabled", "true");
+    expect(handle).not.toBeDisabled();
+    fireEvent.pointerDown(handle, { pointerId: 9, clientX: 100, clientY: 20 });
+    expect(onDisabledTap).toHaveBeenCalledWith("Locked to voiceover");
+  });
+
+  it("offers visible shadcn zoom buttons and changes filmstrip scale", async () => {
+    renderStrip();
+    const first = screen.getByTestId("pocket-timeline-clip-clip-a");
+    expect(first).toHaveStyle({ width: "192px" });
+    fireEvent.click(screen.getByRole("button", { name: "Zoom timeline in" }));
+    await waitFor(() => expect(first).toHaveStyle({ width: "288px" }));
+    expect(screen.getByRole("button", { name: "Zoom timeline out" })).toHaveClass(
+      "size-11",
+    );
+    expect(screen.getByRole("button", { name: "Fit timeline" })).toBeInTheDocument();
+  });
+
+  it("Fit shows a complete 60-second timeline at the compact viewport", async () => {
+    const { viewport } = renderStrip({
+      durationS: 60,
+      segments: [{ id: "long-clip", startS: 0, endS: 60 }],
+    });
+    viewport!.getBoundingClientRect = () =>
+      ({
+        left: 0,
+        top: 0,
+        right: 360,
+        bottom: 44,
+        width: 360,
+        height: 44,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    fireEvent.click(screen.getByRole("button", { name: "Fit timeline" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("pocket-timeline-clip-long-clip")).toHaveStyle({
+        width: "338px",
+      }),
+    );
+  });
+
+  it("pinch-zooms around the fixed playhead without turning into a slip gesture", async () => {
+    const { viewport, onScrubStart, onSelectClip } = renderStrip();
+    const first = screen.getByTestId("pocket-timeline-clip-clip-a");
+    fireEvent.pointerDown(viewport!, {
+      pointerId: 11,
+      clientX: 80,
+      clientY: 20,
+    });
+    fireEvent.pointerDown(viewport!, {
+      pointerId: 12,
+      clientX: 180,
+      clientY: 20,
+    });
+    fireEvent.pointerMove(viewport!, {
+      pointerId: 12,
+      clientX: 280,
+      clientY: 20,
+    });
+    await waitFor(() => expect(first).toHaveStyle({ width: "384px" }));
+    expect(onScrubStart).not.toHaveBeenCalled();
+    fireEvent.pointerCancel(viewport!, { pointerId: 11 });
+    fireEvent.pointerCancel(viewport!, { pointerId: 12 });
+    await waitFor(() => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Clip 2, 4.0–7.0 seconds" }),
+      );
+      expect(onSelectClip).toHaveBeenCalledWith("clip-b", 4);
+    });
+  });
+
+  it("keeps the fixed-playhead anchor after zooming near the timeline end", async () => {
+    const { viewport } = renderStrip({ currentTimeS: 6.5 });
+    viewport!.scrollLeft = 6.5 * POCKET_TIMELINE_BASE_PX_PER_SECOND;
+    fireEvent.click(screen.getByRole("button", { name: "Zoom timeline in" }));
+    await waitFor(() =>
+      expect(viewport!.scrollLeft).toBeCloseTo(
+        6.5 * POCKET_TIMELINE_BASE_PX_PER_SECOND * 1.5,
+        5,
+      ),
+    );
   });
 });

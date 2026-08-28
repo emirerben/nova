@@ -8614,7 +8614,11 @@ def _rerender_guided_story_revision(
     music = runtime_plan.get("music")
     if music is not None:
         try:
-            track_id = uuid.UUID(str(music["track_id"]))
+            # MusicTrack.id is a TEXT primary key. Parse the UUID-shaped value
+            # to reject corrupt plans, but bind the canonical string to
+            # SQLAlchemy; passing the UUID object makes PostgreSQL compare
+            # text = uuid and abort the guided Save render.
+            track_id = str(uuid.UUID(str(music["track_id"])))
         except (TypeError, ValueError) as exc:
             raise GuidedStoryError(
                 "guided_story_music_missing", "The selected music identity is invalid."

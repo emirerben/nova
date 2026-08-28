@@ -37,14 +37,13 @@ import { InfoDot } from "@/components/ui/InfoDot";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-
-/** Caption size range — mirrors the inspector's per-cue override slider so the
- *  global and the override can never express different sizes. */
-const CAPTION_SIZE_MIN = 36;
-const CAPTION_SIZE_MAX = 160;
-const DEFAULT_CAPTION_SIZE_PX = 78;
-const DEFAULT_CAPTION_COLOR = "#FFFFFF";
-const CAPTION_STROKE_MAX = 12;
+import {
+  CAPTION_SIZE_MAX,
+  CAPTION_SIZE_MIN,
+  CAPTION_STROKE_MAX,
+  DEFAULT_CAPTION_COLOR,
+  DEFAULT_CAPTION_SIZE_PX,
+} from "./caption-control-options";
 
 const LANGUAGE_LABELS: Record<string, string> = { en: "English", tr: "Türkçe" };
 
