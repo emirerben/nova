@@ -157,6 +157,8 @@ class GuidedStoryExecutionPlan(BaseModel):
     text_elements: list[TextElement]
     transition_policy: GuidedStoryTransitionPolicy
     mixed_media_timing: MixedMediaTimingProfile | None = None
+    montage_text_bindings: list[dict[str, Any]] = Field(default_factory=list)
+    montage_audio: dict[str, Any] | None = None
     typography: GuidedStoryTypography
     music: GuidedStoryMusic | None = None
     # Optional post-approval runtime projection.  Canonical approved plans
@@ -268,6 +270,7 @@ class GuidedStoryRenderReceipt(BaseModel):
     base_render_generation: str | None = None
     renderer_version: str | None = None
     effect_schema_version: str | None = None
+    source_audio_options: list[dict[str, Any]] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_strict_equality(self) -> GuidedStoryRenderReceipt:
@@ -965,6 +968,36 @@ def _text_elements(
 ) -> list[dict]:
     total_s = float(snapshot.duration_s)
     title_end = min(total_s, 3.2 if snapshot.direction != "fast_montage" else 2.2)
+    if snapshot.montage_text_bindings and snapshot.fast_cuts:
+        text_by_source = {entry.media_id: entry.text for entry in snapshot.montage_text_bindings}
+        elements: list[dict] = []
+        for cut, window in zip(snapshot.fast_cuts, beat_windows, strict=True):
+            text = text_by_source.get(cut.media_id)
+            if not text:
+                continue
+            elements.append(
+                TextElement(
+                    id=f"montage-text-{cut.cut_id}",
+                    text=text,
+                    start_s=float(window["start_s"]),
+                    end_s=float(window["end_s"]),
+                    role="generative_intro",
+                    position="custom" if compiler_version >= 3 else "bottom",
+                    x_frac=0.5 if compiler_version >= 3 else None,
+                    y_frac=0.78 if compiler_version >= 3 else None,
+                    font_family="Fraunces" if compiler_version >= 3 else "Inter-Bold",
+                    size_px=58 if compiler_version >= 3 else 50,
+                    color="#FFF8F0" if compiler_version >= 3 else "#FFFFFF",
+                    highlight_color="#D9FF70" if compiler_version >= 3 else "#6FE7F7",
+                    stroke_width=0 if compiler_version >= 3 else 4,
+                    shadow_enabled=True,
+                    shadow_style="standard" if compiler_version >= 3 else None,
+                    effect="static",
+                    alignment="center",
+                    max_width_frac=0.82,
+                ).model_dump(mode="json", exclude_none=True)
+            )
+        return elements
     # New fast-montage proposals carry their own dense cut list. Keep only the
     # short hook/title; generated chapter thoughts would turn a music-led cut
     # back into an information card edit. Legacy fast snapshots have no
@@ -1369,6 +1402,14 @@ def _compile_execution_plan_version(
             story_timeline=moments,
             beat_windows=beat_windows,
             mixed_media_timing=mixed_timing,
+            montage_text_bindings=[
+                binding.model_dump(mode="json") for binding in snapshot.montage_text_bindings
+            ],
+            montage_audio=(
+                snapshot.montage_audio.model_dump(mode="json")
+                if snapshot.montage_audio is not None
+                else None
+            ),
             text_elements=_text_elements(
                 snapshot,
                 beat_windows,
@@ -2114,6 +2155,7 @@ def _render_video_moment(
     look_preset: str = "none",
     look_adjustments: dict[str, float] | None = None,
     exact_duration: bool = False,
+    preserve_audio: bool = False,
 ) -> None:
     from app.pipeline.reframe import reframe_and_export  # noqa: PLC0415
 
@@ -2132,7 +2174,7 @@ def _render_video_moment(
             output,
             output_fit="letterbox_blur" if layout == "supporting_card" else "crop",
             color_trc=probe.color_trc,
-            has_audio=False,
+            has_audio=preserve_audio,
             canvas=canvas,
             look_preset=look_preset,
             look_adjustments=look_adjustments,
@@ -2179,6 +2221,7 @@ def _render_moments(
                 look_preset=moment.get("look_preset", "none"),
                 look_adjustments=moment.get("look_adjustments"),
                 exact_duration=exact_mixed_duration,
+                preserve_audio=bool((plan.get("montage_audio") or {}).get("preserve_source_audio")),
             )
         probe = probe_video(output)
         if (
@@ -2303,6 +2346,7 @@ def _verify_receipt(
         "media_stages": media_receipts,
         "moment_stages": moment_receipts,
         "text_stages": text_receipts,
+        "source_audio_options": list(plan.get("source_audio_options") or []),
     }
     if plan.get("editor_revision_number") is not None:
         receipt_data["approved_text_ids"] = list(
@@ -2613,6 +2657,127 @@ def _upload_verified_outputs(
         raise
 
 
+def _build_montage_audio_options(
+    plan: dict[str, Any],
+    local_by_id: dict[str, str],
+    assembled: str,
+    *,
+    job_id: str,
+    tmpdir: str,
+    attempt_id: str | None,
+) -> list[dict[str, Any]]:
+    """Prepare reusable audio-only choices for an authored montage timeline."""
+
+    audio_plan = plan.get("montage_audio")
+    if not isinstance(audio_plan, dict) or not audio_plan.get("preview_source_beds"):
+        return []
+    source_ids = list(audio_plan.get("source_media_ids") or [])
+    if not source_ids:
+        source_ids = list(
+            dict.fromkeys(
+                moment["media_id"]
+                for moment in plan.get("story_timeline", [])
+                if moment.get("kind") == "video"
+            )
+        )
+    if not source_ids:
+        return []
+    from app.storage import upload_public_read  # noqa: PLC0415
+
+    duration_s = float(plan["resolved_duration_s"])
+    attempt_suffix = hashlib.sha256(str(attempt_id or "preview").encode()).hexdigest()[:16]
+    options: list[dict[str, Any]] = []
+    interleaved = os.path.join(tmpdir, "montage_audio_interleaved.m4a")
+    command = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        assembled,
+        "-map",
+        "0:a:0",
+        "-vn",
+        "-t",
+        f"{duration_s:.3f}",
+        "-c:a",
+        "copy",
+        interleaved,
+    ]
+    result = subprocess.run(command, capture_output=True, timeout=120, check=False)
+    if result.returncode == 0 and os.path.exists(interleaved):
+        options.append({"mix": "interleaved", "local_path": interleaved, "label": "Interleaved"})
+
+    for index, source_id in enumerate(source_ids):
+        source = local_by_id.get(source_id)
+        if not source:
+            continue
+        output = os.path.join(tmpdir, f"montage_audio_source_{index}.m4a")
+        command = [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-stream_loop",
+            "-1",
+            "-i",
+            source,
+            "-map",
+            "0:a:0",
+            "-vn",
+            "-t",
+            f"{duration_s:.3f}",
+            "-ar",
+            "44100",
+            "-ac",
+            "2",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            output,
+        ]
+        result = subprocess.run(command, capture_output=True, timeout=120, check=False)
+        # Keep source_a/source_b for the existing two-source API contract;
+        # additional sources use stable positional IDs without any editorial
+        # assumption about their meaning.
+        mix = f"source_{chr(ord('a') + index)}" if index < 26 else f"source_{index + 1}"
+        if result.returncode == 0 and os.path.exists(output):
+            label = f"Source {index + 1}"
+            options.append(
+                {
+                    "mix": mix,
+                    "local_path": output,
+                    "label": label,
+                    "source_media_id": source_id,
+                }
+            )
+
+    published: list[dict[str, Any]] = []
+    for option in options:
+        mix = str(option["mix"])
+        path = str(option["local_path"])
+        object_path = f"generative-jobs/{job_id}/montage_audio_{mix}_{attempt_suffix}.m4a"
+        url = upload_public_read(path, object_path, content_type="audio/mp4")
+        published.append(
+            {
+                "mix": mix,
+                "audio_path": object_path,
+                "audio_url": url,
+                "duration_s": duration_s,
+                **({"label": option["label"]} if option.get("label") else {}),
+                **(
+                    {"source_media_id": option["source_media_id"]}
+                    if option.get("source_media_id")
+                    else {}
+                ),
+            }
+        )
+    return published
+
+
 def _mix_pinned_music(
     assembled: str,
     clean_base: str,
@@ -2885,6 +3050,15 @@ def render_execution_plan(
             expected_duration_s=float(plan["resolved_duration_s"]),
             canvas=canvas,
         )
+    if (plan.get("montage_audio") or {}).get("preview_source_beds"):
+        plan["source_audio_options"] = _build_montage_audio_options(
+            plan,
+            local_by_id,
+            assembled,
+            job_id=job_id,
+            tmpdir=tmpdir,
+            attempt_id=attempt_id,
+        )
     music = plan.get("music")
     if music is not None:
         clean_base = os.path.join(tmpdir, "guided_story_base.mp4")
@@ -3018,6 +3192,8 @@ def render_execution_plan(
         "proposal_version": plan["proposal_version"],
         "media_digest": plan["media_digest"],
         "render_receipt": receipt,
+        "source_audio_mix": "interleaved" if plan.get("source_audio_options") else None,
+        "source_audio_options": list(plan.get("source_audio_options") or []),
         "ok": True,
         "render_status": "ready",
     }

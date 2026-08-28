@@ -44,6 +44,29 @@ EDIT_CONVERSATION_MAX_TURNS = 20
 CREATOR_SELECTED_ORIENTATION_REASON = "The creator selected this output format."
 
 
+class MontageTextBinding(BaseModel):
+    """Text the montage should bind to every cut using one source."""
+
+    media_id: str = Field(min_length=1, max_length=100)
+    text: str = Field(min_length=1, max_length=120)
+
+
+class MontageAudioPlan(BaseModel):
+    """Generic audio intent for a source-aware montage timeline."""
+
+    preserve_source_audio: bool = True
+    preview_source_beds: bool = False
+    source_media_ids: list[str] = Field(default_factory=list, max_length=12)
+
+    @model_validator(mode="after")
+    def validate_source_ids(self) -> MontageAudioPlan:
+        if len(set(self.source_media_ids)) != len(self.source_media_ids):
+            raise ValueError("montage audio source IDs must be unique")
+        if any(not value.strip() for value in self.source_media_ids):
+            raise ValueError("montage audio source IDs must not be empty")
+        return self
+
+
 class MixedMediaTimingProfile(BaseModel):
     """Typed timing intent for mixed photo/video edits.
 
@@ -219,6 +242,8 @@ class EditProposalSnapshot(BaseModel):
     story_beats: list[StoryBeat] = Field(min_length=1, max_length=20)
     fast_cuts: list[FastMontageCut] | None = Field(default=None, min_length=1, max_length=80)
     mixed_media_timing: MixedMediaTimingProfile | None = None
+    montage_text_bindings: list[MontageTextBinding] = Field(default_factory=list, max_length=12)
+    montage_audio: MontageAudioPlan | None = None
     output_orientation: OutputOrientation | None = None
     output_orientation_reason: str = Field(default="", max_length=240)
 
@@ -311,6 +336,17 @@ class EditProposalSnapshot(BaseModel):
             cut_duration_s = sum(cut.output_duration_s for cut in self.fast_cuts)
             if abs(cut_duration_s - self.duration_s) > 0.15:
                 raise ValueError("fast montage cut durations must match the proposal duration")
+        text_ids = [binding.media_id for binding in self.montage_text_bindings]
+        if len(text_ids) != len(set(text_ids)):
+            raise ValueError("montage text bindings must use unique source IDs")
+        if not set(text_ids) <= known:
+            raise ValueError("montage text binding references unknown media")
+        if self.montage_audio is not None:
+            audio_ids = set(self.montage_audio.source_media_ids)
+            if not audio_ids <= known:
+                raise ValueError("montage audio references unknown media")
+            if any(by_id[media_id].kind != "video" for media_id in audio_ids):
+                raise ValueError("montage audio beds require video sources")
         if self.output_orientation is None:
             orientation, reason = infer_story_output_orientation(self)
             self.output_orientation = orientation
@@ -444,6 +480,10 @@ class ProposalBrief(BaseModel):
     duration_s: int = Field(default=24, ge=3, le=60)
     creator_request: str = Field(default="", max_length=1000)
     mixed_media_timing: MixedMediaTimingProfile | None = None
+    montage_audio: MontageAudioPlan | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     # Main Creator can pin the short-form delivery canvas without changing
     # ordinary guided-edit orientation inference. None preserves legacy briefs.
     output_orientation: OutputOrientation | None = None

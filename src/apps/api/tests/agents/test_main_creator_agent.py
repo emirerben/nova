@@ -50,7 +50,7 @@ def _input() -> MainCreatorInput:
     )
 
 
-def _raw(*, audio_strategy: str, selected: list[str]) -> str:
+def _raw(*, audio_strategy: str, selected: list[str], montage_audio: dict | None = None) -> str:
     return json.dumps(
         {
             "action": {
@@ -59,6 +59,7 @@ def _raw(*, audio_strategy: str, selected: list[str]) -> str:
                     "direction": "guided_story",
                     "edit_format": "montage",
                     "audio_strategy": audio_strategy,
+                    "montage_audio": montage_audio,
                     "render_program": "guided",
                     "selected_media_ids": selected,
                     "rationale": "Build a concise visual arc.",
@@ -113,6 +114,27 @@ def test_main_creator_recognizes_mixed_media_timing_request() -> None:
         "video_hold": "longer",
         "boundary_style": "cut",
     }
+
+
+def test_main_creator_keeps_generic_montage_audio_intent_for_guided_original_audio() -> None:
+    agent_input = _input()
+    source_ids = [media.media_id for media in agent_input.capability_manifest.media[:2]]
+    output = MainCreatorAgent(None).parse(  # type: ignore[arg-type]
+        _raw(
+            audio_strategy="original_audio",
+            selected=[],
+            montage_audio={
+                "preserve_source_audio": True,
+                "preview_source_beds": True,
+                "source_media_ids": source_ids,
+            },
+        ),
+        agent_input,
+    )
+
+    assert isinstance(output.action, ProposeStrategy)
+    assert output.action.strategy.montage_audio is not None
+    assert output.action.strategy.montage_audio.source_media_ids == source_ids
 
 
 def test_main_creator_repairs_native_mixed_media_timing_to_guided() -> None:

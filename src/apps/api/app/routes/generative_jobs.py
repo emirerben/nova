@@ -1582,6 +1582,33 @@ def _variants_for_response(job: Job) -> list[dict]:
                         base_poster_path=base_poster_path,
                         exc_info=True,
                     )
+        source_audio_options = v.get("source_audio_options")
+        if isinstance(source_audio_options, list):
+            signed_audio_options = []
+            for option in source_audio_options:
+                if not isinstance(option, dict):
+                    continue
+                audio_path = option.get("audio_path")
+                if not audio_path:
+                    signed_audio_options.append(option)
+                    continue
+                try:
+                    signed_audio_options.append(
+                        {
+                            **option,
+                            "audio_url": signed_get_url(audio_path, PLAYBACK_URL_TTL_MIN),
+                        }
+                    )
+                except Exception:  # noqa: BLE001 — alternate audio is optional
+                    log.warning(
+                        "variant_source_audio_resign_failed",
+                        job_id=str(job.id),
+                        variant_id=v.get("variant_id"),
+                        audio_path=audio_path,
+                        exc_info=True,
+                    )
+                    signed_audio_options.append(option)
+            v = {**v, "source_audio_options": signed_audio_options}
         # Overlay-clean base (plan 008 live edit): the un-carded video captured
         # before the first overlay burn. When present, the hero can play THIS
         # and render every card as a live CSS layer — timeline edits reflect

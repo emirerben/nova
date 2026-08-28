@@ -252,6 +252,9 @@ export default function InspectorPanel({
   backgroundMusic = null,
   backgroundMusicTrackDurationS = null,
   onPatchMix,
+  sourceAudioMix,
+  sourceAudioOptions = [],
+  onSourceAudioMix,
   onPickMusic,
   onRemoveMusic,
   onPatchBackgroundMusic,
@@ -357,6 +360,16 @@ export default function InspectorPanel({
   backgroundMusic?: EditorCommitBackgroundMusic | null;
   backgroundMusicTrackDurationS?: number | null;
   onPatchMix?: (level: number) => void;
+  sourceAudioMix?: string | null;
+  sourceAudioOptions?: Array<{
+    mix: string;
+    label?: string;
+    source_media_id?: string;
+    audio_path: string;
+    audio_url: string;
+    duration_s: number;
+  }>;
+  onSourceAudioMix?: (mix: string) => void;
   onPickMusic?: (trackId: string) => void;
   onRemoveMusic?: () => void;
   onPatchBackgroundMusic?: (patch: Partial<EditorCommitBackgroundMusic>) => void;
@@ -601,6 +614,9 @@ export default function InspectorPanel({
           onRemoveBackgroundMusic={onRemoveBackgroundMusic}
           musicWindow={musicWindow}
           onPatch={onPatchMix}
+          sourceAudioMix={sourceAudioMix}
+          sourceAudioOptions={sourceAudioOptions}
+          onSourceAudioMix={onSourceAudioMix}
           onClose={onClose}
         />
       ) : (
@@ -635,6 +651,9 @@ function MixInspector({
   backgroundMusic,
   backgroundMusicTrackDurationS,
   onPatch,
+  sourceAudioMix,
+  sourceAudioOptions,
+  onSourceAudioMix,
   onPickMusic,
   onRemoveMusic,
   onPatchBackgroundMusic,
@@ -656,6 +675,16 @@ function MixInspector({
   backgroundMusic?: EditorCommitBackgroundMusic | null;
   backgroundMusicTrackDurationS?: number | null;
   onPatch?: (level: number) => void;
+  sourceAudioMix?: string | null;
+  sourceAudioOptions: Array<{
+    mix: string;
+    label?: string;
+    source_media_id?: string;
+    audio_path: string;
+    audio_url: string;
+    duration_s: number;
+  }>;
+  onSourceAudioMix?: (mix: string) => void;
   onPickMusic?: (trackId: string) => void;
   onRemoveMusic?: () => void;
   onPatchBackgroundMusic?: (patch: Partial<EditorCommitBackgroundMusic>) => void;
@@ -693,6 +722,28 @@ function MixInspector({
       </div>
       <div className="mt-4">
         <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Song</p>
+        {sourceAudioOptions.length > 0 && (
+          <div className="mb-4 border-b border-zinc-200 pb-4">
+            <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Match audio</p>
+            <div className="grid grid-cols-3 gap-1 rounded-lg bg-zinc-100 p-1" role="group" aria-label="Match audio mix">
+              {sourceAudioOptions.map((option) => (
+                <Button
+                  key={option.mix}
+                  type="button"
+                  variant="ghost"
+                  aria-pressed={(sourceAudioMix ?? "interleaved") === option.mix}
+                  onClick={() => onSourceAudioMix?.(option.mix)}
+                  className={(sourceAudioMix ?? "interleaved") === option.mix ? "min-h-9 rounded-md bg-white px-2 text-[11px] font-semibold shadow-sm" : "min-h-9 rounded-md px-2 text-[11px] text-[#71717a]"}
+                >
+                  {option.label ?? (option.mix === "interleaved" ? "Interleaved" : `Source ${option.mix.replace("source_", "")}`)}
+                </Button>
+              ))}
+            </div>
+            <p className="mt-2 text-[11px] leading-4 text-[#71717a]">
+              Switches the prepared original audio without rerendering the video.
+            </p>
+          </div>
+        )}
         {currentMusicTrackId && (
           <Button
             type="button"

@@ -858,6 +858,34 @@ def test_variants_for_response_resigns_ready_variant(monkeypatch):
     assert failed["output_url"] is None
 
 
+def test_variants_for_response_resigns_intercut_audio_options(monkeypatch):
+    import app.routes.generative_jobs as gj
+
+    monkeypatch.setattr(
+        gj,
+        "signed_get_url",
+        lambda path, ttl: f"https://fresh.example/{path}?sig=new",
+    )
+    job = _resign_job()
+    job.assembly_plan["variants"][0]["source_audio_options"] = [
+        {
+            "mix": "source_a",
+            "audio_path": "generative-jobs/j/intercut_source_a.m4a",
+            "audio_url": "https://stale.example/expired",
+            "duration_s": 6,
+        }
+    ]
+
+    ready = gj._variants_for_response(job)[0]
+
+    assert ready["source_audio_options"][0]["audio_url"] == (
+        "https://fresh.example/generative-jobs/j/intercut_source_a.m4a?sig=new"
+    )
+    assert job.assembly_plan["variants"][0]["source_audio_options"][0]["audio_url"] == (
+        "https://stale.example/expired"
+    )
+
+
 def test_variants_for_response_does_not_mutate_stored_dicts(monkeypatch):
     import app.routes.generative_jobs as gj
 

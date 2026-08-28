@@ -52,6 +52,7 @@ import {
   type CaptionCue,
   type CaptionLanguage,
   setPlanItemCaptionLanguage,
+  setPlanItemSourceAudioMix,
   type SoundEffectPlacement,
   type TextElement,
   type VisualBlock,
@@ -837,6 +838,7 @@ export default function EditorShell({
   const [cameraEffectsDirty, setCameraEffectsDirty] = useState(false);
   const [mixLevel, setMixLevel] = useState<number | null>(null);
   const [mixDirty, setMixDirty] = useState(false);
+  const [sourceAudioMix, setSourceAudioMix] = useState<string>("interleaved");
   const [textDirty, setTextDirty] = useState(false);
   const [captionDirty, setCaptionDirty] = useState(false);
   const [lyricsEnabled, setLyricsEnabled] = useState(false);
@@ -977,6 +979,7 @@ export default function EditorShell({
       setMixDirty(false);
       setSoundMuted(seededMix === 0);
     }
+    setSourceAudioMix(variant.source_audio_mix ?? "interleaved");
     if (!conflictReseed || !captionMetaDirty) {
       setCaptionMeta(captionMetaFromVariant(variant));
       setCaptionMetaDirty(false);
@@ -2339,7 +2342,7 @@ export default function EditorShell({
     grid: clip.state.grid,
     carousel: carouselSplice,
     currentTime,
-    muted: videoMuted,
+    muted: videoMuted || (sourceAudioMix !== "interleaved" && sourceAudioMix !== null),
     musicAudioUrl: virtualMusicAudioUrl,
     musicStartS: virtualMusicStartS,
     soundMuted,
@@ -2408,7 +2411,11 @@ export default function EditorShell({
     const video = videoRef.current;
     const audio = renderedMusicAudioRef.current;
     if (!video) return;
-    video.muted = videoMuted || soundMuted || renderedMusicPreviewActive;
+    video.muted =
+      videoMuted ||
+      soundMuted ||
+      renderedMusicPreviewActive ||
+      (sourceAudioMix !== "interleaved" && sourceAudioMix !== null);
     if (!audio || !renderedMusicPreviewActive) {
       audio?.pause();
       return;
@@ -2450,6 +2457,7 @@ export default function EditorShell({
     effectiveMusicTrackId,
     renderedMusicPreviewActive,
     soundMuted,
+    sourceAudioMix,
     variant,
     videoMuted,
     virtualMusicStartS,
@@ -4142,6 +4150,26 @@ export default function EditorShell({
       setMixDirty(true);
     },
     [capabilities?.mix, history, musicCan, readOnly],
+  );
+
+  const patchSourceAudioMix = useCallback(
+    async (mix: string) => {
+      if (readOnly || !variant?.source_audio_options?.some((option) => option.mix === mix)) return;
+      const previous = sourceAudioMix;
+      setSourceAudioMix(mix);
+      try {
+        const updated = await setPlanItemSourceAudioMix(
+          itemId,
+          variant.variant_id,
+          mix,
+        );
+        setItem(updated);
+      } catch (error) {
+        setSourceAudioMix(previous);
+        toast.error(error instanceof Error ? error.message : "Couldn't switch match audio.");
+      }
+    },
+    [itemId, readOnly, sourceAudioMix, variant],
   );
 
   const handleOverlayUpload = useCallback(
@@ -7781,6 +7809,8 @@ export default function EditorShell({
         <div className="relative min-h-0">
           <EditorCanvas
             variant={variant}
+            sourceAudioMix={sourceAudioMix}
+            sourceAudioOptions={variant?.source_audio_options ?? []}
             elements={canvasPreviewElements}
             bars={canvasTextBars}
             captionsEnabled={captionMeta?.enabled}
@@ -8119,6 +8149,8 @@ export default function EditorShell({
         >
           <EditorCanvas
             variant={variant}
+            sourceAudioMix={sourceAudioMix}
+            sourceAudioOptions={variant?.source_audio_options ?? []}
             elements={canvasPreviewElements}
             bars={canvasTextBars}
             captionsEnabled={captionMeta?.enabled}
@@ -8259,6 +8291,9 @@ export default function EditorShell({
           onRemoveBackgroundMusic={removeBackgroundMusic}
           musicWindow={musicWindowControl}
           onPatchMix={patchMixLevel}
+          sourceAudioMix={sourceAudioMix}
+          sourceAudioOptions={variant?.source_audio_options ?? []}
+          onSourceAudioMix={patchSourceAudioMix}
           smartPlaceAvailable={
             !!selectedBar && !readOnly && (isMasonryVariant(variant) || !!smartPlacementCandidate)
           }
