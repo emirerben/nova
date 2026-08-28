@@ -19,6 +19,10 @@ All notable changes to this project will be documented in this file.
 - **Trim gestures now create exactly one undo step and ripple later clips from the canonical timeline.** Transition-overlap taps select the visible incoming clip, pinch zoom preserves its fixed-playhead anchor, and keyboard users retain a native seek control after touch gestures.
 - **Timeline thumbnails now match each clip's source window without stale or distorted frames.** Current requests clear old imagery immediately, decoding is globally bounded, raster memory is byte-capped, and playback/trim/resize updates are coalesced to display frames for smooth phone interaction.
 - **Mobile chrome now respects iPhone safe areas and the 44px touch contract.** The top bar clears status bars and notches, resize handles remain easy to acquire over video, and primary tool icons use the intended 24px size.
+## [0.56.0.5] — 2026-08-28
+
+### Fixed
+- **Fresh Kria requests no longer inherit obsolete clarification selectors.** Only the latest assistant turn can supply structured referent and pending-action context, so an earlier add-all capacity clarification cannot retarget a new image-only 0.2-second slideshow request or atomically reject an otherwise valid draft.
 
 ## [0.56.0.4] — 2026-08-28
 

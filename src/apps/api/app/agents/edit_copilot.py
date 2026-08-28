@@ -33,7 +33,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-08-28-v36"
+EDIT_COPILOT_PROMPT_VERSION = "2026-08-28-v37"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt prose ("up to 12", twice) and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -652,11 +652,26 @@ def _first_number(data: dict, keys: Iterable[str]) -> float | None:
     return None
 
 
+def _latest_assistant_turn_index(turns: list[dict]) -> int | None:
+    """Return the latest assistant only when no newer user turn supersedes it."""
+    for index in range(len(turns) - 1, -1, -1):
+        turn = turns[index]
+        if not isinstance(turn, dict):
+            continue
+        role = turn.get("role")
+        if role == "assistant":
+            return index
+        return None
+    return None
+
+
 def _format_prior_turns(turns: list[dict]) -> str:
     if not turns:
         return "(no prior turns)"
+    visible_turns = turns[:12]
+    latest_assistant_index = _latest_assistant_turn_index(visible_turns)
     lines: list[str] = []
-    for turn in turns[:12]:
+    for index, turn in enumerate(visible_turns):
         role = _clean_prompt_data(turn.get("role", "unknown"), max_chars=30).upper()
         content = _clean_prompt_data(turn.get("content", ""), max_chars=350)
         if content:
@@ -667,15 +682,23 @@ def _format_prior_turns(turns: list[dict]) -> str:
             lines.append(f"  SYSTEM APPLIED: {_clean_prompt_data(applied, max_chars=500)}")
         if isinstance(rejected, list) and rejected:
             lines.append(f"  SYSTEM REJECTED: {_clean_prompt_data(rejected, max_chars=500)}")
-        context = _sanitize_clarification_context(turn.get("clarification_context"))
+        context = (
+            _sanitize_clarification_context(turn.get("clarification_context"))
+            if index == latest_assistant_index
+            else None
+        )
         if context is not None:
             lines.append(
                 "  SYSTEM CLARIFICATION: "
                 + _clean_prompt_data(json.dumps(context, ensure_ascii=False), max_chars=500)
             )
-        pending = _sanitize_pending_actions(
-            turn.get("pending_actions"),
-            fallback_selector=context.get("selector") if context is not None else None,
+        pending = (
+            _sanitize_pending_actions(
+                turn.get("pending_actions"),
+                fallback_selector=context.get("selector") if context is not None else None,
+            )
+            if index == latest_assistant_index
+            else []
         )
         if pending:
             lines.append(
@@ -1378,9 +1401,11 @@ def _bulk_selector(payload: dict[str, Any]) -> dict[str, str] | None:
     scope = raw.get("scope")
     media_kind = raw.get("media_kind")
     quantifier = raw.get("quantifier")
+    if not all(isinstance(value, str) for value in (scope, media_kind, quantifier)):
+        return None
     if scope not in _BULK_SCOPES or media_kind not in _BULK_MEDIA_KINDS or quantifier != "all":
         return None
-    return {"scope": str(scope), "media_kind": str(media_kind), "quantifier": "all"}
+    return {"scope": scope, "media_kind": media_kind, "quantifier": "all"}
 
 
 def _sanitize_clarification_context(value: object) -> dict[str, Any] | None:
@@ -1392,8 +1417,17 @@ def _sanitize_clarification_context(value: object) -> dict[str, Any] | None:
     if selector is None:
         return None
     referent = value.get("referent")
-    if referent not in {"images", "videos", "clips"}:
+    if not isinstance(referent, str) or referent not in {"images", "videos", "clips"}:
         referent = None
+    else:
+        # The typed selector is authoritative. Persisted prose metadata can be
+        # malformed or stale, so never expose a contradictory referent to the
+        # prompt (for example, selector=video with referent=images).
+        referent = {
+            "image": "images",
+            "video": "videos",
+            "all": "clips",
+        }[selector["media_kind"]]
     return {
         "selector": selector,
         **({"referent": referent} if referent is not None else {}),
@@ -1411,6 +1445,47 @@ _VIDEO_WORD_RE = re.compile(r"\bvideos?\b", re.I)
 _CLIP_WORD_RE = re.compile(r"\bclips?\b", re.I)
 
 
+def _explicit_media_kinds(utterance: str) -> set[str]:
+    qualified = {
+        kind
+        for kind, pattern in (("image", _IMAGE_WORD_RE), ("video", _VIDEO_WORD_RE))
+        if pattern.search(utterance)
+    }
+    # "Video clips" and "image clips" name one media kind; bare "clips"
+    # names both. Treating the noun in a qualified phrase as another explicit
+    # kind drops the matching pending plan and can let a model-guessed duration
+    # bypass clarification.
+    if qualified:
+        return qualified
+    return {"all"} if _CLIP_WORD_RE.search(utterance) else set()
+
+
+def _context_matches_explicit_media(context: dict[str, Any] | None, utterance: str) -> bool:
+    explicit_kinds = _explicit_media_kinds(utterance)
+    if not explicit_kinds:
+        return True
+    if len(explicit_kinds) != 1 or context is None:
+        return False
+    explicit_kind = next(iter(explicit_kinds))
+    return context["selector"]["media_kind"] == explicit_kind
+
+
+def _pending_actions_match_explicit_media(actions: list[dict[str, Any]], utterance: str) -> bool:
+    explicit_kinds = _explicit_media_kinds(utterance)
+    if not explicit_kinds:
+        return True
+    if len(explicit_kinds) != 1:
+        return False
+    explicit_kind = next(iter(explicit_kinds))
+    referent_kinds = [
+        action["selector"]["media_kind"]
+        for action in actions
+        if action.get("op") in {"stack_images", "set_media_duration"}
+        and isinstance(action.get("selector"), dict)
+    ]
+    return bool(referent_kinds) and all(kind == explicit_kind for kind in referent_kinds)
+
+
 def _continues_pending_bulk(utterance: str) -> bool:
     """Recognize an answer to a bulk clarification without matching generic clip edits."""
     if _REFERENT_PRONOUN_RE.search(utterance):
@@ -1425,31 +1500,32 @@ def _continues_pending_bulk(utterance: str) -> bool:
 
 
 def _prior_referent_context(input: EditCopilotInput) -> dict[str, Any] | None:  # noqa: A002
-    """Resolve a pronoun answer from the last structured clarification turn."""
+    """Resolve a pronoun answer from the latest assistant turn's structured context."""
     if not _continues_pending_bulk(input.utterance):
         return None
-    for turn in reversed(input.prior_turns):
-        if not isinstance(turn, dict) or turn.get("role") != "assistant":
-            continue
-        context = _sanitize_clarification_context(turn.get("clarification_context"))
-        if context is not None:
-            return context
-    return None
+    index = _latest_assistant_turn_index(input.prior_turns)
+    if index is None:
+        return None
+    context = _sanitize_clarification_context(input.prior_turns[index].get("clarification_context"))
+    return context if _context_matches_explicit_media(context, input.utterance) else None
 
 
 def _last_pending_actions(input: EditCopilotInput) -> list[dict[str, Any]]:  # noqa: A002
-    """Return the last assistant-authored normalized bulk plan."""
-    for turn in reversed(input.prior_turns):
-        if not isinstance(turn, dict) or turn.get("role") != "assistant":
-            continue
-        context = _sanitize_clarification_context(turn.get("clarification_context"))
-        actions = _sanitize_pending_actions(
-            turn.get("pending_actions"),
-            fallback_selector=(context.get("selector") if context is not None else None),
-        )
-        if actions:
-            return actions
-    return []
+    """Return a normalized bulk plan only from the latest assistant turn."""
+    index = _latest_assistant_turn_index(input.prior_turns)
+    if index is None:
+        return []
+    turn = input.prior_turns[index]
+    context = _sanitize_clarification_context(turn.get("clarification_context"))
+    actions = _sanitize_pending_actions(
+        turn.get("pending_actions"),
+        fallback_selector=(context.get("selector") if context is not None else None),
+    )
+    if context is not None and not _context_matches_explicit_media(context, input.utterance):
+        return []
+    if context is None and not _pending_actions_match_explicit_media(actions, input.utterance):
+        return []
+    return actions
 
 
 def _prior_pending_actions(input: EditCopilotInput) -> list[dict[str, Any]]:  # noqa: A002
@@ -2474,10 +2550,16 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         if capacity_reply is not None:
             reply = capacity_reply
         if bulk_duration_needs_clarification:
-            reply = (
-                "Which images would you like to stack together, "
-                "and how short should the duration be?"
-            )
+            referent = bulk_context.get("referent") if isinstance(bulk_context, dict) else None
+            if referent == "images" and any(
+                action.get("op") == "stack_images" for action in bulk_pending_actions
+            ):
+                reply = (
+                    "Which images would you like to put together, "
+                    "and how short should each image be?"
+                )
+            else:
+                reply = f"How short should the {referent or 'clips'} be?"
         if not reply:
             reply = "Got it. What else should we change?"
 
