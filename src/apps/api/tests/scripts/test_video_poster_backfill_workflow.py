@@ -87,13 +87,19 @@ exit "${STUB_CURL_EXIT:-0}"
 """
 
 
-def _image(*, digest: str = DIGEST, labels: dict[str, str] | str | None = None) -> dict:
+def _image(
+    *,
+    digest: str = DIGEST,
+    labels: dict[str, str] | str | None = None,
+    tag: str = "deployment-test",
+) -> dict:
     if labels is None:
         labels = {REVISION_LABEL: EXPECTED_SHA}
     return {
         "Digest": digest,
         "Registry": "registry.fly.io",
         "Repository": "nova-video",
+        "Tag": tag,
         "Labels": labels if isinstance(labels, str) else json.dumps(labels),
     }
 
@@ -358,7 +364,7 @@ def test_launcher_creates_verifies_starts_and_reconciles_exact_digest(tmp_path: 
 
     assert result.returncode == 0, result.stderr
     create_args = (tmp_path / "create.args").read_text().splitlines()
-    assert create_args[1:4] == ["machine", "create", f"registry.fly.io/nova-video@{DIGEST}"]
+    assert create_args[1:4] == ["machine", "create", "registry.fly.io/nova-video:deployment-test"]
     assert "--restart" in create_args
     assert create_args[create_args.index("--restart") + 1] == "no"
     assert create_args[create_args.index("--vm-cpus") + 1] == "4"
@@ -810,6 +816,19 @@ def test_launcher_fails_closed_on_bad_image_metadata(tmp_path: Path) -> None:
     unreadable = _run(tmp_path / "unreadable", [], image_exit=42)
     assert unreadable.returncode == 1
     assert "Could not read Fly production image metadata" in unreadable.stderr
+
+
+def test_launcher_requires_one_nonempty_tag_for_the_production_digest(tmp_path: Path) -> None:
+    missing = _run(tmp_path / "missing", [_image(tag="")])
+    assert missing.returncode == 1
+    assert "one deployed image tag" in missing.stderr
+
+    ambiguous = _run(
+        tmp_path / "ambiguous",
+        [_image(tag="deployment-one"), _image(tag="deployment-two")],
+    )
+    assert ambiguous.returncode == 1
+    assert "one deployed image tag" in ambiguous.stderr
 
 
 def test_launcher_refuses_bad_revision_or_sha(tmp_path: Path) -> None:

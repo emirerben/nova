@@ -582,7 +582,7 @@ reclaim_or_block_deploy_guard() {
 
 resolve_production_image() {
   local require_expected_revision="$1"
-  local image_json machines_json managed_count unique_images deployed_sha image_match_count
+  local image_json machines_json managed_count unique_images deployed_sha image_match_count image_tag
   local attempt
   for ((attempt = 1; attempt <= production_settle_attempts; attempt++)); do
     machines_json="$(machine_list)" || fail "Could not read Fly Machine inventory."
@@ -653,9 +653,25 @@ resolve_production_image() {
   repository="$(jq -r --arg digest "$digest" '[.[] | select(.Digest == $digest)][0].Repository // empty' <<<"$image_json")"
   [[ -n "$registry" && -n "$repository" && "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || \
     fail "Could not resolve a valid deployed registry, repository, and digest."
+  image_tag="$(
+    jq -er --arg digest "$digest" '
+      [.[]
+        | select(.Digest == $digest)
+        | .Tag
+        | select(type == "string" and length > 0)]
+      | unique
+      | if length == 1 then .[0] else empty end
+    ' <<<"$image_json"
+  )" || fail "Could not resolve one deployed image tag for the production digest."
+  [[ -n "$image_tag" ]] || fail "Could not resolve one deployed image tag for the production digest."
   [[ "$image_match_count" -ge 1 ]] || \
     fail "Managed production digest has no matching immutable image metadata."
-  image_ref="${registry}/${repository}@${digest}"
+  # flyctl resolves and appends the digest internally for `machine create`.
+  # Passing an already digest-qualified reference produces
+  # `repository@sha256:...@sha256:...`, which Fly rejects. The deployment tag
+  # is unique, and the created-only guard is accepted only after its resolved
+  # image_ref.digest exactly matches `digest` below.
+  image_ref="${registry}/${repository}:${image_tag}"
   if [[ "$require_expected_revision" == "true" ]]; then
     if ! deployed_sha="$(
       jq -er --arg label "$revision_label" --arg digest "$digest" '

@@ -173,7 +173,7 @@ function extendedCtx(over: Partial<Parameters<typeof applyCopilotOps>[1]> = {}) 
 }
 
 describe("applyCopilotOps", () => {
-  it("applies image-wide duration and deterministic 8-image Card Stack grouping atomically", () => {
+  it("applies image-wide duration and gathers 8 individual slideshow clips atomically", () => {
     const mixedOrder = [0, 9, 1, 10, 2, 11, 3, 12, 4, 13, 5, 14, 6, 15, 7, 16, 8];
     const slots = mixedOrder.map((clipIndex, index) => slot({
       key: `slot-${index}`,
@@ -210,23 +210,61 @@ describe("applyCopilotOps", () => {
       capabilities,
       motionScenes: [],
       videoDurationS: 20,
-      makeMotionId: (() => { let i = 0; return () => `motion-${i++}`; })(),
     });
     expect(result.rejected).toEqual([]);
     expect(result.nextSlots?.map((entry) => entry.clipIndex)).toEqual([0, 9, 10, 11, 12, 13, 14, 15, 16, 1, 2, 3, 4, 5, 6, 7, 8]);
     expect(result.nextSlots?.filter((s) => s.clipIndex < 9).every((s) => s.durationS === 1)).toBe(true);
     expect(result.nextSlots?.filter((s) => s.clipIndex >= 9).every((s) => s.durationS === 0.2)).toBe(true);
-    expect(result.nextMotionScenes).toHaveLength(2);
-    expect(result.nextMotionScenes?.map((scene) => ((scene as MotionPresetInstance & { params: { assets: Array<{ asset_id: string }> } }).params).assets.map((asset) => asset.asset_id))).toEqual([
-      ["media-9", "media-10", "media-11", "media-12", "media-13", "media-14"],
-      ["media-15", "media-16"],
-    ]);
-    expect(result.nextMotionScenes?.map((scene) => [scene.start_frame, scene.end_frame_exclusive])).toEqual([[30, 66], [66, 78]]);
-    expect(result.nextMotionScenes?.every((scene) => !Object.prototype.hasOwnProperty.call((scene as MotionPresetInstance & { params: Record<string, unknown> }).params, "asset_ids"))).toBe(true);
-    expect(result.nextMotionScenes?.every((scene) => {
-      const params = (scene as MotionPresetInstance & { params: Record<string, unknown> }).params;
-      return !("image_motion" in params || "zoom" in params || "ken_burns" in params);
-    })).toBe(true);
+    expect(result.nextMotionScenes).toBeUndefined();
+    expect(result.applied).toContainEqual({
+      label: "Group images",
+      from: "8 images",
+      to: "8 consecutive slideshow clips",
+    });
+  });
+
+  it("removes overlapping legacy image stacks while preserving unrelated motion", () => {
+    const slots = [
+      slot({ key: "video-0", slotId: "video-0", clipIndex: 0 }),
+      slot({ key: "image-1", slotId: "image-1", clipIndex: 1 }),
+      slot({ key: "video-2", slotId: "video-2", clipIndex: 2 }),
+      slot({ key: "image-3", slotId: "image-3", clipIndex: 3 }),
+    ];
+    const sourcePool = [
+      { clip_index: 0, media_id: "media-0", kind: "video" as const, generation: "g1", duration_s: 4, used: true, status: "ready", signed_url: null },
+      { clip_index: 1, media_id: "media-1", kind: "image" as const, generation: "g1", duration_s: 3, used: true, status: "ready", signed_url: null },
+      { clip_index: 2, media_id: "media-2", kind: "video" as const, generation: "g1", duration_s: 4, used: true, status: "ready", signed_url: null },
+      { clip_index: 3, media_id: "media-3", kind: "image" as const, generation: "g1", duration_s: 3, used: true, status: "ready", signed_url: null },
+    ];
+    const legacyStack = {
+      id: "legacy-stack",
+      preset_id: "card_stack",
+      preset_version: 2,
+      start_frame: 0,
+      end_frame_exclusive: 60,
+      palette: { primary: "#000000", accent: "#FFFFFF" },
+      intensity: 0.72,
+      params: { assets: [{ asset_id: "media-1", gcs_path: "one.jpg" }, { asset_id: "media-3", gcs_path: "three.jpg" }] },
+    } as MotionPresetInstance;
+    const unrelated = {
+      id: "unrelated-motion",
+      preset_id: "kinetic_word",
+      preset_version: 1,
+      start_frame: 60,
+      end_frame_exclusive: 90,
+      palette: { primary: "#000000", accent: "#FFFFFF" },
+      intensity: 0.72,
+      params: { text: "KEEP" },
+    } as MotionPresetInstance;
+    const capabilities = { text_elements: true, timeline: true, motion_scenes: true };
+    const snapshot = buildCopilotSnapshot([], slots, sourcePool, capabilities, [], { sourcePool, motionScenesEnabled: true, motionScenes: [legacyStack, unrelated] });
+    const result = applyCopilotOpsAtomic([
+      { op: "stack_images", selector: { scope: "timeline", media_kind: "image", quantifier: "all" }, integrity: bulkIntegrity(snapshot, slots, sourcePool, "timeline", "image") },
+    ], { bars: [], slots, clips: sourcePool, sourcePool, snapshot, capabilities, motionScenes: [legacyStack, unrelated] });
+
+    expect(result.rejected).toEqual([]);
+    expect(result.nextSlots?.map((entry) => entry.clipIndex)).toEqual([0, 1, 3, 2]);
+    expect(result.nextMotionScenes).toEqual([unrelated]);
   });
 
   it("rejects an impossible all-unused request without a partial timeline", () => {
@@ -367,17 +405,10 @@ describe("applyCopilotOps", () => {
     expect(totalDuration + addedVideoDurations.length / 30).toBeGreaterThan(60);
     const finalKinds = result.nextSlots?.map((entry) => sourcePool[entry.clipIndex]?.kind);
     expect(finalKinds?.slice(1, 59).every((kind) => kind === "image")).toBe(true);
-    expect(result.nextMotionScenes).toHaveLength(10);
-    const covered = result.nextMotionScenes?.flatMap((scene) => (scene as MotionPresetInstance & { params: { assets: Array<{ asset_id: string }> } }).params.assets.map((asset) => asset.asset_id)) ?? [];
-    expect(covered).toHaveLength(58);
-    expect(new Set(covered).size).toBe(58);
-    expect(result.nextMotionScenes?.map((scene) => (scene as MotionPresetInstance & { params: { assets: unknown[] } }).params.assets.length)).toEqual([6, 6, 6, 6, 6, 6, 6, 6, 6, 4]);
-    expect(result.nextMotionScenes?.every((scene) => scene.preset_id === "card_stack")).toBe(true);
-    expect(result.nextMotionScenes?.every((scene) => (scene.end_frame_exclusive - scene.start_frame) <= 360)).toBe(true);
-    expect(result.nextMotionScenes?.every((scene) => {
-      const params = (scene as MotionPresetInstance & { params: Record<string, unknown> }).params;
-      return !("image_motion" in params || "zoom" in params || "ken_burns" in params);
-    })).toBe(true);
+    const imageSlots = result.nextSlots?.filter((entry) => sourcePool[entry.clipIndex]?.kind === "image") ?? [];
+    expect(imageSlots).toHaveLength(58);
+    expect(new Set(imageSlots.map((entry) => sourcePool[entry.clipIndex]?.media_id)).size).toBe(58);
+    expect(result.nextMotionScenes).toBeUndefined();
   });
 
   it("fails atomically when every newly-added video still exceeds the 60-second floor", () => {
@@ -524,7 +555,7 @@ describe("applyCopilotOps", () => {
     expect(result.rejected[0]?.detail).toContain("no changes were staged");
   });
 
-  it("atomically adds, retimes, and stacks newly added images", () => {
+  it("atomically adds, retimes, and groups newly added slideshow images", () => {
     const slots = [
       slot({ key: "video", slotId: "video", clipIndex: 0, durationS: 1 }),
       slot({ key: "image", slotId: "image", clipIndex: 1, durationS: 1 }),
@@ -544,7 +575,7 @@ describe("applyCopilotOps", () => {
     expect(result.nextSlots).toHaveLength(3);
     expect(result.nextSlots?.[1].durationS).toBe(0.2);
     expect(result.nextSlots?.[2].durationS).toBe(0.2);
-    expect(result.nextMotionScenes).toHaveLength(1);
+    expect(result.nextMotionScenes).toBeUndefined();
   });
 
   it("fails closed when an all-selector digest is stale", () => {
@@ -560,7 +591,7 @@ describe("applyCopilotOps", () => {
     expect(result.rejected[0]).toMatchObject({ reason: "stale" });
   });
 
-  it("rejects duplicate and singleton Card Stack selections without motion mutation", () => {
+  it("accepts a singleton slideshow selection but rejects duplicate image IDs", () => {
     const sourcePool = [{ clip_index: 0, media_id: "image-0", kind: "image" as const, generation: "g1", duration_s: 3, used: true, status: "ready", signed_url: null, gcs_path: "users/test/image.jpg" }];
     const singletonSlots = [slot({ key: "image-a", clipIndex: 0 })];
     const singletonSnapshot = buildCopilotSnapshot([], singletonSlots, sourcePool, { text_elements: true, timeline: true, motion_scenes: true }, [], { sourcePool, motionScenesEnabled: true });
@@ -568,7 +599,8 @@ describe("applyCopilotOps", () => {
       { op: "stack_images", selector: { scope: "timeline", media_kind: "image", quantifier: "all" }, integrity: bulkIntegrity(singletonSnapshot, singletonSlots, sourcePool, "timeline", "image") },
     ], { bars: [], slots: singletonSlots, clips: sourcePool, sourcePool, snapshot: singletonSnapshot, capabilities: { text_elements: true, timeline: true, motion_scenes: true }, motionScenes: [] });
     expect(singleton.nextMotionScenes).toBeUndefined();
-    expect(singleton.rejected[0]?.detail).toContain("at least 2");
+    expect(singleton.rejected).toEqual([]);
+    expect(singleton.applied[0]).toMatchObject({ label: "Group images", from: "1 images" });
 
     const duplicateSlots = [slot({ key: "image-a", clipIndex: 0 }), slot({ key: "image-b", clipIndex: 0 })];
     const duplicateSnapshot = buildCopilotSnapshot([], duplicateSlots, sourcePool, { text_elements: true, timeline: true, motion_scenes: true }, [], { sourcePool, motionScenesEnabled: true });

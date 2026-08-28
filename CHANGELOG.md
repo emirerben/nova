@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.56.0.2] — 2026-08-28
+
+### Fixed
+- **Fly deploys can acquire the production mutation guard again.** Guard Machines are created from the unique deployment tag and still verified against the fleet's exact immutable digest, avoiding the invalid double-digest image reference that blocked the Kria backend rollout.
+- **“Stack the images together” now creates the intended fastest slideshow.** Kria gathers every selected image into consecutive individual 0.2-second clips, preserves video timing, and creates no Card Stack, Film Strip, zoom, or Ken Burns motion unless the creator explicitly asks for that Creator Block.
+
 ## [0.56.0.1] — 2026-08-28
 
 ### Fixed

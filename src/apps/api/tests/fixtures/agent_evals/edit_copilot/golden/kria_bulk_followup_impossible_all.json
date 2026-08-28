@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-08-27-v35",
+  "prompt_version": "2026-08-28-v36",
   "input": {
     "utterance": "all of them and make them 0.2 seconds each",
     "prior_turns": [
@@ -60,12 +60,12 @@
       }
     }
   },
-  "raw_text": "{\"intent\":\"clarify\",\"ops\":[],\"confidence\":0.99,\"reply\":\"The current 17-slot edit leaves room for only 103 additional slots under the 120-slot Save limit, but all 104 ready unused sources were requested. The resulting 60 images require 10 Card Stacks at six images each, which fits the 12-block and 12-second motion budgets. Choose a media kind and count of at most 103 while retaining the current edit, or remove existing content first.\",\"suggestions\":[\"Choose media kind and count\",\"Remove existing content\"],\"needs_clarification\":true,\"clarification_context\":{\"referent\":\"images\",\"selector\":{\"scope\":\"timeline\",\"media_kind\":\"image\",\"quantifier\":\"all\"}},\"pending_actions\":[{\"op\":\"add_unused_sources\"},{\"op\":\"stack_images\"},{\"op\":\"set_media_duration\"}]}",
+  "raw_text": "{\"intent\":\"clarify\",\"ops\":[],\"confidence\":0.99,\"reply\":\"The current 17-slot edit leaves room for only 103 additional slots under the 120-slot Save limit, but all 104 ready unused sources were requested. Choose a media kind and count of at most 103 while retaining the current edit, or remove existing content first.\",\"suggestions\":[\"Choose media kind and count\",\"Remove existing content\"],\"needs_clarification\":true,\"clarification_context\":{\"referent\":\"images\",\"selector\":{\"scope\":\"timeline\",\"media_kind\":\"image\",\"quantifier\":\"all\"}},\"pending_actions\":[{\"op\":\"add_unused_sources\"},{\"op\":\"stack_images\"},{\"op\":\"set_media_duration\"}]}",
   "output": {
     "intent": "clarify",
     "ops": [],
     "confidence": 0.99,
-    "reply": "The current 17-slot edit leaves room for only 103 additional slots under the 120-slot Save limit, but all 104 ready unused sources were requested. The resulting 60 images require 10 Card Stacks at six images each, which fits the 12-block and 12-second motion budgets. Choose a media kind and count of at most 103 while retaining the current edit, or remove existing content first.",
+    "reply": "The current 17-slot edit leaves room for only 103 additional slots under the 120-slot Save limit, but all 104 ready unused sources were requested. Choose a media kind and count of at most 103 while retaining the current edit, or remove existing content first.",
     "suggestions": ["Choose media kind and count", "Remove existing content"],
     "needs_clarification": true,
     "clarification_context": {"referent": "images", "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"}},

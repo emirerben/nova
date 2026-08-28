@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-08-27-v35",
+  "prompt_version": "2026-08-28-v36",
   "input": {
     "utterance": "all of them and make them 0.2 seconds each",
     "prior_turns": [
@@ -82,7 +82,7 @@
       }
     }
   },
-  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"add_unused_sources\",\"selector\":{\"scope\":\"unused_sources\",\"media_kind\":\"all\",\"quantifier\":\"all\"}},{\"op\":\"stack_images\",\"selector\":{\"scope\":\"timeline\",\"media_kind\":\"image\",\"quantifier\":\"all\"}},{\"op\":\"set_media_duration\",\"selector\":{\"scope\":\"timeline\",\"media_kind\":\"image\",\"quantifier\":\"all\"},\"duration_s\":0.2}],\"confidence\":0.98,\"reply\":\"Staged the ready unused sources, grouped every image into valid stacks, and set only image duration to 0.2 seconds. Save to render the new video.\",\"suggestions\":[],\"needs_clarification\":false,\"clarification_context\":null,\"pending_actions\":[]}",
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"add_unused_sources\",\"selector\":{\"scope\":\"unused_sources\",\"media_kind\":\"all\",\"quantifier\":\"all\"}},{\"op\":\"stack_images\",\"selector\":{\"scope\":\"timeline\",\"media_kind\":\"image\",\"quantifier\":\"all\"}},{\"op\":\"set_media_duration\",\"selector\":{\"scope\":\"timeline\",\"media_kind\":\"image\",\"quantifier\":\"all\"},\"duration_s\":0.2}],\"confidence\":0.98,\"reply\":\"Staged every ready unused source, gathered all images into one fast consecutive slideshow, and set only images to 0.2 seconds. Save to render the new video.\",\"suggestions\":[],\"needs_clarification\":false,\"clarification_context\":null,\"pending_actions\":[]}",
   "output": {
     "intent": "edit",
     "ops": [
@@ -91,7 +91,7 @@
       {"op": "set_media_duration", "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"}, "duration_s": 0.2}
     ],
     "confidence": 0.98,
-    "reply": "Staged the ready unused sources, grouped every image into valid stacks, and set only image duration to 0.2 seconds. Save to render the new video.",
+    "reply": "Staged every ready unused source, gathered all images into one fast consecutive slideshow, and set only images to 0.2 seconds. Save to render the new video.",
     "suggestions": [],
     "needs_clarification": false,
     "clarification_context": null,
@@ -110,7 +110,8 @@
       "ready_unused_count": 86,
       "final_slot_count": 103,
       "final_image_count": 58,
-      "card_stack_count": 10
+      "individual_image_clips": true,
+      "motion_scene_count": 0
     }
   }
 }
