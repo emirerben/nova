@@ -1,0 +1,40 @@
+{
+  "agent": "nova.plan.edit_proposal",
+  "prompt_version": "1.5.4",
+  "input": {
+    "idea": "Two matches felt the same",
+    "theme": "A shared match feeling",
+    "direction": "fast_montage",
+    "goal": "Alternate the strongest moments from two match videos and keep each source's identity",
+    "creator_request": "Use each match's own text and preserve both original sounds, with an option to preview the source beds together.",
+    "pace": "fast",
+    "target_duration_s": 6,
+    "montage_audio": {
+      "preserve_source_audio": true,
+      "preview_source_beds": true,
+      "source_media_ids": ["match-a", "match-b"]
+    },
+    "media": [
+      {
+        "media_id": "match-a",
+        "lane": "clip",
+        "kind": "video",
+        "duration_s": 6,
+        "subject": "decisive match action"
+      },
+      {
+        "media_id": "match-b",
+        "lane": "asset",
+        "kind": "video",
+        "duration_s": 6,
+        "subject": "parallel decisive match action"
+      }
+    ]
+  },
+  "raw_text": "{\"title\":\"Same feeling, different match\",\"duration_s\":6,\"story_beats\":[],\"fast_cuts\":[{\"cut_id\":\"a1\",\"media_id\":\"match-a\",\"source_start_s\":0,\"source_end_s\":1,\"output_duration_s\":1,\"role\":\"hook\",\"transition\":\"none\",\"beat_align\":false},{\"cut_id\":\"b1\",\"media_id\":\"match-b\",\"source_start_s\":0,\"source_end_s\":1,\"output_duration_s\":1,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":false},{\"cut_id\":\"a2\",\"media_id\":\"match-a\",\"source_start_s\":3,\"source_end_s\":4,\"output_duration_s\":1,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":false},{\"cut_id\":\"b2\",\"media_id\":\"match-b\",\"source_start_s\":3,\"source_end_s\":4,\"output_duration_s\":1,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":false},{\"cut_id\":\"a3\",\"media_id\":\"match-a\",\"source_start_s\":4,\"source_end_s\":5,\"output_duration_s\":1,\"role\":\"build\",\"transition\":\"none\",\"beat_align\":false},{\"cut_id\":\"b3\",\"media_id\":\"match-b\",\"source_start_s\":4,\"source_end_s\":5,\"output_duration_s\":1,\"role\":\"payoff\",\"transition\":\"none\",\"beat_align\":false}],\"montage_text_bindings\":[{\"media_id\":\"match-a\",\"text\":\"The same intensity\"},{\"media_id\":\"match-b\",\"text\":\"A different scene, same feeling\"}],\"montage_audio\":{\"preserve_source_audio\":true,\"preview_source_beds\":true,\"source_media_ids\":[\"match-a\",\"match-b\"]}}",
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "source-aware alternating montage with source text and audio intent",
+    "contract": "the specialist owns source windows, alternating order, per-source text, and source-audio intent within the generic fast-montage contract"
+  }
+}

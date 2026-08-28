@@ -2,15 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.57.0.1] — 2026-08-28
+## [0.57.0.2] — 2026-08-29
 
 ### Fixed
 - **Saved guided slideshows now verify against their actual video frames.** Render receipts compare the committed timeline with the video stream instead of AAC-padded container duration, so a frame-correct 59.9-second edit is no longer mislabeled as a timeline/render mismatch.
 
-## [0.56.0.6] — 2026-08-28
+## [0.57.0.1] — 2026-08-28
 
-### Fixed
-- **Saved guided edits with music now render successfully.** Revision rerenders validate UUID-shaped music identities but bind them using the text type stored by `MusicTrack`, preventing PostgreSQL's `text = uuid` error after a large Kria edit is saved.
+### Added
+- **Kria can now author generic source-aware montage edits.** Natural-language requests that combine multiple videos give the AI control of the ordered cuts, source reuse, timing, persistent source text, and original-audio intent without a hardcoded intercut recipe.
+- **Kria can now visually review its own multi-source montage windows before saving.** Weak moments are fed into one generic replan pass while provider failures remain fail-open.
 
 ## [0.57.0.0] — 2026-08-28
 
@@ -29,10 +30,17 @@ All notable changes to this project will be documented in this file.
 - **Trim gestures now create exactly one undo step and ripple later clips from the canonical timeline.** Transition-overlap taps select the visible incoming clip, pinch zoom preserves its fixed-playhead anchor, and keyboard users retain a native seek control after touch gestures.
 - **Timeline thumbnails now match each clip's source window without stale or distorted frames.** Current requests clear old imagery immediately, decoding is globally bounded, raster memory is byte-capped, and playback/trim/resize updates are coalesced to display frames for smooth phone interaction.
 - **Mobile chrome now respects iPhone safe areas and the 44px touch contract.** The top bar clears status bars and notches, resize handles remain easy to acquire over video, and primary tool icons use the intended 24px size.
+
+## [0.56.0.6] — 2026-08-28
+
+### Fixed
+- **Saved guided edits with music now render successfully.** Revision rerenders validate UUID-shaped music identities but bind them using the text type stored by `MusicTrack`, preventing PostgreSQL's `text = uuid` error after a large Kria edit.
+
 ## [0.56.0.5] — 2026-08-28
 
 ### Fixed
 - **Fresh Kria requests no longer inherit obsolete clarification selectors.** Only the latest assistant turn can supply structured referent and pending-action context, so an earlier add-all capacity clarification cannot retarget a new image-only 0.2-second slideshow request or atomically reject an otherwise valid draft.
+
 
 ## [0.56.0.4] — 2026-08-28
 
@@ -49,7 +57,6 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Fly deploys can acquire the production mutation guard again.** Guard Machines are created from the unique deployment tag and still verified against the fleet's exact immutable digest, avoiding the invalid double-digest image reference that blocked the Kria backend rollout.
 - **“Stack the images together” now creates the intended fastest slideshow.** Kria gathers every selected image into consecutive individual 0.2-second clips, preserves video timing, and creates no Card Stack, Film Strip, zoom, or Ken Burns motion unless the creator explicitly asks for that Creator Block.
-
 ## [0.56.0.1] — 2026-08-28
 
 ### Fixed

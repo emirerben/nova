@@ -10,7 +10,7 @@ from app.agents.edit_proposal import (
     minimum_required_sources,
     shortlist_edit_proposal_media,
 )
-from app.schemas.edit_proposal import MixedMediaTimingProfile
+from app.schemas.edit_proposal import MixedMediaTimingProfile, MontageAudioPlan
 
 
 def _input(count: int = 7) -> EditProposalAgentInput:
@@ -112,6 +112,89 @@ def test_fast_montage_uses_cut_sources_for_mixed_media_variety() -> None:
         "media-1",
         "media-2",
     ]
+
+
+def test_montage_parse_normalizes_aliases_without_imposing_sequence() -> None:
+    agent_input = EditProposalAgentInput(
+        direction="fast_montage",
+        pace="fast",
+        target_duration_s=4,
+        montage_audio=MontageAudioPlan(
+            preserve_source_audio=True,
+            preview_source_beds=True,
+            source_media_ids=["match-a", "match-b"],
+        ),
+        media=[
+            EditProposalMedia(media_id="match-a", lane="clip", kind="video", duration_s=4),
+            EditProposalMedia(media_id="match-b", lane="clip", kind="video", duration_s=4),
+            EditProposalMedia(media_id="match-c", lane="clip", kind="video", duration_s=4),
+        ],
+    )
+    payload = {
+        "title": "Same feeling",
+        "duration_s": 4,
+        "story_beats": [],
+        "fast_cuts": [
+            {
+                "cut_id": f"cut-{index + 1}",
+                "media_id": ["m001", "m002", "m003", "m001"][index],
+                "source_start_s": 0 if index != 3 else 1,
+                "source_end_s": 1 if index != 3 else 2,
+                "output_duration_s": 1,
+                "role": "hook" if index == 0 else "payoff" if index == 3 else "build",
+            }
+            for index in range(4)
+        ],
+        "montage_audio": {
+            "preserve_source_audio": True,
+            "preview_source_beds": True,
+            "source_media_ids": ["m002", "m001"],
+        },
+        "montage_text_bindings": ["Match A feeling", "Match B feeling"],
+    }
+
+    output = EditProposalAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(payload), agent_input
+    )
+
+    assert output.montage_audio is not None
+    assert output.montage_audio.source_media_ids == ["match-b", "match-a"]
+    assert [binding.media_id for binding in output.montage_text_bindings] == [
+        "match-a",
+        "match-b",
+    ]
+    assert [binding.text for binding in output.montage_text_bindings] == [
+        "Match A feeling",
+        "Match B feeling",
+    ]
+    assert [cut.media_id for cut in output.fast_cuts or []] == [
+        "match-a",
+        "match-b",
+        "match-c",
+        "match-a",
+    ]
+
+
+def test_montage_shortlist_remains_evidence_ranked_without_pinned_sequence_sources() -> None:
+    media = [
+        EditProposalMedia(media_id=f"clip-{index}", lane="clip", kind="video", duration_s=4)
+        for index in range(40)
+    ]
+    agent_input = EditProposalAgentInput(
+        direction="fast_montage",
+        pace="fast",
+        target_duration_s=6,
+        montage_audio=MontageAudioPlan(
+            preserve_source_audio=True,
+            source_media_ids=["clip-38", "clip-39"],
+        ),
+        media=media,
+    )
+
+    shortlisted = shortlist_edit_proposal_media(agent_input)
+
+    assert [item.media_id for item in shortlisted[:2]] == ["clip-38", "clip-39"]
+    assert len(shortlisted) == 32
 
 
 def test_mixed_timing_source_floor_fits_low_target_and_minimum_holds() -> None:

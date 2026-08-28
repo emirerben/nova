@@ -8,6 +8,8 @@ from app.schemas.edit_proposal import (
     FastMontageCut,
     MediaRef,
     MixedMediaTimingProfile,
+    MontageAudioPlan,
+    MontageTextBinding,
     ProposalGuidance,
     StoryBeat,
     parse_edit_proposal,
@@ -145,6 +147,111 @@ def test_fast_montage_cut_total_must_match_proposal_duration() -> None:
                 )
             ],
         )
+
+
+def test_montage_contract_accepts_ai_authored_source_order_and_bindings() -> None:
+    snapshot = _snapshot(
+        duration_s=4,
+        media=[
+            MediaRef(
+                lane="clip",
+                media_id="clip-1",
+                gcs_path="users/u/a.mp4",
+                generation="1",
+                kind="video",
+                duration_s=4,
+            ),
+            MediaRef(
+                lane="clip",
+                media_id="clip-2",
+                gcs_path="users/u/b.mp4",
+                generation="1",
+                kind="video",
+                duration_s=4,
+            ),
+        ],
+        fast_cuts=[
+            FastMontageCut(
+                cut_id=f"cut-{index}",
+                media_id=("clip-1" if index % 2 == 0 else "clip-2"),
+                source_start_s=(index // 2),
+                source_end_s=(index // 2) + 1,
+                output_duration_s=1,
+                role="hook" if index == 0 else "payoff" if index == 3 else "build",
+            )
+            for index in range(4)
+        ],
+        montage_text_bindings=[
+            MontageTextBinding(media_id="clip-1", text="The same release"),
+            MontageTextBinding(media_id="clip-2", text="A different night"),
+        ],
+        montage_audio=MontageAudioPlan(
+            preserve_source_audio=True,
+            preview_source_beds=True,
+            source_media_ids=["clip-1", "clip-2"],
+        ),
+    )
+
+    assert [cut.media_id for cut in snapshot.fast_cuts] == [
+        "clip-1",
+        "clip-2",
+        "clip-1",
+        "clip-2",
+    ]
+    assert len(snapshot.montage_text_bindings) == 2
+
+
+def test_montage_contract_does_not_require_round_robin_or_fixed_cadence() -> None:
+    snapshot = _snapshot(
+        duration_s=4,
+        media=[
+            MediaRef(
+                lane="clip",
+                media_id=f"clip-{index}",
+                gcs_path=f"users/u/{index}.mp4",
+                generation="1",
+                kind="video",
+                duration_s=4,
+            )
+            for index in range(1, 4)
+        ],
+        fast_cuts=[
+            FastMontageCut(
+                cut_id="cut-1",
+                media_id="clip-1",
+                source_start_s=0,
+                source_end_s=0.8,
+                output_duration_s=0.8,
+                role="hook",
+            ),
+            FastMontageCut(
+                cut_id="cut-2",
+                media_id="clip-2",
+                source_start_s=0,
+                source_end_s=1.2,
+                output_duration_s=1.2,
+                role="build",
+            ),
+            FastMontageCut(
+                cut_id="cut-3",
+                media_id="clip-3",
+                source_start_s=0,
+                source_end_s=0.8,
+                output_duration_s=0.8,
+                role="build",
+            ),
+            FastMontageCut(
+                cut_id="cut-4",
+                media_id="clip-1",
+                source_start_s=0.8,
+                source_end_s=2.0,
+                output_duration_s=1.2,
+                role="payoff",
+            ),
+        ],
+    )
+
+    assert [cut.media_id for cut in snapshot.fast_cuts] == ["clip-1", "clip-2", "clip-3", "clip-1"]
 
 
 def test_legacy_fast_montage_cannot_use_expanded_video_hold() -> None:
