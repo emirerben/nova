@@ -889,6 +889,103 @@ def test_stale_guided_render_lease_is_reclaimed(monkeypatch) -> None:
     assert job.failure_reason is None
 
 
+def test_invalid_ready_guided_claim_preserves_assets_until_replacement_is_journaled(
+    monkeypatch,
+) -> None:
+    from app.pipeline import guided_story
+
+    job_id = "12345678-1234-5678-1234-567812345678"
+    old_video = f"generative-jobs/{job_id}/old-guided.mp4"
+    old_poster = f"{old_video}.poster.backfill-11111111-1111-4111-8111-111111111111.jpg"
+    existing = {
+        "variant_id": "guided_story",
+        "render_status": "ready",
+        "render_generation_id": "old-attempt",
+        "video_path": old_video,
+        "output_url": "https://signed/old-guided.mp4",
+        "poster_path": old_poster,
+        "base_video_path": f"generative-jobs/{job_id}/old-base.mp4",
+        "base_poster_path": f"generative-jobs/{job_id}/old-base.mp4.poster.jpg",
+        "pre_media_overlay_video_path": f"generative-jobs/{job_id}/old-pre.mp4",
+        "pre_overlay_poster_path": f"generative-jobs/{job_id}/old-pre.mp4.poster.jpg",
+        "pre_sfx_video_path": f"generative-jobs/{job_id}/old-pre-sfx.mp4",
+        "subject_matte_path": f"generative-jobs/{job_id}/old-matte.mp4",
+        "visual_blocks_base_path": f"generative-jobs/{job_id}/old-visual.mp4",
+        "motion_base_path": f"generative-jobs/{job_id}/old-motion.mp4",
+    }
+    job = SimpleNamespace(
+        status="variants_ready",
+        mode="generative",
+        error_detail=None,
+        failure_reason=None,
+        assembly_plan={"variants": [existing]},
+    )
+
+    class _Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, *_args, **_kwargs):
+            return job
+
+        def commit(self):
+            return None
+
+    monkeypatch.setattr(gb, "_sync_session", _Session)
+    monkeypatch.setattr(gb, "_cancelled_job_write_rejected", lambda *_a, **_kw: False)
+    monkeypatch.setattr(
+        guided_story,
+        "validate_ready_result",
+        lambda *_a, **_kw: (_ for _ in ()).throw(guided_story.GuidedStoryError("stale", "rebuild")),
+    )
+    journaled: list[str] = []
+    monkeypatch.setattr(
+        gb,
+        "_reconcile_retired_variant_posters",
+        lambda _job_id, paths: journaled.extend(paths),
+    )
+    plan = {"proposal_version": 5, "media_digest": "c" * 64}
+
+    state, pending = gb._claim_guided_story_attempt(job_id, plan, "replacement-attempt")
+
+    assert state == "claimed"
+    for field in (
+        "video_path",
+        "output_url",
+        "poster_path",
+        "base_video_path",
+        "base_poster_path",
+        "pre_media_overlay_video_path",
+        "pre_overlay_poster_path",
+        "pre_sfx_video_path",
+        "subject_matte_path",
+        "visual_blocks_base_path",
+        "motion_base_path",
+    ):
+        assert pending[field] == existing[field]
+
+    new_video = f"generative-jobs/{job_id}/new-guided.mp4"
+    new_poster = f"{new_video}.poster.jpg"
+    assert gb._update_variant_entry(
+        job_id,
+        "guided_story",
+        {
+            "video_path": new_video,
+            "output_url": "https://signed/new-guided.mp4",
+            "poster_path": new_poster,
+            "render_status": "rendering",
+        },
+        expected_render_gen_id="replacement-attempt",
+    )
+    assert job.assembly_plan[gb.VIDEO_POSTER_BACKFILL_CLEANUP_FIELD] == [
+        {"old_path": old_poster, "replacement_path": new_poster}
+    ]
+    assert journaled == [old_poster]
+
+
 def test_guided_render_claim_rejection_does_not_mutate_job(monkeypatch) -> None:
     job_id = "12345678-1234-5678-1234-567812345678"
     job = SimpleNamespace(

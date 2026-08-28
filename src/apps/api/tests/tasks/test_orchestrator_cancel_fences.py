@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import importlib
 import os
 from types import SimpleNamespace
@@ -453,6 +454,7 @@ def test_legacy_render_cancellation_after_upload_cleans_attempt_outputs(
     )
     clip = SimpleNamespace(
         id=UUID(clip_id),
+        job_id=UUID(job_id),
         start_s=0.0,
         end_s=2.0,
         hook_text="",
@@ -524,6 +526,450 @@ def test_legacy_render_cancellation_after_upload_cleans_attempt_outputs(
     assert clip.video_path is None
     assert clip.thumbnail_path is None
     assert session.commits == 1  # rendering claim only
+
+
+def _run_legacy_clip_redelivery_with_backfill_poster(
+    monkeypatch,
+    *,
+    cleanup_error: Exception | None = None,
+    finalize_clip_job_id: UUID | None = None,
+    assembly_plan_override: object | None = None,
+    finalize_commit_error: Exception | None = None,
+    finalize_commit_outcome: str = "applied",
+):
+    from app.services.video_poster_cleanup import (
+        VIDEO_POSTER_BACKFILL_CLEANUP_FIELD,
+    )
+    from app.tasks import orchestrate as task_mod
+
+    job_id = str(uuid4())
+    clip_id = str(uuid4())
+    user_id = uuid4()
+    old_thumbnail_path = f"{user_id}/{job_id}/legacy.mp4.poster.backfill-{uuid4()}.jpg"
+    original_plan = (
+        assembly_plan_override
+        if assembly_plan_override is not None
+        else {"preserve": {"nested": True}}
+    )
+    job = SimpleNamespace(
+        id=UUID(job_id),
+        status="clips_ready",
+        raw_storage_path="raw/source.mp4",
+        probe_metadata={"aspect_ratio": "9:16", "color_transfer": ""},
+        selected_platforms=["instagram"],
+        user_id=user_id,
+        transcript={"low_confidence": True, "words": []},
+        scene_cuts=[],
+        assembly_plan=original_plan,
+        error_detail=None,
+        failure_reason=None,
+    )
+    # A ready row models a redelivered Celery render task replacing a poster
+    # installed by the historical backfill.
+    clip = SimpleNamespace(
+        id=UUID(clip_id),
+        job_id=UUID(job_id),
+        start_s=0.0,
+        end_s=2.0,
+        hook_text="",
+        rank=1,
+        render_status="ready",
+        video_path="https://signed/old-video",
+        thumbnail_path=old_thumbnail_path,
+    )
+
+    class _FinalizeSession(_FakeSession):
+        def __init__(self):
+            super().__init__(job, clip=clip)
+            self._job_snapshot: dict | None = None
+            self._clip_snapshot: dict | None = None
+            self._raised_finalize_error = False
+
+        def commit(self):
+            super().commit()
+            if self.commits == 1:
+                self._job_snapshot = copy.deepcopy(job.__dict__)
+                self._clip_snapshot = copy.deepcopy(clip.__dict__)
+                return
+            if (
+                self.commits == 2
+                and finalize_commit_error is not None
+                and not self._raised_finalize_error
+            ):
+                self._raised_finalize_error = True
+                if finalize_commit_outcome in {"not_committed", "partial"}:
+                    assert self._job_snapshot is not None
+                    assert self._clip_snapshot is not None
+                    job.__dict__.clear()
+                    job.__dict__.update(copy.deepcopy(self._job_snapshot))
+                    clip.__dict__.clear()
+                    clip.__dict__.update(copy.deepcopy(self._clip_snapshot))
+                if finalize_commit_outcome == "partial":
+                    clip.video_path = "https://signed/video"
+                elif finalize_commit_outcome not in {"applied", "not_committed"}:
+                    raise AssertionError(
+                        f"unknown finalize commit outcome: {finalize_commit_outcome}"
+                    )
+                raise finalize_commit_error
+
+    session = _FinalizeSession()
+    run_id = "legacy-redelivery"
+    deleted: list[str] = []
+    reconcile_calls: list[str] = []
+    flagged: list[tuple[object, str]] = []
+
+    def _download(_storage_path, local_path):
+        with open(local_path, "wb") as output:
+            output.write(b"raw")
+
+    def _thumbnail(**kwargs):
+        jpeg_path = os.path.join(kwargs["output_dir"], "thumb.jpg")
+        with open(jpeg_path, "wb") as output:
+            output.write(b"jpeg")
+        return SimpleNamespace(jpeg_path=jpeg_path)
+
+    def _reframe(**kwargs):
+        with open(kwargs["output_path"], "wb") as output:
+            output.write(b"video")
+
+    def _reconcile(received_job_id):
+        # The durable receipt must commit before any network/storage cleanup.
+        assert session.commits == 2
+        reconcile_calls.append(received_job_id)
+        if cleanup_error is not None:
+            raise cleanup_error
+
+    platform_copy = SimpleNamespace(model_dump=lambda: {"instagram": {}})
+    monkeypatch.setattr(task_mod, "_sync_session", lambda: session)
+    monkeypatch.setattr(task_mod, "download_to_file", _download)
+    monkeypatch.setattr(
+        task_mod,
+        "generate_copy",
+        lambda **_kwargs: (platform_copy, "generated"),
+    )
+    monkeypatch.setattr(task_mod, "select_thumbnail", _thumbnail)
+    monkeypatch.setattr(task_mod, "_generate_captions", lambda *_args: None)
+    monkeypatch.setattr(task_mod, "reframe_and_export", _reframe)
+    monkeypatch.setattr(
+        task_mod,
+        "validate_output",
+        lambda _path: SimpleNamespace(passed=True, errors=[]),
+    )
+    monkeypatch.setattr(task_mod, "new_task_run_id", lambda: run_id)
+    monkeypatch.setattr(task_mod, "upload_public_read", lambda *_args: "https://signed/video")
+
+    def _upload_thumbnail(*_args):
+        if finalize_clip_job_id is not None:
+            # Simulate stale/mismatched task identity appearing after the valid
+            # entry claim but before the worker reacquires both row locks.
+            clip.job_id = finalize_clip_job_id
+
+    monkeypatch.setattr(task_mod, "upload_bytes_public_read", _upload_thumbnail)
+    monkeypatch.setattr(
+        task_mod,
+        "delete_task_owned_outputs",
+        lambda _job_id, paths: deleted.extend(paths),
+    )
+    monkeypatch.setattr(task_mod, "flag_modified", lambda obj, key: flagged.append((obj, key)))
+    monkeypatch.setattr(task_mod, "reconcile_video_poster_cleanup_receipts", _reconcile)
+
+    result = task_mod.render_clip.run(job_id, clip_id)
+    expected_thumbnail_path = f"{user_id}/{job_id}/task-runs/{run_id}/thumb_1.jpg"
+    receipts = (
+        job.assembly_plan.get(VIDEO_POSTER_BACKFILL_CLEANUP_FIELD, [])
+        if isinstance(job.assembly_plan, dict)
+        else []
+    )
+    return SimpleNamespace(
+        result=result,
+        job_id=job_id,
+        job=job,
+        clip=clip,
+        session=session,
+        original_plan=original_plan,
+        old_thumbnail_path=old_thumbnail_path,
+        expected_thumbnail_path=expected_thumbnail_path,
+        receipts=receipts,
+        reconcile_calls=reconcile_calls,
+        deleted=deleted,
+        flagged=flagged,
+    )
+
+
+def test_legacy_clip_redelivery_journals_backfill_poster_before_reconcile(
+    monkeypatch,
+) -> None:
+    outcome = _run_legacy_clip_redelivery_with_backfill_poster(monkeypatch)
+
+    assert outcome.result["success"] is True
+    assert outcome.clip.render_status == "ready"
+    assert outcome.clip.thumbnail_path == outcome.expected_thumbnail_path
+    assert outcome.receipts == [
+        {
+            "old_path": outcome.old_thumbnail_path,
+            "replacement_path": outcome.expected_thumbnail_path,
+        }
+    ]
+    assert outcome.job.assembly_plan is not outcome.original_plan
+    assert outcome.original_plan == {"preserve": {"nested": True}}
+    assert outcome.flagged == [(outcome.job, "assembly_plan")]
+    assert outcome.reconcile_calls == [outcome.job_id]
+    assert outcome.deleted == []
+
+
+def test_legacy_clip_cleanup_failure_leaves_committed_receipt(monkeypatch) -> None:
+    outcome = _run_legacy_clip_redelivery_with_backfill_poster(
+        monkeypatch,
+        cleanup_error=RuntimeError("temporary storage outage"),
+    )
+
+    assert outcome.result["success"] is True
+    assert outcome.session.commits == 2
+    assert outcome.receipts == [
+        {
+            "old_path": outcome.old_thumbnail_path,
+            "replacement_path": outcome.expected_thumbnail_path,
+        }
+    ]
+    assert outcome.reconcile_calls == [outcome.job_id]
+    assert outcome.deleted == []
+
+
+def test_legacy_clip_cleanup_soft_timeout_keeps_committed_ready_output(monkeypatch) -> None:
+    from app.tasks import orchestrate as task_mod
+
+    outcome = _run_legacy_clip_redelivery_with_backfill_poster(
+        monkeypatch,
+        cleanup_error=task_mod.SoftTimeLimitExceeded(),
+    )
+
+    assert outcome.result["success"] is True
+    assert outcome.clip.render_status == "ready"
+    assert outcome.clip.video_path == "https://signed/video"
+    assert outcome.clip.thumbnail_path == outcome.expected_thumbnail_path
+    assert outcome.session.commits == 2
+    assert outcome.receipts == [
+        {
+            "old_path": outcome.old_thumbnail_path,
+            "replacement_path": outcome.expected_thumbnail_path,
+        }
+    ]
+    assert outcome.reconcile_calls == [outcome.job_id]
+    assert outcome.deleted == []
+
+
+def test_legacy_clip_postcommit_soft_timeout_is_fresh_read_confirmed(
+    monkeypatch,
+) -> None:
+    from app.tasks import orchestrate as task_mod
+
+    outcome = _run_legacy_clip_redelivery_with_backfill_poster(
+        monkeypatch,
+        finalize_commit_error=task_mod.SoftTimeLimitExceeded(),
+        finalize_commit_outcome="applied",
+    )
+
+    assert outcome.result["success"] is True
+    assert outcome.clip.render_status == "ready"
+    assert outcome.clip.video_path == "https://signed/video"
+    assert outcome.clip.thumbnail_path == outcome.expected_thumbnail_path
+    assert outcome.session.commits == 2
+    assert outcome.reconcile_calls == [outcome.job_id]
+    assert outcome.deleted == []
+
+
+def test_legacy_clip_definitive_noncommit_deletes_attempt_outputs(monkeypatch) -> None:
+    outcome = _run_legacy_clip_redelivery_with_backfill_poster(
+        monkeypatch,
+        finalize_commit_error=RuntimeError("commit rejected before apply"),
+        finalize_commit_outcome="not_committed",
+    )
+
+    assert outcome.result == {
+        "clip_id": str(outcome.clip.id),
+        "success": False,
+        "error": "commit rejected before apply",
+    }
+    assert outcome.clip.render_status == "failed"
+    assert outcome.session.commits == 3
+    assert outcome.reconcile_calls == []
+    assert outcome.deleted == [
+        outcome.expected_thumbnail_path.replace("thumb_1.jpg", "clip_1.mp4"),
+        outcome.expected_thumbnail_path,
+    ]
+
+
+def test_legacy_clip_partial_commit_reference_fails_closed_without_delete(
+    monkeypatch,
+) -> None:
+    outcome = _run_legacy_clip_redelivery_with_backfill_poster(
+        monkeypatch,
+        finalize_commit_error=RuntimeError("connection lost during commit"),
+        finalize_commit_outcome="partial",
+    )
+
+    assert outcome.result == {
+        "clip_id": str(outcome.clip.id),
+        "success": False,
+        "error": "finalization commit outcome is uncertain",
+        "finalization_uncertain": True,
+    }
+    assert outcome.clip.render_status == "rendering"
+    assert outcome.clip.video_path == "https://signed/video"
+    assert outcome.clip.thumbnail_path == outcome.old_thumbnail_path
+    assert outcome.session.commits == 2
+    assert outcome.reconcile_calls == []
+    assert outcome.deleted == []
+
+
+def test_legacy_render_rejects_cross_job_clip_before_mutation(monkeypatch) -> None:
+    from app.tasks import orchestrate as task_mod
+
+    job_id = str(uuid4())
+    clip_id = str(uuid4())
+    job = SimpleNamespace(
+        id=UUID(job_id),
+        status="processing",
+        error_detail=None,
+        failure_reason=None,
+    )
+    clip = SimpleNamespace(
+        id=UUID(clip_id),
+        job_id=uuid4(),
+        render_status="pending",
+    )
+    session = _FakeSession(job, clip=clip)
+    download_calls: list[str] = []
+    monkeypatch.setattr(task_mod, "_sync_session", lambda: session)
+    monkeypatch.setattr(
+        task_mod,
+        "download_to_file",
+        lambda *_args: download_calls.append("download"),
+    )
+
+    result = task_mod.render_clip.run(job_id, clip_id)
+
+    assert result == {
+        "clip_id": clip_id,
+        "success": False,
+        "error": "DB record not found",
+    }
+    assert clip.render_status == "pending"
+    assert session.commits == 0
+    assert download_calls == []
+
+
+def test_legacy_render_finalize_rechecks_clip_owner_and_cleans_outputs(monkeypatch) -> None:
+    foreign_job_id = uuid4()
+    outcome = _run_legacy_clip_redelivery_with_backfill_poster(
+        monkeypatch,
+        finalize_clip_job_id=foreign_job_id,
+    )
+
+    assert outcome.result == {
+        "clip_id": str(outcome.clip.id),
+        "success": False,
+        "error": "cancelled",
+    }
+    assert outcome.clip.job_id == foreign_job_id
+    assert outcome.clip.render_status == "rendering"
+    assert outcome.clip.video_path == "https://signed/old-video"
+    assert outcome.clip.thumbnail_path == outcome.old_thumbnail_path
+    assert outcome.job.assembly_plan is outcome.original_plan
+    assert outcome.receipts == []
+    assert outcome.reconcile_calls == []
+    assert outcome.flagged == []
+    assert outcome.deleted == [
+        outcome.expected_thumbnail_path.replace("thumb_1.jpg", "clip_1.mp4"),
+        outcome.expected_thumbnail_path,
+    ]
+    assert outcome.session.commits == 1
+
+
+def test_legacy_render_fails_closed_on_non_object_plan_before_clip_mutation(
+    monkeypatch,
+) -> None:
+    corrupt_plan = ["preserve", {"forensic": True}]
+    outcome = _run_legacy_clip_redelivery_with_backfill_poster(
+        monkeypatch,
+        assembly_plan_override=corrupt_plan,
+    )
+
+    assert outcome.result == {
+        "clip_id": str(outcome.clip.id),
+        "success": False,
+        "error": "invalid assembly plan",
+    }
+    assert outcome.job.assembly_plan is corrupt_plan
+    assert outcome.job.assembly_plan == ["preserve", {"forensic": True}]
+    assert outcome.clip.render_status == "rendering"
+    assert outcome.clip.video_path == "https://signed/old-video"
+    assert outcome.clip.thumbnail_path == outcome.old_thumbnail_path
+    assert outcome.receipts == []
+    assert outcome.reconcile_calls == []
+    assert outcome.flagged == []
+    assert outcome.deleted == [
+        outcome.expected_thumbnail_path.replace("thumb_1.jpg", "clip_1.mp4"),
+        outcome.expected_thumbnail_path,
+    ]
+    assert outcome.session.commits == 1
+
+
+@pytest.mark.parametrize("terminal_kind", ["timeout", "error"])
+def test_legacy_render_terminal_failure_never_mutates_reassigned_clip(
+    monkeypatch,
+    terminal_kind: str,
+) -> None:
+    from app.tasks import orchestrate as task_mod
+
+    job_id = str(uuid4())
+    clip_id = str(uuid4())
+    foreign_job_id = uuid4()
+    job = SimpleNamespace(
+        id=UUID(job_id),
+        status="processing",
+        raw_storage_path="raw/source.mp4",
+        probe_metadata={"aspect_ratio": "9:16", "color_transfer": ""},
+        selected_platforms=["instagram"],
+        user_id=uuid4(),
+        transcript={"low_confidence": True, "words": []},
+        scene_cuts=[],
+        error_detail=None,
+        failure_reason=None,
+    )
+    clip = SimpleNamespace(
+        id=UUID(clip_id),
+        job_id=UUID(job_id),
+        start_s=0.0,
+        end_s=2.0,
+        hook_text="",
+        rank=1,
+        render_status="pending",
+        error_detail="foreign evidence",
+    )
+    session = _FakeSession(job, clip=clip)
+
+    def fail_after_reassignment(*_args):
+        clip.job_id = foreign_job_id
+        if terminal_kind == "timeout":
+            raise task_mod.SoftTimeLimitExceeded()
+        raise RuntimeError("render exploded")
+
+    monkeypatch.setattr(task_mod, "_sync_session", lambda: session)
+    monkeypatch.setattr(task_mod, "download_to_file", fail_after_reassignment)
+    monkeypatch.setattr(task_mod, "delete_task_owned_outputs", lambda *_args: None)
+
+    result = task_mod.render_clip.run(job_id, clip_id)
+
+    assert result == {
+        "clip_id": clip_id,
+        "success": False,
+        "error": "render timeout" if terminal_kind == "timeout" else "render exploded",
+    }
+    assert clip.job_id == foreign_job_id
+    assert clip.render_status == "rendering"
+    assert clip.error_detail == "foreign evidence"
+    assert session.commits == 1
 
 
 def test_cleanup_refuses_stable_or_user_paths(monkeypatch) -> None:

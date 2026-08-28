@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.56.0.0] — 2026-08-28
+
+### Changed
+- **Posterless library tiles now load video only after an explicit Play action.** Mobile grids keep every MP4 unmounted until selected, allow only one active preview, expose a reliable Stop/retry flow, and release the decoder when playback ends.
+
+### Fixed
+- **Historical ready videos now receive durable, source-matched posters without re-rendering.** The repair covers every browser-visible output shape, proves database writes and storage publication under row locks, repairs interrupted runs, and excludes synthetic or non-library jobs.
+- **Later renders and account cleanup no longer leak immutable backfill posters.** Durable cleanup receipts survive storage failures and concurrency, protect rollback assets, and are reconciled by a bounded indexed maintenance sweep.
+- **The production repair can run only against the exact revision live on every Fly Machine.** Deploy and backfill workflows serialize safely, resume cancelled repair Machines, reject mixed releases or altered execution contracts, and finish with a strict zero-work audit; use the [video-poster backfill runbook](docs/runbooks/video-poster-backfill.md) to run or recover it.
+
 ## [0.55.0.1] — 2026-08-27
 
 ### Fixed

@@ -5,6 +5,9 @@ from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+from billiard.exceptions import SoftTimeLimitExceeded
+
 from app.pipeline.speech_cut_state import cut_revision, make_candidate
 from app.routes.generative_jobs import rollback_speech_cut_dispatch
 from app.tasks import generative_build as gb
@@ -216,6 +219,111 @@ def test_winning_publish_is_the_only_completed_receipt_boundary(monkeypatch) -> 
     assert receipt["revision"] == cut_revision(published)
     assert job.assembly_plan["speech_cut_control"] is None
     assert job.assembly_plan["speech_cut_previous_variant"] is None
+
+
+def test_publish_commits_rollback_clear_before_reconciling_pending_poster(monkeypatch) -> None:
+    job = _inflight_job()
+    old_poster = (
+        "generative-jobs/job/last-good.mp4.poster.backfill-11111111-1111-4111-8111-111111111111.jpg"
+    )
+    replacement = job.assembly_plan["variants"][0]["video_path"]
+    receipt = {"old_path": old_poster, "replacement_path": replacement}
+    job.assembly_plan[gb.VIDEO_POSTER_BACKFILL_CLEANUP_FIELD] = [receipt]
+    job.assembly_plan["speech_cut_previous_variants"] = [
+        deepcopy(job.assembly_plan["speech_cut_previous_variant"])
+    ]
+    session = _Session(job)
+    monkeypatch.setattr(gb, "_sync_session", lambda: session)
+    reconciled: list[tuple[str, list[str]]] = []
+
+    def _assert_committed_then_reconcile(job_id: str, paths: list[str]) -> None:
+        assert session.commits == 1
+        assert job.assembly_plan["speech_cut_previous_variant"] is None
+        assert job.assembly_plan["speech_cut_previous_variants"] is None
+        reconciled.append((job_id, list(paths)))
+
+    monkeypatch.setattr(gb, "_reconcile_retired_variant_posters", _assert_committed_then_reconcile)
+    job_id = str(uuid.uuid4())
+
+    with patch("sqlalchemy.orm.attributes.flag_modified"):
+        gb._publish_speech_cut_rerender(
+            job_id,
+            expected_operation_id="operation-a",
+            expected_attempt_id="attempt-a",
+        )
+
+    assert reconciled == [(job_id, [old_poster])]
+    assert job.assembly_plan[gb.VIDEO_POSTER_BACKFILL_CLEANUP_FIELD] == [receipt]
+
+
+def test_publish_cleanup_failure_keeps_committed_poster_receipt(monkeypatch) -> None:
+    job = _inflight_job()
+    old_poster = (
+        "generative-jobs/job/last-good.mp4.poster.backfill-11111111-1111-4111-8111-111111111111.jpg"
+    )
+    replacement = job.assembly_plan["variants"][0]["video_path"]
+    receipt = {"old_path": old_poster, "replacement_path": replacement}
+    job.assembly_plan[gb.VIDEO_POSTER_BACKFILL_CLEANUP_FIELD] = [receipt]
+    job.assembly_plan["speech_cut_previous_variants"] = [
+        deepcopy(job.assembly_plan["speech_cut_previous_variant"])
+    ]
+    session = _Session(job)
+    monkeypatch.setattr(gb, "_sync_session", lambda: session)
+
+    def _fail_cleanup(_job_id):
+        raise RuntimeError("storage unavailable")
+
+    monkeypatch.setattr(gb, "reconcile_video_poster_cleanup_receipts", _fail_cleanup)
+
+    with patch("sqlalchemy.orm.attributes.flag_modified"):
+        gb._publish_speech_cut_rerender(
+            str(uuid.uuid4()),
+            expected_operation_id="operation-a",
+            expected_attempt_id="attempt-a",
+        )
+
+    assert session.commits == 1
+    assert job.assembly_plan["speech_cut_previous_variant"] is None
+    assert job.assembly_plan["speech_cut_previous_variants"] is None
+    assert job.assembly_plan[gb.VIDEO_POSTER_BACKFILL_CLEANUP_FIELD] == [receipt]
+
+
+def test_speech_cut_intermediate_finalize_propagates_cleanup_soft_timeout(monkeypatch) -> None:
+    job = _inflight_job()
+    current = job.assembly_plan["variants"][0]
+    old_poster = (
+        "generative-jobs/job/new.mp4.poster.backfill-11111111-1111-4111-8111-111111111111.jpg"
+    )
+    current["poster_path"] = old_poster
+    finalized = {**current, "poster_path": None}
+    session = _Session(job)
+    monkeypatch.setattr(gb, "_sync_session", lambda: session)
+    monkeypatch.setattr(
+        gb,
+        "reconcile_video_poster_cleanup_receipts",
+        lambda _job_id: (_ for _ in ()).throw(SoftTimeLimitExceeded()),
+    )
+
+    with pytest.raises(SoftTimeLimitExceeded):
+        gb._set_status(
+            str(uuid.uuid4()),
+            "variants_ready",
+            {"variants": [finalized]},
+            merge_finalized_variants=True,
+            expected_speech_cut_operation_id="operation-a",
+            expected_speech_cut_attempt_id="attempt-a",
+        )
+
+    # The intermediate write is durable, but the exception must reach the task
+    # wrapper before compose/publish so it can restore the last-good snapshot.
+    assert session.commits == 1
+    assert job.status == "variants_ready"
+    assert job.assembly_plan[gb.VIDEO_POSTER_BACKFILL_CLEANUP_FIELD] == [
+        {
+            "old_path": old_poster,
+            "replacement_path": current["video_path"],
+        }
+    ]
 
 
 def test_duplicate_delivery_cannot_claim_or_publish_over_winner(monkeypatch) -> None:
