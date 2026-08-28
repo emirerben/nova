@@ -24,6 +24,8 @@ export const FILMSTRIP_TILE_W = 56;
 
 const DEFAULT_TILE_H = 40;
 const IDLE_DECODER_TTL_MS = 15_000;
+const MAX_CONCURRENT_FILMSTRIP_DECODES = 3;
+const MAX_RASTER_CACHE_BYTES = 32 * 1024 * 1024;
 
 interface FilmstripRequest {
   src: string | null;
@@ -40,6 +42,9 @@ interface FilmstripRequest {
 
 const rasterCache = new Map<string, HTMLCanvasElement>();
 const MAX_RASTER_CACHE_ENTRIES = 96;
+let rasterCacheBytes = 0;
+let activeFilmstripDecodes = 0;
+const filmstripDecodeWaiters: Array<() => void> = [];
 const latestRequestByPoolKey = new Map<string, string>();
 const clipVideos = new Map<
   string,
@@ -72,6 +77,14 @@ export function filmstripZoomBucket(
       maxSeekCount,
       Math.max(boundedMinimum, Math.round(widthPx / FILMSTRIP_TILE_W)),
     ),
+  );
+}
+
+/** Keep canvas backing stores bounded even when a long clip is highly zoomed. */
+export function filmstripRasterWidth(widthPx: number, tiles: number): number {
+  return Math.max(
+    1,
+    Math.min(Math.round(widthPx), Math.max(1, tiles) * FILMSTRIP_TILE_W),
   );
 }
 
@@ -332,13 +345,32 @@ function enqueueClipDecode(
   clipId: string,
   decode: (video: HTMLVideoElement) => Promise<void>,
 ): Promise<void> {
-  const poolKey = filmstripPoolKey(src, clipId);
-  const entry = pooledClipVideo(src, clipId);
-  const run = entry.queue
-    .catch(() => undefined)
-    .then(() => decode(entry.video));
-  entry.queue = run.catch(() => undefined);
-  return run.finally(() => releaseClipVideo(poolKey, entry));
+  return withFilmstripDecodeSlot(async () => {
+    const poolKey = filmstripPoolKey(src, clipId);
+    const entry = pooledClipVideo(src, clipId);
+    const run = entry.queue
+      .catch(() => undefined)
+      .then(() => decode(entry.video));
+    entry.queue = run.catch(() => undefined);
+    return run.finally(() => releaseClipVideo(poolKey, entry));
+  });
+}
+
+function withFilmstripDecodeSlot<T>(task: () => Promise<T>): Promise<T> {
+  const acquire = () => {
+    if (activeFilmstripDecodes < MAX_CONCURRENT_FILMSTRIP_DECODES) {
+      activeFilmstripDecodes += 1;
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => filmstripDecodeWaiters.push(resolve));
+  };
+  return acquire()
+    .then(task)
+    .finally(() => {
+      const next = filmstripDecodeWaiters.shift();
+      if (next) next();
+      else activeFilmstripDecodes = Math.max(0, activeFilmstripDecodes - 1);
+    });
 }
 
 function copyCanvas(source: HTMLCanvasElement, target: HTMLCanvasElement) {
@@ -353,11 +385,21 @@ function copyCanvas(source: HTMLCanvasElement, target: HTMLCanvasElement) {
 }
 
 function cacheRaster(key: string, canvas: HTMLCanvasElement) {
-  rasterCache.delete(key);
+  const existing = rasterCache.get(key);
+  if (existing) {
+    rasterCacheBytes -= existing.width * existing.height * 4;
+    rasterCache.delete(key);
+  }
   rasterCache.set(key, canvas);
-  while (rasterCache.size > MAX_RASTER_CACHE_ENTRIES) {
+  rasterCacheBytes += canvas.width * canvas.height * 4;
+  while (
+    rasterCache.size > MAX_RASTER_CACHE_ENTRIES ||
+    rasterCacheBytes > MAX_RASTER_CACHE_BYTES
+  ) {
     const oldest = rasterCache.keys().next().value as string | undefined;
     if (oldest == null) break;
+    const evicted = rasterCache.get(oldest);
+    if (evicted) rasterCacheBytes -= evicted.width * evicted.height * 4;
     rasterCache.delete(oldest);
   }
 }
@@ -396,7 +438,7 @@ export default function Filmstrip({
   const [failed, setFailed] = useState(false);
 
   const tiles = filmstripZoomBucket(widthPx, maxSeekCount, minSeekCount);
-  const rasterWidthPx = Math.max(1, Math.round(widthPx));
+  const rasterWidthPx = filmstripRasterWidth(widthPx, tiles);
   const rasterHeightPx = Math.max(1, Math.round(heightPx));
   const request = useMemo<FilmstripRequest>(
     () => ({

@@ -68,4 +68,3 @@ export function mobilePreviewOutputAtSource(
     reachedEnd: localOffsetS >= entry.durationS - 1 / 120,
   };
 }
-

@@ -794,6 +794,54 @@ describe("MiniStrip", () => {
     );
   });
 
+  it("resizes selected lane edges in 0.1s steps from the keyboard", () => {
+    const onLaneResizeStart = jest.fn();
+    const onPreviewLaneTiming = jest.fn();
+    renderStrip({
+      lanes: [
+        {
+          id: "text",
+          label: "Text",
+          items: [
+            {
+              id: "title-1",
+              kind: "text",
+              startS: 1.2,
+              endS: 5.4,
+              label: "Add a title",
+            },
+          ],
+        },
+      ],
+      selectedLaneItem: { kind: "text", id: "title-1" },
+      onLaneResizeStart,
+      onPreviewLaneTiming,
+    });
+
+    fireEvent.keyDown(
+      screen.getByRole("button", { name: /Resize Add a title start/ }),
+      { key: "ArrowRight" },
+    );
+    fireEvent.keyDown(
+      screen.getByRole("button", { name: /Resize Add a title end/ }),
+      { key: "ArrowLeft" },
+    );
+
+    expect(onLaneResizeStart).toHaveBeenCalledTimes(2);
+    expect(onPreviewLaneTiming).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ id: "title-1" }),
+      { startS: 1.3, endS: 5.4 },
+      "left",
+    );
+    expect(onPreviewLaneTiming).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ id: "title-1" }),
+      { startS: 1.2, endS: 5.3 },
+      "right",
+    );
+  });
+
   it("keeps a disabled resize handle focusable and reports its reason", () => {
     const onDisabledTap = jest.fn();
     const onPreviewLaneTiming = jest.fn();

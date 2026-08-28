@@ -1913,13 +1913,13 @@ export default function EditorCanvas({
                               tabIndex={-1}
                               aria-label={`Resize text (${corner})`}
                               onPointerDown={(e) => onHandlePointerDown(e, layout.id)}
-                              className="absolute h-6 w-6 touch-none bg-transparent p-0 hover:bg-transparent"
+                              className="absolute h-11 w-11 touch-none bg-transparent p-0 hover:bg-transparent"
                               style={{
                                 cursor: corner === "nw" || corner === "se" ? "nwse-resize" : "nesw-resize",
-                                top: corner.startsWith("n") ? -13 : undefined,
-                                bottom: corner.startsWith("s") ? -13 : undefined,
-                                left: corner.endsWith("w") ? -13 : undefined,
-                                right: corner.endsWith("e") ? -13 : undefined,
+                                top: corner.startsWith("n") ? -23 : undefined,
+                                bottom: corner.startsWith("s") ? -23 : undefined,
+                                left: corner.endsWith("w") ? -23 : undefined,
+                                right: corner.endsWith("e") ? -23 : undefined,
                               }}
                             >
                               <span
@@ -1937,13 +1937,13 @@ export default function EditorCanvas({
                               tabIndex={-1}
                               aria-label={`Adjust text width (${side})`}
                               onPointerDown={(e) => onWidthHandlePointerDown(e, layout.id, side)}
-                              className="absolute h-7 w-7 touch-none bg-transparent p-0 hover:bg-transparent"
+                              className="absolute h-11 w-11 touch-none bg-transparent p-0 hover:bg-transparent"
                               style={{
                                 cursor: "ew-resize",
                                 top: "50%",
                                 transform: "translateY(-50%)",
-                                left: side === "left" ? -15 : undefined,
-                                right: side === "right" ? -15 : undefined,
+                                left: side === "left" ? -23 : undefined,
+                                right: side === "right" ? -23 : undefined,
                               }}
                             >
                               <span
@@ -2198,13 +2198,13 @@ function MediaOverlayCard({
                 tabIndex={-1}
                 aria-label={`Resize overlay (${corner})`}
                 onPointerDown={(e) => onHandlePointerDown(e, card)}
-                className="absolute h-6 w-6 touch-none bg-transparent p-0 hover:bg-transparent"
+                className="absolute h-11 w-11 touch-none bg-transparent p-0 hover:bg-transparent"
                 style={{
                   cursor: corner === "nw" || corner === "se" ? "nwse-resize" : "nesw-resize",
-                  top: corner.startsWith("n") ? -13 : undefined,
-                  bottom: corner.startsWith("s") ? -13 : undefined,
-                  left: corner.endsWith("w") ? -13 : undefined,
-                  right: corner.endsWith("e") ? -13 : undefined,
+                  top: corner.startsWith("n") ? -23 : undefined,
+                  bottom: corner.startsWith("s") ? -23 : undefined,
+                  left: corner.endsWith("w") ? -23 : undefined,
+                  right: corner.endsWith("e") ? -23 : undefined,
                 }}
               >
                 <span

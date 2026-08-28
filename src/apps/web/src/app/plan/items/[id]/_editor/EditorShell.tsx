@@ -7562,6 +7562,9 @@ export default function EditorShell({
           layoutMode === "light"
             ? "56px minmax(0, 1fr) auto"
             : "56px minmax(0, 1fr) clamp(220px, 30dvh, 260px)",
+        // Keep the full-screen pocket header below iOS status bars/notches.
+        // `env()` resolves to zero on desktop and non-notched viewports.
+        paddingTop: "env(safe-area-inset-top)",
         // Half detent is non-modal (§3): canvas + transport squeeze above the
         // sheet so playback stays visible and controllable while editing.
         ...(pocketSheetOpen && pocket.detent === "half"

@@ -26,10 +26,7 @@ import { cn } from "@/lib/cn";
 import { formatTimecode } from "@/lib/timeline/time-format";
 import { applyClipSourceWindowDrag } from "./editor-bar-drag";
 import Filmstrip, { allocateFilmstripDensityBudget } from "./Filmstrip";
-import {
-  useEditorPlaybackTime,
-  type EditorPlaybackClock,
-} from "./editor-playback-clock";
+import type { EditorPlaybackClock } from "./editor-playback-clock";
 
 export interface MiniStripSegment {
   id: string;
@@ -245,6 +242,7 @@ interface TrimDragState {
   segment: MiniStripSegment;
   handle: "left" | "right";
   startX: number;
+  latestClientX: number;
   recorded: boolean;
 }
 
@@ -290,18 +288,20 @@ export function MiniStrip({
   onPreviewTrim,
   onDisabledTap,
 }: MiniStripProps): JSX.Element | null {
-  const playbackTimeS = useEditorPlaybackTime(playbackClock, currentTimeS);
   const viewportRef = useRef<HTMLDivElement>(null);
   const timelineDragRef = useRef<TimelineDragState | null>(null);
   const trimDragRef = useRef<TrimDragState | null>(null);
+  const trimPreviewFrameRef = useRef<number | null>(null);
   const laneResizeDragRef = useRef<LaneResizeDragState | null>(null);
+  const laneResizePreviewFrameRef = useRef<number | null>(null);
   const laneResizeAutoPanFrameRef = useRef<number | null>(null);
   const pointersRef = useRef(new Map<number, { x: number; y: number }>());
   const pinchRef = useRef<PinchState | null>(null);
   const suppressClickRef = useRef(false);
-  const syncingScrollRef = useRef(false);
   const programmaticScrollTargetRef = useRef<number | null>(null);
-  const syncScrollEndTimerRef = useRef<number | null>(null);
+  const programmaticScrollUntilRef = useRef(0);
+  const playbackScrollFrameRef = useRef<number | null>(null);
+  const playbackTimeRef = useRef(currentTimeS);
   const manualScrollRef = useRef(false);
   const zoomFrameRef = useRef<number | null>(null);
   const scrubFrameRef = useRef<number | null>(null);
@@ -319,15 +319,7 @@ export function MiniStrip({
   const [filmstripSegments, setFilmstripSegments] = useState(segments);
 
   const markProgrammaticScroll = useCallback(() => {
-    syncingScrollRef.current = true;
-    if (syncScrollEndTimerRef.current != null) {
-      window.clearTimeout(syncScrollEndTimerRef.current);
-    }
-    syncScrollEndTimerRef.current = window.setTimeout(() => {
-      syncingScrollRef.current = false;
-      programmaticScrollTargetRef.current = null;
-      syncScrollEndTimerRef.current = null;
-    }, 80);
+    programmaticScrollUntilRef.current = performance.now() + 80;
   }, []);
 
   useEffect(() => {
@@ -376,25 +368,53 @@ export function MiniStrip({
     setFilmstripSegments(segments);
   }, [segments]);
 
+  const syncViewportToPlaybackTime = useCallback(
+    (timeS: number) => {
+      playbackTimeRef.current = timeS;
+      const viewport = viewportRef.current;
+      if (
+        !viewport ||
+        timelineDragRef.current ||
+        pinchRef.current ||
+        laneResizeDragRef.current
+      ) {
+        return;
+      }
+      const nextScrollLeft =
+        Math.min(durationS, Math.max(0, timeS)) * pixelsPerSecond;
+      if (Math.abs(viewport.scrollLeft - nextScrollLeft) < 0.5) return;
+      markProgrammaticScroll();
+      programmaticScrollTargetRef.current = nextScrollLeft;
+      viewport.scrollLeft = nextScrollLeft;
+    },
+    [durationS, markProgrammaticScroll, pixelsPerSecond],
+  );
+
   useEffect(() => {
-    const viewport = viewportRef.current;
-    if (
-      !viewport ||
-      timelineDragRef.current ||
-      pinchRef.current ||
-      laneResizeDragRef.current
-    ) {
-      return;
-    }
-    const nextScrollLeft =
-      Math.min(durationS, Math.max(0, playbackTimeS)) * pixelsPerSecond;
-    if (Math.abs(viewport.scrollLeft - nextScrollLeft) < 0.5) return;
-    markProgrammaticScroll();
-    programmaticScrollTargetRef.current = nextScrollLeft;
-    viewport.scrollLeft = nextScrollLeft;
-    // The 80ms quiet window stays active across decoded playback frames. A
-    // real pointerdown clears it synchronously before user scrolling begins.
-  }, [durationS, markProgrammaticScroll, pixelsPerSecond, playbackTimeS]);
+    playbackTimeRef.current = currentTimeS;
+    if (!playbackClock) syncViewportToPlaybackTime(currentTimeS);
+  }, [currentTimeS, playbackClock, syncViewportToPlaybackTime]);
+
+  useEffect(() => {
+    if (!playbackClock) return;
+    const scheduleScrollSync = () => {
+      playbackTimeRef.current = playbackClock.getSnapshot();
+      if (playbackScrollFrameRef.current != null) return;
+      playbackScrollFrameRef.current = window.requestAnimationFrame(() => {
+        playbackScrollFrameRef.current = null;
+        syncViewportToPlaybackTime(playbackTimeRef.current);
+      });
+    };
+    scheduleScrollSync();
+    const unsubscribe = playbackClock.subscribe(scheduleScrollSync);
+    return () => {
+      unsubscribe();
+      if (playbackScrollFrameRef.current != null) {
+        window.cancelAnimationFrame(playbackScrollFrameRef.current);
+        playbackScrollFrameRef.current = null;
+      }
+    };
+  }, [playbackClock, syncViewportToPlaybackTime]);
 
   useEffect(
     () => () => {
@@ -407,11 +427,17 @@ export function MiniStrip({
       if (nativeScrollEndTimerRef.current != null) {
         window.clearTimeout(nativeScrollEndTimerRef.current);
       }
-      if (syncScrollEndTimerRef.current != null) {
-        window.clearTimeout(syncScrollEndTimerRef.current);
+      if (playbackScrollFrameRef.current != null) {
+        cancelAnimationFrame(playbackScrollFrameRef.current);
       }
       if (laneResizeAutoPanFrameRef.current != null) {
         cancelAnimationFrame(laneResizeAutoPanFrameRef.current);
+      }
+      if (trimPreviewFrameRef.current != null) {
+        cancelAnimationFrame(trimPreviewFrameRef.current);
+      }
+      if (laneResizePreviewFrameRef.current != null) {
+        cancelAnimationFrame(laneResizePreviewFrameRef.current);
       }
     },
     [],
@@ -433,7 +459,10 @@ export function MiniStrip({
 
   if (durationS <= 0 || segments.length === 0) return null;
 
-  const changeZoom = (nextZoom: number, anchorTimeS = playbackTimeS) => {
+  const changeZoom = (
+    nextZoom: number,
+    anchorTimeS = playbackTimeRef.current,
+  ) => {
     const clamped = clampPocketTimelineZoom(nextZoom);
     pendingZoomRef.current = { zoom: clamped, anchorTimeS };
     if (zoomFrameRef.current != null) return;
@@ -493,11 +522,7 @@ export function MiniStrip({
   const handleTimelinePointerDown = (
     event: ReactPointerEvent<HTMLDivElement>,
   ) => {
-    if (syncScrollEndTimerRef.current != null) {
-      window.clearTimeout(syncScrollEndTimerRef.current);
-      syncScrollEndTimerRef.current = null;
-    }
-    syncingScrollRef.current = false;
+    programmaticScrollUntilRef.current = 0;
     programmaticScrollTargetRef.current = null;
     pointersRef.current.set(event.pointerId, {
       x: event.clientX,
@@ -509,7 +534,7 @@ export function MiniStrip({
       pinchRef.current = {
         startDistance: Math.max(1, distance),
         startZoom: zoom,
-        anchorTimeS: playbackTimeS,
+        anchorTimeS: playbackTimeRef.current,
       };
       timelineDragRef.current = null;
       suppressClickRef.current = true;
@@ -709,8 +734,47 @@ export function MiniStrip({
       segment,
       handle,
       startX: event.clientX,
+      latestClientX: event.clientX,
       recorded: false,
     };
+  };
+
+  const previewActiveTrim = (drag: TrimDragState) => {
+    previewTrim(
+      drag.segment,
+      drag.handle,
+      (drag.latestClientX - drag.startX) / pixelsPerSecond,
+      () => {
+        if (drag.recorded) return;
+        drag.recorded = true;
+        onTrimStart?.();
+      },
+    );
+  };
+
+  const scheduleActiveTrimPreview = () => {
+    if (trimPreviewFrameRef.current != null) return;
+    trimPreviewFrameRef.current = requestAnimationFrame(() => {
+      trimPreviewFrameRef.current = null;
+      const drag = trimDragRef.current;
+      if (drag) previewActiveTrim(drag);
+    });
+  };
+
+  const finishTrimPointer = (
+    event: ReactPointerEvent<HTMLButtonElement>,
+    cancelled = false,
+  ) => {
+    event.stopPropagation();
+    const drag = trimDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (trimPreviewFrameRef.current != null) {
+      cancelAnimationFrame(trimPreviewFrameRef.current);
+      trimPreviewFrameRef.current = null;
+    }
+    if (!cancelled) previewActiveTrim(drag);
+    trimDragRef.current = null;
+    setFilmstripSegments(latestSegmentsRef.current);
   };
 
   const handleTrimPointerMove = (
@@ -719,16 +783,8 @@ export function MiniStrip({
     event.stopPropagation();
     const drag = trimDragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
-    previewTrim(
-      drag.segment,
-      drag.handle,
-      (event.clientX - drag.startX) / pixelsPerSecond,
-      () => {
-        if (drag.recorded) return;
-        drag.recorded = true;
-        onTrimStart?.();
-      },
-    );
+    drag.latestClientX = event.clientX;
+    scheduleActiveTrimPreview();
   };
 
   const handleTrimKey = (
@@ -848,6 +904,10 @@ export function MiniStrip({
       markProgrammaticScroll();
       programmaticScrollTargetRef.current = nextScrollLeft;
       viewport.scrollLeft = nextScrollLeft;
+      if (laneResizePreviewFrameRef.current != null) {
+        cancelAnimationFrame(laneResizePreviewFrameRef.current);
+        laneResizePreviewFrameRef.current = null;
+      }
       previewActiveLaneResize(drag);
       laneResizeAutoPanFrameRef.current = requestAnimationFrame(tick);
     };
@@ -861,7 +921,13 @@ export function MiniStrip({
     const drag = laneResizeDragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     drag.latestClientX = event.clientX;
-    previewActiveLaneResize(drag);
+    if (laneResizePreviewFrameRef.current == null) {
+      laneResizePreviewFrameRef.current = requestAnimationFrame(() => {
+        laneResizePreviewFrameRef.current = null;
+        const activeDrag = laneResizeDragRef.current;
+        if (activeDrag) previewActiveLaneResize(activeDrag);
+      });
+    }
     const viewport = viewportRef.current;
     if (!viewport) return;
     const rect = viewport.getBoundingClientRect();
@@ -880,9 +946,17 @@ export function MiniStrip({
 
   const finishLaneResizePointer = (
     event: ReactPointerEvent<HTMLButtonElement>,
+    cancelled = false,
   ) => {
     event.stopPropagation();
     stopLaneResizeAutoPan();
+    const drag = laneResizeDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (laneResizePreviewFrameRef.current != null) {
+      cancelAnimationFrame(laneResizePreviewFrameRef.current);
+      laneResizePreviewFrameRef.current = null;
+    }
+    if (!cancelled) previewActiveLaneResize(drag);
     laneResizeDragRef.current = null;
     manualScrollRef.current = false;
   };
@@ -1003,7 +1077,12 @@ export function MiniStrip({
               return;
             }
             programmaticScrollTargetRef.current = null;
-            if (syncingScrollRef.current || manualScrollRef.current) return;
+            if (
+              performance.now() < programmaticScrollUntilRef.current ||
+              manualScrollRef.current
+            ) {
+              return;
+            }
             if (!nativeScrollActiveRef.current) {
               nativeScrollActiveRef.current = true;
               onScrubStart?.();
@@ -1116,16 +1195,10 @@ export function MiniStrip({
                           handleTrimPointerDown(event, segment, handle)
                         }
                         onPointerMove={handleTrimPointerMove}
-                        onPointerUp={(event) => {
-                          event.stopPropagation();
-                          trimDragRef.current = null;
-                          setFilmstripSegments(latestSegmentsRef.current);
-                        }}
-                        onPointerCancel={(event) => {
-                          event.stopPropagation();
-                          trimDragRef.current = null;
-                          setFilmstripSegments(latestSegmentsRef.current);
-                        }}
+                        onPointerUp={(event) => finishTrimPointer(event)}
+                        onPointerCancel={(event) =>
+                          finishTrimPointer(event, true)
+                        }
                         onKeyDown={(event) =>
                           handleTrimKey(event, segment, handle)
                         }
@@ -1264,8 +1337,12 @@ export function MiniStrip({
                                 handleLaneResizePointerDown(event, item, handle)
                               }
                               onPointerMove={handleLaneResizePointerMove}
-                              onPointerUp={finishLaneResizePointer}
-                              onPointerCancel={finishLaneResizePointer}
+                              onPointerUp={(event) =>
+                                finishLaneResizePointer(event)
+                              }
+                              onPointerCancel={(event) =>
+                                finishLaneResizePointer(event, true)
+                              }
                               onKeyDown={(event) =>
                                 handleLaneResizeKey(event, item, handle)
                               }

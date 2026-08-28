@@ -114,7 +114,7 @@ export function ToolDock({
             }`}
           >
             <span className={enabled ? undefined : "opacity-50"}>
-              {tool.icon("h-5 w-5")}
+              {tool.icon("h-6 w-6")}
             </span>
             <span
               className={`text-[11px] font-medium ${

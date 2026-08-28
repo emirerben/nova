@@ -898,11 +898,16 @@ test("Visuals, overlays, and styles create visible editable state", async ({ pag
   await page.getByLabel("Upload overlay").setInputFiles({
     name: "travel-badge.png",
     mimeType: "image/png",
-    buffer: Buffer.from("fixture-overlay"),
+    buffer: Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64",
+    ),
   });
-  await expect(page.getByTestId("qa-media-overlay")).toHaveText(
-    "travel-badge.png",
-  );
+  const overlayPreview = page.getByTestId("qa-media-overlay");
+  await expect(overlayPreview).toBeVisible();
+  const overlayImage = overlayPreview.locator("img");
+  await expect(overlayImage).toBeVisible();
+  await expect.poll(() => overlayImage.getAttribute("src")).toMatch(/^blob:/);
   await expect(page.getByTestId("pocket-timeline-lane-overlays")).toBeAttached();
   expect(await qaNumber(page, "data-history-len")).toBe(
     historyBeforeUpload + 1,
@@ -919,6 +924,20 @@ test("Visuals, overlays, and styles create visible editable state", async ({ pag
   await expect(page.locator("#qa-state")).toHaveAttribute(
     "data-overlay",
     /"position":"Right"/,
+  );
+  const scaleSlider = page.getByRole("slider", { name: "Overlay scale" });
+  await scaleSlider.focus();
+  await scaleSlider.press("Home");
+  await expect(overlayPreview).toHaveAttribute("data-overlay-scale", "0.2");
+  await page
+    .getByTestId("mobile-tool-panel")
+    .getByRole("button", { name: "Fullscreen", exact: true })
+    .click();
+  await expect(overlayPreview).toHaveAttribute("data-display-mode", "Fullscreen");
+  await page.getByRole("button", { name: "Bring forward" }).click();
+  await expect(page.locator("#qa-state")).toHaveAttribute(
+    "data-overlay",
+    /"zOrder":2/,
   );
   await page.getByRole("button", { name: "Styles tool" }).click();
   await page.getByRole("button", { name: "Film" }).click();

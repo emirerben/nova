@@ -3,7 +3,14 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, Move, RotateCcw } from "lucide-react";
+import {
+  ChevronLeft,
+  Move,
+  Palette,
+  RotateCcw,
+  Scissors,
+  Sparkles,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -123,6 +130,37 @@ interface FixtureOverlay {
   endS: number;
   durationS: number;
   position: string;
+  previewUrl?: string;
+  mediaKind?: "image" | "video";
+  sourceInS: number;
+  sourceOutS: number;
+  xPct: number;
+  yPct: number;
+  scale: number;
+  displayMode: "Overlay" | "Fullscreen";
+  zOrder: number;
+}
+
+function createFixtureOverlay(
+  item: FixtureTimelineItem,
+  patch: Partial<FixtureOverlay> = {},
+): FixtureOverlay {
+  return {
+    id: item.id,
+    name: item.label,
+    startS: item.startS,
+    endS: item.endS,
+    durationS: item.endS - item.startS,
+    position: "Center",
+    sourceInS: 0,
+    sourceOutS: 5,
+    xPct: 50,
+    yPct: 34,
+    scale: 0.42,
+    displayMode: "Overlay",
+    zOrder: 1,
+    ...patch,
+  };
 }
 
 const INITIAL_WINDOWS: ClipWindow[] = [
@@ -271,6 +309,15 @@ export default function MobileEditorFixture() {
   const previewCanvasRef = useRef<HTMLDivElement>(null);
   const textEditorRef = useRef<HTMLDivElement | null>(null);
   const textFrameRef = useRef<HTMLDivElement>(null);
+  const uploadedObjectUrlsRef = useRef(new Set<string>());
+  const overlayDragRef = useRef<{
+    pointerId: number;
+    startClientX: number;
+    startClientY: number;
+    startXPct: number;
+    startYPct: number;
+    moved: boolean;
+  } | null>(null);
   const pendingTextFocusRef = useRef(false);
   const textEditRecordedRef = useRef(false);
   const textDragRef = useRef<{
@@ -510,6 +557,10 @@ export default function MobileEditorFixture() {
   const activeTool = activeDockTool;
   const resolvedTextFont = resolveCssFont(textDraft?.font);
   const resolvedCaptionFont = resolveCssFont(caption.font);
+  const overlaySelected =
+    overlay != null &&
+    selectedLaneItem?.kind === "overlay" &&
+    selectedLaneItem.id === overlay.id;
 
   useEffect(() => {
     if (!textDraft || !textSelected || !pendingTextFocusRef.current) return;
@@ -527,6 +578,14 @@ export default function MobileEditorFixture() {
     });
     return () => window.cancelAnimationFrame(frame);
   }, [textDraft, textSelected]);
+
+  useEffect(
+    () => () => {
+      uploadedObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      uploadedObjectUrlsRef.current.clear();
+    },
+    [],
+  );
 
   const flushPendingSourceSeek = useCallback(() => {
     const video = videoRef.current;
@@ -914,6 +973,75 @@ export default function MobileEditorFixture() {
     if (drag.moved) setReceipt("Text moved · Undo available");
   };
 
+  const startOverlayDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (!overlay) return;
+    event.stopPropagation();
+    setSelectedLaneItem({ kind: "overlay", id: overlay.id });
+    setActiveDockTool("overlays");
+    setTextSelected(false);
+    if (overlay.displayMode === "Fullscreen") {
+      setReceipt("Overlay selected");
+      return;
+    }
+    event.currentTarget.setPointerCapture(event.pointerId);
+    overlayDragRef.current = {
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startXPct: overlay.xPct,
+      startYPct: overlay.yPct,
+      moved: false,
+    };
+  };
+
+  const moveOverlayDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = overlayDragRef.current;
+    const preview = previewCanvasRef.current?.getBoundingClientRect();
+    const overlayFrame = event.currentTarget.getBoundingClientRect();
+    if (
+      !drag ||
+      drag.pointerId !== event.pointerId ||
+      !preview ||
+      preview.width <= 0 ||
+      preview.height <= 0
+    ) {
+      return;
+    }
+    const dx = event.clientX - drag.startClientX;
+    const dy = event.clientY - drag.startClientY;
+    if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+    if (!drag.moved) {
+      record();
+      drag.moved = true;
+    }
+    event.preventDefault();
+    const halfWidthPct = (overlayFrame.width / preview.width) * 50;
+    const halfHeightPct = (overlayFrame.height / preview.height) * 50;
+    const nextXPct = drag.startXPct + (dx / preview.width) * 100;
+    const nextYPct = drag.startYPct + (dy / preview.height) * 100;
+    setOverlay((current) =>
+      current
+        ? {
+            ...current,
+            position: "Custom",
+            xPct: Math.min(98 - halfWidthPct, Math.max(halfWidthPct + 2, nextXPct)),
+            yPct: Math.min(98 - halfHeightPct, Math.max(halfHeightPct + 2, nextYPct)),
+          }
+        : current,
+    );
+    setReceipt("Moving overlay…");
+  };
+
+  const finishOverlayDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = overlayDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    overlayDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    setReceipt(drag.moved ? "Overlay moved · Undo available" : "Overlay selected");
+  };
+
   const openToolAction = (tool: SheetDockTool, action: string) => {
     captionEditRecordedRef.current = false;
     setToolAction(`${tool}:${action}`);
@@ -1165,19 +1293,20 @@ export default function MobileEditorFixture() {
               aria-label="Choose overlay file"
               accept="image/*,video/*"
               onChange={(event) => {
-                const name = event.currentTarget.files?.[0]?.name;
-                if (!name) return;
+                const file = event.currentTarget.files?.[0];
+                if (!file) return;
                 record();
-                const item = timelineWindowAtPlayhead(name, 2.5);
-                setOverlay({
-                  id: item.id,
-                  name,
-                  startS: item.startS,
-                  endS: item.endS,
-                  durationS: item.endS - item.startS,
-                  position: "Center",
-                });
-                setReceipt(`${name} overlay added`);
+                const previewUrl = URL.createObjectURL(file);
+                uploadedObjectUrlsRef.current.add(previewUrl);
+                const item = timelineWindowAtPlayhead(file.name, 2.5);
+                setOverlay(
+                  createFixtureOverlay(item, {
+                    previewUrl,
+                    mediaKind: file.type.startsWith("video/") ? "video" : "image",
+                  }),
+                );
+                setSelectedLaneItem({ kind: "overlay", id: item.id });
+                setReceipt(`${file.name} overlay added`);
               }}
             />
             <Button
@@ -1187,14 +1316,13 @@ export default function MobileEditorFixture() {
               onClick={() => {
                 record();
                 const item = timelineWindowAtPlayhead("Nova travel badge", 2.5);
-                setOverlay({
-                  id: item.id,
-                  name: item.label,
-                  startS: item.startS,
-                  endS: item.endS,
-                  durationS: item.endS - item.startS,
-                  position: "Center",
-                });
+                setOverlay(
+                  createFixtureOverlay(item, {
+                    previewUrl: VISUAL_PREVIEW_SOURCES[0],
+                    mediaKind: "image",
+                  }),
+                );
+                setSelectedLaneItem({ kind: "overlay", id: item.id });
                 setReceipt("Sample overlay added");
               }}
             >
@@ -1209,16 +1337,22 @@ export default function MobileEditorFixture() {
           overlay?.position ?? null,
           (position) => {
             record();
-            setOverlay((current) => ({
-              id: current?.id ?? crypto.randomUUID(),
-              name: current?.name ?? "Nova travel badge",
-              startS: current?.startS ?? currentTimeS,
-              endS:
-                current?.endS ??
-                Math.min(totalDurationS, currentTimeS + 2.5),
-              durationS: current?.durationS ?? 2.5,
-              position,
-            }));
+            setOverlay((current) => {
+              if (current) {
+                return {
+                  ...current,
+                  position,
+                  xPct: position === "Left" ? 25 : position === "Right" ? 75 : 50,
+                };
+              }
+              const item = timelineWindowAtPlayhead("Nova travel badge", 2.5);
+              return createFixtureOverlay(item, {
+                position,
+                xPct: position === "Left" ? 25 : position === "Right" ? 75 : 50,
+                previewUrl: VISUAL_PREVIEW_SOURCES[0],
+                mediaKind: "image",
+              });
+            });
             setReceipt(`Overlay moved ${position.toLowerCase()}`);
           },
         );
@@ -1240,17 +1374,20 @@ export default function MobileEditorFixture() {
             onPointerDown={record}
             onKeyDown={record}
             onValueChange={([durationS]) => {
-              setOverlay((current) => ({
-                id: current?.id ?? crypto.randomUUID(),
-                name: current?.name ?? "Nova travel badge",
-                startS: current?.startS ?? currentTimeS,
-                endS: Math.min(
-                  totalDurationS,
-                  (current?.startS ?? currentTimeS) + durationS,
-                ),
-                durationS,
-                position: current?.position ?? "Center",
-              }));
+              setOverlay((current) => {
+                if (current) {
+                  return {
+                    ...current,
+                    endS: Math.min(totalDurationS, current.startS + durationS),
+                    durationS,
+                  };
+                }
+                const item = timelineWindowAtPlayhead("Nova travel badge", durationS);
+                return createFixtureOverlay(item, {
+                  previewUrl: VISUAL_PREVIEW_SOURCES[0],
+                  mediaKind: "image",
+                });
+              });
               setReceipt(`Overlay duration ${durationS.toFixed(1)}s`);
             }}
           />
@@ -1596,9 +1733,18 @@ export default function MobileEditorFixture() {
       record();
       if (property === "delete") {
         setOverlay(null);
+        setSelectedLaneItem(null);
         setReceipt("Overlay deleted · Undo available");
       } else if (property === "position" && typeof value === "string") {
-        setOverlay((current) => (current ? { ...current, position: value } : current));
+        setOverlay((current) =>
+          current
+            ? {
+                ...current,
+                position: value,
+                xPct: value === "Left" ? 25 : value === "Right" ? 75 : 50,
+              }
+            : current,
+        );
         setReceipt(`Overlay moved ${String(value).toLowerCase()}`);
       } else if (property === "duration" && typeof value === "number") {
         setOverlay((current) =>
@@ -1611,22 +1757,69 @@ export default function MobileEditorFixture() {
             : current,
         );
         setReceipt(`Overlay duration ${value.toFixed(1)}s`);
+      } else if (property === "sourceIn" && typeof value === "number") {
+        setOverlay((current) =>
+          current
+            ? { ...current, sourceInS: Math.min(value, current.sourceOutS - 0.1) }
+            : current,
+        );
+        setReceipt(`Overlay source In ${value.toFixed(1)}s`);
+      } else if (property === "sourceOut" && typeof value === "number") {
+        setOverlay((current) =>
+          current
+            ? { ...current, sourceOutS: Math.max(value, current.sourceInS + 0.1) }
+            : current,
+        );
+        setReceipt(`Overlay source Out ${value.toFixed(1)}s`);
+      } else if (property === "scale" && typeof value === "number") {
+        setOverlay((current) => (current ? { ...current, scale: value } : current));
+        setReceipt(`Overlay scale ${Math.round(value * 100)}%`);
+      } else if (
+        property === "display" &&
+        (value === "Overlay" || value === "Fullscreen")
+      ) {
+        setOverlay((current) =>
+          current ? { ...current, displayMode: value } : current,
+        );
+        setReceipt(`Overlay display changed to ${value}`);
+      } else if (property === "zOrder" && typeof value === "number") {
+        setOverlay((current) =>
+          current ? { ...current, zOrder: Math.max(0, value) } : current,
+        );
+        setReceipt(`Overlay layer ${Math.max(0, value)}`);
       } else {
-        const name =
-          property === "suggest"
-            ? "Kria suggested skyline"
-            : typeof value === "string"
-              ? value
-              : "Uploaded overlay";
+        const uploadValue =
+          typeof value === "object" && value != null
+            ? (value as Record<string, unknown>)
+            : null;
+        const uploadedOverlay =
+          property === "upload" &&
+          typeof uploadValue?.name === "string" &&
+          typeof uploadValue.previewUrl === "string" &&
+          (uploadValue.mediaKind === "image" || uploadValue.mediaKind === "video")
+            ? {
+                name: uploadValue.name,
+                previewUrl: uploadValue.previewUrl,
+                mediaKind: uploadValue.mediaKind as "image" | "video",
+              }
+            : null;
+        if (uploadedOverlay?.previewUrl.startsWith("blob:")) {
+          uploadedObjectUrlsRef.current.add(uploadedOverlay.previewUrl);
+        }
+        const name = property === "suggest"
+          ? "Kria suggested skyline"
+          : uploadedOverlay?.name ?? "Uploaded overlay";
         const item = timelineWindowAtPlayhead(name, 2);
-        setOverlay({
-          id: item.id,
-          name,
-          startS: item.startS,
-          endS: item.endS,
-          durationS: item.endS - item.startS,
-          position: "Center",
-        });
+        setOverlay(
+          createFixtureOverlay(item, {
+            previewUrl:
+              uploadedOverlay?.previewUrl ??
+              (property === "suggest" ? VISUAL_PREVIEW_SOURCES[2] : undefined),
+            mediaKind:
+              uploadedOverlay?.mediaKind ?? (property === "suggest" ? "image" : undefined),
+          }),
+        );
+        setSelectedLaneItem({ kind: "overlay", id: item.id });
         setReceipt(`${name} added`);
       }
       return;
@@ -1716,6 +1909,11 @@ export default function MobileEditorFixture() {
                 name: overlay.name,
                 durationS: overlay.durationS,
                 position: overlay.position,
+                sourceInS: overlay.sourceInS,
+                sourceOutS: overlay.sourceOutS,
+                scale: overlay.scale,
+                displayMode: overlay.displayMode,
+                zOrder: overlay.zOrder,
               })
             : ""
         }
@@ -2002,23 +2200,78 @@ export default function MobileEditorFixture() {
               </span>
             ))}
           </div>
-          {overlay && (
-            <span
+          {overlay &&
+            currentTimeS >= overlay.startS &&
+            currentTimeS < overlay.endS && (
+            <Button
+              type="button"
+              variant="ghost"
               data-testid="qa-media-overlay"
-              className="pointer-events-none absolute rounded-md border border-white/70 bg-black/70 px-2 py-1 text-xs font-semibold text-white shadow"
+              data-display-mode={overlay.displayMode}
+              data-overlay-scale={overlay.scale}
+              aria-label={`Select and move overlay: ${overlay.name}`}
+              aria-pressed={overlaySelected}
+              className={`absolute touch-none overflow-hidden p-0 shadow-lg hover:bg-transparent ${
+                overlay.displayMode === "Fullscreen"
+                  ? "inset-0 h-full w-full rounded-xl"
+                  : "aspect-[4/3] h-auto min-h-11 rounded-lg"
+              } ${
+                overlaySelected
+                  ? "ring-2 ring-lime-500 ring-offset-2 ring-offset-black"
+                  : "border border-white/70"
+              }`}
               style={{
-                left:
-                  overlay.position === "Left"
-                    ? "20%"
-                    : overlay.position === "Right"
-                      ? "70%"
-                      : "50%",
-                top: "34%",
-                transform: "translate(-50%, -50%)",
+                ...(overlay.displayMode === "Overlay"
+                  ? {
+                      left: `${overlay.xPct}%`,
+                      top: `${overlay.yPct}%`,
+                      width: `${overlay.scale * 100}%`,
+                      transform: "translate(-50%, -50%)",
+                    }
+                  : null),
+                zIndex: 20 + overlay.zOrder,
               }}
+              onPointerDown={startOverlayDrag}
+              onPointerMove={moveOverlayDrag}
+              onPointerUp={finishOverlayDrag}
+              onPointerCancel={finishOverlayDrag}
             >
-              {overlay.name}
-            </span>
+              {overlay.previewUrl && overlay.mediaKind === "video" ? (
+                <video
+                  src={overlay.previewUrl}
+                  muted
+                  playsInline
+                  autoPlay={playing}
+                  className="pointer-events-none h-full w-full object-cover"
+                  onLoadedMetadata={(event) => {
+                    event.currentTarget.currentTime = overlay.sourceInS;
+                  }}
+                  onTimeUpdate={(event) => {
+                    if (event.currentTarget.currentTime >= overlay.sourceOutS) {
+                      event.currentTarget.currentTime = overlay.sourceInS;
+                    }
+                  }}
+                />
+              ) : overlay.previewUrl ? (
+                <Image
+                  src={overlay.previewUrl}
+                  alt=""
+                  fill
+                  sizes="(max-width: 430px) 300px"
+                  className="pointer-events-none object-cover"
+                  unoptimized={overlay.previewUrl.startsWith("blob:")}
+                />
+              ) : (
+                <span className="flex h-full min-h-11 w-full items-center justify-center bg-black/75 px-2 text-xs font-semibold text-white">
+                  {overlay.name}
+                </span>
+              )}
+              {overlaySelected && overlay.displayMode === "Overlay" && (
+                <span className="pointer-events-none absolute left-1 top-1 rounded bg-black/75 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                  Selected · drag to move
+                </span>
+              )}
+            </Button>
           )}
         </div>
         {history.length > 0 && (
@@ -2164,6 +2417,11 @@ export default function MobileEditorFixture() {
                     name: overlay.name,
                     durationS: overlay.durationS,
                     position: overlay.position,
+                    sourceInS: overlay.sourceInS,
+                    sourceOutS: overlay.sourceOutS,
+                    scale: overlay.scale,
+                    displayMode: overlay.displayMode,
+                    zOrder: overlay.zOrder,
                   }
                 : null,
               look,
@@ -2237,14 +2495,14 @@ export default function MobileEditorFixture() {
               </SheetHeader>
               <Tabs defaultValue="trim" className="px-4 pt-3">
                 <TabsList className="grid h-11 w-full grid-cols-3">
-                  <TabsTrigger value="trim" className="min-h-11">
-                    Trim
+                  <TabsTrigger value="trim" className="min-h-11 gap-1.5">
+                    <Scissors className="size-4" aria-hidden="true" /> Trim
                   </TabsTrigger>
-                  <TabsTrigger value="look" className="min-h-11">
-                    Look
+                  <TabsTrigger value="look" className="min-h-11 gap-1.5">
+                    <Palette className="size-4" aria-hidden="true" /> Look
                   </TabsTrigger>
-                  <TabsTrigger value="transition" className="min-h-11">
-                    Transition
+                  <TabsTrigger value="transition" className="min-h-11 gap-1.5">
+                    <Sparkles className="size-4" aria-hidden="true" /> Transition
                   </TabsTrigger>
                 </TabsList>
                 <TabsContent value="trim" className="mt-4 space-y-3">

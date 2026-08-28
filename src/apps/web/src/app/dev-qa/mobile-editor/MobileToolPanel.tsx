@@ -15,6 +15,7 @@ import {
   WandSparkles,
   X,
 } from "lucide-react";
+import { useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -94,7 +95,16 @@ export interface MobileToolPanelState {
   musicTrack: string;
   musicGain: number;
   visuals: string[];
-  overlay: { name: string; durationS: number; position: string } | null;
+  overlay: {
+    name: string;
+    durationS: number;
+    position: string;
+    sourceInS: number;
+    sourceOutS: number;
+    scale: number;
+    displayMode: "Overlay" | "Fullscreen";
+    zOrder: number;
+  } | null;
   look: string;
   clipLook: string;
   transition: string;
@@ -177,7 +187,7 @@ function PanelTabs({
           <TabsTrigger
             key={tab.value}
             value={tab.value}
-            className="min-h-10 flex-none gap-1.5 rounded-md border-b-0 px-3 pb-0 text-xs"
+            className="min-h-11 flex-none gap-1.5 rounded-md border-b-0 px-3 pb-0 text-xs"
           >
             {tab.icon}
             {tab.label}
@@ -200,6 +210,8 @@ export function MobileToolPanel({
   onDisabledTap,
 }: MobileToolPanelProps) {
   const title = tool === "nova" ? "Kria" : tool[0].toUpperCase() + tool.slice(1);
+  const visualUploadRef = useRef<HTMLInputElement>(null);
+  const overlayUploadRef = useRef<HTMLInputElement>(null);
 
   return (
     <section
@@ -208,14 +220,14 @@ export function MobileToolPanel({
       aria-label={`${title} controls`}
       className="border-t border-border bg-background"
     >
-      <div className="flex h-10 items-center justify-between px-3">
+      <div className="flex min-h-11 items-center justify-between px-3">
         <p className="text-xs font-semibold">{title}</p>
         <Button
           type="button"
           variant="ghost"
           size="icon"
           aria-label={`Close ${title} controls`}
-          className="size-10"
+          className="size-11"
           onClick={onClose}
         >
           <X className="size-4" aria-hidden="true" />
@@ -286,7 +298,7 @@ export function MobileToolPanel({
                   aria-label="Fill color"
                   value={state.text.color}
                   onChange={(event) => onAction("text.color", event.currentTarget.value)}
-                  className="h-10 w-12 p-1"
+                  className="h-11 w-12 p-1"
                 />
                 <HexInput
                   value={state.text.color}
@@ -453,7 +465,7 @@ export function MobileToolPanel({
             <div className="min-w-[156px] space-y-1.5">
               <p className="text-[11px] text-muted-foreground">Highlight</p>
               <div className="flex h-11 items-center gap-2">
-                <Input type="color" aria-label="Highlight color" value={state.text.highlightColor} onChange={(event) => onAction("text.highlightColor", event.currentTarget.value)} className="h-10 w-12 p-1" />
+                <Input type="color" aria-label="Highlight color" value={state.text.highlightColor} onChange={(event) => onAction("text.highlightColor", event.currentTarget.value)} className="h-11 w-12 p-1" />
                 <HexInput value={state.text.highlightColor} onChange={(value) => onAction("text.highlightColor", value)} ariaLabel="Highlight color hex" />
               </div>
             </div>
@@ -560,24 +572,31 @@ export function MobileToolPanel({
           ]}
         >
           <TabsContent value="add" className={contentClass}>
-            <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-md border px-4 text-sm font-medium">
-              <Upload className="size-4" /> Upload
-              <Input
-                type="file"
-                accept="image/*,video/*"
-                aria-label="Upload visual"
-                className="sr-only"
-                onChange={(event) => {
-                  const file = event.currentTarget.files?.[0];
-                  if (!file) return;
-                  onAction("visuals.upload", {
-                    name: file.name,
-                    previewUrl: URL.createObjectURL(file),
-                    mediaKind: file.type.startsWith("video/") ? "video" : "image",
-                  });
-                }}
-              />
-            </label>
+            <Input
+              ref={visualUploadRef}
+              type="file"
+              accept="image/*,video/*"
+              aria-label="Upload visual"
+              className="sr-only"
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                if (!file) return;
+                onAction("visuals.upload", {
+                  name: file.name,
+                  previewUrl: URL.createObjectURL(file),
+                  mediaKind: file.type.startsWith("video/") ? "video" : "image",
+                });
+                event.currentTarget.value = "";
+              }}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11 min-w-max"
+              onClick={() => visualUploadRef.current?.click()}
+            >
+              <Upload className="size-4" aria-hidden="true" /> Upload
+            </Button>
             {[
               ["visuals.montage", "Montage"],
               ["visuals.media", "Media block"],
@@ -635,10 +654,31 @@ export function MobileToolPanel({
           ]}
         >
           <TabsContent value="add" className={contentClass}>
-            <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-md border px-4 text-sm font-medium">
-              <Upload className="size-4" /> Upload overlay
-              <Input type="file" accept="image/*,video/*" aria-label="Upload overlay" className="sr-only" onChange={(event) => onAction("overlays.upload", event.currentTarget.files?.[0]?.name ?? "Uploaded overlay")} />
-            </label>
+            <Input
+              ref={overlayUploadRef}
+              type="file"
+              accept="image/*,video/*"
+              aria-label="Upload overlay"
+              className="sr-only"
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                if (!file) return;
+                onAction("overlays.upload", {
+                  name: file.name,
+                  previewUrl: URL.createObjectURL(file),
+                  mediaKind: file.type.startsWith("video/") ? "video" : "image",
+                });
+                event.currentTarget.value = "";
+              }}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11 min-w-max"
+              onClick={() => overlayUploadRef.current?.click()}
+            >
+              <Upload className="size-4" aria-hidden="true" /> Upload overlay
+            </Button>
             <Button className="min-h-11 min-w-max" onClick={() => onAction("overlays.suggest")}><Sparkles className="size-4" /> Suggest overlay</Button>
           </TabsContent>
           <TabsContent value="place" className={contentClass}>
@@ -648,6 +688,26 @@ export function MobileToolPanel({
                 <div className="min-w-[170px]">
                   <div className="flex justify-between text-xs text-muted-foreground"><span>Duration</span><span>{state.overlay.durationS.toFixed(1)}s</span></div>
                   <Slider aria-label="Overlay duration" min={0.5} max={6} step={0.1} value={[state.overlay.durationS]} onValueChange={([value]) => onAction("overlays.duration", value)} className="h-11" />
+                </div>
+                <div className="min-w-[170px]">
+                  <div className="flex justify-between text-xs text-muted-foreground"><span>Source In</span><span>{state.overlay.sourceInS.toFixed(1)}s</span></div>
+                  <Slider aria-label="Overlay source In" min={0} max={Math.max(0, state.overlay.sourceOutS - 0.1)} step={0.1} value={[state.overlay.sourceInS]} onValueChange={([value]) => onAction("overlays.sourceIn", value)} className="h-11" />
+                </div>
+                <div className="min-w-[170px]">
+                  <div className="flex justify-between text-xs text-muted-foreground"><span>Source Out</span><span>{state.overlay.sourceOutS.toFixed(1)}s</span></div>
+                  <Slider aria-label="Overlay source Out" min={state.overlay.sourceInS + 0.1} max={10} step={0.1} value={[state.overlay.sourceOutS]} onValueChange={([value]) => onAction("overlays.sourceOut", value)} className="h-11" />
+                </div>
+                <div className="min-w-[170px]">
+                  <div className="flex justify-between text-xs text-muted-foreground"><span>Scale</span><span>{Math.round(state.overlay.scale * 100)}%</span></div>
+                  <Slider aria-label="Overlay scale" min={0.2} max={0.9} step={0.01} value={[state.overlay.scale]} onValueChange={([value]) => onAction("overlays.scale", value)} className="h-11" />
+                </div>
+                <ChoiceRow label="Display mode" options={["Overlay", "Fullscreen"]} selected={state.overlay.displayMode} onSelect={(value) => onAction("overlays.display", value)} />
+                <div className="space-y-1.5">
+                  <p className="text-[11px] font-medium text-muted-foreground">Layer order · {state.overlay.zOrder}</p>
+                  <div className="flex min-w-max gap-2">
+                    <Button type="button" variant="outline" className="min-h-11" onClick={() => onAction("overlays.zOrder", Math.max(0, state.overlay!.zOrder - 1))}>Send backward</Button>
+                    <Button type="button" variant="outline" className="min-h-11" onClick={() => onAction("overlays.zOrder", state.overlay!.zOrder + 1)}>Bring forward</Button>
+                  </div>
                 </div>
                 <Button variant="destructive" className="mt-5 min-h-11" onClick={() => onAction("overlays.delete")}>Delete overlay</Button>
               </>

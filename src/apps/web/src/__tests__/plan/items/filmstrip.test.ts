@@ -1,5 +1,8 @@
 import { describe, expect, it } from "@jest/globals";
-import {
+import "@testing-library/jest-dom";
+import React from "react";
+import { render, screen } from "@testing-library/react";
+import Filmstrip, {
   FILMSTRIP_MAX_SEEKS,
   FILMSTRIP_TILE_W,
   allocateFilmstripDensityBudget,
@@ -8,6 +11,7 @@ import {
   filmstripDecodeKey,
   filmstripFallbackLabel,
   filmstripPoolKey,
+  filmstripRasterWidth,
   filmstripSampleTimes,
   filmstripZoomBucket,
 } from "@/app/plan/items/[id]/_editor/Filmstrip";
@@ -89,6 +93,30 @@ describe("editor source filmstrip helpers", () => {
     expect(filmstripZoomBucket(FILMSTRIP_TILE_W * 0.4, 3)).toBe(1);
     expect(filmstripZoomBucket(FILMSTRIP_TILE_W, 0)).toBe(0);
     expect(filmstripZoomBucket(FILMSTRIP_TILE_W * 3, 8, 8)).toBe(8);
+  });
+
+  it("caps the backing raster to the decoded thumbnail density", () => {
+    expect(filmstripRasterWidth(11_520, 8)).toBe(8 * FILMSTRIP_TILE_W);
+    expect(filmstripRasterWidth(173, 8)).toBe(173);
+  });
+
+  it("renders an explicit labelled fallback when clip media is unavailable", async () => {
+    render(
+      React.createElement(Filmstrip, {
+        src: null,
+        clipId: "missing-clip",
+        sourceId: "missing-source",
+        sourceStartS: 0,
+        durationS: 3.2,
+        widthPx: 180,
+        label: "Missing clip",
+      }),
+    );
+
+    expect(await screen.findByText("Missing clip")).not.toBeNull();
+    expect(
+      screen.getByTestId("editor-filmstrip").getAttribute("data-clip-key"),
+    ).toBe("missing-clip");
   });
 
   it("allocates visible tiles for a prod-shaped 17-slot song timeline", () => {
