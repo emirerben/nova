@@ -909,6 +909,550 @@ def test_stack_images_discards_legacy_creator_block_preset() -> None:
     assert "preset_id" not in parsed.ops[0]
 
 
+def test_explicit_bulk_request_does_not_resurrect_stale_clarification_context() -> None:
+    fixture_path = (
+        Path(__file__).parent
+        / "fixtures"
+        / "agent_evals"
+        / "edit_copilot"
+        / "golden"
+        / "kria_bulk_followup_satisfiable.json"
+    )
+    snapshot = json.loads(fixture_path.read_text())["input"]["variant_snapshot"]
+    stale_capacity_clarification = {
+        "role": "assistant",
+        "content": "Adding every unused source exceeds the editor limit.",
+        "clarification_context": {
+            "selector": {
+                "scope": "unused_sources",
+                "media_kind": "all",
+                "quantifier": "all",
+            }
+        },
+        "pending_actions": [
+            {
+                "op": "add_unused_sources",
+                "selector": {
+                    "scope": "unused_sources",
+                    "media_kind": "all",
+                    "quantifier": "all",
+                },
+            },
+            {
+                "op": "stack_images",
+                "selector": {
+                    "scope": "timeline",
+                    "media_kind": "image",
+                    "quantifier": "all",
+                },
+            },
+        ],
+    }
+    later_failed_turn = {
+        "role": "assistant",
+        "content": "I couldn't build a valid draft change for that request. Try again.",
+    }
+    utterance = (
+        "Add all of the unused clips as well. Put all images together as the fastest "
+        "slideshow: keep every image as its own consecutive clip at 0.2 seconds each. "
+        "Do not use Card Stack, Film Strip, Creator Blocks, zoom, or Ken Burns."
+    )
+    prior_turns = [
+        stale_capacity_clarification,
+        {"role": "user", "content": "all of them and make them 0.2 seconds each"},
+        later_failed_turn,
+    ]
+
+    rendered = _agent().render_prompt(
+        EditCopilotInput(
+            utterance=utterance,
+            prior_turns=prior_turns,
+            variant_snapshot=snapshot,
+        )
+    )
+    assert "SYSTEM CLARIFICATION" not in rendered
+    assert "SYSTEM PENDING BULK ACTIONS" not in rendered
+
+    out = _agent().parse(
+        json.dumps(
+            {
+                "intent": "edit",
+                "ops": [
+                    {
+                        "op": "add_unused_sources",
+                        "selector": {
+                            "scope": "unused_sources",
+                            "media_kind": "all",
+                            "quantifier": "all",
+                        },
+                    },
+                    {
+                        "op": "stack_images",
+                        "selector": {
+                            "scope": "timeline",
+                            "media_kind": "image",
+                            "quantifier": "all",
+                        },
+                    },
+                    {
+                        "op": "set_media_duration",
+                        "selector": {
+                            "scope": "timeline",
+                            "media_kind": "image",
+                            "quantifier": "all",
+                        },
+                        "duration_s": 0.2,
+                    },
+                ],
+                "confidence": 0.95,
+                "reply": "I prepared the complete slideshow edit.",
+                "needs_clarification": False,
+            }
+        ),
+        EditCopilotInput(
+            utterance=utterance,
+            prior_turns=prior_turns,
+            variant_snapshot=snapshot,
+        ),
+    )
+
+    assert out.outcome == "proposed"
+    assert [operation["op"] for operation in out.ops] == [
+        "add_unused_sources",
+        "stack_images",
+        "set_media_duration",
+    ]
+    duration = out.ops[2]
+    assert duration["selector"] == {
+        "scope": "timeline",
+        "media_kind": "image",
+        "quantifier": "all",
+    }
+    assert duration["duration_s"] == 0.2
+
+
+def test_latest_assistant_clarification_wins_over_older_structured_context() -> None:
+    snapshot = _bulk_snapshot()
+    video_selector = {"scope": "timeline", "media_kind": "video", "quantifier": "all"}
+    image_selector = {"scope": "timeline", "media_kind": "image", "quantifier": "all"}
+    prior_turns = [
+        {
+            "role": "assistant",
+            "content": "How short should the videos be?",
+            "clarification_context": {"selector": video_selector, "referent": "videos"},
+            "pending_actions": _pending_with_integrity(
+                snapshot,
+                [{"op": "set_media_duration"}],
+                video_selector,
+            ),
+        },
+        {"role": "user", "content": "Leave the videos alone."},
+        {
+            "role": "assistant",
+            "content": "Which images, and how short should each image be?",
+            "clarification_context": {"selector": image_selector, "referent": "images"},
+            "pending_actions": _pending_with_integrity(
+                snapshot,
+                [{"op": "stack_images"}, {"op": "set_media_duration"}],
+                image_selector,
+            ),
+        },
+    ]
+    input_data = EditCopilotInput(
+        utterance="all of them and make them 0.2 seconds each",
+        prior_turns=prior_turns,
+        variant_snapshot=snapshot,
+    )
+
+    rendered = _agent().render_prompt(input_data)
+    structured_lines = [line for line in rendered.splitlines() if "SYSTEM " in line]
+    assert len([line for line in structured_lines if "SYSTEM CLARIFICATION" in line]) == 1
+    assert len([line for line in structured_lines if "SYSTEM PENDING BULK ACTIONS" in line]) == 1
+    structured = "\n".join(structured_lines)
+    assert '"media_kind": "image"' in structured
+    assert '"media_kind": "video"' not in structured
+
+    out = _agent().parse(
+        json.dumps(
+            {
+                "intent": "edit",
+                "ops": [
+                    {
+                        "op": "set_media_duration",
+                        "selector": {
+                            "scope": "unused_sources",
+                            "media_kind": "all",
+                            "quantifier": "all",
+                        },
+                        "duration_s": 0.2,
+                    }
+                ],
+                "confidence": 0.95,
+                "reply": "I prepared the image slideshow.",
+                "needs_clarification": False,
+            }
+        ),
+        input_data,
+    )
+
+    assert out.outcome == "proposed"
+    assert {operation["op"] for operation in out.ops} == {
+        "stack_images",
+        "set_media_duration",
+    }
+    assert all(operation["selector"] == image_selector for operation in out.ops)
+
+
+def test_latest_assistant_without_context_clears_stale_pending_actions() -> None:
+    snapshot = _bulk_snapshot()
+    stale_selector = {
+        "scope": "unused_sources",
+        "media_kind": "all",
+        "quantifier": "all",
+    }
+    image_selector = {"scope": "timeline", "media_kind": "image", "quantifier": "all"}
+    prior_turns = [
+        {
+            "role": "assistant",
+            "content": "Should I add every unused source?",
+            "clarification_context": {"selector": stale_selector},
+            "pending_actions": _pending_with_integrity(
+                snapshot,
+                [{"op": "add_unused_sources"}],
+                stale_selector,
+            ),
+        },
+        {"role": "user", "content": "Never mind."},
+        {"role": "assistant", "content": "Okay, I left the timeline unchanged."},
+    ]
+
+    out = _agent().parse(
+        json.dumps(
+            {
+                "intent": "edit",
+                "ops": [
+                    {"op": "stack_images", "selector": image_selector},
+                    {
+                        "op": "set_media_duration",
+                        "selector": image_selector,
+                        "duration_s": 0.2,
+                    },
+                ],
+                "confidence": 0.95,
+                "reply": "I prepared the image slideshow.",
+                "needs_clarification": False,
+            }
+        ),
+        EditCopilotInput(
+            utterance="Stack all images together as individual 0.2-second clips.",
+            prior_turns=prior_turns,
+            variant_snapshot=snapshot,
+        ),
+    )
+
+    assert out.outcome == "proposed"
+    assert [operation["op"] for operation in out.ops] == [
+        "stack_images",
+        "set_media_duration",
+    ]
+
+
+def test_intervening_user_turn_clears_stale_pending_actions() -> None:
+    snapshot = _bulk_snapshot()
+    stale_selector = {
+        "scope": "unused_sources",
+        "media_kind": "all",
+        "quantifier": "all",
+    }
+    image_selector = {"scope": "timeline", "media_kind": "image", "quantifier": "all"}
+    prior_turns = [
+        {
+            "role": "assistant",
+            "content": "Should I add every unused source?",
+            "clarification_context": {"selector": stale_selector},
+            "pending_actions": _pending_with_integrity(
+                snapshot,
+                [{"op": "add_unused_sources"}],
+                stale_selector,
+            ),
+        },
+        {"role": "user", "content": "Never mind. Leave the unused sources alone."},
+    ]
+    input_data = EditCopilotInput(
+        utterance="Stack all images together as individual 0.2-second clips.",
+        prior_turns=prior_turns,
+        variant_snapshot=snapshot,
+    )
+
+    rendered = _agent().render_prompt(input_data)
+    assert "SYSTEM CLARIFICATION" not in rendered
+    assert "SYSTEM PENDING BULK ACTIONS" not in rendered
+
+    out = _agent().parse(
+        json.dumps(
+            {
+                "intent": "edit",
+                "ops": [
+                    {"op": "stack_images", "selector": image_selector},
+                    {
+                        "op": "set_media_duration",
+                        "selector": image_selector,
+                        "duration_s": 0.2,
+                    },
+                ],
+                "confidence": 0.95,
+                "reply": "I prepared the image slideshow.",
+                "needs_clarification": False,
+            }
+        ),
+        input_data,
+    )
+
+    assert out.outcome == "proposed"
+    assert [operation["op"] for operation in out.ops] == [
+        "stack_images",
+        "set_media_duration",
+    ]
+
+
+def test_explicit_image_request_does_not_inherit_video_clarification() -> None:
+    snapshot = _bulk_snapshot()
+    video_selector = {"scope": "timeline", "media_kind": "video", "quantifier": "all"}
+    image_selector = {"scope": "timeline", "media_kind": "image", "quantifier": "all"}
+    input_data = EditCopilotInput(
+        utterance="Stack all images together and make them 0.2 seconds each.",
+        prior_turns=[
+            {
+                "role": "assistant",
+                "content": "How short should all videos be?",
+                "clarification_context": {"selector": video_selector, "referent": "videos"},
+                "pending_actions": _pending_with_integrity(
+                    snapshot,
+                    [{"op": "set_media_duration"}],
+                    video_selector,
+                ),
+            }
+        ],
+        variant_snapshot=snapshot,
+    )
+
+    out = _agent().parse(
+        json.dumps(
+            {
+                "intent": "edit",
+                "ops": [
+                    {"op": "stack_images", "selector": image_selector},
+                    {
+                        "op": "set_media_duration",
+                        "selector": image_selector,
+                        "duration_s": 0.2,
+                    },
+                ],
+                "confidence": 0.95,
+                "reply": "I prepared the image slideshow.",
+                "needs_clarification": False,
+            }
+        ),
+        input_data,
+    )
+
+    assert out.outcome == "proposed"
+    assert [operation["op"] for operation in out.ops] == [
+        "stack_images",
+        "set_media_duration",
+    ]
+    assert all(operation["selector"] == image_selector for operation in out.ops)
+
+
+def test_explicit_mixed_media_request_does_not_inherit_image_clarification() -> None:
+    snapshot = _bulk_snapshot()
+    image_selector = {"scope": "timeline", "media_kind": "image", "quantifier": "all"}
+    all_selector = {"scope": "timeline", "media_kind": "all", "quantifier": "all"}
+
+    out = _agent().parse(
+        json.dumps(
+            {
+                "intent": "edit",
+                "ops": [
+                    {
+                        "op": "set_media_duration",
+                        "selector": all_selector,
+                        "duration_s": 0.2,
+                    }
+                ],
+                "confidence": 0.95,
+                "reply": "I prepared the mixed-media edit.",
+                "needs_clarification": False,
+            }
+        ),
+        EditCopilotInput(
+            utterance="Stack all images and videos together and make them 0.2 seconds each.",
+            prior_turns=[
+                {
+                    "role": "assistant",
+                    "content": "Which images should I stack?",
+                    "clarification_context": {
+                        "selector": image_selector,
+                        "referent": "images",
+                    },
+                    "pending_actions": _pending_with_integrity(
+                        snapshot,
+                        [{"op": "stack_images"}],
+                        image_selector,
+                    ),
+                }
+            ],
+            variant_snapshot=snapshot,
+        ),
+    )
+
+    assert out.outcome == "proposed"
+    assert [operation["op"] for operation in out.ops] == ["set_media_duration"]
+    assert out.ops[0]["selector"] == all_selector
+
+
+def test_unknown_latest_role_clears_stale_pending_actions() -> None:
+    snapshot = _bulk_snapshot()
+    image_selector = {"scope": "timeline", "media_kind": "image", "quantifier": "all"}
+    prior_turns = [
+        {
+            "role": "assistant",
+            "content": "Which images should I stack?",
+            "clarification_context": {"selector": image_selector, "referent": "images"},
+            "pending_actions": _pending_with_integrity(
+                snapshot,
+                [{"op": "add_unused_sources"}, {"op": "stack_images"}],
+                image_selector,
+            ),
+        },
+        {"role": "system", "content": "Malformed client turn."},
+    ]
+    input_data = EditCopilotInput(
+        utterance="all of them and make them 0.2 seconds each",
+        prior_turns=prior_turns,
+        variant_snapshot=snapshot,
+    )
+
+    rendered = _agent().render_prompt(input_data)
+    assert "SYSTEM CLARIFICATION" not in rendered
+    assert "SYSTEM PENDING BULK ACTIONS" not in rendered
+
+    out = _agent().parse(
+        json.dumps(
+            {
+                "intent": "edit",
+                "ops": [
+                    {
+                        "op": "set_media_duration",
+                        "selector": image_selector,
+                        "duration_s": 0.2,
+                    }
+                ],
+                "confidence": 0.95,
+                "reply": "I prepared the image duration edit.",
+                "needs_clarification": False,
+            }
+        ),
+        input_data,
+    )
+
+    assert out.outcome == "proposed"
+    assert [operation["op"] for operation in out.ops] == ["set_media_duration"]
+
+
+def test_malformed_latest_clarification_selector_is_ignored() -> None:
+    rendered = _agent().render_prompt(
+        EditCopilotInput(
+            utterance="all of them and make them 0.2 seconds each",
+            prior_turns=[
+                {
+                    "role": "assistant",
+                    "content": "How short should they be?",
+                    "clarification_context": {
+                        "selector": {
+                            "scope": [],
+                            "media_kind": "image",
+                            "quantifier": "all",
+                        }
+                    },
+                }
+            ],
+            variant_snapshot=_bulk_snapshot(),
+        )
+    )
+
+    assert "SYSTEM CLARIFICATION" not in rendered
+    assert "SYSTEM PENDING BULK ACTIONS" not in rendered
+
+
+@pytest.mark.parametrize("referent", [[], {}])
+def test_malformed_clarification_referent_is_ignored(referent: object) -> None:
+    from app.agents.edit_copilot import _sanitize_clarification_context
+
+    selector = {"scope": "timeline", "media_kind": "image", "quantifier": "all"}
+    assert _sanitize_clarification_context({"selector": selector, "referent": referent}) == {
+        "selector": selector
+    }
+
+
+def test_clarification_referent_cannot_contradict_typed_selector() -> None:
+    from app.agents.edit_copilot import _sanitize_clarification_context
+
+    selector = {"scope": "timeline", "media_kind": "video", "quantifier": "all"}
+    assert _sanitize_clarification_context({"selector": selector, "referent": "images"}) == {
+        "selector": selector,
+        "referent": "videos",
+    }
+
+
+def test_qualified_video_clips_preserve_video_duration_clarification() -> None:
+    snapshot = _bulk_snapshot()
+    selector = {"scope": "timeline", "media_kind": "video", "quantifier": "all"}
+    input_data = EditCopilotInput(
+        utterance="Make all video clips shorter.",
+        prior_turns=[
+            {
+                "role": "assistant",
+                "content": "How short should all videos be?",
+                "clarification_context": {"selector": selector, "referent": "videos"},
+                "pending_actions": _pending_with_integrity(
+                    snapshot,
+                    [{"op": "set_media_duration"}],
+                    selector,
+                ),
+            }
+        ],
+        variant_snapshot=snapshot,
+    )
+
+    out = _agent().parse(
+        json.dumps(
+            {
+                "intent": "edit",
+                "ops": [
+                    {
+                        "op": "set_media_duration",
+                        "selector": selector,
+                        # A comparative request supplied no number. The model's
+                        # guessed value must never be staged.
+                        "duration_s": 0.2,
+                    }
+                ],
+                "confidence": 0.95,
+                "reply": "Done.",
+                "needs_clarification": False,
+            }
+        ),
+        input_data,
+    )
+
+    assert out.outcome == "clarification"
+    assert out.ops == []
+    assert out.reply == "How short should the videos be?"
+    assert out.clarification_context == {"selector": selector, "referent": "videos"}
+    assert [action["op"] for action in out.pending_actions] == ["set_media_duration"]
+
+
 @pytest.mark.parametrize("omitted_op", ["add_unused_sources", "set_media_duration"])
 def test_pronoun_followup_restores_safe_pending_bulk_action(omitted_op: str) -> None:
     snapshot = _bulk_snapshot()
@@ -3503,12 +4047,13 @@ def test_prompt_version_bumped_for_numbered_follow_up_resolution() -> None:
     # (2026-08-27-v34) for durable pending bulk actions and deterministic
     # missing-duration clarification, then (2026-08-27-v35) for expanded
     # guided timeline capacity, then (2026-08-28-v36) to make stack_images a
-    # consecutive individual-clip slideshow with no implicit Creator Block — update
-    # this pin whenever EDIT_COPILOT_PROMPT_VERSION moves, per the
-    # prompt-change rule.
+    # consecutive individual-clip slideshow with no implicit Creator Block, then
+    # (2026-08-28-v37) so only the newest assistant turn can provide structured
+    # clarification and pending-action context — update this pin whenever
+    # EDIT_COPILOT_PROMPT_VERSION moves, per the prompt-change rule.
     from app.agents.edit_copilot import EDIT_COPILOT_PROMPT_VERSION
 
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-28-v36"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-08-28-v37"
 
 
 def _motion_snapshot() -> dict:
