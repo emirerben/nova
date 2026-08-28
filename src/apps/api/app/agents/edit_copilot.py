@@ -2424,6 +2424,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         ops: list[dict] = []
         ordinary_op_count = 0
         bulk_caption_op_count = 0
+        bulk_parse_failed = False
         ordinary_raw_count = sum(
             1
             for raw_op in raw_ops
@@ -2507,6 +2508,19 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                     bulk_caption_op_count += 1
                 elif raw_name not in _BULK_OPS:
                     ordinary_op_count += 1
+            elif raw_name in _BULK_OPS:
+                bulk_parse_failed = True
+
+        if bulk_parse_failed:
+            state.reject(
+                op="bundle",
+                reason="invalid_value",
+                detail=(
+                    "one or more bulk media actions could not resolve every eligible target; "
+                    "the complete bundle was rejected without partial operations"
+                ),
+            )
+            ops = []
 
         ops, no_effect_reply = _drop_normalized_no_effect_ops(ops, input.variant_snapshot)
 

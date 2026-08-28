@@ -1621,6 +1621,39 @@ def test_capacity_followup_rejects_when_all_authoritative_targets_become_unready
     assert "complete all-selection changed" in final.reply
 
 
+def test_bulk_bundle_discards_valid_siblings_when_one_selector_has_no_targets() -> None:
+    snapshot = _bulk_snapshot()
+    for source in snapshot["source_pool"]:
+        if not source.get("used"):
+            source["status"] = "analyzing"
+
+    out = _parse(
+        [
+            {
+                "op": "add_unused_sources",
+                "selector": {
+                    "scope": "unused_sources",
+                    "media_kind": "all",
+                    "quantifier": "all",
+                },
+            },
+            {
+                "op": "stack_images",
+                "selector": {
+                    "scope": "timeline",
+                    "media_kind": "image",
+                    "quantifier": "all",
+                },
+            },
+        ],
+        snapshot=snapshot,
+    )
+
+    assert out.ops == []
+    assert out.outcome == "failed"
+    assert any(reason["op"] == "bundle" for reason in out.rejection_reasons)
+
+
 def test_format_snapshot_renders_meta_only_captions() -> None:
     from app.agents.edit_copilot import _format_snapshot
 
