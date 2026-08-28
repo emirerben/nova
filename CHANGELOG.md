@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.56.0.5] — 2026-08-28
+
+### Fixed
+- **Fresh Kria requests no longer inherit obsolete clarification selectors.** Only the latest assistant turn can supply structured referent and pending-action context, so an earlier add-all capacity clarification cannot retarget a new image-only 0.2-second slideshow request or atomically reject an otherwise valid draft.
+
 ## [0.56.0.4] — 2026-08-28
 
 ### Fixed
