@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.56.0.6] — 2026-08-28
+
+### Fixed
+- **Saved guided edits with music now render successfully.** Revision rerenders validate UUID-shaped music identities but bind them using the text type stored by `MusicTrack`, preventing PostgreSQL's `text = uuid` error after a large Kria edit is saved.
+
 ## [0.56.0.5] — 2026-08-28
 
 ### Fixed
