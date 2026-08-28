@@ -2,21 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.57.0.0] — 2026-08-28
 
 ### Added
-- **Mobile creators can now edit against a direct thumbnail timeline.** A fixed center playhead, tap-to-seek clip selection, 44px source In/Out handles, pinch zoom, visible zoom controls, and Fit make precise trimming practical on phone-sized screens.
+- **Mobile creators can now edit against a direct thumbnail timeline.** A fixed near-left playhead, tap-to-seek clip selection, 44px source In/Out handles, pinch zoom, visible zoom controls, and Fit make precise trimming practical on phone-sized screens.
 - **Text can now be created, edited, and positioned directly in the video preview.** The title receives focus immediately, stays draggable within the canvas, and preserves one-step undo without forcing creators into a form sheet.
 - **A real-media mobile QA route now covers the complete core gesture loop.** The guarded fixture exercises touch trimming, ripple behavior, split, mute, delete, undo, scrubbing, and Save at both supported mobile viewports.
 
 ### Changed
 - **Pocket editing keeps clip actions above an icon-led shadcn tool dock.** Split, Mute, Replace, Move, Reset, and Delete remain discoverable without shrinking touch targets or hiding capability reasons.
 - **Every mobile tool now opens a working editor state.** Captions, sounds, visuals, overlays, styles, and Kria expose functional actions while detailed changes stay in one shadcn sheet at a time.
+- **Uploaded visuals and overlays now appear as their actual media in the phone preview.** Creators can select and move overlays directly, then adjust source In/Out, scale, display mode, layer order, position, and duration with the same icon-led shadcn controls.
 - **Mobile Save still uses Nova's existing atomic editor commit and render path.** Timeline slots, source bounds, beat timing, conflict handling, and feature gates keep their current contracts.
 
 ### Fixed
 - **Trim gestures now create exactly one undo step and ripple later clips from the canonical timeline.** Transition-overlap taps select the visible incoming clip, pinch zoom preserves its fixed-playhead anchor, and keyboard users retain a native seek control after touch gestures.
-- **Timeline thumbnails now match each clip's source window without stale or distorted frames.** Current requests clear old imagery immediately, source-plus-clip decoding avoids cross-editor cancellation, and pooled media resources are released after each decode queue drains.
+- **Timeline thumbnails now match each clip's source window without stale or distorted frames.** Current requests clear old imagery immediately, decoding is globally bounded, raster memory is byte-capped, and playback/trim/resize updates are coalesced to display frames for smooth phone interaction.
+- **Mobile chrome now respects iPhone safe areas and the 44px touch contract.** The top bar clears status bars and notches, resize handles remain easy to acquire over video, and primary tool icons use the intended 24px size.
 
 ## [0.56.0.4] — 2026-08-28
 

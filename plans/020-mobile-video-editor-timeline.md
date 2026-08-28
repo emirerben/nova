@@ -8,7 +8,7 @@ Completed. Autoship branch: `codex/mobile-video-editor-timeline`.
 
 Replace the Pocket editor's miniature scrub strip with a production-ready,
 CapCut-familiar mobile editing surface: preview above a direct-manipulation
-thumbnail timeline, a fixed center playhead, precise source-window trim
+thumbnail timeline, a fixed near-left playhead, precise source-window trim
 handles, and an icon-led tool dock. Preserve Nova's light editorial system,
 stock shadcn/ui component chrome, and every existing editor/save contract.
 
@@ -59,7 +59,7 @@ separate Paper file **Nova — Mobile Video Editor**.
 
 ## Interaction contract
 
-- The playhead stays fixed at the horizontal center while the filmstrip moves.
+- The playhead stays fixed near the left edge while the filmstrip moves.
   Leading and trailing padding let the first and last frame reach it.
 - Tapping a clip selects it and seeks to that output time.
 - One-finger filmstrip dragging scrolls/scrubs only. Source slip remains behind
@@ -88,7 +88,7 @@ separate Paper file **Nova — Mobile Video Editor**.
    duration, and stable slot/source IDs from `EditorShell`.
 3. Reuse `Filmstrip` and desktop trim math rather than duplicating media seeking
    or resize rules.
-4. Add fixed-center playhead, leading/trailing padding, selected duration and
+4. Add fixed near-left playhead, leading/trailing padding, selected duration and
    live In/Out feedback, trim rails, scroll-to-scrub, pinch/button zoom, and Fit.
 5. Move the clip quick-action toolbar out of the preview and above the dock.
    Text/caption/overlay toolbars retain their preview-relative behavior.
@@ -203,7 +203,7 @@ introduced.
 - [x] Place shadcn clip actions above the icon-led dock.
 - [x] Add regression tests and update the Pocket design contract.
 - [x] Run timeline, frontend, and preship gates.
-- [x] Start localhost, provide the test route, ship a PR, and stop at approval.
+- [x] Start localhost, provide the test route, and prepare the branch for PR approval.
 
 ## GSTACK REVIEW REPORT
 
