@@ -5978,17 +5978,19 @@ def test_guided_timeline_projection_accepts_production_scale_103_slot_commit(mon
 
     job = _job()
     variant = job.assembly_plan["variants"][0]
-    sources = [
-        {
-            "media_id": f"media-{index}",
-            "lane": "clip",
-            "gcs_path": f"slot-uploads/media-{index}.jpg",
-            "generation": "g1",
-            "kind": "image",
-            "duration_s": 1.0,
-        }
-        for index in range(103)
-    ]
+    sources = []
+    for index in range(103):
+        is_image = 1 <= index <= 58
+        sources.append(
+            {
+                "media_id": f"media-{index}",
+                "lane": "clip",
+                "gcs_path": f"slot-uploads/media-{index}.{'jpg' if is_image else 'mp4'}",
+                "generation": "g1",
+                "kind": "image" if is_image else "video",
+                "duration_s": 1.0 if is_image else 5.0,
+            }
+        )
     current = {
         "approval_proposal_version": 1,
         "approval_media_digest": "a" * 64,
@@ -6010,7 +6012,17 @@ def test_guided_timeline_projection_accepts_production_scale_103_slot_commit(mon
                     slot_id=f"slot-{index}",
                     clip_index=index,
                     in_s=0.0,
-                    duration_s=0.1,
+                    duration_s=(
+                        0.2
+                        if 1 <= index <= 58
+                        else 2.8
+                        if index == 66
+                        else 2.0
+                        if index == 0 or 59 <= index <= 65
+                        else 0.8
+                    ),
+                    transition_after="cut",
+                    transition_duration_s=0,
                 )
                 for index in range(103)
             ],
@@ -6018,7 +6030,9 @@ def test_guided_timeline_projection_accepts_production_scale_103_slot_commit(mon
     )
 
     assert len(result["segments"]) == 103
-    assert result["segments"][-1]["output_start_s"] == pytest.approx(10.2)
+    assert sum(segment["duration_s"] for segment in result["segments"]) == pytest.approx(59.2)
+    assert all(segment["transition_after"] == "cut" for segment in result["segments"])
+    assert all(segment["transition_duration_s"] == 0 for segment in result["segments"])
 
 
 def test_guided_timeline_rejects_transition_when_feature_is_disabled(monkeypatch):
