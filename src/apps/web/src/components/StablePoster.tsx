@@ -9,6 +9,11 @@ export interface StablePosterProps
   src?: string | null;
   /** Stable object/render identity. Signature churn is ignored when this is unchanged. */
   identity?: string;
+  /**
+   * Optional caller-controlled retry allowance. A changed key lets a failed
+   * poster adopt one newly authorized URL while the render identity is stable.
+   */
+  retryKey?: string;
   /** Optional placeholder shown after the poster has failed to load. */
   fallback?: React.ReactNode;
 }
@@ -23,6 +28,7 @@ export interface StablePosterProps
 export function StablePoster({
   src,
   identity,
+  retryKey,
   fallback = null,
   onError,
   ...rest
@@ -31,10 +37,11 @@ export function StablePoster({
     identity: null,
     src: null,
   });
-  const retriedIdentityRef = useRef<string | null>(null);
+  const retriedKeyRef = useRef<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [, setRetryNonce] = useState(0);
   const effectiveIdentity = stableVideoSourceIdentity(src, identity);
+  const retryAllowanceKey = retryKey ?? effectiveIdentity;
 
   // A source can disappear when a new render is selected. Never let the old
   // poster bleed into that new identity while the matching poster is absent.
@@ -45,8 +52,8 @@ export function StablePoster({
     heldRef.current = { identity: effectiveIdentity, src: null };
   } else if (
     src &&
-    (heldRef.current.src === null ||
-      effectiveIdentity !== heldRef.current.identity)
+    (effectiveIdentity !== heldRef.current.identity ||
+      (heldRef.current.src === null && !failed))
   ) {
     heldRef.current = { identity: effectiveIdentity, src };
   }
@@ -55,21 +62,22 @@ export function StablePoster({
   useEffect(() => {
     if (previousIdentityRef.current !== effectiveIdentity) {
       previousIdentityRef.current = effectiveIdentity;
-      retriedIdentityRef.current = null;
+      retriedKeyRef.current = null;
       setFailed(false);
     } else if (
       failed &&
       src &&
       src !== heldRef.current.src &&
-      retriedIdentityRef.current !== effectiveIdentity
+      retriedKeyRef.current !== retryAllowanceKey
     ) {
-      // A new signed URL gets one retry after an image error, but subsequent
-      // signature churn does not keep re-requesting a permanently missing key.
-      retriedIdentityRef.current = effectiveIdentity;
+      // A new signed URL gets one retry after an image error. By default that
+      // is once per render identity; callers can explicitly authorize bounded
+      // retries by changing retryKey.
+      retriedKeyRef.current = retryAllowanceKey;
       heldRef.current = { identity: effectiveIdentity, src };
       setFailed(false);
     }
-  }, [effectiveIdentity, failed, src]);
+  }, [effectiveIdentity, failed, retryAllowanceKey, src]);
 
   const heldSrc = heldRef.current.src ?? src ?? null;
   if (!heldSrc || failed) return <>{fallback}</>;
@@ -81,16 +89,16 @@ export function StablePoster({
     if (
       src &&
       src !== heldRef.current.src &&
-      retriedIdentityRef.current !== effectiveIdentity
+      retriedKeyRef.current !== retryAllowanceKey
     ) {
-      retriedIdentityRef.current = effectiveIdentity;
+      retriedKeyRef.current = retryAllowanceKey;
       heldRef.current = { ...heldRef.current, src };
       setFailed(false);
       setRetryNonce((value) => value + 1);
     } else {
       setFailed(true);
+      onError?.(event);
     }
-    onError?.(event);
   };
 
   return <img {...rest} src={heldSrc} alt={rest.alt ?? ""} onError={handleError} />;

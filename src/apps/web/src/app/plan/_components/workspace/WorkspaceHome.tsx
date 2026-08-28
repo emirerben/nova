@@ -10,7 +10,7 @@
  * The ideas ledger is gone — items are created by the New-video flow.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   createCreatorWorkspaceRelevanceProposal,
@@ -20,7 +20,16 @@ import {
   type ContentPlan,
   type CreatorWorkspaceRelevanceProposal,
 } from "@/lib/plan-api";
-import { listMyJobs, type LibraryJob } from "@/lib/me-api";
+import {
+  listMyJobs,
+  refreshMyJobPosters,
+  type LibraryJob,
+  type PosterRefreshJob,
+} from "@/lib/me-api";
+import {
+  libraryPosterRecoveryKey,
+  libraryPosterRecoveryKeyForIdentity,
+} from "@/lib/library-poster";
 import type { TikTokConnection } from "@/lib/tiktok-api";
 import LibraryTile from "@/components/library/LibraryTile";
 import TikTokConnectionCard from "@/components/library/TikTokConnectionCard";
@@ -31,6 +40,67 @@ import { CreatorWorkspacePanel } from "./CreatorWorkspacePanel";
 
 const CREATOR_WORKSPACE_UPLOADS_ENABLED =
   process.env.NEXT_PUBLIC_MAIN_CREATOR_AGENT_FREEFORM_UPLOADS_ENABLED === "true";
+
+export const POSTER_RECOVERY_DELAYS_MS = [1_500, 3_000, 6_000, 12_000, 24_000] as const;
+export const POSTER_REFRESH_TRANSPORT_DELAYS_MS = [1_500, 3_000, 6_000, 12_000, 24_000] as const;
+export const POSTER_ERROR_REFRESH_DEBOUNCE_MS = 400;
+export const POSTER_REFRESH_TIMEOUT_MS = 10_000;
+export const POSTER_REFRESH_MAX_JOB_IDS = 200;
+
+function needsPosterRecovery(
+  job: LibraryJob,
+  failedPosterKeys?: ReadonlySet<string>,
+): boolean {
+  return (
+    job.status === "ready" &&
+    job.poster_status !== "unavailable" &&
+    (!job.poster_url || failedPosterKeys?.has(libraryPosterRecoveryKey(job)) === true)
+  );
+}
+
+function mergeRefreshedPosterMetadata(
+  current: LibraryJob[],
+  refreshed: PosterRefreshJob[],
+): LibraryJob[] {
+  const refreshedById = new Map(refreshed.map((job) => [job.id, job]));
+  return current.map((job) => {
+    const poster = refreshedById.get(job.id);
+    return poster
+      ? {
+          ...job,
+          poster_url: poster.poster_url,
+          poster_identity: poster.poster_identity,
+          poster_status: poster.poster_status,
+        }
+      : job;
+  });
+}
+
+interface PosterRecoveryState {
+  posterAttempts: number;
+  transportFailures: number;
+  nextAttemptAt: number;
+}
+
+async function refreshPostersWithTimeout(
+  jobIds: string[],
+  controller: AbortController,
+) {
+  let timeoutId: number | null = null;
+  try {
+    return await Promise.race([
+      refreshMyJobPosters(jobIds, controller.signal),
+      new Promise<never>((_, reject) => {
+        timeoutId = window.setTimeout(() => {
+          controller.abort();
+          reject(new Error("Poster refresh timed out"));
+        }, POSTER_REFRESH_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timeoutId !== null) window.clearTimeout(timeoutId);
+  }
+}
 
 interface WorkspaceHomeProps {
   plan: ContentPlan;
@@ -53,6 +123,19 @@ export function WorkspaceHome({ plan, onRefresh, onError }: WorkspaceHomeProps) 
   const [workspaceFiles, setWorkspaceFiles] = useState<File[]>([]);
   const [uploadingWorkspaceFootage, setUploadingWorkspaceFootage] = useState(false);
   const [workspaceUploadError, setWorkspaceUploadError] = useState<string | null>(null);
+  const jobsRef = useRef<LibraryJob[]>([]);
+  const posterRecoveryStateRef = useRef(new Map<string, PosterRecoveryState>());
+  const failedPosterKeysRef = useRef(new Set<string>());
+  const posterErrorRefreshKeysRef = useRef(new Set<string>());
+  const pendingPosterErrorsRef = useRef(new Map<string, string>());
+  const posterErrorRefreshDueAtRef = useRef<number | null>(null);
+  const posterRecoveryInFlightRef = useRef(false);
+  const posterRefreshAbortRef = useRef<AbortController | null>(null);
+  const posterRefreshRequestIdRef = useRef(0);
+  const mountedRef = useRef(true);
+  const [posterRecoveryTick, setPosterRecoveryTick] = useState(0);
+
+  jobsRef.current = jobs;
 
   useEffect(() => {
     // Do not let a proposal or retry from the previous plan leak into a newly
@@ -78,11 +161,318 @@ export function WorkspaceHome({ plan, onRefresh, onError }: WorkspaceHomeProps) 
     void load();
   }, [load]);
 
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      posterRefreshRequestIdRef.current += 1;
+      posterRefreshAbortRef.current?.abort();
+      posterRefreshAbortRef.current = null;
+      posterRecoveryInFlightRef.current = false;
+    };
+  }, []);
+
+  const posterRecoveryJobs = useMemo(
+    () =>
+      jobs.filter((job) =>
+        needsPosterRecovery(job, failedPosterKeysRef.current),
+      ),
+    // The tick makes ref-backed image failures visible to this derived list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [jobs, posterRecoveryTick],
+  );
+  const exhaustedPosterJobIds = useMemo(
+    () =>
+      new Set(
+        posterRecoveryJobs
+          .filter(
+            (job) =>
+              (posterRecoveryStateRef.current.get(libraryPosterRecoveryKey(job))
+                ?.posterAttempts ?? 0) >=
+              POSTER_RECOVERY_DELAYS_MS.length,
+          )
+          .map((job) => job.id),
+      ),
+    // The tick makes ref-backed attempt changes visible without rebuilding the
+    // entire jobs array after a failed background request.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [posterRecoveryJobs, posterRecoveryTick],
+  );
+  const transportUnavailablePosterJobIds = useMemo(
+    () =>
+      new Set(
+        posterRecoveryJobs
+          .filter(
+            (job) =>
+              (posterRecoveryStateRef.current.get(libraryPosterRecoveryKey(job))
+                ?.transportFailures ?? 0) >=
+              POSTER_REFRESH_TRANSPORT_DELAYS_MS.length,
+          )
+          .map((job) => job.id),
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [posterRecoveryJobs, posterRecoveryTick],
+  );
+
+  const posterRecoverySignature = posterRecoveryJobs
+    .map(libraryPosterRecoveryKey)
+    .sort()
+    .join("|");
+
+  useEffect(() => {
+    if (posterRecoveryInFlightRef.current) return;
+
+    const now = Date.now();
+    const currentJobKeys = new Set(jobsRef.current.map(libraryPosterRecoveryKey));
+    for (const key of failedPosterKeysRef.current) {
+      if (!currentJobKeys.has(key)) failedPosterKeysRef.current.delete(key);
+    }
+    for (const key of posterErrorRefreshKeysRef.current) {
+      if (!currentJobKeys.has(key)) posterErrorRefreshKeysRef.current.delete(key);
+    }
+    for (const key of pendingPosterErrorsRef.current.keys()) {
+      if (!currentJobKeys.has(key)) pendingPosterErrorsRef.current.delete(key);
+    }
+    if (pendingPosterErrorsRef.current.size === 0) {
+      posterErrorRefreshDueAtRef.current = null;
+    }
+    const activeRecoveryJobs = jobsRef.current.filter((job) =>
+      needsPosterRecovery(job, failedPosterKeysRef.current),
+    );
+    const activeRecoveryKeys = new Set(
+      activeRecoveryJobs.map(libraryPosterRecoveryKey),
+    );
+    for (const key of posterRecoveryStateRef.current.keys()) {
+      if (!activeRecoveryKeys.has(key)) posterRecoveryStateRef.current.delete(key);
+    }
+    for (const job of activeRecoveryJobs) {
+      const key = libraryPosterRecoveryKey(job);
+      if (!posterRecoveryStateRef.current.has(key)) {
+        posterRecoveryStateRef.current.set(key, {
+          posterAttempts: 0,
+          transportFailures: 0,
+          nextAttemptAt: now + POSTER_RECOVERY_DELAYS_MS[0],
+        });
+      }
+    }
+
+    const nextRecoveryAt = Math.min(
+      ...activeRecoveryJobs
+        .map((job) =>
+          posterRecoveryStateRef.current.get(libraryPosterRecoveryKey(job)),
+        )
+        .filter(
+          (state): state is PosterRecoveryState =>
+            Boolean(
+              state &&
+                state.posterAttempts < POSTER_RECOVERY_DELAYS_MS.length &&
+                state.transportFailures <
+                  POSTER_REFRESH_TRANSPORT_DELAYS_MS.length,
+            ),
+        )
+        .map((state) => state.nextAttemptAt),
+    );
+    const nextErrorRefreshAt = posterErrorRefreshDueAtRef.current ?? Infinity;
+    const nextRefreshAt = Math.min(nextRecoveryAt, nextErrorRefreshAt);
+    if (!Number.isFinite(nextRefreshAt)) return;
+
+    const timer = window.setTimeout(() => {
+      if (posterRecoveryInFlightRef.current) return;
+      const firedAt = Date.now();
+      const targetJobIds = new Set<string>();
+      const scheduledRecoveryKeys = new Map<string, string>();
+      const duePosterErrorKeys = new Set<string>();
+
+      if (
+        posterErrorRefreshDueAtRef.current !== null &&
+        posterErrorRefreshDueAtRef.current <= firedAt
+      ) {
+        for (const [key, jobId] of pendingPosterErrorsRef.current) {
+          targetJobIds.add(jobId);
+          duePosterErrorKeys.add(key);
+        }
+        posterErrorRefreshDueAtRef.current = null;
+      }
+
+      for (const job of jobsRef.current.filter((candidate) =>
+        needsPosterRecovery(candidate, failedPosterKeysRef.current),
+      )) {
+        const key = libraryPosterRecoveryKey(job);
+        const state = posterRecoveryStateRef.current.get(key);
+        if (
+          !state ||
+          state.posterAttempts >= POSTER_RECOVERY_DELAYS_MS.length ||
+          state.transportFailures >= POSTER_REFRESH_TRANSPORT_DELAYS_MS.length ||
+          state.nextAttemptAt > firedAt
+        ) {
+          continue;
+        }
+        targetJobIds.add(job.id);
+        scheduledRecoveryKeys.set(job.id, key);
+      }
+
+      if (targetJobIds.size === 0) {
+        setPosterRecoveryTick((value) => value + 1);
+        return;
+      }
+
+      posterRecoveryInFlightRef.current = true;
+      setPosterRecoveryTick((value) => value + 1);
+
+      const controller = new AbortController();
+      const requestId = ++posterRefreshRequestIdRef.current;
+      posterRefreshAbortRef.current = controller;
+      const requestedIds = [...targetJobIds].slice(0, POSTER_REFRESH_MAX_JOB_IDS);
+      const requestedIdSet = new Set(requestedIds);
+      for (const key of duePosterErrorKeys) {
+        const jobId = pendingPosterErrorsRef.current.get(key);
+        if (!jobId || !requestedIdSet.has(jobId)) continue;
+        pendingPosterErrorsRef.current.delete(key);
+      }
+      if (pendingPosterErrorsRef.current.size > 0) {
+        posterErrorRefreshDueAtRef.current = firedAt;
+      }
+      const requestedJobsById = new Map(
+        jobsRef.current.map((job) => [job.id, job]),
+      );
+
+      const recordTransportFailure = (jobId: string, failedAt: number) => {
+        const currentJob = requestedJobsById.get(jobId);
+        if (!currentJob) return;
+        const key = libraryPosterRecoveryKey(currentJob);
+        const state = posterRecoveryStateRef.current.get(key);
+        if (!state) return;
+        state.transportFailures += 1;
+        state.nextAttemptAt =
+          state.transportFailures < POSTER_REFRESH_TRANSPORT_DELAYS_MS.length
+            ? failedAt +
+              POSTER_REFRESH_TRANSPORT_DELAYS_MS[state.transportFailures]
+            : Infinity;
+      };
+
+      void refreshPostersWithTimeout(requestedIds, controller)
+        .then(({ jobs: refreshedJobs }) => {
+          if (requestId !== posterRefreshRequestIdRef.current) return;
+          const completedAt = Date.now();
+          const refreshedById = new Map(
+            refreshedJobs.map((job) => [job.id, job]),
+          );
+          const loadedById = new Map(
+            jobsRef.current.map((job) => [job.id, job]),
+          );
+
+          for (const jobId of requestedIds) {
+            const currentJob = loadedById.get(jobId);
+            const refreshed = refreshedById.get(jobId);
+            if (!currentJob || !refreshed) {
+              recordTransportFailure(jobId, completedAt);
+              continue;
+            }
+
+            const key = libraryPosterRecoveryKey(currentJob);
+            const state = posterRecoveryStateRef.current.get(key);
+            if (!state) continue;
+            state.transportFailures = 0;
+
+            const refreshedJob = {
+              ...currentJob,
+              poster_url: refreshed.poster_url,
+              poster_identity: refreshed.poster_identity,
+              poster_status: refreshed.poster_status,
+            };
+            if (
+              scheduledRecoveryKeys.get(jobId) === key &&
+              needsPosterRecovery(refreshedJob, failedPosterKeysRef.current)
+            ) {
+              state.posterAttempts += 1;
+              state.nextAttemptAt =
+                state.posterAttempts < POSTER_RECOVERY_DELAYS_MS.length
+                  ? completedAt + POSTER_RECOVERY_DELAYS_MS[state.posterAttempts]
+                  : Infinity;
+            } else if (!needsPosterRecovery(refreshedJob, failedPosterKeysRef.current)) {
+              state.nextAttemptAt = Infinity;
+            }
+          }
+
+          setJobs((current) =>
+            mergeRefreshedPosterMetadata(current, refreshedJobs),
+          );
+        })
+        .catch(() => {
+          if (requestId !== posterRefreshRequestIdRef.current) return;
+          const failedAt = Date.now();
+          for (const jobId of requestedIds) recordTransportFailure(jobId, failedAt);
+        })
+        .finally(() => {
+          if (requestId !== posterRefreshRequestIdRef.current) return;
+          if (posterRefreshAbortRef.current === controller) {
+            posterRefreshAbortRef.current = null;
+          }
+          posterRecoveryInFlightRef.current = false;
+          if (mountedRef.current) {
+            setPosterRecoveryTick((value) => value + 1);
+          }
+        });
+    }, Math.max(0, nextRefreshAt - now));
+
+    return () => window.clearTimeout(timer);
+  }, [posterRecoverySignature, posterRecoveryTick]);
+
+  const handlePosterLoadError = useCallback(
+    (jobId: string, posterIdentity: string | null) => {
+      const key = posterIdentity !== null
+        ? libraryPosterRecoveryKeyForIdentity(jobId, posterIdentity)
+        : (() => {
+            const currentJob = jobsRef.current.find((job) => job.id === jobId);
+            return currentJob
+              ? libraryPosterRecoveryKey(currentJob)
+              : libraryPosterRecoveryKeyForIdentity(jobId, null);
+          })();
+      failedPosterKeysRef.current.add(key);
+      if (posterErrorRefreshKeysRef.current.has(key)) return;
+      posterErrorRefreshKeysRef.current.add(key);
+      pendingPosterErrorsRef.current.set(key, jobId);
+      posterErrorRefreshDueAtRef.current ??=
+        Date.now() + POSTER_ERROR_REFRESH_DEBOUNCE_MS;
+      setPosterRecoveryTick((value) => value + 1);
+    },
+    [],
+  );
+
+  const handlePosterLoadSuccess = useCallback(
+    (jobId: string, posterIdentity: string | null) => {
+      const key = posterIdentity !== null
+        ? libraryPosterRecoveryKeyForIdentity(jobId, posterIdentity)
+        : (() => {
+            const currentJob = jobsRef.current.find((job) => job.id === jobId);
+            return currentJob
+              ? libraryPosterRecoveryKey(currentJob)
+              : libraryPosterRecoveryKeyForIdentity(jobId, null);
+          })();
+      const removedFailure = failedPosterKeysRef.current.delete(key);
+      const removedErrorRefresh = posterErrorRefreshKeysRef.current.delete(key);
+      const removedRecovery = posterRecoveryStateRef.current.delete(key);
+      const removedPendingError = pendingPosterErrorsRef.current.delete(key);
+      const changed =
+        removedFailure ||
+        removedErrorRefresh ||
+        removedRecovery ||
+        removedPendingError;
+      if (!changed) return;
+      if (pendingPosterErrorsRef.current.size === 0) {
+        posterErrorRefreshDueAtRef.current = null;
+      }
+      setPosterRecoveryTick((value) => value + 1);
+    },
+    [],
+  );
+
   async function loadMore() {
     if (!cursor) return;
+    const requestCursor = cursor;
     setLoadingMore(true);
     try {
-      const page = await listMyJobs({ cursor });
+      const page = await listMyJobs({ cursor: requestCursor });
       setJobs((prev) => [...prev, ...page.jobs]);
       setCursor(page.next_cursor);
     } catch {
@@ -268,7 +658,16 @@ export function WorkspaceHome({ plan, onRefresh, onError }: WorkspaceHomeProps) 
               <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
                 {jobs.map((job) => (
                   <li key={job.id}>
-                    <LibraryTile job={job} onDeleted={handleDeleted} />
+                    <LibraryTile
+                      job={job}
+                      onDeleted={handleDeleted}
+                      onPosterLoadError={handlePosterLoadError}
+                      onPosterLoadSuccess={handlePosterLoadSuccess}
+                      posterRecoveryExhausted={exhaustedPosterJobIds.has(job.id)}
+                      posterRefreshUnavailable={transportUnavailablePosterJobIds.has(
+                        job.id,
+                      )}
+                    />
                   </li>
                 ))}
               </ul>

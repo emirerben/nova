@@ -262,6 +262,43 @@ it("stops an active preview, releases the video, and restores trigger focus", as
   expect(screen.getByRole("button", { name: "Play preview" })).toHaveFocus();
 });
 
+it("preserves active playback when poster recovery completes, then shows the poster after stop", async () => {
+  const user = userEvent.setup();
+  const posterlessJob: LibraryJob = {
+    ...baseJob,
+    poster_url: null,
+    poster_status: "repairing",
+  };
+  const recoveredPosterUrl = "https://example.test/video.poster.jpg?sig=recovered";
+  const { container, rerender } = render(<LibraryTile job={posterlessJob} />);
+
+  await user.click(screen.getByRole("button", { name: "Play preview" }));
+  const activeVideo = container.querySelector("video[src]") as HTMLVideoElement;
+  fireEvent.playing(activeVideo);
+
+  rerender(
+    <LibraryTile
+      job={{
+        ...posterlessJob,
+        poster_url: recoveredPosterUrl,
+        poster_identity: "song_text:2026-08-28T10:00:00Z",
+        poster_status: "ready",
+      }}
+    />,
+  );
+
+  expect(container.querySelector("video[src]")).toBe(activeVideo);
+  expect(screen.queryByRole("img", { name: "Your video" })).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "Stop preview" }));
+
+  expect(container.querySelector("video[src]")).toBeNull();
+  expect(screen.getByRole("img", { name: "Your video" })).toHaveAttribute(
+    "src",
+    recoveredPosterUrl,
+  );
+});
+
 it("keeps at most one posterless tile decoding after another preview is selected", async () => {
   const user = userEvent.setup();
   mockGetMyJobPlaybackUrl.mockImplementation(async (jobId) => ({
@@ -570,18 +607,111 @@ it("keeps a pinned posterless tile as one link without an inline media request",
   const links = screen.getAllByRole("link");
   expect(links).toHaveLength(1);
   expect(links[0]).toHaveAttribute("href", "/plan/items/item-42");
-  expect(screen.getByText("Open video")).toBeInTheDocument();
+  expect(screen.getAllByText("Preparing preview…")).not.toHaveLength(0);
+  expect(screen.queryByText("Open video")).not.toBeInTheDocument();
   expect(container.querySelector("video[src]")).toBeNull();
   expect(mockGetMyJobPlaybackUrl).not.toHaveBeenCalled();
 });
 
-it("falls back to an unloaded placeholder when the poster image fails", () => {
-  const { container } = render(<LibraryTile job={baseJob} />);
+it("reports one poster image failure and keeps explicit tap-to-play fallback", () => {
+  const onPosterLoadError = jest.fn();
+  const { container } = render(
+    <LibraryTile job={baseJob} onPosterLoadError={onPosterLoadError} />,
+  );
 
   fireEvent.error(screen.getByRole("img", { name: "Your video" }));
 
+  expect(onPosterLoadError).toHaveBeenCalledTimes(1);
+  expect(onPosterLoadError).toHaveBeenCalledWith(
+    baseJob.id,
+    baseJob.poster_identity,
+  );
+  expect(screen.getByText("Thumbnail unavailable. Tap to play.")).toBeInTheDocument();
+  expect(screen.getByText("Ready to post")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Play preview" })).toBeInTheDocument();
   expect(container.querySelector("video[src]")).toBeNull();
+});
+
+it("reports the stable poster identity after the thumbnail loads", () => {
+  const onPosterLoadSuccess = jest.fn();
+  render(
+    <LibraryTile job={baseJob} onPosterLoadSuccess={onPosterLoadSuccess} />,
+  );
+
+  fireEvent.load(screen.getByRole("img", { name: "Your video" }));
+
+  expect(onPosterLoadSuccess).toHaveBeenCalledWith(
+    baseJob.id,
+    baseJob.poster_identity,
+  );
+});
+
+it("keeps an explicitly unavailable poster tap-to-play without fetching video bytes", () => {
+  const { container } = render(
+    <LibraryTile
+      job={{ ...baseJob, poster_url: null, poster_status: "unavailable" }}
+    />,
+  );
+
+  expect(screen.getByText("Thumbnail unavailable. Tap to play.")).toBeInTheDocument();
+  expect(screen.getByText("Ready to post")).toBeInTheDocument();
+  expect(screen.queryByText("Open video")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Play preview" })).toBeInTheDocument();
+  expect(container.querySelector("video[src]")).toBeNull();
+  expect(mockGetMyJobPlaybackUrl).not.toHaveBeenCalled();
+});
+
+it("keeps an explicitly unavailable pinned poster as a static editor link", () => {
+  const { container } = render(
+    <LibraryTile
+      job={{
+        ...baseJob,
+        poster_url: null,
+        poster_status: "unavailable",
+        content_plan_item_id: "item-42",
+      }}
+    />,
+  );
+
+  expect(screen.getByText("Thumbnail unavailable")).toBeInTheDocument();
+  expect(screen.getByText("Ready to post")).toBeInTheDocument();
+  expect(screen.getAllByRole("link")).toHaveLength(1);
+  expect(screen.queryByText("Open video")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Play preview" })).not.toBeInTheDocument();
+  expect(container.querySelector("video[src]")).toBeNull();
+  expect(mockGetMyJobPlaybackUrl).not.toHaveBeenCalled();
+});
+
+it("settles a posterless tile after bounded recovery with tap-to-play fallback", () => {
+  const { container } = render(
+    <LibraryTile
+      job={{ ...baseJob, poster_url: null }}
+      posterRecoveryExhausted
+    />,
+  );
+
+  expect(screen.getByText("Thumbnail unavailable. Tap to play.")).toBeInTheDocument();
+  expect(screen.getByText("Ready to post")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Play preview" })).toBeInTheDocument();
+  expect(container.querySelector("video[src]")).toBeNull();
+  expect(mockGetMyJobPlaybackUrl).not.toHaveBeenCalled();
+});
+
+it("distinguishes a temporary poster refresh outage from confirmed exhaustion", () => {
+  const { container } = render(
+    <LibraryTile
+      job={{ ...baseJob, poster_url: null, poster_status: "repairing" }}
+      posterRefreshUnavailable
+    />,
+  );
+
+  expect(
+    screen.getByText("Thumbnail temporarily unavailable. Tap to play."),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("Thumbnail unavailable. Tap to play.")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Play preview" })).toBeInTheDocument();
+  expect(container.querySelector("video[src]")).toBeNull();
+  expect(mockGetMyJobPlaybackUrl).not.toHaveBeenCalled();
 });
 
 it("keeps a nonblank retry state when an activated fallback video fails", async () => {
