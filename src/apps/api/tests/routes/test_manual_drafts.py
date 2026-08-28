@@ -16,6 +16,7 @@ from sqlalchemy.exc import OperationalError
 from app.auth import get_current_user
 from app.config import settings
 from app.database import AsyncSessionLocal, get_db, sync_session
+from app.database import engine as async_engine
 from app.main import app
 from app.models import ContentPlan, Job, Persona, PlanItem, User
 from app.routes.generative_jobs import _durable_sources_prefix
@@ -185,10 +186,18 @@ async def test_concurrent_create_manual_draft_requests_converge_on_one_item_and_
                 session,
             )
 
-    first = asyncio.create_task(submit())
-    second = asyncio.create_task(submit())
-    start.set()
-    responses = await asyncio.gather(first, second)
+    # The application engine is process-global while pytest gives async tests
+    # separate event loops. Discard connections pooled by an earlier test so
+    # this concurrency check never checks out an asyncpg connection bound to a
+    # different loop.
+    await async_engine.dispose()
+    try:
+        first = asyncio.create_task(submit())
+        second = asyncio.create_task(submit())
+        start.set()
+        responses = await asyncio.gather(first, second)
+    finally:
+        await async_engine.dispose()
 
     assert {response.plan_item_id for response in responses} == {responses[0].plan_item_id}
     assert {response.job_id for response in responses} == {responses[0].job_id}
