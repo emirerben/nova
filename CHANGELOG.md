@@ -9,6 +9,10 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **Thumbnail recovery no longer interrupts a playing preview or gives up because of a temporary network failure.** Expired signatures, partial refresh responses, delayed requests, and a failed-to-missing-to-recovered poster transition now retry within separate bounded budgets and preserve the active video until the creator stops it.
+## [0.56.0.6] — 2026-08-28
+
+### Fixed
+- **Saved guided edits with music now render successfully.** Revision rerenders validate UUID-shaped music identities but bind them using the text type stored by `MusicTrack`, preventing PostgreSQL's `text = uuid` error after a large Kria edit is saved.
 
 ## [0.57.0.0] — 2026-08-28
 
