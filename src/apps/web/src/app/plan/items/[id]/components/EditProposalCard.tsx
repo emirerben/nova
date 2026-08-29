@@ -316,6 +316,8 @@ export default function EditProposalCard({
       setError(
         code === "media_required"
           ? EMPTY_MEDIA_MESSAGE
+          : code === "proposal_replan_required"
+            ? "This montage needs a new cut plan. Ask Kria to replan it before saving."
           : "Kria couldn’t update your edit direction. Check your connection and try again.",
       );
       // A network timeout is ambiguous: the server may have committed the
@@ -389,7 +391,11 @@ export default function EditProposalCard({
       setEditingApproved(false);
       onChanged(approved);
     } catch (err) {
-      setError("Kria couldn’t approve this plan. Check your connection and try again.");
+      setError(
+        err instanceof PlanApiError && err.code === "proposal_replan_required"
+          ? "This montage needs a new cut plan. Ask Kria to replan the direction before approving."
+          : "Kria couldn’t approve this plan. Check your connection and try again.",
+      );
     } finally {
       setWorkingAction(null);
     }
@@ -936,65 +942,42 @@ export default function EditProposalCard({
         </label>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid gap-3 sm:grid-cols-3">
-          <label htmlFor="edit-proposal-direction" className="text-sm font-medium text-foreground">
-            Direction
-            <Select
-              value={visibleDraft.direction}
-              disabled={isFastCutProgram}
-              onValueChange={(value) =>
-                setDraft({ ...visibleDraft, direction: value as EditProposalDirection })
-              }
-            >
-              <SelectTrigger id="edit-proposal-direction" aria-label="Direction" className="mt-1">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {DIRECTION_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </label>
-          <label htmlFor="edit-proposal-pace" className="text-sm font-medium text-foreground">
-            Pace
-            <Select
-              value={visibleDraft.pace}
-              disabled={isFastCutProgram}
-              onValueChange={(value) =>
-                setDraft({ ...visibleDraft, pace: value as EditProposalPace })
-              }
-            >
-              <SelectTrigger id="edit-proposal-pace" aria-label="Pace" className="mt-1">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {PACE_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </label>
-          <label htmlFor="edit-proposal-duration" className="text-sm font-medium text-foreground">
-            Target length
-            <Select
-              value={String(visibleDraft.duration_s)}
-              disabled={isFastCutProgram}
-              onValueChange={(value) =>
-                setDraft({ ...visibleDraft, duration_s: Number(value) })
-              }
-            >
-              <SelectTrigger id="edit-proposal-duration" aria-label="Target length" className="mt-1">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {durationOptions(visibleDraft.duration_s).map((seconds) => (
-                  <SelectItem key={seconds} value={String(seconds)}>{seconds} seconds</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </label>
-        </div>
+        <dl className="grid gap-3 sm:grid-cols-3">
+          <div>
+            <dt className="text-sm font-medium text-foreground">Direction</dt>
+            <dd className="mt-1 text-sm text-muted-foreground">
+              {DIRECTION_LABELS[visibleDraft.direction]}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-sm font-medium text-foreground">Pace</dt>
+            <dd className="mt-1 text-sm text-muted-foreground">
+              {PACE_LABELS[visibleDraft.pace]}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-sm font-medium text-foreground">Target length</dt>
+            <dd className="mt-1 text-sm text-muted-foreground">{visibleDraft.duration_s} seconds</dd>
+          </div>
+        </dl>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="w-fit px-0 text-lime-800 hover:bg-transparent hover:text-lime-900"
+          onClick={() => {
+            if (conversationEnabled) {
+              setConversationOpen(true);
+              window.setTimeout(() => inputRef.current?.focus(), 0);
+            } else {
+              setLegacyBriefOpen(true);
+            }
+          }}
+        >
+          {conversationEnabled
+            ? "Ask Kria to change direction, pace, or length"
+            : "Start a new plan to change direction, pace, or length"}
+        </Button>
 
         {isFastCutProgram ? (
           <section aria-labelledby="fast-cut-program-heading" className="rounded-lg border border-border bg-background p-3">

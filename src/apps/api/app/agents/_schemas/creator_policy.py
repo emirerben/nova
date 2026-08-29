@@ -6,6 +6,7 @@ from app.agents._schemas.edit_format import (
     coerce_edit_format,
     guided_edit_applicable,
 )
+from app.schemas.edit_proposal import MontageAudioPlan
 
 MAX_MAIN_CREATOR_SELECTED_MEDIA = 12
 CAPABILITY_DRAFT_GUIDED_PROPOSAL = "draft_guided_proposal"
@@ -13,6 +14,10 @@ CAPABILITY_DRAFT_GUIDED_PROPOSAL = "draft_guided_proposal"
 
 class MixedMediaTimingUnavailableError(ValueError):
     """The requested per-kind timing cannot be compiled by an available renderer."""
+
+
+class MontageCadenceUnavailableError(ValueError):
+    """The requested exact cadence conflicts with the available render path."""
 
 
 def effective_render_program(
@@ -36,6 +41,18 @@ def effective_render_program(
             or strategy.montage_audio.preview_source_beds
         )
     )
+    montage_cadence_requires_guided = strategy.montage_cadence is not None
+    guided = manifest.capabilities.get(CAPABILITY_DRAFT_GUIDED_PROPOSAL)
+    if montage_cadence_requires_guided:
+        if manifest.has_voiceover or strategy.audio_strategy == "voiceover":
+            raise MontageCadenceUnavailableError(
+                "exact montage cadence is unavailable with a recorded voiceover"
+            )
+        if not (guided and guided.available):
+            raise MontageCadenceUnavailableError(
+                "source-aware montage requires the guided proposal capability"
+            )
+        return "guided"
     native_required = (
         manifest.has_voiceover
         or (
@@ -47,7 +64,6 @@ def effective_render_program(
     )
     if native_required:
         return "native"
-    guided = manifest.capabilities.get(CAPABILITY_DRAFT_GUIDED_PROPOSAL)
     media_kinds = {media.kind for media in manifest.media}
     # Native montage only receives attached clips. A per-kind timing request
     # needs the guided specialist so pool photos are selected and compiled too.
@@ -60,7 +76,7 @@ def effective_render_program(
         reason = (
             "mixed-media timing requires the guided proposal capability"
             if mixed_media_timing_requires_specialist
-            else "source-aware montage audio requires the guided proposal capability"
+            else "source-aware montage requires the guided proposal capability"
         )
         raise MixedMediaTimingUnavailableError(reason)
     if (
@@ -84,6 +100,19 @@ def normalize_creator_strategy_media(
 ) -> CreativeStrategy:
     """Bound exact refs; optional repair is reserved for the model boundary."""
 
+    if (
+        strategy.montage_cadence is not None
+        and strategy.audio_strategy == "original_audio"
+        and strategy.montage_audio is None
+    ):
+        strategy = strategy.model_copy(
+            update={
+                "montage_audio": MontageAudioPlan(
+                    preserve_source_audio=True,
+                    source_media_ids=strategy.montage_cadence.source_media_ids,
+                )
+            }
+        )
     effective_program = effective_render_program(
         manifest,
         strategy,
@@ -113,6 +142,21 @@ def normalize_creator_strategy_media(
                 )
             }
         )
+    if strategy.montage_cadence is not None:
+        cadence_ids = list(dict.fromkeys(strategy.montage_cadence.source_media_ids))
+        unknown_cadence = [media_id for media_id in cadence_ids if media_id not in manifest_ids]
+        if unknown_cadence:
+            raise ValueError("montage cadence sources must reference manifest media")
+        by_id = {media.media_id: media for media in manifest.media}
+        if any(by_id[media_id].kind != "video" for media_id in cadence_ids):
+            raise ValueError("montage cadence sources must be videos")
+        strategy = strategy.model_copy(
+            update={
+                "montage_cadence": strategy.montage_cadence.model_copy(
+                    update={"source_media_ids": cadence_ids}
+                )
+            }
+        )
     if effective_program == "native":
         native_ids = [
             media.media_id for media in manifest.media if not media.media_id.startswith("asset-")
@@ -139,6 +183,7 @@ __all__ = [
     "MAX_MAIN_CREATOR_SELECTED_MEDIA",
     "CAPABILITY_DRAFT_GUIDED_PROPOSAL",
     "MixedMediaTimingUnavailableError",
+    "MontageCadenceUnavailableError",
     "effective_render_program",
     "normalize_creator_strategy_media",
 ]

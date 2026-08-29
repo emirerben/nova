@@ -30,6 +30,7 @@ from app.schemas.edit_proposal import (
     GUIDED_STORY_MIN_MOMENT_S,
     EditProposalSnapshot,
     MixedMediaTimingProfile,
+    MontageCadenceConstraint,
     canonical_media_digest,
     mixed_media_hold_bounds,
     uses_quick_photo_long_video_timing,
@@ -157,6 +158,10 @@ class GuidedStoryExecutionPlan(BaseModel):
     text_elements: list[TextElement]
     transition_policy: GuidedStoryTransitionPolicy
     mixed_media_timing: MixedMediaTimingProfile | None = None
+    montage_cadence: MontageCadenceConstraint | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     montage_text_bindings: list[dict[str, Any]] = Field(default_factory=list)
     montage_audio: dict[str, Any] | None = None
     typography: GuidedStoryTypography
@@ -410,6 +415,7 @@ def _fast_montage_output_windows(
     track: dict[str, Any] | None,
     video_media_ids: set[str],
     mixed_media_timing: MixedMediaTimingProfile | None = None,
+    preserve_exact_cadence: bool = False,
 ) -> list[tuple[float, float, float | None]]:
     """Allocate hard-cut output windows, optionally snapping marked boundaries.
 
@@ -436,7 +442,11 @@ def _fast_montage_output_windows(
     # The typed profile is already an exact, creator-approved per-kind timing
     # program. Legacy beat snapping can move a 0.5s photo below its minimum,
     # so preserve those approved windows byte-for-byte and use hard cuts.
-    if track and not uses_quick_photo_long_video_timing(mixed_media_timing):
+    if (
+        track
+        and not preserve_exact_cadence
+        and not uses_quick_photo_long_video_timing(mixed_media_timing)
+    ):
         music_start_s = float(track.get("start_s") or 0.0)
         beat_times = sorted(
             round(float(raw_beat) - music_start_s, 3)
@@ -1180,6 +1190,7 @@ def _compile_execution_plan_version(
             track=track,
             video_media_ids={ref.media_id for ref in snapshot.media if ref.kind == "video"},
             mixed_media_timing=snapshot.mixed_media_timing,
+            preserve_exact_cadence=snapshot.montage_cadence is not None,
         )
         for cut, (start_s, end_s, beat_time_s) in zip(
             snapshot.fast_cuts, output_windows, strict=True
@@ -1263,6 +1274,7 @@ def _compile_execution_plan_version(
                 story_timeline=moments,
                 beat_windows=beat_windows,
                 mixed_media_timing=mixed_timing,
+                montage_cadence=snapshot.montage_cadence,
                 text_elements=_text_elements(
                     snapshot, beat_windows, policy, compiler_version=compiler_version
                 ),
@@ -1402,6 +1414,7 @@ def _compile_execution_plan_version(
             story_timeline=moments,
             beat_windows=beat_windows,
             mixed_media_timing=mixed_timing,
+            montage_cadence=snapshot.montage_cadence,
             montage_text_bindings=[
                 binding.model_dump(mode="json") for binding in snapshot.montage_text_bindings
             ],
@@ -1467,14 +1480,18 @@ def validate_proposal_timing(snapshot: EditProposalSnapshot) -> None:
                 windows_by_media.setdefault(cut.media_id, []).append(
                     (float(cut.source_start_s), float(cut.source_end_s))
                 )
-        for windows in windows_by_media.values():
-            windows.sort()
-            for previous, current in zip(windows, windows[1:]):
-                if current[0] < previous[1] - _DURATION_MATCH_TOLERANCE_S:
-                    raise GuidedStoryError(
-                        "guided_story_snapshot_invalid",
-                        "Fast montage cuts cannot reuse overlapping video footage.",
-                    )
+        if not (
+            snapshot.montage_cadence is not None
+            and snapshot.montage_cadence.reuse_policy == "allow_repeat"
+        ):
+            for windows in windows_by_media.values():
+                windows.sort()
+                for previous, current in zip(windows, windows[1:]):
+                    if current[0] < previous[1] - _DURATION_MATCH_TOLERANCE_S:
+                        raise GuidedStoryError(
+                            "guided_story_snapshot_invalid",
+                            "Fast montage cuts cannot reuse overlapping video footage.",
+                        )
 
     media_digest = canonical_media_digest(snapshot.media)
     compile_execution_plan(
@@ -2196,7 +2213,9 @@ def _render_moments(
     mixed_timing = (
         MixedMediaTimingProfile.model_validate(raw_timing) if raw_timing is not None else None
     )
-    exact_mixed_duration = uses_quick_photo_long_video_timing(mixed_timing)
+    exact_mixed_duration = uses_quick_photo_long_video_timing(mixed_timing) or bool(
+        plan.get("montage_cadence")
+    )
     for index, moment in enumerate(plan["story_timeline"]):
         output = os.path.join(tmpdir, f"moment_{index:02d}.mp4")
         if moment["kind"] == "image":
@@ -2242,6 +2261,8 @@ def _render_moments(
                 "kind": moment["kind"],
                 "layout": moment["layout"],
                 "image_motion": moment.get("image_motion"),
+                "source_start_s": round(float(moment.get("source_start_s", 0.0)), 3),
+                "source_end_s": round(float(moment.get("source_end_s", moment["duration_s"])), 3),
                 "output_duration_s": round(float(probe.duration_s), 3),
                 "width": probe.width,
                 "height": probe.height,
@@ -2529,6 +2550,29 @@ def validate_ready_result(
         }
         for row in receipt.moment_stages
     ]
+    cadence_receipt_ok = True
+    if typed_plan.montage_cadence is not None:
+        expected_cadence_stages = [
+            {
+                "moment_id": moment.moment_id,
+                "media_id": moment.media_id,
+                "source_start_s": round(moment.source_start_s, 3),
+                "source_end_s": round(moment.source_end_s, 3),
+                "output_duration_s": round(moment.duration_s, 3),
+            }
+            for moment in typed_plan.story_timeline
+        ]
+        staged_cadence_stages = [
+            {
+                "moment_id": str(row.get("moment_id")),
+                "media_id": str(row.get("media_id")),
+                "source_start_s": round(float(row.get("source_start_s", -1)), 3),
+                "source_end_s": round(float(row.get("source_end_s", -1)), 3),
+                "output_duration_s": round(float(row.get("output_duration_s", -1)), 3),
+            }
+            for row in receipt.moment_stages
+        ]
+        cadence_receipt_ok = staged_cadence_stages == expected_cadence_stages
     staged_text = [str(row.get("element_id")) for row in receipt.text_stages if row.get("visible")]
     exact_story = [row.model_dump(mode="json") for row in typed_plan.story_timeline]
     prefix = f"generative-jobs/{job_id}/"
@@ -2567,6 +2611,7 @@ def validate_ready_result(
         and receipt.music == typed_plan.music
         and staged_media == expected_media_stages
         and staged_moments == expected_moment_stages
+        and cadence_receipt_ok
         and staged_text == receipt.actual_text_ids
         and receipt.expected_duration_s == typed_plan.resolved_duration_s
         and abs(receipt.actual_duration_s - typed_plan.resolved_duration_s)
@@ -2988,7 +3033,9 @@ def render_execution_plan(
     mixed_timing = (
         MixedMediaTimingProfile.model_validate(raw_timing) if raw_timing is not None else None
     )
-    strict_mixed_duration = uses_quick_photo_long_video_timing(mixed_timing)
+    strict_mixed_duration = uses_quick_photo_long_video_timing(mixed_timing) or bool(
+        plan.get("montage_cadence")
+    )
     local_by_id, media_receipts = _download_selected(plan, tmpdir)
     moment_paths, moment_receipts = _render_moments(plan, local_by_id, tmpdir)
     assembled = os.path.join(tmpdir, "guided_story_assembled.mp4")

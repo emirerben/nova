@@ -34,6 +34,7 @@ from app.schemas.edit_proposal import (
 from app.services.content_plan_persona import load_owned_plan_persona_sync
 from app.services.edit_direction_planner import (
     clamp_fast_montage_target_duration_s,
+    round_robin_capacity_s,
 )
 from app.services.edit_proposal_limits import (
     EDIT_PROPOSAL_TASK_HARD_TIME_LIMIT_S,
@@ -187,7 +188,12 @@ def guided_feasibility_threshold_s(media_count: int) -> float:
     )
 
 
-def adapt_target_duration_s(brief_duration_s: int, feasible_s: float) -> int:
+def adapt_target_duration_s(
+    brief_duration_s: int,
+    feasible_s: float,
+    *,
+    allow_source_reuse: bool = False,
+) -> int:
     """Clamp the brief's target to what the footage can actually support.
 
     Never exceeds the feasible estimate (floored, so the agent's target is
@@ -200,7 +206,26 @@ def adapt_target_duration_s(brief_duration_s: int, feasible_s: float) -> int:
     defensive absolute floor matching the agent's Pydantic ge=3.
     """
 
+    if allow_source_reuse:
+        return max(MIN_GUIDED_DURATION_S, min(int(brief_duration_s), 60))
     return max(MIN_GUIDED_DURATION_S, min(int(brief_duration_s), math.floor(feasible_s)))
+
+
+def cadence_target_duration_s(brief, media: list[MediaRef]) -> int | None:  # noqa: ANN001
+    """Validate a cadence against cut capacity, bypassing story-beat minimums."""
+
+    cadence = brief.montage_cadence
+    if cadence is None:
+        return None
+    capacity_s = round_robin_capacity_s(media, cadence)
+    cycle_s = cadence.cut_duration_s * len(cadence.source_media_ids)
+    cycle_count = brief.duration_s / cycle_s
+    if not math.isclose(cycle_count, round(cycle_count), abs_tol=0.001):
+        raise ValueError("round-robin cadence target must contain complete source cycles")
+    required_s = cycle_s if cadence.reuse_policy == "allow_repeat" else brief.duration_s
+    if capacity_s + 0.001 < required_s:
+        raise ValueError("round-robin cadence exceeds available source capacity")
+    return int(brief.duration_s)
 
 
 def _fail(
@@ -752,6 +777,14 @@ def _dispatch_after_auto_design(
 
     dispatch_kwargs = {"bypass_guided_edit_gate": bypass}
     dispatch_kwargs["creator_guided_attempt_id"] = attempt_id
+    # `design_fallback=MAIN_CREATOR_FAIL_CLOSED` is the deploy-skew-safe,
+    # durable marker for a Main Creator-owned guided attempt. Every ordinary
+    # one-click auto-design dispatch must re-check for a session that may have
+    # started after reservation; confirmed Creator execution must not block
+    # itself.
+    dispatch_kwargs["reject_active_creator_session"] = (
+        current.design_fallback != MAIN_CREATOR_FAIL_CLOSED
+    )
     result = dispatch_item_render_for(item_id, ownership_epoch, **dispatch_kwargs)
     if result.outcome not in {"dispatched", "already_active"}:
         # The proposal is already committed (approved, or failed+design_fallback)
@@ -1001,8 +1034,23 @@ def _run_draft_attempt(
                     db.commit()
             return
         feasible_duration_s = feasible_guided_duration_s(media)
+        allow_cadence_reuse = bool(
+            brief.montage_cadence is not None
+            and brief.montage_cadence.reuse_policy == "allow_repeat"
+        )
         feasibility_threshold_s = guided_feasibility_threshold_s(len(media))
-        if feasible_duration_s < feasibility_threshold_s:
+        try:
+            cadence_target_s = cadence_target_duration_s(brief, media)
+        except ValueError:
+            cadence_target_s = None
+            cadence_infeasible = True
+        else:
+            cadence_infeasible = False
+        if cadence_infeasible or (
+            brief.montage_cadence is None
+            and feasible_duration_s < feasibility_threshold_s
+            and not allow_cadence_reuse
+        ):
             with sync_session() as db:
                 locked = _locked_item(db, iid, ownership_epoch)
                 item = locked[0] if locked else None
@@ -1023,7 +1071,11 @@ def _run_draft_attempt(
                     )
                     db.commit()
             return
-        target_duration_s = adapt_target_duration_s(brief.duration_s, feasible_duration_s)
+        target_duration_s = cadence_target_s or adapt_target_duration_s(
+            brief.duration_s,
+            feasible_duration_s,
+            allow_source_reuse=allow_cadence_reuse,
+        )
         if brief.direction == "fast_montage":
             try:
                 target_duration_s = clamp_fast_montage_target_duration_s(
@@ -1154,6 +1206,7 @@ def _run_draft_attempt(
                     target_duration_s=target_duration_s,
                     mixed_media_timing=brief.mixed_media_timing,
                     montage_audio=brief.montage_audio,
+                    montage_cadence=brief.montage_cadence,
                     media=agent_media,
                 )
             )
@@ -1187,6 +1240,7 @@ def _run_draft_attempt(
                             target_duration_s=target_duration_s,
                             mixed_media_timing=brief.mixed_media_timing,
                             montage_audio=brief.montage_audio,
+                            montage_cadence=brief.montage_cadence,
                             review_feedback=review_feedback,
                             media=agent_media,
                         )
@@ -1211,7 +1265,11 @@ def _run_draft_attempt(
         # the true footage cap (P2-1a, 2026-08-18 adversarial review). Reject
         # rather than silently rewrite per-beat durations the agent already
         # sized for a specific total.
-        if output is not None and output.duration_s > math.floor(feasible_duration_s):
+        if (
+            output is not None
+            and brief.montage_cadence is None
+            and output.duration_s > math.floor(feasible_duration_s)
+        ):
             with sync_session() as db:
                 locked = _locked_item(db, iid, ownership_epoch)
                 item = locked[0] if locked else None
@@ -1238,7 +1296,10 @@ def _run_draft_attempt(
             return
         if output is None and brief.direction == "fast_montage":
             fallback_cuts = deterministic_fast_cuts(
-                media, target_duration_s, brief.mixed_media_timing
+                media,
+                target_duration_s,
+                brief.mixed_media_timing,
+                brief.montage_cadence,
             )
             fallback_beats = _fast_story_beats(fallback_cuts)
         else:
@@ -1287,6 +1348,7 @@ def _run_draft_attempt(
                 if output is not None and getattr(output, "montage_audio", None) is not None
                 else brief.montage_audio
             ),
+            montage_cadence=brief.montage_cadence,
             output_orientation=brief.output_orientation,
         )
         if fallback_used:

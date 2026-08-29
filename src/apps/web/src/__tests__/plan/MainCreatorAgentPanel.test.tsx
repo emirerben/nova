@@ -7,6 +7,7 @@ import {
   PlanApiError,
   requestCreatorAutoIteration,
   startCreatorAgentSession,
+  turnCreatorAgentSession,
 } from "@/lib/plan-api";
 
 jest.mock("@/lib/plan-api", () => ({
@@ -26,6 +27,9 @@ const startSession = startCreatorAgentSession as jest.MockedFunction<
 const confirmPlan = confirmCreatorAgentPlan as jest.MockedFunction<typeof confirmCreatorAgentPlan>;
 const requestAuto = requestCreatorAutoIteration as jest.MockedFunction<
   typeof requestCreatorAutoIteration
+>;
+const turnSession = turnCreatorAgentSession as jest.MockedFunction<
+  typeof turnCreatorAgentSession
 >;
 
 const proposed = {
@@ -54,12 +58,31 @@ beforeEach(() => {
   getSession.mockResolvedValue(null);
 });
 
+it("shows a compact status placeholder while checking creator-session eligibility", async () => {
+  let resolveSession!: (value: null) => void;
+  getSession.mockReturnValueOnce(
+    new Promise((resolve) => {
+      resolveSession = resolve;
+    }),
+  );
+
+  render(<MainCreatorAgentPanel itemId="item-1" />);
+
+  expect(
+    screen.getByRole("region", { name: "Create with Kria" }).getAttribute("aria-busy"),
+  ).toBe("true");
+  expect(screen.getByRole("status").textContent).toContain("Checking your saved Kria plan…");
+
+  await act(async () => resolveSession(null));
+  await screen.findByLabelText("Message Kria");
+});
+
 it("asks for intent and never renders before explicit confirmation", async () => {
   startSession.mockResolvedValue(proposed);
   render(<MainCreatorAgentPanel itemId="item-1" />);
 
-  await screen.findByText("Create with Kria");
-  fireEvent.change(screen.getByLabelText("Message Kria"), {
+  const creatorMessage = await screen.findByLabelText("Message Kria");
+  fireEvent.change(creatorMessage, {
     target: { value: "Make it feel energetic" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Start" }));
@@ -89,6 +112,51 @@ it("dispatches only after Render this is clicked", async () => {
   expect(await screen.findByText("Rendering the confirmed direction…")).not.toBeNull();
 });
 
+it("submits the recommended clarification chip as the next creator turn", async () => {
+  const clarification = {
+    ...proposed,
+    status: "briefing" as const,
+    revision: 3,
+    pending_plan: null,
+    events: [
+      {
+        id: "event-1",
+        role: "assistant" as const,
+        event_type: "assistant_question",
+        payload: {
+          message: "I can make a balanced 12-second edit without repeating footage.",
+          options: ["Use the best 12 seconds", "Repeat footage to keep 24 seconds"],
+          recommended_option: "Use the best 12 seconds",
+        },
+        created_at: "2026-08-29T00:00:00Z",
+      },
+    ],
+  };
+  getSession.mockResolvedValue(clarification);
+  turnSession.mockResolvedValue({
+    ...proposed,
+    pending_plan: { ...proposed.pending_plan, summary: "Twelve exact alternating cuts." },
+  });
+
+  render(<MainCreatorAgentPanel itemId="item-1" />);
+
+  const recommendation = await screen.findByRole("button", {
+    name: "Use the best 12 seconds (recommended)",
+  });
+  fireEvent.click(recommendation);
+
+  await waitFor(() =>
+    expect(turnSession).toHaveBeenCalledWith(
+      "item-1",
+      "session-1",
+      "Use the best 12 seconds",
+      3,
+      expect.any(String),
+    ),
+  );
+  expect((screen.getByLabelText("Message Kria") as HTMLTextAreaElement).value).toBe("");
+});
+
 it("stays hidden when the user is outside the backend rollout cohort", async () => {
   getSession.mockRejectedValue(
     new PlanApiError({
@@ -101,6 +169,47 @@ it("stays hidden when the user is outside the backend rollout cohort", async () 
 
   await waitFor(() => expect(getSession).toHaveBeenCalledTimes(1));
   await waitFor(() => expect(container.innerHTML).toBe(""));
+});
+
+it("recovers parent availability after a transient refresh failure and successful action", async () => {
+  const onAvailabilityChange = jest.fn();
+  getSession.mockRejectedValueOnce(new Error("temporary upstream failure"));
+  startSession.mockResolvedValue(proposed);
+
+  render(
+    <MainCreatorAgentPanel
+      itemId="item-1"
+      onAvailabilityChange={onAvailabilityChange}
+    />,
+  );
+
+  expect(await screen.findByText("Kria couldn't refresh this plan. Your work is safe.")).not.toBeNull();
+  expect(onAvailabilityChange).toHaveBeenLastCalledWith("error");
+
+  fireEvent.change(screen.getByLabelText("Message Kria"), {
+    target: { value: "Alternate every second" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Start" }));
+
+  await screen.findByText("A fast arrival-to-sunset story.");
+  expect(onAvailabilityChange).toHaveBeenLastCalledWith("available");
+  expect(screen.queryByText("Kria couldn't refresh this plan. Your work is safe.")).toBeNull();
+});
+
+it("offers an explicit retry after a transient refresh failure", async () => {
+  getSession
+    .mockRejectedValueOnce(new Error("temporary upstream failure"))
+    .mockResolvedValueOnce(null);
+
+  render(<MainCreatorAgentPanel itemId="item-1" />);
+
+  await screen.findByText("Kria couldn't refresh this plan. Your work is safe.");
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+  await waitFor(() => expect(getSession).toHaveBeenCalledTimes(2));
+  await waitFor(() =>
+    expect(screen.queryByText("Kria couldn't refresh this plan. Your work is safe.")).toBeNull(),
+  );
 });
 
 it("shows a strategy preview without a dead render action during planning-only rollout", async () => {

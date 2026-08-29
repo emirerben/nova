@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
+from typing import Protocol
 
 import structlog
 
@@ -21,12 +23,151 @@ from app.schemas.edit_proposal import (
     MediaRef,
     MixedMediaTimingProfile,
     MontageAudioPlan,
+    MontageCadenceConstraint,
     StoryBeat,
     mixed_media_hold_bounds,
     uses_quick_photo_long_video_timing,
 )
 
 log = structlog.get_logger()
+
+
+class CadenceCapacityMedia(Protocol):
+    """Structural media contract shared by creator manifests and proposals."""
+
+    media_id: str
+    kind: str
+    duration_s: float | None
+
+
+def round_robin_capacity_s(
+    media: Sequence[CadenceCapacityMedia], cadence: MontageCadenceConstraint
+) -> float:
+    """Return the longest balanced cadence supported without source reuse."""
+
+    by_id = {ref.media_id: ref for ref in media}
+    capacities: list[int] = []
+    for media_id in cadence.source_media_ids:
+        ref = by_id.get(media_id)
+        if ref is None or ref.kind != "video" or ref.duration_s is None:
+            return 0.0
+        capacities.append(math.floor((float(ref.duration_s) + 0.001) / cadence.cut_duration_s))
+    cycles = min(capacities, default=0)
+    return cycles * len(cadence.source_media_ids) * cadence.cut_duration_s
+
+
+def _ranked_non_overlapping_windows(
+    ref: MediaRef, *, count: int, cut_duration_s: float
+) -> list[tuple[float, float]]:
+    """Choose cadence-aligned windows from strongest moments, then source order.
+
+    Keeping every candidate on the source's cadence grid guarantees that
+    selecting a strong window cannot fragment otherwise usable footage.  That
+    keeps this allocator consistent with ``round_robin_capacity_s`` even when
+    an analyzed moment starts halfway through a cadence interval.
+    """
+
+    duration_s = float(ref.duration_s or 0.0)
+    ranked_moments: list[tuple[float, float, float]] = []
+    for moment in (ref.analysis or {}).get("best_moments") or []:
+        if not isinstance(moment, dict):
+            continue
+        try:
+            start_s = max(0.0, float(moment.get("start_s", 0.0)))
+            end_s = min(duration_s, float(moment.get("end_s", 0.0)))
+        except (TypeError, ValueError):
+            continue
+        if end_s - start_s + 0.001 >= cut_duration_s:
+            ranked_moments.append((_moment_energy(moment), start_s, end_s))
+    ranked_moments.sort(key=lambda value: (-value[0], value[1]))
+
+    total_slots = math.floor((duration_s + 0.001) / cut_duration_s)
+    selected_slots: list[int] = []
+    selected_slot_set: set[int] = set()
+
+    def try_select(slot_index: int) -> bool:
+        if slot_index < 0 or slot_index >= total_slots or slot_index in selected_slot_set:
+            return False
+        selected_slots.append(slot_index)
+        selected_slot_set.add(slot_index)
+        return len(selected_slots) == count
+
+    # Prefer full cadence windows contained by the strongest analyzed moments.
+    # Stop at the exact requested count so even multi-hour footage remains
+    # bounded by the render contract rather than source duration.
+    for _energy, moment_start_s, moment_end_s in ranked_moments:
+        first_slot = math.ceil((moment_start_s - 0.001) / cut_duration_s)
+        last_slot = math.floor((moment_end_s - cut_duration_s + 0.001) / cut_duration_s)
+        for slot_index in range(first_slot, last_slot + 1):
+            if try_select(slot_index):
+                break
+        if len(selected_slots) == count:
+            break
+
+    if len(selected_slots) < count:
+        for slot_index in range(total_slots):
+            if try_select(slot_index):
+                break
+
+    if len(selected_slots) == count:
+        return [
+            (
+                round(slot_index * cut_duration_s, 3),
+                round((slot_index + 1) * cut_duration_s, 3),
+            )
+            for slot_index in selected_slots
+        ]
+    raise ValueError("round-robin cadence cannot allocate enough distinct source windows")
+
+
+def deterministic_round_robin_cuts(
+    media: list[MediaRef],
+    duration_s: int | float,
+    cadence: MontageCadenceConstraint,
+) -> list[FastMontageCut]:
+    """Compile exact creator-requested cadence from ranked source windows."""
+
+    cut_count_float = float(duration_s) / cadence.cut_duration_s
+    cut_count = round(cut_count_float)
+    if abs(cut_count_float - cut_count) > 0.001 or cut_count % len(cadence.source_media_ids):
+        raise ValueError("round-robin target must contain complete exact cadence cycles")
+    by_id = {ref.media_id: ref for ref in media}
+    per_source_count = cut_count // len(cadence.source_media_ids)
+    windows: dict[str, list[tuple[float, float]]] = {}
+    for media_id in cadence.source_media_ids:
+        ref = by_id.get(media_id)
+        if ref is None:
+            raise ValueError("round-robin cadence references unavailable media")
+        unique_count = min(
+            per_source_count,
+            math.floor((float(ref.duration_s or 0.0) + 0.001) / cadence.cut_duration_s),
+        )
+        if unique_count < per_source_count and cadence.reuse_policy == "no_repeat":
+            raise ValueError("round-robin cadence exceeds non-repeating source capacity")
+        ranked = _ranked_non_overlapping_windows(
+            ref, count=max(1, unique_count), cut_duration_s=cadence.cut_duration_s
+        )
+        windows[media_id] = [ranked[index % len(ranked)] for index in range(per_source_count)]
+    source_offsets = {media_id: 0 for media_id in cadence.source_media_ids}
+    cuts: list[FastMontageCut] = []
+    for index in range(cut_count):
+        media_id = cadence.source_media_ids[index % len(cadence.source_media_ids)]
+        window_index = source_offsets[media_id]
+        source_offsets[media_id] += 1
+        start_s, end_s = windows[media_id][window_index]
+        cuts.append(
+            FastMontageCut(
+                cut_id=f"cadence-cut-{index + 1}",
+                media_id=media_id,
+                source_start_s=start_s,
+                source_end_s=end_s,
+                output_duration_s=cadence.cut_duration_s,
+                role="hook" if index == 0 else "payoff" if index == cut_count - 1 else "build",
+                transition="none",
+                beat_align=False,
+            )
+        )
+    return cuts
 
 
 def _moment_energy(moment: dict) -> float:
@@ -107,6 +248,7 @@ def deterministic_fast_cuts(
     media: list[MediaRef],
     duration_s: int,
     mixed_media_timing: MixedMediaTimingProfile | None = None,
+    montage_cadence: MontageCadenceConstraint | None = None,
 ) -> list[FastMontageCut]:
     """Build a strict source-aware montage when the semantic planner is invalid.
 
@@ -115,6 +257,9 @@ def deterministic_fast_cuts(
     into a user-visible failure. Every video window is consumed at most once,
     image sources are used once, and adjacent cuts always use different media.
     """
+
+    if montage_cadence is not None:
+        return deterministic_round_robin_cuts(media, duration_s, montage_cadence)
 
     eligible = [ref for ref in media if ref.kind == "image" or float(ref.duration_s or 0.0) >= 0.4]
     if not eligible:
@@ -355,6 +500,7 @@ def plan_direction_snapshot(
     duration_s: int,
     mixed_media_timing: MixedMediaTimingProfile | None = None,
     montage_audio: MontageAudioPlan | None = None,
+    montage_cadence: MontageCadenceConstraint | None = None,
     idea: str = "",
     theme: str = "",
     job_id: str | None = None,
@@ -399,6 +545,7 @@ def plan_direction_snapshot(
                 target_duration_s=planning_duration_s,
                 mixed_media_timing=mixed_media_timing,
                 montage_audio=montage_audio,
+                montage_cadence=montage_cadence,
                 media=media,
             ),
             ctx=RunContext(job_id=job_id) if job_id else None,
@@ -416,7 +563,12 @@ def plan_direction_snapshot(
     cuts = (
         output.fast_cuts
         if output is not None and direction == "fast_montage"
-        else deterministic_fast_cuts(source.media, planning_duration_s, mixed_media_timing)
+        else deterministic_fast_cuts(
+            source.media,
+            planning_duration_s,
+            mixed_media_timing,
+            montage_cadence,
+        )
         if direction == "fast_montage"
         else None
     )
@@ -459,6 +611,7 @@ def plan_direction_snapshot(
                 if output is not None and output.montage_audio is not None
                 else montage_audio
             ),
+            "montage_cadence": montage_cadence,
         }
     )
     result = EditProposalSnapshot.model_validate(planned.model_dump(mode="json"))

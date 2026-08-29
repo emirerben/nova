@@ -226,6 +226,8 @@ The Main Creator calls no specialist merely because one exists. V1 delegates onl
 when a specialist owns a stronger typed contract:
 
 - guided-compatible story → `edit_proposal` via a confirmed `ProposalBrief`;
+- explicit numeric source alternation → a typed round-robin cadence with a capacity question before
+  confirmation when the requested target would require shortening or source reuse;
 - native render → existing format/audio dispatch, whose pipeline may invoke
   `music_matcher`, `intro_writer`, caption, sequence, and treatment specialists;
 - render completion → structural exact-generation receipt; the Stage 2

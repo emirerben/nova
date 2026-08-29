@@ -1,18 +1,24 @@
 {
   "agent": "nova.plan.edit_proposal",
-  "prompt_version": "1.5.4",
+  "prompt_version": "1.5.5",
   "input": {
     "idea": "Two matches felt the same",
     "theme": "A shared match feeling",
     "direction": "fast_montage",
     "goal": "Alternate the strongest moments from two match videos and keep each source's identity",
-    "creator_request": "Use each match's own text and preserve both original sounds, with an option to preview the source beds together.",
+    "creator_request": "Show one second from one match, switch to the other one, and go back and forth to express the similar emotions I had in both matches.",
     "pace": "fast",
     "target_duration_s": 6,
     "montage_audio": {
       "preserve_source_audio": true,
       "preview_source_beds": true,
       "source_media_ids": ["match-a", "match-b"]
+    },
+    "montage_cadence": {
+      "mode": "round_robin",
+      "source_media_ids": ["match-a", "match-b"],
+      "cut_duration_s": 1.0,
+      "reuse_policy": "no_repeat"
     },
     "media": [
       {

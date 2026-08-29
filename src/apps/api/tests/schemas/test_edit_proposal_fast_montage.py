@@ -9,10 +9,12 @@ from app.schemas.edit_proposal import (
     MediaRef,
     MixedMediaTimingProfile,
     MontageAudioPlan,
+    MontageCadenceConstraint,
     MontageTextBinding,
     ProposalGuidance,
     StoryBeat,
     parse_edit_proposal,
+    recognize_round_robin_cadence,
 )
 
 
@@ -51,6 +53,23 @@ def test_legacy_fast_montage_without_cut_contract_stays_readable() -> None:
     assert snapshot.fast_cuts is None
 
 
+def test_cadence_cut_duration_must_align_to_thirty_fps_frames() -> None:
+    assert (
+        MontageCadenceConstraint(
+            source_media_ids=["clip-1", "clip-2"], cut_duration_s=0.4
+        ).cut_duration_s
+        == 0.4
+    )
+
+    with pytest.raises(ValidationError, match="align to 30fps frames"):
+        MontageCadenceConstraint(source_media_ids=["clip-1", "clip-2"], cut_duration_s=0.41)
+
+
+def test_cadence_recognizer_ignores_non_frame_aligned_timing() -> None:
+    assert recognize_round_robin_cadence("alternate every 0.41 seconds") is None
+    assert recognize_round_robin_cadence("alternate every 0.4 seconds") == 0.4
+
+
 def test_new_fast_montage_cut_contract_is_source_aware_and_hook_first() -> None:
     snapshot = _snapshot(
         fast_cuts=[
@@ -84,6 +103,145 @@ def test_new_fast_montage_cut_contract_is_source_aware_and_hook_first() -> None:
 
     assert snapshot.fast_cuts[0].transition == "none"
     assert snapshot.fast_cuts[1].beat_align is True
+
+
+def test_explicit_cadence_allows_exact_cuts_above_legacy_montage_limit() -> None:
+    media = [
+        MediaRef(
+            lane="clip",
+            media_id=media_id,
+            gcs_path=f"users/u/{media_id}.mp4",
+            generation="1",
+            kind="video",
+            duration_s=3,
+        )
+        for media_id in ("clip-1", "clip-2")
+    ]
+    cadence = MontageCadenceConstraint(source_media_ids=["clip-1", "clip-2"], cut_duration_s=1.5)
+
+    snapshot = _snapshot(
+        media=media,
+        montage_cadence=cadence,
+        fast_cuts=[
+            FastMontageCut(
+                cut_id=f"cut-{index + 1}",
+                media_id=media_id,
+                source_start_s=0,
+                source_end_s=1.5,
+                output_duration_s=1.5,
+                role="hook" if index == 0 else "payoff",
+            )
+            for index, media_id in enumerate(cadence.source_media_ids)
+        ],
+    )
+
+    assert [cut.output_duration_s for cut in snapshot.fast_cuts or []] == [1.5, 1.5]
+
+
+def _cadence_snapshot_payload(*, reuse_policy: str = "no_repeat") -> dict:
+    media = [
+        MediaRef(
+            lane="clip",
+            media_id=media_id,
+            gcs_path=f"users/u/{media_id}.mp4",
+            generation="1",
+            kind="video",
+            duration_s=4,
+        )
+        for media_id in ("clip-1", "clip-2")
+    ]
+    return {
+        "direction": "fast_montage",
+        "pace": "fast",
+        "duration_s": 4,
+        "title": "Alternating matches",
+        "media": media,
+        "story_beats": [
+            StoryBeat(
+                beat_id="legacy-envelope",
+                topic="Highlights",
+                media_ids=["clip-1", "clip-2"],
+                duration_s=4,
+            )
+        ],
+        "montage_cadence": MontageCadenceConstraint(
+            source_media_ids=["clip-1", "clip-2"],
+            cut_duration_s=1,
+            reuse_policy=reuse_policy,
+        ),
+        "fast_cuts": [
+            FastMontageCut(
+                cut_id=f"cut-{index + 1}",
+                media_id=("clip-1", "clip-2")[index % 2],
+                source_start_s=float(index // 2),
+                source_end_s=float(index // 2 + 1),
+                output_duration_s=1,
+                role="hook" if index == 0 else "payoff" if index == 3 else "build",
+            )
+            for index in range(4)
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    ("case", "match"),
+    [
+        ("wrong_direction", "only valid for fast montage"),
+        ("unknown_source", "references unknown media"),
+        ("missing_cuts", "requires fast cuts"),
+        ("partial_cycle", "complete source cycles"),
+        ("wrong_order", "preserve round-robin source order"),
+        ("wrong_duration", "preserve the exact cadence duration"),
+        ("overlapping_no_repeat", "must not overlap"),
+    ],
+)
+def test_cadence_snapshot_rejects_invalid_contracts(case: str, match: str) -> None:
+    payload = _cadence_snapshot_payload()
+    cuts = list(payload["fast_cuts"])
+    if case == "wrong_direction":
+        payload["direction"] = "guided_story"
+        payload["fast_cuts"] = None
+    elif case == "unknown_source":
+        payload["montage_cadence"] = MontageCadenceConstraint(
+            source_media_ids=["clip-1", "missing"], cut_duration_s=1
+        )
+    elif case == "missing_cuts":
+        payload["fast_cuts"] = None
+    elif case == "partial_cycle":
+        payload["duration_s"] = 3
+        payload["fast_cuts"] = cuts[:3]
+    elif case == "wrong_order":
+        payload["fast_cuts"] = [cuts[0], cuts[2], cuts[1], cuts[3]]
+    elif case == "wrong_duration":
+        payload["montage_cadence"] = MontageCadenceConstraint(
+            source_media_ids=["clip-1", "clip-2"], cut_duration_s=2
+        )
+    elif case == "overlapping_no_repeat":
+        payload["fast_cuts"] = [
+            cuts[0],
+            cuts[1],
+            cuts[2].model_copy(update={"source_start_s": 0, "source_end_s": 1}),
+            cuts[3],
+        ]
+
+    with pytest.raises(ValidationError, match=match):
+        EditProposalSnapshot.model_validate(payload)
+
+
+def test_cadence_snapshot_allows_overlap_only_after_explicit_reuse_opt_in() -> None:
+    payload = _cadence_snapshot_payload(reuse_policy="allow_repeat")
+    cuts = list(payload["fast_cuts"])
+    payload["fast_cuts"] = [
+        cuts[0],
+        cuts[1],
+        cuts[2].model_copy(update={"source_start_s": 0, "source_end_s": 1}),
+        cuts[3].model_copy(update={"source_start_s": 0, "source_end_s": 1}),
+    ]
+
+    snapshot = EditProposalSnapshot.model_validate(payload)
+
+    assert snapshot.montage_cadence is not None
+    assert snapshot.montage_cadence.reuse_policy == "allow_repeat"
 
 
 @pytest.mark.parametrize(

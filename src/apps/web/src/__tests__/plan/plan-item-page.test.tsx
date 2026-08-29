@@ -161,6 +161,7 @@ import {
   updatePlanItem,
   uploadToGcs,
   getCreatorAgentSession,
+  PlanApiError,
   type PlanItemJobStatus,
 } from "@/lib/plan-api";
 const PlanItemPage = require("@/app/plan/items/[id]/page").default;
@@ -357,6 +358,85 @@ describe("PlanItemPage — masonry collage item UX", () => {
       expect(screen.getAllByRole("region", { name: "Create with Kria" })).toHaveLength(1);
     },
   );
+
+  it("prevents direct Create while a creator-agent plan is active", async () => {
+    mockGetCreatorAgentSession.mockResolvedValueOnce({
+      id: "creator-session-1",
+      status: "briefing",
+      revision: 2,
+      render_attempts: 0,
+      max_render_attempts: 2,
+      can_render: true,
+      pending_plan: null,
+      current_job_id: null,
+      events: [],
+      created_at: "2026-08-29T09:00:00Z",
+      updated_at: "2026-08-29T09:00:00Z",
+    });
+
+    await act(async () => {
+      renderMasonryItem({
+        clip_gcs_paths: ["users/u/plan/i/match-a.mp4", "users/u/plan/i/match-b.mp4"],
+        clip_assignments: [
+          { gcs_path: "users/u/plan/i/match-a.mp4", shot_id: null, user_note: "" },
+          { gcs_path: "users/u/plan/i/match-b.mp4", shot_id: null, user_note: "" },
+        ],
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByRole("button", { name: "Create video" })[0]).toBeDisabled();
+    });
+    expect(screen.getByRole("textbox", { name: "Message Kria" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Tell Kria" })).toBeNull();
+  });
+
+  it("keeps Create disabled until creator-session eligibility has loaded", async () => {
+    let resolveSession!: (value: null) => void;
+    mockGetCreatorAgentSession.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSession = resolve;
+      }),
+    );
+
+    await act(async () => {
+      renderMasonryItem({
+        clip_gcs_paths: ["users/u/plan/i/match-a.mp4"],
+        clip_assignments: [
+          { gcs_path: "users/u/plan/i/match-a.mp4", shot_id: null, user_note: "" },
+        ],
+      });
+    });
+
+    expect(screen.getAllByRole("button", { name: "Create video" })[0]).toBeDisabled();
+    expect(screen.getAllByText("Checking your saved Kria plan…")).toHaveLength(2);
+    const creatorLoadingRegion = screen.getByRole("region", { name: "Create with Kria" });
+    expect(creatorLoadingRegion.querySelector('[role="status"]')?.textContent).toContain(
+      "Checking your saved Kria plan…",
+    );
+    await act(async () => resolveSession(null));
+    await waitFor(() => {
+      expect(screen.getAllByRole("button", { name: "Create video" })[0]).toBeEnabled();
+    });
+  });
+
+  it("restores Tell Kria when the user is outside the backend cohort", async () => {
+    mockGetCreatorAgentSession.mockRejectedValueOnce(
+      new PlanApiError({ message: "Creator agent unavailable", status: 404 }),
+    );
+
+    await act(async () => {
+      renderMasonryItem({
+        clip_gcs_paths: ["users/u/plan/i/match-a.mp4"],
+        clip_assignments: [
+          { gcs_path: "users/u/plan/i/match-a.mp4", shot_id: null, user_note: "" },
+        ],
+      });
+    });
+
+    expect(await screen.findByRole("textbox", { name: "Tell Kria" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Message Kria" })).toBeNull();
+  });
 
   it("renders uploaded clips as a compact filmstrip", async () => {
     await act(async () => {
@@ -1713,8 +1793,10 @@ describe("PlanItemPage — per-type setup truth table (V2 redesign)", () => {
     expect(
       screen.getByText("This recording becomes the soundtrack. It is separate from your note to Kria."),
     ).toBeInTheDocument();
-    // Direction/voice-note section is gone — replaced by the single "Tell Kria" field.
-    expect(screen.getByRole("textbox", { name: "Tell Kria" })).toBeInTheDocument();
+    // With Main Creator enabled, the legacy notes box cannot bypass planning.
+    // The one prompt entry is the typed creator-agent conversation.
+    expect(screen.getByRole("textbox", { name: "Message Kria" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Tell Kria" })).toBeNull();
     expect(screen.queryByText(/Direction for Kria/)).toBeNull();
     expect(screen.queryByText(/Add a voice note to Kria/)).toBeNull();
     expect(screen.queryByRole("button", { name: /Original audio/i })).toBeNull();

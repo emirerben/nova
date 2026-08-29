@@ -27,7 +27,15 @@ from sqlalchemy.exc import OperationalError
 from app.config import settings
 from app.database import sync_session
 from app.main import app
-from app.models import ContentPlan, Job, Persona, PlanItem, PlanItemAsset, User
+from app.models import (
+    ContentPlan,
+    CreatorAgentSession,
+    Job,
+    Persona,
+    PlanItem,
+    PlanItemAsset,
+    User,
+)
 from app.schemas.edit_proposal import (
     ApprovedProposalSnapshot,
     DirectionHypothesis,
@@ -343,6 +351,64 @@ def test_generate_item_mints_job_synchronously(client: TestClient) -> None:
     assert enqueue.call_args.args[1] == str(job.id)
 
 
+def test_active_creator_session_blocks_raw_generate_without_self_deadlock(
+    client: TestClient,
+) -> None:
+    """The active-session fence runs inside the sync dispatcher lock.
+
+    Running the HTTP request in a bounded thread proves the route does not hold
+    the PlanItem lock while awaiting that dispatcher (the former implementation
+    deadlocked its own two database sessions).
+    """
+    user_id, item_id = _seed_item()
+    with sync_session() as session:
+        session.add(
+            CreatorAgentSession(
+                creator_id=user_id,
+                plan_item_id=item_id,
+                status="awaiting_confirmation",
+                ownership_epoch=0,
+            )
+        )
+        session.commit()
+
+    responses: list[object] = []
+
+    def _request() -> None:
+        responses.append(client.post(f"/plan-items/{item_id}/generate", headers=_auth(user_id)))
+
+    thread = threading.Thread(target=_request)
+    thread.start()
+    thread.join(timeout=15)
+
+    assert not thread.is_alive(), "Generate self-deadlocked on the PlanItem lock"
+    assert len(responses) == 1
+    response = responses[0]
+    assert getattr(response, "status_code") == 409
+    assert response.json()["detail"]["code"] == "creator_agent_plan_required"
+    assert _jobs_for(item_id) == []
+
+
+def test_creator_confirmed_dispatch_may_render_its_own_active_plan() -> None:
+    """The fence is producer-scoped: Creator execution does not bypass itself."""
+    user_id, item_id = _seed_item()
+    with sync_session() as session:
+        session.add(
+            CreatorAgentSession(
+                creator_id=user_id,
+                plan_item_id=item_id,
+                status="executing",
+                ownership_epoch=0,
+            )
+        )
+        session.commit()
+
+    with patch(_ENQUEUE):
+        result = dispatch_item_render_for(str(item_id))
+
+    assert result.outcome == "dispatched"
+
+
 def test_generate_response_carries_fresh_job_id(client: TestClient) -> None:
     """Identity-map pin (plans/014 A2 + review P1): the route's async session
     loaded the item AND the auth User row before the helper's sync session
@@ -492,6 +558,29 @@ def test_task_side_confirmation_gate_rejects_pending_direction_proposal(
         result = dispatch_item_render_for(str(item_id))
 
     assert result.outcome == "direction_confirmation_required"
+    enqueue.assert_not_called()
+    assert _jobs_for(item_id) == []
+
+
+def test_task_side_cutless_fast_montage_replans_even_without_enforcement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The renderer boundary must never revive the legacy long-section montage."""
+    monkeypatch.setattr(settings, "guided_edit_capability_enabled", False)
+    monkeypatch.setattr(settings, "guided_edit_enforcement_enabled", False)
+    monkeypatch.setattr(settings, "guided_edit_direction_confirmation_enabled", False)
+    _user_id, item_id = _seed_item()
+
+    with (
+        patch(
+            "app.services.edit_proposals.proposal_generate_error",
+            return_value="proposal_replan_required",
+        ),
+        patch(_ENQUEUE) as enqueue,
+    ):
+        result = dispatch_item_render_for(str(item_id))
+
+    assert result.outcome == "proposal_replan_required"
     enqueue.assert_not_called()
     assert _jobs_for(item_id) == []
 

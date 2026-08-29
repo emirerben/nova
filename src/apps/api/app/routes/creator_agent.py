@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import copy
+import math
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Any
@@ -38,6 +40,8 @@ from app.agents._schemas.creator_agent import (
 from app.agents._schemas.creator_policy import (
     MAX_MAIN_CREATOR_SELECTED_MEDIA,
     MixedMediaTimingUnavailableError,
+    MontageCadenceUnavailableError,
+    normalize_creator_strategy_media,
 )
 from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
 from app.auth import CurrentUser
@@ -61,7 +65,15 @@ from app.routes.generative_jobs import (
     validate_sound_effects_for_user,
     visual_block_variant_duration,
 )
-from app.schemas.edit_proposal import recognize_mixed_media_timing
+from app.schemas.edit_proposal import (
+    MontageCadenceConstraint,
+    recognize_cadence_reuse_policy,
+    recognize_explicit_cadence_reuse_policy,
+    recognize_mixed_media_timing,
+    recognize_round_robin_cadence,
+    recognize_total_duration_s,
+    rejects_round_robin_cadence,
+)
 from app.services.content_plan_persona import load_owned_plan_persona
 from app.services.creator_autonomy import (
     build_auto_bundle,
@@ -84,6 +96,7 @@ from app.services.creator_sessions import (
     rollout_eligible,
     serialize_session,
 )
+from app.services.edit_direction_planner import round_robin_capacity_s
 from app.services.job_phases import mark_reattempt
 from app.services.job_status import PLAN_ITEM_JOB_READY, PLAN_ITEM_JOB_TERMINAL
 
@@ -319,6 +332,299 @@ def _confirmed_creator_request(events: list[CreatorAgentEvent], current_message:
     return "\n".join(messages)[:1000]
 
 
+def _latest_cadence_question(events: list[CreatorAgentEvent]) -> dict[str, Any] | None:
+    ordered = sorted(events, key=lambda value: value.sequence)
+    if ordered and ordered[-1].role == "user":
+        ordered = ordered[:-1]
+    if not ordered or ordered[-1].event_type != "assistant_question":
+        return None
+    payload = ordered[-1].payload if isinstance(ordered[-1].payload, dict) else {}
+    context = payload.get("cadence_context")
+    return context if isinstance(context, dict) else None
+
+
+def _latest_planned_cadence(
+    events: list[CreatorAgentEvent],
+) -> tuple[MontageCadenceConstraint | None, int | None]:
+    """Recover the last accepted typed cadence after active-plan reset."""
+
+    for event in sorted(events, key=lambda value: value.sequence, reverse=True):
+        if event.event_type != "assistant_strategy":
+            continue
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        try:
+            cadence = MontageCadenceConstraint.model_validate(payload["montage_cadence"])
+        except (KeyError, ValueError):
+            return None, None
+        target_s = payload.get("target_duration_s")
+        return cadence, int(target_s) if isinstance(target_s, (int, float)) else None
+    return None, None
+
+
+def _cadence_was_cancelled(events: list[CreatorAgentEvent]) -> bool:
+    """Return the latest explicit cadence-vs-cancellation intent in history."""
+
+    for event in sorted(events, key=lambda value: value.sequence, reverse=True):
+        if event.role != "user":
+            continue
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        message = str(payload.get("message") or "")
+        if rejects_round_robin_cadence(message):
+            return True
+        if recognize_round_robin_cadence(message) is not None:
+            return False
+    return False
+
+
+async def _record_required_cadence_question(
+    db: AsyncSession,
+    session: CreatorAgentSession,
+    *,
+    payload: dict[str, Any],
+) -> None:
+    """Ask an essential cadence question without overrunning the session budget."""
+
+    if session.question_count >= session.question_budget:
+        session.status = "failed"
+        session.last_error = {"code": "question_budget_exhausted"}
+        await append_event(
+            db,
+            session,
+            event_type="assistant_error",
+            payload={"message": "This edit needs a fresh creator session."},
+        )
+        return
+    session.status = "briefing"
+    session.question_count += 1
+    await append_event(db, session, event_type="assistant_question", payload=payload)
+
+
+async def _record_cadence_unavailable(
+    db: AsyncSession,
+    session: CreatorAgentSession,
+    exc: MontageCadenceUnavailableError,
+) -> None:
+    session.status = "failed"
+    session.last_error = {
+        "code": "montage_cadence_unavailable",
+        "message": str(exc)[:300],
+    }
+    await append_event(
+        db,
+        session,
+        event_type="assistant_error",
+        payload={
+            "message": (
+                "I can't preserve that exact alternating cadence with the current "
+                "audio setup. No fallback edit was rendered. Ask Kria to remove the "
+                "voiceover or change the edit direction."
+            ),
+            "code": "montage_cadence_unavailable",
+        },
+    )
+
+
+def _enqueue_creator_clip_metadata(item: PlanItem, plan: ContentPlan) -> None:
+    """Best-effort metadata extraction; creator planning never waits on it."""
+
+    from app.tasks.creator_clip_metadata import (  # noqa: PLC0415
+        CREATOR_CLIP_METADATA_QUEUE,
+        analyze_creator_clip_metadata,
+    )
+
+    try:
+        analyze_creator_clip_metadata.apply_async(
+            args=[str(item.id), int(getattr(plan, "ownership_epoch", 0) or 0)],
+            queue=CREATOR_CLIP_METADATA_QUEUE,
+        )
+    except Exception as exc:  # noqa: BLE001 - the question remains a safe failure
+        log.warning(
+            "main_creator.clip_metadata_dispatch_failed",
+            plan_item_id=str(item.id),
+            error=str(exc)[:240],
+        )
+
+
+async def _record_cadence_duration_unavailable(
+    db: AsyncSession,
+    session: CreatorAgentSession,
+    *,
+    cadence: MontageCadenceConstraint,
+    target_duration_s: int | None = None,
+) -> None:
+    await _record_required_cadence_question(
+        db,
+        session,
+        payload={
+            "message": (
+                "I couldn't verify both clip lengths yet, so I won't guess at the "
+                "alternating cut plan. Try again after the uploads finish processing."
+            ),
+            "reason_code": "cadence_duration_unavailable",
+            "options": ["Try again"],
+            "recommended_option": "Try again",
+            "cadence_context": {
+                "kind": "duration_unavailable",
+                "cadence": cadence.model_dump(mode="json"),
+                # Keep these flattened fields readable by rolling clients and
+                # historical debugging tools while the typed cadence remains
+                # the authoritative retry contract.
+                "cut_duration_s": cadence.cut_duration_s,
+                "source_media_ids": list(cadence.source_media_ids),
+                "target_duration_s": target_duration_s,
+            },
+        },
+    )
+
+
+def _balanced_integer_duration_s(*, limit_s: float, cycle_s: float) -> int:
+    """Find the longest whole-second target made of complete cadence cycles."""
+
+    cycle_count = int((limit_s + 0.001) // cycle_s)
+    for cycles in range(cycle_count, 0, -1):
+        duration_s = cycles * cycle_s
+        rounded_s = round(duration_s)
+        if 3 <= rounded_s <= 60 and abs(duration_s - rounded_s) <= 0.001:
+            return int(rounded_s)
+    return 0
+
+
+def _next_balanced_integer_duration_s(*, minimum_s: float, limit_s: float, cycle_s: float) -> int:
+    """Find the shortest whole-second complete-cycle target above a lower bound."""
+
+    first_cycle = max(1, math.ceil((minimum_s - 0.001) / cycle_s))
+    last_cycle = int((limit_s + 0.001) // cycle_s)
+    for cycles in range(first_cycle, last_cycle + 1):
+        duration_s = cycles * cycle_s
+        rounded_s = round(duration_s)
+        if 3 <= rounded_s <= 60 and abs(duration_s - rounded_s) <= 0.001:
+            return int(rounded_s)
+    return 0
+
+
+def _selected_cadence_sources(
+    context: dict[str, Any], manifest: Any, user_message: str
+) -> list[str] | None:
+    selections = context.get("selections")
+    if not isinstance(selections, dict):
+        return None
+    normalized_message = " ".join(user_message.casefold().split())
+    selected = next(
+        (
+            ids
+            for label, ids in selections.items()
+            if " ".join(str(label).casefold().split()) == normalized_message
+        ),
+        None,
+    )
+    if isinstance(selected, list) and len(selected) == 2:
+        return [str(value) for value in selected]
+
+    matches: list[tuple[int, int, str]] = []
+    for media in manifest.media:
+        if media.kind != "video":
+            continue
+        for name in (media.media_id, media.label):
+            normalized_name = " ".join(str(name or "").casefold().split())
+            if not normalized_name:
+                continue
+            start = normalized_message.find(normalized_name)
+            if start >= 0:
+                matches.append((start, start + len(normalized_name), media.media_id))
+    non_overlapping: list[tuple[int, int, str]] = []
+    for match in sorted(matches, key=lambda value: (-(value[1] - value[0]), value[0])):
+        if any(
+            match[0] < selected_match[1] and match[1] > selected_match[0]
+            for selected_match in non_overlapping
+        ):
+            continue
+        non_overlapping.append(match)
+    mentioned = [media_id for _start, _end, media_id in sorted(non_overlapping)]
+    return mentioned if len(mentioned) == 2 else None
+
+
+def _resolved_cadence_for_turn(
+    *,
+    events: list[CreatorAgentEvent],
+    manifest: Any,
+    creator_request: str,
+    user_message: str,
+) -> tuple[MontageCadenceConstraint | None, int | None]:
+    if rejects_round_robin_cadence(user_message):
+        return None, None
+    prior = _latest_cadence_question(events)
+    if prior:
+        if prior.get("kind") == "source_selection":
+            selected = _selected_cadence_sources(prior, manifest, user_message)
+            if selected is not None:
+                return (
+                    MontageCadenceConstraint(
+                        source_media_ids=selected,
+                        cut_duration_s=float(prior.get("cut_duration_s") or 1.0),
+                        reuse_policy=str(prior.get("reuse_policy") or "no_repeat"),
+                    ),
+                    None,
+                )
+        try:
+            cadence = MontageCadenceConstraint.model_validate(prior["cadence"])
+        except (KeyError, ValueError):
+            cadence = None
+        if cadence is not None:
+            if prior.get("kind") == "duration_unavailable":
+                return (
+                    cadence,
+                    recognize_total_duration_s(user_message)
+                    or int(prior.get("target_duration_s") or 0)
+                    or recognize_total_duration_s(creator_request)
+                    or None,
+                )
+            recommendation = str(prior.get("recommendation") or "")
+            requested_s = int(prior.get("requested_duration_s") or 24)
+            recommended_s = int(prior.get("recommended_duration_s") or 0)
+            normalized = " ".join(user_message.casefold().split())
+            if recommendation and normalized == recommendation.casefold():
+                if recognize_cadence_reuse_policy(user_message) == "allow_repeat":
+                    return (
+                        cadence.model_copy(update={"reuse_policy": "allow_repeat"}),
+                        requested_s,
+                    )
+                return cadence, recommended_s
+            if recognize_cadence_reuse_policy(user_message) == "allow_repeat":
+                return cadence.model_copy(update={"reuse_policy": "allow_repeat"}), requested_s
+            target_match = re.search(r"\b(\d{1,2})\s*(?:seconds?|secs?|s)\b", normalized)
+            if target_match:
+                return cadence, int(target_match.group(1))
+
+    current_cut_duration_s = recognize_round_robin_cadence(user_message)
+    if current_cut_duration_s is None:
+        if _cadence_was_cancelled(events):
+            return None, None
+        planned_cadence, planned_target_s = _latest_planned_cadence(events)
+        if planned_cadence is not None:
+            return (
+                planned_cadence,
+                recognize_total_duration_s(user_message) or planned_target_s,
+            )
+
+    cut_duration_s = current_cut_duration_s or recognize_round_robin_cadence(creator_request)
+    if cut_duration_s is None:
+        return None, None
+    videos = [media for media in manifest.media if media.kind == "video"]
+    if len(videos) != 2:
+        return None, None
+    reuse_policy = recognize_explicit_cadence_reuse_policy(
+        user_message
+    ) or recognize_cadence_reuse_policy(creator_request)
+    return (
+        MontageCadenceConstraint(
+            source_media_ids=[media.media_id for media in videos],
+            cut_duration_s=cut_duration_s,
+            reuse_policy=reuse_policy,
+        ),
+        recognize_total_duration_s(user_message) or recognize_total_duration_s(creator_request),
+    )
+
+
 def _fallback_strategy(manifest: Any, *, user_message: str = "") -> CreativeStrategy:
     current_format = manifest.edit_format
     current_available = manifest.capabilities.get(f"edit_format:{current_format}")
@@ -393,7 +699,7 @@ async def _run_planning_turn(
     expected_revision: int,
     user_message: str,
 ) -> CreatorSessionResponse:
-    item, _plan, persona = await _owned_context(db, item_id, user.id)
+    item, plan, persona = await _owned_context(db, item_id, user.id)
     session = await _load_session(db, session_id, user.id, item.id)
     manifest, media_context = await resolve_item_creator_context(db, item, persona=persona)
     if not manifest.capabilities["dispatch_render"].available:
@@ -414,6 +720,91 @@ async def _run_planning_turn(
 
     creator_summary, item_summary = creator_context(persona, item)
     creator_request = _confirmed_creator_request(session.events, user_message)
+    latest_cut_s = recognize_round_robin_cadence(user_message)
+    current_rejects_cadence = rejects_round_robin_cadence(user_message)
+    cadence_cancelled = current_rejects_cadence or (
+        latest_cut_s is None and _cadence_was_cancelled(session.events)
+    )
+    explicit_cut_s = (
+        None
+        if cadence_cancelled
+        else latest_cut_s or recognize_round_robin_cadence(creator_request)
+    )
+    videos = [media for media in manifest.media if media.kind == "video"]
+    usable_videos = [media for media in videos if media.duration_s is not None]
+    pending_cadence_question = _latest_cadence_question(session.events)
+    if (
+        pending_cadence_question
+        and pending_cadence_question.get("kind") == "source_selection"
+        and not cadence_cancelled
+        and _selected_cadence_sources(pending_cadence_question, manifest, user_message) is None
+    ):
+        locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
+        if locked.revision != expected_revision:
+            raise HTTPException(status_code=409, detail="Creator session changed")
+        await _record_required_cadence_question(
+            db,
+            locked,
+            payload={
+                "message": "Choose two of the listed videos so I can preserve the alternation.",
+                "reason_code": "cadence_source_selection",
+                "options": list((pending_cadence_question.get("selections") or {}).keys()),
+                "cadence_context": pending_cadence_question,
+            },
+        )
+        return await _response(db, locked)
+    planned_cadence, _planned_target_s = _latest_planned_cadence(session.events)
+    if explicit_cut_s is not None and len(videos) == 2 and len(usable_videos) != 2:
+        _enqueue_creator_clip_metadata(item, plan)
+        locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
+        if locked.revision != expected_revision:
+            raise HTTPException(status_code=409, detail="Creator session changed")
+        await _record_cadence_duration_unavailable(
+            db,
+            locked,
+            cadence=MontageCadenceConstraint(
+                source_media_ids=[media.media_id for media in videos],
+                cut_duration_s=explicit_cut_s,
+                reuse_policy=recognize_cadence_reuse_policy(creator_request),
+            ),
+            target_duration_s=recognize_total_duration_s(creator_request),
+        )
+        return await _response(db, locked)
+    if (
+        explicit_cut_s is not None
+        and len(videos) > 2
+        and pending_cadence_question is None
+        and planned_cadence is None
+    ):
+        selections: dict[str, list[str]] = {}
+        for index, left in enumerate(videos[:3]):
+            for right in videos[index + 1 : 3]:
+                left_label = left.label or left.media_id
+                right_label = right.label or right.media_id
+                selections[f"Alternate {left_label} and {right_label}"] = [
+                    left.media_id,
+                    right.media_id,
+                ]
+        locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
+        if locked.revision != expected_revision:
+            raise HTTPException(status_code=409, detail="Creator session changed")
+        await _record_required_cadence_question(
+            db,
+            locked,
+            payload={
+                "message": "Which two videos should I alternate?",
+                "reason_code": "cadence_source_selection",
+                "options": list(selections),
+                "cadence_context": {
+                    "kind": "source_selection",
+                    "cut_duration_s": explicit_cut_s,
+                    "reuse_policy": recognize_explicit_cadence_reuse_policy(user_message)
+                    or recognize_cadence_reuse_policy(creator_request),
+                    "selections": selections,
+                },
+            },
+        )
+        return await _response(db, locked)
     agent_input = MainCreatorInput(
         user_message=user_message,
         creator_context=creator_summary,
@@ -497,6 +888,134 @@ async def _run_planning_turn(
             if isinstance(action, ProposeStrategy)
             else "A focused edit from your strongest footage."
         )
+        cadence, clarified_target_s = _resolved_cadence_for_turn(
+            events=session.events,
+            manifest=manifest,
+            creator_request=creator_request,
+            user_message=user_message,
+        )
+        if cadence is not None:
+            media_by_id = {media.media_id: media for media in manifest.media}
+            if any(
+                media_by_id.get(media_id) is None or media_by_id[media_id].duration_s is None
+                for media_id in cadence.source_media_ids
+            ):
+                _enqueue_creator_clip_metadata(item, plan)
+                await _record_cadence_duration_unavailable(
+                    db,
+                    locked,
+                    cadence=cadence,
+                    target_duration_s=(
+                        clarified_target_s
+                        or recognize_total_duration_s(user_message)
+                        or recognize_total_duration_s(creator_request)
+                        or strategy.target_duration_s
+                    ),
+                )
+                return await _response(db, locked)
+            explicit_target_s = recognize_total_duration_s(
+                user_message
+            ) or recognize_total_duration_s(creator_request)
+            strategy = strategy.model_copy(
+                update={
+                    "direction": "fast_montage",
+                    "edit_format": "montage",
+                    "pacing": "fast",
+                    "target_duration_s": (
+                        clarified_target_s or explicit_target_s or strategy.target_duration_s
+                    ),
+                    "montage_cadence": cadence,
+                }
+            )
+            try:
+                strategy = normalize_creator_strategy_media(
+                    manifest, strategy, repair_model_output=True
+                )
+            except MontageCadenceUnavailableError as exc:
+                await _record_cadence_unavailable(db, locked, exc)
+                return await _response(db, locked)
+            cycle_s = cadence.cut_duration_s * len(cadence.source_media_ids)
+            capacity_s = round_robin_capacity_s(manifest.media, cadence)
+            requested_s = strategy.target_duration_s
+            if capacity_s < cycle_s:
+                balanced_s = 0
+            else:
+                limit_s = (
+                    requested_s
+                    if cadence.reuse_policy == "allow_repeat"
+                    else min(capacity_s, requested_s)
+                )
+                balanced_s = _balanced_integer_duration_s(limit_s=limit_s, cycle_s=cycle_s)
+                if balanced_s < 3:
+                    # A minimum-length request can fall between complete
+                    # cycles (for example 3s requested with a 2s A/B cycle).
+                    # Recommend the next renderable cycle instead of offering
+                    # reuse, which cannot make an incomplete cycle valid.
+                    expansion_limit_s = 60 if cadence.reuse_policy == "allow_repeat" else capacity_s
+                    balanced_s = _next_balanced_integer_duration_s(
+                        minimum_s=requested_s,
+                        limit_s=expansion_limit_s,
+                        cycle_s=cycle_s,
+                    )
+            if balanced_s != requested_s:
+                if balanced_s < 3:
+                    can_repeat = capacity_s >= cycle_s
+                    options = ["Allow the strongest moments to repeat"] if can_repeat else []
+                    await _record_required_cadence_question(
+                        db,
+                        locked,
+                        payload={
+                            "message": (
+                                "There isn't enough footage for one complete alternating cycle. "
+                                + (
+                                    "Allow footage to repeat or add longer clips."
+                                    if can_repeat
+                                    else "Add longer clips before I build the edit."
+                                )
+                            ),
+                            "reason_code": "cadence_insufficient_footage",
+                            "options": options,
+                            "recommended_option": options[0] if options else None,
+                            "cadence_context": {
+                                "kind": "capacity",
+                                "cadence": cadence.model_dump(mode="json"),
+                                "requested_duration_s": requested_s,
+                                "recommended_duration_s": balanced_s,
+                                "recommendation": "Allow the strongest moments to repeat",
+                            },
+                        },
+                    )
+                    return await _response(db, locked)
+                recommendation = f"Use the best {balanced_s} seconds"
+                alternatives = [recommendation]
+                if cadence.reuse_policy == "no_repeat" and capacity_s < requested_s:
+                    alternatives.append(f"Repeat footage to keep {requested_s} seconds")
+                await _record_required_cadence_question(
+                    db,
+                    locked,
+                    payload={
+                        "message": (
+                            f"I can make a balanced {balanced_s}-second edit "
+                            + (
+                                "without repeating footage. "
+                                if cadence.reuse_policy == "no_repeat"
+                                else "with exact complete alternation. "
+                            )
+                            + "I recommend using the strongest moments. What would you prefer?"
+                        ),
+                        "reason_code": "cadence_capacity",
+                        "options": alternatives,
+                        "recommended_option": recommendation,
+                        "cadence_context": {
+                            "kind": "capacity",
+                            "cadence": cadence.model_dump(mode="json"),
+                            "requested_duration_s": requested_s,
+                            "recommended_duration_s": balanced_s,
+                            "recommendation": recommendation,
+                        },
+                    },
+                )
+                return await _response(db, locked)
         try:
             locked.active_plan = compile_active_plan(
                 locked,
@@ -511,6 +1030,9 @@ async def _run_planning_turn(
                 session_id=str(locked.id),
                 error=str(exc)[:300],
             )
+            if isinstance(exc, MontageCadenceUnavailableError):
+                await _record_cadence_unavailable(db, locked, exc)
+                return await _response(db, locked)
             if isinstance(exc, MixedMediaTimingUnavailableError):
                 locked.status = "failed"
                 locked.last_error = {
@@ -568,6 +1090,8 @@ async def _run_planning_turn(
             payload={
                 "message": locked.active_plan["summary"],
                 "plan_hash": locked.active_plan["plan_hash"],
+                "target_duration_s": locked.active_plan.get("target_duration_s"),
+                "montage_cadence": locked.active_plan.get("montage_cadence"),
             },
         )
     return await _response(db, locked)
@@ -605,7 +1129,8 @@ async def start_creator_session(
 ) -> CreatorSessionResponse:
     _ = request
     _require_feature(user.id)
-    item, plan, _persona = await _owned_context(db, item_id, user.id)
+    # Serialize session creation against direct generation's PlanItem lock.
+    item, plan, _persona = await _owned_context(db, item_id, user.id, for_update=True)
 
     # Idempotency is a receipt of the original start event, not a property of
     # the currently-active state machine row.  Check terminal sessions before
@@ -633,6 +1158,67 @@ async def start_creator_session(
             raise HTTPException(status_code=409, detail="Idempotency key reused")
         return await _response(db, session)
 
+    # Inverse side of the start-vs-generate race. Both paths acquire the same
+    # Plan -> Persona -> PlanItem locks: if raw Generate won, its committed Job
+    # is visible here and a new creator plan cannot begin over that render. If
+    # this start won, the dispatcher waits and then sees the active session.
+    current_job_id = getattr(item, "current_job_id", None)
+    current_job = None
+    if current_job_id is not None:
+        current_job = await db.get(
+            Job,
+            current_job_id,
+            with_for_update=True,
+            populate_existing=True,
+        )
+        if current_job is not None and current_job.status not in PLAN_ITEM_JOB_TERMINAL:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Wait for the current render before starting a Kria plan",
+            )
+
+    # If one-click Generate won the PlanItem lock and durably reserved its
+    # automatic guided proposal, a new Creator session must not start in the
+    # gap before that worker dispatches. Main Creator-owned guided attempts use
+    # the fail-closed sentinel and are part of the current session, not a rival
+    # producer.
+    from app.schemas.edit_proposal import (  # noqa: PLC0415
+        MAIN_CREATOR_FAIL_CLOSED,
+        parse_edit_proposal,
+    )
+
+    pending_auto_design = parse_edit_proposal(getattr(item, "edit_proposal", None))
+    ordinary_auto_design = bool(
+        pending_auto_design is not None
+        and pending_auto_design.approval_mode == "auto"
+        and pending_auto_design.design_fallback != MAIN_CREATOR_FAIL_CLOSED
+    )
+    auto_design_is_pending = bool(
+        ordinary_auto_design
+        and pending_auto_design is not None
+        and (
+            pending_auto_design.status in {"analyzing", "drafting"}
+            or (
+                pending_auto_design.status == "approved"
+                and not _job_matches_guided_attempt(
+                    current_job, pending_auto_design.generation_attempt_id
+                )
+            )
+            or (
+                pending_auto_design.status == "failed"
+                and bool(pending_auto_design.design_fallback)
+                and not _job_matches_guided_attempt(
+                    current_job, pending_auto_design.generation_attempt_id
+                )
+            )
+        )
+    )
+    if auto_design_is_pending:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Kria is already designing this video. Wait for it to finish.",
+        )
+
     session = await _latest_session(db, user.id, item.id, active_only=True)
     if session is None:
         session = CreatorAgentSession(
@@ -640,6 +1226,9 @@ async def start_creator_session(
             plan_item_id=item.id,
             status="briefing",
             ownership_epoch=int(plan.ownership_epoch or 0),
+            # Source selection can legitimately be followed by one capacity
+            # choice. Keep both deterministic questions inside the session.
+            question_budget=2,
             max_render_attempts=2,
             iteration_budget=2,
             events=[],
@@ -809,6 +1398,26 @@ def _seed_guided_specialist_brief(
         direction = "guided_story"
     story_goal = "; ".join(plan.strategy.story_structure)
     goal = (story_goal or plan.strategy.rationale or summary)[:500]
+    specialist_audio = plan.strategy.montage_audio
+    if specialist_audio is not None:
+        specialist_audio = specialist_audio.model_copy(
+            update={
+                "source_media_ids": [
+                    media_id.removeprefix("asset-")
+                    for media_id in specialist_audio.source_media_ids
+                ]
+            }
+        )
+    specialist_cadence = plan.strategy.montage_cadence
+    if specialist_cadence is not None:
+        specialist_cadence = specialist_cadence.model_copy(
+            update={
+                "source_media_ids": [
+                    media_id.removeprefix("asset-")
+                    for media_id in specialist_cadence.source_media_ids
+                ]
+            }
+        )
     save_edit_conversation_turn(
         item,
         expected_version=expected_version,
@@ -816,10 +1425,11 @@ def _seed_guided_specialist_brief(
             direction=direction,
             goal=goal,
             pace=plan.strategy.pacing,
-            duration_s=24,
+            duration_s=plan.strategy.target_duration_s,
             creator_request=creator_request,
             mixed_media_timing=plan.strategy.mixed_media_timing,
-            montage_audio=plan.strategy.montage_audio,
+            montage_audio=specialist_audio,
+            montage_cadence=specialist_cadence,
             output_orientation=(
                 "portrait" if plan.strategy.mixed_media_timing is not None else None
             ),
@@ -930,6 +1540,28 @@ async def confirm_creator_plan(
             raise HTTPException(
                 status_code=409, detail="Footage or capabilities changed; review the plan again"
             )
+        cadence = edit_plan.strategy.montage_cadence
+        if cadence is not None:
+            media_by_id = {media.media_id: media for media in manifest.media}
+            cycle_s = cadence.cut_duration_s * len(cadence.source_media_ids)
+            capacity_s = round_robin_capacity_s(manifest.media, cadence)
+            target_s = edit_plan.strategy.target_duration_s
+            complete_cycles = target_s / cycle_s
+            cadence_is_feasible = bool(
+                all(
+                    media_by_id.get(media_id) is not None
+                    and media_by_id[media_id].duration_s is not None
+                    for media_id in cadence.source_media_ids
+                )
+                and capacity_s >= cycle_s - 0.001
+                and abs(complete_cycles - round(complete_cycles)) <= 0.001
+                and (cadence.reuse_policy == "allow_repeat" or capacity_s >= target_s - 0.001)
+            )
+            if not cadence_is_feasible:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Footage lengths changed; review the alternating plan again",
+                )
         receipt = CreatorAgentExecution(
             session_id=session.id,
             idempotency_key=body.client_event_id,

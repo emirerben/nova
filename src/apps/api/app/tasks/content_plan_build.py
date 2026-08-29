@@ -29,14 +29,15 @@ from app.agents._schemas.content_plan import (
 from app.agents._schemas.persona import Persona
 from app.agents.content_plan_generator import ContentPlanGeneratorAgent
 from app.database import sync_session
-from app.models import ContentPlan, Job, PlanItem, User
+from app.models import ContentPlan, CreatorAgentSession, Job, PlanItem, User
 from app.models import Persona as PersonaRow
 from app.services.content_plan_dedup import choose_replacements, flag_replacement_indices
 from app.services.content_plan_persona import (
     PlanPersonaOwnershipError,
     load_owned_plan_persona_sync,
 )
-from app.services.edit_proposal_limits import queue_for_mixed_media_timing
+from app.services.creator_sessions import ACTIVE_CREATOR_PHASES
+from app.services.edit_proposal_limits import queue_for_guided_contract
 from app.services.job_status import PLAN_ITEM_JOB_TERMINAL
 from app.services.seed_provenance import match_specs_to_seeds
 from app.worker import celery_app
@@ -520,15 +521,16 @@ PLAN_JOBS_QUEUE = "plan-jobs"
 
 
 def _guided_render_queue(approved_proposal: dict | None) -> str:
-    """Route expanded mixed-media snapshots only to current-version workers."""
+    """Route new guided timing snapshots only to current-version workers."""
 
     if not isinstance(approved_proposal, dict):
         return PLAN_JOBS_QUEUE
     snapshot = approved_proposal.get("snapshot")
     if not isinstance(snapshot, dict):
         return PLAN_JOBS_QUEUE
-    return queue_for_mixed_media_timing(
+    return queue_for_guided_contract(
         snapshot.get("mixed_media_timing"),
+        snapshot.get("montage_cadence"),
         default_queue=PLAN_JOBS_QUEUE,
     )
 
@@ -555,6 +557,11 @@ DispatchOutcome = Literal[
     # services/edit_proposals.guided_render_is_blocked); Generate is refused
     # until the user revises it in the planner.
     "proposal_render_blocked",
+    "proposal_replan_required",
+    # A raw website/API Generate request raced with an active Main Creator
+    # session. The caller must finish or cancel that typed plan instead of
+    # bypassing it through the legacy renderer.
+    "creator_agent_plan_required",
     "speech_cleanup_unavailable",
     "speech_cleanup_recovery_conflict",
 ]
@@ -747,6 +754,14 @@ def _dispatch_item_render(
             return DispatchResult("proposal_stale")
 
     approved_proposal: dict | None = None
+    # This is a renderer safety invariant, not a guided-edit rollout policy.
+    # Historical completed videos remain playable, but every new render of an
+    # approved fast montage must have typed cuts even when all guided flags are
+    # disabled for rollback.
+    from app.services.edit_proposals import proposal_generate_error  # noqa: PLC0415
+
+    if proposal_generate_error(item) == "proposal_replan_required":
+        return DispatchResult("proposal_replan_required")
     if bypass_guided_edit_gate and guided_applicable:
         # The caller's zero-registered-pool-assets invariant was checked in a
         # SEPARATE transaction — re-assert it under THIS lock (the item row is
@@ -783,6 +798,11 @@ def _dispatch_item_render(
             if proposal_error == "proposal_stale":
                 mark_edit_proposal_stale(item)
                 session.commit()
+            # A fast montage without typed cuts is never renderable, regardless
+            # of guided-edit rollout flags. Falling through here revives the
+            # exact legacy long-section compiler bug this contract closes.
+            if proposal_error == "proposal_replan_required":
+                return DispatchResult(proposal_error)
             if (
                 settings.guided_edit_enforcement_enabled
                 or settings.guided_edit_direction_confirmation_enabled
@@ -1093,6 +1113,7 @@ def dispatch_item_render_for(
     speech_cleanup_contract: str | None = None,
     speech_cleanup_action: str | None = None,
     expected_job_id: str | None = None,
+    reject_active_creator_session: bool = False,
 ) -> DispatchResult:
     """Load + lock a plan item, re-check for an active render, then dispatch.
 
@@ -1153,6 +1174,23 @@ def dispatch_item_render_for(
         if item is None or item.content_plan_id != plan.id:
             log.warning("plan_item_videos.missing_item", plan_item_id=plan_item_id)
             return DispatchResult("missing_row")
+        # This check deliberately lives behind the canonical Plan -> Persona ->
+        # PlanItem locks. A route-side async check either races session start or,
+        # if it holds the same item lock while awaiting this sync dispatcher,
+        # self-deadlocks. Only raw Generate producers opt in; the Main Creator's
+        # own confirmed execution dispatches without this flag.
+        if reject_active_creator_session:
+            active_creator_session_id = session.execute(
+                select(CreatorAgentSession.id)
+                .where(
+                    CreatorAgentSession.creator_id == plan.user_id,
+                    CreatorAgentSession.plan_item_id == item.id,
+                    CreatorAgentSession.status.in_(ACTIVE_CREATOR_PHASES),
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+            if active_creator_session_id is not None:
+                return DispatchResult("creator_agent_plan_required")
         if speech_cleanup_action is not None and item.current_job_id is None:
             return DispatchResult("speech_cleanup_recovery_conflict")
         if item.current_job_id is not None:
@@ -1231,7 +1269,14 @@ def generate_plan_item_videos(
     expected_ownership_epoch: int | None = None,
 ) -> None:  # noqa: ANN001
     """Mint a generative Job for a plan item's themed clips and dispatch its render."""
-    result = dispatch_item_render_for(str(plan_item_id), expected_ownership_epoch)
+    result = dispatch_item_render_for(
+        str(plan_item_id),
+        expected_ownership_epoch,
+        # This legacy Celery task is exclusively the raw Generate producer.
+        # Keep its two-argument wire signature rollout-safe while applying the
+        # same creator-session fence unconditionally inside the new worker.
+        reject_active_creator_session=True,
+    )
     if result.outcome == "invalid_persona":
         # Legacy/direct Celery deliveries must be visibly failed rather than
         # proceeding with a Job; this error log is its terminal task outcome.

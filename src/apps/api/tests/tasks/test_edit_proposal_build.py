@@ -17,7 +17,9 @@ from app.schemas.edit_proposal import (
     FastMontageCut,
     MediaRef,
     MixedMediaTimingProfile,
+    MontageCadenceConstraint,
     ProposalBrief,
+    canonical_media_digest,
     parse_edit_proposal,
 )
 from app.tasks.autoplace import (
@@ -745,6 +747,58 @@ def test_adapt_target_duration_clamps_to_feasible_footage() -> None:
     assert adapted >= proposal_build.MIN_GUIDED_DURATION_S
     # Never exceeds the creator's requested duration either.
     assert proposal_build.adapt_target_duration_s(5, 40.0) == 5
+    assert proposal_build.adapt_target_duration_s(24, 4.0, allow_source_reuse=True) == 24
+
+
+def test_cadence_feasibility_uses_cut_capacity_for_short_sources() -> None:
+    media = [
+        MediaRef(
+            lane="clip",
+            media_id=f"clip-{index}",
+            gcs_path=f"users/u/clip-{index}.mp4",
+            generation="1",
+            kind="video",
+            duration_s=0.8,
+        )
+        for index in range(5)
+    ]
+    brief = ProposalBrief(
+        direction="fast_montage",
+        duration_s=4,
+        montage_cadence=MontageCadenceConstraint(
+            source_media_ids=[ref.media_id for ref in media],
+            cut_duration_s=0.4,
+        ),
+    )
+
+    assert proposal_build.feasible_guided_duration_s(media) == 0
+    assert proposal_build.cadence_target_duration_s(brief, media) == 4
+
+
+def test_cadence_target_rejects_duration_that_ends_mid_cycle() -> None:
+    media = [
+        MediaRef(
+            lane="clip",
+            media_id=f"clip-{index}",
+            gcs_path=f"users/u/clip-{index}.mp4",
+            generation="1",
+            kind="video",
+            duration_s=3,
+        )
+        for index in range(2)
+    ]
+    brief = ProposalBrief(
+        direction="fast_montage",
+        duration_s=5,
+        montage_cadence=MontageCadenceConstraint(
+            source_media_ids=[ref.media_id for ref in media],
+            cut_duration_s=1,
+            reuse_policy="allow_repeat",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="complete source cycles"):
+        proposal_build.cadence_target_duration_s(brief, media)
 
 
 def test_infeasible_footage_skips_agent_and_fails_with_actionable_message(monkeypatch) -> None:
@@ -1114,6 +1168,200 @@ def test_initial_draft_terminal_agent_failure_uses_renderer_validated_fallback(
     }
 
 
+def test_alternating_matches_acceptance_survives_specialist_worker_and_receipt(
+    monkeypatch,
+) -> None:
+    """Production regression: plain-language cadence remains exact end to end."""
+
+    from app.agents._runtime import TerminalError
+    from app.agents._schemas.creator_agent import CreativeStrategy
+    from app.pipeline.guided_story import compile_execution_plan, validate_ready_result
+    from app.routes.creator_agent import (
+        _balanced_integer_duration_s,
+        _resolved_cadence_for_turn,
+        _seed_guided_specialist_brief,
+    )
+    from app.services import creator_capabilities
+    from app.services.creator_capabilities import compile_strategy_to_plan, resolve_creator_manifest
+    from app.services.edit_direction_planner import round_robin_capacity_s
+    from tests.pipeline.test_guided_story import _ready_result
+
+    monkeypatch.setattr(creator_capabilities.settings, "guided_edit_capability_enabled", True)
+    prompt = (
+        "Show one second from one, switch to the other one, and back and forth. "
+        "I want to express the similar emotions I had in both matches."
+    )
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": "match-a", "kind": "video", "duration_s": 6.633},
+            {"media_id": "match-b", "kind": "video", "duration_s": 26.433},
+        ],
+    )
+    initial_cadence = MontageCadenceConstraint(
+        source_media_ids=["match-a", "match-b"],
+        cut_duration_s=1,
+    )
+    capacity_s = round_robin_capacity_s(manifest.media, initial_cadence)
+    recommended_s = _balanced_integer_duration_s(limit_s=capacity_s, cycle_s=2)
+    assert capacity_s == 12
+    assert recommended_s == 12
+
+    question_context = {
+        "kind": "capacity",
+        "cadence": initial_cadence.model_dump(mode="json"),
+        "requested_duration_s": 24,
+        "recommended_duration_s": recommended_s,
+        "recommendation": "Use the best 12 seconds",
+    }
+    events = [
+        SimpleNamespace(
+            sequence=1,
+            role="user",
+            event_type="user_message",
+            payload={"message": prompt},
+        ),
+        SimpleNamespace(
+            sequence=2,
+            role="assistant",
+            event_type="assistant_question",
+            payload={"cadence_context": question_context},
+        ),
+    ]
+    cadence, target_s = _resolved_cadence_for_turn(
+        events=events,
+        manifest=manifest,
+        creator_request=prompt,
+        user_message="Use the best 12 seconds",
+    )
+    assert cadence == initial_cadence
+    assert target_s == 12
+
+    edit_plan = compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            direction="fast_montage",
+            edit_format="montage",
+            audio_strategy="licensed_music",
+            pacing="fast",
+            target_duration_s=target_s,
+            render_program="guided",
+            montage_cadence=cadence,
+        ),
+    )
+    item_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    assignments = [
+        {
+            "media_id": media_id,
+            "gcs_path": f"users/u/{media_id}.mp4",
+            "generation": "1",
+            "duration_s": duration_s,
+        }
+        for media_id, duration_s in (("match-a", 6.633), ("match-b", 26.433))
+    ]
+    item = _prod_item(item_id, clip_assignments=assignments)
+    item.edit_proposal = None
+    _seed_guided_specialist_brief(
+        item,
+        edit_plan,
+        summary="Alternate the two matches in exact one-second cuts.",
+        creator_request=prompt,
+    )
+    seeded = parse_edit_proposal(item.edit_proposal)
+    assert seeded is not None
+    assert seeded.brief.duration_s == 12
+    assert seeded.brief.montage_cadence == initial_cadence
+    item.edit_proposal = seeded.model_copy(
+        update={
+            "status": "analyzing",
+            "generation_attempt_id": "attempt-1",
+        }
+    ).model_dump(mode="json")
+
+    refs = [
+        MediaRef(
+            lane="clip",
+            media_id="match-a",
+            gcs_path="users/u/match-a.mp4",
+            generation="1",
+            kind="video",
+            duration_s=6.633,
+            analysis={"best_moments": [{"start_s": 2, "end_s": 6, "energy": 9}]},
+        ),
+        MediaRef(
+            lane="clip",
+            media_id="match-b",
+            gcs_path="users/u/match-b.mp4",
+            generation="1",
+            kind="video",
+            duration_s=26.433,
+            analysis={"best_moments": [{"start_s": 10, "end_s": 16, "energy": 8}]},
+        ),
+    ]
+    db = _Db(_Result(rows=[]))
+
+    @contextmanager
+    def _session():
+        yield db
+
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    monkeypatch.setattr(proposal_build, "_locked_item", lambda *_a, **_kw: (item, owner_id))
+    monkeypatch.setattr(proposal_build, "_attempt_is_active", lambda *_a, **_kw: True)
+    monkeypatch.setattr(proposal_build, "_pool_refs", lambda *_a, **_kw: [])
+    monkeypatch.setattr(
+        proposal_build,
+        "_analyze_clip_assignments",
+        lambda clip_assignments, *_a, **_kw: list(zip(clip_assignments, refs, strict=True)),
+    )
+    monkeypatch.setattr(proposal_build, "media_generations_match_sync", lambda _refs: True)
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: None)
+    monkeypatch.setattr(
+        "app.agents.edit_proposal.EditProposalAgent.run",
+        lambda *_a, **_kw: (_ for _ in ()).throw(TerminalError("force deterministic fallback")),
+    )
+
+    proposal_build._run_draft_attempt(
+        SimpleNamespace(), item_id, str(item_id), "attempt-1", 0, False
+    )
+
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None and persisted.status == "draft"
+    assert persisted.draft is not None
+    snapshot = persisted.draft
+    assert snapshot.duration_s == 12
+    assert snapshot.montage_cadence == initial_cadence
+    assert [cut.media_id for cut in snapshot.fast_cuts or []] == ["match-a", "match-b"] * 6
+    assert [cut.output_duration_s for cut in snapshot.fast_cuts or []] == [1.0] * 12
+
+    raw = {
+        "proposal_version": persisted.proposal_version,
+        "media_digest": canonical_media_digest(snapshot.media),
+        "approved_proposal": snapshot.model_dump(mode="json"),
+        "media_identities": [
+            {
+                "lane": ref.lane,
+                "media_id": ref.media_id,
+                "gcs_path": ref.gcs_path,
+                "generation": ref.generation,
+                "kind": ref.kind,
+            }
+            for ref in snapshot.media
+        ],
+    }
+    execution_plan = compile_execution_plan(raw, track=None)
+    assert [row["media_id"] for row in execution_plan["story_timeline"]] == [
+        "match-a",
+        "match-b",
+    ] * 6
+    assert [row["duration_s"] for row in execution_plan["story_timeline"]] == [1.0] * 12
+    ready = _ready_result(execution_plan)
+    assert (
+        validate_ready_result(execution_plan, ready, job_id="job-1", verify_storage=False) == ready
+    )
+
+
 def test_initial_draft_does_not_approve_fallback_rejected_by_renderer(monkeypatch) -> None:
     from app.pipeline import guided_story
 
@@ -1327,9 +1575,16 @@ def test_auto_finalize_success_approves_auto_and_dispatches_after_commit(monkeyp
         *,
         bypass_guided_edit_gate=False,
         creator_guided_attempt_id=None,
+        reject_active_creator_session=False,
     ):
         dispatch_calls.append(
-            (item_id_arg, epoch, bypass_guided_edit_gate, creator_guided_attempt_id)
+            (
+                item_id_arg,
+                epoch,
+                bypass_guided_edit_gate,
+                creator_guided_attempt_id,
+                reject_active_creator_session,
+            )
         )
         return SimpleNamespace(outcome="dispatched")
 
@@ -1344,7 +1599,7 @@ def test_auto_finalize_success_approves_auto_and_dispatches_after_commit(monkeyp
     assert persisted.last_approved is not None
     assert persisted.last_approved.approval_mode == "auto"
     assert persisted.design_fallback is None
-    assert dispatch_calls == [(str(item_id), 0, False, "attempt-1")]
+    assert dispatch_calls == [(str(item_id), 0, False, "attempt-1", True)]
 
 
 def test_auto_finalize_dispatch_failure_leaves_approved_no_wedge(monkeypatch) -> None:
@@ -1418,9 +1673,16 @@ def test_auto_finalize_infeasible_footage_falls_back_to_montage_clip_only(monkey
         *,
         bypass_guided_edit_gate=False,
         creator_guided_attempt_id=None,
+        reject_active_creator_session=False,
     ):
         dispatch_calls.append(
-            (item_id_arg, epoch, bypass_guided_edit_gate, creator_guided_attempt_id)
+            (
+                item_id_arg,
+                epoch,
+                bypass_guided_edit_gate,
+                creator_guided_attempt_id,
+                reject_active_creator_session,
+            )
         )
         return SimpleNamespace(outcome="dispatched")
 
@@ -1434,7 +1696,7 @@ def test_auto_finalize_infeasible_footage_falls_back_to_montage_clip_only(monkey
     assert persisted.failure is not None
     assert persisted.failure.code == "guided_edit_infeasible"
     assert persisted.design_fallback == "guided_edit_infeasible"
-    assert dispatch_calls == [(str(item_id), 0, True, "attempt-1")]
+    assert dispatch_calls == [(str(item_id), 0, True, "attempt-1", True)]
 
 
 def test_main_creator_fail_closed_sentinel_blocks_generic_fallback(monkeypatch) -> None:

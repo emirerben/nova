@@ -38,6 +38,19 @@ def queue_for_mixed_media_timing(value: Any, *, default_queue: str) -> str:
     return default_queue
 
 
+def queue_for_guided_contract(
+    mixed_media_timing: Any,
+    montage_cadence: Any,
+    *,
+    default_queue: str,
+) -> str:
+    """Fence every new guided timing contract onto current-version workers."""
+
+    if montage_cadence is not None:
+        return MIXED_MEDIA_CREATOR_QUEUE
+    return queue_for_mixed_media_timing(mixed_media_timing, default_queue=default_queue)
+
+
 if EDIT_PROPOSAL_TASK_SOFT_TIME_LIMIT_S >= EDIT_PROPOSAL_TASK_HARD_TIME_LIMIT_S:
     raise RuntimeError("edit proposal soft limit must stay below its hard limit")
 if CREATOR_EXECUTION_RECEIPT_LEASE_S <= EDIT_PROPOSAL_TASK_HARD_TIME_LIMIT_S:
