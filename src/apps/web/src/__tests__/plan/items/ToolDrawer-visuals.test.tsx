@@ -249,7 +249,7 @@ describe("ToolDrawer visual blocks", () => {
   });
 
   it("exposes card background, transition, duplication, and audio controls", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const onPatchVisualBlock = jest.fn();
     const onDuplicateVisualBlock = jest.fn();
     const onAddVisualBlockText = jest.fn();

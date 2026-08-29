@@ -139,14 +139,14 @@ describe("UnifiedTimeline — SFX bars render", () => {
  * it with userEvent.click (see DESIGN.md §15 "Jest / Radix-in-jsdom notes").
  */
 async function pickGlossaryEffect(name: string) {
-  const user = userEvent.setup();
+  const user = userEvent.setup({ delay: null });
   await user.click(screen.getByRole("combobox"));
   await user.click(await screen.findByRole("option", { name: new RegExp(name, "i") }));
 }
 
 describe("UnifiedTimeline — glossary picker", () => {
   it("renders glossary effects in the select", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const effects = [makeGlossaryEffect({ id: "g1", name: "Boom" })];
     render(<UnifiedTimeline {...makeProps({ sfxGlossaryEffects: effects })} />);
     await user.click(screen.getByRole("combobox"));
