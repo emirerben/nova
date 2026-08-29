@@ -26,7 +26,9 @@ userEvent.setup = (options = {}) =>
   defaultUserEventSetup({
     ...options,
     delay: options.delay ?? null,
-    pointerEventsCheck: options.pointerEventsCheck ?? 0,
+    ...(process.env.CI && {
+      pointerEventsCheck: options.pointerEventsCheck ?? 0,
+    }),
   });
 
 // Feature flags: page.tsx reads these at module-load time via `=== "true"`.
