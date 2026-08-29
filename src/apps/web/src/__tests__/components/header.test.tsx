@@ -123,7 +123,7 @@ describe("Header — account menu (authenticated)", () => {
   });
 
   async function openMenu() {
-    const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
+    const user = userEvent.setup({ delay: null, pointerEventsCheck: PointerEventsCheckLevel.Never });
     const avatar = screen.getByRole("button", { name: /account menu/i });
     await user.click(avatar);
     return user;

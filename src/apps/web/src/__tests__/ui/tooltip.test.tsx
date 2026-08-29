@@ -10,7 +10,7 @@ import {
 
 describe("Tooltip", () => {
   it("opens on hover/focus and renders content at z-[130]", async () => {
-    const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
+    const user = userEvent.setup({ delay: null, pointerEventsCheck: PointerEventsCheckLevel.Never });
     render(
       <TooltipProvider delayDuration={0}>
         <Tooltip>
