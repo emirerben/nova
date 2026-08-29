@@ -6,6 +6,11 @@ const createJestConfig = nextJest({ dir: "./" });
 const config = {
   testEnvironment: "jsdom",
   maxWorkers: "50%",
+  // The full JSDOM suite grows past 1.5 GB in one process. GitHub's smaller
+  // runners can swap heavily when multiple long-lived workers do that at once,
+  // starving interaction timers and invalidating performance tests. Recycle
+  // only CI workers at a fixed absolute ceiling; local runs keep warm workers.
+  ...(process.env.CI ? { workerIdleMemoryLimit: "512MB" } : {}),
   moduleNameMapper: {
     "^@/(.*)$": "<rootDir>/src/$1",
     "^@nova/motion-runtime$": "<rootDir>/../../packages/motion-runtime/src/index.ts",

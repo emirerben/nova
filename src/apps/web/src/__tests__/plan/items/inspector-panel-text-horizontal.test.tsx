@@ -57,7 +57,7 @@ function renderTextInspector(bar: TextElementBar) {
 
 describe("InspectorPanel text horizontal controls", () => {
   it("offers standard, high-visibility, and off shadow effects", async () => {
-    const user = userEvent.setup({ delay: null });
+    const user = userEvent.setup();
     const onPatch = renderTextInspector(makeBar());
     const select = screen.getByRole("combobox", { name: "Shadow effect" });
 
@@ -87,7 +87,7 @@ describe("InspectorPanel text horizontal controls", () => {
   });
 
   it("restores standard from an off shadow effect", async () => {
-    const user = userEvent.setup({ delay: null });
+    const user = userEvent.setup();
     const onPatch = renderTextInspector(makeBar({ shadow_enabled: false }));
     const select = screen.getByRole("combobox", { name: "Shadow effect" });
     expect(select).toHaveTextContent("Off");

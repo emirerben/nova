@@ -5,7 +5,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 
 describe("Popover", () => {
   it("opens on click and renders content at z-[130]", async () => {
-    const user = userEvent.setup({ delay: null });
+    const user = userEvent.setup();
     render(
       <Popover>
         <PopoverTrigger aria-label="Info">i</PopoverTrigger>

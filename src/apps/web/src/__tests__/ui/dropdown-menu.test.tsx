@@ -10,7 +10,7 @@ import {
 
 describe("DropdownMenu", () => {
   it("opens on click and shows menu items at z-[130]", async () => {
-    const user = userEvent.setup({ delay: null });
+    const user = userEvent.setup();
     render(
       <DropdownMenu>
         <DropdownMenuTrigger aria-label="Account menu">Avatar</DropdownMenuTrigger>

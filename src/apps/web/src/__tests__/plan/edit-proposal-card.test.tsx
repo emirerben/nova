@@ -347,7 +347,7 @@ describe("EditProposalCard", () => {
   });
 
   it("marks AI thoughts, supports keyboard-operable ordering, and approves with CAS", async () => {
-    const user = userEvent.setup({ delay: null });
+    const user = userEvent.setup();
     const saved = item({ ...proposal(), proposal_version: 3 });
     const approved = item({ ...proposal("approved"), proposal_version: 4 });
     mockUpdate.mockResolvedValue(saved);
@@ -390,7 +390,7 @@ describe("EditProposalCard", () => {
   });
 
   it("shows a conversational custom duration instead of falling back to 15 seconds", async () => {
-    const user = userEvent.setup({ delay: null });
+    const user = userEvent.setup();
     const custom = proposal();
     custom.draft = { ...custom.draft!, duration_s: 10 };
     custom.brief = { ...custom.brief, duration_s: 10 };
