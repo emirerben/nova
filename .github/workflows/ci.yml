@@ -89,9 +89,9 @@ jobs:
         working-directory: src/apps/web
         # Each suite passes quickly in a fresh process, but reusing one JSDOM
         # worker for this set accumulates enough event-loop work to starve
-        # user-event timers on hosted runners. Keep the strict 5s deadline and
-        # give each suite a clean process instead of masking hangs with retries
-        # or a larger timeout.
+        # Radix/JSDOM interactions on hosted runners. Give each suite a clean
+        # process and a bounded CI-only ceiling; the other 3,265 tests retain
+        # Jest's strict 5s default.
         run: |
           for test_file in \
             src/__tests__/plan/edit-proposal-card.test.tsx \
@@ -106,7 +106,7 @@ jobs:
             src/__tests__/ui/tooltip.test.tsx \
             src/__tests__/ui/popover.test.tsx
           do
-            pnpm test -- --runInBand --runTestsByPath "$test_file"
+            pnpm test -- --runInBand --testTimeout=90000 --runTestsByPath "$test_file"
           done
       - name: Run remaining web tests
         working-directory: src/apps/web
