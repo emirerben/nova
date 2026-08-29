@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **Fly deploy verification now accepts the exact dormant guard lifecycle Fly actually produces.** A guard may settle from `created` to `stopped` only when it has no start or exit event, remains immutable and unowned by Launch, and matches its signed metadata receipt; executed or altered guards still fail closed, while successful deploys can verify and remove the lock.
-- **Web CI no longer collapses under Jest heap growth.** Hosted-runner workers recycle at a fixed memory ceiling, preventing swap-driven interaction timeouts without weakening test deadlines or local behavior.
+- **Web CI isolates JSDOM interaction suites without weakening their deadlines.** Each event-heavy suite runs in a fresh process before the remaining Jest suite, preventing accumulated event-loop work from causing false hosted-runner timeouts.
 
 ## [0.57.0.2] — 2026-08-29
 
