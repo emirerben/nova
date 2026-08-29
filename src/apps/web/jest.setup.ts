@@ -6,6 +6,24 @@
  * Polyfill it here so any test that calls code using crypto.randomUUID works.
  */
 
+/**
+ * user-event's default delay is zero, but it still yields through a real
+ * setTimeout between pointer actions. That timer is occasionally starved by
+ * the hosted CI runner, causing otherwise immediate Radix interactions to
+ * exceed Jest's five-second test timeout. Keep the default interaction
+ * sequence intact while removing the unnecessary timer yield in tests.
+ */
+const userEventModule = require("@testing-library/user-event") as {
+  default?: { setup: (options?: Record<string, unknown>) => unknown };
+  setup?: (options?: Record<string, unknown>) => unknown;
+};
+const userEvent = (userEventModule.default ?? userEventModule) as {
+  setup: (options?: Record<string, unknown>) => unknown;
+};
+const defaultUserEventSetup = userEvent.setup;
+userEvent.setup = (options = {}) =>
+  defaultUserEventSetup({ ...options, delay: options.delay ?? null });
+
 // Feature flags: page.tsx reads these at module-load time via `=== "true"`.
 // Without a .env in src/apps/web/, process.env is empty in jest → flags off →
 // "timeline" tab hidden → tests that click the Timeline tab fail.
