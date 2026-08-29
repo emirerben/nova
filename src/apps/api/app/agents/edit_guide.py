@@ -59,7 +59,8 @@ class EditGuideRevision(BaseModel):
     direction: Literal["guided_story", "fast_montage", "text_explainer"]
     goal: str = Field(default="", max_length=500)
     pace: Literal["relaxed", "balanced", "fast"]
-    duration_s: int = Field(ge=10, le=60)
+    # Main Creator cadence plans can be as short as the shared proposal floor.
+    duration_s: int = Field(ge=3, le=60)
     title: str = Field(min_length=1, max_length=100)
     story_beats: list[EditGuideRevisionBeat] = Field(min_length=1, max_length=20)
 

@@ -185,6 +185,22 @@ describe("EditProposalCard", () => {
     expect(mockConversation).not.toHaveBeenCalled();
   });
 
+  it("offers a legacy replan path when semantic fields are read-only and chat is dark", () => {
+    const legacyItem = {
+      ...item(proposal()),
+      guided_edit_conversation_available: false,
+    };
+    render(<EditProposalCard item={legacyItem} onChanged={jest.fn()} />);
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Start a new plan to change direction, pace, or length",
+      }),
+    );
+
+    expect(screen.getByText("Edit direction")).toBeInTheDocument();
+  });
+
   it("shows the inferred direction and confirms it with proposal-version protection", async () => {
     const awaiting = proposal("briefing");
     awaiting.guidance = {
@@ -361,12 +377,12 @@ describe("EditProposalCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Move Coast earlier" }));
     expect(screen.getByLabelText("Moment 1 topic")).toHaveValue("Coast");
 
-    openSelect(screen.getByRole("combobox", { name: "Direction" }));
-    fireEvent.click(await screen.findByRole("option", { name: "Text explainer" }));
-    openSelect(screen.getByRole("combobox", { name: "Pace" }));
-    fireEvent.click(await screen.findByRole("option", { name: "Relaxed" }));
-    openSelect(screen.getByRole("combobox", { name: "Target length" }));
-    fireEvent.click(await screen.findByRole("option", { name: "30 seconds" }));
+    expect(screen.getByText("Direction").nextElementSibling).toHaveTextContent("Story with thoughts");
+    expect(screen.getByText("Pace").nextElementSibling).toHaveTextContent("Balanced");
+    expect(screen.getByText("Target length").nextElementSibling).toHaveTextContent("24 seconds");
+    expect(
+      screen.getByRole("button", { name: "Ask Kria to change direction, pace, or length" }),
+    ).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("Moment 1 topic"), {
       target: { value: "Sea and beaches" },
@@ -380,9 +396,9 @@ describe("EditProposalCard", () => {
 
     await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(1));
     const sent = mockUpdate.mock.calls[0][2];
-    expect(sent.direction).toBe("text_explainer");
-    expect(sent.pace).toBe("relaxed");
-    expect(sent.duration_s).toBe(30);
+    expect(sent.direction).toBe("guided_story");
+    expect(sent.pace).toBe("balanced");
+    expect(sent.duration_s).toBe(24);
     expect(sent.story_beats[0].topic).toBe("Sea and beaches");
     expect(sent.story_beats[0].layout).toBe("supporting_card");
     expect(sent.story_beats[0].thought_source).toBe("user");
@@ -391,16 +407,14 @@ describe("EditProposalCard", () => {
     expect(onChanged).toHaveBeenLastCalledWith(approved);
   });
 
-  it("shows a conversational custom duration instead of falling back to 15 seconds", async () => {
+  it("shows a read-only conversational custom duration instead of falling back to 15 seconds", () => {
     const custom = proposal();
     custom.draft = { ...custom.draft!, duration_s: 10 };
     custom.brief = { ...custom.brief, duration_s: 10 };
 
     render(<EditProposalCard item={item(custom)} onChanged={jest.fn()} />);
 
-    expect(screen.getByRole("combobox", { name: "Target length" })).toHaveTextContent("10 seconds");
-    openSelect(screen.getByRole("combobox", { name: "Target length" }));
-    expect(await screen.findByRole("option", { name: "10 seconds" })).toBeInTheDocument();
+    expect(screen.getByText("Target length").nextElementSibling).toHaveTextContent("10 seconds");
   });
 
   it("shows the source-aware cut program instead of editable compatibility beats", () => {
@@ -440,8 +454,25 @@ describe("EditProposalCard", () => {
     expect(screen.getByText(/coast.mp4/)).toBeInTheDocument();
     expect(screen.getByText(/hook · 0.2–1.2s · hard cut/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Moment 1 topic")).toBeNull();
-    expect(screen.getByRole("combobox", { name: "Direction" })).toBeDisabled();
-    expect(screen.getByRole("combobox", { name: "Target length" })).toBeDisabled();
+    expect(screen.getByText("Direction").nextElementSibling).toHaveTextContent("Fast montage");
+    expect(screen.getByText("Target length").nextElementSibling).toHaveTextContent("2 seconds");
+  });
+
+  it("turns a replan-required save failure into an actionable Kria error", async () => {
+    mockUpdate.mockRejectedValueOnce(
+      new PlanApiError({
+        message: "proposal_replan_required",
+        status: 409,
+        code: "proposal_replan_required",
+      }),
+    );
+
+    render(<EditProposalCard item={item(proposal())} onChanged={jest.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Approve plan" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "This montage needs a new cut plan. Ask Kria to replan the direction before approving.",
+    );
   });
 
   it("counts only selected sources in the approved summary", () => {

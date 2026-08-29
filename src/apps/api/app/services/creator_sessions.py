@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import math
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -38,7 +39,7 @@ from app.services.edit_proposal_limits import (
     CREATOR_EXECUTION_RECEIPT_LEASE_S,
     EDIT_PROPOSAL_TASK_HARD_TIME_LIMIT_S,
     edit_proposal_task_id,
-    queue_for_mixed_media_timing,
+    queue_for_guided_contract,
 )
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
 
@@ -91,6 +92,16 @@ def rollout_eligible(user_id: uuid.UUID) -> bool:
 
 def _clean(value: object, limit: int = 500) -> str:
     return " ".join(str(value or "").split())[:limit]
+
+
+def _positive_duration_s(value: object) -> float | None:
+    try:
+        duration_s = float(value or 0) or None
+    except (TypeError, ValueError):
+        return None
+    if duration_s is None or duration_s <= 0 or not math.isfinite(duration_s):
+        return None
+    return duration_s
 
 
 def _job_matches_guided_attempt(job: Job | None, attempt_id: str | None) -> bool:
@@ -198,9 +209,22 @@ async def resolve_item_creator_context(
             continue
         seen.add(media_id)
         user_note = _clean(assignment.get("user_note"), 400)
-        media_refs.append(CreatorMediaRef(media_id=media_id, kind="video", label=user_note or None))
+        duration_s = _positive_duration_s(assignment.get("duration_s"))
+        media_refs.append(
+            CreatorMediaRef(
+                media_id=media_id,
+                kind="video",
+                duration_s=duration_s,
+                label=user_note or None,
+            )
+        )
         media_context.append(
-            {"media_id": media_id, "kind": "video", "creator_note": user_note or None}
+            {
+                "media_id": media_id,
+                "kind": "video",
+                "duration_s": duration_s,
+                "creator_note": user_note or None,
+            }
         )
 
     assets = (
@@ -229,9 +253,7 @@ async def resolve_item_creator_context(
             CreatorMediaRef(
                 media_id=media_id,
                 kind=kind,
-                duration_s=(
-                    float(asset.duration_s) if asset.duration_s and asset.duration_s <= 60 else None
-                ),
+                duration_s=_positive_duration_s(asset.duration_s),
                 label=context or None,
             )
         )
@@ -240,6 +262,7 @@ async def resolve_item_creator_context(
             {
                 "media_id": media_id,
                 "kind": kind,
+                "duration_s": _positive_duration_s(asset.duration_s),
                 "creator_context": context or None,
                 # AI evidence is clearly segregated and must never be copied to
                 # on-screen text (also enforced in the main prompt).
@@ -420,6 +443,7 @@ def compile_active_plan(
         "story_structure": list(getattr(strategy, "story_structure", []) or []),
         "caption_style": getattr(strategy, "caption_style", None),
         "intro_hook": getattr(strategy, "intro_hook", None),
+        "target_duration_s": strategy.target_duration_s,
         "edit_plan": edit_plan.model_dump(mode="json", exclude_none=True),
     }
     clean_request = _clean(creator_request, 1000)
@@ -427,6 +451,8 @@ def compile_active_plan(
         receipt["creator_request"] = clean_request
     if strategy.mixed_media_timing is not None:
         receipt["mixed_media_timing"] = strategy.mixed_media_timing.model_dump(mode="json")
+    if strategy.montage_cadence is not None:
+        receipt["montage_cadence"] = strategy.montage_cadence.model_dump(mode="json")
     receipt["plan_hash"] = canonical_context_hash(receipt)
     return receipt
 
@@ -565,8 +591,9 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
                 from app.services.queue_state import get_task_runtime_state  # noqa: PLC0415
                 from app.worker import celery_app  # noqa: PLC0415
 
-                queue_name = queue_for_mixed_media_timing(
+                queue_name = queue_for_guided_contract(
                     parsed_proposal.brief.mixed_media_timing,
+                    parsed_proposal.brief.montage_cadence,
                     default_queue=settings.pool_asset_analysis_queue,
                 )
                 runtime = await asyncio.to_thread(

@@ -20,6 +20,7 @@ from app.schemas.edit_proposal import (
     FastMontageCut,
     MixedMediaTimingProfile,
     MontageAudioPlan,
+    MontageCadenceConstraint,
     MontageTextBinding,
     mixed_media_hold_bounds,
     uses_quick_photo_long_video_timing,
@@ -160,6 +161,7 @@ class EditProposalAgentInput(BaseModel):
     target_duration_s: int = Field(ge=3, le=60)
     mixed_media_timing: MixedMediaTimingProfile | None = None
     montage_audio: MontageAudioPlan | None = None
+    montage_cadence: MontageCadenceConstraint | None = None
     review_feedback: str = Field(default="", max_length=5000)
     media: list[EditProposalMedia] = Field(min_length=1, max_length=MAX_EDIT_PROPOSAL_MEDIA)
 
@@ -208,7 +210,10 @@ def shortlist_edit_proposal_media(
 
     explicitly_required_ids = {
         media_id
-        for media_id in (input.montage_audio.source_media_ids if input.montage_audio else [])
+        for media_id in (
+            (input.montage_audio.source_media_ids if input.montage_audio else [])
+            + (input.montage_cadence.source_media_ids if input.montage_cadence else [])
+        )
         if media_id in {media.media_id for _index, media in eligible}
     }
     selected: list[EditProposalMedia] = [
@@ -590,7 +595,13 @@ def _normalize_fast_montage_duration(
         # Let the normal output model retain its established missing/shape error.
         return payload, set()
     quick_mixed_timing = uses_quick_photo_long_video_timing(input.mixed_media_timing)
-    split_limit_s = 3.0 if quick_mixed_timing else 1.2
+    split_limit_s = (
+        input.montage_cadence.cut_duration_s
+        if input.montage_cadence is not None
+        else 3.0
+        if quick_mixed_timing
+        else 1.2
+    )
     cuts, repaired_cut_ids, raw_total_s = _compile_fast_cuts(raw_cuts, split_limit_s=split_limit_s)
 
     # Reconcile against the actual cut total. Do not reject a fixable provider
@@ -602,6 +613,11 @@ def _normalize_fast_montage_duration(
     normalized_cuts = list(cuts)
 
     def assert_video_windows_do_not_overlap() -> None:
+        if (
+            input.montage_cadence is not None
+            and input.montage_cadence.reuse_policy == "allow_repeat"
+        ):
+            return
         windows_by_media: dict[str, list[tuple[float, float]]] = {}
         for candidate in normalized_cuts:
             media = media_by_id.get(candidate.media_id)
@@ -706,7 +722,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.edit_proposal",
         prompt_id="edit_proposal",
-        prompt_version="1.5.4",
+        prompt_version="1.5.5",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -721,7 +737,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
         return ["title", "story_beats"]
 
     def render_prompt(self, input: EditProposalAgentInput) -> str:  # noqa: A002
-        prompt_media, _alias_to_id, _id_to_alias = _prompt_media(input)
+        prompt_media, _alias_to_id, id_to_alias = _prompt_media(input)
         video_footage_s = sum(
             m.duration_s for m in prompt_media if m.kind == "video" and m.duration_s
         )
@@ -770,6 +786,16 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 "preserve_source_audio, preview_source_beds, and source_media_ids in that "
                 "object; do not add provider-specific mixer fields."
             )
+        if input.montage_cadence is not None:
+            cadence = input.montage_cadence
+            aliases = [id_to_alias[media_id] for media_id in cadence.source_media_ids]
+            montage_note += (
+                " ROUND-ROBIN CADENCE: fast_cuts must follow this exact repeating source "
+                f"order: {', '.join(aliases)}. Every cut must be exactly "
+                f"{cadence.cut_duration_s:g}s. Reuse policy is {cadence.reuse_policy}; "
+                "choose the strongest analyzed non-overlapping windows and preserve the exact "
+                "target duration."
+            )
         review_note = ""
         if input.review_feedback.strip():
             review_note = (
@@ -779,11 +805,15 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 "requested source coverage, text, audio intent, and exact target duration. "
                 f"{input.review_feedback.strip()}"
             )
-        source_floor = minimum_required_sources(
-            len(prompt_media),
-            target_duration_s=input.target_duration_s,
-            media=prompt_media,
-            mixed_media_timing=input.mixed_media_timing,
+        source_floor = (
+            len(input.montage_cadence.source_media_ids)
+            if input.montage_cadence is not None
+            else minimum_required_sources(
+                len(prompt_media),
+                target_duration_s=input.target_duration_s,
+                media=prompt_media,
+                mixed_media_timing=input.mixed_media_timing,
+            )
         )
         source_floor_note = (
             "SCHEMA SOURCE FLOOR: This response must reference at least "
@@ -858,6 +888,16 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 raise SchemaError(
                     "edit_proposal: requested montage audio sources were not preserved"
                 )
+        if input.montage_cadence is not None:
+            cadence = input.montage_cadence
+            cadence_sources = cadence.source_media_ids
+            if len(output.fast_cuts or []) % len(cadence_sources):
+                raise SchemaError("edit_proposal: round-robin cadence ended mid-cycle")
+            for index, cut in enumerate(output.fast_cuts or []):
+                if cut.media_id != cadence_sources[index % len(cadence_sources)]:
+                    raise SchemaError("edit_proposal: round-robin source order changed")
+                if abs(cut.output_duration_s - cadence.cut_duration_s) > 0.001:
+                    raise SchemaError("edit_proposal: round-robin cut duration changed")
         allowed = {m.media_id for m in input.media}
         media_by_id = {media.media_id: media for media in input.media}
         used: set[str] = set()
@@ -890,6 +930,11 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 source_duration = float(media.duration_s or 0.0)
                 if media.kind == "video" and cut.source_end_s > source_duration + 0.001:
                     raise SchemaError("edit_proposal: fast cut source window exceeds video")
+                # An explicit cadence owns the cut length. It has already been
+                # checked above against the exact typed contract, so do not
+                # apply the generic 0.8s montage floor to valid faster rhythms.
+                if input.montage_cadence is not None:
+                    continue
                 if uses_quick_photo_long_video_timing(input.mixed_media_timing):
                     bounds = mixed_media_hold_bounds(media.kind)
                     if media.kind == "image":
@@ -918,11 +963,15 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                         raise SchemaError(
                             "edit_proposal: fast cuts target 0.8-1.2s except truly short sources"
                         )
-            minimum = minimum_required_sources(
-                len(input.media),
-                target_duration_s=input.target_duration_s,
-                media=input.media,
-                mixed_media_timing=input.mixed_media_timing,
+            minimum = (
+                len(input.montage_cadence.source_media_ids)
+                if input.montage_cadence is not None
+                else minimum_required_sources(
+                    len(input.media),
+                    target_duration_s=input.target_duration_s,
+                    media=input.media,
+                    mixed_media_timing=input.mixed_media_timing,
+                )
             )
             if len(cut_sources) < minimum:
                 raise SchemaError(

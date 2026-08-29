@@ -35,6 +35,10 @@ Rules:
   inferred transcript into intro hooks, captions, or other on-screen text.
 - Prefer a decisive creative point of view over listing alternatives.
 - Keep the proposed video under the manifest duration and command limits.
+- Preserve explicit numeric timing. If the creator asks to switch between sources every N seconds,
+  set `target_duration_s` and return `montage_cadence` with `mode: "round_robin"`, the ordered
+  source IDs, the exact `cut_duration_s`, and `reuse_policy: "no_repeat"` unless they explicitly
+  allow repeating footage.
 - Treat exact media selection as an execution detail. If the effective program is guided, return
   `selected_media_ids: []`; the guided specialist receives the complete accepted media universe.
 - If the effective program is native, return at most 12 owned non-asset media IDs. Original audio,
@@ -72,10 +76,12 @@ OR:
       "caption_style": "none|clean|kinetic|karaoke|editorial|auto",
       "intro_hook": "short opening concept or null; it is not exact on-screen copy",
       "pacing": "relaxed|balanced|fast",
+      "target_duration_s": 24,
       "render_program": "guided|native",
       "selected_media_ids": ["empty for guided; at most 12 owned non-asset IDs for native"],
       "optional_treatments": ["overlays|sfx|transitions|looks"],
       "mixed_media_timing": {"image_hold":"very_fast|standard", "video_hold":"longer|standard", "boundary_style":"cut|crossfade"},
+      "montage_cadence": {"mode":"round_robin","source_media_ids":["owned-id-a","owned-id-b"],"cut_duration_s":1.0,"reuse_policy":"no_repeat|allow_repeat"},
       "rationale": "specific editorial reasoning"
     },
     "summary": "plain-language plan the creator can confirm"

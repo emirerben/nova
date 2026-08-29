@@ -42,6 +42,11 @@ class ClipAssignment:
     # Stable proposal-level identity. Legacy assignments receive one when the
     # creator first clicks Plan edit; normal re-attaches preserve it by path.
     media_id: str | None = None
+    # Server-probed duration. Never accepted from the attach request body.
+    duration_s: float | None = None
+    duration_probe_status: str | None = None
+    duration_probe_generation: str | None = None
+    duration_probe_attempted_at: str | None = None
 
 
 class ClipAssignmentError(ValueError):
@@ -53,7 +58,19 @@ def ensure_clip_media_ids(item: PlanItem) -> bool:
 
     changed = False
     assignments: list[dict] = []
-    for raw in item.clip_assignments or []:
+    raw_assignments = item.clip_assignments or []
+    if not raw_assignments and item.clip_gcs_paths:
+        raw_assignments = [
+            {
+                "gcs_path": path,
+                "shot_id": None,
+                "user_note": "",
+                "machine_matched": False,
+            }
+            for path in item.clip_gcs_paths
+        ]
+        changed = True
+    for raw in raw_assignments:
         if not isinstance(raw, dict) or not raw.get("gcs_path"):
             continue
         entry = dict(raw)
@@ -107,6 +124,22 @@ def set_item_clips(item: PlanItem, assignments: list[ClipAssignment]) -> None:
             "user_note": a.user_note or "",
             "machine_matched": bool(a.machine_matched),
             **({"media_id": a.media_id} if a.media_id else {}),
+            **({"duration_s": a.duration_s} if a.duration_s is not None else {}),
+            **(
+                {"duration_probe_status": a.duration_probe_status}
+                if a.duration_probe_status
+                else {}
+            ),
+            **(
+                {"duration_probe_generation": a.duration_probe_generation}
+                if a.duration_probe_generation
+                else {}
+            ),
+            **(
+                {"duration_probe_attempted_at": a.duration_probe_attempted_at}
+                if a.duration_probe_attempted_at
+                else {}
+            ),
         }
         for a in assignments
     ]

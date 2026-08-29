@@ -25,6 +25,13 @@ def client() -> TestClient:
     return TestClient(app, raise_server_exceptions=False)
 
 
+@pytest.fixture(autouse=True)
+def _stub_creator_clip_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.tasks.creator_clip_metadata import analyze_creator_clip_metadata
+
+    monkeypatch.setattr(analyze_creator_clip_metadata, "apply_async", MagicMock())
+
+
 def teardown_function() -> None:
     app.dependency_overrides.clear()
 
@@ -323,6 +330,11 @@ def test_attach_clips_rejects_over_cap(client: TestClient) -> None:
 
 def test_attach_clips_happy_path_with_assignments(client: TestClient) -> None:
     """Happy path: shot assignment accepted, conformance nulled, task fired."""
+    from app.tasks.creator_clip_metadata import (
+        CREATOR_CLIP_METADATA_QUEUE,
+        analyze_creator_clip_metadata,
+    )
+
     user = _user()
     sid = uuid.uuid4().hex
     guide = [_shot(shot_id=sid)]
@@ -342,6 +354,9 @@ def test_attach_clips_happy_path_with_assignments(client: TestClient) -> None:
         )
     assert resp.status_code == 200
     mock_task.delay.assert_called_once_with(str(item.id), plan.ownership_epoch)
+    analyze_creator_clip_metadata.apply_async.assert_called_once_with(
+        args=[str(item.id), plan.ownership_epoch], queue=CREATOR_CLIP_METADATA_QUEUE
+    )
     # D7: conformance must be nulled on attach.
     assert item.conformance is None
 
@@ -362,10 +377,15 @@ def test_attach_clips_legacy_no_assignments(client: TestClient) -> None:
         )
     assert resp.status_code == 200
     # All clips should be in pool (shot_id=None).
-    expected_assignments = [
-        {"gcs_path": clip_path, "shot_id": None, "user_note": "", "machine_matched": False}
-    ]
-    assert item.clip_assignments == expected_assignments
+    assert len(item.clip_assignments) == 1
+    assert item.clip_assignments[0] == {
+        "gcs_path": clip_path,
+        "shot_id": None,
+        "user_note": "",
+        "machine_matched": False,
+        "media_id": item.clip_assignments[0]["media_id"],
+    }
+    uuid.UUID(item.clip_assignments[0]["media_id"])
 
 
 def test_attach_clips_nulls_conformance(client: TestClient) -> None:

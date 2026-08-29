@@ -84,6 +84,10 @@ class ProposalConflictError(ValueError):
     pass
 
 
+class ProposalReplanRequiredError(ProposalConflictError):
+    """The stored proposal cannot safely proceed without semantic replanning."""
+
+
 # Matches the Next.js proxy's maxDuration=60 (see conversational-edit route) so
 # a client-visible request timeout and the server-side reservation expire
 # together — was 90s, leaving a 30s window where the client had already given
@@ -439,6 +443,8 @@ def save_proposal_draft(
     """
 
     current = require_expected_version(item, expected_version)
+    if snapshot.direction == "fast_montage" and not snapshot.fast_cuts:
+        raise ProposalReplanRequiredError("proposal_replan_required")
     update: dict = {
         "proposal_version": current.proposal_version + 1,
         "status": "draft",
@@ -464,6 +470,8 @@ def approve_proposal(item: PlanItem, *, expected_version: int) -> EditProposal:
     current = require_expected_version(item, expected_version)
     if current.status != "draft" or current.draft is None or current.media_digest is None:
         raise ProposalConflictError("Only a current draft can be approved.")
+    if current.draft.direction == "fast_montage" and not current.draft.fast_cuts:
+        raise ProposalReplanRequiredError("proposal_replan_required")
     approved_version = current.proposal_version + 1
     approved = ApprovedProposalSnapshot(
         proposal_version=approved_version,
@@ -562,7 +570,7 @@ def guided_render_is_blocked(proposal: EditProposal) -> bool:
 
 
 def proposal_generate_error(item: PlanItem) -> str | None:
-    proposal = parse_edit_proposal(item.edit_proposal)
+    proposal = parse_edit_proposal(getattr(item, "edit_proposal", None))
     if proposal is None:
         return "proposal_required"
     if proposal.status in {"analyzing", "drafting"}:
@@ -580,6 +588,11 @@ def proposal_generate_error(item: PlanItem) -> str | None:
         return "direction_confirmation_required"
     if proposal.status != "approved" or proposal.last_approved is None:
         return "proposal_draft"
+    if (
+        proposal.last_approved.snapshot.direction == "fast_montage"
+        and not proposal.last_approved.snapshot.fast_cuts
+    ):
+        return "proposal_replan_required"
     if settings.guided_render_recovery_enabled and guided_render_is_blocked(proposal):
         return "proposal_render_blocked"
     return None

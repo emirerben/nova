@@ -705,6 +705,51 @@ async def test_context_caps_combined_clips_and_assets_at_manifest_limit() -> Non
 
 
 @pytest.mark.asyncio
+async def test_context_preserves_analyzed_clip_assignment_duration() -> None:
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        edit_format="montage",
+        audio_mode="kria",
+        voiceover_gcs_path=None,
+        current_job_id=None,
+        clip_gcs_paths=[],
+        clip_assignments=[
+            {
+                "media_id": "match-a",
+                "gcs_path": "users/u/a.mp4",
+                "duration_s": 6.633,
+            },
+            {
+                "media_id": "match-b",
+                "gcs_path": "users/u/b.mp4",
+                "duration_s": "66.433",
+            },
+        ],
+    )
+    persona = SimpleNamespace(user_id=uuid.uuid4())
+    asset = SimpleNamespace(
+        id=uuid.uuid4(),
+        kind="video",
+        duration_s=90.5,
+        user_context=None,
+        analysis=None,
+    )
+    asset_result = MagicMock()
+    asset_result.scalars.return_value = [asset]
+    empty_result = MagicMock()
+    empty_result.scalars.return_value = []
+    db = AsyncMock()
+    db.execute.side_effect = [asset_result, empty_result, empty_result]
+
+    manifest, media_context = await creator_sessions.resolve_item_creator_context(
+        db, item, persona=persona
+    )
+
+    assert [media.duration_s for media in manifest.media] == [6.633, 66.433, 90.5]
+    assert [media.get("duration_s") for media in media_context] == [6.633, 66.433, 90.5]
+
+
+@pytest.mark.asyncio
 async def test_context_exposes_only_ready_published_sound_effect_catalog_refs() -> None:
     item = SimpleNamespace(
         id=uuid.uuid4(),

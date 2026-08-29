@@ -7,6 +7,7 @@ from app.agents.edit_guide import (
     EditGuideAgent,
     EditGuideBeatInput,
     EditGuideInput,
+    EditGuideRevision,
 )
 from app.schemas.edit_proposal import EditConversationTurn, ProposalBrief
 
@@ -18,6 +19,26 @@ def _brief_payload() -> dict:
         "pace": "balanced",
         "duration_s": 24,
     }
+
+
+def test_review_revision_accepts_short_creator_cadence_duration() -> None:
+    revision = EditGuideRevision(
+        direction="fast_montage",
+        goal="Keep the alternating emotions",
+        pace="fast",
+        duration_s=4,
+        title="Two matches",
+        story_beats=[
+            {
+                "beat_id": "beat-1",
+                "topic": "Alternating moments",
+                "duration_s": 4,
+                "media_refs": ["media_1", "media_2"],
+            }
+        ],
+    )
+
+    assert revision.duration_s == 4
 
 
 def test_briefing_forces_ready_after_two_follow_up_questions() -> None:

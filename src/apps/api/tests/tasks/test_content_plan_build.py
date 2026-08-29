@@ -40,6 +40,37 @@ def test_mixed_media_guided_render_uses_deploy_fenced_queue() -> None:
     assert _guided_render_queue(None) == "plan-jobs"
 
 
+def test_cadence_guided_render_uses_deploy_fenced_queue() -> None:
+    approved = {
+        "snapshot": {
+            "montage_cadence": {
+                "mode": "round_robin",
+                "source_media_ids": ["clip-1", "clip-2"],
+                "cut_duration_s": 1,
+                "reuse_policy": "no_repeat",
+            }
+        }
+    }
+
+    assert _guided_render_queue(approved) == "creator-guided-jobs"
+
+
+def test_legacy_generate_task_keeps_wire_shape_and_fences_creator_sessions() -> None:
+    """Old two-argument Celery messages remain consumable during rollout."""
+    item_id = uuid.uuid4()
+    with patch(
+        "app.tasks.content_plan_build.dispatch_item_render_for",
+        return_value=SimpleNamespace(outcome="missing_row"),
+    ) as dispatch:
+        generate_plan_item_videos.run(str(item_id), 7)
+
+    dispatch.assert_called_once_with(
+        str(item_id),
+        7,
+        reject_active_creator_session=True,
+    )
+
+
 @pytest.fixture(autouse=True)
 def _legacy_task_owner_loader(monkeypatch: pytest.MonkeyPatch):
     """Keep old mock-session tests focused on their original behavior.
@@ -75,6 +106,7 @@ def _session_with(item, plan, persona_row) -> MagicMock:
         return {PlanItem: item, ContentPlan: plan, PersonaRow: persona_row}.get(model)
 
     session.get = MagicMock(side_effect=_get)
+    session.execute.return_value.scalar_one_or_none.return_value = None
     ctx = MagicMock()
     ctx.__enter__ = MagicMock(return_value=session)
     ctx.__exit__ = MagicMock(return_value=False)
@@ -293,6 +325,7 @@ def test_dispatch_snapshots_only_explicit_speech_cleanup_contracts(
         smart_sound_design_enabled=True,
         speech_cleanup_enabled=requested,
         current_job_id=None,
+        edit_proposal=None,
     )
     plan = SimpleNamespace(
         id=uuid.uuid4(),

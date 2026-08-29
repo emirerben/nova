@@ -116,6 +116,66 @@ def test_main_creator_recognizes_mixed_media_timing_request() -> None:
     }
 
 
+def test_main_creator_recovers_explicit_one_second_alternation() -> None:
+    base = _input()
+    videos = [
+        CreatorMediaRef(media_id="match-a", kind="video", duration_s=6.633),
+        CreatorMediaRef(media_id="match-b", kind="video", duration_s=26.433),
+    ]
+    agent_input = base.model_copy(
+        update={
+            "user_message": (
+                "Show one second from one, switch to the other one, and back and forth."
+            ),
+            "capability_manifest": base.capability_manifest.model_copy(update={"media": videos}),
+        }
+    )
+
+    output = MainCreatorAgent(None).parse(  # type: ignore[arg-type]
+        _raw(audio_strategy="licensed_music", selected=[]),
+        agent_input,
+    )
+
+    assert isinstance(output.action, ProposeStrategy)
+    assert output.action.strategy.montage_cadence is not None
+    assert output.action.strategy.montage_cadence.model_dump() == {
+        "mode": "round_robin",
+        "source_media_ids": ["match-a", "match-b"],
+        "cut_duration_s": 1.0,
+        "reuse_policy": "no_repeat",
+    }
+    assert output.action.strategy.render_program == "guided"
+
+
+def test_main_creator_prefers_latest_cadence_revision() -> None:
+    base = _input()
+    videos = [
+        CreatorMediaRef(media_id="match-a", kind="video", duration_s=20),
+        CreatorMediaRef(media_id="match-b", kind="video", duration_s=20),
+    ]
+    agent_input = base.model_copy(
+        update={
+            "conversation": [
+                {"role": "user", "content": "Alternate every 1 second without repeating."}
+            ],
+            "user_message": (
+                "Actually, alternate every 2 seconds and allow the moments to repeat."
+            ),
+            "capability_manifest": base.capability_manifest.model_copy(update={"media": videos}),
+        }
+    )
+
+    output = MainCreatorAgent(None).parse(  # type: ignore[arg-type]
+        _raw(audio_strategy="licensed_music", selected=[]),
+        agent_input,
+    )
+
+    assert isinstance(output.action, ProposeStrategy)
+    assert output.action.strategy.montage_cadence is not None
+    assert output.action.strategy.montage_cadence.cut_duration_s == 2
+    assert output.action.strategy.montage_cadence.reuse_policy == "allow_repeat"
+
+
 def test_main_creator_keeps_generic_montage_audio_intent_for_guided_original_audio() -> None:
     agent_input = _input()
     source_ids = [media.media_id for media in agent_input.capability_manifest.media[:2]]

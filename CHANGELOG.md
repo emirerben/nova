@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.57.0.5] — 2026-08-29
+
+### Added
+- **Kria now turns plain-language alternating-match requests into an exact typed cut plan.** Requests such as “one second from one, switch to the other, and back and forth” retain their source order, cut duration, reuse policy, and requested total length from planning through the render receipt.
+- **Insufficient footage now produces an actionable capacity choice instead of a broken montage.** With two uneven clips, Kria recommends the longest balanced no-repeat edit, preserves the clarification context, and exposes one-click answer chips in the website.
+
+### Fixed
+- **Fast montages can no longer render without their authored cuts.** Save, approval, raw Generate, and worker dispatch all fail closed with a replanning action, while completed historical videos remain playable.
+- **Alternating edits now use strong, non-overlapping source windows in strict round-robin order.** Footage repeats only after explicit creator consent, cadence timing stays frame-aligned, and incompatible voiceover or source-audio requests cannot silently discard the confirmed plan.
+- **Kria planning and raw Generate no longer race or deadlock.** Canonical locks, durable attempt ownership, metadata single-flight processing, and split-deploy-compatible task contracts prevent duplicate or stale renders.
+- **Creator-plan loading and recovery are visible and accessible.** The website shows a reduced-motion-safe eligibility placeholder, restores Create after successful recovery actions, and offers an explicit retry after transient refresh failures.
+
 ## [0.57.0.4] — 2026-08-29
 
 ### Fixed

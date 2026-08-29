@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 ProposalStatus = Literal[
     "briefing",
@@ -65,6 +65,136 @@ class MontageAudioPlan(BaseModel):
         if any(not value.strip() for value in self.source_media_ids):
             raise ValueError("montage audio source IDs must not be empty")
         return self
+
+
+class MontageCadenceConstraint(BaseModel):
+    """Exact creator-authored source cadence for a fast montage."""
+
+    mode: Literal["round_robin"] = "round_robin"
+    source_media_ids: list[str] = Field(min_length=2, max_length=12)
+    cut_duration_s: float = Field(ge=0.4, le=3.0)
+    reuse_policy: Literal["no_repeat", "allow_repeat"] = "no_repeat"
+
+    @field_validator("cut_duration_s")
+    @classmethod
+    def validate_frame_alignment(cls, value: float) -> float:
+        frame_count = round(value * 30)
+        frame_aligned = frame_count / 30
+        if abs(value - frame_aligned) > 0.001:
+            raise ValueError("montage cadence cut duration must align to 30fps frames")
+        return round(frame_aligned, 6)
+
+    @model_validator(mode="after")
+    def validate_source_ids(self) -> MontageCadenceConstraint:
+        if len(set(self.source_media_ids)) != len(self.source_media_ids):
+            raise ValueError("montage cadence source IDs must be unique")
+        if any(not value.strip() for value in self.source_media_ids):
+            raise ValueError("montage cadence source IDs must not be empty")
+        return self
+
+
+def _recognized_frame_aligned_cadence(value: float) -> float | None:
+    """Return a safe 30fps cadence value or leave ambiguous timing to the agent."""
+
+    if not 0.4 <= value <= 3.0:
+        return None
+    frame_aligned = round(value * 30) / 30
+    if abs(value - frame_aligned) > 0.001:
+        return None
+    return round(frame_aligned, 6)
+
+
+def recognize_round_robin_cadence(text: str) -> float | None:
+    """Recognize explicit alternation plus numeric cut timing without an LLM."""
+
+    normalized = " ".join(str(text or "").casefold().split())
+    alternates = bool(
+        re.search(r"\b(?:alternate|alternating|back and forth)\b", normalized)
+        or re.search(r"\bswitch\b.{0,40}\b(?:other|between)\b", normalized)
+    )
+    if not alternates:
+        return None
+    contextual_patterns = (
+        r"\bevery\s+(?P<value>\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b",
+        r"\b(?P<value>\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s)\s+(?:from|of)\b",
+    )
+    for pattern in contextual_patterns:
+        contextual = re.search(pattern, normalized)
+        if contextual is not None:
+            value = float(contextual.group("value"))
+            return _recognized_frame_aligned_cadence(value)
+    if re.search(r"\bevery\s+one\s+second\b|\bone\s+second\s+(?:from|of)\b", normalized):
+        return 1.0
+    matches = re.finditer(
+        r"\b(?P<value>\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b",
+        normalized,
+    )
+    for match in matches:
+        value = float(match.group("value"))
+        recognized = _recognized_frame_aligned_cadence(value)
+        if recognized is not None:
+            return recognized
+    if re.search(r"\bone second\b", normalized):
+        return 1.0
+    return None
+
+
+def rejects_round_robin_cadence(text: str) -> bool:
+    """Recognize an explicit latest-turn request to stop alternating."""
+
+    normalized = " ".join(str(text or "").casefold().split())
+    return bool(
+        re.search(
+            r"\b(?:do not|don't|dont|stop|no longer|instead of)\b.{0,48}"
+            r"\b(?:alternate|alternating|back and forth|switching)\b",
+            normalized,
+        )
+    )
+
+
+def recognize_total_duration_s(text: str) -> int | None:
+    """Recognize an explicit whole-output duration without guessing from cut timing."""
+
+    normalized = " ".join(str(text or "").casefold().split())
+    patterns = (
+        r"\b(?:for|lasting)\s+(\d{1,2})\s*(?:seconds?|secs?|s)\b",
+        r"\b(?:total|length)\s+(?:of\s+)?(\d{1,2})\s*(?:seconds?|secs?|s)\b",
+        r"\bmake\s+it\s+(\d{1,2})\s*(?:seconds?|secs?|s)\b",
+        r"\bmake\s+(?:a\s+)?(\d{1,2})[-\s]*(?:second|sec|s)\s+(?:edit|video)\b",
+        r"\b(?:want|need|prefer)\s+(?:a\s+)?(\d{1,2})[-\s]*(?:second|sec|s)\s+"
+        r"(?:edit|video)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, normalized)
+        if match is not None:
+            value = int(match.group(1))
+            return value if 3 <= value <= 60 else None
+    return None
+
+
+def recognize_explicit_cadence_reuse_policy(
+    text: str,
+) -> Literal["no_repeat", "allow_repeat"] | None:
+    """Recognize an explicit reuse decision, preserving prior intent when absent."""
+
+    normalized = " ".join(str(text or "").casefold().split())
+    if re.search(
+        r"\b(?:do not|don't|dont|without|never|not)\b.{0,40}\b(?:repeat|reuse|loop)\b",
+        normalized,
+    ):
+        return "no_repeat"
+    if re.match(r"(?:please\s+)?(?:repeat|reuse|loop)\b", normalized) or re.search(
+        r"\b(?:allow|okay to|ok to|can|may)\b.{0,64}\b(?:repeat|reuse|loop)\b",
+        normalized,
+    ):
+        return "allow_repeat"
+    return None
+
+
+def recognize_cadence_reuse_policy(text: str) -> Literal["no_repeat", "allow_repeat"]:
+    """Require an explicit opt-in before source windows may repeat."""
+
+    return recognize_explicit_cadence_reuse_policy(text) or "no_repeat"
 
 
 class MixedMediaTimingProfile(BaseModel):
@@ -244,6 +374,10 @@ class EditProposalSnapshot(BaseModel):
     mixed_media_timing: MixedMediaTimingProfile | None = None
     montage_text_bindings: list[MontageTextBinding] = Field(default_factory=list, max_length=12)
     montage_audio: MontageAudioPlan | None = None
+    montage_cadence: MontageCadenceConstraint | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     output_orientation: OutputOrientation | None = None
     output_orientation_reason: str = Field(default="", max_length=240)
 
@@ -269,8 +403,10 @@ class EditProposalSnapshot(BaseModel):
                 raise ValueError("fast montage cuts reference missing media IDs")
             by_id = {ref.media_id: ref for ref in self.media}
             quick_mixed_timing = uses_quick_photo_long_video_timing(self.mixed_media_timing)
-            if not quick_mixed_timing and any(
-                cut.output_duration_s > 1.2 + 0.001 for cut in self.fast_cuts
+            if (
+                self.montage_cadence is None
+                and not quick_mixed_timing
+                and any(cut.output_duration_s > 1.2 + 0.001 for cut in self.fast_cuts)
             ):
                 raise ValueError(
                     "fast montage cuts above 1.2s require the mixed-media timing profile"
@@ -311,7 +447,10 @@ class EditProposalSnapshot(BaseModel):
                 )
             for media_id, windows in video_windows.items():
                 ordered = sorted(windows)
-                if any(
+                if not (
+                    self.montage_cadence is not None
+                    and self.montage_cadence.reuse_policy == "allow_repeat"
+                ) and any(
                     current[0] < previous[1] - 0.001
                     for previous, current in zip(ordered, ordered[1:], strict=False)
                 ):
@@ -336,6 +475,22 @@ class EditProposalSnapshot(BaseModel):
             cut_duration_s = sum(cut.output_duration_s for cut in self.fast_cuts)
             if abs(cut_duration_s - self.duration_s) > 0.15:
                 raise ValueError("fast montage cut durations must match the proposal duration")
+        if self.montage_cadence is not None:
+            if self.direction != "fast_montage":
+                raise ValueError("montage cadence is only valid for fast montage proposals")
+            cadence = self.montage_cadence
+            if not set(cadence.source_media_ids) <= known:
+                raise ValueError("montage cadence references unknown media")
+            if not self.fast_cuts:
+                raise ValueError("montage cadence requires fast cuts")
+            expected = cadence.source_media_ids
+            if len(self.fast_cuts) % len(expected):
+                raise ValueError("round-robin cadence must contain complete source cycles")
+            for index, cut in enumerate(self.fast_cuts):
+                if cut.media_id != expected[index % len(expected)]:
+                    raise ValueError("fast montage cuts must preserve round-robin source order")
+                if abs(cut.output_duration_s - cadence.cut_duration_s) > 0.001:
+                    raise ValueError("fast montage cuts must preserve the exact cadence duration")
         text_ids = [binding.media_id for binding in self.montage_text_bindings]
         if len(text_ids) != len(set(text_ids)):
             raise ValueError("montage text bindings must use unique source IDs")
@@ -481,6 +636,10 @@ class ProposalBrief(BaseModel):
     creator_request: str = Field(default="", max_length=1000)
     mixed_media_timing: MixedMediaTimingProfile | None = None
     montage_audio: MontageAudioPlan | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    montage_cadence: MontageCadenceConstraint | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )

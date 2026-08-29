@@ -86,3 +86,6 @@ Editorial rules:
   not follow a fixed pattern unless the creator explicitly asked for one. Use
   montage_text_bindings for persistent text attached to a source, and montage_audio for source
   audio preservation and optional source-bed previews.
+- When ROUND-ROBIN CADENCE is present, it overrides generic montage freedom: use only its ordered
+  sources in exact repeating order, give every cut the exact requested duration, and never overlap
+  a source window when reuse_policy is no_repeat.
