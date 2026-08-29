@@ -297,7 +297,11 @@ deploy_guard_contract_is_valid() {
     "$machine_json" "$deploy_operation" "$deploy_guard_lease_s" &&
     jq -e --arg command "$deploy_guard_command" '
       (.config // .incomplete_config // {}) as $config
-      | .state == "created"
+      | ((.state == "created") or (
+            .state == "stopped"
+            and ([.events[]? | select(.type == "start" or .type == "exit")]
+              | length == 0)
+          ))
         and ($config.guest == {"cpu_kind":"shared","cpus":1,"memory_mb":256})
         and ($config.init.cmd == [$command])
     ' <<<"$machine_json" >/dev/null
@@ -558,7 +562,7 @@ reclaim_or_block_deploy_guard() {
   local allow_owned="${2:-false}"
   local machine_id owner revision
   deploy_guard_contract_is_valid "$machine_json" || \
-    fail "Stable deploy guard violates its exact created-only contract; it was retained."
+    fail "Stable deploy guard violates its exact dormant contract; it was retained."
   machine_id="$(jq -r '.id' <<<"$machine_json")"
   owner="$(jq -r '(.config.metadata // .incomplete_config.metadata).nova_guard_owner' <<<"$machine_json")"
   revision="$(jq -r '(.config.metadata // .incomplete_config.metadata).nova_revision' <<<"$machine_json")"
@@ -575,7 +579,7 @@ reclaim_or_block_deploy_guard() {
   # API/worker/light/autoplace topology in a proven operational state; otherwise
   # a second mutation would make an ambiguous rollout worse.
   resolve_production_image false
-  echo "Reclaiming expired, exact created-only deploy guard $machine_id owned by $owner..."
+  echo "Reclaiming expired, exact dormant deploy guard $machine_id owned by $owner..."
   flyctl machine destroy --force --app "$app_name" "$machine_id" || \
     fail "Expired deploy guard $machine_id could not be force-destroyed."
 }
@@ -805,8 +809,9 @@ acquire_deploy_guard() {
         actual_digest="$(jq -r '.image_ref.digest' <<<"$RESOLVED_GUARD_JSON")"
         state="$(jq -r '.state' <<<"$RESOLVED_GUARD_JSON")"
         if [[ "$owner" == "$guard_owner" && "$revision" == "$expected_sha" \
-          && "$actual_digest" == "$digest" && "$state" == "created" ]]; then
-          echo "Acquired created-only deploy guard $machine_id for $guard_owner at revision $expected_sha."
+          && "$actual_digest" == "$digest" \
+          && ( "$state" == "created" || "$state" == "stopped" ) ]]; then
+          echo "Acquired dormant deploy guard $machine_id for $guard_owner at revision $expected_sha."
           return 0
         fi
       fi
@@ -833,7 +838,7 @@ release_deploy_guard() {
     return 0
   fi
   deploy_guard_contract_is_valid "$machine_json" || \
-    fail "Stable Machine is not an exact created-only deploy guard; it was retained."
+    fail "Stable Machine is not an exact dormant deploy guard; it was retained."
   machine_id="$(jq -r '.id' <<<"$machine_json")"
   owner="$(jq -r '(.config.metadata // .incomplete_config.metadata).nova_guard_owner' <<<"$machine_json")"
   revision="$(jq -r '(.config.metadata // .incomplete_config.metadata).nova_revision' <<<"$machine_json")"
@@ -846,7 +851,7 @@ release_deploy_guard() {
     fail "Managed production digest no longer matches the verified deploy receipt; the guard was retained."
   flyctl machine destroy --force --app "$app_name" "$machine_id" || \
     fail "Owned deploy guard $machine_id could not be force-destroyed."
-  echo "Released created-only deploy guard $machine_id for revision $expected_sha."
+  echo "Released dormant deploy guard $machine_id for revision $expected_sha."
 }
 
 run_backfill() {

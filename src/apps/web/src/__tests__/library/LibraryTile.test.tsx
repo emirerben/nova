@@ -740,29 +740,27 @@ it("shows a Rendering badge while a video is still processing", () => {
 });
 
 it("offers a destructive delete flow and removes the tile after success", async () => {
-  const user = userEvent.setup();
   const onDeleted = jest.fn();
   render(<LibraryTile job={baseJob} onDeleted={onDeleted} />);
 
-  await user.click(screen.getByRole("button", { name: "More video actions" }));
-  await user.click(screen.getByRole("menuitem", { name: "Delete video" }));
+  fireEvent.keyDown(screen.getByRole("button", { name: "More video actions" }), { key: "Enter" });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Delete video" }));
 
   expect(screen.getByRole("alertdialog")).toBeInTheDocument();
   expect(screen.getByText(/You can’t undo this/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Keep video" })).toHaveFocus();
 
-  await user.click(screen.getByRole("button", { name: "Delete video" }));
+  fireEvent.click(screen.getByRole("button", { name: "Delete video" }));
 
   await waitFor(() => expect(mockDeleteMyJob).toHaveBeenCalledWith("job-1"));
   expect(onDeleted).toHaveBeenCalledWith("job-1");
 });
 
 it("keeps plan footage in the linked-video confirmation copy", async () => {
-  const user = userEvent.setup();
   render(<LibraryTile job={{ ...baseJob, content_plan_item_id: "item-1" }} />);
 
-  await user.click(screen.getByRole("button", { name: "More video actions" }));
-  await user.click(screen.getByRole("menuitem", { name: "Delete video" }));
+  fireEvent.keyDown(screen.getByRole("button", { name: "More video actions" }), { key: "Enter" });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Delete video" }));
 
   expect(screen.getByText(/edit plan and uploaded footage will stay available/)).toBeInTheDocument();
   expect(screen.queryByText(/You can’t undo this/)).not.toBeInTheDocument();
@@ -797,14 +795,13 @@ it("does not offer deletion while TikTok is still processing", () => {
 });
 
 it("reconciles a stale 404 as a successful delete", async () => {
-  const user = userEvent.setup();
   const onDeleted = jest.fn();
   mockDeleteMyJob.mockRejectedValue(new MeApiError("not found", 404));
   render(<LibraryTile job={baseJob} onDeleted={onDeleted} />);
 
-  await user.click(screen.getByRole("button", { name: "More video actions" }));
-  await user.click(screen.getByRole("menuitem", { name: "Delete video" }));
-  await user.click(screen.getByRole("button", { name: "Delete video" }));
+  fireEvent.keyDown(screen.getByRole("button", { name: "More video actions" }), { key: "Enter" });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Delete video" }));
+  fireEvent.click(screen.getByRole("button", { name: "Delete video" }));
 
   await waitFor(() => expect(onDeleted).toHaveBeenCalledWith("job-1"));
   expect(mockToast.success).toHaveBeenCalledWith("Video deleted.");
@@ -812,14 +809,13 @@ it("reconciles a stale 404 as a successful delete", async () => {
 });
 
 it("keeps the tile and explains a delete conflict", async () => {
-  const user = userEvent.setup();
   const onDeleted = jest.fn();
   mockDeleteMyJob.mockRejectedValue(new MeApiError("still processing", 409));
   render(<LibraryTile job={baseJob} onDeleted={onDeleted} />);
 
-  await user.click(screen.getByRole("button", { name: "More video actions" }));
-  await user.click(screen.getByRole("menuitem", { name: "Delete video" }));
-  await user.click(screen.getByRole("button", { name: "Delete video" }));
+  fireEvent.keyDown(screen.getByRole("button", { name: "More video actions" }), { key: "Enter" });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Delete video" }));
+  fireEvent.click(screen.getByRole("button", { name: "Delete video" }));
 
   await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith(expect.stringContaining("still being prepared")));
   expect(onDeleted).not.toHaveBeenCalled();

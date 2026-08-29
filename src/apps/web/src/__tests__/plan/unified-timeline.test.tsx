@@ -14,7 +14,6 @@
 
 import React from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 
 import UnifiedTimeline from "@/app/plan/_components/UnifiedTimeline";
@@ -134,22 +133,19 @@ describe("UnifiedTimeline — SFX bars render", () => {
 });
 
 /**
- * The glossary picker is a Radix <Select> (SfxLane) — it opens on
- * pointerdown, not the native <select> "change" event, so tests must drive
- * it with userEvent.click (see DESIGN.md §15 "Jest / Radix-in-jsdom notes").
+ * Drive Radix Select through its keyboard contract. This preserves the real
+ * component behavior without JSDOM's throttled synthetic pointer pipeline.
  */
 async function pickGlossaryEffect(name: string) {
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("combobox"));
-  await user.click(await screen.findByRole("option", { name: new RegExp(name, "i") }));
+  fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
+  fireEvent.click(await screen.findByRole("option", { name: new RegExp(name, "i") }));
 }
 
 describe("UnifiedTimeline — glossary picker", () => {
   it("renders glossary effects in the select", async () => {
-    const user = userEvent.setup();
     const effects = [makeGlossaryEffect({ id: "g1", name: "Boom" })];
     render(<UnifiedTimeline {...makeProps({ sfxGlossaryEffects: effects })} />);
-    await user.click(screen.getByRole("combobox"));
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
     expect(await screen.findByRole("option", { name: /Boom/i })).toBeInTheDocument();
   });
 

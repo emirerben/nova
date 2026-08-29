@@ -10,6 +10,12 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Thumbnail recovery no longer interrupts a playing preview or gives up because of a temporary network failure.** Expired signatures, partial refresh responses, delayed requests, and a failed-to-missing-to-recovered poster transition now retry within separate bounded budgets and preserve the active video until the creator stops it.
 
+## [0.57.0.3] — 2026-08-29
+
+### Fixed
+- **Fly deploy verification now accepts the exact dormant guard lifecycle Fly actually produces.** A guard may settle from `created` to `stopped` only when it has no start or exit event, remains immutable and unowned by Launch, and matches its signed metadata receipt; executed or altered guards still fail closed, while successful deploys can verify and remove the lock.
+- **Web CI no longer fails on severely throttled Radix/JSDOM interactions.** Menu and select coverage drives the components' accessible keyboard contracts, while the 11 affected suites run in fresh processes with a bounded five-minute CI ceiling; the other 3,265 tests keep Jest's strict five-second default.
+
 ## [0.57.0.2] — 2026-08-29
 
 ### Fixed

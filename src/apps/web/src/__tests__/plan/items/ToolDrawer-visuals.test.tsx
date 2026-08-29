@@ -1,7 +1,6 @@
 import "@testing-library/jest-dom";
 import type { ComponentProps } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import ToolDrawer from "@/app/plan/items/[id]/_editor/ToolDrawer";
 import type { PoolAsset, VisualBlock } from "@/lib/plan-api";
 
@@ -249,7 +248,6 @@ describe("ToolDrawer visual blocks", () => {
   });
 
   it("exposes card background, transition, duplication, and audio controls", async () => {
-    const user = userEvent.setup();
     const onPatchVisualBlock = jest.fn();
     const onDuplicateVisualBlock = jest.fn();
     const onAddVisualBlockText = jest.fn();
@@ -272,17 +270,16 @@ describe("ToolDrawer visual blocks", () => {
       onSelectVisualBlockText,
     });
 
-    // Radix Select opens on pointerdown, not a native <select> change event —
-    // userEvent drives the full click sequence jsdom needs (jest.setup.ts
-    // polyfills hasPointerCapture/scrollIntoView/ResizeObserver for it).
-    await user.click(screen.getByRole("combobox", { name: "Background type" }));
-    await user.click(await screen.findByRole("option", { name: "Gradient" }));
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Background type" }), {
+      key: "ArrowDown",
+    });
+    fireEvent.click(await screen.findByRole("option", { name: "Gradient" }));
 
-    await user.click(screen.getByRole("combobox", { name: "Entrance" }));
-    await user.click(await screen.findByRole("option", { name: "Fade" }));
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Entrance" }), { key: "ArrowDown" });
+    fireEvent.click(await screen.findByRole("option", { name: "Fade" }));
 
-    await user.click(screen.getByRole("combobox", { name: "Base audio" }));
-    await user.click(await screen.findByRole("option", { name: "Mute" }));
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Base audio" }), { key: "ArrowDown" });
+    fireEvent.click(await screen.findByRole("option", { name: "Mute" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Duplicate" }));
     fireEvent.click(screen.getByRole("button", { name: "Add text" }));
