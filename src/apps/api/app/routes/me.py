@@ -1,6 +1,7 @@
 """Per-user "my" surface — the video library + one-off → plan attach (Phase 1 spine).
 
 GET    /me/jobs                           — the signed-in user's videos (the library)
+POST   /me/jobs/posters/refresh           — refresh owned poster metadata in one batch
 GET    /me/jobs/{job_id}/playback-url     — refresh one owned ready preview URL
 DELETE /me/jobs/{job_id}                   — delete one terminal video and its local media
 POST   /me/jobs/{job_id}/add-to-plan      — pin a standalone video onto a plan day
@@ -77,6 +78,7 @@ _JOB_FAILED = PLAN_ITEM_JOB_FAILED
 _DEFAULT_LIMIT = 24
 _MAX_LIMIT = 60
 _MAX_PREVIEW_CLIPS = 50
+_MAX_POSTER_REFRESH_JOBS = 200
 OPEN_IN_EDITOR_NOT_READY_DETAIL = "Video is not ready to open in the editor."
 OPEN_IN_EDITOR_LINK_CONFLICT_DETAIL = "Video is linked to a different plan item."
 DELETE_JOB_NOT_TERMINAL_DETAIL = "This video is still being prepared or posted."
@@ -460,6 +462,7 @@ class LibraryJob(BaseModel):
     output_url: str | None
     poster_url: str | None = None
     poster_identity: str | None = None
+    poster_status: Literal["ready", "repairing", "unavailable"]
     download_url: str | None = None
     output_variant_id: str | None = None
     tiktok_publishable: bool = False
@@ -474,6 +477,28 @@ class LibraryJob(BaseModel):
     # Populated batched in list_my_jobs; defaults None elsewhere (the tile keeps its
     # own optimistic state after a write).
     feedback_signal: str | None = None
+
+
+def _library_poster_status(
+    job: Job,
+    preview: _LibraryPreview | None,
+    poster_url: str | None,
+) -> Literal["ready", "repairing", "unavailable"]:
+    """Classify whether a stable poster is usable, expected, or terminally absent.
+
+    A ready output with an owned video path can still receive a poster from the
+    repair/backfill path, so it remains ``repairing``. Legacy rows that retain
+    only an expired browser URL have no owned source object to repair and are
+    terminally ``unavailable``. In-flight jobs remain ``repairing`` until their
+    preview shape is finalized.
+    """
+    if poster_url:
+        return "ready"
+    if _derived_status(job) == "generating":
+        return "repairing"
+    if _derived_status(job) == "ready" and preview is not None and preview.video_path:
+        return "repairing"
+    return "unavailable"
 
 
 def _to_library_job(
@@ -537,6 +562,7 @@ def _to_library_job(
         output_url=output_url,
         poster_url=poster_url,
         poster_identity=poster_identity,
+        poster_status=_library_poster_status(job, preview, poster_url),
         download_url=download_url,
         output_variant_id=output_variant_id,
         tiktok_publishable=bool(output_url and has_owned_output),
@@ -579,6 +605,24 @@ class LibraryResponse(BaseModel):
 
 class LibraryPlaybackResponse(BaseModel):
     video_url: str
+
+
+class LibraryPosterRefreshRequest(BaseModel):
+    job_ids: list[uuid.UUID] = Field(
+        min_length=1,
+        max_length=_MAX_POSTER_REFRESH_JOBS,
+    )
+
+
+class LibraryPosterRefreshJob(BaseModel):
+    id: str
+    poster_url: str | None = None
+    poster_identity: str | None = None
+    poster_status: Literal["ready", "repairing", "unavailable"]
+
+
+class LibraryPosterRefreshResponse(BaseModel):
+    jobs: list[LibraryPosterRefreshJob]
 
 
 @router.get("/jobs", response_model=LibraryResponse)
@@ -702,6 +746,125 @@ async def list_my_jobs(
         ],
         next_cursor=next_cursor,
     )
+
+
+@router.post("/jobs/posters/refresh", response_model=LibraryPosterRefreshResponse)
+async def refresh_library_posters(
+    body: LibraryPosterRefreshRequest,
+    user: CurrentUser,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+) -> LibraryPosterRefreshResponse:
+    """Refresh poster metadata for an owned set of library jobs in one request.
+
+    This deliberately does not call ``_to_library_job``: poster recovery must
+    not re-sign video/download URLs or load feedback and publication state. IDs
+    that are missing or belong to another user are omitted so the endpoint does
+    not disclose whether a cross-user job exists.
+    """
+    job_ids = list(dict.fromkeys(body.job_ids))
+    rows = list(
+        (
+            await db.execute(
+                select(Job)
+                .options(
+                    load_only(
+                        Job.id,
+                        Job.user_id,
+                        Job.status,
+                        Job.assembly_plan,
+                        Job.mode,
+                        Job.job_type,
+                    )
+                )
+                .where(
+                    Job.id.in_(job_ids),
+                    Job.user_id == user.id,
+                    Job.status != "draft",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    jobs_by_id = {job.id: job for job in rows}
+    ordered_jobs = [jobs_by_id[job_id] for job_id in job_ids if job_id in jobs_by_id]
+
+    clips_by_job: dict[uuid.UUID, list[JobClip]] = {}
+    jobs_needing_clips = [job.id for job in ordered_jobs if _preview(job) is None]
+    if jobs_needing_clips:
+        ranked_clips = (
+            select(
+                JobClip.id.label("clip_id"),
+                func.row_number()
+                .over(
+                    partition_by=JobClip.job_id,
+                    order_by=(JobClip.rank, JobClip.created_at, JobClip.id),
+                )
+                .label("clip_rank"),
+            )
+            .where(
+                JobClip.job_id.in_(jobs_needing_clips),
+                JobClip.render_status == "ready",
+            )
+            .subquery()
+        )
+        clip_rows = (
+            (
+                await db.execute(
+                    select(JobClip)
+                    .options(
+                        load_only(
+                            JobClip.id,
+                            JobClip.job_id,
+                            JobClip.rank,
+                            JobClip.render_status,
+                            JobClip.video_path,
+                            JobClip.thumbnail_path,
+                            JobClip.created_at,
+                        )
+                    )
+                    .join(ranked_clips, JobClip.id == ranked_clips.c.clip_id)
+                    .where(ranked_clips.c.clip_rank <= _MAX_PREVIEW_CLIPS)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for clip in clip_rows:
+            clips_by_job.setdefault(clip.job_id, []).append(clip)
+
+    def sign_ordered_posters() -> list[LibraryPosterRefreshJob]:
+        refreshed: list[LibraryPosterRefreshJob] = []
+        for job in ordered_jobs:
+            preview = _preview(job, clips_by_job.get(job.id))
+            poster_url: str | None = None
+            if preview is not None and preview.poster_path:
+                try:
+                    poster_url = signed_get_url(
+                        preview.poster_path,
+                        PLAYBACK_URL_TTL_MIN,
+                    )
+                except Exception as exc:  # noqa: BLE001 — isolate one failed signature
+                    log.warning(
+                        "library_poster_refresh_failed",
+                        job_id=str(job.id),
+                        poster_path=preview.poster_path,
+                        error_class=type(exc).__name__,
+                    )
+            refreshed.append(
+                LibraryPosterRefreshJob(
+                    id=str(job.id),
+                    poster_url=poster_url,
+                    poster_identity=preview.poster_identity if preview else None,
+                    poster_status=_library_poster_status(job, preview, poster_url),
+                )
+            )
+        return refreshed
+
+    refreshed = await run_in_threadpool(sign_ordered_posters)
+    response.headers["Cache-Control"] = "no-store"
+    return LibraryPosterRefreshResponse(jobs=list(refreshed))
 
 
 @router.get("/jobs/{job_id}/playback-url", response_model=LibraryPlaybackResponse)

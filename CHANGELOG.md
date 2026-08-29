@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.58.0.0] — 2026-08-28
+
+### Added
+- **Mobile library videos now show static JPEG thumbnails without loading every MP4 in the grid.** Historical videos recover their poster metadata in bounded batches, while posterless standalone videos remain available through an explicit tap-to-play fallback.
+
+### Fixed
+- **Thumbnail recovery no longer interrupts a playing preview or gives up because of a temporary network failure.** Expired signatures, partial refresh responses, delayed requests, and a failed-to-missing-to-recovered poster transition now retry within separate bounded budgets and preserve the active video until the creator stops it.
+
 ## [0.57.0.2] — 2026-08-29
 
 ### Fixed
