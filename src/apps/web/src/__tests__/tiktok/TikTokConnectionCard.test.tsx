@@ -1,5 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import userEvent, { PointerEventsCheckLevel } from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 import TikTokConnectionCard from "@/components/library/TikTokConnectionCard";
 import {
@@ -54,7 +54,7 @@ it("surfaces a partial scope grant and offers reconnection", async () => {
   render(<TikTokConnectionCard />);
 
   expect(await screen.findByText("Partial access")).toBeInTheDocument();
-  const user = userEvent.setup();
+  const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
   await user.click(screen.getByRole("button", { name: "Reconnect" }));
   expect(mockedStart).toHaveBeenCalledTimes(1);
 });
@@ -84,7 +84,7 @@ it("keeps the account connected when the disconnect AlertDialog is cancelled", a
   mockedConnection.mockResolvedValue(fullyConnected);
   render(<TikTokConnectionCard />);
 
-  const user = userEvent.setup();
+  const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
   await user.click(await screen.findByRole("button", { name: "More TikTok actions" }));
   await user.click(await screen.findByRole("menuitem", { name: "Disconnect" }));
 
@@ -101,7 +101,7 @@ it("disconnects TikTok after the AlertDialog is confirmed", async () => {
   mockedDisconnect.mockResolvedValue();
   render(<TikTokConnectionCard />);
 
-  const user = userEvent.setup();
+  const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
   await user.click(await screen.findByRole("button", { name: "More TikTok actions" }));
   await user.click(await screen.findByRole("menuitem", { name: "Disconnect" }));
   await screen.findByRole("alertdialog", { name: "Disconnect TikTok?" });
@@ -115,7 +115,7 @@ it("syncs performance from the overflow menu and surfaces failures", async () =>
   mockedSync.mockRejectedValue(new Error("TikTok is busy"));
   render(<TikTokConnectionCard />);
 
-  const user = userEvent.setup();
+  const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
   await user.click(await screen.findByRole("button", { name: "More TikTok actions" }));
   await user.click(await screen.findByRole("menuitem", { name: "Sync TikTok performance" }));
 

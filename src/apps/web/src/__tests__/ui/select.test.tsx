@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom";
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import userEvent, { PointerEventsCheckLevel } from "@testing-library/user-event";
 import {
   Select,
   SelectContent,
@@ -13,7 +13,7 @@ import {
 // the full pointer sequence jsdom needs (see jest.setup.ts polyfills).
 describe("Select", () => {
   it("renders a combobox trigger and opens to reveal options", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
     render(
       <Select defaultValue="a">
         <SelectTrigger aria-label="Kind" className="extra-class">

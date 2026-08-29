@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom";
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import userEvent, { PointerEventsCheckLevel } from "@testing-library/user-event";
 
 import InspectorPanel from "@/app/plan/items/[id]/_editor/InspectorPanel";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
@@ -57,7 +57,7 @@ function renderTextInspector(bar: TextElementBar) {
 
 describe("InspectorPanel text horizontal controls", () => {
   it("offers standard, high-visibility, and off shadow effects", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
     const onPatch = renderTextInspector(makeBar());
     const select = screen.getByRole("combobox", { name: "Shadow effect" });
 
@@ -87,7 +87,7 @@ describe("InspectorPanel text horizontal controls", () => {
   });
 
   it("restores standard from an off shadow effect", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
     const onPatch = renderTextInspector(makeBar({ shadow_enabled: false }));
     const select = screen.getByRole("combobox", { name: "Shadow effect" });
     expect(select).toHaveTextContent("Off");

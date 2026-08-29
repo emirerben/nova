@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom";
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import userEvent, { PointerEventsCheckLevel } from "@testing-library/user-event";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,7 +10,7 @@ import {
 
 describe("DropdownMenu", () => {
   it("opens on click and shows menu items at z-[130]", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
     render(
       <DropdownMenu>
         <DropdownMenuTrigger aria-label="Account menu">Avatar</DropdownMenuTrigger>

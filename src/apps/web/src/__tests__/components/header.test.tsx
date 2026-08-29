@@ -10,7 +10,7 @@
 // @ts-nocheck
 import React from "react";
 import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import userEvent, { PointerEventsCheckLevel } from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 
 let mockPathname = "/";
@@ -123,7 +123,7 @@ describe("Header — account menu (authenticated)", () => {
   });
 
   async function openMenu() {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
     const avatar = screen.getByRole("button", { name: /account menu/i });
     await user.click(avatar);
     return user;

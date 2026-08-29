@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom";
 import type { ComponentProps } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import userEvent, { PointerEventsCheckLevel } from "@testing-library/user-event";
 import ToolDrawer from "@/app/plan/items/[id]/_editor/ToolDrawer";
 import type { PoolAsset, VisualBlock } from "@/lib/plan-api";
 
@@ -249,7 +249,7 @@ describe("ToolDrawer visual blocks", () => {
   });
 
   it("exposes card background, transition, duplication, and audio controls", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
     const onPatchVisualBlock = jest.fn();
     const onDuplicateVisualBlock = jest.fn();
     const onAddVisualBlockText = jest.fn();

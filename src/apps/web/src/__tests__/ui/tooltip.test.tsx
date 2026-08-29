@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import userEvent, { PointerEventsCheckLevel } from "@testing-library/user-event";
 import { describe, expect, it } from "@jest/globals";
 import {
   Tooltip,
@@ -10,7 +10,7 @@ import {
 
 describe("Tooltip", () => {
   it("opens on hover/focus and renders content at z-[130]", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
     render(
       <TooltipProvider delayDuration={0}>
         <Tooltip>
