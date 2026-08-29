@@ -8,10 +8,11 @@
 
 /**
  * user-event's default delay is zero, but it still yields through a real
- * setTimeout between pointer actions. That timer is occasionally starved by
- * the hosted CI runner, causing otherwise immediate Radix interactions to
- * exceed Jest's five-second test timeout. Keep the default interaction
- * sequence intact while removing the unnecessary timer yield in tests.
+ * setTimeout between pointer actions and walks computed styles to validate
+ * pointer-events. In jsdom, that adds scheduling and CSS-traversal overhead
+ * to every pointer interaction, which can push Radix interactions past
+ * Jest's five-second timeout on the hosted CI runner. Keep the event
+ * sequence intact while removing that test-harness overhead.
  */
 const userEventModule = require("@testing-library/user-event") as {
   default?: { setup: (options?: Record<string, unknown>) => unknown };
@@ -22,7 +23,11 @@ const userEvent = (userEventModule.default ?? userEventModule) as {
 };
 const defaultUserEventSetup = userEvent.setup;
 userEvent.setup = (options = {}) =>
-  defaultUserEventSetup({ ...options, delay: options.delay ?? null });
+  defaultUserEventSetup({
+    ...options,
+    delay: options.delay ?? null,
+    pointerEventsCheck: options.pointerEventsCheck ?? 0,
+  });
 
 // Feature flags: page.tsx reads these at module-load time via `=== "true"`.
 // Without a .env in src/apps/web/, process.env is empty in jest → flags off →
