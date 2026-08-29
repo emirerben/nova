@@ -2,10 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.56.0.3] — 2026-08-28
+## [0.57.0.3] — 2026-08-29
 
 ### Fixed
 - **Fly deploy verification now accepts the exact dormant guard lifecycle Fly actually produces.** A guard may settle from `created` to `stopped` only when it has no start or exit event, remains immutable and unowned by Launch, and matches its signed metadata receipt; executed or altered guards still fail closed, while successful deploys can verify and remove the lock.
+- **Web CI no longer times out under a CPU-starved GitHub runner.** The GitHub Actions suite uses one Jest worker so JSDOM interaction timers receive consistent CPU without slowing normal local test runs.
+
 ## [0.57.0.2] — 2026-08-29
 
 ### Fixed
