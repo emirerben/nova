@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { MoreHorizontal, Play, Square } from "lucide-react";
+import { ImageOff, MoreHorizontal, Play, Square } from "lucide-react";
 import { toast } from "sonner";
 import {
   deleteMyJob,
@@ -10,6 +10,7 @@ import {
   MeApiError,
   type LibraryJob,
 } from "@/lib/me-api";
+import { libraryPosterIdentity } from "@/lib/library-poster";
 import { getTikTokPublication, shouldPollTikTokPublication, type TikTokPublication } from "@/lib/tiktok-api";
 import { jobFailureCopy } from "@/lib/job-failure-copy";
 import { Badge } from "@/components/ui/badge";
@@ -57,9 +58,17 @@ function playbackNeedsDirectGesture(error: unknown): boolean {
 export default function LibraryTile({
   job,
   onDeleted,
+  onPosterLoadError,
+  onPosterLoadSuccess,
+  posterRecoveryExhausted = false,
+  posterRefreshUnavailable = false,
 }: {
   job: LibraryJob;
   onDeleted?: (jobId: string) => void;
+  onPosterLoadError?: (jobId: string, posterIdentity: string | null) => void;
+  onPosterLoadSuccess?: (jobId: string, posterIdentity: string | null) => void;
+  posterRecoveryExhausted?: boolean;
+  posterRefreshUnavailable?: boolean;
 }) {
   const failureCopy = jobFailureCopy(job.error_class ?? job.failure_reason ?? job.raw_status);
   const [latestPublication, setLatestPublication] = useState<TikTokPublication | null>(
@@ -87,6 +96,7 @@ export default function LibraryTile({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [activePreviewUrl, setActivePreviewUrl] = useState<string | null>(null);
+  const [posterLoadFailed, setPosterLoadFailed] = useState(false);
   const [previewAttemptFailed, setPreviewAttemptFailed] = useState(false);
   const [previewStatus, setPreviewStatus] = useState<
     "idle" | "refreshing" | "loading" | "awaiting_gesture" | "playing"
@@ -102,6 +112,10 @@ export default function LibraryTile({
   const previewAttemptDeadlineRef = useRef<number | null>(null);
   const previewAttemptActiveRef = useRef(false);
   const restorePreviewFocusRef = useRef(false);
+
+  useEffect(() => {
+    setPosterLoadFailed(false);
+  }, [job.poster_identity, job.poster_url]);
 
   async function handleDelete() {
     setIsDeleting(true);
@@ -315,6 +329,13 @@ export default function LibraryTile({
     setPreviewStatus("playing");
   }, [clearPreviewAttemptDeadline]);
 
+  const posterUnavailable =
+    job.poster_status === "unavailable" ||
+    posterRecoveryExhausted ||
+    posterLoadFailed;
+  const posterRepairing =
+    isReady && !job.poster_url && !posterUnavailable && !posterRefreshUnavailable;
+  const posterRecoveryIdentity = libraryPosterIdentity(job);
   const fallbackMedia = isFallbackPreviewActive ? (
     <div className="relative h-full w-full bg-zinc-100">
       <video
@@ -367,14 +388,45 @@ export default function LibraryTile({
         <Square className="h-4 w-4" fill="currentColor" aria-hidden="true" />
       </Button>
     </div>
+  ) : posterUnavailable && href ? (
+    <div
+      role="status"
+      className="flex h-full w-full flex-col items-center justify-center gap-3 bg-zinc-100 p-5 text-center text-[#52525b]"
+    >
+      <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white shadow-sm" aria-hidden="true">
+        <ImageOff className="h-5 w-5" />
+      </span>
+      <span className="text-sm font-medium">Thumbnail unavailable</span>
+    </div>
+  ) : posterRefreshUnavailable && href ? (
+    <div
+      role="status"
+      className="flex h-full w-full flex-col items-center justify-center gap-3 bg-zinc-100 p-5 text-center text-[#3f3f46]"
+    >
+      <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white shadow-sm" aria-hidden="true">
+        <ImageOff className="h-5 w-5" />
+      </span>
+      <span className="text-sm font-medium">Thumbnail temporarily unavailable</span>
+    </div>
+  ) : posterRepairing && href ? (
+    <div
+      role="status"
+      className="flex h-full w-full flex-col items-center justify-center gap-3 bg-zinc-100 p-5 text-center text-[#52525b]"
+    >
+      <span
+        className="h-10 w-10 rounded-full border-2 border-zinc-200 border-t-zinc-500 motion-safe:animate-spin"
+        aria-hidden="true"
+      />
+      <span className="text-sm font-medium">Preparing preview…</span>
+    </div>
   ) : (
     <div className="h-full w-full bg-zinc-100 text-[#3f3f46]">
       {href ? (
         <div className="flex h-full w-full flex-col items-center justify-center gap-3 p-5 text-center">
           <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white shadow-sm" aria-hidden="true">
-            <Play className="ml-0.5 h-5 w-5" fill="currentColor" />
+            <ImageOff className="h-5 w-5" />
           </span>
-          <span className="text-sm font-medium">Open video</span>
+          <span className="text-sm font-medium">Preparing preview…</span>
         </div>
       ) : (
         <Button
@@ -403,13 +455,23 @@ export default function LibraryTile({
                 : "Play preview"}
           </span>
           {previewStatus === "refreshing" && (
-            <span role="status" className="whitespace-normal text-xs text-[#71717a]">
+            <span role="status" className="whitespace-normal text-xs text-[#3f3f46]">
               Getting a fresh preview…
             </span>
           )}
           {previewAttemptFailed && (
-            <span role="status" className="whitespace-normal text-xs text-[#71717a]">
+            <span role="status" className="whitespace-normal text-xs text-[#3f3f46]">
               Preview unavailable. You can try again.
+            </span>
+          )}
+          {posterUnavailable && !previewAttemptFailed && (
+            <span role="status" className="whitespace-normal text-xs text-[#3f3f46]">
+              Thumbnail unavailable. Tap to play.
+            </span>
+          )}
+          {posterRefreshUnavailable && !posterUnavailable && !previewAttemptFailed && (
+            <span role="status" className="whitespace-normal text-xs text-[#3f3f46]">
+              Thumbnail temporarily unavailable. Tap to play.
             </span>
           )}
         </Button>
@@ -424,15 +486,26 @@ export default function LibraryTile({
         isFailed ? "border-dashed border-zinc-300" : "border-zinc-200",
       )}
     >
-      {isReady ? (
+      {isReady && isFallbackPreviewActive ? (
+        fallbackMedia
+      ) : isReady ? (
         <StablePoster
           src={job.poster_url}
           identity={job.poster_identity ?? undefined}
+          retryKey={job.poster_url ?? undefined}
           alt="Your video"
           loading="lazy"
           decoding="async"
           className="h-full w-full object-cover"
           fallback={fallbackMedia}
+          onError={() => {
+            setPosterLoadFailed(true);
+            onPosterLoadError?.(job.id, posterRecoveryIdentity);
+          }}
+          onLoad={() => {
+            setPosterLoadFailed(false);
+            onPosterLoadSuccess?.(job.id, posterRecoveryIdentity);
+          }}
         />
       ) : isFailed ? (
         <div className="flex h-full w-full flex-col items-center justify-center gap-2 p-4 text-center">

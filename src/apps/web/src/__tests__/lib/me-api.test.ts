@@ -4,6 +4,7 @@ import {
   getMyJobPlaybackUrl,
   listMyJobs,
   NotAuthenticatedError,
+  refreshMyJobPosters,
 } from "@/lib/me-api";
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -54,6 +55,36 @@ describe("me-api client", () => {
         cache: "no-store",
         headers: expect.any(Object),
         signal: controller.signal,
+      }),
+    );
+  });
+
+  it("refreshes only poster metadata for a bounded job-id batch", async () => {
+    const refreshed = {
+      jobs: [
+        {
+          id: "j1",
+          poster_url: "https://storage.example/video.jpg?sig=fresh",
+          poster_identity: "render-1",
+          poster_status: "ready",
+        },
+      ],
+    };
+    const fetchMock = jest.fn().mockResolvedValue(jsonResponse(200, refreshed));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const controller = new AbortController();
+
+    await expect(
+      refreshMyJobPosters(["j1", "j2"], controller.signal),
+    ).resolves.toEqual(refreshed);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/me/jobs/posters/refresh",
+      expect.objectContaining({
+        method: "POST",
+        cache: "no-store",
+        headers: expect.any(Object),
+        signal: controller.signal,
+        body: JSON.stringify({ job_ids: ["j1", "j2"] }),
       }),
     );
   });

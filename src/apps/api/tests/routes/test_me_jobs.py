@@ -150,6 +150,7 @@ def test_list_returns_users_jobs_with_derived_status_and_preview(monkeypatch) ->
     assert resp.status_code == 200
     body = resp.json()
     assert [j["status"] for j in body["jobs"]] == ["ready", "ready"]
+    assert [j["poster_status"] for j in body["jobs"]] == ["repairing", "repairing"]
     # Re-signed fresh from `video_path`/`output_path`, not the stale stored URL.
     assert body["jobs"][0]["output_url"] == (
         f"https://resigned.example/generative-jobs/{ready_variant_job.id}/song-text.mp4"
@@ -178,7 +179,226 @@ def test_list_generating_job_has_no_preview_url() -> None:
     assert resp.status_code == 200
     j = resp.json()["jobs"][0]
     assert j["status"] == "generating"
+    assert j["poster_status"] == "repairing"
     assert j["output_url"] is None
+
+
+def test_list_marks_legacy_signed_only_ready_poster_unavailable() -> None:
+    user = _user()
+    stale_url = "https://storage.example/output.mp4?X-Goog-Expires=1&expired=true"
+    job = _job(
+        user_id=user.id,
+        status="template_ready",
+        mode="template",
+        job_type="template",
+        assembly_plan={"output_url": stale_url},
+    )
+    db = _db([_scalars([job]), _rows([]), _scalars([]), _scalars([])])
+    _override(user, db)
+
+    response = client.get("/me/jobs")
+
+    assert response.status_code == 200
+    item = response.json()["jobs"][0]
+    assert item["status"] == "ready"
+    assert item["poster_url"] is None
+    assert item["poster_status"] == "unavailable"
+
+
+# ── POST /me/jobs/posters/refresh ────────────────────────────────────────────
+
+
+def test_refresh_posters_batches_owned_jobs_in_request_order_and_signs_only_posters(
+    monkeypatch,
+) -> None:
+    user = _user()
+    with_poster = _job(
+        user_id=user.id,
+        status="variants_ready",
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "primary",
+                    "render_status": "ready",
+                    "video_path": "generative-jobs/PLACEHOLDER/output.mp4",
+                    "poster_path": "generative-jobs/PLACEHOLDER/output.jpg",
+                }
+            ]
+        },
+    )
+    with_poster.assembly_plan["variants"][0].update(
+        {
+            "video_path": f"generative-jobs/{with_poster.id}/output.mp4",
+            "poster_path": f"generative-jobs/{with_poster.id}/output.jpg",
+        }
+    )
+    repairing = _job(
+        user_id=user.id,
+        status="template_ready",
+        mode="template",
+        job_type="template",
+        assembly_plan={"output_path": "jobs/PLACEHOLDER/output.mp4"},
+    )
+    repairing.assembly_plan["output_path"] = f"jobs/{repairing.id}/output.mp4"
+    unavailable = _job(
+        user_id=user.id,
+        status="template_ready",
+        mode="template",
+        job_type="template",
+        assembly_plan={"output_url": "https://storage.example/legacy.mp4?expired=true"},
+    )
+    foreign_id = uuid.uuid4()
+    # Deliberately return DB rows in a different order than requested.
+    db = _db([_scalars([repairing, with_poster, unavailable])])
+    _override(user, db)
+    signer = MagicMock(side_effect=lambda path, ttl: f"https://poster.example/{path}")
+    download_signer = MagicMock()
+    monkeypatch.setattr("app.routes.me.signed_get_url", signer)
+    monkeypatch.setattr("app.routes.me.signed_download_url", download_signer)
+
+    response = client.post(
+        "/me/jobs/posters/refresh",
+        json={
+            "job_ids": [
+                str(unavailable.id),
+                str(foreign_id),
+                str(with_poster.id),
+                str(repairing.id),
+                str(with_poster.id),
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json()["jobs"] == [
+        {
+            "id": str(unavailable.id),
+            "poster_url": None,
+            "poster_identity": None,
+            "poster_status": "unavailable",
+        },
+        {
+            "id": str(with_poster.id),
+            "poster_url": f"https://poster.example/generative-jobs/{with_poster.id}/output.jpg",
+            "poster_identity": f"primary:generative-jobs/{with_poster.id}/output.mp4",
+            "poster_status": "ready",
+        },
+        {
+            "id": str(repairing.id),
+            "poster_url": None,
+            "poster_identity": f"jobs/{repairing.id}/output.mp4",
+            "poster_status": "repairing",
+        },
+    ]
+    signer.assert_called_once_with(
+        f"generative-jobs/{with_poster.id}/output.jpg",
+        360,
+    )
+    download_signer.assert_not_called()
+    assert db.execute.await_count == 1
+    statement = db.execute.await_args_list[0].args[0]
+    compiled = statement.compile()
+    assert user.id in compiled.params.values()
+    assert "jobs.user_id" in str(compiled)
+
+
+def test_refresh_posters_uses_ready_jobclip_and_omits_missing_or_foreign_ids(
+    monkeypatch,
+) -> None:
+    user = _user()
+    job = _job(user_id=user.id, status="clips_ready", mode=None, job_type="default")
+    clip = MagicMock(
+        id=uuid.uuid4(),
+        job_id=job.id,
+        rank=1,
+        created_at=datetime(2026, 5, 30, 12, 0, tzinfo=UTC),
+        render_status="ready",
+        video_path=f"{user.id}/{job.id}/task-runs/run/clip.mp4",
+        thumbnail_path=f"{user.id}/{job.id}/task-runs/run/clip.jpg",
+    )
+    foreign_id = uuid.uuid4()
+    missing_id = uuid.uuid4()
+    db = _db([_scalars([job]), _scalars([clip])])
+    _override(user, db)
+    signer = MagicMock(return_value="https://poster.example/clip.jpg?signature=fresh")
+    monkeypatch.setattr("app.routes.me.signed_get_url", signer)
+
+    response = client.post(
+        "/me/jobs/posters/refresh",
+        json={"job_ids": [str(foreign_id), str(job.id), str(missing_id)]},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "jobs": [
+            {
+                "id": str(job.id),
+                "poster_url": "https://poster.example/clip.jpg?signature=fresh",
+                "poster_identity": clip.video_path,
+                "poster_status": "ready",
+            }
+        ]
+    }
+    signer.assert_called_once_with(clip.thumbnail_path, 360)
+    assert db.execute.await_count == 2
+
+
+def test_refresh_posters_signing_failure_stays_repairable(monkeypatch) -> None:
+    user = _user()
+    job = _job(
+        user_id=user.id,
+        status="variants_ready",
+        assembly_plan={
+            "output_path": "jobs/PLACEHOLDER/output.mp4",
+            "poster_path": "jobs/PLACEHOLDER/output.jpg",
+        },
+    )
+    job.assembly_plan.update(
+        {
+            "output_path": f"jobs/{job.id}/output.mp4",
+            "poster_path": f"jobs/{job.id}/output.jpg",
+        }
+    )
+    db = _db([_scalars([job])])
+    _override(user, db)
+    monkeypatch.setattr(
+        "app.routes.me.signed_get_url",
+        MagicMock(side_effect=RuntimeError("temporary signer failure")),
+    )
+
+    response = client.post(
+        "/me/jobs/posters/refresh",
+        json={"job_ids": [str(job.id)]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["jobs"] == [
+        {
+            "id": str(job.id),
+            "poster_url": None,
+            "poster_identity": f"jobs/{job.id}/output.mp4",
+            "poster_status": "repairing",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "job_ids",
+    [
+        [],
+        [str(uuid.UUID(int=index + 1)) for index in range(201)],
+    ],
+)
+def test_refresh_posters_rejects_empty_or_oversized_batches_without_db_access(job_ids) -> None:
+    user = _user()
+    db = _db([])
+    _override(user, db)
+
+    response = client.post("/me/jobs/posters/refresh", json={"job_ids": job_ids})
+
+    assert response.status_code == 422
+    assert db.execute.await_count == 0
 
 
 def test_playback_url_refresh_is_owner_fenced_and_hides_foreign_jobs() -> None:
@@ -358,6 +578,7 @@ def test_list_uses_ready_jobclip_video_and_poster_without_downloading_video(monk
     item = resp.json()["jobs"][0]
     assert item["output_url"] == f"signed://{clip.video_path}"
     assert item["poster_url"] == f"signed://{clip.thumbnail_path}"
+    assert item["poster_status"] == "ready"
 
 
 def test_list_falls_through_to_next_ready_clip_when_lowest_rank_path_is_unowned(

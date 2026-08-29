@@ -25,6 +25,7 @@ export class MeApiError extends Error {
 }
 
 export type LibraryJobStatus = "ready" | "generating" | "failed";
+export type PosterStatus = "ready" | "repairing" | "unavailable";
 
 /** The three mutually-exclusive thumb reactions on a video (a `note` is separate). */
 export type FeedbackSignal = "up" | "down" | "more_like_this";
@@ -44,6 +45,11 @@ export interface LibraryJob {
   poster_url?: string | null;
   /** Stable render identity so an in-place reburn cannot keep a stale poster. */
   poster_identity?: string | null;
+  /**
+   * Optional server-side poster-repair state. Older API responses omit it, so
+   * a ready job with no poster is handled by bounded client recovery.
+   */
+  poster_status?: PosterStatus;
   /** Fresh attachment-signed URL when the job retains its owned GCS path. */
   download_url?: string | null;
   output_variant_id: string | null;
@@ -82,6 +88,17 @@ export interface JobPlaybackUrl {
   video_url: string;
 }
 
+export interface PosterRefreshJob {
+  id: string;
+  poster_url: string | null;
+  poster_identity: string | null;
+  poster_status: PosterStatus;
+}
+
+export interface PosterRefreshResponse {
+  jobs: PosterRefreshJob[];
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${ME_BASE}${path}`, {
     ...init,
@@ -110,6 +127,19 @@ export function listMyJobs(opts?: { limit?: number; cursor?: string }): Promise<
   if (opts?.cursor) qs.set("cursor", opts.cursor);
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return request<LibraryPage>(`/jobs${suffix}`);
+}
+
+/** Refresh poster metadata for a bounded set of already-loaded, owner-scoped jobs. */
+export function refreshMyJobPosters(
+  jobIds: string[],
+  signal?: AbortSignal,
+): Promise<PosterRefreshResponse> {
+  return request<PosterRefreshResponse>(`/jobs/posters/refresh`, {
+    method: "POST",
+    cache: "no-store",
+    signal,
+    body: JSON.stringify({ job_ids: jobIds }),
+  });
 }
 
 /** Fetch a fresh signed URL immediately before playing one library video. */
