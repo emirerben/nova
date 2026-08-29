@@ -1293,6 +1293,13 @@ export interface CreatorAgentMixedMediaTimingProfile {
   boundary_style: "cut" | "crossfade";
 }
 
+export interface MontageCadenceConstraint {
+  mode: "round_robin";
+  source_media_ids: string[];
+  cut_duration_s: number;
+  reuse_policy: "no_repeat" | "allow_repeat";
+}
+
 export interface CreatorAgentPlanPreview {
   version: number;
   plan_hash: string;
@@ -1303,13 +1310,17 @@ export interface CreatorAgentPlanPreview {
   story_structure?: string[];
   caption_style?: string | null;
   intro_hook?: string | null;
+  target_duration_s?: number;
   creator_request?: string;
   /** Optional mixed-media timing profile. Older API responses omit this block. */
   mixed_media_timing?: CreatorAgentMixedMediaTimingProfile | null;
+  montage_cadence?: MontageCadenceConstraint | null;
   /** Optional on newer creator-agent responses. Older APIs omit this block. */
   edit_plan?: {
     strategy?: {
       optional_treatments?: Array<"overlays" | "sfx" | "transitions" | "looks">;
+      target_duration_s?: number;
+      montage_cadence?: MontageCadenceConstraint | null;
     };
   } | null;
 }
@@ -3275,6 +3286,8 @@ export interface ClipAssignment {
   machine_matched?: boolean;
   /** Stable server-owned identity used by guided-edit proposals. */
   media_id?: string | null;
+  /** Server-probed source duration; null while upload analysis is pending. */
+  duration_s?: number | null;
 }
 
 export type EditProposalStatus =
@@ -3354,6 +3367,7 @@ export interface EditProposalSnapshot {
   story_beats: EditProposalBeat[];
   fast_cuts?: EditProposalFastCut[] | null;
   mixed_media_timing?: CreatorAgentMixedMediaTimingProfile | null;
+  montage_cadence?: MontageCadenceConstraint | null;
 }
 
 export interface EditProposal {
@@ -3371,6 +3385,7 @@ export interface EditProposal {
     pace: EditProposalPace;
     duration_s: number;
     mixed_media_timing?: CreatorAgentMixedMediaTimingProfile | null;
+    montage_cadence?: MontageCadenceConstraint | null;
   };
   conversation: Array<{
     role: "user" | "agent";

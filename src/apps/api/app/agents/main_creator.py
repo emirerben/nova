@@ -21,10 +21,15 @@ from app.agents._schemas.creator_agent import (
 )
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import (
+    MontageCadenceConstraint,
+    recognize_cadence_reuse_policy,
+    recognize_explicit_cadence_reuse_policy,
     recognize_mixed_media_timing,
+    recognize_round_robin_cadence,
+    rejects_round_robin_cadence,
 )
 
-MAIN_CREATOR_PROMPT_VERSION = "2026-08-28-v9"
+MAIN_CREATOR_PROMPT_VERSION = "2026-08-29-v10"
 
 
 class MainCreatorInput(BaseModel):
@@ -97,7 +102,34 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 timing = recognize_mixed_media_timing(
                     "\n".join([*user_messages, input.user_message])
                 )
-                strategy = action.strategy.model_copy(update={"mixed_media_timing": timing})
+                combined_request = "\n".join([*user_messages, input.user_message])
+                latest_cut_s = recognize_round_robin_cadence(input.user_message)
+                cadence_cut_s = (
+                    None
+                    if rejects_round_robin_cadence(input.user_message)
+                    else latest_cut_s or recognize_round_robin_cadence(combined_request)
+                )
+                videos = [
+                    media
+                    for media in input.capability_manifest.media
+                    if media.kind == "video" and media.duration_s is not None
+                ]
+                cadence = None
+                if cadence_cut_s is not None and len(videos) == 2:
+                    reuse_policy = recognize_explicit_cadence_reuse_policy(
+                        input.user_message
+                    ) or recognize_cadence_reuse_policy(combined_request)
+                    cadence = MontageCadenceConstraint(
+                        source_media_ids=[media.media_id for media in videos],
+                        cut_duration_s=cadence_cut_s,
+                        reuse_policy=reuse_policy,
+                    )
+                strategy = action.strategy.model_copy(
+                    update={
+                        "mixed_media_timing": timing,
+                        "montage_cadence": cadence,
+                    }
+                )
                 action = action.model_copy(
                     update={
                         "strategy": normalize_creator_strategy_media(

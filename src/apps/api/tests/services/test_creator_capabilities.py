@@ -5,8 +5,11 @@ from types import SimpleNamespace
 import pytest
 
 from app.agents._schemas.creator_agent import CreativeStrategy, CreatorEditSnapshot
-from app.agents._schemas.creator_policy import MixedMediaTimingUnavailableError
-from app.schemas.edit_proposal import MixedMediaTimingProfile
+from app.agents._schemas.creator_policy import (
+    MixedMediaTimingUnavailableError,
+    MontageCadenceUnavailableError,
+)
+from app.schemas.edit_proposal import MixedMediaTimingProfile, MontageCadenceConstraint
 from app.services import creator_capabilities as capabilities
 from app.services.creator_sessions import compile_active_plan
 
@@ -33,6 +36,23 @@ def test_guided_policy_is_used_and_manifest_is_deterministic(monkeypatch) -> Non
     assert first.capabilities[capabilities.CAPABILITY_DRAFT_GUIDED_PROPOSAL].available is True
     assert first.context_hash == second.context_hash
     assert first.manifest_hash == second.manifest_hash
+
+
+def test_async_clip_duration_does_not_change_confirmation_identity(monkeypatch) -> None:
+    _enable_guided(monkeypatch)
+    pending = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[{"media_id": "clip-1", "kind": "video", "duration_s": None}],
+    )
+    analyzed = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[{"media_id": "clip-1", "kind": "video", "duration_s": 26.433}],
+    )
+
+    assert pending.context_hash == analyzed.context_hash
+    assert pending.manifest_hash == analyzed.manifest_hash
 
 
 def test_audio_led_and_voiceover_items_are_native(monkeypatch) -> None:
@@ -485,6 +505,64 @@ def test_compile_rejects_format_whose_renderer_flag_is_off(monkeypatch) -> None:
                 audio_strategy="original_audio",
                 render_program="native",
                 selected_media_ids=["clip-1"],
+            ),
+        )
+
+
+def test_cadence_forces_guided_renderer_even_with_original_audio(monkeypatch) -> None:
+    _enable_guided(monkeypatch)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": "clip-1", "kind": "video", "duration_s": 10},
+            {"media_id": "clip-2", "kind": "video", "duration_s": 10},
+        ],
+    )
+
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="montage",
+            audio_strategy="original_audio",
+            selected_media_ids=["clip-1", "clip-2"],
+            montage_cadence=MontageCadenceConstraint(
+                source_media_ids=["clip-1", "clip-2"], cut_duration_s=1
+            ),
+        ),
+    )
+
+    assert plan.strategy.render_program == "guided"
+    assert plan.strategy.montage_audio is not None
+    assert plan.strategy.montage_audio.preserve_source_audio is True
+    assert plan.strategy.montage_audio.source_media_ids == ["clip-1", "clip-2"]
+
+
+def test_cadence_with_recorded_voiceover_fails_closed(monkeypatch) -> None:
+    _enable_guided(monkeypatch)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        has_voiceover=True,
+        media=[
+            {"media_id": "clip-1", "kind": "video", "duration_s": 10},
+            {"media_id": "clip-2", "kind": "video", "duration_s": 10},
+        ],
+    )
+
+    with pytest.raises(
+        MontageCadenceUnavailableError,
+        match="unavailable with a recorded voiceover",
+    ):
+        capabilities.compile_strategy_to_plan(
+            manifest,
+            CreativeStrategy(
+                edit_format="montage",
+                audio_strategy="voiceover",
+                selected_media_ids=["clip-1", "clip-2"],
+                montage_cadence=MontageCadenceConstraint(
+                    source_media_ids=["clip-1", "clip-2"], cut_duration_s=1
+                ),
             ),
         )
 

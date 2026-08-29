@@ -268,7 +268,12 @@ def resolve_creator_manifest(
         "render_program": render_program,
         "has_voiceover": has_voiceover,
         "current_edit": resolved_edit,
-        "media": resolved_media,
+        # Duration is asynchronous analysis evidence, not source identity. A
+        # probe finishing while the creator reviews a plan must not invalidate
+        # ordinary confirmation. Cadence plans recheck capacity explicitly.
+        "media": [
+            media.model_dump(mode="json", exclude={"duration_s"}) for media in resolved_media
+        ],
         "catalog": resolved_catalog,
         "has_ready_variant": ready_variant,
         "capabilities": capabilities,

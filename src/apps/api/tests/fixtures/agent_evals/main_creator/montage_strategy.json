@@ -1,6 +1,6 @@
 {
   "agent": "nova.creator.main",
-  "prompt_version": "2026-08-25-v7",
+  "prompt_version": "2026-08-29-v10",
   "input": {
     "user_message": "Photos should have a very fast transition, videos can be a bit longer",
     "creator_context": "Travel creator; warm and direct.",

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Sparkles, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,18 @@ function eventText(event: CreatorAgentEvent): string | null {
     if (typeof value === "string" && value.trim()) return value.trim();
   }
   return null;
+}
+
+function eventOptions(event: CreatorAgentEvent): string[] {
+  const options = event.payload.options;
+  return Array.isArray(options)
+    ? options.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    : [];
+}
+
+function eventRecommendedOption(event: CreatorAgentEvent): string | null {
+  const value = event.payload.recommended_option;
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function eventId(): string {
@@ -52,7 +64,17 @@ function shouldPoll(session: CreatorAgentSession): boolean {
   return session.status === "awaiting_feedback" && ACTIVE_REVIEW_STATES.has(session.last_review?.status ?? "");
 }
 
-export default function MainCreatorAgentPanel({ itemId }: { itemId: string }) {
+export default function MainCreatorAgentPanel({
+  itemId,
+  onActiveChange,
+  onAvailabilityChange,
+}: {
+  itemId: string;
+  onActiveChange?: (active: boolean) => void;
+  onAvailabilityChange?: (
+    availability: "loading" | "available" | "unavailable" | "error",
+  ) => void;
+}) {
   const [session, setSession] = useState<CreatorAgentSession | null>(null);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
@@ -61,12 +83,31 @@ export default function MainCreatorAgentPanel({ itemId }: { itemId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [autoOptIn, setAutoOptIn] = useState(false);
   const [autoSending, setAutoSending] = useState(false);
+  const reportedAvailability = useRef<string | null>(null);
+
+  const reportAvailability = useCallback(
+    (next: "loading" | "available" | "unavailable" | "error") => {
+      if (reportedAvailability.current === next) return;
+      reportedAvailability.current = next;
+      onAvailabilityChange?.(next);
+    },
+    [onAvailabilityChange],
+  );
+
+  const acceptSession = useCallback(
+    (next: CreatorAgentSession | null) => {
+      setAvailable(true);
+      setSession(next);
+      setError(null);
+      reportAvailability("available");
+    },
+    [reportAvailability],
+  );
 
   const refresh = useCallback(async () => {
     try {
       const next = await getCreatorAgentSession(itemId);
-      setAvailable(true);
-      setSession(next);
+      acceptSession(next);
       return next;
     } catch (reason) {
       // The public web flag can cover more users than a percentage-based API
@@ -74,14 +115,18 @@ export default function MainCreatorAgentPanel({ itemId }: { itemId: string }) {
       if (reason instanceof PlanApiError && reason.status === 404) {
         setAvailable(false);
         setSession(null);
+        reportAvailability("unavailable");
         return null;
       }
+      setError("Kria couldn't refresh this plan. Your work is safe.");
+      reportAvailability("error");
       throw reason;
     }
-  }, [itemId]);
+  }, [acceptSession, itemId, reportAvailability]);
 
   useEffect(() => {
     let cancelled = false;
+    reportAvailability("loading");
     refresh()
       .catch(() => null)
       .finally(() => {
@@ -90,7 +135,13 @@ export default function MainCreatorAgentPanel({ itemId }: { itemId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [refresh]);
+  }, [refresh, reportAvailability]);
+
+  const sessionActive =
+    session != null && !["completed", "failed", "cancelled"].includes(session.status);
+  useEffect(() => {
+    onActiveChange?.(sessionActive);
+  }, [onActiveChange, sessionActive]);
 
   useEffect(() => {
     if (!session || !shouldPoll(session)) return;
@@ -112,8 +163,8 @@ export default function MainCreatorAgentPanel({ itemId }: { itemId: string }) {
     [session],
   );
 
-  async function send(): Promise<void> {
-    const trimmed = message.trim();
+  async function send(option?: string): Promise<void> {
+    const trimmed = (option ?? message).trim();
     if (!trimmed || sending) return;
     setSending(true);
     setError(null);
@@ -121,7 +172,7 @@ export default function MainCreatorAgentPanel({ itemId }: { itemId: string }) {
       const next = session
         ? await turnCreatorAgentSession(itemId, session.id, trimmed, session.revision, eventId())
         : await startCreatorAgentSession(itemId, trimmed, eventId());
-      setSession(next);
+      acceptSession(next);
       setMessage("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Kria couldn't respond. Try again.");
@@ -135,7 +186,8 @@ export default function MainCreatorAgentPanel({ itemId }: { itemId: string }) {
     setSending(true);
     setError(null);
     try {
-      setSession(await confirmCreatorAgentPlan(itemId, session, eventId()));
+      const next = await confirmCreatorAgentPlan(itemId, session, eventId());
+      acceptSession(next);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "That plan changed. Ask Kria to review it again.");
     } finally {
@@ -147,7 +199,10 @@ export default function MainCreatorAgentPanel({ itemId }: { itemId: string }) {
     if (!session || sending) return;
     setSending(true);
     try {
-      setSession(await cancelCreatorAgentSession(itemId, session.id, session.revision));
+      const next = await cancelCreatorAgentSession(itemId, session.id, session.revision);
+      acceptSession(next);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Kria couldn't cancel this plan. Try again.");
     } finally {
       setSending(false);
     }
@@ -158,14 +213,13 @@ export default function MainCreatorAgentPanel({ itemId }: { itemId: string }) {
     setAutoSending(true);
     setError(null);
     try {
-      setSession(
-        await requestCreatorAutoIteration(itemId, {
+      const next = await requestCreatorAutoIteration(itemId, {
           session_id: session.id,
           expected_revision: session.revision,
           opt_in: true,
           client_event_id: eventId(),
-        }),
-      );
+        });
+      acceptSession(next);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Automatic revision could not be enabled.");
     } finally {
@@ -173,7 +227,29 @@ export default function MainCreatorAgentPanel({ itemId }: { itemId: string }) {
     }
   }
 
-  if (loading || !available) return null;
+  if (loading) {
+    return (
+      <section
+        aria-label="Create with Kria"
+        aria-busy="true"
+        className="rounded-xl border border-lime-200/70 bg-lime-50/40 p-4"
+      >
+        <div className="flex items-center gap-2 text-sm font-semibold text-[#0c0c0e]">
+          <Sparkles className="h-4 w-4 text-lime-700" aria-hidden="true" />
+          Create with Kria
+        </div>
+        <div className="mt-3 flex items-center gap-3" role="status">
+          <div className="h-9 w-9 rounded-lg bg-lime-200/70 motion-safe:animate-pulse" aria-hidden="true" />
+          <div className="min-w-0 flex-1 space-y-2" aria-hidden="true">
+            <div className="h-3 w-40 max-w-full rounded bg-zinc-200 motion-safe:animate-pulse" />
+            <div className="h-3 w-64 max-w-full rounded bg-zinc-100 motion-safe:animate-pulse" />
+          </div>
+          <span className="sr-only">Checking your saved Kria plan…</span>
+        </div>
+      </section>
+    );
+  }
+  if (!available) return null;
 
   const plan = session?.pending_plan;
   const timingLabel = plan ? mixedMediaTimingLabel(plan.mixed_media_timing) : null;
@@ -217,12 +293,37 @@ export default function MainCreatorAgentPanel({ itemId }: { itemId: string }) {
           className="mt-4 max-h-52 space-y-3 overflow-y-auto border-l border-lime-300 pl-3"
           aria-live="polite"
         >
-          {visibleEvents.map((event) => (
+          {visibleEvents.map((event, eventIndex) => (
             <div key={event.id} className="text-sm text-[#27272a]">
               <p className="mb-0.5 text-[11px] font-medium uppercase tracking-wide text-[#71717a]">
                 {event.role === "user" ? "You" : "Kria"}
               </p>
               <p>{eventText(event)}</p>
+              {eventIndex === visibleEvents.length - 1 && event.event_type === "assistant_question" &&
+                eventOptions(event).length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-2" aria-label="Suggested answers">
+                    {eventOptions(event).map((option) => (
+                      <div key={option} className="flex flex-col items-start gap-1">
+                        {option === eventRecommendedOption(event) ? (
+                          <span className="text-[11px] font-medium uppercase tracking-wide text-lime-800">
+                            Recommended
+                          </span>
+                        ) : null}
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="min-h-11 whitespace-normal border-zinc-200 bg-white text-left hover:border-lime-400 hover:bg-lime-50 focus-visible:ring-lime-500"
+                          aria-label={`${option}${option === eventRecommendedOption(event) ? " (recommended)" : ""}`}
+                          disabled={sending}
+                          onClick={() => void send(option)}
+                        >
+                          {option}
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
             </div>
           ))}
         </div>
@@ -355,7 +456,23 @@ export default function MainCreatorAgentPanel({ itemId }: { itemId: string }) {
         </div>
       )}
 
-      {error && <p className="mt-2 text-sm text-zinc-700" role="alert">{error}</p>}
+      {error && (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2">
+          <p className="text-sm text-zinc-700" role="alert">{error}</p>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={sending}
+            onClick={() => {
+              setSending(true);
+              void refresh().catch(() => null).finally(() => setSending(false));
+            }}
+          >
+            Retry
+          </Button>
+        </div>
+      )}
     </section>
   );
 }

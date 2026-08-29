@@ -36,7 +36,15 @@ from app.auth import SYNTHETIC_USER_ID, CurrentUser
 from app.config import settings
 from app.database import get_db
 from app.limiter import limiter
-from app.models import ContentPlan, Job, MusicTrack, Persona, PlanItem, PlanItemAsset
+from app.models import (
+    ContentPlan,
+    CreatorAgentSession,
+    Job,
+    MusicTrack,
+    Persona,
+    PlanItem,
+    PlanItemAsset,
+)
 from app.routes._copilot import CopilotTurnBody, CopilotTurnResponse, run_copilot_turn
 from app.routes._director import (
     DirectorFeedbackBody,
@@ -153,7 +161,7 @@ from app.services.edit_interaction_receipts import (
 )
 from app.services.edit_proposal_limits import (
     edit_proposal_task_id,
-    queue_for_mixed_media_timing,
+    queue_for_guided_contract,
 )
 from app.services.generative_upload_paths import DIRECT_VOICEOVER_PREFIX
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
@@ -453,6 +461,8 @@ class ClipAssignmentResponse(BaseModel):
     # Stable server-owned identity used by guided-edit proposals. Null only on
     # legacy rows that have never been processed by Plan edit.
     media_id: str | None = None
+    # Server-probed source duration used by creator cadence preflight.
+    duration_s: float | None = None
 
 
 class PlanItemResponse(BaseModel):
@@ -580,6 +590,11 @@ def plan_item_response(
             user_note=str(a.get("user_note") or ""),
             machine_matched=bool(a.get("machine_matched")),
             media_id=str(a.get("media_id")) if a.get("media_id") else None,
+            duration_s=(
+                float(a["duration_s"])
+                if isinstance(a.get("duration_s"), int | float) and float(a["duration_s"]) > 0
+                else None
+            ),
         )
         for a in raw_assignments
         if isinstance(a, dict) and a.get("gcs_path")
@@ -1259,6 +1274,7 @@ async def attach_clips(
     from app.services.plan_clips import (  # noqa: PLC0415
         ClipAssignment,
         ClipAssignmentError,
+        ensure_clip_media_ids,
         set_item_clips,
     )
 
@@ -1293,6 +1309,27 @@ async def attach_clips(
         for a in (item.clip_assignments or [])
         if isinstance(a, dict) and a.get("gcs_path") and a.get("media_id")
     }
+    prior_durations: dict[str, float] = {
+        str(a["gcs_path"]): float(a["duration_s"])
+        for a in (item.clip_assignments or [])
+        if isinstance(a, dict)
+        and a.get("gcs_path")
+        and isinstance(a.get("duration_s"), int | float)
+        and float(a["duration_s"]) > 0
+    }
+    prior_duration_probe: dict[str, dict[str, str]] = {
+        str(a["gcs_path"]): {
+            key: str(a[key])
+            for key in (
+                "duration_probe_status",
+                "duration_probe_generation",
+                "duration_probe_attempted_at",
+            )
+            if a.get(key)
+        }
+        for a in (item.clip_assignments or [])
+        if isinstance(a, dict) and a.get("gcs_path")
+    }
 
     if body.assignments is not None:
         # Shot-slot uploader path: validate prefix, then validate shot_ids.
@@ -1324,6 +1361,16 @@ async def attach_clips(
                 user_note=(a.user_note or "")[:_MAX_NOTE_CHARS],
                 machine_matched=prior_mm.get((a.gcs_path, a.shot_id), False),
                 media_id=prior_media_ids.get(a.gcs_path),
+                duration_s=prior_durations.get(a.gcs_path),
+                duration_probe_status=prior_duration_probe.get(a.gcs_path, {}).get(
+                    "duration_probe_status"
+                ),
+                duration_probe_generation=prior_duration_probe.get(a.gcs_path, {}).get(
+                    "duration_probe_generation"
+                ),
+                duration_probe_attempted_at=prior_duration_probe.get(a.gcs_path, {}).get(
+                    "duration_probe_attempted_at"
+                ),
             )
             for a in body.assignments
         ]
@@ -1341,6 +1388,14 @@ async def attach_clips(
                 shot_id=None,
                 machine_matched=prior_mm.get((p, None), False),
                 media_id=prior_media_ids.get(p),
+                duration_s=prior_durations.get(p),
+                duration_probe_status=prior_duration_probe.get(p, {}).get("duration_probe_status"),
+                duration_probe_generation=prior_duration_probe.get(p, {}).get(
+                    "duration_probe_generation"
+                ),
+                duration_probe_attempted_at=prior_duration_probe.get(p, {}).get(
+                    "duration_probe_attempted_at"
+                ),
             )
             for p in body.clip_gcs_paths
         ]
@@ -1386,6 +1441,9 @@ async def attach_clips(
 
     try:
         set_item_clips(item, assignments)
+        # Identity generation is cheap and belongs in the attach transaction;
+        # duration extraction is delegated after commit to the worker below.
+        ensure_clip_media_ids(item)
     except ClipAssignmentError as exc:
         detail: str | dict[str, int | str] = str(exc)
         if len(assignments) > _MAX_CLIPS_PER_ITEM:
@@ -1407,8 +1465,15 @@ async def attach_clips(
     await db.commit()
     # Fire-and-forget conformance analysis (best-effort, never blocks this response).
     from app.tasks.conformance_build import analyze_item_conformance  # noqa: PLC0415
+    from app.tasks.creator_clip_metadata import (  # noqa: PLC0415
+        CREATOR_CLIP_METADATA_QUEUE,
+        analyze_creator_clip_metadata,
+    )
 
     analyze_item_conformance.delay(str(item.id), ownership_epoch)
+    analyze_creator_clip_metadata.apply_async(
+        args=[str(item.id), ownership_epoch], queue=CREATOR_CLIP_METADATA_QUEUE
+    )
     # Reload with current_job eager-loaded (commit expired it) before serializing.
     reloaded = await _load_owned_item(item_id, user.id, db)
     instruction_level = await _get_instruction_level(reloaded, db)
@@ -2360,15 +2425,17 @@ def _snapshot_from_edit_guide_revision(  # noqa: ANN001
             current.montage_text_bindings if revision.direction == "fast_montage" else []
         ),
         montage_audio=current.montage_audio if revision.direction == "fast_montage" else None,
+        montage_cadence=current.montage_cadence if revision.direction == "fast_montage" else None,
         output_orientation=output_orientation,
     )
 
 
 def _proposal_analysis_queue(proposal) -> str:  # noqa: ANN001
-    """Keep expanded mixed-media cuts away from rolling legacy workers."""
+    """Keep new guided timing contracts away from rolling legacy workers."""
 
-    return queue_for_mixed_media_timing(
+    return queue_for_guided_contract(
         proposal.brief.mixed_media_timing,
+        proposal.brief.montage_cadence,
         default_queue=settings.pool_asset_analysis_queue,
     )
 
@@ -2441,6 +2508,19 @@ def _proposal_http_conflict(code: str, message: str) -> HTTPException:
     )
 
 
+def _proposal_service_conflict(exc: ValueError) -> HTTPException:
+    """Map stable proposal service error types to the public API contract."""
+
+    from app.services.edit_proposals import ProposalReplanRequiredError  # noqa: PLC0415
+
+    if isinstance(exc, ProposalReplanRequiredError):
+        return _proposal_http_conflict(
+            "proposal_replan_required",
+            "This montage needs a new cut plan. Ask Kria to replan it.",
+        )
+    return _proposal_http_conflict("proposal_conflict", str(exc))
+
+
 _PROPOSAL_GENERATE_MESSAGES = {
     "proposal_required": "Plan this edit before generating.",
     "proposal_draft": "Approve the edit plan before generating.",
@@ -2454,6 +2534,9 @@ _PROPOSAL_GENERATE_MESSAGES = {
     "proposal_failed": "Kria couldn't finish planning this edit — open the planner to try again.",
     "proposal_render_blocked": (
         "This approved edit couldn't be rendered — open the planner to revise it."
+    ),
+    "proposal_replan_required": (
+        "This montage needs a new cut plan before it can render. Ask Kria to replan it."
     ),
 }
 
@@ -2504,6 +2587,14 @@ async def _respond_to_dispatch_result(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="The render couldn't be queued — give it another go",
         )
+    if result.outcome == "creator_agent_plan_required":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "creator_agent_plan_required",
+                "message": "Finish or cancel the active Kria plan before creating the video.",
+            },
+        )
     if result.outcome in {
         "proposal_required",
         "proposal_draft",
@@ -2511,6 +2602,7 @@ async def _respond_to_dispatch_result(
         "proposal_analyzing",
         "proposal_failed",
         "proposal_render_blocked",
+        "proposal_replan_required",
     }:
         _raise_proposal_generate_conflict(result.outcome)
     if result.outcome not in ("dispatched", "already_active"):
@@ -2556,6 +2648,8 @@ async def _auto_finalize_existing_draft(
     ownership_epoch: int,
     current,  # noqa: ANN001 - EditProposal, imported locally by every caller
     db: AsyncSession,
+    *,
+    reject_active_creator_session: bool,
 ) -> PlanItemResponse | None:
     """Approve + dispatch an existing reviewable draft instead of discarding
 
@@ -2569,6 +2663,7 @@ async def _auto_finalize_existing_draft(
 
     from app.services.edit_proposals import (  # noqa: PLC0415
         ProposalConflictError,
+        ProposalReplanRequiredError,
         approve_proposal,
         mark_edit_proposal_stale,
     )
@@ -2586,6 +2681,8 @@ async def _auto_finalize_existing_draft(
         )
     try:
         approve_proposal(locked, expected_version=current.proposal_version)
+    except ProposalReplanRequiredError as exc:
+        raise _proposal_service_conflict(exc) from exc
     except ProposalConflictError:
         # Lost the race to a concurrent mutation (another tab approved or
         # replanned first) — from the creator's point of view this is just a
@@ -2593,11 +2690,17 @@ async def _auto_finalize_existing_draft(
         return await _auto_design_idempotent_current(item_id, owner_id, db)
     await db.commit()
 
+    from functools import partial  # noqa: PLC0415
+
     from anyio import to_thread  # noqa: PLC0415
 
     from app.tasks.content_plan_build import dispatch_item_render_for  # noqa: PLC0415
 
-    result = await to_thread.run_sync(dispatch_item_render_for, item_id, ownership_epoch)
+    dispatch = partial(
+        dispatch_item_render_for,
+        reject_active_creator_session=reject_active_creator_session,
+    )
+    result = await to_thread.run_sync(dispatch, item_id, ownership_epoch)
     return await _respond_to_dispatch_result(result, item_id, owner_id, db)
 
 
@@ -2673,6 +2776,37 @@ async def _maybe_auto_design_generate(
     owner_id = user.id
     ownership_epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
     locked = await _load_owned_item(item_id, owner_id, db, for_update=True)
+    raw_generate = generation_attempt_id is None
+    if raw_generate:
+        # The raw one-click auto-design path is another Generate producer. Fence
+        # it under the same PlanItem lock as creator-session start, before it can
+        # approve an existing draft or reserve background proposal work. A Main
+        # Creator-owned guided attempt carries its immutable attempt id and is
+        # intentionally allowed to execute its own confirmed plan.
+        from app.services.creator_sessions import ACTIVE_CREATOR_PHASES  # noqa: PLC0415
+
+        active_creator_session_id = (
+            await db.execute(
+                select(CreatorAgentSession.id)
+                .where(
+                    CreatorAgentSession.creator_id == owner_id,
+                    CreatorAgentSession.plan_item_id == locked.id,
+                    CreatorAgentSession.status.in_(ACTIVE_CREATOR_PHASES),
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if asyncio.iscoroutine(active_creator_session_id):
+            active_creator_session_id = await active_creator_session_id
+        if isinstance(active_creator_session_id, uuid.UUID):
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "creator_agent_plan_required",
+                    "message": "Finish or cancel the active Kria plan before creating the video.",
+                },
+            )
     current = parse_edit_proposal(locked.edit_proposal)
     if (
         generation_attempt_id
@@ -2711,15 +2845,27 @@ async def _maybe_auto_design_generate(
         # so falling through to them would incorrectly re-raise the original
         # conflict for a proposal that is actually approved now.
         await db.rollback()  # release the row lock before the separate sync-session dispatch call
+        from functools import partial  # noqa: PLC0415
+
         from anyio import to_thread  # noqa: PLC0415
 
         from app.tasks.content_plan_build import dispatch_item_render_for  # noqa: PLC0415
 
-        result = await to_thread.run_sync(dispatch_item_render_for, item_id, ownership_epoch)
+        dispatch = partial(
+            dispatch_item_render_for,
+            reject_active_creator_session=raw_generate,
+        )
+        result = await to_thread.run_sync(dispatch, item_id, ownership_epoch)
         return await _respond_to_dispatch_result(result, item_id, owner_id, db)
     if live_status == "draft":
         return await _auto_finalize_existing_draft(
-            item_id, owner_id, locked, ownership_epoch, current, db
+            item_id,
+            owner_id,
+            locked,
+            ownership_epoch,
+            current,
+            db,
+            reject_active_creator_session=raw_generate,
         )
 
     from app.schemas.edit_proposal import (  # noqa: PLC0415
@@ -2953,6 +3099,7 @@ async def edit_proposal_conversation_turn(
             pace=review_snapshot.pace,
             duration_s=review_snapshot.duration_s,
             mixed_media_timing=review_mixed_media_timing,
+            montage_cadence=review_snapshot.montage_cadence,
             output_orientation=current.brief.output_orientation if current else None,
         )
         if review_snapshot
@@ -3064,6 +3211,11 @@ async def edit_proposal_conversation_turn(
                     montage_audio=(
                         brief.montage_audio if result.revision.direction == "fast_montage" else None
                     ),
+                    montage_cadence=(
+                        brief.montage_cadence
+                        if result.revision.direction == "fast_montage"
+                        else None
+                    ),
                 )
             else:
                 revised_snapshot = _snapshot_from_edit_guide_revision(
@@ -3101,6 +3253,7 @@ async def edit_proposal_conversation_turn(
             mixed_media_timing=revised_snapshot.mixed_media_timing,
             montage_text_bindings=revised_snapshot.montage_text_bindings,
             montage_audio=revised_snapshot.montage_audio,
+            montage_cadence=revised_snapshot.montage_cadence,
             output_orientation=brief.output_orientation,
         )
 
@@ -3433,6 +3586,15 @@ async def update_item_edit_proposal(
                 "media": [ref.model_dump(mode="json") for ref in current.draft.media],
             }
         )
+        if (
+            server_snapshot.direction != current.draft.direction
+            or server_snapshot.pace != current.draft.pace
+            or server_snapshot.duration_s != current.draft.duration_s
+        ):
+            raise _proposal_http_conflict(
+                "proposal_replan_required",
+                "Ask Kria to change the direction, pacing, or target length.",
+            )
         save_proposal_draft(
             item,
             expected_version=body.expected_proposal_version,
@@ -3447,7 +3609,7 @@ async def update_item_edit_proposal(
             clear_approval_mode=True,
         )
     except ProposalConflictError as exc:
-        raise _proposal_http_conflict("proposal_conflict", str(exc)) from exc
+        raise _proposal_service_conflict(exc) from exc
     except ValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -3497,7 +3659,7 @@ async def approve_item_edit_proposal(
     try:
         approve_proposal(item, expected_version=body.expected_proposal_version)
     except ProposalConflictError as exc:
-        raise _proposal_http_conflict("proposal_conflict", str(exc)) from exc
+        raise _proposal_service_conflict(exc) from exc
     await db.commit()
     reloaded = await _load_owned_item(item_id, user.id, db)
     return plan_item_response(reloaded)
@@ -3641,21 +3803,18 @@ async def generate_item(
     # the async handler → MissingGreenlet 500 on every successful generate
     # (review 2026-08-04, performance P1).
     owner_id = user.id
-    # anyio.to_thread.run_sync accepts positional arguments only. Keep the
-    # legacy no-body call shape intact (a few integrations monkeypatch the
-    # dispatcher with the original two-argument signature), and bind recovery
-    # options only when this request actually carries them.
+    # anyio.to_thread.run_sync accepts positional arguments only. Bind the raw
+    # Generate guard here; creator-confirmed execution calls the same dispatcher
+    # without it and is therefore still authorized to render its own plan.
     dispatch_args = (str(item.id), ownership_epoch)
-    if body is not None and (body.speech_cleanup_action or body.expected_job_id):
-        from functools import partial  # noqa: PLC0415
+    from functools import partial  # noqa: PLC0415
 
-        dispatch = partial(
-            dispatch_item_render_for,
-            speech_cleanup_action=body.speech_cleanup_action,
-            expected_job_id=body.expected_job_id,
-        )
-    else:
-        dispatch = dispatch_item_render_for
+    dispatch = partial(
+        dispatch_item_render_for,
+        speech_cleanup_action=body.speech_cleanup_action if body is not None else None,
+        expected_job_id=body.expected_job_id if body is not None else None,
+        reject_active_creator_session=True,
+    )
     result = await to_thread.run_sync(dispatch, *dispatch_args)
     return await _respond_to_dispatch_result(result, item_id, owner_id, db)
 

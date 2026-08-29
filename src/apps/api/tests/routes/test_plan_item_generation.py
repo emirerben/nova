@@ -53,6 +53,13 @@ def client() -> TestClient:
     return TestClient(app, raise_server_exceptions=False)
 
 
+@pytest.fixture(autouse=True)
+def _stub_creator_clip_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.tasks.creator_clip_metadata import analyze_creator_clip_metadata
+
+    monkeypatch.setattr(analyze_creator_clip_metadata, "apply_async", MagicMock())
+
+
 def teardown_function() -> None:
     app.dependency_overrides.clear()
 
@@ -288,7 +295,13 @@ def test_generate_allows_current_approved_asset_only_story(monkeypatch, client: 
         response = client.post(f"/plan-items/{item.id}/generate")
 
     assert response.status_code == 200
-    dispatch.assert_called_once_with(str(item.id), 0)
+    dispatch.assert_called_once_with(
+        str(item.id),
+        0,
+        speech_cleanup_action=None,
+        expected_job_id=None,
+        reject_active_creator_session=True,
+    )
 
 
 def test_collection_shape_omits_full_proposal_and_preview_signing(monkeypatch) -> None:
@@ -296,7 +309,13 @@ def test_collection_shape_omits_full_proposal_and_preview_signing(monkeypatch) -
 
     user = _user()
     item, _plan = _owned_item(user.id)
-    item.clip_assignments = []
+    item.clip_assignments = [
+        {
+            "gcs_path": "users/u/plan/i/match.mp4",
+            "media_id": "match-a",
+            "duration_s": 26.433,
+        }
+    ]
     item.edit_proposal = EditProposal(
         proposal_version=1,
         generation_attempt_id="attempt-1",
@@ -311,6 +330,7 @@ def test_collection_shape_omits_full_proposal_and_preview_signing(monkeypatch) -
     response = routes.plan_item_response(item, include_edit_proposal=False)
 
     assert response.edit_proposal is None
+    assert response.clip_assignments[0].duration_s == pytest.approx(26.433)
 
 
 @pytest.mark.parametrize(
@@ -358,6 +378,76 @@ def test_generate_returns_explicit_proposal_gate_codes(
 
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == expected_code
+
+
+def test_generate_cutless_fast_montage_requires_replan_without_dispatch(
+    monkeypatch,
+    client: TestClient,
+) -> None:
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "guided_edit_enforcement_enabled", True)
+    monkeypatch.setattr(app_settings, "guided_edit_capability_enabled", True)
+    monkeypatch.setattr(app_settings, "guided_auto_design_enabled", False)
+    user = _user()
+    clip_path = f"users/{user.id}/plan/0/match.mp4"
+    item, plan = _owned_item(user.id, clips=[clip_path])
+    item.edit_format = "montage"
+    media = MediaRef(
+        lane="clip",
+        media_id="match-a",
+        gcs_path=clip_path,
+        generation="1",
+        kind="video",
+        duration_s=10,
+    )
+    snapshot = EditProposalSnapshot(
+        direction="fast_montage",
+        goal="Alternate the strongest match moments",
+        pace="fast",
+        duration_s=10,
+        title="Two matches",
+        media=[media],
+        story_beats=[
+            StoryBeat(
+                beat_id="legacy-envelope",
+                topic="Highlights",
+                media_ids=[media.media_id],
+                duration_s=10,
+            )
+        ],
+        fast_cuts=None,
+    )
+    digest = canonical_media_digest(snapshot.media)
+    item.edit_proposal = EditProposal(
+        proposal_version=3,
+        generation_attempt_id="attempt-1",
+        media_digest=digest,
+        status="approved",
+        brief=ProposalBrief(direction="fast_montage", pace="fast", duration_s=10),
+        draft=snapshot,
+        last_approved=ApprovedProposalSnapshot(
+            proposal_version=3,
+            media_digest=digest,
+            approved_at=datetime.now(UTC),
+            snapshot=snapshot,
+        ),
+    ).model_dump(mode="json")
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with _patch_dispatch_ok() as dispatch:
+        response = client.post(f"/plan-items/{item.id}/generate")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "proposal_replan_required",
+        "message": (
+            "This montage needs a new cut plan before it can render. Ask Kria to replan it."
+        ),
+    }
+    dispatch.assert_not_called()
 
 
 def test_generate_auto_designs_instead_of_409_when_flag_on_and_media_present(
@@ -498,7 +588,13 @@ def test_generate_confirmation_without_capability_fails_closed_without_unconfirm
 
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "proposal_required"
-    dispatch.assert_called_once_with(str(item.id), 0)
+    dispatch.assert_called_once_with(
+        str(item.id),
+        0,
+        speech_cleanup_action=None,
+        expected_job_id=None,
+        reject_active_creator_session=True,
+    )
     draft_task.assert_not_called()
     assert item.edit_proposal is None
 
@@ -534,7 +630,13 @@ def test_generate_audio_led_bypasses_guided_gate_and_hides_capabilities(
         response = client.post(f"/plan-items/{item.id}/generate")
 
     assert response.status_code == 200
-    dispatch.assert_called_once_with(str(item.id), 0)
+    dispatch.assert_called_once_with(
+        str(item.id),
+        0,
+        speech_cleanup_action=None,
+        expected_job_id=None,
+        reject_active_creator_session=True,
+    )
     draft_task.assert_not_called()
     body = response.json()
     assert body["guided_edit_available"] is False
@@ -650,7 +752,40 @@ def test_generate_enqueues_when_clips_present(client: TestClient) -> None:
     with _patch_dispatch_ok() as dispatch:
         resp = client.post(f"/plan-items/{item.id}/generate")
     assert resp.status_code == 200
-    dispatch.assert_called_once_with(str(item.id), 0)
+    dispatch.assert_called_once_with(
+        str(item.id),
+        0,
+        speech_cleanup_action=None,
+        expected_job_id=None,
+        reject_active_creator_session=True,
+    )
+
+
+def test_generate_rejects_direct_dispatch_while_creator_session_is_active(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
+    _ = monkeypatch
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[f"users/{user.id}/plan/{uuid.uuid4()}/a.mp4"])
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with patch(
+        "app.tasks.content_plan_build.dispatch_item_render_for",
+        return_value=DispatchResult("creator_agent_plan_required"),
+    ) as dispatch:
+        response = client.post(f"/plan-items/{item.id}/generate")
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "creator_agent_plan_required"
+    dispatch.assert_called_once_with(
+        str(item.id),
+        0,
+        speech_cleanup_action=None,
+        expected_job_id=None,
+        reject_active_creator_session=True,
+    )
 
 
 def test_generate_unknown_dispatch_outcome_is_500(client: TestClient) -> None:
@@ -812,7 +947,13 @@ def test_generate_allows_narrated_without_voiceover_when_self_narration_on(
     with _patch_dispatch_ok() as dispatch:
         resp = client.post(f"/plan-items/{item.id}/generate")
     assert resp.status_code == 200
-    dispatch.assert_called_once_with(str(item.id), 0)
+    dispatch.assert_called_once_with(
+        str(item.id),
+        0,
+        speech_cleanup_action=None,
+        expected_job_id=None,
+        reject_active_creator_session=True,
+    )
 
 
 def test_generate_voiceover_mode_requires_recording_even_with_self_narration_on(
@@ -866,7 +1007,13 @@ def test_generate_allows_narrated_with_voiceover(client: TestClient) -> None:
     with _patch_dispatch_ok() as dispatch:
         resp = client.post(f"/plan-items/{item.id}/generate")
     assert resp.status_code == 200
-    dispatch.assert_called_once_with(str(item.id), 0)
+    dispatch.assert_called_once_with(
+        str(item.id),
+        0,
+        speech_cleanup_action=None,
+        expected_job_id=None,
+        reject_active_creator_session=True,
+    )
 
 
 def test_set_voiceover_stores_path_and_selects_voiceover_audio_mode(

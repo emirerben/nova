@@ -13,8 +13,10 @@ from sqlalchemy.exc import MissingGreenlet
 from starlette.requests import Request
 
 from app.agents._schemas.creator_agent import (
+    AskUser,
     CreativeStrategy,
     CreatorCraftBundle,
+    CreatorMediaRef,
     ProposeStrategy,
     canonical_context_hash,
 )
@@ -34,18 +36,39 @@ from app.routes.creator_agent import (
     TurnBody,
     _apply_plan_intent,
     _auto_iteration_already_finalized,
+    _balanced_integer_duration_s,
     _confirmed_creator_request,
     _creator_speech_cut_source_enabled,
     _fallback_strategy,
+    _next_balanced_integer_duration_s,
     _reset_render_target,
+    _resolved_cadence_for_turn,
     _seed_guided_specialist_brief,
+    _selected_cadence_sources,
     _strict_creator_format,
 )
-from app.schemas.edit_proposal import MixedMediaTimingProfile
+from app.schemas.edit_proposal import (
+    EditProposal,
+    MixedMediaTimingProfile,
+    MontageAudioPlan,
+    MontageCadenceConstraint,
+    ProposalBrief,
+    recognize_cadence_reuse_policy,
+    recognize_round_robin_cadence,
+    recognize_total_duration_s,
+    rejects_round_robin_cadence,
+)
 from app.services.creator_capabilities import (
     compile_strategy_to_plan,
     resolve_creator_manifest,
 )
+
+
+@pytest.fixture(autouse=True)
+def _stub_creator_clip_metadata_dispatch(monkeypatch) -> None:
+    from app.tasks.creator_clip_metadata import analyze_creator_clip_metadata
+
+    monkeypatch.setattr(analyze_creator_clip_metadata, "apply_async", MagicMock())
 
 
 def _craft_bundle(
@@ -69,6 +92,22 @@ def _craft_bundle(
         idempotency_key=idempotency_key,
         commands=[{**pins, "command": "set_caption_style", "caption_style": "word"}],
         **pins,
+    )
+
+
+def test_creator_clip_metadata_dispatch_uses_analysis_queue() -> None:
+    from app.tasks.creator_clip_metadata import (
+        CREATOR_CLIP_METADATA_QUEUE,
+        analyze_creator_clip_metadata,
+    )
+
+    item = SimpleNamespace(id=uuid.uuid4())
+    plan = SimpleNamespace(ownership_epoch=5)
+
+    creator_routes._enqueue_creator_clip_metadata(item, plan)
+
+    analyze_creator_clip_metadata.apply_async.assert_called_once_with(
+        args=[str(item.id), 5], queue=CREATOR_CLIP_METADATA_QUEUE
     )
 
 
@@ -701,6 +740,54 @@ def test_confirmed_guided_strategy_becomes_specialist_brief(monkeypatch) -> None
     }
 
 
+def test_specialist_brief_normalizes_pool_asset_audio_and_cadence_ids(monkeypatch) -> None:
+    from app.services import creator_capabilities
+
+    monkeypatch.setattr(creator_capabilities.settings, "guided_edit_capability_enabled", True)
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": "asset-video-a", "kind": "video", "duration_s": 10},
+            {"media_id": "asset-video-b", "kind": "video", "duration_s": 10},
+        ],
+    )
+    edit_plan = compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            direction="fast_montage",
+            edit_format="montage",
+            audio_strategy="original_audio",
+            selected_media_ids=["asset-video-a", "asset-video-b"],
+            montage_audio=MontageAudioPlan(
+                preserve_source_audio=True,
+                source_media_ids=["asset-video-a", "asset-video-b"],
+            ),
+            montage_cadence=MontageCadenceConstraint(
+                source_media_ids=["asset-video-a", "asset-video-b"],
+                cut_duration_s=1,
+            ),
+        ),
+    )
+    item = SimpleNamespace(edit_proposal=None)
+
+    _seed_guided_specialist_brief(
+        item,
+        edit_plan,
+        summary="Alternate both pool videos.",
+        creator_request="Alternate every one second and keep the original audio.",
+    )
+
+    assert item.edit_proposal["brief"]["montage_audio"]["source_media_ids"] == [
+        "video-a",
+        "video-b",
+    ]
+    assert item.edit_proposal["brief"]["montage_cadence"]["source_media_ids"] == [
+        "video-a",
+        "video-b",
+    ]
+
+
 def test_native_mixed_timing_replaces_stale_approved_proposal_with_fresh_brief(
     monkeypatch,
 ) -> None:
@@ -862,6 +949,621 @@ async def test_planning_fails_closed_when_mixed_media_specialist_is_unavailable(
     }
 
 
+@pytest.mark.asyncio
+async def test_planning_fails_closed_when_cadence_conflicts_with_voiceover(monkeypatch) -> None:
+    from app.services import creator_capabilities
+
+    monkeypatch.setattr(creator_capabilities.settings, "guided_edit_capability_enabled", True)
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        has_voiceover=True,
+        media=[
+            {"media_id": "match-a", "kind": "video", "duration_s": 20},
+            {"media_id": "match-b", "kind": "video", "duration_s": 20},
+        ],
+    )
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4())
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        revision=1,
+        status="planning",
+        events=[],
+        agent_call_count=0,
+        agent_call_budget=2,
+        question_count=0,
+        question_budget=2,
+        active_plan=None,
+        last_error=None,
+    )
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=CreativeStrategy(
+            edit_format="montage", audio_strategy="voiceover", target_duration_s=10
+        ),
+        summary="Alternate the matches under the voiceover.",
+    )
+    append_event = AsyncMock()
+    response = SimpleNamespace(status="failed")
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, SimpleNamespace(), SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(creator_routes, "creator_context", lambda *_args: ("creator", "item"))
+    monkeypatch.setattr(creator_routes, "default_client", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        creator_routes.asyncio,
+        "to_thread",
+        AsyncMock(return_value=SimpleNamespace(action=action)),
+    )
+    monkeypatch.setattr(creator_routes, "append_event", append_event)
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+
+    result = await creator_routes._run_planning_turn(
+        AsyncMock(),
+        item_id=str(item.id),
+        user=user,
+        session_id=session.id,
+        expected_revision=1,
+        user_message="Alternate every 1 second for 10 seconds.",
+    )
+
+    assert result is response
+    assert session.status == "failed"
+    assert session.last_error["code"] == "montage_cadence_unavailable"
+    assert append_event.await_args.kwargs["payload"]["code"] == ("montage_cadence_unavailable")
+
+
+@pytest.mark.asyncio
+async def test_required_cadence_question_fails_closed_at_question_budget(monkeypatch) -> None:
+    session = SimpleNamespace(
+        status="planning",
+        question_count=2,
+        question_budget=2,
+        last_error=None,
+    )
+    append_event = AsyncMock()
+    monkeypatch.setattr(creator_routes, "append_event", append_event)
+
+    await creator_routes._record_required_cadence_question(
+        AsyncMock(),
+        session,
+        payload={"message": "Choose two videos."},
+    )
+
+    assert session.status == "failed"
+    assert session.last_error == {"code": "question_budget_exhausted"}
+    assert append_event.await_args.kwargs["event_type"] == "assistant_error"
+
+
+@pytest.mark.asyncio
+async def test_alternation_prompt_asks_for_balanced_twelve_second_capacity(
+    monkeypatch,
+) -> None:
+    from app.services import creator_capabilities
+
+    monkeypatch.setattr(creator_capabilities.settings, "guided_edit_capability_enabled", True)
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": "match-a", "kind": "video", "duration_s": 6.633},
+            {"media_id": "match-b", "kind": "video", "duration_s": 26.433},
+        ],
+    )
+    message = "Show one second from one, switch to the other one, and back and forth."
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4())
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        revision=1,
+        status="planning",
+        events=[
+            SimpleNamespace(
+                sequence=0,
+                role="user",
+                event_type="user_message",
+                payload={"message": message},
+            )
+        ],
+        agent_call_count=0,
+        agent_call_budget=2,
+        question_count=0,
+        question_budget=2,
+        active_plan=None,
+        last_error=None,
+    )
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=CreativeStrategy(
+            edit_format="montage",
+            render_program="guided",
+            target_duration_s=24,
+        ),
+        summary="Alternate the two matches.",
+    )
+    append_event = AsyncMock()
+    response = SimpleNamespace(status="briefing")
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, SimpleNamespace(), SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(creator_routes, "creator_context", lambda *_args: ("creator", "item"))
+    monkeypatch.setattr(creator_routes, "default_client", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        creator_routes.asyncio,
+        "to_thread",
+        AsyncMock(return_value=SimpleNamespace(action=action)),
+    )
+    monkeypatch.setattr(creator_routes, "append_event", append_event)
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+
+    result = await creator_routes._run_planning_turn(
+        AsyncMock(),
+        item_id=str(item.id),
+        user=user,
+        session_id=session.id,
+        expected_revision=1,
+        user_message=message,
+    )
+
+    assert result is response
+    assert session.status == "briefing"
+    payload = append_event.await_args.kwargs["payload"]
+    assert payload["message"] == (
+        "I can make a balanced 12-second edit without repeating footage. "
+        "I recommend using the strongest moments. What would you prefer?"
+    )
+    assert payload["options"][0] == "Use the best 12 seconds"
+    assert payload["cadence_context"]["recommended_duration_s"] == 12
+
+
+@pytest.mark.asyncio
+async def test_unrecognized_source_selection_is_reasked_before_agent_fallback(monkeypatch) -> None:
+    from app.services import creator_capabilities
+
+    monkeypatch.setattr(creator_capabilities.settings, "guided_edit_capability_enabled", True)
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": "match-a", "kind": "video", "duration_s": 10},
+            {"media_id": "match-b", "kind": "video", "duration_s": 10},
+            {"media_id": "match-c", "kind": "video", "duration_s": 10},
+        ],
+    )
+    context = {
+        "kind": "source_selection",
+        "cut_duration_s": 1,
+        "reuse_policy": "no_repeat",
+        "selections": {"Alternate match-a and match-b": ["match-a", "match-b"]},
+    }
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4())
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        revision=1,
+        status="briefing",
+        events=[
+            SimpleNamespace(
+                sequence=1,
+                role="assistant",
+                event_type="assistant_question",
+                payload={"cadence_context": context},
+            )
+        ],
+        agent_call_count=0,
+        agent_call_budget=2,
+        question_count=1,
+        question_budget=3,
+        active_plan=None,
+        last_error=None,
+    )
+    to_thread = AsyncMock()
+    append_event = AsyncMock()
+    response = SimpleNamespace(status="briefing")
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, SimpleNamespace(), SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(creator_routes, "creator_context", lambda *_args: ("creator", "item"))
+    monkeypatch.setattr(creator_routes.asyncio, "to_thread", to_thread)
+    monkeypatch.setattr(creator_routes, "append_event", append_event)
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+
+    result = await creator_routes._run_planning_turn(
+        AsyncMock(),
+        item_id=str(item.id),
+        user=user,
+        session_id=session.id,
+        expected_revision=1,
+        user_message="Whatever you think",
+    )
+
+    assert result is response
+    to_thread.assert_not_awaited()
+    assert append_event.await_args.kwargs["payload"]["reason_code"] == ("cadence_source_selection")
+    assert session.status == "briefing"
+
+
+@pytest.mark.asyncio
+async def test_pending_source_selection_honors_latest_cadence_cancellation(monkeypatch) -> None:
+    from app.services import creator_capabilities
+
+    monkeypatch.setattr(creator_capabilities.settings, "guided_edit_capability_enabled", True)
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": "match-a", "kind": "video", "duration_s": 10},
+            {"media_id": "match-b", "kind": "video", "duration_s": 10},
+            {"media_id": "match-c", "kind": "video", "duration_s": 10},
+        ],
+    )
+    context = {
+        "kind": "source_selection",
+        "cut_duration_s": 1,
+        "reuse_policy": "no_repeat",
+        "selections": {"Alternate match-a and match-b": ["match-a", "match-b"]},
+    }
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4())
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        revision=1,
+        status="planning",
+        events=[
+            SimpleNamespace(
+                sequence=1,
+                role="assistant",
+                event_type="assistant_question",
+                payload={"cadence_context": context},
+            )
+        ],
+        agent_call_count=0,
+        agent_call_budget=2,
+        question_count=1,
+        question_budget=3,
+        active_plan=None,
+        last_error=None,
+    )
+    to_thread = AsyncMock(
+        return_value=SimpleNamespace(
+            action=AskUser(
+                kind="ask_user",
+                question="What story should this become instead?",
+                reason_code="story_direction",
+            )
+        )
+    )
+    append_event = AsyncMock()
+    response = SimpleNamespace(status="briefing")
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, SimpleNamespace(), SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(creator_routes, "creator_context", lambda *_args: ("creator", "item"))
+    monkeypatch.setattr(creator_routes.asyncio, "to_thread", to_thread)
+    monkeypatch.setattr(creator_routes, "default_client", lambda: SimpleNamespace())
+    monkeypatch.setattr(creator_routes, "append_event", append_event)
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+
+    result = await creator_routes._run_planning_turn(
+        AsyncMock(),
+        item_id=str(item.id),
+        user=user,
+        session_id=session.id,
+        expected_revision=1,
+        user_message="Don't alternate; make it a guided story",
+    )
+
+    assert result is response
+    to_thread.assert_awaited_once()
+    assert append_event.await_args.kwargs["payload"]["reason_code"] == "story_direction"
+
+
+@pytest.mark.asyncio
+async def test_selected_pair_with_pending_duration_fails_closed(monkeypatch) -> None:
+    from app.services import creator_capabilities
+
+    monkeypatch.setattr(creator_capabilities.settings, "guided_edit_capability_enabled", True)
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": "match-a", "kind": "video", "duration_s": 10},
+            {"media_id": "match-b", "kind": "video", "duration_s": 10},
+            {"media_id": "match-c", "kind": "video", "duration_s": None},
+        ],
+    )
+    context = {
+        "kind": "source_selection",
+        "cut_duration_s": 1,
+        "reuse_policy": "no_repeat",
+        "selections": {"Alternate match-a and match-c": ["match-a", "match-c"]},
+    }
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4())
+    plan = SimpleNamespace(ownership_epoch=4)
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        revision=1,
+        status="planning",
+        events=[
+            SimpleNamespace(
+                sequence=0,
+                role="user",
+                event_type="user_message",
+                payload={"message": "Alternate every 1 second"},
+            ),
+            SimpleNamespace(
+                sequence=1,
+                role="assistant",
+                event_type="assistant_question",
+                payload={"cadence_context": context},
+            ),
+        ],
+        agent_call_count=0,
+        agent_call_budget=2,
+        question_count=1,
+        question_budget=3,
+        active_plan=None,
+        last_error=None,
+    )
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=CreativeStrategy(edit_format="montage", render_program="guided"),
+        summary="Alternate the selected matches.",
+    )
+    append_event = AsyncMock()
+    response = SimpleNamespace(status="briefing")
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, plan, SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(creator_routes, "creator_context", lambda *_args: ("creator", "item"))
+    monkeypatch.setattr(creator_routes, "default_client", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        creator_routes.asyncio,
+        "to_thread",
+        AsyncMock(return_value=SimpleNamespace(action=action)),
+    )
+    monkeypatch.setattr(creator_routes, "append_event", append_event)
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+
+    result = await creator_routes._run_planning_turn(
+        AsyncMock(),
+        item_id=str(item.id),
+        user=user,
+        session_id=session.id,
+        expected_revision=1,
+        user_message="Alternate match-a and match-c",
+    )
+
+    assert result is response
+    assert append_event.await_args.kwargs["payload"]["reason_code"] == (
+        "cadence_duration_unavailable"
+    )
+    assert append_event.await_args.kwargs["payload"]["cadence_context"]["source_media_ids"] == [
+        "match-a",
+        "match-c",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_model_target_duration_survives_non_regex_cadence_wording(monkeypatch) -> None:
+    from app.services import creator_capabilities
+
+    monkeypatch.setattr(creator_capabilities.settings, "guided_edit_capability_enabled", True)
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": "match-a", "kind": "video", "duration_s": 20},
+            {"media_id": "match-b", "kind": "video", "duration_s": 20},
+        ],
+    )
+    message = "Alternate each match every one second; keep the finished piece ten seconds long."
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4())
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        revision=1,
+        status="planning",
+        events=[],
+        agent_call_count=0,
+        agent_call_budget=2,
+        question_count=0,
+        question_budget=2,
+        active_plan=None,
+        last_error=None,
+    )
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=CreativeStrategy(
+            edit_format="montage", render_program="guided", target_duration_s=10
+        ),
+        summary="Alternate the matches for ten seconds.",
+    )
+    compile_plan = MagicMock(
+        return_value={
+            "summary": "Alternate the matches for ten seconds.",
+            "plan_hash": "a" * 64,
+            "target_duration_s": 10,
+            "montage_cadence": {},
+        }
+    )
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, SimpleNamespace(), SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(creator_routes, "creator_context", lambda *_args: ("creator", "item"))
+    monkeypatch.setattr(creator_routes, "default_client", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        creator_routes.asyncio,
+        "to_thread",
+        AsyncMock(return_value=SimpleNamespace(action=action)),
+    )
+    monkeypatch.setattr(creator_routes, "compile_active_plan", compile_plan)
+    monkeypatch.setattr(creator_routes, "append_event", AsyncMock())
+    response = SimpleNamespace(status="awaiting_confirmation")
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+
+    result = await creator_routes._run_planning_turn(
+        AsyncMock(),
+        item_id=str(item.id),
+        user=user,
+        session_id=session.id,
+        expected_revision=1,
+        user_message=message,
+    )
+
+    assert result is response
+    assert compile_plan.call_args.kwargs["strategy"].target_duration_s == 10
+    assert compile_plan.call_args.kwargs["strategy"].montage_cadence is not None
+
+
+@pytest.mark.asyncio
+async def test_unrelated_revision_keeps_accepted_sources_with_three_videos(monkeypatch) -> None:
+    from app.services import creator_capabilities
+
+    monkeypatch.setattr(creator_capabilities.settings, "guided_edit_capability_enabled", True)
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": "match-a", "kind": "video", "duration_s": 20},
+            {"media_id": "match-b", "kind": "video", "duration_s": 20},
+            {"media_id": "match-c", "kind": "video", "duration_s": 20},
+        ],
+    )
+    cadence = MontageCadenceConstraint(source_media_ids=["match-a", "match-b"], cut_duration_s=1)
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4())
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        revision=2,
+        status="planning",
+        events=[
+            SimpleNamespace(
+                sequence=1,
+                role="user",
+                event_type="user_message",
+                payload={"message": "Alternate every 1 second."},
+            ),
+            SimpleNamespace(
+                sequence=2,
+                role="assistant",
+                event_type="assistant_strategy",
+                payload={
+                    "target_duration_s": 12,
+                    "montage_cadence": cadence.model_dump(mode="json"),
+                },
+            ),
+        ],
+        agent_call_count=0,
+        agent_call_budget=3,
+        question_count=1,
+        question_budget=3,
+        active_plan=None,
+        last_error=None,
+    )
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=CreativeStrategy(edit_format="montage", render_program="guided"),
+        summary="Keep the cadence and refine the captions.",
+    )
+    compile_plan = MagicMock(
+        return_value={
+            "summary": "Keep the cadence and refine the captions.",
+            "plan_hash": "a" * 64,
+            "target_duration_s": 12,
+            "montage_cadence": cadence.model_dump(mode="json"),
+        }
+    )
+    append_event = AsyncMock()
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, SimpleNamespace(), SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(creator_routes, "creator_context", lambda *_args: ("creator", "item"))
+    monkeypatch.setattr(creator_routes, "default_client", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        creator_routes.asyncio,
+        "to_thread",
+        AsyncMock(return_value=SimpleNamespace(action=action)),
+    )
+    monkeypatch.setattr(creator_routes, "compile_active_plan", compile_plan)
+    monkeypatch.setattr(creator_routes, "append_event", append_event)
+    response = SimpleNamespace(status="awaiting_confirmation")
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+
+    result = await creator_routes._run_planning_turn(
+        AsyncMock(),
+        item_id=str(item.id),
+        user=user,
+        session_id=session.id,
+        expected_revision=2,
+        user_message="Make the captions clean.",
+    )
+
+    assert result is response
+    planned = compile_plan.call_args.kwargs["strategy"]
+    assert planned.target_duration_s == 12
+    assert planned.montage_cadence == cadence
+    assert append_event.await_args.kwargs["event_type"] == "assistant_strategy"
+
+
 def test_confirmed_creator_request_preserves_instruction_across_clarification() -> None:
     initial = "Photos should have a very fast transition, videos can be a bit longer"
     events = [
@@ -871,6 +1573,426 @@ def test_confirmed_creator_request_preserves_instruction_across_clarification() 
     ]
 
     assert _confirmed_creator_request(events, "Yes") == f"{initial}\nYes"
+
+
+def test_capacity_recommendation_preserves_cadence_context(monkeypatch) -> None:
+    manifest = _manifest(monkeypatch).model_copy(
+        update={
+            "media": [
+                {"media_id": "match-a", "kind": "video", "duration_s": 6.633},
+                {"media_id": "match-b", "kind": "video", "duration_s": 26.433},
+            ]
+        }
+    )
+    cadence = MontageCadenceConstraint(source_media_ids=["match-a", "match-b"], cut_duration_s=1)
+    events = [
+        SimpleNamespace(
+            sequence=1,
+            role="assistant",
+            event_type="assistant_question",
+            payload={
+                "cadence_context": {
+                    "kind": "capacity",
+                    "cadence": cadence.model_dump(mode="json"),
+                    "requested_duration_s": 24,
+                    "recommended_duration_s": 12,
+                    "recommendation": "Use the best 12 seconds",
+                }
+            },
+        ),
+        SimpleNamespace(
+            sequence=2,
+            role="user",
+            event_type="user_message",
+            payload={"message": "Use the best 12 seconds"},
+        ),
+    ]
+
+    resolved, target_s = _resolved_cadence_for_turn(
+        events=events,
+        manifest=manifest,
+        creator_request="original request\nUse the best 12 seconds",
+        user_message="Use the best 12 seconds",
+    )
+
+    assert resolved == cadence
+    assert target_s == 12
+
+
+def test_capacity_answer_can_choose_a_shorter_custom_length(monkeypatch) -> None:
+    manifest = _manifest(monkeypatch)
+    cadence = MontageCadenceConstraint(source_media_ids=["match-a", "match-b"], cut_duration_s=1)
+    events = [
+        SimpleNamespace(
+            sequence=1,
+            role="assistant",
+            event_type="assistant_question",
+            payload={
+                "cadence_context": {
+                    "kind": "capacity",
+                    "cadence": cadence.model_dump(mode="json"),
+                    "requested_duration_s": 24,
+                    "recommended_duration_s": 12,
+                    "recommendation": "Use the best 12 seconds",
+                }
+            },
+        ),
+        SimpleNamespace(
+            sequence=2,
+            role="user",
+            event_type="user_message",
+            payload={"message": "Make it 10 seconds"},
+        ),
+    ]
+
+    resolved, target_s = _resolved_cadence_for_turn(
+        events=events,
+        manifest=manifest,
+        creator_request="original request\nMake it 10 seconds",
+        user_message="Make it 10 seconds",
+    )
+
+    assert resolved == cadence
+    assert target_s == 10
+
+
+def test_insufficient_capacity_recommendation_explicitly_enables_reuse(monkeypatch) -> None:
+    manifest = _manifest(monkeypatch)
+    cadence = MontageCadenceConstraint(source_media_ids=["match-a", "match-b"], cut_duration_s=1)
+    recommendation = "Allow the strongest moments to repeat"
+    events = [
+        SimpleNamespace(
+            sequence=1,
+            role="assistant",
+            event_type="assistant_question",
+            payload={
+                "cadence_context": {
+                    "kind": "capacity",
+                    "cadence": cadence.model_dump(mode="json"),
+                    "requested_duration_s": 24,
+                    "recommended_duration_s": 2,
+                    "recommendation": recommendation,
+                }
+            },
+        ),
+        SimpleNamespace(
+            sequence=2,
+            role="user",
+            event_type="user_message",
+            payload={"message": recommendation},
+        ),
+    ]
+
+    resolved, target_s = _resolved_cadence_for_turn(
+        events=events,
+        manifest=manifest,
+        creator_request=f"original request\n{recommendation}",
+        user_message=recommendation,
+    )
+
+    assert resolved == cadence.model_copy(update={"reuse_policy": "allow_repeat"})
+    assert target_s == 24
+
+
+def test_source_selection_accepts_free_form_video_labels(monkeypatch) -> None:
+    base_manifest = _manifest(monkeypatch)
+    manifest = type(base_manifest).model_validate(
+        {
+            **base_manifest.model_dump(mode="json"),
+            "media": [
+                {"media_id": "match-a", "kind": "video", "duration_s": 10, "label": "Final"},
+                {
+                    "media_id": "match-b",
+                    "kind": "video",
+                    "duration_s": 10,
+                    "label": "Semi-final",
+                },
+                {
+                    "media_id": "match-c",
+                    "kind": "video",
+                    "duration_s": 10,
+                    "label": "Quarter-final",
+                },
+            ],
+        }
+    )
+    events = [
+        SimpleNamespace(
+            sequence=1,
+            role="assistant",
+            event_type="assistant_question",
+            payload={
+                "cadence_context": {
+                    "kind": "source_selection",
+                    "cut_duration_s": 1,
+                    "reuse_policy": "no_repeat",
+                    "selections": {"Alternate Final and Semi-final": ["match-a", "match-b"]},
+                }
+            },
+        ),
+        SimpleNamespace(
+            sequence=2,
+            role="user",
+            event_type="user_message",
+            payload={"message": "Use Semi-final and Quarter-final"},
+        ),
+    ]
+
+    resolved, target_s = _resolved_cadence_for_turn(
+        events=events,
+        manifest=manifest,
+        creator_request="Alternate every second\nUse Semi-final and Quarter-final",
+        user_message="Use Semi-final and Quarter-final",
+    )
+
+    assert resolved == MontageCadenceConstraint(
+        source_media_ids=["match-b", "match-c"], cut_duration_s=1
+    )
+    assert target_s is None
+
+
+def test_reuse_policy_does_not_treat_a_prohibition_as_permission() -> None:
+    assert recognize_cadence_reuse_policy("Do not repeat any footage") == "no_repeat"
+    assert recognize_cadence_reuse_policy("Can you not repeat footage?") == "no_repeat"
+    assert recognize_cadence_reuse_policy("Repeat the best moments if needed") == "allow_repeat"
+
+
+def test_cadence_recognizers_separate_cut_timing_total_length_and_cancellation() -> None:
+    request = "Make a 3-second edit and alternate every 1 second"
+
+    assert recognize_round_robin_cadence(request) == 1
+    assert recognize_total_duration_s(request) == 3
+    assert recognize_total_duration_s("I want a 10-second video") == 10
+    assert _balanced_integer_duration_s(limit_s=24, cycle_s=1.4) == 21
+    assert _next_balanced_integer_duration_s(minimum_s=3, limit_s=12, cycle_s=2) == 4
+    assert rejects_round_robin_cadence("Don't alternate; make it a guided story") is True
+
+
+def test_duration_revision_does_not_resurrect_cadence_after_cancellation() -> None:
+    events = [
+        SimpleNamespace(
+            sequence=0,
+            role="user",
+            event_type="user_message",
+            payload={"message": "Alternate every 1 second."},
+        ),
+        SimpleNamespace(
+            sequence=1,
+            role="assistant",
+            event_type="assistant_strategy",
+            payload={
+                "target_duration_s": 12,
+                "montage_cadence": {
+                    "mode": "round_robin",
+                    "source_media_ids": ["match-a", "match-b"],
+                    "cut_duration_s": 1,
+                    "reuse_policy": "no_repeat",
+                },
+            },
+        ),
+        SimpleNamespace(
+            sequence=2,
+            role="user",
+            event_type="user_message",
+            payload={"message": "Don't alternate; make it a guided story."},
+        ),
+        SimpleNamespace(
+            sequence=3,
+            role="user",
+            event_type="user_message",
+            payload={"message": "Make it 10 seconds."},
+        ),
+    ]
+    manifest = SimpleNamespace(
+        media=[
+            CreatorMediaRef(media_id="match-a", kind="video", duration_s=10),
+            CreatorMediaRef(media_id="match-b", kind="video", duration_s=10),
+        ]
+    )
+
+    cadence, target_s = _resolved_cadence_for_turn(
+        events=events,
+        manifest=manifest,
+        creator_request=(
+            "Alternate every 1 second.\n"
+            "Don't alternate; make it a guided story.\n"
+            "Make it 10 seconds."
+        ),
+        user_message="Make it 10 seconds.",
+    )
+
+    assert cadence is None
+    assert target_s is None
+
+
+def test_unrecognized_source_selection_does_not_resolve() -> None:
+    manifest = SimpleNamespace(
+        media=[
+            CreatorMediaRef(media_id="match-a", kind="video", duration_s=10),
+            CreatorMediaRef(media_id="match-b", kind="video", duration_s=10),
+            CreatorMediaRef(media_id="match-c", kind="video", duration_s=10),
+        ]
+    )
+    context = {
+        "kind": "source_selection",
+        "selections": {"Alternate match-a and match-b": ["match-a", "match-b"]},
+    }
+
+    assert _selected_cadence_sources(context, manifest, "Whatever you think") is None
+
+
+def test_latest_planned_cadence_survives_unrelated_revision(monkeypatch) -> None:
+    manifest = _manifest(monkeypatch)
+    cadence = MontageCadenceConstraint(source_media_ids=["match-a", "match-b"], cut_duration_s=1)
+    events = [
+        SimpleNamespace(
+            sequence=1,
+            role="assistant",
+            event_type="assistant_strategy",
+            payload={
+                "target_duration_s": 12,
+                "montage_cadence": cadence.model_dump(mode="json"),
+            },
+        ),
+        SimpleNamespace(
+            sequence=2,
+            role="user",
+            event_type="user_message",
+            payload={"message": "Make the captions clean"},
+        ),
+    ]
+
+    resolved, target_s = _resolved_cadence_for_turn(
+        events=events,
+        manifest=manifest,
+        creator_request="Alternate every 1 second\nMake the captions clean",
+        user_message="Make the captions clean",
+    )
+
+    assert resolved == cadence
+    assert target_s == 12
+
+
+def test_duration_retry_preserves_selected_sources_with_three_videos() -> None:
+    cadence = MontageCadenceConstraint(source_media_ids=["match-a", "match-c"], cut_duration_s=1)
+    manifest = SimpleNamespace(
+        media=[
+            CreatorMediaRef(media_id="match-a", kind="video", duration_s=10),
+            CreatorMediaRef(media_id="match-b", kind="video", duration_s=10),
+            CreatorMediaRef(media_id="match-c", kind="video", duration_s=10),
+        ]
+    )
+    events = [
+        SimpleNamespace(
+            sequence=1,
+            role="assistant",
+            event_type="assistant_question",
+            payload={
+                "cadence_context": {
+                    "kind": "duration_unavailable",
+                    "cadence": cadence.model_dump(mode="json"),
+                    "cut_duration_s": 1,
+                    "source_media_ids": ["match-a", "match-c"],
+                }
+            },
+        )
+    ]
+
+    resolved, target_s = _resolved_cadence_for_turn(
+        events=events,
+        manifest=manifest,
+        creator_request="Alternate every 1 second\nUse match-a and match-c\nTry again",
+        user_message="Try again",
+    )
+
+    assert resolved == cadence
+    assert target_s is None
+
+
+def test_latest_turn_can_cancel_planned_cadence(monkeypatch) -> None:
+    manifest = _manifest(monkeypatch)
+    cadence = MontageCadenceConstraint(source_media_ids=["match-a", "match-b"], cut_duration_s=1)
+    events = [
+        SimpleNamespace(
+            sequence=1,
+            role="assistant",
+            event_type="assistant_strategy",
+            payload={
+                "target_duration_s": 12,
+                "montage_cadence": cadence.model_dump(mode="json"),
+            },
+        )
+    ]
+
+    resolved, target_s = _resolved_cadence_for_turn(
+        events=events,
+        manifest=manifest,
+        creator_request="Alternate every 1 second\nDon't alternate anymore",
+        user_message="Don't alternate anymore; make it a guided story",
+    )
+
+    assert resolved is None
+    assert target_s is None
+
+
+def test_latest_turn_overrides_prior_cadence_timing_and_reuse(monkeypatch) -> None:
+    manifest = _manifest(monkeypatch).model_copy(
+        update={
+            "media": [
+                CreatorMediaRef(media_id="match-a", kind="video", duration_s=20),
+                CreatorMediaRef(media_id="match-b", kind="video", duration_s=20),
+            ]
+        }
+    )
+
+    resolved, target_s = _resolved_cadence_for_turn(
+        events=[],
+        manifest=manifest,
+        creator_request=(
+            "Alternate every 1 second without repeating.\n"
+            "Actually, alternate every 2 seconds and allow the moments to repeat."
+        ),
+        user_message="Actually, alternate every 2 seconds and allow the moments to repeat.",
+    )
+
+    assert resolved is not None
+    assert resolved.cut_duration_s == 2
+    assert resolved.reuse_policy == "allow_repeat"
+    assert target_s is None
+
+
+def test_stale_cadence_question_is_not_reused(monkeypatch) -> None:
+    manifest = _manifest(monkeypatch)
+    events = [
+        SimpleNamespace(
+            sequence=1,
+            role="assistant",
+            event_type="assistant_question",
+            payload={"cadence_context": {"kind": "capacity"}},
+        ),
+        SimpleNamespace(
+            sequence=2,
+            role="assistant",
+            event_type="assistant_strategy",
+            payload={"message": "A newer plan"},
+        ),
+        SimpleNamespace(
+            sequence=3,
+            role="user",
+            event_type="user_message",
+            payload={"message": "Use the best 12 seconds"},
+        ),
+    ]
+
+    resolved, target_s = _resolved_cadence_for_turn(
+        events=events,
+        manifest=manifest,
+        creator_request="Use the best 12 seconds",
+        user_message="Use the best 12 seconds",
+    )
+
+    assert resolved is None
+    assert target_s is None
 
 
 def test_main_creator_prompt_contains_no_storage_capabilities(monkeypatch) -> None:
@@ -1077,6 +2199,178 @@ async def test_start_replays_terminal_session_for_persisted_start_event(monkeypa
     planning.assert_not_awaited()
     load_session.assert_awaited_once_with(db, session.id, user.id, item.id, for_update=True)
     response_for.assert_awaited_once_with(db, session)
+
+
+@pytest.mark.asyncio
+async def test_start_rejects_when_raw_generate_already_minted_active_job(monkeypatch) -> None:
+    """The inverse start-vs-generate race is fenced by the same item lock."""
+    user = SimpleNamespace(id=uuid.uuid4())
+    job_id = uuid.uuid4()
+    item = SimpleNamespace(id=uuid.uuid4(), current_job_id=job_id)
+    plan = SimpleNamespace(ownership_epoch=4)
+    job = SimpleNamespace(id=job_id, status="queued")
+    db = AsyncMock()
+    no_prior = MagicMock()
+    no_prior.scalar_one_or_none.return_value = None
+    db.execute.return_value = no_prior
+    db.get.return_value = job
+
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_rollout_percent", 100)
+    owned_context = AsyncMock(return_value=(item, plan, SimpleNamespace()))
+    monkeypatch.setattr(creator_routes, "_owned_context", owned_context)
+    latest_session = AsyncMock()
+    monkeypatch.setattr(creator_routes, "_latest_session", latest_session)
+
+    with pytest.raises(HTTPException) as exc:
+        await creator_routes.start_creator_session(
+            Request(
+                {
+                    "type": "http",
+                    "method": "POST",
+                    "path": "/",
+                    "headers": [],
+                    "client": ("test", 1),
+                    "scheme": "http",
+                    "server": ("test", 80),
+                    "query_string": b"",
+                }
+            ),
+            str(item.id),
+            StartBody(message="Alternate every second", client_event_id="start-after-generate"),
+            user,
+            db,
+        )
+
+    assert exc.value.status_code == 409
+    assert "current render" in str(exc.value.detail)
+    owned_context.assert_awaited_once_with(db, str(item.id), user.id, for_update=True)
+    db.get.assert_awaited_once_with(
+        Job,
+        job_id,
+        with_for_update=True,
+        populate_existing=True,
+    )
+    latest_session.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_start_rejects_when_raw_auto_design_reservation_won_race(monkeypatch) -> None:
+    """An analyzing auto-design owns the item before its render Job exists."""
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        current_job_id=None,
+        edit_proposal=EditProposal(
+            proposal_version=1,
+            generation_attempt_id="raw-auto-attempt",
+            status="analyzing",
+            approval_mode="auto",
+            brief=ProposalBrief(),
+        ).model_dump(mode="json"),
+    )
+    plan = SimpleNamespace(ownership_epoch=4)
+    db = AsyncMock()
+    no_prior = MagicMock()
+    no_prior.scalar_one_or_none.return_value = None
+    db.execute.return_value = no_prior
+
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_rollout_percent", 100)
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, plan, SimpleNamespace())),
+    )
+    latest_session = AsyncMock()
+    monkeypatch.setattr(creator_routes, "_latest_session", latest_session)
+
+    with pytest.raises(HTTPException) as exc:
+        await creator_routes.start_creator_session(
+            Request(
+                {
+                    "type": "http",
+                    "method": "POST",
+                    "path": "/",
+                    "headers": [],
+                    "client": ("test", 1),
+                    "scheme": "http",
+                    "server": ("test", 80),
+                    "query_string": b"",
+                }
+            ),
+            str(item.id),
+            StartBody(message="Alternate every second", client_event_id="start-during-auto"),
+            user,
+            db,
+        )
+
+    assert exc.value.status_code == 409
+    assert "already designing" in str(exc.value.detail)
+    latest_session.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_start_rejects_fresh_auto_design_even_with_old_terminal_job(monkeypatch) -> None:
+    """A stale completed Job cannot satisfy a newer proposal attempt."""
+    user = SimpleNamespace(id=uuid.uuid4())
+    old_job_id = uuid.uuid4()
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        current_job_id=old_job_id,
+        edit_proposal=EditProposal(
+            proposal_version=1,
+            generation_attempt_id="fresh-raw-auto-attempt",
+            status="analyzing",
+            approval_mode="auto",
+            brief=ProposalBrief(),
+        ).model_dump(mode="json"),
+    )
+    plan = SimpleNamespace(ownership_epoch=4)
+    old_job = SimpleNamespace(
+        id=old_job_id,
+        status="variants_ready",
+        assembly_plan={"guided_edit": {"generation_attempt_id": "older-attempt"}},
+    )
+    db = AsyncMock()
+    no_prior = MagicMock()
+    no_prior.scalar_one_or_none.return_value = None
+    db.execute.return_value = no_prior
+    db.get.return_value = old_job
+
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_rollout_percent", 100)
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, plan, SimpleNamespace())),
+    )
+    latest_session = AsyncMock()
+    monkeypatch.setattr(creator_routes, "_latest_session", latest_session)
+
+    with pytest.raises(HTTPException) as exc:
+        await creator_routes.start_creator_session(
+            Request(
+                {
+                    "type": "http",
+                    "method": "POST",
+                    "path": "/",
+                    "headers": [],
+                    "client": ("test", 1),
+                    "scheme": "http",
+                    "server": ("test", 80),
+                    "query_string": b"",
+                }
+            ),
+            str(item.id),
+            StartBody(message="Use a new direction", client_event_id="fresh-after-old-job"),
+            user,
+            db,
+        )
+
+    assert exc.value.status_code == 409
+    assert "already designing" in str(exc.value.detail)
+    latest_session.assert_not_awaited()
 
 
 @pytest.mark.asyncio

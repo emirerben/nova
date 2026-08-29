@@ -97,6 +97,53 @@ def _snapshot() -> EditProposalSnapshot:
     )
 
 
+def _legacy_fast_snapshot_without_cuts() -> EditProposalSnapshot:
+    return EditProposalSnapshot.model_validate(
+        {**_snapshot().model_dump(mode="json"), "direction": "fast_montage"}
+    )
+
+
+def test_fast_montage_without_cuts_cannot_be_saved_or_approved() -> None:
+    item = _item()
+    proposal = begin_proposal_attempt(item)
+    snapshot = _legacy_fast_snapshot_without_cuts()
+    raw = dict(item.edit_proposal)
+    raw.update(
+        {
+            "status": "drafting",
+            "media_digest": canonical_media_digest(snapshot.media),
+        }
+    )
+    item.edit_proposal = raw
+
+    with pytest.raises(ProposalConflictError, match="proposal_replan_required"):
+        save_proposal_draft(
+            item,
+            expected_version=proposal.proposal_version,
+            snapshot=snapshot,
+        )
+
+    raw.update({"status": "draft", "draft": snapshot.model_dump(mode="json")})
+    item.edit_proposal = raw
+    with pytest.raises(ProposalConflictError, match="proposal_replan_required"):
+        approve_proposal(item, expected_version=proposal.proposal_version)
+
+
+def test_approved_legacy_fast_montage_without_cuts_requires_replan() -> None:
+    item = _approved_item()
+    raw = dict(item.edit_proposal)
+    approved = dict(raw["last_approved"])
+    approved["snapshot"] = _legacy_fast_snapshot_without_cuts().model_dump(mode="json")
+    raw["last_approved"] = approved
+    item.edit_proposal = raw
+
+    assert proposal_generate_error(item) == "proposal_replan_required"
+
+
+def test_proposal_generate_error_tolerates_proposal_less_dispatch_double() -> None:
+    assert proposal_generate_error(SimpleNamespace()) == "proposal_required"
+
+
 def _photo_only_mixed_snapshot(*, video_duration_s: float) -> EditProposalSnapshot:
     photos = [
         MediaRef(

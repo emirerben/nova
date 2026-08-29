@@ -670,6 +670,10 @@ export default function PlanItemPage() {
   // Guided-edit conversation with Kria now lives in a Sheet (PlanThreadPanel)
   // instead of morphing the setup zone inline (DESIGN.md §12).
   const [threadOpen, setThreadOpen] = useState(false);
+  const [creatorAgentActive, setCreatorAgentActive] = useState(false);
+  const [creatorAgentAvailability, setCreatorAgentAvailability] = useState<
+    "loading" | "available" | "unavailable" | "error"
+  >(MAIN_CREATOR_AGENT_ENABLED ? "loading" : "unavailable");
   // Conformance polling: keep fetching for up to 3 extra cycles after clips are attached
   // so the verdict panel appears shortly after the async agent finishes (~6s window).
   const conformancePolls = useRef(0);
@@ -2269,10 +2273,20 @@ export default function PlanItemPage() {
           />
         </TabsContent>
       )}
-      {MAIN_CREATOR_AGENT_ENABLED && <MainCreatorAgentPanel itemId={itemId} />}
+      {MAIN_CREATOR_AGENT_ENABLED ? (
+        <>
+          <MainCreatorAgentPanel
+            itemId={itemId}
+            onActiveChange={setCreatorAgentActive}
+            onAvailabilityChange={setCreatorAgentAvailability}
+          />
+          {creatorAgentAvailability === "unavailable" && tellKriaSection}
+        </>
+      ) : (
+        tellKriaSection
+      )}
       <Separator />
       {narratedVoiceoverSection}
-      {tellKriaSection}
       {guidedStatusRowNode}
     </>
   );
@@ -2281,6 +2295,9 @@ export default function PlanItemPage() {
     gate.disabled ||
     speechCleanupSaving ||
     speechCleanupUnavailableWhileOn ||
+    (MAIN_CREATOR_AGENT_ENABLED &&
+      creatorAgentAvailability !== "unavailable" &&
+      (creatorAgentAvailability !== "available" || creatorAgentActive)) ||
     (guidedEditActive && !guidedEditApproved && !guidedEditAutoDesign);
   const generateLabel = generating
     ? "Creating…"
@@ -2294,6 +2311,13 @@ export default function PlanItemPage() {
   // edit) — DESIGN.md §8 keeps faint ink decorative-only.
   const generateHint =
     gate.hint ??
+    (MAIN_CREATOR_AGENT_ENABLED && creatorAgentAvailability === "loading"
+      ? "Checking your saved Kria plan…"
+      : MAIN_CREATOR_AGENT_ENABLED && creatorAgentAvailability === "error"
+        ? "Reconnect Kria above before creating this video."
+        : MAIN_CREATOR_AGENT_ENABLED && creatorAgentActive
+          ? "Finish or cancel the active Kria plan before creating this video."
+          : null) ??
     (guidedEditActive && !guidedEditApproved ? guidedEditHint : null);
 
   return (
@@ -2368,10 +2392,20 @@ export default function PlanItemPage() {
                 ) : (
                   <CardContent className="space-y-6 pt-6">
                     <div>{clipsTabBody}</div>
-                    {MAIN_CREATOR_AGENT_ENABLED && <MainCreatorAgentPanel itemId={itemId} />}
+                    {MAIN_CREATOR_AGENT_ENABLED ? (
+                      <>
+                        <MainCreatorAgentPanel
+                          itemId={itemId}
+                          onActiveChange={setCreatorAgentActive}
+                          onAvailabilityChange={setCreatorAgentAvailability}
+                        />
+                        {creatorAgentAvailability === "unavailable" && tellKriaSection}
+                      </>
+                    ) : (
+                      tellKriaSection
+                    )}
                     <Separator />
                     {narratedVoiceoverSection}
-                    {tellKriaSection}
                     {guidedStatusRowNode}
                   </CardContent>
                 )}

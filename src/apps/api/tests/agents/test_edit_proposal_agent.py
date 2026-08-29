@@ -10,7 +10,11 @@ from app.agents.edit_proposal import (
     minimum_required_sources,
     shortlist_edit_proposal_media,
 )
-from app.schemas.edit_proposal import MixedMediaTimingProfile, MontageAudioPlan
+from app.schemas.edit_proposal import (
+    MixedMediaTimingProfile,
+    MontageAudioPlan,
+    MontageCadenceConstraint,
+)
 
 
 def _input(count: int = 7) -> EditProposalAgentInput:
@@ -112,6 +116,40 @@ def test_fast_montage_uses_cut_sources_for_mixed_media_variety() -> None:
         "media-1",
         "media-2",
     ]
+
+
+def test_explicit_cadence_below_generic_cut_floor_is_preserved() -> None:
+    cadence = MontageCadenceConstraint(source_media_ids=["match-a", "match-b"], cut_duration_s=0.5)
+    agent_input = EditProposalAgentInput(
+        direction="fast_montage",
+        pace="fast",
+        target_duration_s=4,
+        montage_cadence=cadence,
+        media=[
+            EditProposalMedia(media_id="match-a", lane="clip", kind="video", duration_s=4),
+            EditProposalMedia(media_id="match-b", lane="clip", kind="video", duration_s=4),
+        ],
+    )
+    payload = {
+        "title": "Same feeling",
+        "duration_s": 4,
+        "story_beats": [],
+        "fast_cuts": [
+            {
+                "cut_id": f"cut-{index + 1}",
+                "media_id": cadence.source_media_ids[index % 2],
+                "source_start_s": (index // 2) * 0.5,
+                "source_end_s": (index // 2 + 1) * 0.5,
+                "output_duration_s": 0.5,
+                "role": "hook" if index == 0 else "payoff" if index == 7 else "build",
+            }
+            for index in range(8)
+        ],
+    }
+
+    output = EditProposalAgent(None).parse(json.dumps(payload), agent_input)  # type: ignore[arg-type]
+
+    assert [cut.output_duration_s for cut in output.fast_cuts or []] == [0.5] * 8
 
 
 def test_montage_parse_normalizes_aliases_without_imposing_sequence() -> None:

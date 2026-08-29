@@ -368,9 +368,10 @@ removed from the execution plan and that timeline keeps its legacy renderer cont
 For a mixed image/video upload, the profile selects the guided proposal path even when the Main
 Creator strategy would otherwise choose native montage. If guided planning is unavailable, the
 request fails closed before confirmation instead of silently dropping the photos.
-Without that profile, legacy fast-montage cuts remain capped at 1.2s and retain their previous timing
-behavior. Legacy fast-montage snapshots without `fast_cuts`
-remain readable and render through the older story-shaped contract.
+Without that profile, generic fast-montage cuts remain capped at 1.2s and retain their previous
+timing behavior. Legacy fast-montage snapshots without `fast_cuts` remain readable so completed
+historical videos stay playable, but save, approval, and new render attempts return
+`proposal_replan_required`; the creator must ask Kria for a current cut plan.
 
 Source-aware montage is a generic capability layered onto `fast_cuts`, not an intercut-comparison
 format. When the creator asks for a multi-source montage, `EditProposalAgent` owns the creative
@@ -383,6 +384,14 @@ reviews the exact proposed windows. Weak windows are passed back to the proposal
 generic replan; reviewer/provider failure is fail-open and leaves the first valid proposal intact.
 The reviewer is evidence for selection, not a hardcoded sequence or a guarantee of semantic
 highlight quality.
+
+An explicit alternating request adds `montage_cadence` to this same generic contract. Round-robin
+cadence pins the ordered source IDs, exact per-cut duration, and whether source-window reuse is
+allowed. Main Creator deterministically recognizes plain-language alternation with numeric timing,
+preflights complete balanced cycles, and asks before shortening or repeating. The specialist and
+deterministic recovery both select ranked non-overlapping analyzed windows, and the compiler disables
+beat snapping so the approved cadence survives unchanged into the execution plan. Reuse is allowed
+only after an explicit creator opt-in.
 
 The renderer exact-generation downloads every source selected by a beat. Unselected catalog media
 remains authorized but is not required in the output. Photos and videos become sequential full-screen

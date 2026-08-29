@@ -38,6 +38,7 @@ celery_app = Celery(
         "app.tasks.send_daily_digest",
         "app.tasks.maintenance",
         "app.tasks.conformance_build",
+        "app.tasks.creator_clip_metadata",
         "app.tasks.transcript_analyze",
         "app.tasks.autoplace",
         "app.tasks.edit_proposal_build",

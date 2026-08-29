@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
@@ -17,6 +17,7 @@ from app.schemas.edit_proposal import (
     FastMontageCut,
     MediaRef,
     MixedMediaTimingProfile,
+    MontageCadenceConstraint,
     ProposalBrief,
     StoryBeat,
     canonical_media_digest,
@@ -618,6 +619,18 @@ def test_mixed_media_proposals_use_the_deploy_fenced_worker_queue() -> None:
         brief=ProposalBrief(
             mixed_media_timing=MixedMediaTimingProfile(
                 image_hold="very_fast", video_hold="longer", boundary_style="cut"
+            )
+        )
+    )
+
+    assert plan_items._proposal_analysis_queue(proposal) == "creator-guided-jobs"
+
+
+def test_cadence_proposals_use_the_deploy_fenced_worker_queue() -> None:
+    proposal = SimpleNamespace(
+        brief=ProposalBrief(
+            montage_cadence=MontageCadenceConstraint(
+                source_media_ids=["clip-1", "clip-2"], cut_duration_s=1
             )
         )
     )
@@ -1771,6 +1784,31 @@ async def test_update_rejects_cut_beyond_server_owned_source_duration(monkeypatc
     item = _draft_item()
     db = _patch_route_dependencies(monkeypatch, item, media_current=True)
     client_media = _snapshot().media[0].model_copy(update={"duration_s": 100})
+    server_media = client_media.model_copy(update={"duration_s": 30})
+    current = parse_edit_proposal(item.edit_proposal)
+    assert current is not None
+    current.draft = EditProposalSnapshot(
+        direction="fast_montage",
+        goal="Move quickly through the strongest moments",
+        pace="fast",
+        duration_s=3,
+        title="Corfu",
+        media=[server_media],
+        story_beats=_snapshot().story_beats,
+        fast_cuts=[
+            FastMontageCut(
+                cut_id=f"server-cut-{index}",
+                media_id=server_media.media_id,
+                source_start_s=index,
+                source_end_s=index + 1,
+                output_duration_s=1,
+                role="hook" if index == 0 else "payoff" if index == 2 else "build",
+            )
+            for index in range(3)
+        ],
+    )
+    current.media_digest = canonical_media_digest(current.draft.media)
+    item.edit_proposal = current.model_dump(mode="json")
     snapshot = EditProposalSnapshot(
         direction="fast_montage",
         goal="Move quickly through the strongest moments",
@@ -1805,6 +1843,75 @@ async def test_update_rejects_cut_beyond_server_owned_source_duration(monkeypatc
 
     assert exc.value.status_code == 422
     assert exc.value.detail["code"] == "proposal_invalid"
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_update_rejects_direct_semantic_control_changes(monkeypatch) -> None:
+    item = _draft_item()
+    db = _patch_route_dependencies(monkeypatch, item, media_current=True)
+    snapshot = _snapshot().model_copy(
+        update={"direction": "fast_montage", "pace": "fast", "duration_s": 12}
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await plan_items.update_item_edit_proposal(
+            str(item.id),
+            plan_items.UpdateEditProposalBody(
+                expected_proposal_version=2,
+                snapshot=snapshot,
+            ),
+            SimpleNamespace(id=uuid.uuid4()),
+            db,
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "proposal_replan_required"
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_approve_cutless_fast_montage_returns_replan_required(monkeypatch) -> None:
+    snapshot = _snapshot().model_copy(
+        update={
+            "direction": "fast_montage",
+            "pace": "fast",
+            "fast_cuts": None,
+        }
+    )
+    proposal = EditProposal(
+        proposal_version=2,
+        generation_attempt_id="attempt-1",
+        media_digest=canonical_media_digest(snapshot.media),
+        status="draft",
+        brief=ProposalBrief(direction="fast_montage", pace="fast"),
+        draft=snapshot,
+    )
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        clip_assignments=[
+            {
+                "media_id": snapshot.media[0].media_id,
+                "gcs_path": snapshot.media[0].gcs_path,
+            }
+        ],
+        edit_proposal=proposal.model_dump(mode="json"),
+    )
+    db = _patch_route_dependencies(monkeypatch, item, media_current=True)
+
+    with pytest.raises(HTTPException) as exc:
+        await plan_items.approve_item_edit_proposal(
+            str(item.id),
+            plan_items.ApproveEditProposalBody(expected_proposal_version=2),
+            SimpleNamespace(id=uuid.uuid4()),
+            db,
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == {
+        "code": "proposal_replan_required",
+        "message": "This montage needs a new cut plan. Ask Kria to replan it.",
+    }
     db.commit.assert_not_awaited()
 
 
@@ -1896,6 +2003,52 @@ def _auto_design_plan() -> SimpleNamespace:
 
 def _auto_design_user() -> SimpleNamespace:
     return SimpleNamespace(id=uuid.uuid4())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("existing_draft", [False, True])
+async def test_raw_auto_design_never_mutates_while_creator_session_is_active(
+    monkeypatch, existing_draft: bool
+) -> None:
+    """The reservation lock fences both fresh and existing-draft auto-design."""
+    user = _auto_design_user()
+    if existing_draft:
+        item = _draft_item()
+        item.clip_gcs_paths = [item.clip_assignments[0]["gcs_path"]]
+        original_proposal = dict(item.edit_proposal)
+    else:
+        item = SimpleNamespace(
+            id=uuid.uuid4(),
+            clip_gcs_paths=["users/u/plan/i/match.mp4"],
+            clip_assignments=[
+                {
+                    "media_id": "clip-1",
+                    "gcs_path": "users/u/plan/i/match.mp4",
+                }
+            ],
+            edit_proposal=None,
+            edit_format="montage",
+        )
+        original_proposal = None
+
+    active_result = SimpleNamespace(scalar_one_or_none=lambda: uuid.uuid4())
+    db = AsyncMock()
+    db.execute.return_value = active_result
+    monkeypatch.setattr(plan_items.settings, "guided_auto_design_enabled", True)
+    monkeypatch.setattr(plan_items, "_load_owned_item", AsyncMock(return_value=item))
+    enqueue = MagicMock()
+    monkeypatch.setattr("app.tasks.edit_proposal_build.draft_edit_proposal.apply_async", enqueue)
+
+    with pytest.raises(HTTPException) as exc:
+        await plan_items._maybe_auto_design_generate(
+            str(item.id), item, _auto_design_plan(), user, db
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "creator_agent_plan_required"
+    assert item.edit_proposal == original_proposal
+    db.rollback.assert_awaited_once()
+    enqueue.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -2081,8 +2234,8 @@ async def test_auto_design_finalizes_an_existing_draft_instead_of_redrafting(mon
     )
     dispatch_calls = []
 
-    def _fake_dispatch(item_id_arg, epoch):
-        dispatch_calls.append((item_id_arg, epoch))
+    def _fake_dispatch(item_id_arg, epoch, *, reject_active_creator_session=False):
+        dispatch_calls.append((item_id_arg, epoch, reject_active_creator_session))
         return DispatchResult("dispatched", job_id=str(uuid.uuid4()))
 
     monkeypatch.setattr("app.tasks.content_plan_build.dispatch_item_render_for", _fake_dispatch)
@@ -2095,7 +2248,47 @@ async def test_auto_design_finalizes_an_existing_draft_instead_of_redrafting(mon
     assert result is item
     assert item.edit_proposal["status"] == "approved"
     assert item.edit_proposal["last_approved"] is not None
-    assert len(dispatch_calls) == 1  # dispatched the EXISTING draft, no redraft/agent call
+    assert dispatch_calls == [(str(item.id), 1, True)]
+
+
+@pytest.mark.asyncio
+async def test_auto_design_cutless_fast_montage_returns_replan_required(monkeypatch) -> None:
+    """Auto-finalize must not mislabel an invalid legacy montage as a retry race."""
+
+    item = _draft_item()
+    proposal = parse_edit_proposal(item.edit_proposal)
+    assert proposal is not None and proposal.draft is not None
+    cutless = proposal.draft.model_copy(
+        update={
+            "direction": "fast_montage",
+            "pace": "fast",
+            "fast_cuts": None,
+        }
+    )
+    proposal = proposal.model_copy(update={"draft": cutless})
+    item.edit_proposal = proposal.model_dump(mode="json")
+    monkeypatch.setattr(plan_items, "_proposal_media_is_current", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        plan_items,
+        "_auto_design_idempotent_current",
+        AsyncMock(side_effect=AssertionError("invalid montage is not an idempotent approval race")),
+    )
+    db = AsyncMock()
+
+    with pytest.raises(HTTPException) as exc:
+        await plan_items._auto_finalize_existing_draft(
+            str(item.id),
+            uuid.uuid4(),
+            item,
+            1,
+            proposal,
+            db,
+            reject_active_creator_session=True,
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "proposal_replan_required"
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -2147,8 +2340,8 @@ async def test_auto_design_dispatches_directly_for_an_already_approved_proposal(
     monkeypatch.setattr("app.services.edit_proposals.begin_proposal_attempt", _boom)
     dispatch_calls = []
 
-    def _fake_dispatch(item_id_arg, epoch):
-        dispatch_calls.append((item_id_arg, epoch))
+    def _fake_dispatch(item_id_arg, epoch, *, reject_active_creator_session=False):
+        dispatch_calls.append((item_id_arg, epoch, reject_active_creator_session))
         return DispatchResult("dispatched", job_id=str(uuid.uuid4()))
 
     monkeypatch.setattr("app.tasks.content_plan_build.dispatch_item_render_for", _fake_dispatch)
@@ -2158,6 +2351,6 @@ async def test_auto_design_dispatches_directly_for_an_already_approved_proposal(
     )
 
     assert result is item  # plan_item_response mocked to identity
-    assert len(dispatch_calls) == 1
+    assert dispatch_calls == [(str(item.id), 1, True)]
     db.rollback.assert_awaited()
     assert item.edit_proposal["status"] == "approved"  # untouched

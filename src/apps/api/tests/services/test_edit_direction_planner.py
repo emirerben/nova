@@ -7,6 +7,7 @@ from app.schemas.edit_proposal import (
     FastMontageCut,
     MediaRef,
     MixedMediaTimingProfile,
+    MontageCadenceConstraint,
     StoryBeat,
 )
 from app.services import edit_direction_planner
@@ -18,6 +19,106 @@ class FailingAgent:
 
     def run(self, _input, ctx=None):  # noqa: ANN001, ARG002
         raise TerminalError("provider returned invalid fast-cut arithmetic")
+
+
+def test_round_robin_capacity_and_fallback_match_production_lengths() -> None:
+    media = [
+        MediaRef(
+            lane="asset",
+            media_id="match-a",
+            gcs_path="users/test/match-a.mp4",
+            generation="1",
+            kind="video",
+            duration_s=6.633,
+            analysis={
+                "best_moments": [
+                    {"start_s": 2.0, "end_s": 6.0, "energy": 9.0},
+                ]
+            },
+        ),
+        MediaRef(
+            lane="asset",
+            media_id="match-b",
+            gcs_path="users/test/match-b.mp4",
+            generation="1",
+            kind="video",
+            duration_s=26.433,
+            analysis={
+                "best_moments": [
+                    {"start_s": 10.0, "end_s": 16.0, "energy": 8.0},
+                ]
+            },
+        ),
+    ]
+    cadence = MontageCadenceConstraint(
+        source_media_ids=["match-a", "match-b"],
+        cut_duration_s=1,
+    )
+
+    assert edit_direction_planner.round_robin_capacity_s(media, cadence) == 12
+
+    cuts = edit_direction_planner.deterministic_fast_cuts(media, 12, montage_cadence=cadence)
+
+    assert len(cuts) == 12
+    assert [cut.media_id for cut in cuts] == ["match-a", "match-b"] * 6
+    assert all(cut.output_duration_s == 1 for cut in cuts)
+    assert cuts[0].source_start_s == 2
+    assert cuts[1].source_start_s == 10
+    for media_id in cadence.source_media_ids:
+        windows = sorted(
+            (cut.source_start_s, cut.source_end_s) for cut in cuts if cut.media_id == media_id
+        )
+        assert all(
+            current[0] >= previous[1]
+            for previous, current in zip(windows, windows[1:], strict=False)
+        )
+
+
+def test_round_robin_offset_best_moment_cannot_fragment_valid_capacity() -> None:
+    media = [
+        MediaRef(
+            lane="clip",
+            media_id=media_id,
+            gcs_path=f"users/test/{media_id}.mp4",
+            generation="1",
+            kind="video",
+            duration_s=2,
+            analysis={"best_moments": [{"start_s": 0.5, "end_s": 1.5, "energy": 9}]},
+        )
+        for media_id in ("match-a", "match-b")
+    ]
+    cadence = MontageCadenceConstraint(source_media_ids=["match-a", "match-b"], cut_duration_s=1)
+
+    cuts = edit_direction_planner.deterministic_fast_cuts(media, 4, montage_cadence=cadence)
+
+    assert [cut.media_id for cut in cuts] == ["match-a", "match-b"] * 2
+    for media_id in cadence.source_media_ids:
+        assert [
+            (cut.source_start_s, cut.source_end_s) for cut in cuts if cut.media_id == media_id
+        ] == [(0, 1), (1, 2)]
+
+
+def test_round_robin_reuses_ranked_windows_only_after_explicit_opt_in() -> None:
+    media = [
+        MediaRef(
+            lane="clip",
+            media_id=media_id,
+            gcs_path=f"users/test/{media_id}.mp4",
+            generation="1",
+            kind="video",
+            duration_s=1,
+            analysis={"best_moments": [{"start_s": 0, "end_s": 1, "energy": 9}]},
+        )
+        for media_id in ("match-a", "match-b")
+    ]
+    no_repeat = MontageCadenceConstraint(source_media_ids=["match-a", "match-b"], cut_duration_s=1)
+    with pytest.raises(ValueError, match="non-repeating source capacity"):
+        edit_direction_planner.deterministic_fast_cuts(media, 4, montage_cadence=no_repeat)
+
+    allow_repeat = no_repeat.model_copy(update={"reuse_policy": "allow_repeat"})
+    cuts = edit_direction_planner.deterministic_fast_cuts(media, 4, montage_cadence=allow_repeat)
+    assert [cut.media_id for cut in cuts] == ["match-a", "match-b"] * 2
+    assert [(cut.source_start_s, cut.source_end_s) for cut in cuts] == [(0, 1)] * 4
 
 
 def test_fast_montage_snapshot_uses_server_requested_duration(monkeypatch) -> None:

@@ -36,6 +36,7 @@ from app.schemas.edit_proposal import (
     FastMontageCut,
     MediaRef,
     MixedMediaTimingProfile,
+    MontageCadenceConstraint,
     StoryBeat,
     canonical_media_digest,
 )
@@ -315,6 +316,104 @@ def test_fast_montage_none_policy_resolves_to_hard_cut_boundaries() -> None:
     }
 
     assert guided_story._resolved_transition_boundaries(plan) == ["cut", "cut"]
+
+
+def test_round_robin_cadence_survives_compile_without_beat_snapping() -> None:
+    media = [
+        MediaRef(
+            lane="asset",
+            media_id="match-a",
+            gcs_path="users/u/match-a.mp4",
+            generation="1",
+            kind="video",
+            duration_s=6.633,
+        ),
+        MediaRef(
+            lane="asset",
+            media_id="match-b",
+            gcs_path="users/u/match-b.mp4",
+            generation="1",
+            kind="video",
+            duration_s=26.433,
+        ),
+    ]
+    cadence = MontageCadenceConstraint(source_media_ids=["match-a", "match-b"], cut_duration_s=1)
+    cuts = [
+        FastMontageCut(
+            cut_id=f"cut-{index + 1}",
+            media_id=("match-a", "match-b")[index % 2],
+            source_start_s=float(index // 2),
+            source_end_s=float(index // 2 + 1),
+            output_duration_s=1,
+            role="hook" if index == 0 else "payoff" if index == 11 else "build",
+            beat_align=True,
+        )
+        for index in range(12)
+    ]
+    snapshot = EditProposalSnapshot(
+        direction="fast_montage",
+        goal="Show the same emotion in both matches",
+        pace="fast",
+        duration_s=12,
+        title="Same feeling, two matches",
+        media=media,
+        story_beats=[
+            StoryBeat(
+                beat_id="compat",
+                topic="Alternating matches",
+                media_ids=["match-a", "match-b"],
+                duration_s=12,
+            )
+        ],
+        fast_cuts=cuts,
+        montage_cadence=cadence,
+    )
+    raw = {
+        "proposal_version": 8,
+        "media_digest": canonical_media_digest(media),
+        "approved_proposal": snapshot.model_dump(mode="json"),
+        "media_identities": [
+            {
+                "lane": ref.lane,
+                "media_id": ref.media_id,
+                "gcs_path": ref.gcs_path,
+                "generation": ref.generation,
+                "kind": ref.kind,
+            }
+            for ref in media
+        ],
+    }
+
+    plan = compile_execution_plan(
+        raw,
+        track={
+            "track_id": "track-1",
+            "title": "Beat",
+            "audio_gcs_path": "music/beat.mp3",
+            "generation": "1",
+            "start_s": 0.0,
+            "beat_timestamps_s": [0.9, 1.9, 2.9],
+        },
+    )
+
+    assert [row["media_id"] for row in plan["story_timeline"]] == [
+        "match-a",
+        "match-b",
+    ] * 6
+    assert [row["duration_s"] for row in plan["story_timeline"]] == [1.0] * 12
+    assert plan["resolved_duration_s"] == 12
+    assert plan["montage_cadence"] == cadence.model_dump(mode="json")
+
+    receipt_plan = compile_execution_plan(raw, track=None)
+    result = _ready_result(receipt_plan)
+    assert (
+        validate_ready_result(receipt_plan, result, job_id="job-1", verify_storage=False) == result
+    )
+    corrupt = copy.deepcopy(result)
+    corrupt["render_receipt"]["moment_stages"][0]["output_duration_s"] = 0.8
+    with pytest.raises(GuidedStoryError) as exc:
+        validate_ready_result(receipt_plan, corrupt, job_id="job-1", verify_storage=False)
+    assert exc.value.code == "guided_story_receipt_mismatch"
 
 
 def test_mixed_media_timing_disables_legacy_beat_snap_below_photo_minimum() -> None:
@@ -1991,6 +2090,10 @@ def _verified_receipt(plan: dict) -> dict:
     beat_ids = [row["beat_id"] for row in plan["beat_windows"]]
     moment_ids = [row["moment_id"] for row in plan["story_timeline"]]
     text_ids = [row["id"] for row in plan["text_elements"]]
+    selected_kinds = {
+        media_id: next(row["kind"] for row in plan["story_timeline"] if row["media_id"] == media_id)
+        for media_id in plan["selected_media_ids"]
+    }
     return {
         "schema_version": 1,
         "verified": True,
@@ -2005,8 +2108,8 @@ def _verified_receipt(plan: dict) -> dict:
         "expected_text_ids": text_ids,
         "actual_text_ids": text_ids,
         "media_count": len(plan["selected_media_ids"]),
-        "image_count": 2,
-        "video_count": 1,
+        "image_count": sum(kind == "image" for kind in selected_kinds.values()),
+        "video_count": sum(kind == "video" for kind in selected_kinds.values()),
         "expected_duration_s": plan["resolved_duration_s"],
         "actual_duration_s": plan["resolved_duration_s"],
         "music_applied": False,
@@ -2056,6 +2159,9 @@ def _verified_receipt(plan: dict) -> dict:
                 "kind": row["kind"],
                 "layout": row["layout"],
                 "image_motion": row["image_motion"],
+                "source_start_s": row["source_start_s"],
+                "source_end_s": row["source_end_s"],
+                "output_duration_s": row["duration_s"],
             }
             for row in plan["story_timeline"]
         ],
