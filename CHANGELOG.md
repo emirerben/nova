@@ -10,6 +10,11 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Thumbnail recovery no longer interrupts a playing preview or gives up because of a temporary network failure.** Expired signatures, partial refresh responses, delayed requests, and a failed-to-missing-to-recovered poster transition now retry within separate bounded budgets and preserve the active video until the creator stops it.
 
+## [0.57.0.4] — 2026-08-29
+
+### Fixed
+- **Fly deploy verification now accepts a newly deployed render worker that is safely dormant.** A stopped managed worker with the exact deployed digest and no start or exit events is a valid scale-to-zero state; crash exits and stopped always-on process groups still fail closed.
+
 ## [0.57.0.3] — 2026-08-29
 
 ### Fixed

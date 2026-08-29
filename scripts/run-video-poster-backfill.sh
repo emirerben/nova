@@ -158,7 +158,8 @@ managed_fleet_is_operationally_stable() {
       and all($managed[];
         (.config // .incomplete_config // {}) as $config
         | (($config.metadata // {}).fly_process_group) as $group
-        | ([.events[]? | select(.type == "exit")]
+        | ([.events[]? | select(.type == "start" or .type == "exit")]) as $lifecycle_events
+        | ([$lifecycle_events[] | select(.type == "exit")]
             | sort_by(.timestamp) | last | .request.exit_event) as $last_exit
         | ($group | type == "string" and length > 0)
           and (
@@ -170,9 +171,12 @@ managed_fleet_is_operationally_stable() {
                   and any(($config.services // [])[]?;
                     .autostop == true or .autostop == "stop"))
                 or ($group == "worker"
-                  and $last_exit.requested_stop == true
-                  and ($last_exit.oom_killed // false) == false
-                  and ($last_exit.restarting // false) == false)
+                  and (
+                    ($lifecycle_events | length == 0)
+                    or ($last_exit.requested_stop == true
+                      and ($last_exit.oom_killed // false) == false
+                      and ($last_exit.restarting // false) == false)
+                  ))
               )
             )
           )
