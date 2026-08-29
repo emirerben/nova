@@ -1071,7 +1071,11 @@ def test_runtime_revision_removes_music_and_receipt_records_v2_provenance(
         guided_story,
         "probe_video",
         lambda _path: SimpleNamespace(
-            duration_s=runtime["resolved_duration_s"], width=1080, height=1920, codec="h264"
+            duration_s=runtime["resolved_duration_s"] + 1.0,
+            video_stream_duration_s=runtime["resolved_duration_s"] + (1 / 30),
+            width=1080,
+            height=1920,
+            codec="h264",
         ),
     )
     monkeypatch.setattr(
@@ -1135,6 +1139,9 @@ def test_runtime_revision_removes_music_and_receipt_records_v2_provenance(
     assert receipt["segment_order"] == [moment["moment_id"] for moment in moment_receipts]
     assert receipt["music_removed"] is True
     assert receipt["music"] is None
+    assert receipt["actual_duration_s"] == pytest.approx(
+        runtime["resolved_duration_s"] + (1 / 30), abs=0.001
+    )
 
 
 def test_render_moments_forwards_segment_looks_to_image_and_video_renderers(
@@ -2227,6 +2234,47 @@ def test_guided_text_reburn_rejects_invisible_required_element(tmp_path, monkeyp
         )
 
     assert exc.value.code == "guided_story_text_missing"
+
+
+def test_guided_text_reburn_uses_video_stream_duration_not_padded_container(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.pipeline import guided_story
+
+    plan = compile_execution_plan(_guided_snapshot(), track=None)
+    expected_duration_s = float(plan["resolved_duration_s"])
+    final = tmp_path / "final.mp4"
+    base = tmp_path / "base.mp4"
+    final.write_bytes(b"final")
+    base.write_bytes(b"base")
+    monkeypatch.setattr(
+        guided_story,
+        "probe_video",
+        lambda _path: SimpleNamespace(
+            duration_s=expected_duration_s + 1.0,
+            video_stream_duration_s=expected_duration_s + (1 / 30),
+            width=1080,
+            height=1920,
+            codec="h264",
+        ),
+    )
+    monkeypatch.setattr(guided_story, "_audio_codec", lambda _path: "aac")
+    monkeypatch.setattr(
+        guided_story,
+        "_sha256",
+        lambda path: "f" * 64 if Path(path) == final else "b" * 64,
+    )
+
+    receipt = verify_guided_text_reburn(
+        _verified_receipt(plan),
+        [plan["text_elements"][0]],
+        [{"element_id": plan["text_elements"][0]["id"], "visible": True}],
+        str(final),
+        str(base),
+    )
+
+    assert receipt["verified"] is True
+    assert receipt["actual_duration_s"] == pytest.approx(expected_duration_s + (1 / 30), abs=0.001)
 
 
 @pytest.mark.parametrize("drop", ["supporting_card", "media", "text"])

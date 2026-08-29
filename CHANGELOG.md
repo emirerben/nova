@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.57.0.2] — 2026-08-29
+
+### Fixed
+- **Saved guided slideshows now verify against their actual video frames.** Render receipts compare the committed timeline with the video stream instead of AAC-padded container duration, so a frame-correct 59.9-second edit is no longer mislabeled as a timeline/render mismatch.
+
 ## [0.57.0.1] — 2026-08-28
 
 ### Added

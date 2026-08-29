@@ -46,17 +46,17 @@ class TestProbeVideo:
         ]
         if has_audio:
             streams.append({"codec_type": "audio", "codec_name": "aac"})
-        return json.dumps({
-            "streams": streams,
-            "format": {"duration": duration, "size": file_size},
-        })
+        return json.dumps(
+            {
+                "streams": streams,
+                "format": {"duration": duration, "size": file_size},
+            }
+        )
 
     def test_happy_path_16_9(self):
         output = self._make_ffprobe_output()
         with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=0, stdout=output, stderr=""
-            )
+            mock_run.return_value = MagicMock(returncode=0, stdout=output, stderr="")
             result = probe_video("/fake/video.mp4")
 
         assert isinstance(result, VideoProbe)
@@ -67,6 +67,34 @@ class TestProbeVideo:
         assert result.fps == pytest.approx(30.0)
         assert result.has_audio is True
         assert result.codec == "h264"
+
+    def test_preserves_video_stream_duration_separately_from_aac_padded_container(self):
+        output = json.loads(self._make_ffprobe_output(duration="59.939002"))
+        output["streams"][0]["duration"] = "59.933333"
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0,
+                stdout=json.dumps(output),
+                stderr="",
+            )
+            result = probe_video("/fake/video.mp4")
+
+        assert result.duration_s == pytest.approx(59.939002)
+        assert result.video_stream_duration_s == pytest.approx(59.933333)
+
+    def test_video_stream_duration_falls_back_when_ffprobe_reports_na(self):
+        output = json.loads(self._make_ffprobe_output(duration="12.5"))
+        output["streams"][0]["duration"] = "N/A"
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0,
+                stdout=json.dumps(output),
+                stderr="",
+            )
+            result = probe_video("/fake/video.mp4")
+
+        assert result.duration_s == pytest.approx(12.5)
+        assert result.video_stream_duration_s == pytest.approx(12.5)
 
     def test_happy_path_9_16(self):
         output = self._make_ffprobe_output(width=1080, height=1920)
@@ -91,7 +119,9 @@ class TestProbeVideo:
                 probe_video("/fake/bad.mp4")
 
     def test_timeout_raises_probe_timeout(self):
-        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="ffprobe", timeout=60)):  # noqa: E501
+        with patch(
+            "subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="ffprobe", timeout=60)
+        ):  # noqa: E501
             with pytest.raises(ProbeTimeout):
                 probe_video("/fake/video.mp4")
 

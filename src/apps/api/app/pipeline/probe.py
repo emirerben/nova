@@ -28,6 +28,10 @@ class VideoProbe:
     # 10-bit HEVC clips longer than a hardware-cost ceiling — see the
     # MAX_HDR_DURATION_S constant there for the empirical budget.
     pix_fmt: str = ""
+    # Duration of the visual stream itself. Container duration can be a few
+    # milliseconds longer because AAC packets are frame-sized; render parity
+    # must compare the committed timeline to video frames, not audio padding.
+    video_stream_duration_s: float | None = None
 
 
 class ProbeError(Exception):
@@ -128,6 +132,16 @@ def probe_video(file_path: str) -> VideoProbe:
     except (KeyError, ValueError, ZeroDivisionError) as exc:
         raise ProbeError(f"Failed to parse probe metadata: {exc}") from exc
 
+    video_stream_duration_s = duration_s
+    try:
+        candidate_video_duration_s = float(video_stream.get("duration") or duration_s)
+        if candidate_video_duration_s > 0:
+            video_stream_duration_s = candidate_video_duration_s
+    except (TypeError, ValueError):
+        # Some containers report the stream duration as "N/A" while the
+        # format duration remains valid. Preserve the historical fallback.
+        pass
+
     aspect_ratio = _classify_aspect(width, height)
 
     # Never log the full URL when probing a signed GCS URL — the v4 query
@@ -141,6 +155,7 @@ def probe_video(file_path: str) -> VideoProbe:
         "probe_complete",
         path=log_path,
         duration_s=duration_s,
+        video_stream_duration_s=video_stream_duration_s,
         resolution=f"{width}x{height}",
         aspect_ratio=aspect_ratio,
         fps=fps,
@@ -169,6 +184,7 @@ def probe_video(file_path: str) -> VideoProbe:
         color_trc=color_trc,
         color_transfer=color_transfer,
         pix_fmt=pix_fmt,
+        video_stream_duration_s=video_stream_duration_s,
     )
 
 
