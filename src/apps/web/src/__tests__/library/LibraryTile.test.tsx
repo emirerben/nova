@@ -1,4 +1,4 @@
-import userEvent, { PointerEventsCheckLevel } from "@testing-library/user-event";
+import userEvent from "@testing-library/user-event";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import LibraryTile, { PREVIEW_LOAD_TIMEOUT_MS } from "@/components/library/LibraryTile";
@@ -209,7 +209,7 @@ it("does not issue grid-wide MP4 requests for multiple posterless tiles", () => 
 });
 
 it("loads only the selected posterless preview after explicit interaction", async () => {
-  const user = userEvent.setup({ delay: null, pointerEventsCheck: PointerEventsCheckLevel.Never });
+  const user = userEvent.setup();
   const selectedListUrl = "https://example.test/video-2.mp4?sig=list-stale";
   const selectedFreshUrl = "https://example.test/job-2.mp4?sig=click-fresh";
   mockGetMyJobPlaybackUrl.mockImplementation(async (jobId) => ({
@@ -248,7 +248,7 @@ it("loads only the selected posterless preview after explicit interaction", asyn
 });
 
 it("stops an active preview, releases the video, and restores trigger focus", async () => {
-  const user = userEvent.setup({ delay: null, pointerEventsCheck: PointerEventsCheckLevel.Never });
+  const user = userEvent.setup();
   const { container } = render(<LibraryTile job={{ ...baseJob, poster_url: null }} />);
 
   await user.click(screen.getByRole("button", { name: "Play preview" }));
@@ -263,7 +263,7 @@ it("stops an active preview, releases the video, and restores trigger focus", as
 });
 
 it("keeps at most one posterless tile decoding after another preview is selected", async () => {
-  const user = userEvent.setup({ delay: null, pointerEventsCheck: PointerEventsCheckLevel.Never });
+  const user = userEvent.setup();
   mockGetMyJobPlaybackUrl.mockImplementation(async (jobId) => ({
     video_url: `https://example.test/${jobId}.mp4?sig=fresh`,
   }));
@@ -298,7 +298,7 @@ it("ignores an older pending refresh after another tile is selected", async () =
       ? firstRefresh
       : Promise.resolve({ video_url: "https://example.test/job-2.mp4?sig=fresh" }),
   );
-  const user = userEvent.setup({ delay: null, pointerEventsCheck: PointerEventsCheckLevel.Never });
+  const user = userEvent.setup();
   const { container } = render(
     <>
       <LibraryTile job={{ ...baseJob, id: "job-1", poster_url: null }} />
@@ -334,7 +334,7 @@ it("uses a direct gesture without refetching when Safari blocks delayed autoplay
   const firstFreshUrl = "https://example.test/video.mp4?sig=first";
   mockGetMyJobPlaybackUrl.mockResolvedValueOnce({ video_url: firstFreshUrl });
   playSpy.mockRejectedValueOnce(new DOMException("Autoplay blocked", "NotAllowedError"));
-  const user = userEvent.setup({ delay: null, pointerEventsCheck: PointerEventsCheckLevel.Never });
+  const user = userEvent.setup();
   const { container } = render(<LibraryTile job={{ ...baseJob, poster_url: null }} />);
 
   await user.click(screen.getByRole("button", { name: "Play preview" }));
@@ -395,7 +395,7 @@ it("never retries an expired list or prior-attempt URL after the clock advances"
 });
 
 it("can play a ready posterless job even when list-time URL signing failed", async () => {
-  const user = userEvent.setup({ delay: null, pointerEventsCheck: PointerEventsCheckLevel.Never });
+  const user = userEvent.setup();
   const { container } = render(
     <LibraryTile job={{ ...baseJob, output_url: null, poster_url: null }} />,
   );
@@ -416,7 +416,7 @@ it("restores focus and offers a fresh Retry when playback URL refresh fails", as
   mockGetMyJobPlaybackUrl
     .mockRejectedValueOnce(new MeApiError("Could not sign playback URL", 503))
     .mockResolvedValueOnce({ video_url: "https://example.test/video.mp4?sig=recovered" });
-  const user = userEvent.setup({ delay: null, pointerEventsCheck: PointerEventsCheckLevel.Never });
+  const user = userEvent.setup();
   const { container } = render(<LibraryTile job={{ ...baseJob, poster_url: null }} />);
 
   await user.click(screen.getByRole("button", { name: "Play preview" }));
@@ -437,7 +437,7 @@ it("restores focus and offers a fresh Retry when playback URL refresh fails", as
 
 it("allows narrow mobile failure copy to wrap inside the tile", async () => {
   playSpy.mockRejectedValueOnce(new DOMException("Playback failed", "NotSupportedError"));
-  const user = userEvent.setup({ delay: null, pointerEventsCheck: PointerEventsCheckLevel.Never });
+  const user = userEvent.setup();
   render(<LibraryTile job={{ ...baseJob, poster_url: null }} />);
 
   await user.click(screen.getByRole("button", { name: "Play preview" }));
@@ -585,7 +585,7 @@ it("falls back to an unloaded placeholder when the poster image fails", () => {
 });
 
 it("keeps a nonblank retry state when an activated fallback video fails", async () => {
-  const user = userEvent.setup({ delay: null, pointerEventsCheck: PointerEventsCheckLevel.Never });
+  const user = userEvent.setup();
   const { container } = render(<LibraryTile job={{ ...baseJob, poster_url: null }} />);
 
   await user.click(screen.getByRole("button", { name: "Play preview" }));
@@ -610,29 +610,27 @@ it("shows a Rendering badge while a video is still processing", () => {
 });
 
 it("offers a destructive delete flow and removes the tile after success", async () => {
-  const user = userEvent.setup({ delay: null, pointerEventsCheck: PointerEventsCheckLevel.Never });
   const onDeleted = jest.fn();
   render(<LibraryTile job={baseJob} onDeleted={onDeleted} />);
 
-  await user.click(screen.getByRole("button", { name: "More video actions" }));
-  await user.click(screen.getByRole("menuitem", { name: "Delete video" }));
+  fireEvent.keyDown(screen.getByRole("button", { name: "More video actions" }), { key: "Enter" });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Delete video" }));
 
   expect(screen.getByRole("alertdialog")).toBeInTheDocument();
   expect(screen.getByText(/You can’t undo this/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Keep video" })).toHaveFocus();
 
-  await user.click(screen.getByRole("button", { name: "Delete video" }));
+  fireEvent.click(screen.getByRole("button", { name: "Delete video" }));
 
   await waitFor(() => expect(mockDeleteMyJob).toHaveBeenCalledWith("job-1"));
   expect(onDeleted).toHaveBeenCalledWith("job-1");
 });
 
 it("keeps plan footage in the linked-video confirmation copy", async () => {
-  const user = userEvent.setup({ delay: null, pointerEventsCheck: PointerEventsCheckLevel.Never });
   render(<LibraryTile job={{ ...baseJob, content_plan_item_id: "item-1" }} />);
 
-  await user.click(screen.getByRole("button", { name: "More video actions" }));
-  await user.click(screen.getByRole("menuitem", { name: "Delete video" }));
+  fireEvent.keyDown(screen.getByRole("button", { name: "More video actions" }), { key: "Enter" });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Delete video" }));
 
   expect(screen.getByText(/edit plan and uploaded footage will stay available/)).toBeInTheDocument();
   expect(screen.queryByText(/You can’t undo this/)).not.toBeInTheDocument();
@@ -667,14 +665,13 @@ it("does not offer deletion while TikTok is still processing", () => {
 });
 
 it("reconciles a stale 404 as a successful delete", async () => {
-  const user = userEvent.setup({ delay: null, pointerEventsCheck: PointerEventsCheckLevel.Never });
   const onDeleted = jest.fn();
   mockDeleteMyJob.mockRejectedValue(new MeApiError("not found", 404));
   render(<LibraryTile job={baseJob} onDeleted={onDeleted} />);
 
-  await user.click(screen.getByRole("button", { name: "More video actions" }));
-  await user.click(screen.getByRole("menuitem", { name: "Delete video" }));
-  await user.click(screen.getByRole("button", { name: "Delete video" }));
+  fireEvent.keyDown(screen.getByRole("button", { name: "More video actions" }), { key: "Enter" });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Delete video" }));
+  fireEvent.click(screen.getByRole("button", { name: "Delete video" }));
 
   await waitFor(() => expect(onDeleted).toHaveBeenCalledWith("job-1"));
   expect(mockToast.success).toHaveBeenCalledWith("Video deleted.");
@@ -682,14 +679,13 @@ it("reconciles a stale 404 as a successful delete", async () => {
 });
 
 it("keeps the tile and explains a delete conflict", async () => {
-  const user = userEvent.setup({ delay: null, pointerEventsCheck: PointerEventsCheckLevel.Never });
   const onDeleted = jest.fn();
   mockDeleteMyJob.mockRejectedValue(new MeApiError("still processing", 409));
   render(<LibraryTile job={baseJob} onDeleted={onDeleted} />);
 
-  await user.click(screen.getByRole("button", { name: "More video actions" }));
-  await user.click(screen.getByRole("menuitem", { name: "Delete video" }));
-  await user.click(screen.getByRole("button", { name: "Delete video" }));
+  fireEvent.keyDown(screen.getByRole("button", { name: "More video actions" }), { key: "Enter" });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Delete video" }));
+  fireEvent.click(screen.getByRole("button", { name: "Delete video" }));
 
   await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith(expect.stringContaining("still being prepared")));
   expect(onDeleted).not.toHaveBeenCalled();

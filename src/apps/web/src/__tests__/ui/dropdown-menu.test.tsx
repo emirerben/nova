@@ -1,6 +1,5 @@
 import "@testing-library/jest-dom";
-import { render, screen } from "@testing-library/react";
-import userEvent, { PointerEventsCheckLevel } from "@testing-library/user-event";
+import { fireEvent, render, screen } from "@testing-library/react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,7 +9,6 @@ import {
 
 describe("DropdownMenu", () => {
   it("opens on click and shows menu items at z-[130]", async () => {
-    const user = userEvent.setup({ delay: null, pointerEventsCheck: PointerEventsCheckLevel.Never });
     render(
       <DropdownMenu>
         <DropdownMenuTrigger aria-label="Account menu">Avatar</DropdownMenuTrigger>
@@ -21,7 +19,7 @@ describe("DropdownMenu", () => {
       </DropdownMenu>
     );
 
-    await user.click(screen.getByRole("button", { name: "Account menu" }));
+    fireEvent.keyDown(screen.getByRole("button", { name: "Account menu" }), { key: "Enter" });
     const menu = await screen.findByRole("menu");
     expect(menu.className).toContain("z-[130]");
     expect(menu.className).toContain("extra-class");

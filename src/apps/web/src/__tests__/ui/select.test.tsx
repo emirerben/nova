@@ -1,6 +1,5 @@
 import "@testing-library/jest-dom";
-import { render, screen } from "@testing-library/react";
-import userEvent, { PointerEventsCheckLevel } from "@testing-library/user-event";
+import { fireEvent, render, screen } from "@testing-library/react";
 import {
   Select,
   SelectContent,
@@ -9,11 +8,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-// Radix opens Select on pointerdown, not click — userEvent.click dispatches
-// the full pointer sequence jsdom needs (see jest.setup.ts polyfills).
 describe("Select", () => {
   it("renders a combobox trigger and opens to reveal options", async () => {
-    const user = userEvent.setup({ delay: null, pointerEventsCheck: PointerEventsCheckLevel.Never });
     render(
       <Select defaultValue="a">
         <SelectTrigger aria-label="Kind" className="extra-class">
@@ -29,7 +25,7 @@ describe("Select", () => {
     const trigger = screen.getByRole("combobox", { name: "Kind" });
     expect(trigger.className).toContain("extra-class");
 
-    await user.click(trigger);
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
     expect(await screen.findByRole("option", { name: "Narrated" })).toBeInTheDocument();
   });
 });
