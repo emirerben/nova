@@ -91,11 +91,11 @@ jobs:
         # suite, so frontend tests that hard-code values (overlay constants,
         # font-vibe counts) silently rotted when those values changed — the
         # suite was red on main for multiple releases before anyone noticed.
-        # GitHub's shared runners can become CPU-starved enough that parallel
-        # JSDOM workers miss Jest's 5s per-test deadline even though the same
-        # suites pass in seconds in isolation. Keep local Jest parallelism, but
-        # serialize CI so one worker always receives the runner's full CPU.
-        run: pnpm test -- --runInBand
+        # GitHub's shared runners can become CPU-starved enough that JSDOM
+        # interaction tests miss Jest's 5s deadline even though the same suites
+        # pass in seconds locally. Keep the strict local default, but allow CI
+        # enough time to distinguish a throttled test from a genuine hang.
+        run: pnpm test -- --testTimeout=30000
 
   test-api:
     runs-on: ubuntu-latest
