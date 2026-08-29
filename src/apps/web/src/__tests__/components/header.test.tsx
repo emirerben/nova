@@ -9,8 +9,7 @@
 
 // @ts-nocheck
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
 let mockPathname = "/";
@@ -123,10 +122,9 @@ describe("Header — account menu (authenticated)", () => {
   });
 
   async function openMenu() {
-    const user = userEvent.setup();
     const avatar = screen.getByRole("button", { name: /account menu/i });
-    await user.click(avatar);
-    return user;
+    fireEvent.keyDown(avatar, { key: "Enter" });
+    await screen.findByRole("menu");
   }
 
   it("test_account_menu_opens_with_my_videos_and_sign_out", async () => {
@@ -152,9 +150,9 @@ describe("Header — account menu (authenticated)", () => {
 
   it("test_account_menu_sign_out_calls_signOut", async () => {
     render(<Header />);
-    const user = await openMenu();
+    await openMenu();
     const signOutItem = await screen.findByRole("menuitem", { name: /sign out/i });
-    await user.click(signOutItem);
+    fireEvent.click(signOutItem);
     await waitFor(() => {
       expect(mockSignOut).toHaveBeenCalledWith({ callbackUrl: "/" });
     });

@@ -85,13 +85,38 @@ jobs:
           deno cache --no-config --node-modules-dir=none \
             ../../packages/motion-runtime/server/render-sequence.ts \
             ../../packages/motion-runtime/server/render-frame.ts
-      - name: Run web tests
+      - name: Run interaction-heavy web tests
+        working-directory: src/apps/web
+        # Each suite passes quickly in a fresh process, but reusing one JSDOM
+        # worker for this set accumulates enough event-loop work to starve
+        # Radix/JSDOM interactions on hosted runners. Give each suite a clean
+        # process and a bounded CI-only ceiling; the other 3,265 tests retain
+        # Jest's strict 5s default.
+        run: |
+          for test_file in \
+            src/__tests__/plan/edit-proposal-card.test.tsx \
+            src/__tests__/library/LibraryTile.test.tsx \
+            src/__tests__/plan/unified-timeline.test.tsx \
+            src/__tests__/plan/items/ToolDrawer-visuals.test.tsx \
+            src/__tests__/plan/items/inspector-panel-text-horizontal.test.tsx \
+            src/__tests__/components/header.test.tsx \
+            src/__tests__/tiktok/TikTokConnectionCard.test.tsx \
+            src/__tests__/ui/select.test.tsx \
+            src/__tests__/ui/dropdown-menu.test.tsx \
+            src/__tests__/ui/tooltip.test.tsx \
+            src/__tests__/ui/popover.test.tsx
+          do
+            pnpm test -- --runInBand --testTimeout=300000 --runTestsByPath "$test_file"
+          done
+      - name: Run remaining web tests
         working-directory: src/apps/web
         # Jest only. CI previously ran lint + pytest but never the web Jest
         # suite, so frontend tests that hard-code values (overlay constants,
         # font-vibe counts) silently rotted when those values changed — the
         # suite was red on main for multiple releases before anyone noticed.
-        run: pnpm test
+        run: >-
+          pnpm test --
+          --testPathIgnorePatterns='src/__tests__/(plan/edit-proposal-card|library/LibraryTile|plan/unified-timeline|plan/items/ToolDrawer-visuals|plan/items/inspector-panel-text-horizontal|components/header|tiktok/TikTokConnectionCard|ui/(select|dropdown-menu|tooltip|popover))\.test\.tsx$'
 
   test-api:
     runs-on: ubuntu-latest

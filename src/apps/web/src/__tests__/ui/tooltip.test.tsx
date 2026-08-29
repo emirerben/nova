@@ -1,5 +1,4 @@
-import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "@jest/globals";
 import {
   Tooltip,
@@ -10,7 +9,6 @@ import {
 
 describe("Tooltip", () => {
   it("opens on hover/focus and renders content at z-[130]", async () => {
-    const user = userEvent.setup();
     render(
       <TooltipProvider delayDuration={0}>
         <Tooltip>
@@ -20,7 +18,7 @@ describe("Tooltip", () => {
       </TooltipProvider>
     );
 
-    await user.hover(screen.getByRole("button", { name: "Reconnect" }));
+    fireEvent.focus(screen.getByRole("button", { name: "Reconnect" }));
     const content = await screen.findByText("Private beta");
     expect(content.className).toContain("z-[130]");
     expect(content.className).toContain("extra-class");

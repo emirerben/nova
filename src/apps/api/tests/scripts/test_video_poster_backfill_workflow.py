@@ -195,13 +195,14 @@ def _deploy_guard(
     digest: str = DIGEST,
     created_epoch: int = NOW_EPOCH,
     state: str = "created",
+    events: list[dict] | None = None,
 ) -> dict:
     return {
         "id": machine_id,
         "name": GUARD_NAME,
         "state": state,
         "image_ref": {"digest": digest},
-        "events": [],
+        "events": events or [],
         "config": {
             "metadata": {
                 "nova_operation": "fly-deploy-guard",
@@ -896,7 +897,7 @@ def test_backfill_reproves_managed_digest_after_winning_name_before_start(
     assert not (tmp_path / "destroy.args").exists()
 
 
-def test_deploy_guard_acquire_is_created_only_and_exact_release_is_forced(
+def test_deploy_guard_acquire_is_dormant_and_exact_release_is_forced(
     tmp_path: Path,
 ) -> None:
     guard = _deploy_guard()
@@ -961,7 +962,7 @@ def test_deploy_guard_lost_create_response_resolves_owned_stable_name(
     )
 
     assert result.returncode == 0, result.stderr
-    assert "Acquired created-only deploy guard" in result.stdout
+    assert "Acquired dormant deploy guard" in result.stdout
     assert not (tmp_path / "start.args").exists()
 
 
@@ -1041,7 +1042,7 @@ def test_expired_deploy_guard_is_retained_when_managed_fleet_is_mixed(
     assert not (tmp_path / "create.args").exists()
 
 
-def test_deploy_guard_rejects_foreign_owner_or_non_created_state(tmp_path: Path) -> None:
+def test_deploy_guard_rejects_foreign_owner_or_executed_state(tmp_path: Path) -> None:
     foreign = _deploy_guard(owner="99999:1")
     release = _run(
         tmp_path / "owner",
@@ -1059,8 +1060,43 @@ def test_deploy_guard_rejects_foreign_owner_or_non_created_state(tmp_path: Path)
         machine_sequence=[_inventory(started), _inventory(started)],
     )
     assert invalid.returncode == 1
-    assert "created-only contract" in invalid.stderr
+    assert "dormant contract" in invalid.stderr
     assert not (tmp_path / "state" / "destroy.args").exists()
+
+    executed = _deploy_guard(
+        state="stopped",
+        events=[{"type": "exit", "timestamp": 1, "request": {"exit_event": {}}}],
+    )
+    invalid_stopped = _run(
+        tmp_path / "executed",
+        args=["--release-deploy-guard"],
+        machine_sequence=[_inventory(executed)],
+    )
+    assert invalid_stopped.returncode == 1
+    assert "exact dormant deploy guard" in invalid_stopped.stderr
+    assert not (tmp_path / "executed" / "destroy.args").exists()
+
+
+def test_fly_settled_unexecuted_guard_can_be_verified_and_released(tmp_path: Path) -> None:
+    guard = _deploy_guard(
+        state="stopped",
+        events=[
+            {"type": "update", "status": "stopped", "source": "flyd", "timestamp": 3},
+            {"type": "launch", "status": "created", "source": "user", "timestamp": 2},
+            {"type": "launch", "status": "pending", "source": "flyd", "timestamp": 1},
+        ],
+    )
+    result = _run(
+        tmp_path,
+        [_image()],
+        args=["--release-deploy-guard"],
+        verified_deploy_digest=DIGEST,
+        machine_sequence=[_inventory(guard), _inventory(guard)],
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Released dormant deploy guard" in result.stdout
+    assert MACHINE_ID in (tmp_path / "destroy.args").read_text()
 
 
 def test_deploy_guard_release_requires_matching_verified_production_digest(
@@ -1115,7 +1151,7 @@ def test_manual_main_fix_deploy_can_release_exact_failed_backfill_then_acquire(
     assert result.returncode == 0, result.stderr
     assert "Explicitly acknowledging incomplete poster repair" in result.stdout
     assert "Removed acknowledged failed poster backfill guard" in result.stdout
-    assert "Acquired created-only deploy guard" in result.stdout
+    assert "Acquired dormant deploy guard" in result.stdout
     destroy_args = (tmp_path / "destroy.args").read_text().splitlines()
     assert destroy_args[-1] == MACHINE_ID
     assert "--force" not in destroy_args
@@ -1421,6 +1457,8 @@ def test_workflows_pin_revision_keep_historical_lock_and_gate_deploy() -> None:
     assert "timeout --signal=TERM --kill-after=60s 2100s" in deploy
     assert 'has("fly_process_group")' in deploy
     assert 'init.cmd == ["/bin/false"]' in deploy
+    assert 'select(.type == "start" or .type == "exit")' in deploy
+    assert "deploy guard is not exact, dormant, and unexecuted" in deploy
     assert "org.opencontainers.image.revision=${GITHUB_SHA}" in deploy
     for workflow in (backfill, deploy):
         assert "managed_fleet_has_required_processes" in workflow
