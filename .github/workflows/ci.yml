@@ -91,12 +91,7 @@ jobs:
         # suite, so frontend tests that hard-code values (overlay constants,
         # font-vibe counts) silently rotted when those values changed — the
         # suite was red on main for multiple releases before anyone noticed.
-        # The jsdom/Radix interaction tests share timer-heavy browser shims.
-        # On the hosted Ubuntu runner, parallel Jest workers intermittently
-        # starve those timers and turn userEvent clicks into 5s timeouts.
-        # Keep this CI job deterministic; local runs retain Jest's default
-        # parallelism through the package script.
-        run: pnpm test -- --runInBand
+        run: pnpm test
 
   test-api:
     runs-on: ubuntu-latest
