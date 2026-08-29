@@ -20,6 +20,7 @@ from app.schemas.edit_proposal import (
     FastMontageCut,
     MediaRef,
     MixedMediaTimingProfile,
+    MontageAudioPlan,
     StoryBeat,
     mixed_media_hold_bounds,
     uses_quick_photo_long_video_timing,
@@ -353,6 +354,7 @@ def plan_direction_snapshot(
     pace: str,
     duration_s: int,
     mixed_media_timing: MixedMediaTimingProfile | None = None,
+    montage_audio: MontageAudioPlan | None = None,
     idea: str = "",
     theme: str = "",
     job_id: str | None = None,
@@ -396,6 +398,7 @@ def plan_direction_snapshot(
                 pace=pace,
                 target_duration_s=planning_duration_s,
                 mixed_media_timing=mixed_media_timing,
+                montage_audio=montage_audio,
                 media=media,
             ),
             ctx=RunContext(job_id=job_id) if job_id else None,
@@ -448,6 +451,14 @@ def plan_direction_snapshot(
             "story_beats": beats,
             "fast_cuts": cuts,
             "mixed_media_timing": mixed_media_timing,
+            "montage_text_bindings": (
+                output.montage_text_bindings if output is not None else source.montage_text_bindings
+            ),
+            "montage_audio": (
+                output.montage_audio
+                if output is not None and output.montage_audio is not None
+                else montage_audio
+            ),
         }
     )
     result = EditProposalSnapshot.model_validate(planned.model_dump(mode="json"))

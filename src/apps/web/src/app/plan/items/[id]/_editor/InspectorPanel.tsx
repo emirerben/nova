@@ -87,6 +87,15 @@ import type { InspectorTab } from "./InspectorRail";
 import { normalizeEditableHex } from "./editor-color";
 import { FontSelect, HexInput } from "./inspector-fields";
 import {
+  EDITOR_TEXT_SIZE_MAX,
+  EDITOR_TEXT_SIZE_MIN,
+  EDITOR_TEXT_SIZE_OPTIONS,
+} from "./text-control-options";
+import {
+  CAPTION_SIZE_MAX,
+  CAPTION_SIZE_MIN,
+} from "./caption-control-options";
+import {
   applyClipSourceWindowDrag,
   CLIP_MIN_DURATION_S,
   type BarDragHandle,
@@ -138,9 +147,6 @@ const EDITABLE_ROW_FIELDS = new Set([
   "cue_size_px",
 ]);
 
-const EDITOR_TEXT_SIZE_MIN = 8;
-const EDITOR_TEXT_SIZE_MAX = 300;
-
 const TEXT_BEHIND_SUBJECT_UI_ENABLED =
   process.env.NEXT_PUBLIC_TEXT_BEHIND_SUBJECT_ENABLED === "true";
 const TEXT_MOTION_V2_UI_ENABLED =
@@ -158,13 +164,6 @@ export interface InspectorClipTiming {
   sourceDurationS: number | null;
   sourceUrl: string | null;
 }
-
-const SIZE_OPTIONS = (() => {
-  const out: number[] = [];
-  for (let s = 8; s <= 96; s += 8) out.push(s);
-  out.push(120, 160, 220, 300);
-  return out;
-})();
 
 function fieldLabel(key: string): string {
   return key.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
@@ -253,6 +252,9 @@ export default function InspectorPanel({
   backgroundMusic = null,
   backgroundMusicTrackDurationS = null,
   onPatchMix,
+  sourceAudioMix,
+  sourceAudioOptions = [],
+  onSourceAudioMix,
   onPickMusic,
   onRemoveMusic,
   onPatchBackgroundMusic,
@@ -358,6 +360,16 @@ export default function InspectorPanel({
   backgroundMusic?: EditorCommitBackgroundMusic | null;
   backgroundMusicTrackDurationS?: number | null;
   onPatchMix?: (level: number) => void;
+  sourceAudioMix?: string | null;
+  sourceAudioOptions?: Array<{
+    mix: string;
+    label?: string;
+    source_media_id?: string;
+    audio_path: string;
+    audio_url: string;
+    duration_s: number;
+  }>;
+  onSourceAudioMix?: (mix: string) => void;
   onPickMusic?: (trackId: string) => void;
   onRemoveMusic?: () => void;
   onPatchBackgroundMusic?: (patch: Partial<EditorCommitBackgroundMusic>) => void;
@@ -602,6 +614,9 @@ export default function InspectorPanel({
           onRemoveBackgroundMusic={onRemoveBackgroundMusic}
           musicWindow={musicWindow}
           onPatch={onPatchMix}
+          sourceAudioMix={sourceAudioMix}
+          sourceAudioOptions={sourceAudioOptions}
+          onSourceAudioMix={onSourceAudioMix}
           onClose={onClose}
         />
       ) : (
@@ -636,6 +651,9 @@ function MixInspector({
   backgroundMusic,
   backgroundMusicTrackDurationS,
   onPatch,
+  sourceAudioMix,
+  sourceAudioOptions,
+  onSourceAudioMix,
   onPickMusic,
   onRemoveMusic,
   onPatchBackgroundMusic,
@@ -657,6 +675,16 @@ function MixInspector({
   backgroundMusic?: EditorCommitBackgroundMusic | null;
   backgroundMusicTrackDurationS?: number | null;
   onPatch?: (level: number) => void;
+  sourceAudioMix?: string | null;
+  sourceAudioOptions: Array<{
+    mix: string;
+    label?: string;
+    source_media_id?: string;
+    audio_path: string;
+    audio_url: string;
+    duration_s: number;
+  }>;
+  onSourceAudioMix?: (mix: string) => void;
   onPickMusic?: (trackId: string) => void;
   onRemoveMusic?: () => void;
   onPatchBackgroundMusic?: (patch: Partial<EditorCommitBackgroundMusic>) => void;
@@ -694,6 +722,28 @@ function MixInspector({
       </div>
       <div className="mt-4">
         <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Song</p>
+        {sourceAudioOptions.length > 0 && (
+          <div className="mb-4 border-b border-zinc-200 pb-4">
+            <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Match audio</p>
+            <div className="grid grid-cols-3 gap-1 rounded-lg bg-zinc-100 p-1" role="group" aria-label="Match audio mix">
+              {sourceAudioOptions.map((option) => (
+                <Button
+                  key={option.mix}
+                  type="button"
+                  variant="ghost"
+                  aria-pressed={(sourceAudioMix ?? "interleaved") === option.mix}
+                  onClick={() => onSourceAudioMix?.(option.mix)}
+                  className={(sourceAudioMix ?? "interleaved") === option.mix ? "min-h-9 rounded-md bg-white px-2 text-[11px] font-semibold shadow-sm" : "min-h-9 rounded-md px-2 text-[11px] text-[#71717a]"}
+                >
+                  {option.label ?? (option.mix === "interleaved" ? "Interleaved" : `Source ${option.mix.replace("source_", "")}`)}
+                </Button>
+              ))}
+            </div>
+            <p className="mt-2 text-[11px] leading-4 text-[#71717a]">
+              Switches the prepared original audio without rerendering the video.
+            </p>
+          </div>
+        )}
         {currentMusicTrackId && (
           <Button
             type="button"
@@ -1900,8 +1950,8 @@ function TextInspector({
           <div className="mt-2 flex items-center gap-2">
             <Slider
               aria-label="This caption's font size"
-              min={36}
-              max={160}
+              min={CAPTION_SIZE_MIN}
+              max={CAPTION_SIZE_MAX}
               step={1}
               value={[cueEffectiveSizePx]}
               onValueChange={([value]) => onPatch({ cue_size_px: value })}
@@ -1948,7 +1998,7 @@ function TextInspector({
           </div>
           <div className="mt-2 flex items-center gap-2">
             <Select
-              value={SIZE_OPTIONS.includes(sizeValue) ? String(sizeValue) : "custom"}
+              value={EDITOR_TEXT_SIZE_OPTIONS.includes(sizeValue) ? String(sizeValue) : "custom"}
               onValueChange={(value) => {
                 const v = Number(value);
                 if (Number.isFinite(v) && v > 0) onPatch({ size_px: v, size_class: undefined });
@@ -1958,10 +2008,10 @@ function TextInspector({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {!SIZE_OPTIONS.includes(sizeValue) && (
+                {!EDITOR_TEXT_SIZE_OPTIONS.includes(sizeValue) && (
                   <SelectItem value="custom">{sizeValue}</SelectItem>
                 )}
-                {SIZE_OPTIONS.map((s) => (
+                {EDITOR_TEXT_SIZE_OPTIONS.map((s) => (
                   <SelectItem key={s} value={String(s)}>
                     {s}
                   </SelectItem>

@@ -819,6 +819,7 @@ def _seed_guided_specialist_brief(
             duration_s=24,
             creator_request=creator_request,
             mixed_media_timing=plan.strategy.mixed_media_timing,
+            montage_audio=plan.strategy.montage_audio,
             output_orientation=(
                 "portrait" if plan.strategy.mixed_media_timing is not None else None
             ),

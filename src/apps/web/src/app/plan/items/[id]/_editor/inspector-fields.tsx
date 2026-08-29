@@ -20,6 +20,7 @@ import { normalizeEditableHex } from "./editor-color";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { cn } from "@/lib/cn";
 
 export function HexInput({
   value,
@@ -67,6 +68,7 @@ export function FontSelect({
   value,
   onChange,
   ariaLabelPrefix = "Font",
+  triggerClassName,
 }: {
   value: string | null;
   onChange: (name: string) => void;
@@ -74,6 +76,8 @@ export function FontSelect({
    * FontSelect renders at once (Lane PR-A: "This caption" + "All captions"
    * both show a font picker). Defaults to the original label. */
   ariaLabelPrefix?: string;
+  /** Presentation-only sizing; font data and behavior remain shared. */
+  triggerClassName?: string;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -89,7 +93,10 @@ export function FontSelect({
           aria-haspopup="listbox"
           aria-expanded={open}
           aria-label={`${ariaLabelPrefix}: ${current}`}
-          className="flex h-9 w-full items-center justify-between rounded-lg px-3 text-left text-[13px] font-normal text-[#0c0c0e]"
+          className={cn(
+            "flex h-9 w-full items-center justify-between rounded-lg px-3 text-left text-[13px] font-normal text-[#0c0c0e]",
+            triggerClassName,
+          )}
         >
           <span className="truncate" style={{ fontFamily: family, fontWeight: weight }}>
             {current}

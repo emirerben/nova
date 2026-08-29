@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import tempfile
@@ -31,7 +32,9 @@ from app.schemas.edit_proposal import (
     parse_edit_proposal,
 )
 from app.services.content_plan_persona import load_owned_plan_persona_sync
-from app.services.edit_direction_planner import clamp_fast_montage_target_duration_s
+from app.services.edit_direction_planner import (
+    clamp_fast_montage_target_duration_s,
+)
 from app.services.edit_proposal_limits import (
     EDIT_PROPOSAL_TASK_HARD_TIME_LIMIT_S,
     EDIT_PROPOSAL_TASK_SOFT_TIME_LIMIT_S,
@@ -53,6 +56,8 @@ _TASK_LIMITS = {
     "time_limit": EDIT_PROPOSAL_TASK_HARD_TIME_LIMIT_S,
 }
 _CLIP_ANALYSIS_CONCURRENCY = 3
+_MONTAGE_REVIEW_CONCURRENCY = 3
+_MONTAGE_REVIEW_KEEP_THRESHOLD = 6.0
 
 
 def _locked_item(
@@ -433,6 +438,128 @@ def _attempt_is_active(
             and current.generation_attempt_id == attempt_id
             and current.status == "analyzing"
         )
+
+
+def _review_authored_montage(
+    output,  # noqa: ANN001
+    media: list[MediaRef],
+    creator_request: str,
+    job_id: str,
+) -> list[tuple[str, object]]:
+    """Have a vision model inspect the source windows chosen by the montage agent.
+
+    This is deliberately source-agnostic: any fast montage using at least two
+    distinct video sources can be reviewed. The reviewer sees the original
+    source file plus the exact proposed timestamps, so it can catch a valid
+    but visually weak window before the proposal is saved. Review is best
+    effort; a provider failure must not make a normal montage unavailable.
+    """
+
+    from app.agents._model_client import default_client  # noqa: PLC0415
+    from app.agents._runtime import RunContext  # noqa: PLC0415
+    from app.agents.montage_reviewer import (  # noqa: PLC0415
+        MontageReviewAgent,
+        MontageReviewCutInput,
+        MontageReviewInput,
+    )
+    from app.storage import download_generation_to_file  # noqa: PLC0415
+
+    cuts = list(getattr(output, "fast_cuts", None) or [])
+    cuts_by_source: dict[str, list] = {}
+    for cut in cuts:
+        cuts_by_source.setdefault(cut.media_id, []).append(cut)
+    video_by_id = {
+        ref.media_id: ref
+        for ref in media
+        if ref.kind == "video" and ref.media_id in cuts_by_source and ref.gcs_path
+    }
+    if len(video_by_id) < 2:
+        return []
+
+    def review_one(source_id: str) -> tuple[str, object] | None:
+        ref = video_by_id[source_id]
+        try:
+            with tempfile.TemporaryDirectory(prefix="montage-review-") as tmpdir:
+                local = os.path.join(tmpdir, Path(ref.gcs_path).name or "source.mp4")
+                download_generation_to_file(ref.gcs_path, local, generation=ref.generation)
+                uploaded = default_client().upload_media(local)
+                review = MontageReviewAgent(default_client()).run(
+                    MontageReviewInput(
+                        file_uri=uploaded.uri,
+                        source_media_id=source_id,
+                        source_duration_s=float(ref.duration_s or 0.0),
+                        creator_request=creator_request[:1000],
+                        proposed_cuts=[
+                            MontageReviewCutInput(
+                                cut_id=cut.cut_id,
+                                media_id=cut.media_id,
+                                source_start_s=cut.source_start_s,
+                                source_end_s=cut.source_end_s,
+                                output_duration_s=cut.output_duration_s,
+                            )
+                            for cut in cuts_by_source[source_id]
+                        ],
+                        candidate_moments=list((ref.analysis or {}).get("best_moments") or []),
+                    ),
+                    ctx=RunContext(job_id=job_id),
+                )
+                return source_id, review
+        except Exception as exc:  # noqa: BLE001 — review is fail-open
+            log.warning(
+                "edit_proposal.montage_review_failed",
+                source_media_id=source_id,
+                error=str(exc)[:240],
+            )
+            return None
+
+    executor = ThreadPoolExecutor(
+        max_workers=min(_MONTAGE_REVIEW_CONCURRENCY, len(video_by_id)),
+        thread_name_prefix="montage-review",
+    )
+    try:
+        futures = [executor.submit(review_one, source_id) for source_id in video_by_id]
+        results = [future.result() for future in futures]
+        return [result for result in results if result is not None]
+    finally:
+        executor.shutdown(wait=True)
+
+
+def _montage_review_feedback(reviews: list[tuple[str, object]]) -> str:
+    """Serialize only actionable visual findings for one generic replan pass."""
+
+    findings: list[dict[str, object]] = []
+    for source_id, review in reviews:
+        source_flagged = False
+        for cut_review in review.cut_reviews:
+            if cut_review.keep and cut_review.quality_score >= _MONTAGE_REVIEW_KEEP_THRESHOLD:
+                continue
+            source_flagged = True
+            finding = {
+                "source_media_id": source_id,
+                "cut_id": cut_review.cut_id,
+                "quality_score": cut_review.quality_score,
+                "keep": cut_review.keep,
+                "observed_action": cut_review.observed_action,
+                "feedback": cut_review.feedback,
+            }
+            if cut_review.replacement_start_s is not None:
+                finding["replacement_start_s"] = cut_review.replacement_start_s
+            if cut_review.replacement_end_s is not None:
+                finding["replacement_end_s"] = cut_review.replacement_end_s
+            findings.append(finding)
+        if review.needs_replan and not source_flagged:
+            findings.append(
+                {
+                    "source_media_id": source_id,
+                    "feedback": review.summary,
+                }
+            )
+    return (
+        ""
+        if not findings
+        else "The visual reviewer flagged these proposed windows: "
+        + json.dumps(findings, ensure_ascii=False)[:4500]
+    )
 
 
 def _attempt_wants_auto_finalize(
@@ -1026,6 +1153,7 @@ def _run_draft_attempt(
                     pace=brief.pace,
                     target_duration_s=target_duration_s,
                     mixed_media_timing=brief.mixed_media_timing,
+                    montage_audio=brief.montage_audio,
                     media=agent_media,
                 )
             )
@@ -1040,6 +1168,42 @@ def _run_draft_attempt(
                 direction=brief.direction,
                 error=str(exc),
             )
+        if output is not None and brief.direction == "fast_montage":
+            # Review only authored multi-source video montages. A single
+            # generic review pass is enough to catch weak windows without
+            # turning every ordinary photo montage into a vision round-trip.
+            reviews = _review_authored_montage(output, media, brief.creator_request, item_id)
+            review_feedback = _montage_review_feedback(reviews)
+            if review_feedback:
+                try:
+                    output = EditProposalAgent(default_client()).run(
+                        EditProposalAgentInput(
+                            idea=idea,
+                            theme=theme,
+                            direction=brief.direction,
+                            goal=brief.goal,
+                            creator_request=brief.creator_request,
+                            pace=brief.pace,
+                            target_duration_s=target_duration_s,
+                            mixed_media_timing=brief.mixed_media_timing,
+                            montage_audio=brief.montage_audio,
+                            review_feedback=review_feedback,
+                            media=agent_media,
+                        )
+                    )
+                    log.info(
+                        "edit_proposal.montage_replanned_after_visual_review",
+                        item_id=item_id,
+                        reviewed_sources=len(reviews),
+                    )
+                except TerminalError as exc:
+                    # The first authored plan remains safer than dropping a
+                    # proposal because an optional critic/replan call failed.
+                    log.warning(
+                        "edit_proposal.montage_replan_failed",
+                        item_id=item_id,
+                        error=str(exc)[:240],
+                    )
         # EditProposalAgent.parse()'s +/-5s tolerance checks output.duration_s
         # against target_duration_s, NOT against real footage — with a small
         # target (e.g. the MIN_GUIDED_DURATION_S=3 floor) that tolerance
@@ -1113,6 +1277,16 @@ def _run_draft_attempt(
                 else fallback_cuts
             ),
             mixed_media_timing=brief.mixed_media_timing,
+            montage_text_bindings=(
+                getattr(output, "montage_text_bindings", [])
+                if output is not None and getattr(output, "montage_text_bindings", [])
+                else []
+            ),
+            montage_audio=(
+                getattr(output, "montage_audio", None)
+                if output is not None and getattr(output, "montage_audio", None) is not None
+                else brief.montage_audio
+            ),
             output_orientation=brief.output_orientation,
         )
         if fallback_used:

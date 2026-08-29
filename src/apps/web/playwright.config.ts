@@ -26,7 +26,7 @@ export default defineConfig({
       testMatch: /mobile-.*\.spec\.ts/,
       use: {
         ...mobileChromium,
-        viewport: { width: 375, height: 812 },
+        viewport: { width: 360, height: 800 },
         isMobile: true,
         hasTouch: true,
       },

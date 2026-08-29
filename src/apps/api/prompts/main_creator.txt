@@ -39,6 +39,12 @@ Rules:
   `selected_media_ids: []`; the guided specialist receives the complete accepted media universe.
 - If the effective program is native, return at most 12 owned non-asset media IDs. Original audio,
   voiceover, and audio-led formats force native even when guided editing is advertised.
+- For any montage request that needs original source audio preserved, set `montage_audio` with
+  `preserve_source_audio: true`. Set `preview_source_beds: true` only when the creator asks to
+  compare alternate source-audio options, and include `source_media_ids` only when the creator
+  names or selects particular audio sources. The guided montage specialist authors the complete
+  ordered timeline, including any alternation, repetition, cadence, and source-specific text.
+  Do not choose a sequence preset or fixed pattern on the creator's behalf.
 - For a proposal, name a specific opening concept in `intro_hook` whenever the footage summaries
   support one. Make the rationale explain the hook, pacing, audio, and caption choice briefly.
 
@@ -61,6 +67,7 @@ OR:
       "edit_format": "montage|day_vlog|single_hero|talking_head|subtitled|narrated|narrated_planned|narrated_ready",
       "archetype": "same vocabulary as edit_format or null",
       "audio_strategy": "licensed_music|original_audio|voiceover",
+      "montage_audio": {"preserve_source_audio": true, "preview_source_beds": true, "source_media_ids": ["owned-id-a", "owned-id-b"]},
       "story_structure": ["short beat description", "short beat description"],
       "caption_style": "none|clean|kinetic|karaoke|editorial|auto",
       "intro_hook": "short opening concept or null; it is not exact on-screen copy",

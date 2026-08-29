@@ -6,13 +6,61 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **Fly deploy verification now accepts the exact dormant guard lifecycle Fly actually produces.** A guard may settle from `created` to `stopped` only when it has no start or exit event, remains immutable and unowned by Launch, and matches its signed metadata receipt; executed or altered guards still fail closed, while successful deploys can verify and remove the lock.
+## [0.57.0.2] — 2026-08-29
+
+### Fixed
+- **Saved guided slideshows now verify against their actual video frames.** Render receipts compare the committed timeline with the video stream instead of AAC-padded container duration, so a frame-correct 59.9-second edit is no longer mislabeled as a timeline/render mismatch.
+
+## [0.57.0.1] — 2026-08-28
+
+### Added
+- **Kria can now author generic source-aware montage edits.** Natural-language requests that combine multiple videos give the AI control of the ordered cuts, source reuse, timing, persistent source text, and original-audio intent without a hardcoded intercut recipe.
+- **Kria can now visually review its own multi-source montage windows before saving.** Weak moments are fed into one generic replan pass while provider failures remain fail-open.
+
+## [0.57.0.0] — 2026-08-28
+
+### Added
+- **Mobile creators can now edit against a direct thumbnail timeline.** A fixed near-left playhead, tap-to-seek clip selection, 44px source In/Out handles, pinch zoom, visible zoom controls, and Fit make precise trimming practical on phone-sized screens.
+- **Text can now be created, edited, and positioned directly in the video preview.** The title receives focus immediately, stays draggable within the canvas, and preserves one-step undo without forcing creators into a form sheet.
+- **A real-media mobile QA route now covers the complete core gesture loop.** The guarded fixture exercises touch trimming, ripple behavior, split, mute, delete, undo, scrubbing, and Save at both supported mobile viewports.
+
+### Changed
+- **Pocket editing keeps clip actions above an icon-led shadcn tool dock.** Split, Mute, Replace, Move, Reset, and Delete remain discoverable without shrinking touch targets or hiding capability reasons.
+- **Every mobile tool now opens a working editor state.** Captions, sounds, visuals, overlays, styles, and Kria expose functional actions while detailed changes stay in one shadcn sheet at a time.
+- **Uploaded visuals and overlays now appear as their actual media in the phone preview.** Creators can select and move overlays directly, then adjust source In/Out, scale, display mode, layer order, position, and duration with the same icon-led shadcn controls.
+- **Mobile Save still uses Nova's existing atomic editor commit and render path.** Timeline slots, source bounds, beat timing, conflict handling, and feature gates keep their current contracts.
+
+### Fixed
+- **Trim gestures now create exactly one undo step and ripple later clips from the canonical timeline.** Transition-overlap taps select the visible incoming clip, pinch zoom preserves its fixed-playhead anchor, and keyboard users retain a native seek control after touch gestures.
+- **Timeline thumbnails now match each clip's source window without stale or distorted frames.** Current requests clear old imagery immediately, decoding is globally bounded, raster memory is byte-capped, and playback/trim/resize updates are coalesced to display frames for smooth phone interaction.
+- **Mobile chrome now respects iPhone safe areas and the 44px touch contract.** The top bar clears status bars and notches, resize handles remain easy to acquire over video, and primary tool icons use the intended 24px size.
+
+## [0.56.0.6] — 2026-08-28
+
+### Fixed
+- **Saved guided edits with music now render successfully.** Revision rerenders validate UUID-shaped music identities but bind them using the text type stored by `MusicTrack`, preventing PostgreSQL's `text = uuid` error after a large Kria edit.
+
+## [0.56.0.5] — 2026-08-28
+
+### Fixed
+- **Fresh Kria requests no longer inherit obsolete clarification selectors.** Only the latest assistant turn can supply structured referent and pending-action context, so an earlier add-all capacity clarification cannot retarget a new image-only 0.2-second slideshow request or atomically reject an otherwise valid draft.
+
+
+## [0.56.0.4] — 2026-08-28
+
+### Fixed
+- **Guided Story bulk drafts keep their approved text identity through Save.** The conventional editor no longer adds a legacy synthetic intro tombstone to an unchanged guided title, so the complete 103-clip slideshow can pass the canonical revision identity check without weakening protection against unapproved text IDs.
+
+## [0.56.0.3] — 2026-08-28
+
+### Fixed
+- **Large guided slideshows now survive Save.** The editor serializes zero-duration hard cuts using the commit API's canonical null value, while the backend also accepts and normalizes older guided drafts that send `0`; animated transitions still require at least 0.1 seconds.
 
 ## [0.56.0.2] — 2026-08-28
 
 ### Fixed
 - **Fly deploys can acquire the production mutation guard again.** Guard Machines are created from the unique deployment tag and still verified against the fleet's exact immutable digest, avoiding the invalid double-digest image reference that blocked the Kria backend rollout.
 - **“Stack the images together” now creates the intended fastest slideshow.** Kria gathers every selected image into consecutive individual 0.2-second clips, preserves video timing, and creates no Card Stack, Film Strip, zoom, or Ken Burns motion unless the creator explicitly asks for that Creator Block.
-
 ## [0.56.0.1] — 2026-08-28
 
 ### Fixed

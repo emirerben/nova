@@ -22,6 +22,32 @@ const element: TextElement = {
 };
 
 describe("buildEditorCommitRequest", () => {
+  it("serializes guided zero-duration cuts using the legacy null wire value", () => {
+    const body = buildEditorCommitRequest({
+      elements: [],
+      textDirty: false,
+      timelineDirty: true,
+      slots: Array.from({ length: 103 }, (_, index) => ({
+        slotId: `slot-${index}`,
+        clipIndex: index,
+        inS: 0,
+        durationS: index < 58 ? 0.2 : 0.867,
+        durationBeats: null,
+        removed: false,
+        transitionAfter: "cut" as const,
+        transitionDurationS: 0,
+      })),
+      titleDirty: false,
+      title: "",
+      variant: { render_generation_id: "gen-current" },
+    });
+
+    expect(body.timeline_slots).toHaveLength(103);
+    expect(body.timeline_slots?.every(
+      (slot) => slot.transition_duration_s === null,
+    )).toBe(true);
+  });
+
   it("maps shell state to the backend editor-commit body", () => {
     const body = buildEditorCommitRequest({
       elements: [element],

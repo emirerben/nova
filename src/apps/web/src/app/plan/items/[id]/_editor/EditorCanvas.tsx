@@ -10,14 +10,15 @@
  *  - selection box (lime stroke) + 4 corner handles (white core, 1px ink halo)
  *  - drag = move (x_frac / y_frac), corner-drag = scale (size_px)
  *  - click video/empty = deselect; overlap hit-test topmost + click-cycling
- *  - double-click focuses the inspector textarea (select-all) — no
- *    contenteditable on canvas, ever
+ *  - Pocket: selected text edits in place; desktop double-click keeps the
+ *    inspector textarea contract
  *  - hover: cursor pointer + 1px zinc-400/60 ghost outline
  *  - selecting during playback never pauses
  * Fullscreen button bottom-right ONLY — the "Basic mode" pill is CUT (D7).
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Move } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type {
   CameraEffect,
@@ -256,6 +257,9 @@ export default function EditorCanvas({
   captionTapSelect = false,
   onClearSelection,
   onPatchBar,
+  onEditText,
+  inlineTextEditing = false,
+  textEditable = false,
   onPatchOverlay,
   onPreviewVisualBlock,
   onPatchVisualBlock,
@@ -265,6 +269,8 @@ export default function EditorCanvas({
   onDuration,
   onPlayingChange,
   onReloadSource,
+  sourceAudioMix = "interleaved",
+  sourceAudioOptions = [],
   virtualPreview,
   carouselMoment,
   carouselClips = [],
@@ -321,6 +327,10 @@ export default function EditorCanvas({
   captionTapSelect?: boolean;
   onClearSelection: () => void;
   onPatchBar: (id: string, patch: Partial<Omit<TextElementBar, "id" | "role">>) => void;
+  onEditText?: (id: string, text: string) => void;
+  /** Pocket only: selected non-lyric text becomes an on-canvas editor. */
+  inlineTextEditing?: boolean;
+  textEditable?: boolean;
   onPatchOverlay?: (id: string, patch: Partial<MediaOverlay>) => void;
   onPreviewVisualBlock?: (id: string, patch: Partial<Extract<VisualBlock, { kind: "media" }>>) => void;
   onPatchVisualBlock?: (id: string, patch: Partial<Extract<VisualBlock, { kind: "media" }>>) => void;
@@ -334,6 +344,15 @@ export default function EditorCanvas({
   /** Re-fetch the variant (re-signs an expired preview URL) on the error tile's
    * Retry — the shell re-runs getPlanItem (plan §9 canvas error state). */
   onReloadSource?: () => void;
+  sourceAudioMix?: string | null;
+  sourceAudioOptions?: Array<{
+    mix: string;
+    label?: string;
+    source_media_id?: string;
+    audio_path: string;
+    audio_url: string;
+    duration_s: number;
+  }>;
   virtualPreview?: VirtualPreviewController | null;
   /** Staged/persisted carousel-moment config — drives the placeholder block
    *  preview (CarouselBlockPreview) mounted when the playhead is inside its
@@ -380,6 +399,7 @@ export default function EditorCanvas({
   const viewportRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const overlayRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const inlineTextEditorRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const mediaOverlayRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const virtualDeckAContainerRef = useRef<HTMLDivElement>(null);
   const virtualDeckBContainerRef = useRef<HTMLDivElement>(null);
@@ -400,6 +420,23 @@ export default function EditorCanvas({
   const [dragOverride, setDragOverride] = useState<DragOverride | null>(null);
   const reducedMotion = usePrefersReducedMotion();
   const settleAuthoredMotion = !playbackClock && reducedMotion;
+
+  useEffect(() => {
+    if (!inlineTextEditing || !selectedTextId || !textEditable) return;
+    const frame = window.requestAnimationFrame(() => {
+      const editor = inlineTextEditorRefs.current.get(selectedTextId);
+      if (!editor) return;
+      editor.focus({ preventScroll: true });
+      const selection = window.getSelection();
+      if (!selection) return;
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [inlineTextEditing, selectedTextId, textEditable]);
+
   const renderedIdentity = variant.base_video_url
     ? stableVideoSourceIdentity(variant.base_video_url, variant.base_video_path ?? undefined)
     : `${variant.variant_id}:${variant.render_finished_at ?? ""}`;
@@ -573,6 +610,31 @@ export default function EditorCanvas({
   };
 
   const src = variant.base_video_url ?? variant.output_url ?? null;
+  const sourceAudioRef = useRef<HTMLAudioElement | null>(null);
+  const selectedSourceAudio = useMemo(
+    () => sourceAudioOptions.find((option) => option.mix === (sourceAudioMix ?? "interleaved")),
+    [sourceAudioMix, sourceAudioOptions],
+  );
+  useEffect(() => {
+    const audio = sourceAudioRef.current;
+    if (!audio || !selectedSourceAudio || selectedSourceAudio.mix === "interleaved") {
+      audio?.pause();
+      return;
+    }
+    audio.src = selectedSourceAudio.audio_url;
+    audio.load();
+    audio.currentTime = Math.max(0, committedCurrentTime);
+    audio.muted = false;
+    if (playing) void audio.play().catch(() => {});
+    else audio.pause();
+  }, [committedCurrentTime, playing, selectedSourceAudio]);
+  useEffect(() => {
+    const audio = sourceAudioRef.current;
+    if (!audio || !selectedSourceAudio || selectedSourceAudio.mix === "interleaved") return;
+    if (Math.abs(audio.currentTime - committedCurrentTime) > 0.15) {
+      audio.currentTime = Math.max(0, committedCurrentTime);
+    }
+  }, [committedCurrentTime, selectedSourceAudio]);
   const hasPreview = Boolean(src || virtualPreview);
   const virtualVideoARef = virtualPreview?.videoAProps.ref;
   const virtualVideoBRef = virtualPreview?.videoBProps.ref;
@@ -1468,6 +1530,14 @@ export default function EditorCanvas({
                 No preview for this variant yet
               </div>
             )}
+            {selectedSourceAudio && selectedSourceAudio.mix !== "interleaved" && (
+              <audio
+                ref={sourceAudioRef}
+                data-testid="intercut-source-audio-preview"
+                preload="auto"
+                className="hidden"
+              />
+            )}
 
             {!virtualPreview &&
               hasPreview &&
@@ -1641,6 +1711,13 @@ export default function EditorCanvas({
                       : 0;
                   const isSelected = selectedTextId === layout.id;
                   const isLyric = bar?.role === "lyric_line";
+                  const isInlineEditable =
+                    isSelected &&
+                    inlineTextEditing &&
+                    textEditable &&
+                    !isLyric &&
+                    !isCaptionBar(bar) &&
+                    onEditText != null;
                   const isHovered = hoveredId === layout.id && !isSelected;
                   const isFlashing = flashTextIds?.has(layout.id) ?? false;
                   const zIndex =
@@ -1740,10 +1817,59 @@ export default function EditorCanvas({
                       onDoubleClick={(e) => {
                         e.stopPropagation();
                         onSelectText(layout.id);
-                        onFocusContent();
+                        if (inlineTextEditing && !isCaptionBar(bar)) {
+                          window.requestAnimationFrame(() => {
+                            inlineTextEditorRefs.current
+                              .get(layout.id)
+                              ?.focus({ preventScroll: true });
+                          });
+                        } else {
+                          onFocusContent();
+                        }
                       }}
                     >
-                      {effect === "staggered-slice" ? (
+                      {isInlineEditable ? (
+                        <div
+                          ref={(el) => {
+                            if (el) {
+                              inlineTextEditorRefs.current.set(layout.id, el);
+                              if (
+                                document.activeElement !== el &&
+                                el.textContent !== layout.text
+                              ) {
+                                el.textContent = layout.text;
+                              }
+                            } else {
+                              inlineTextEditorRefs.current.delete(layout.id);
+                            }
+                          }}
+                          role="textbox"
+                          aria-label="Text content"
+                          aria-multiline="true"
+                          contentEditable
+                          suppressContentEditableWarning
+                          spellCheck
+                          className="min-w-[1ch] cursor-text select-text whitespace-pre-wrap rounded-[2px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+                          style={textElementContentStyle({
+                            layout,
+                            fontSize: `${motionFontPx}px`,
+                            strokeWidth: strokePx > 0 ? `${strokePx}px` : null,
+                            canvasPixelCssSize: `${stageSize.h / canvas.h}px`,
+                          })}
+                          onInput={(event) => {
+                            onEditText?.(
+                              layout.id,
+                              event.currentTarget.textContent ?? "",
+                            );
+                          }}
+                          onPointerDown={(event) => event.stopPropagation()}
+                          onKeyDown={(event) => {
+                            if (event.key !== "Escape") return;
+                            event.preventDefault();
+                            event.currentTarget.blur();
+                          }}
+                        />
+                      ) : effect === "staggered-slice" ? (
                         <StaggeredSliceText
                           text={layout.text}
                           tLocal={frameTime - layout.start_s}
@@ -1831,13 +1957,13 @@ export default function EditorCanvas({
                               tabIndex={-1}
                               aria-label={`Resize text (${corner})`}
                               onPointerDown={(e) => onHandlePointerDown(e, layout.id)}
-                              className="absolute h-6 w-6 touch-none bg-transparent p-0 hover:bg-transparent"
+                              className="absolute h-11 w-11 touch-none bg-transparent p-0 hover:bg-transparent"
                               style={{
                                 cursor: corner === "nw" || corner === "se" ? "nwse-resize" : "nesw-resize",
-                                top: corner.startsWith("n") ? -13 : undefined,
-                                bottom: corner.startsWith("s") ? -13 : undefined,
-                                left: corner.endsWith("w") ? -13 : undefined,
-                                right: corner.endsWith("e") ? -13 : undefined,
+                                top: corner.startsWith("n") ? -23 : undefined,
+                                bottom: corner.startsWith("s") ? -23 : undefined,
+                                left: corner.endsWith("w") ? -23 : undefined,
+                                right: corner.endsWith("e") ? -23 : undefined,
                               }}
                             >
                               <span
@@ -1855,13 +1981,13 @@ export default function EditorCanvas({
                               tabIndex={-1}
                               aria-label={`Adjust text width (${side})`}
                               onPointerDown={(e) => onWidthHandlePointerDown(e, layout.id, side)}
-                              className="absolute h-7 w-7 touch-none bg-transparent p-0 hover:bg-transparent"
+                              className="absolute h-11 w-11 touch-none bg-transparent p-0 hover:bg-transparent"
                               style={{
                                 cursor: "ew-resize",
                                 top: "50%",
                                 transform: "translateY(-50%)",
-                                left: side === "left" ? -15 : undefined,
-                                right: side === "right" ? -15 : undefined,
+                                left: side === "left" ? -23 : undefined,
+                                right: side === "right" ? -23 : undefined,
                               }}
                             >
                               <span
@@ -1871,6 +1997,21 @@ export default function EditorCanvas({
                               />
                             </Button>
                           ))}
+                          {isInlineEditable && (
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="icon"
+                              aria-label="Move text"
+                              onPointerDown={(event) => {
+                                event.stopPropagation();
+                                onOverlayPointerDown(event, layout.id);
+                              }}
+                              className="absolute -right-12 -top-12 h-11 w-11 touch-none rounded-full border border-zinc-200 bg-white/95 text-zinc-900 shadow-sm hover:bg-white"
+                            >
+                              <Move aria-hidden className="h-4 w-4" />
+                            </Button>
+                          )}
                         </div>
                       )}
                     </div>
@@ -2101,13 +2242,13 @@ function MediaOverlayCard({
                 tabIndex={-1}
                 aria-label={`Resize overlay (${corner})`}
                 onPointerDown={(e) => onHandlePointerDown(e, card)}
-                className="absolute h-6 w-6 touch-none bg-transparent p-0 hover:bg-transparent"
+                className="absolute h-11 w-11 touch-none bg-transparent p-0 hover:bg-transparent"
                 style={{
                   cursor: corner === "nw" || corner === "se" ? "nwse-resize" : "nesw-resize",
-                  top: corner.startsWith("n") ? -13 : undefined,
-                  bottom: corner.startsWith("s") ? -13 : undefined,
-                  left: corner.endsWith("w") ? -13 : undefined,
-                  right: corner.endsWith("e") ? -13 : undefined,
+                  top: corner.startsWith("n") ? -23 : undefined,
+                  bottom: corner.startsWith("s") ? -23 : undefined,
+                  left: corner.endsWith("w") ? -23 : undefined,
+                  right: corner.endsWith("e") ? -23 : undefined,
                 }}
               >
                 <span

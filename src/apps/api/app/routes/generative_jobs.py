@@ -35,7 +35,7 @@ from typing import Any, Literal
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -803,7 +803,7 @@ class TimelineSlotEdit(BaseModel):
     duration_s: float | None = None
     removed: bool = False
     transition_after: Literal["cut", "crossfade", "dip_to_black", "flash"] = "cut"
-    transition_duration_s: float | None = Field(default=None, ge=0.1, le=1.0)
+    transition_duration_s: float | None = Field(default=None, ge=0.0, le=1.0)
     # None means an older client omitted the field; resolution preserves the
     # current slot value in that case. Explicit "none" remains the clear action.
     look_preset: LookPreset | None = None
@@ -817,6 +817,20 @@ class TimelineSlotEdit(BaseModel):
         if value is None:
             raise ValueError("look_preset cannot be null")
         return value
+
+    @model_validator(mode="after")
+    def normalize_cut_transition_duration(self) -> TimelineSlotEdit:
+        """Accept the guided revision's canonical zero-duration hard cut.
+
+        Timeline drafts use ``0`` for cuts while the legacy commit payload used
+        ``None``. Normalize both representations here so a valid guided draft
+        cannot fail Save merely because it crossed that adapter boundary.
+        """
+        if self.transition_after == "cut":
+            self.transition_duration_s = None
+        elif self.transition_duration_s is not None and self.transition_duration_s < 0.1:
+            raise ValueError("animated transition duration must be at least 0.1 seconds")
+        return self
 
 
 class TimelineEditRequest(BaseModel):
@@ -1568,6 +1582,33 @@ def _variants_for_response(job: Job) -> list[dict]:
                         base_poster_path=base_poster_path,
                         exc_info=True,
                     )
+        source_audio_options = v.get("source_audio_options")
+        if isinstance(source_audio_options, list):
+            signed_audio_options = []
+            for option in source_audio_options:
+                if not isinstance(option, dict):
+                    continue
+                audio_path = option.get("audio_path")
+                if not audio_path:
+                    signed_audio_options.append(option)
+                    continue
+                try:
+                    signed_audio_options.append(
+                        {
+                            **option,
+                            "audio_url": signed_get_url(audio_path, PLAYBACK_URL_TTL_MIN),
+                        }
+                    )
+                except Exception:  # noqa: BLE001 — alternate audio is optional
+                    log.warning(
+                        "variant_source_audio_resign_failed",
+                        job_id=str(job.id),
+                        variant_id=v.get("variant_id"),
+                        audio_path=audio_path,
+                        exc_info=True,
+                    )
+                    signed_audio_options.append(option)
+            v = {**v, "source_audio_options": signed_audio_options}
         # Overlay-clean base (plan 008 live edit): the un-carded video captured
         # before the first overlay burn. When present, the hero can play THIS
         # and render every card as a live CSS layer — timeline edits reflect
@@ -3518,6 +3559,7 @@ def validate_text_elements_payload(
     *,
     require_base: bool,
     strict_drop: bool = False,
+    append_projection_tombstones: bool = True,
 ) -> tuple[list[dict], bool]:
     """Shared text-element SECTION validation (PUT /text-elements + editor-commit E2).
 
@@ -3718,11 +3760,12 @@ def validate_text_elements_payload(
                     detail=complexity_error,
                 )
             validated = [e.model_dump() for e in coerced]
-            validated = append_ai_text_tombstones(variant, validated)
+            if append_projection_tombstones:
+                validated = append_ai_text_tombstones(variant, validated)
     elif variant.get("text_elements_user_edited"):
         # Explicit empty list = delete all generated AI text. Persist tombstones
         # so the read adapter does not resurrect projected bars on reload.
-        validated = append_ai_text_tombstones(variant, [])
+        validated = append_ai_text_tombstones(variant, []) if append_projection_tombstones else []
     return validated, _is_first_sequence_edit
 
 
@@ -7387,6 +7430,12 @@ def prepare_editor_commit(
             payload.text_elements,
             require_base=payload.timeline_slots is None and not text_requires_full_render,
             strict_drop=True,
+            # Guided v2 owns text identity and deletions in the canonical
+            # revision/tombstone document.  The legacy variant projection can
+            # synthesize a second intro identity for the same guided title,
+            # which makes an unchanged full-lane Save fail the revision's
+            # exact-ID guard.
+            append_projection_tombstones=not guided_v2,
         )
         if not guided_v2:
             _require_guided_story_text_ids(variant, validated_elements)

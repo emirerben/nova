@@ -10,6 +10,24 @@ describe("verifyCommittedRenderDuration", () => {
     }).ok).toBe(true);
   });
 
+  it("accepts a frame-quantized 30 fps video stream at the one-frame boundary", () => {
+    expect(verifyCommittedRenderDuration({
+      expectedDurationS: 59.9,
+      expectedGeneration: "g4",
+      expectedRevisionHash: "rev-4",
+      variant: {
+        output_url: "https://example.test/video.mp4",
+        render_generation_id: "g4",
+        render_receipt: {
+          revision_hash: "rev-4",
+          expected_duration_s: 59.9,
+          actual_duration_s: 59.933,
+          verified: true,
+        },
+      },
+    }).ok).toBe(true);
+  });
+
   it("rejects a ready video whose duration disagrees with the staged timeline", () => {
     const result = verifyCommittedRenderDuration({
       expectedDurationS: 10.6,
