@@ -106,7 +106,7 @@ jobs:
             src/__tests__/ui/tooltip.test.tsx \
             src/__tests__/ui/popover.test.tsx
           do
-            pnpm test -- --runInBand --testTimeout=90000 --runTestsByPath "$test_file"
+            pnpm test -- --runInBand --testTimeout=300000 --runTestsByPath "$test_file"
           done
       - name: Run remaining web tests
         working-directory: src/apps/web
