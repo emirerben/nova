@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.57.0.4] — 2026-08-29
+
+### Fixed
+- **Fly deploy verification now accepts a newly deployed render worker that is safely dormant.** A stopped managed worker with the exact deployed digest and no start or exit events is a valid scale-to-zero state; crash exits and stopped always-on process groups still fail closed.
+
 ## [0.57.0.3] — 2026-08-29
 
 ### Fixed

@@ -437,6 +437,39 @@ def test_launcher_accepts_autostopped_managed_machines_on_the_exact_digest(
     assert (tmp_path / "destroy.args").read_text().splitlines()[-1] == MACHINE_ID
 
 
+def test_launcher_accepts_never_started_dormant_worker_on_the_exact_digest(
+    tmp_path: Path,
+) -> None:
+    created = _machine("created", include_start_event=False)
+    stopped = _machine("stopped", signal=-1, guest_signal=-1)
+
+    def dormant_worker_inventory(*guards: dict) -> list[dict]:
+        return [
+            _managed_machine("api", autostop=True),
+            _managed_machine("worker", state="stopped"),
+            _managed_machine("light"),
+            _managed_machine("autoplace"),
+            *guards,
+        ]
+
+    result = _run(
+        tmp_path,
+        [_image(), _image()],
+        machine_sequence=[
+            dormant_worker_inventory(),
+            dormant_worker_inventory(),
+            dormant_worker_inventory(),
+            dormant_worker_inventory(created),
+            dormant_worker_inventory(created),
+            dormant_worker_inventory(stopped),
+        ],
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "start.args").read_text().splitlines()[-1] == MACHINE_ID
+    assert (tmp_path / "destroy.args").read_text().splitlines()[-1] == MACHINE_ID
+
+
 def test_launcher_rejects_managed_machine_that_never_settles(tmp_path: Path) -> None:
     transitional = _inventory(state="starting")
     result = _run(
@@ -479,7 +512,7 @@ def test_launcher_rejects_stopped_machine_without_documented_lifecycle(
     elif failure == "autoplace-stopped":
         machines[3] = _managed_machine("autoplace", state="stopped")
     else:
-        machines[1] = _managed_machine("worker", state="stopped")
+        machines[1] = _managed_machine("worker", state="stopped", oom_killed=True)
 
     result = _run(
         tmp_path,
@@ -1466,6 +1499,7 @@ def test_workflows_pin_revision_keep_historical_lock_and_gate_deploy() -> None:
         assert "managed_fleet_is_operationally_stable" in workflow
         assert '.fly_process_group) == "light"' in workflow
         assert '.fly_process_group) == "autoplace"' in workflow
+        assert "($lifecycle_events | length == 0)" in workflow
         assert "$last_exit.requested_stop == true" in workflow
         assert '.autostop == true or .autostop == "stop"' in workflow
         assert "do not satisfy the required stable process topology" in workflow
