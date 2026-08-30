@@ -504,6 +504,34 @@ def _load_motion_preset_params() -> dict[str, dict[str, dict[str, Any]]]:
 _MOTION_PRESET_PARAMS = _load_motion_preset_params()
 
 
+def _load_motion_preset_defaults() -> dict[str, dict[str, Any]]:
+    """Resolve authoring defaults from the same immutable Creator Block catalog."""
+    source = Path(__file__).resolve()
+    candidates = (
+        Path("/app/motion-runtime/creator-blocks.catalog.json"),
+        *(
+            parent / "packages" / "motion-runtime" / "creator-blocks.catalog.json"
+            for parent in source.parents
+        ),
+    )
+    catalog_path = next((candidate for candidate in candidates if candidate.is_file()), None)
+    if catalog_path is None:
+        raise RuntimeError("Creator Block catalog is missing")
+    catalog = json.loads(catalog_path.read_text())
+    defaults_by_preset: dict[str, dict[str, Any]] = {}
+    for preset in catalog["presets"]:
+        if not preset.get("ai_exposed"):
+            continue
+        defaults = dict(preset.get("defaults") or {})
+        if "asset_ids" not in defaults and "assets" in defaults:
+            defaults["asset_ids"] = defaults.pop("assets")
+        defaults_by_preset[str(preset["preset_id"])] = defaults
+    return defaults_by_preset
+
+
+_MOTION_PRESET_DEFAULTS = _load_motion_preset_defaults()
+
+
 def _load_motion_preset_controls() -> dict[str, dict[str, dict[str, Any]]]:
     """Resolve per-preset control bounds from the same generated catalog."""
     source = Path(__file__).resolve()
@@ -610,6 +638,13 @@ def _snapshot_list(snapshot: dict, keys: Iterable[str]) -> list:
         if isinstance(value, list):
             return value
     return []
+
+
+def _wire_section_compact(snapshot: dict, section: str) -> bool:
+    compact = snapshot.get("wire_compact")
+    return (
+        isinstance(compact, dict) and compact.get("version") == 1 and compact.get(section) is True
+    )
 
 
 def _snapshot_len(snapshot: dict, keys: Iterable[str]) -> int:
@@ -907,16 +942,34 @@ def _format_snapshot(snapshot: dict) -> str:
         for entry in catalog[:12]:
             if not isinstance(entry, dict):
                 continue
+            preset_id = str(entry.get("preset_id") or "")
+            parameter_rules = _MOTION_PRESET_PARAMS.get(preset_id, {})
+            control_rules = _MOTION_PRESET_CONTROLS.get(preset_id, {})
+            entry_parameters = entry.get("parameters")
+            if not isinstance(entry_parameters, list) and _wire_section_compact(
+                snapshot, "motion_catalog"
+            ):
+                entry_parameters = [{**rule, "key": key} for key, rule in parameter_rules.items()]
+            entry_controls = entry.get("controls")
+            if not isinstance(entry_controls, list) and _wire_section_compact(
+                snapshot, "motion_catalog"
+            ):
+                entry_controls = [{**rule, "key": key} for key, rule in control_rules.items()]
+            entry_defaults = entry.get("defaults")
+            if not isinstance(entry_defaults, dict) and _wire_section_compact(
+                snapshot, "motion_catalog"
+            ):
+                entry_defaults = _MOTION_PRESET_DEFAULTS.get(preset_id, {})
             default_params = _clean_prompt_data(
-                json.dumps(entry.get("defaults") or {}, ensure_ascii=False),
+                json.dumps(entry_defaults or {}, ensure_ascii=False),
                 max_chars=240,
             )
             controls = _clean_prompt_data(
-                json.dumps(entry.get("controls") or [], ensure_ascii=False),
+                json.dumps(entry_controls or [], ensure_ascii=False),
                 max_chars=500,
             )
             parameters = _clean_prompt_data(
-                json.dumps(entry.get("parameters") or [], ensure_ascii=False),
+                json.dumps(entry_parameters or [], ensure_ascii=False),
                 max_chars=700,
             )
             lines.append(
@@ -1952,6 +2005,8 @@ def _bulk_source_catalog_present(snapshot: dict) -> bool:
 
 def _bulk_selector_has_authoritative_rows(snapshot: dict, selector: dict[str, Any]) -> bool:
     if selector.get("scope") == "timeline":
+        if _wire_section_compact(snapshot, "timeline"):
+            return False
         return isinstance(snapshot.get("slots"), list)
     return _bulk_source_catalog_present(snapshot)
 

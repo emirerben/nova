@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.58.0.1] — 2026-08-30
+## [0.58.1.1] — 2026-08-30
 
 ### Added
 - **Maintainers can reproduce a real guided edit safely on localhost.** A read-only production clone command mirrors the selected item's media into fixture-only filesystem storage, remaps ownership to the local QA account, and supports isolated API, web, database, and Redis settings so concurrent worktrees cannot cross their preview or Save state.
@@ -10,6 +10,11 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Guided mixed-media edits keep the timeline, live preview, and Save on one revision.** Still images use browser-safe previews instead of video elements, crop/resize/delete changes remain synchronized, and Save uses the timeline's paired revision baseline rather than a lagging status response.
 - **Failed editor saves now explain the actual constraint.** Source-bound and timeline validation messages remain visible so creators can correct the edit without losing their staged work.
+
+## [0.58.1.0] — 2026-08-30
+
+### Fixed
+- **Kria can now continue editing large guided-story videos in the first chat turn.** Once the API advertises compact-snapshot support, oversized editor snapshots stay within the request budget without losing clip identity, lyric locks, guided titles, or motion controls; older API deployments keep receiving the legacy complete snapshot during rollout.
 
 ## [0.58.0.0] — 2026-08-28
 

@@ -666,6 +666,55 @@ def test_format_snapshot_renders_beat_marks() -> None:
     assert "median interval between listed marks" in rendered
 
 
+def test_compact_timeline_uses_source_summary_for_bulk_integrity() -> None:
+    selector = {"scope": "timeline", "media_kind": "image", "quantifier": "all"}
+    full = _bulk_snapshot()
+    stamped = _stamp_pending_integrity(
+        {"op": "stack_images", "selector": selector},
+        full,
+    )
+    expected = stamped["integrity"]
+    compact = {
+        "allowed_op_families": ["clip"],
+        "guided_revision": full["guided_revision"],
+        "wire_compact": {"version": 1, "timeline": True},
+        "slots": [
+            {
+                "duration_s": row["duration_s"],
+                "output_start_s": float(index),
+                "media_kind": row["kind"],
+            }
+            for index, row in enumerate(full["slots"])
+        ],
+        "source_pool_summary": {
+            "digest": expected["source_digest"],
+            "total_count": expected["source_count"],
+            "ready_unused_count": 2,
+            "ready_unused_by_kind": {"image": 2, "video": 0},
+            "selectors": {
+                "timeline:image": {
+                    "target_count": expected["target_count"],
+                    "selection_digest": expected["selection_digest"],
+                }
+            },
+        },
+    }
+
+    out = _parse(
+        [{"op": "set_media_duration", "selector": selector, "duration_s": 0.2}],
+        snapshot=compact,
+    )
+
+    assert out.ops == [
+        {
+            "op": "set_media_duration",
+            "selector": selector,
+            "duration_s": 0.2,
+            "integrity": expected,
+        }
+    ]
+
+
 def test_copilot_prompt_resolves_numbered_prior_answer_before_draft_indices() -> None:
     rendered = _agent().render_prompt(
         EditCopilotInput(
@@ -4217,6 +4266,75 @@ def test_creator_block_catalog_is_rendered_without_paths() -> None:
     assert "speed=1.25 easing='ease-out-cubic' hold_frames=18" in rendered
     assert "image_1" in rendered
     assert "gcs_path" not in rendered
+
+
+def test_compact_creator_block_catalog_expands_server_owned_schemas() -> None:
+    from app.agents.edit_copilot import _format_snapshot, _parse_op, _ParseState
+
+    snapshot = _motion_snapshot()
+    snapshot["wire_compact"] = {"version": 1, "motion_catalog": True}
+    rendered = _format_snapshot(snapshot)
+
+    assert "MAKE IT WILD" in rendered
+    assert '"key": "text"' in rendered
+    assert '"max_length": 32' in rendered
+    assert '"key": "speed"' in rendered
+    assert '"minimum": 0.25' in rendered
+    assert '"asset_ids": []' in rendered
+    assert '"assets": []' not in rendered
+    assert _parse_op(
+        {
+            "op": "add_motion_block",
+            "preset_id": "kinetic_word",
+            "start_s": 2.5,
+            "end_s": 4.0,
+            "params": {"text": "NEW HOOK"},
+        },
+        snapshot,
+        _ParseState(0.9),
+    ) == {
+        "op": "add_motion_block",
+        "preset_id": "kinetic_word",
+        "start_s": 2.5,
+        "end_s": 4.0,
+        "params": {"text": "NEW HOOK"},
+        "intensity": 0.72,
+    }
+
+
+def test_compact_text_bars_keep_legacy_lyric_lock_identity() -> None:
+    snapshot = {
+        "allowed_op_families": ["text"],
+        "wire_compact": {"version": 1, "text_bars": True},
+        "text_bars": [
+            {
+                "id": "lyric_0",
+                "role": "lyric_line",
+                "text": "locked lyric",
+                "start_s": 0,
+                "end_s": 1,
+            },
+            {
+                "id": "guided-title",
+                "role": "generative_intro",
+                "text": "Old title",
+                "start_s": 0,
+                "end_s": 1,
+            },
+        ],
+    }
+
+    assert _parse([{"op": "remove_text", "bar_index": 0}], snapshot=snapshot).ops == []
+    assert (
+        _parse(
+            [{"op": "set_text_timing", "bar_index": 0, "start_s": 0.1, "end_s": 0.9}],
+            snapshot=snapshot,
+        ).ops
+        == []
+    )
+    assert _parse([{"op": "set_title", "title": "New title"}], snapshot=snapshot).ops == [
+        {"op": "edit_text", "bar_index": 1, "text": "New title"}
+    ]
 
 
 def test_format_snapshot_speech_caps_enforced_on_overflow() -> None:

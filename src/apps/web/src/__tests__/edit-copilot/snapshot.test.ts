@@ -1046,6 +1046,147 @@ describe("render_step_summary + recent_edit_history", () => {
     expect(snapshot.recent_edit_history).toBeUndefined();
     expect(snapshot.render_step_summary).toBeUndefined();
   });
+
+  it("keeps a maximum guided timeline below the wire budget with motion enabled", () => {
+    const sourcePool = Array.from({ length: EDITOR_MAX_TIMELINE_SLOTS }, (_, index) => ({
+      clip_index: index,
+      media_id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      kind: (index % 2 === 0 ? "image" : "video") as "image" | "video",
+      generation: `1788076800${String(index).padStart(6, "0")}`,
+      duration_s: 8,
+      used: true,
+      status: "ready",
+    }));
+    const slots = sourcePool.map((source, index) => slot({
+      key: `guided-slot-${index}`,
+      slotId: `guided-slot-${index}`,
+      clipIndex: index,
+      inS: index % 3,
+      durationS: 0.5,
+      momentDescription: `夏の日の思い出 🎬 ${index} ${"x".repeat(80)}`,
+    }));
+
+    const snapshot = buildCopilotSnapshot(
+      [bar({ text: "A guided story with every source" })],
+      slots,
+      sourcePool,
+      {
+        text_elements: true,
+        timeline: true,
+        timeline_max_slots: EDITOR_MAX_TIMELINE_SLOTS,
+        motion_scenes: true,
+        copilot_snapshot_wire_version: 1,
+      },
+      [],
+      { sourcePool, motionScenesEnabled: true, evolvingTypeEnabled: true },
+    );
+    const wire = JSON.parse(JSON.stringify(snapshot)) as typeof snapshot;
+
+    expect(byteLength(wire)).toBeLessThanOrEqual(COPILOT_SNAPSHOT_MAX_BYTES);
+    expect(wire.slots).toHaveLength(EDITOR_MAX_TIMELINE_SLOTS);
+    expect(wire.wire_compact).toEqual({ version: 1, timeline: true, motion_catalog: true });
+    expect(wire.slots[0]).toMatchObject({ clip_index: 0, media_kind: "image", output_start_s: 0 });
+    expect(wire.slots[60]).toMatchObject({ clip_index: 60, media_kind: "image", output_start_s: 30 });
+    expect(wire.slots[119]).toMatchObject({ clip_index: 119, media_kind: "video", output_start_s: 59.5 });
+    expect(wire.allowed_op_families).toContain("motion");
+    expect(wire.motion?.catalog[0]).toHaveProperty("preset_id");
+    expect(wire.motion?.catalog[0]).not.toHaveProperty("parameters");
+    expect(snapshot.slots[119].clip_index).toBe(119);
+    expect(snapshot.slots[119].key).toBe("guided-slot-119");
+    expect(snapshot.slots[119].media_id).toBe(sourcePool[119].media_id);
+    expect(snapshot.slots[119].mutation_fingerprint).toMatch(/^m1-/);
+    expect(JSON.stringify(wire)).not.toContain("mutation_fingerprint");
+  });
+
+  it("does not emit compact rows until the API advertises wire v1", () => {
+    const slots = Array.from({ length: EDITOR_MAX_TIMELINE_SLOTS }, (_, index) => slot({
+      key: `legacy-slot-${index}`,
+      slotId: `legacy-slot-${index}`,
+      clipIndex: index,
+      durationS: 0.5,
+      momentDescription: `legacy-${index}-${"m".repeat(120)}`,
+    }));
+    const snapshot = buildCopilotSnapshot(
+      [bar()],
+      slots,
+      Array.from({ length: EDITOR_MAX_TIMELINE_SLOTS }, () => ({ source_duration_s: 8 })),
+      {
+        text_elements: true,
+        timeline: true,
+        timeline_max_slots: EDITOR_MAX_TIMELINE_SLOTS,
+      },
+    );
+
+    expect(snapshot.wire_compact).toBeUndefined();
+    expect(snapshot.slots[0].key).toBe("legacy-slot-0");
+    expect(byteLength(snapshot)).toBeGreaterThan(COPILOT_SNAPSHOT_MAX_BYTES);
+  });
+
+  it("removes a family with its section before pathological state can exceed the wire budget", () => {
+    const slots = Array.from({ length: EDITOR_MAX_TIMELINE_SLOTS }, (_, index) => slot({
+      key: `slot-${index}`,
+      slotId: `slot-${index}`,
+      clipIndex: index,
+      durationS: 0.5,
+      momentDescription: `moment-${index}-${"m".repeat(120)}`,
+    }));
+    const bars = Array.from({ length: EDITOR_MAX_TIMELINE_SLOTS }, (_, index) => bar({
+      id: `bar-${index}`,
+      text: `text-${index}-${"t".repeat(300)}`,
+      start_s: index * 0.5,
+      end_s: index * 0.5 + 0.5,
+    }));
+    const snapshot = buildCopilotSnapshot(
+      bars,
+      slots,
+      Array.from({ length: EDITOR_MAX_TIMELINE_SLOTS }, () => ({ source_duration_s: 8 })),
+      { text_elements: true, timeline: true, sfx: true, copilot_snapshot_wire_version: 1 },
+      [],
+      {
+        sfxEnabled: true,
+        sfxPlacements: Array.from({ length: 15 }, (_, index) => sfx({ id: `sfx-${index}` })),
+        sfxCatalog: Array.from({ length: 20 }, (_, index) => effect({ id: `effect-${index}` })),
+      },
+    );
+    const wire = JSON.parse(JSON.stringify(snapshot)) as Partial<typeof snapshot>;
+
+    expect(byteLength(wire)).toBeLessThanOrEqual(COPILOT_SNAPSHOT_MAX_BYTES);
+    expect(snapshot.text_bars).toHaveLength(EDITOR_MAX_TIMELINE_SLOTS);
+    expect(wire.text_bars).toBeUndefined();
+    expect(wire.allowed_op_families).not.toContain("text");
+    expect(wire.allowed_op_families).not.toContain("title");
+    expect(wire.allowed_op_families).not.toContain("sfx");
+    expect(wire.sfx).toBeUndefined();
+  });
+
+  it("keeps locked lyric identity when compacting text rows", () => {
+    const bars = Array.from({ length: 30 }, (_, index) => bar({
+      id: index === 0 ? "lyric_0" : index === 1 ? "guided-title" : `bar-${index}`,
+      role: index === 0 ? "lyric_line" : "generative_sequence",
+      text: `text-${index}-${"t".repeat(60)}`,
+      start_s: index * 0.5,
+      end_s: index * 0.5 + 0.5,
+    }));
+    const snapshot = buildCopilotSnapshot(
+      bars,
+      Array.from({ length: EDITOR_MAX_TIMELINE_SLOTS }, (_, index) => slot({
+        key: `slot-${index}`,
+        slotId: `slot-${index}`,
+        clipIndex: index,
+        durationS: 0.5,
+        momentDescription: `moment-${index}-${"m".repeat(80)}`,
+      })),
+      Array.from({ length: EDITOR_MAX_TIMELINE_SLOTS }, () => ({ source_duration_s: 8 })),
+      { text_elements: true, timeline: true, copilot_snapshot_wire_version: 1 },
+    );
+    const wire = JSON.parse(JSON.stringify(snapshot)) as typeof snapshot;
+
+    expect(byteLength(wire)).toBeLessThanOrEqual(COPILOT_SNAPSHOT_MAX_BYTES);
+    expect(wire.wire_compact?.text_bars).toBe(true);
+    expect(wire.text_bars[0].id).toBe("lyric_0");
+    expect(wire.text_bars[1].id).toBe("guided-title");
+    expect(wire.text_bars[2]).not.toHaveProperty("id");
+  });
 });
 
 describe("Creator Block snapshot", () => {
