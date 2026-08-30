@@ -41,6 +41,12 @@ const DEFAULT_CLIPS = [
 const ONE_SLOT = [SLOT];
 const EMPTY_GRID: number[] = [];
 const TWO_SLOTS = [SLOT, SLOT_2];
+const IMAGE_SLOT: DraftSlot = {
+  ...SLOT,
+  key: "image-slot",
+  clipIndex: 1,
+  durationS: 0.2,
+};
 const TRANSITION_SLOTS: DraftSlot[] = [
   { ...SLOT, transitionAfter: "crossfade", transitionDurationS: 0.3 },
   SLOT_2,
@@ -66,8 +72,10 @@ function Harness({
   musicTrackActive = false,
   musicAudioUrl = "https://cdn.example.test/music.m4a",
   onMusicError,
+  onSourceError = NOOP_SOURCE_ERROR,
   onTimeUpdate = NOOP_TIME_UPDATE,
   slots = ONE_SLOT,
+  clips = DEFAULT_CLIPS,
   carousel = NO_CAROUSEL,
   frameDriven = false,
   onFrameTimeUpdate,
@@ -78,8 +86,10 @@ function Harness({
   musicTrackActive?: boolean;
   musicAudioUrl?: string | null;
   onMusicError?: () => void;
+  onSourceError?: () => void;
   onTimeUpdate?: (timeS: number) => void;
   slots?: DraftSlot[];
+  clips?: Array<{ clip_index: number; signed_url: string | null; kind?: "image" | "video" | null }>;
   carousel?: VirtualCarouselSplice | null;
   frameDriven?: boolean;
   onFrameTimeUpdate?: (timeS: number) => void;
@@ -87,7 +97,7 @@ function Harness({
   const preview = useVirtualPreview({
     enabled: true,
     slots,
-    clips: DEFAULT_CLIPS,
+    clips,
     grid: EMPTY_GRID,
     carousel,
     currentTime: 0,
@@ -101,7 +111,7 @@ function Harness({
     onTimeUpdate,
     onDuration: NOOP_DURATION,
     onPlayingChange,
-    onSourceError: NOOP_SOURCE_ERROR,
+    onSourceError,
     onMusicError,
   });
   const { ref: videoARef, ...videoAProps } = preview.videoAProps;
@@ -972,6 +982,55 @@ describe("useVirtualPreview carousel-window clock (bug fix: frozen transport)", 
     const callsAtPause = onTimeUpdate.mock.calls.length;
     act(() => jest.advanceTimersByTime(500));
     expect(onTimeUpdate).toHaveBeenCalledTimes(callsAtPause);
+  });
+
+  it("plays a guided still-image window without binding it to a video deck", () => {
+    const onSourceError = jest.fn();
+    const onTimeUpdate = jest.fn();
+    render(
+      <Harness
+        onPlayingChange={jest.fn()}
+        onSourceError={onSourceError}
+        onTimeUpdate={onTimeUpdate}
+        slots={[IMAGE_SLOT]}
+        clips={[{ clip_index: 1, signed_url: "https://cdn.example.test/still.jpg", kind: "image" }]}
+      />,
+    );
+
+    const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
+    const deckB = screen.getByTestId("deck-b") as HTMLVideoElement;
+    expect(deckA.src).toBe("");
+    expect(deckB.src).toBe("");
+    expect(onSourceError).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+    act(() => jest.advanceTimersByTime(250));
+    expect(onSourceError).not.toHaveBeenCalled();
+    expect(onTimeUpdate).toHaveBeenCalled();
+    expect(onTimeUpdate.mock.calls.length).toBeLessThanOrEqual(3);
+  });
+
+  it("preloads and hands off to the video after a still-image window", () => {
+    const onSourceError = jest.fn();
+    render(
+      <Harness
+        onPlayingChange={jest.fn()}
+        onSourceError={onSourceError}
+        slots={[IMAGE_SLOT, SLOT]}
+        clips={[
+          { clip_index: 0, signed_url: "https://cdn.example.test/clip.mp4", kind: "video" },
+          { clip_index: 1, signed_url: "https://cdn.example.test/still.jpg", kind: "image" },
+        ]}
+      />,
+    );
+
+    const deckB = screen.getByTestId("deck-b") as HTMLVideoElement;
+    expect(deckB.src).toBe("https://cdn.example.test/clip.mp4");
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+    act(() => jest.advanceTimersByTime(500));
+
+    expect(onSourceError).not.toHaveBeenCalled();
+    expect(deckB.src).toBe("https://cdn.example.test/clip.mp4");
   });
 
   // Bug #2 (visual E2E): "with a staged carousel block, scrubbing OUTSIDE its

@@ -115,6 +115,7 @@ from app.routes.generative_jobs import (
     dispatch_set_text_elements,
     dispatch_swap_song,
     enqueue_editor_commit_render,
+    guided_timeline_image_preview_paths,
     persist_variant_caption_font,
     persist_variant_caption_style,
     persist_variant_captions,
@@ -4760,7 +4761,26 @@ async def get_item_timeline(
 ) -> TimelineResponse:
     """The effective clip timeline of one of this item's variants (+ clip pool)."""
     job = await _owned_item_render_job(item_id, user.id, db)
-    return TimelineResponse(**dispatch_get_timeline(job, variant_id))
+    variant = next(
+        (
+            row
+            for row in (job.assembly_plan or {}).get("variants") or []
+            if row.get("variant_id") == variant_id
+        ),
+        None,
+    )
+    image_preview_paths = (
+        await guided_timeline_image_preview_paths(db, job.content_plan_item_id)
+        if variant and variant.get("resolved_archetype") == "guided_story"
+        else {}
+    )
+    return TimelineResponse(
+        **dispatch_get_timeline(
+            job,
+            variant_id,
+            image_preview_paths=image_preview_paths,
+        )
+    )
 
 
 @router.get("/{item_id}/variants/{variant_id}/lyric-seeds", response_model=LyricSeedsResponse)

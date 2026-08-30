@@ -49,7 +49,7 @@ from app.auth import CurrentUserOrSynthetic, ensure_job_owner
 from app.config import settings
 from app.database import get_db
 from app.limiter import limiter
-from app.models import AgentRun, ContentPlan, Job, MusicTrack, PlanItem, User
+from app.models import AgentRun, ContentPlan, Job, MusicTrack, PlanItem, PlanItemAsset, User
 from app.pipeline.look_presets import (
     EDIT_WIDE_LOOK_PRESETS,
     LOOK_PRESETS,
@@ -5711,7 +5711,37 @@ def speech_cut_director_context(job: Job, variant: dict) -> dict:
     }
 
 
-def dispatch_get_timeline(job: Job, variant_id: str) -> dict:
+async def guided_timeline_image_preview_paths(
+    db: AsyncSession,
+    plan_item_id: object | None,
+) -> dict[str, str]:
+    """Browser-safe image derivatives keyed by immutable guided source path."""
+    if plan_item_id is None:
+        return {}
+    rows = (
+        await db.execute(
+            select(PlanItemAsset.gcs_path, PlanItemAsset.preview_gcs_path).where(
+                PlanItemAsset.plan_item_id == plan_item_id,
+                PlanItemAsset.status == "ready",
+                PlanItemAsset.kind == "image",
+                PlanItemAsset.preview_gcs_path.is_not(None),
+                PlanItemAsset.preview_gcs_path != "",
+            )
+        )
+    ).all()
+    return {
+        str(gcs_path): str(preview_path)
+        for gcs_path, preview_path in rows
+        if gcs_path and preview_path
+    }
+
+
+def dispatch_get_timeline(
+    job: Job,
+    variant_id: str,
+    *,
+    image_preview_paths: dict[str, str] | None = None,
+) -> dict:
     """Effective timeline (user_timeline if present, else ai_timeline) + clip pool.
 
     Read-only and side-effect free; never raises for an ineligible variant — it
@@ -5724,7 +5754,11 @@ def dispatch_get_timeline(job: Job, variant_id: str) -> dict:
         getattr(settings, "guided_story_editor_v2_enabled", False)
         or isinstance(variant.get("guided_edit_revision"), dict)
     ):
-        return _guided_v2_timeline_projection(job, variant)
+        return _guided_v2_timeline_projection(
+            job,
+            variant,
+            image_preview_paths=image_preview_paths,
+        )
     reason = _timeline_ineligibility(job, variant)
     ai_slots, user_slots, beat_grid = _timeline_parts(variant)
     clip_paths = list((job.all_candidates or {}).get("clip_paths") or [])
@@ -6085,7 +6119,12 @@ def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
         return None
 
 
-def _guided_v2_timeline_projection(job: Job, variant: dict) -> dict:
+def _guided_v2_timeline_projection(
+    job: Job,
+    variant: dict,
+    *,
+    image_preview_paths: dict[str, str] | None = None,
+) -> dict:
     revision = _guided_v2_revision(job, variant)
     if revision is None:
         return {
@@ -6104,8 +6143,10 @@ def _guided_v2_timeline_projection(job: Job, variant: dict) -> dict:
     clips: list[dict] = []
     for index, source in enumerate(sources):
         path = str(source.get("gcs_path") or "")
+        preview_path = (image_preview_paths or {}).get(path)
+        browser_path = preview_path if source.get("kind") == "image" and preview_path else path
         try:
-            url = signed_get_url(path, PLAYBACK_URL_TTL_MIN)
+            url = signed_get_url(browser_path, PLAYBACK_URL_TTL_MIN)
         except Exception:  # noqa: BLE001
             url = None
         clips.append(
@@ -8065,6 +8106,13 @@ def prepare_editor_commit(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="baseline_conflict")
 
     # ── Stage the single atomic job-JSON write ─────────────────────────────────
+    # Guided V2 compiles conventional timeline_slots into guided_revision
+    # below instead of the legacy resolved_slots list.  Treat that compact
+    # projection as a real base-affecting render section now; otherwise a
+    # timeline-only Save persists the revision but reuses the old generation,
+    # enqueue_editor_commit_render no-ops, and the finished MP4 stays detached
+    # from the timeline despite a 200 response.
+    guided_timeline_commit = bool(guided_v2 and payload.timeline_slots is not None)
     has_render_section = (
         validated_elements is not None
         or validated_caption_cues is not None
@@ -8083,10 +8131,12 @@ def prepare_editor_commit(
         or validated_motion_scenes is not None
         or validated_camera_effects is not None
         or carousel_moment_touched
+        or guided_timeline_commit
     )
     new_gen = uuid.uuid4().hex if has_render_section else None
     base_affecting_commit = (
         resolved_slots is not None
+        or guided_timeline_commit
         or payload.mix is not None
         or payload.music_track_id is not None
         or payload.remove_music
@@ -9270,7 +9320,19 @@ async def get_variant_timeline(
         allowed_modes=_READABLE_MODES,
         with_for_update=False,
     )
-    return TimelineResponse(**dispatch_get_timeline(job, variant_id))
+    variant = _find_variant(job, variant_id)
+    image_preview_paths = (
+        await guided_timeline_image_preview_paths(db, job.content_plan_item_id)
+        if variant and variant.get("resolved_archetype") == "guided_story"
+        else {}
+    )
+    return TimelineResponse(
+        **dispatch_get_timeline(
+            job,
+            variant_id,
+            image_preview_paths=image_preview_paths,
+        )
+    )
 
 
 @router.get("/{job_id}/variants/{variant_id}/lyric-seeds", response_model=LyricSeedsResponse)
