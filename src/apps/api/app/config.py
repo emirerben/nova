@@ -14,6 +14,12 @@ class Settings(BaseSettings):
     # Storage
     storage_bucket: str
     storage_provider: str = "gcs"
+    # Local filesystem storage is available only for deterministic E2E/dev
+    # fixtures.  Production keeps STORAGE_PROVIDER=gcs; callers must also set
+    # E2E_FIXTURES=true before the adapter or its HTTP route will activate.
+    local_storage_root: str = ""
+    local_storage_base_url: str = "http://127.0.0.1:8000/dev-qa/storage"
+    e2e_fixtures: bool = False
     gcloud_project: str = ""
     google_application_credentials: str = ""
     google_service_account_json: str = ""

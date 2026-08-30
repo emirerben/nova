@@ -18,6 +18,8 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEV_DIR="$REPO/.dev"
 PID_FILE="$DEV_DIR/pids"
+api_port="${NOVA_DEV_API_PORT:-8000}"
+web_port="${NOVA_DEV_WEB_PORT:-3000}"
 mkdir -p "$DEV_DIR"
 
 log() { printf '[dev-auto] %s\n' "$*"; }
@@ -32,8 +34,8 @@ if [[ -f "$PID_FILE" ]]; then
   sleep 1
 fi
 
-# Also free our dev ports (8000 api, 3000 web) in case of orphan processes
-for port in 3000 8000; do
+# Also free this worktree's selected ports in case of orphan processes.
+for port in "$web_port" "$api_port"; do
   pids=$(lsof -ti ":$port" 2>/dev/null || true)
   [[ -n "$pids" ]] && kill -9 $pids 2>/dev/null || true
 done
@@ -78,8 +80,27 @@ set -a
 # shellcheck source=/dev/null
 source "$REPO/.env"
 set +a
-export REDIS_URL="${REDIS_URL:-redis://localhost:6379}"
-export DATABASE_URL="${DATABASE_URL:-postgresql://postgres:postgres@localhost:5432/nova}"
+# Explicit dev-only overrides let an isolated QA run use filesystem storage
+# without editing the shared, symlinked repo-root .env (which would affect
+# every worktree). Production never invokes dev-auto.sh.
+export STORAGE_PROVIDER="${NOVA_DEV_STORAGE_PROVIDER:-$STORAGE_PROVIDER}"
+export E2E_FIXTURES="${NOVA_DEV_E2E_FIXTURES:-${E2E_FIXTURES:-false}}"
+local_storage_root="${NOVA_DEV_LOCAL_STORAGE_ROOT:-${LOCAL_STORAGE_ROOT:-}}"
+if [[ -n "$local_storage_root" ]]; then
+  export LOCAL_STORAGE_ROOT="$local_storage_root"
+fi
+local_storage_base_url="${NOVA_DEV_LOCAL_STORAGE_BASE_URL:-${LOCAL_STORAGE_BASE_URL:-}}"
+if [[ -n "$local_storage_base_url" ]]; then
+  export LOCAL_STORAGE_BASE_URL="$local_storage_base_url"
+fi
+export REDIS_URL="${NOVA_DEV_REDIS_URL:-${REDIS_URL:-redis://localhost:6379}}"
+export DATABASE_URL="${NOVA_DEV_DATABASE_URL:-${DATABASE_URL:-postgresql://postgres:postgres@localhost:5432/nova}}"
+export API_URL="${NOVA_DEV_API_URL:-http://localhost:$api_port}"
+export NEXT_PUBLIC_API_URL="$API_URL"
+export NEXTAUTH_URL="${NOVA_DEV_NEXTAUTH_URL:-http://localhost:$web_port}"
+if [[ "$STORAGE_PROVIDER" == "local" && -z "${NOVA_DEV_LOCAL_STORAGE_BASE_URL:-}" ]]; then
+  export LOCAL_STORAGE_BASE_URL="http://127.0.0.1:$api_port/dev-qa/storage"
+fi
 
 # ── 5. Run migrations ─────────────────────────────────────────────────────────
 log "Running alembic migrations..."
@@ -89,10 +110,10 @@ log "Running alembic migrations..."
 }
 
 # ── 6. Start API (hot reload via uvicorn --reload) ───────────────────────────
-log "Starting API on :8000 (uvicorn --reload)..."
+log "Starting API on :$api_port (uvicorn --reload)..."
 (
   cd "$REPO/src/apps/api"
-  exec .venv/bin/uvicorn app.main:app --reload --port 8000 --host 0.0.0.0
+  exec .venv/bin/uvicorn app.main:app --reload --port "$api_port" --host 0.0.0.0
 ) > "$DEV_DIR/api.log" 2>&1 &
 echo $! >> "$PID_FILE"
 
@@ -132,10 +153,10 @@ log "Starting overlay worker (--pool=solo for macOS fork-safety)..."
 echo $! >> "$PID_FILE"
 
 # ── 8. Start web (Next.js HMR) ───────────────────────────────────────────────
-log "Starting Next.js on :3000..."
+log "Starting Next.js on :$web_port..."
 (
   cd "$REPO/src/apps/web"
-  exec npm run dev
+  exec npm run dev -- --port "$web_port"
 ) > "$DEV_DIR/web.log" 2>&1 &
 echo $! >> "$PID_FILE"
 
@@ -143,9 +164,9 @@ echo $! >> "$PID_FILE"
 sleep 2
 log ""
 log "Dev environment started:"
-log "  API:      http://localhost:8000   (reload on .py edits)"
+log "  API:      http://localhost:$api_port   (reload on .py edits)"
 log "  Worker:   celery               (restart on .py edits via watchfiles)"
-log "  Frontend: http://localhost:3000   (Next.js HMR)"
+log "  Frontend: http://localhost:$web_port   (Next.js HMR)"
 log ""
 log "Logs:"
 log "  tail -f $DEV_DIR/api.log"
