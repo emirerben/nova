@@ -161,6 +161,18 @@ def _session_variant_target(
     return (ready, "ready") if ready is not None else (None, "stale")
 
 
+def _partial_variant_render_in_flight(job: Job) -> bool:
+    """Whether a partial-ready Job still has a variant retry in progress."""
+
+    if job.status != "variants_ready_partial":
+        return False
+    variants = (job.assembly_plan or {}).get("variants") or []
+    return any(
+        isinstance(variant, dict) and variant.get("render_status") == "rendering"
+        for variant in variants
+    )
+
+
 def creator_context(persona: Persona, item: PlanItem) -> tuple[str, str]:
     data = persona.persona or {}
     creator = {
@@ -213,7 +225,11 @@ async def resolve_item_creator_context(
         media_refs.append(
             CreatorMediaRef(
                 media_id=media_id,
-                kind="video",
+                kind=(
+                    assignment.get("kind")
+                    if assignment.get("kind") in {"video", "image"}
+                    else "video"
+                ),
                 duration_s=duration_s,
                 label=user_note or None,
             )
@@ -221,7 +237,11 @@ async def resolve_item_creator_context(
         media_context.append(
             {
                 "media_id": media_id,
-                "kind": "video",
+                "kind": (
+                    assignment.get("kind")
+                    if assignment.get("kind") in {"video", "image"}
+                    else "video"
+                ),
                 "duration_s": duration_s,
                 "creator_note": user_note or None,
             }
@@ -671,6 +691,15 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
             payload={"message": "The render identity changed. Start a new creator session."},
         )
         return True
+    # ``variants_ready_partial`` is terminal for the initial orchestrator, but
+    # not while a failed variant is being retried in place.  Keep the Creator
+    # session in rendering until that exact variant's generation-fenced worker
+    # publishes ready/failed; otherwise a GET poll can incorrectly settle the
+    # session and permit a second mutation while work is still running.
+    if _partial_variant_render_in_flight(job):
+        changed = session.phase != "rendering"
+        session.phase = "rendering"
+        return changed
     if job.status in PLAN_ITEM_JOB_FAILED:
         session.phase = "failed"
         session.last_error = {"code": job.failure_reason or "render_failed"}

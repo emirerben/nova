@@ -1,6 +1,7 @@
 "use client";
 
 import { useSession } from "next-auth/react";
+import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, Suspense } from "react";
 import {
@@ -19,15 +20,21 @@ import {
 import { createGenerativeJob } from "@/lib/generative-api";
 import { Button } from "@/components/ui/button";
 import { resolvePlanMode } from "./_lib/route";
-import { GeneratingStateLight } from "./_components/GeneratingStateLight";
-import OnboardingShell from "./_components/OnboardingShell";
 import { LightShell } from "./_components/ui/LightShell";
 import SignInPrompt from "./_components/SignInPrompt";
-import { WorkspaceHome } from "./_components/workspace/WorkspaceHome";
-import { ForkScreen } from "./_components/onboarding/ForkScreen";
-import { EditUploadStep } from "./_components/onboarding/EditUploadStep";
-import { ClipGroupStep, type ClipItem } from "./_components/onboarding/ClipGroupStep";
-import { EditPayoff } from "./_components/onboarding/EditPayoff";
+import type { ClipItem } from "./_components/onboarding/ClipGroupStep";
+import ChatCreationWorkspace from "./_components/workspace/ChatCreationWorkspace";
+import { CHAT_FIRST_CREATION_ENABLED } from "@/lib/chat-first";
+
+// Rollback-only legacy experience. Keep its heavy onboarding and workspace
+// surfaces out of the canonical chat-first bundle.
+const GeneratingStateLight = dynamic(() => import("./_components/GeneratingStateLight").then((module) => module.GeneratingStateLight));
+const OnboardingShell = dynamic(() => import("./_components/OnboardingShell"));
+const WorkspaceHome = dynamic(() => import("./_components/workspace/WorkspaceHome").then((module) => module.WorkspaceHome));
+const ForkScreen = dynamic(() => import("./_components/onboarding/ForkScreen").then((module) => module.ForkScreen));
+const EditUploadStep = dynamic(() => import("./_components/onboarding/EditUploadStep").then((module) => module.EditUploadStep));
+const ClipGroupStep = dynamic(() => import("./_components/onboarding/ClipGroupStep").then((module) => module.ClipGroupStep));
+const EditPayoff = dynamic(() => import("./_components/onboarding/EditPayoff").then((module) => module.EditPayoff));
 
 const POLL_MS = 2000;
 const POLL_REQUEST_TIMEOUT_MS = 10000;
@@ -61,6 +68,7 @@ function PlanPageInner() {
   const [persona, setPersona] = useState<PersonaResponse | null>(null);
   const [plan, setPlan] = useState<ContentPlan | null>(null);
   const [loading, setLoading] = useState(true);
+  const [chatFallback, setChatFallback] = useState(false);
   const [needsAuth, setNeedsAuth] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -133,8 +141,8 @@ function PlanPageInner() {
       setLoading(false);
       return;
     }
-    if (authStatus === "authenticated") void load();
-  }, [authStatus, load]);
+    if (authStatus === "authenticated" && (!CHAT_FIRST_CREATION_ENABLED || chatFallback)) void load();
+  }, [authStatus, load, chatFallback]);
 
   // Poll while either generation is in flight. Keyed on the boolean (not the
   // status string) so the interval keeps firing across polls where the status
@@ -238,6 +246,14 @@ function PlanPageInner() {
         <SignInPrompt callbackUrl="/plan" />
       </LightShell>
     );
+  }
+
+  // Chat-first is the canonical signed-in creation surface. The backend uses
+  // a deliberate 404 capability response during deploy skew/rollback; only
+  // that response opts this browser back into the legacy plan router. Network
+  // and 5xx failures stay visible inside the chat workspace.
+  if (CHAT_FIRST_CREATION_ENABLED && authStatus === "authenticated" && !chatFallback) {
+    return <ChatCreationWorkspace onLegacyFallback={() => setChatFallback(true)} />;
   }
 
   if (loading) {

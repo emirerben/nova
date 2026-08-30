@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.59.0.0] — 2026-08-30
+
+### Added
+- **Kria is now the canonical signed-in creation workspace.** A durable project rail and creative chat guide creators through Montage, Narrated, or Talking to camera, direct video/image/audio uploads, explicit render confirmation, ready results, and confirmation-gated revisions around the existing full editor.
+- **Creation conversations survive refreshes and devices without becoming a second render state machine.** Owner-scoped append-only threads project typed Creator Agent events while Plan Items and Jobs remain authoritative for media, rendering, variants, and editor state.
+- **The new flow includes deterministic QA and operational rollback coverage.** Desktop, mobile, 200% zoom, reduced motion, offline/stale recovery, partial renders, retry states, embedded-editor messaging, deployment order, and kill-switch behavior are documented and regression-tested.
+
+### Changed
+- **Legacy creation entry points now converge on Kria.** `/plan/new`, `/create`, `/create/manual`, `/library`, and `/generative` preserve compatible links while redirecting into the canonical chat or Gallery state; the former plan experience remains available only through the emergency kill switch.
+- **Chat-first creation ships enabled by default.** Backend capability fallback handles deploy skew safely, while network and server failures remain visible instead of silently returning creators to the legacy product.
+
+### Fixed
+- **Creation mutations are revision-fenced, idempotent, and owner-scoped.** Upload attachment, session binding, confirmation dispatch, exact-generation revisions, variant retries, archive actions, stale tabs, and iframe leave/discard messages preserve authoritative state across retries and races.
+- **Recovery no longer loses a creator's work.** Failed uploads can retry or be removed individually, attached media rehydrates after refresh, offline polling shows reconnecting state, project switches cannot accept stale async responses, and stale-revision reloads preserve composer text.
+
 ## [0.58.1.1] — 2026-08-30
 
 ### Added

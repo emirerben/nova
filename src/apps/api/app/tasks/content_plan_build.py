@@ -678,6 +678,7 @@ def _dispatch_item_render(
     ownership_epoch: int,
     bypass_guided_edit_gate: bool = False,
     creator_strategy: dict | None = None,
+    creator_clip_order: list[int] | None = None,
     creator_guided_attempt_id: str | None = None,
     speech_cleanup_contract: str | None = None,
 ) -> DispatchResult:
@@ -812,8 +813,15 @@ def _dispatch_item_render(
 
     content_plan_id = plan.id
     plan_item_id = item.id
-    clip_paths = list(item.clip_gcs_paths or [])
+    item_clip_paths = list(item.clip_gcs_paths or [])
+    clip_paths = item_clip_paths
     clip_paths = _creator_selected_clip_paths(item, clip_paths, creator_strategy)
+    if creator_clip_order:
+        creator_clip_order = [
+            clip_paths.index(item_clip_paths[index])
+            for index in creator_clip_order
+            if 0 <= index < len(item_clip_paths) and item_clip_paths[index] in clip_paths
+        ]
     if not clip_paths and approved_proposal is not None:
         # Asset-only guided stories are valid. build_generative_job still needs
         # one server-validated seed/raw path for its generic Job contract, but
@@ -858,9 +866,14 @@ def _dispatch_item_render(
     # Narrative clip order (filming-guide alignment): reorder clip_paths so the
     # guide's shot clips come first IN GUIDE ORDER (clip_assignments stores them
     # in attach-request order, which is client-controlled and not the guide
-    # order), pool clips after. narrative_shot_count tells the render path how
-    # many of the leading paths form the narrative spine.
-    clip_paths, narrative_shot_count = _narrative_clip_order(item, clip_paths)
+    # order), pool clips after. An explicit Creator preserve-order fence wins
+    # over the guide's attach-time ordering; otherwise retain the normal guide
+    # behavior. narrative_shot_count tells the render path how many of the
+    # leading paths form the narrative spine.
+    if creator_clip_order:
+        narrative_shot_count = 0
+    else:
+        clip_paths, narrative_shot_count = _narrative_clip_order(item, clip_paths)
     smart_context = resolve_smart_captions_context_sync(
         user_id=plan.user_id,
         edit_format=str(item.edit_format or "montage"),
@@ -935,7 +948,16 @@ def _dispatch_item_render(
             ),
             smart_captions=smart_context,
             creator_strategy=creator_strategy,
+            creator_clip_order=creator_clip_order,
         )
+        # Pin one immutable identity for this Creator-confirmed render before
+        # the worker is queued.  Native variants historically received no
+        # generation token until a later editor rerender, which made a ready
+        # first cut impossible for the Creator session to reconcile exactly.
+        job.assembly_plan = {
+            **(job.assembly_plan or {}),
+            "creator_generation_id": uuid.uuid4().hex,
+        }
     except ValueError as exc:
         log.warning("plan_item_render.invalid_clips", plan_item_id=str(item.id), error=str(exc))
         return DispatchResult("invalid_clips")
@@ -1109,6 +1131,7 @@ def dispatch_item_render_for(
     *,
     bypass_guided_edit_gate: bool = False,
     creator_strategy: dict | None = None,
+    creator_clip_order: list[int] | None = None,
     creator_guided_attempt_id: str | None = None,
     speech_cleanup_contract: str | None = None,
     speech_cleanup_action: str | None = None,
@@ -1252,6 +1275,7 @@ def dispatch_item_render_for(
             ownership_epoch=ownership_epoch,
             bypass_guided_edit_gate=bypass_guided_edit_gate,
             creator_strategy=creator_strategy,
+            creator_clip_order=creator_clip_order,
             creator_guided_attempt_id=creator_guided_attempt_id,
             speech_cleanup_contract=speech_cleanup_contract,
         )

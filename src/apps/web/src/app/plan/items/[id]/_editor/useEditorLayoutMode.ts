@@ -39,8 +39,18 @@ function hasMatchMedia(): boolean {
   return typeof window !== "undefined" && typeof window.matchMedia === "function";
 }
 
+/** Embedded editor panes are intentionally feature-complete: the chat shell
+ * constrains width, so the drawer overlays the canvas instead of switching the
+ * editor down to its mobile/light surface. Direct editor breakpoints remain
+ * unchanged. */
+export function isEmbeddedEditor(): boolean {
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).get("embedded") === "1";
+}
+
 function readMode(): EditorLayoutMode {
   if (!hasMatchMedia()) return "full";
+  if (isEmbeddedEditor()) return "overlay";
   return resolveLayoutMode(
     window.matchMedia(FULL_QUERY).matches,
     window.matchMedia(DESKTOP_QUERY).matches,

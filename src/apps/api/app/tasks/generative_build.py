@@ -1623,6 +1623,7 @@ def _run_generative_job_impl(
     )
 
     render_trace_id = uuid.uuid4().hex
+    render_generation_id: str | None = None
 
     with _sync_session() as db:
         entry = _lock_owned_entry_job(db, job_id)
@@ -1630,6 +1631,14 @@ def _run_generative_job_impl(
             log.error("generative_job_entry_rejected", job_id=job_id)
             return
         job, ownership_epoch = entry
+        assembly = dict(job.assembly_plan or {})
+        render_generation_id = str(assembly.get("creator_generation_id") or "") or uuid.uuid4().hex
+        if assembly.get("creator_generation_id") != render_generation_id:
+            # Legacy jobs may not have a Creator dispatch token.  Backfill one
+            # under the Job lock so every first render has an exact identity
+            # that can be matched by CreatorAgentSession reconciliation.
+            job.assembly_plan = {**assembly, "creator_generation_id": render_generation_id}
+            db.commit()
         # Cancellation is immutable even for a matching speech-cut finalizer.
         # That claim may have been minted before cancellation and must never be
         # treated as authority to resurrect the Job.
@@ -1798,6 +1807,13 @@ def _run_generative_job_impl(
         # clip_paths are the guide's shot clips, in guide order (derived at
         # dispatch by _dispatch_item_render). 0/absent on public/legacy jobs.
         narrative_shot_count: int = int(all_candidates.get("narrative_shot_count") or 0)
+        # An explicit Creator revision may carry the prior rendered clip order.
+        # It is server-derived from the previous Job timeline, never model-authored.
+        creator_clip_order: list[int] = []
+        for value in all_candidates.get("creator_clip_order") or []:
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                if value not in creator_clip_order:
+                    creator_clip_order.append(value)
         # Landscape-clip fit preference (plan-item editor, 0057+). "fit" = letterbox
         # landscape clips (black bars, never enlarged). "fill" = crop to fill (legacy
         # default). Absent on public/legacy jobs → defaults to "fill" → byte-identical
@@ -2165,6 +2181,14 @@ def _run_generative_job_impl(
             prefer_narrated_voiceover=(job.mode == "content_plan"),
             narrative_shot_count=narrative_shot_count,
         )
+        if archetype == "montage" and creator_clip_order:
+            preserved_order = _creator_preserved_narrative_order(creator_clip_order, clip_id_to_gcs)
+            if preserved_order:
+                # Reuse the narrative matcher’s strict first-appearance pass for
+                # this server-pinned order. It keeps the normal renderer and
+                # duration logic while preventing a revision from reshuffling
+                # clips the creator explicitly asked to preserve.
+                narrative_order = preserved_order
         if (
             speech_cleanup_contract == "required_v1"
             and archetype == "montage"
@@ -2397,6 +2421,10 @@ def _run_generative_job_impl(
                     expected_operation_id=speech_cut_operation_id,
                     expected_attempt_id=speech_cut_attempt_id,
                 )
+                # Native first renders did not historically carry a generation
+                # token; stamp the dispatch identity before finalization writes
+                # the authoritative variant snapshot.
+                result["render_generation_id"] = render_generation_id
 
                 # Per-variant render_finished_at on success (D6 tile clock).
                 if result.get("ok"):
@@ -3423,6 +3451,27 @@ def _resolve_narrative_order(
         {"shot_count": narrative_shot_count, "clip_ids": ordered_ids},
     )
     return ordered_ids
+
+
+def _creator_preserved_narrative_order(
+    creator_clip_order: list[int], clip_id_to_gcs: dict[str, str]
+) -> list[str]:
+    """Translate a server-pinned source order into matcher clip IDs.
+
+    Creator revisions persist source indices from the previous authoritative
+    timeline, while the matcher addresses the current ingest by ``clip_N``.
+    Keep this conversion strict and deterministic so malformed metadata cannot
+    introduce a source outside the current Job manifest.
+    """
+
+    ordered: list[str] = []
+    for index in creator_clip_order:
+        if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+            continue
+        clip_id = f"clip_{index}"
+        if clip_id in clip_id_to_gcs and clip_id not in ordered:
+            ordered.append(clip_id)
+    return ordered
 
 
 def _durable_sources_prefix(job_id: str) -> str:

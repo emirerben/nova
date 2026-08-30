@@ -187,7 +187,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - DATABASE_URL
 - OPENAI_API_KEY
 - GEMINI_API_KEY — clip + template analysis
-- `NEXT_PUBLIC_CREATION_HUB_ENABLED` / `GENERATIVE_DIRECT_VOICEOVER_STRICT_ENABLED` / `NEXT_PUBLIC_MANUAL_EDITOR_ENABLED` — default `false`; enable Fly strict validation before the hub, and keep manual drafts off pending plan 017 acceptance.
+- `CREATION_THREADS_ENABLED` / `NEXT_PUBLIC_CHAT_FIRST_CREATION_ENABLED` — default `true`; canonical `/plan` chat-first creation gates. Disable both for emergency rollback (Fly first, then rebuild Vercel). `GENERATIVE_DIRECT_VOICEOVER_STRICT_ENABLED` remains default `false` for legacy voiceover-upload compatibility.
 - `EDIT_WIDE_LOOKS_ENABLED` — off; rollout: `docs/pipelines/generative.md`.
 - `ORIENTATION_NORMALIZE_ENABLED` — defaults to `true`. Set to `false` and restart workers to make `normalize_orientation` a no-op (safety valve for orientation regressions).
 - `LYRIC_DYNAMIC_CROSSFADE_ENABLED` — defaults to `true`. Set to `false` to roll back to legacy `_inject_line` behavior byte-identically. **WARNING: disabling re-introduces the stacked-text bug — emergency rollback ONLY.** Kill-switch test: `tests/pipeline/test_lyric_injector_no_stacking.py::test_kill_switch_disabled_reproduces_pre_fix_output`. Apply: `fly secrets set LYRIC_DYNAMIC_CROSSFADE_ENABLED=false --app nova-video` + `fly machine restart <id>`. See agents/DECISIONS.md "Kill-switch incidents" for the full warning.

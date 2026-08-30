@@ -89,6 +89,11 @@ class Settings(BaseSettings):
     # set true on Fly to require voiceover-uploads/direct/{user_id}/ exactly.
     generative_direct_voiceover_strict_enabled: bool = False
 
+    # Canonical chat-first creation workspace.  Keep the flag server-side so
+    # deploy skew can return a deliberate 404 and let the web app use its
+    # legacy kill-switch experience.
+    creation_threads_enabled: bool = True
+
     # Live speech-cleanup rollout state. New jobs always receive an explicit
     # required_v1/off_v1 contract; legacy_auto is historical-job compatibility
     # only and is intentionally rejected as a live setting.

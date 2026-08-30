@@ -177,12 +177,15 @@ class CreatorSessionResponse(BaseModel):
     updated_at: str
 
 
-def _require_feature(user_id: uuid.UUID, *, execution: bool = False) -> None:
-    if not rollout_eligible(user_id):
+def _require_feature(
+    user_id: uuid.UUID, *, execution: bool = False, allow_chat: bool = False
+) -> None:
+    chat_enabled = allow_chat and settings.creation_threads_enabled
+    if not chat_enabled and not rollout_eligible(user_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Creator agent unavailable"
         )
-    if execution and not settings.main_creator_agent_execution_enabled:
+    if execution and not chat_enabled and not settings.main_creator_agent_execution_enabled:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Creator agent rendering is not enabled yet",
@@ -330,6 +333,99 @@ def _confirmed_creator_request(events: list[CreatorAgentEvent], current_message:
     if current_message.strip() and (not messages or messages[-1] != current_message.strip()):
         messages.append(current_message.strip())
     return "\n".join(messages)[:1000]
+
+
+def _requests_preserved_clip_order(creator_request: str) -> bool:
+    """Recognize an explicit request to keep the current source sequence."""
+
+    normalized = " ".join(creator_request.casefold().split())
+    return bool(
+        re.search(
+            r"\b(?:keep|preserve|maintain)\b.{0,80}\b(?:clip\s+)?(?:order|sequence)\b",
+            normalized,
+        )
+        or re.search(r"\b(?:same|unchanged)\s+(?:clip\s+)?(?:order|sequence)\b", normalized)
+    )
+
+
+def _source_basename(path: str) -> str:
+    return str(path or "").rsplit("/", 1)[-1]
+
+
+def _source_matches_item_path(previous_path: str, item_path: str) -> bool:
+    """Match durable Job snapshots back to their owner-scoped upload paths."""
+
+    previous_name = _source_basename(previous_path)
+    item_name = _source_basename(item_path)
+    return previous_name == item_name or previous_name.split("_", 1)[-1] == item_name
+
+
+async def _previous_creator_clip_order(
+    db: AsyncSession,
+    item: PlanItem,
+    session: CreatorAgentSession,
+    creator_request: str,
+) -> list[int] | None:
+    """Resolve the prior rendered first-appearance order for an explicit preserve request."""
+
+    if not _requests_preserved_clip_order(creator_request) or not item.current_job_id:
+        return None
+    previous_job = await db.get(Job, item.current_job_id)
+    if previous_job is None or previous_job.user_id != session.creator_id:
+        return None
+    if (
+        previous_job.content_plan_item_id != item.id
+        or previous_job.status not in PLAN_ITEM_JOB_READY
+    ):
+        return None
+    previous_paths = list((previous_job.all_candidates or {}).get("clip_paths") or [])
+    variants = list((previous_job.assembly_plan or {}).get("variants") or [])
+    target_variant_id = session.target_variant_id
+    variant = next(
+        (
+            value
+            for value in variants
+            if isinstance(value, dict)
+            and (target_variant_id is None or value.get("variant_id") == target_variant_id)
+            and value.get("render_status") == "ready"
+        ),
+        None,
+    )
+    # The editor's user_timeline is authoritative when present; ai_timeline is
+    # only the fallback for cuts that have not been manually rearranged.
+    raw_timeline = (variant or {}).get("user_timeline") or (variant or {}).get("ai_timeline")
+    timeline = raw_timeline if isinstance(raw_timeline, dict) else {}
+    slots = [slot for slot in timeline.get("slots") or [] if isinstance(slot, dict)]
+    if not previous_paths or not slots:
+        return None
+    item_paths = list(item.clip_gcs_paths or [])
+    order: list[int] = []
+
+    def _slot_order(value: dict) -> int:
+        try:
+            return int(value.get("order", 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    for slot in sorted(slots, key=_slot_order):
+        try:
+            previous_index = int(slot["clip_index"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not 0 <= previous_index < len(previous_paths):
+            continue
+        previous_path = str(previous_paths[previous_index])
+        item_index = next(
+            (
+                index
+                for index, item_path in enumerate(item_paths)
+                if _source_matches_item_path(previous_path, str(item_path))
+            ),
+            None,
+        )
+        if item_index is not None and item_index not in order:
+            order.append(item_index)
+    return order or None
 
 
 def _latest_cadence_question(events: list[CreatorAgentEvent]) -> dict[str, Any] | None:
@@ -1017,6 +1113,12 @@ async def _run_planning_turn(
                 )
                 return await _response(db, locked)
         try:
+            # Model-authored media references are repaired only at this trust
+            # boundary. The subsequent compiler remains strict, so persisted
+            # plans can contain only IDs from the authoritative manifest.
+            strategy = normalize_creator_strategy_media(
+                manifest, strategy, repair_model_output=True
+            )
             locked.active_plan = compile_active_plan(
                 locked,
                 manifest=manifest,
@@ -1118,17 +1220,17 @@ async def get_creator_session(
     return CreatorSessionResponse.model_validate(serialize_session(session))
 
 
-@router.post("/{item_id}/creator-agent/session", response_model=CreatorSessionResponse)
-@limiter.limit(CREATOR_AGENT_MUTATION_RATE_LIMIT)
-async def start_creator_session(
+async def start_creator_session_controller(
     request: Request,
     item_id: str,
     body: StartBody,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    *,
+    allow_chat: bool = False,
 ) -> CreatorSessionResponse:
     _ = request
-    _require_feature(user.id)
+    _require_feature(user.id, allow_chat=allow_chat)
     # Serialize session creation against direct generation's PlanItem lock.
     item, plan, _persona = await _owned_context(db, item_id, user.id, for_update=True)
 
@@ -1283,17 +1385,29 @@ async def start_creator_session(
     )
 
 
-@router.post("/{item_id}/creator-agent/turn", response_model=CreatorSessionResponse)
+@router.post("/{item_id}/creator-agent/session", response_model=CreatorSessionResponse)
 @limiter.limit(CREATOR_AGENT_MUTATION_RATE_LIMIT)
-async def creator_session_turn(
+async def start_creator_session(
+    request: Request,
+    item_id: str,
+    body: StartBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> CreatorSessionResponse:
+    return await start_creator_session_controller(request, item_id, body, user, db)
+
+
+async def creator_session_turn_controller(
     request: Request,
     item_id: str,
     body: TurnBody,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    *,
+    allow_chat: bool = False,
 ) -> CreatorSessionResponse:
     _ = request
-    _require_feature(user.id)
+    _require_feature(user.id, allow_chat=allow_chat)
     item, _plan, _persona = await _owned_context(db, item_id, user.id)
     session = await _load_session(db, body.session_id, user.id, item.id, for_update=True)
     duplicate = (
@@ -1332,6 +1446,18 @@ async def creator_session_turn(
         expected_revision=expected_revision,
         user_message=body.message.strip(),
     )
+
+
+@router.post("/{item_id}/creator-agent/turn", response_model=CreatorSessionResponse)
+@limiter.limit(CREATOR_AGENT_MUTATION_RATE_LIMIT)
+async def creator_session_turn(
+    request: Request,
+    item_id: str,
+    body: TurnBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> CreatorSessionResponse:
+    return await creator_session_turn_controller(request, item_id, body, user, db)
 
 
 def _apply_plan_intent(item: PlanItem, plan: CreatorEditPlan) -> None:
@@ -1482,14 +1608,15 @@ async def _concurrent_render_response(
     return await _response(db, conflicted)
 
 
-@router.post("/{item_id}/creator-agent/confirm", response_model=CreatorSessionResponse)
-async def confirm_creator_plan(
+async def confirm_creator_plan_controller(
     item_id: str,
     body: ConfirmBody,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    *,
+    allow_chat: bool = False,
 ) -> CreatorSessionResponse:
-    _require_feature(user.id, execution=True)
+    _require_feature(user.id, execution=True, allow_chat=allow_chat)
     item, plan_row, persona = await _owned_context(db, item_id, user.id, for_update=True)
     session = await _load_session(db, body.session_id, user.id, item.id, for_update=True)
     # Keep identity/ownership scalars local.  The guided auto-design helper
@@ -1737,11 +1864,18 @@ async def confirm_creator_plan(
         else:
             from app.tasks.content_plan_build import dispatch_item_render_for  # noqa: PLC0415
 
+            preserved_clip_order = await _previous_creator_clip_order(
+                db,
+                item,
+                session,
+                str(active.get("creator_request") or ""),
+            )
             outcome = await asyncio.to_thread(
                 dispatch_item_render_for,
                 item_id,
                 int(plan_row.ownership_epoch or 0),
                 creator_strategy=edit_plan.strategy.model_dump(mode="json", exclude_none=True),
+                creator_clip_order=preserved_clip_order,
             )
             if outcome.outcome == "already_active":
                 return await _concurrent_render_response(
@@ -1806,6 +1940,16 @@ async def confirm_creator_plan(
         },
     )
     return await _response(db, completed)
+
+
+@router.post("/{item_id}/creator-agent/confirm", response_model=CreatorSessionResponse)
+async def confirm_creator_plan(
+    item_id: str,
+    body: ConfirmBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> CreatorSessionResponse:
+    return await confirm_creator_plan_controller(item_id, body, user, db)
 
 
 def _craft_response(receipt: CreatorAgentExecution) -> CreatorCraftResponse:

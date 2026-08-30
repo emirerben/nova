@@ -4087,6 +4087,47 @@ def test_build_generative_job_clamps_count_to_clip_count():
     assert job.all_candidates["narrative_shot_count"] == 1
 
 
+def test_build_generative_job_persists_creator_clip_order():
+    import uuid as _uuid
+
+    from app.services.generative_jobs import build_generative_job
+
+    job = build_generative_job(
+        user_id=_uuid.uuid4(),
+        clip_paths=["users/u/plan/i/a.mp4", "users/u/plan/i/b.mp4"],
+        mode="content_plan",
+        content_plan_item_id=_uuid.uuid4(),
+        content_plan_ownership_epoch=0,
+        creator_clip_order=[1, 0],
+    )
+
+    assert job.all_candidates["creator_clip_order"] == [1, 0]
+
+
+def test_build_generative_job_drops_invalid_creator_clip_order_indices():
+    import uuid as _uuid
+
+    from app.services.generative_jobs import build_generative_job
+
+    job = build_generative_job(
+        user_id=_uuid.uuid4(),
+        clip_paths=["users/u/plan/i/a.mp4", "users/u/plan/i/b.mp4"],
+        mode="content_plan",
+        content_plan_item_id=_uuid.uuid4(),
+        content_plan_ownership_epoch=0,
+        creator_clip_order=[1, 99, 1, -1],
+    )
+
+    assert job.all_candidates["creator_clip_order"] == [1]
+
+
+def test_creator_preserved_narrative_order_uses_only_current_manifest_clips():
+    assert gb._creator_preserved_narrative_order(
+        [1, 0, 1, 99, -1],
+        {"clip_0": "new/a.mp4", "clip_1": "new/b.mp4"},
+    ) == ["clip_1", "clip_0"]
+
+
 # ---------------------------------------------------------------------------
 # Cluster layout — _resolve_intro_overlay_params + _resolve_regen_text threading
 # ---------------------------------------------------------------------------
