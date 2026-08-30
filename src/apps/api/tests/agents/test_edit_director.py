@@ -111,9 +111,10 @@ def _valid_suggestions() -> list[dict]:
 
 
 def _parse(suggestions: list[dict], **input_overrides):
+    snapshot = input_overrides.pop("variant_snapshot", _snapshot())
     return EditDirectorAgent(ModelClient()).parse(
         json.dumps({"suggestions": suggestions}),
-        EditDirectorInput(variant_snapshot=_snapshot(), **input_overrides),
+        EditDirectorInput(variant_snapshot=snapshot, **input_overrides),
     )
 
 
@@ -433,6 +434,38 @@ def test_director_omni_requires_flag_and_explicit_bounded_source() -> None:
     second_omni["omni"]["source_end_s"] = 11.0
     over_limit = _parse(suggestions, omni_enabled=True)
     assert all(item.apply_mode == "instant" for item in over_limit.suggestions)
+
+
+def test_director_omni_accepts_compact_timeline_with_clip_identity() -> None:
+    snapshot = _snapshot()
+    snapshot["wire_compact"] = {"version": 1, "timeline": True}
+    for slot in snapshot["slots"]:
+        slot.pop("key", None)
+        slot.pop("output_end_s", None)
+        slot.pop("look_preset", None)
+    omni = {
+        **_suggestion("effect", "Restyle the reveal", {"op": "edit_text"}),
+        "apply_mode": "omni_async",
+        "ops": [],
+        "omni": {
+            "action": "restyle_segment",
+            "prompt": "Turn this selected reveal into a restrained film-burn bridge.",
+            "insert_at_s": 3.0,
+            "duration_s": 4.0,
+            "source_clip_index": 1,
+            "source_start_s": 0.0,
+            "source_end_s": 3.0,
+            "reference_clip_index": 0,
+            "reference_frame_s": 1.0,
+        },
+    }
+
+    output = _parse([omni], omni_enabled=True, variant_snapshot=snapshot)
+
+    assert len(output.suggestions) == 1
+    assert output.suggestions[0].omni is not None
+    assert output.suggestions[0].omni.source_clip_index == 1
+    assert output.suggestions[0].omni.reference_clip_index == 0
 
 
 @pytest.mark.asyncio

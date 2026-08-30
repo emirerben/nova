@@ -2173,6 +2173,8 @@ export interface EditorCapabilities {
   timeline?: boolean;
   /** Active guided timeline capacity advertised by the deployed API. */
   timeline_max_slots?: number;
+  /** Compact Copilot snapshot format understood by the deployed API. */
+  copilot_snapshot_wire_version?: 1;
   split_clips?: boolean;
   automatic_cut?: boolean;
   automatic_cut_reason?: string | null;

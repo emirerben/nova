@@ -393,6 +393,7 @@ class EditorCapabilitiesOut(BaseModel):
     """Typed additions plus forward-compatible existing editor capability fields."""
 
     music_window: MusicWindowCapabilityOut | None = None
+    copilot_snapshot_wire_version: Literal[1] | None = None
 
     model_config = {"extra": "allow"}
 
@@ -5413,6 +5414,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
                 "text_elements": text_editable,
                 "timeline": bool(revision is not None),
                 "timeline_max_slots": _TIMELINE_MAX_SLOTS,
+                "copilot_snapshot_wire_version": 1,
                 "split_clips": bool(revision is not None),
                 "clips": clips,
                 "music_operations": music_operations,
@@ -5504,6 +5506,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             "text_elements": text_editable,
             "timeline": False,
             "timeline_max_slots": _TIMELINE_MAX_SLOTS,
+            "copilot_snapshot_wire_version": 1,
             "split_clips": False,
             "automatic_cut": False,
             "automatic_cut_reason": reason,
@@ -5632,6 +5635,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         ),
         "timeline": timeline_ok,
         "timeline_max_slots": _TIMELINE_MAX_SLOTS,
+        "copilot_snapshot_wire_version": 1,
         # Splitting a clip is a timeline-override operation — same eligibility.
         "split_clips": timeline_ok,
         "automatic_cut": automatic_cut,
