@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.58.1.0] — 2026-08-30
+
+### Fixed
+- **Kria can now continue editing large guided-story videos in the first chat turn.** Oversized editor snapshots stay within the API request budget without losing clip identity, lyric locks, guided titles, motion controls, or compatibility during split frontend/backend deployments.
+
 ## [0.58.0.0] — 2026-08-28
 
 ### Added
