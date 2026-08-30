@@ -461,6 +461,15 @@ export interface CopilotSnapshot {
   editor_limits?: {
     max_timeline_slots: number;
   };
+  /** Sections whose wire representation was compacted to stay below the API
+   * request ceiling. The in-memory snapshot still owns the complete fields
+   * used by local stale-target validation; only JSON serialization is sparse. */
+  wire_compact?: {
+    version: 1;
+    timeline?: true;
+    motion_catalog?: true;
+    text_bars?: true;
+  };
   /** Legacy input accepted by server parsing; new snapshots intentionally
    * omit the full source list and expose only aggregate integrity metadata. */
   source_pool?: Array<{
@@ -803,7 +812,101 @@ function compactByteLength(value: unknown): number {
   return encodeURIComponent(json).replace(/%[0-9A-F]{2}/g, "x").length;
 }
 
-function trimSnapshotToBudget(snapshot: CopilotSnapshot): CopilotSnapshot {
+function makeLocalOnly(target: object, keys: readonly string[]): void {
+  const record = target as Record<string, unknown>;
+  for (const key of keys) {
+    const descriptor = Object.getOwnPropertyDescriptor(record, key);
+    if (!descriptor?.enumerable) continue;
+    Object.defineProperty(record, key, { ...descriptor, enumerable: false });
+  }
+}
+
+function markWireCompact(
+  snapshot: CopilotSnapshot,
+  section: Exclude<keyof NonNullable<CopilotSnapshot["wire_compact"]>, "version">,
+): void {
+  snapshot.wire_compact ??= { version: 1 };
+  snapshot.wire_compact[section] = true;
+}
+
+function compactMotionCatalogForWire(snapshot: CopilotSnapshot): void {
+  if (!snapshot.motion?.catalog.length) return;
+  markWireCompact(snapshot, "motion_catalog");
+  for (const entry of snapshot.motion.catalog) {
+    // The API owns the same immutable generated catalog and expands these
+    // schemas for prompting/validation. Keep exposure identity on the wire;
+    // retain the full catalog only for local editor operation validation.
+    makeLocalOnly(entry, ["defaults", "parameters", "controls"]);
+  }
+}
+
+function compactTimelineForWire(snapshot: CopilotSnapshot): void {
+  if (snapshot.slots.length === 0) return;
+  markWireCompact(snapshot, "timeline");
+  for (const slot of snapshot.slots) {
+    // Array position is the authoritative operation index. Bulk selector
+    // identity moves to source_pool_summary while compact; the API recognizes
+    // the marker and must not recompute it from these sparse rows.
+    makeLocalOnly(slot, [
+      "index",
+      "key",
+      "slot_id",
+      "source_duration_s",
+      "moment",
+      "output_end_s",
+      "media_id",
+      "generation",
+    ]);
+    if (!slot.removed) makeLocalOnly(slot, ["removed"]);
+    if (slot.look_preset === "none") makeLocalOnly(slot, ["look_preset"]);
+  }
+}
+
+function compactTextBarsForWire(snapshot: CopilotSnapshot): void {
+  if (snapshot.text_bars.length === 0) return;
+  markWireCompact(snapshot, "text_bars");
+  for (const bar of snapshot.text_bars) {
+    // IDs and effective default style values are only needed by the local
+    // applier. Keep legacy lyric IDs on the wire because the API uses their
+    // `lyric_` prefix to distinguish locked projections from editable
+    // role=lyric_line elements.
+    makeLocalOnly(bar, ["index"]);
+    if (!bar.id.startsWith("lyric_") && bar.id !== "guided-title") {
+      makeLocalOnly(bar, ["id"]);
+    }
+    if (bar.font_family === "PlayfairDisplay-Bold") makeLocalOnly(bar, ["font_family"]);
+    if (bar.highlight_color == null) makeLocalOnly(bar, ["highlight_color"]);
+    if (bar.effect === "static") makeLocalOnly(bar, ["effect"]);
+    if (bar.alignment === "center") makeLocalOnly(bar, ["alignment"]);
+    if (bar.text_case === "none") makeLocalOnly(bar, ["text_case"]);
+    if (bar.position === "middle") makeLocalOnly(bar, ["position"]);
+    if (bar.x_frac == null) makeLocalOnly(bar, ["x_frac"]);
+    if (bar.y_frac == null) makeLocalOnly(bar, ["y_frac"]);
+  }
+}
+
+function dropOptionalFamilySections(snapshot: CopilotSnapshot): void {
+  const drops: Array<{ family: CopilotOpFamily; remove: () => void }> = [
+    { family: "motion", remove: () => { delete snapshot.motion; } },
+    { family: "overlay", remove: () => { delete snapshot.overlays; } },
+    { family: "sfx", remove: () => { delete snapshot.sfx; } },
+    { family: "caption", remove: () => { delete snapshot.captions; } },
+    { family: "music", remove: () => { delete snapshot.music; delete snapshot.mix; } },
+    { family: "effect", remove: () => { delete snapshot.camera_effects; } },
+    { family: "visual", remove: () => { delete snapshot.visual_blocks; } },
+    { family: "carousel", remove: () => { delete snapshot.carousel; } },
+    { family: "render", remove: () => { delete snapshot.intro; } },
+    { family: "tool", remove: () => { delete snapshot.open_tools; } },
+  ];
+  for (const drop of drops) {
+    if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return;
+    if (!snapshot.allowed_op_families.includes(drop.family)) continue;
+    snapshot.allowed_op_families = snapshot.allowed_op_families.filter((family) => family !== drop.family);
+    drop.remove();
+  }
+}
+
+function trimSnapshotToBudget(snapshot: CopilotSnapshot, allowWireCompaction: boolean): CopilotSnapshot {
   if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
   // Orientation context (steps/history) trims first — never worth crowding
   // out addressable editable state (captions, overlays, sfx, ...) below.
@@ -870,6 +973,35 @@ function trimSnapshotToBudget(snapshot: CopilotSnapshot): CopilotSnapshot {
     ...slot,
     moment: slot.moment == null ? null : slot.moment.slice(0, 40),
   }));
+  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  // Split-deploy safety: an older API does not understand sparse timeline or
+  // catalog rows. Only emit the v1 compact protocol after the capabilities
+  // response explicitly advertises support.
+  if (!allowWireCompaction) return snapshot;
+  compactMotionCatalogForWire(snapshot);
+  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  compactTimelineForWire(snapshot);
+  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  compactTextBarsForWire(snapshot);
+  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  // Last-resort degradation is capability-safe: a section is never removed
+  // while its operation family remains advertised. Core clip rows stay
+  // addressable; optional lanes yield before the request can hit API 422.
+  dropOptionalFamilySections(snapshot);
+  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  snapshot.allowed_op_families = snapshot.allowed_op_families.filter(
+    (family) => family !== "text" && family !== "title",
+  );
+  makeLocalOnly(snapshot, ["text_bars"]);
+  if (compactByteLength(snapshot) <= COPILOT_SNAPSHOT_MAX_BYTES) return snapshot;
+  // A future expansion can still grow the bounded envelope around the 120
+  // compact rows. Fail closed on editable families, not on the HTTP request:
+  // keep the complete arrays locally, but do not advertise operations whose
+  // validation context could not be serialized inside the fixed contract.
+  snapshot.allowed_op_families = snapshot.allowed_op_families.filter(
+    (family) => family !== "clip" && family !== "transition",
+  );
+  makeLocalOnly(snapshot, ["slots", "source_pool_summary"]);
   return snapshot;
 }
 
@@ -1317,7 +1449,10 @@ export function buildCopilotSnapshot(
         truncate(options.historyState.last_turn_summary, RECENT_EDIT_HISTORY_ENTRY_MAX) ?? null,
     };
   }
-  const trimmed = trimSnapshotToBudget(snapshot);
+  const trimmed = trimSnapshotToBudget(
+    snapshot,
+    capabilities?.copilot_snapshot_wire_version === 1,
+  );
   const textById = new Map(visibleBars.map((bar) => [bar.id, bar]));
   for (const item of trimmed.text_bars) {
     const bar = textById.get(item.id);

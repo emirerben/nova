@@ -19,13 +19,26 @@ accepted and dismissed suggestion IDs.
 ## Suggestion lifecycle
 
 `POST /plan-items/{item_id}/variants/{variant_id}/director/suggestions` accepts
-the complete unsaved editor snapshot plus a snapshot revision and up to 30
+the current unsaved editor snapshot plus a snapshot revision and up to 30
 dismissed suggestion IDs. An optional `omni_enabled` capability defaults to
 false. The prompt still asks for three to five ranked suggestions across varied
 categories, but the API returns every valid non-conflicting card that survives
 per-card validation, from one to five, instead of failing the whole review. The
 endpoint is authenticated, ownership-checked, editability-checked, size-limited
 to 20 KB, rate-limited, and gated by `EDIT_DIRECTOR_ENABLED`.
+
+Snapshots normally serialize completely. When editor capabilities advertise
+`copilot_snapshot_wire_version=1` and trimming alone cannot reach the 18 KB
+client budget, the browser sends `wire_compact.version=1` and sparsifies
+`timeline`, `motion_catalog`, and `text_bars`. The API expands server-owned
+Creator Block defaults, parameters, and controls; treats compact timeline
+selectors as summary-backed; and preserves semantic IDs needed for lyric locks
+and guided titles. The browser retains the complete in-memory objects and local
+fingerprints for stale-target validation. Whole operation families are removed
+from `allowed_op_families` before their sections are omitted; core text and clip
+families fail closed only as a last resort. A new frontend never emits sparse
+rows to an older API that did not advertise v1, so deploy the backend first for
+the size fix to take effect.
 
 Returned instant cards target mutually compatible edit domains. Director keeps
 at most one clip-timeline mutation in a batch because timing, order, removal,

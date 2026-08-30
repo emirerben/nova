@@ -678,6 +678,7 @@ def test_guided_v2_capabilities_keep_legacy_lane_booleans_and_honest_reasons(
     assert caps["nova"]["trim_output_start"] == {"editable": True, "reason": None}
     assert caps["nova"]["remove_music"] == {"editable": True, "reason": None}
     assert caps["timeline_max_slots"] == 120
+    assert caps["copilot_snapshot_wire_version"] == 1
 
 
 def _commit_req(**kw) -> gj.EditorCommitRequest:
@@ -4598,6 +4599,7 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
         "text_elements": True,
         "timeline": True,
         "timeline_max_slots": 120,
+        "copilot_snapshot_wire_version": 1,
         "split_clips": True,
         "mix": True,  # fixture carries mix=0.5
         "sfx": True,
@@ -5602,6 +5604,7 @@ def test_editor_capabilities_advertise_motion_runtime_only_when_eligible(monkeyp
     capabilities = gj._editor_capabilities(job, job.assembly_plan["variants"][0])
     assert capabilities["motion_scenes"] is True
     assert capabilities["motion_runtime_hash"] == MOTION_RUNTIME_HASH
+    assert capabilities["copilot_snapshot_wire_version"] == 1
 
 
 def test_editor_motion_capability_fails_closed_for_unsupported_persisted_runtime(monkeypatch):
