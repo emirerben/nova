@@ -94,7 +94,8 @@ if [[ -n "$local_storage_base_url" ]]; then
   export LOCAL_STORAGE_BASE_URL="$local_storage_base_url"
 fi
 export REDIS_URL="${NOVA_DEV_REDIS_URL:-${REDIS_URL:-redis://localhost:6379}}"
-export DATABASE_URL="${NOVA_DEV_DATABASE_URL:-${DATABASE_URL:-postgresql://postgres:postgres@localhost:5432/nova}}"
+export DATABASE_URL="${DATABASE_URL:-postgresql://postgres:postgres@localhost:5432/nova}"
+export DATABASE_URL="${NOVA_DEV_DATABASE_URL:-$DATABASE_URL}"
 export API_URL="${NOVA_DEV_API_URL:-http://localhost:$api_port}"
 export NEXT_PUBLIC_API_URL="$API_URL"
 export NEXTAUTH_URL="${NOVA_DEV_NEXTAUTH_URL:-http://localhost:$web_port}"
