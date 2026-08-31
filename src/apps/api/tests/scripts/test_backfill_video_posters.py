@@ -2122,7 +2122,9 @@ def test_main_publishes_only_after_uuid_reservation_commits(monkeypatch, capsys)
     assert backfill.main(["--batch-size", "2"]) == 0
     assert [name for name, _key in calls] == ["reserve", "publish"]
     assert calls[0][1] == calls[1][1]
-    assert backfill._is_backfill_poster_path(calls[0][1], source)
+    # The run loop reserves a durable, job-scoped key for the exact source.
+    assert calls[0][1].startswith(f"job-posters/{job.id}/")
+    assert backfill._is_backfill_poster_path(calls[0][1], source, job.id)
     assert "generated=1" in capsys.readouterr().out
 
 
@@ -2227,3 +2229,137 @@ def test_main_strict_dry_run_ignores_superseded_missing_candidate(monkeypatch, c
     output = capsys.readouterr().out
     assert "stale_race=1" in output
     assert "would_generate=0" in output
+
+
+def test_backfill_poster_key_uses_durable_prefix_and_keeps_uuid_marker() -> None:
+    """Durable prefix + immutable UUID suffix + cleanup-service recognition."""
+    job = _job()
+    source = f"music-jobs/{job.id}/output.mp4"
+
+    poster = backfill._backfill_poster_object_path(source, job.id)
+
+    assert poster.startswith(f"job-posters/{job.id}/")
+    assert backfill._BACKFILL_POSTER_MARKER in poster
+    assert poster.endswith(".jpg")
+    # Two derivations of the same source must never collide with each other,
+    # so a concurrent renderer can never overwrite a reserved object.
+    assert poster != backfill._backfill_poster_object_path(source, job.id)
+    # The cleanup service still recognizes it as a deletable backfill object.
+    assert poster_cleanup.is_uuid_backfill_poster(poster) is True
+    assert backfill.owned_job_output_path(poster, job) == poster
+
+
+def test_backfill_poster_key_falls_back_to_sibling_without_job_id() -> None:
+    job = _job()
+    source = f"music-jobs/{job.id}/output.mp4"
+
+    poster = backfill._backfill_poster_object_path(source)
+
+    assert poster.startswith(f"{source}{backfill._BACKFILL_POSTER_MARKER}")
+    assert poster_cleanup.backfill_poster_source(poster) == source
+
+
+def test_poster_matches_source_accepts_legacy_and_durable_shapes() -> None:
+    job = _job()
+    other = _job()
+    source = f"music-jobs/{job.id}/output.mp4"
+
+    legacy_sibling = f"{source}.poster.jpg"
+    legacy_backfill = backfill._backfill_poster_object_path(source)
+    durable_render = backfill.poster_object_path(source, job_id=str(job.id))
+    durable_backfill = backfill._backfill_poster_object_path(source, job.id)
+
+    assert backfill._poster_matches_source(legacy_sibling, source, job.id) is True
+    assert backfill._poster_matches_source(legacy_backfill, source, job.id) is True
+    assert backfill._poster_matches_source(durable_render, source, job.id) is True
+    assert backfill._poster_matches_source(durable_backfill, source, job.id) is True
+    # A durable key only matches under the job that owns it.
+    assert backfill._poster_matches_source(durable_backfill, source, other.id) is False
+    assert backfill._poster_matches_source(durable_backfill, source) is False
+    # And never for a different source object under the same job.
+    assert (
+        backfill._poster_matches_source(
+            durable_backfill,
+            f"music-jobs/{job.id}/other.mp4",
+            job.id,
+        )
+        is False
+    )
+
+
+def test_strict_candidate_accepts_durable_poster_that_exists(monkeypatch) -> None:
+    job = _job()
+    source = f"music-jobs/{job.id}/output.mp4"
+    poster = backfill._backfill_poster_object_path(source, job.id)
+    _mock_strict_poster(monkeypatch, poster=poster, data=_jpeg_bytes())
+
+    candidate = _make_candidate(
+        job,
+        kind="job_output",
+        raw_source=source,
+        poster_value=poster,
+        poster_field="poster_path",
+        verify_existing=True,
+    )
+
+    assert candidate is not None
+    assert candidate.already_present is True
+    assert candidate.existing_poster_key == poster
+    assert _candidate_has_usable_poster(candidate, verify_storage=True) is True
+
+
+def test_persist_and_publish_accept_durable_poster_reservation(monkeypatch) -> None:
+    job = _job()
+    source = f"music-jobs/{job.id}/output.mp4"
+    job.assembly_plan = {"output_path": source}
+    candidate = _make_candidate(
+        job,
+        kind="job_output",
+        raw_source=source,
+        poster_value=None,
+        poster_field="poster_path",
+    )
+    assert candidate is not None
+    poster = backfill._backfill_poster_object_path(source, job.id)
+
+    class Result:
+        def scalar_one_or_none(self):
+            return job
+
+    class Session:
+        commits = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, *_args, **_kwargs):
+            return job
+
+        def commit(self):
+            Session.commits += 1
+
+        def expire_all(self):
+            pass
+
+        def execute(self, *_args, **_kwargs):
+            return Result()
+
+    monkeypatch.setattr(backfill, "sync_session", Session)
+    monkeypatch.setattr(backfill, "flag_modified", lambda *_args: None)
+
+    assert _persist_poster(candidate, poster) == "generated"
+    assert job.assembly_plan["poster_path"] == poster
+
+    uploads: list[tuple[bytes, str, str]] = []
+    monkeypatch.setattr(
+        backfill,
+        "upload_bytes_public_read",
+        lambda data, path, content_type: uploads.append((data, path, content_type)),
+    )
+    monkeypatch.setattr(backfill, "object_exists", lambda path: path == poster)
+
+    assert _publish_reserved_poster(candidate, poster, b"jpeg") == "generated"
+    assert uploads == [(b"jpeg", poster, "image/jpeg")]

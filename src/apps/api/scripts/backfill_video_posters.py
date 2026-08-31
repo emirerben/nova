@@ -41,6 +41,7 @@ from app.services.job_status import PLAN_ITEM_JOB_READY
 from app.services.job_storage_paths import owned_job_output_path
 from app.services.template_poster import (
     PosterExtractionError,
+    durable_poster_stem,
     extract_poster_bytes,
     poster_object_path,
 )
@@ -99,24 +100,44 @@ _SOURCE_METADATA_TIMEOUT_S = 3.0
 _JPEG_CONTENT_TYPES = frozenset({"image/jpeg", "image/jpg"})
 
 
-def _backfill_poster_object_path(source_key: str) -> str:
-    """Return a source-bound key that no concurrent renderer can overwrite."""
-    return f"{source_key}{_BACKFILL_POSTER_MARKER}{uuid.uuid4()}.jpg"
+def _backfill_poster_object_path(source_key: str, job_id: object = None) -> str:
+    """Return a source-bound key that no concurrent renderer can overwrite.
+
+    With a ``job_id`` the key hangs off the durable ``job-posters/`` prefix so
+    a lifecycle rule on the source video can never delete it; the immutable
+    ``<marker><uuid>.jpg`` suffix is preserved either way so the cleanup
+    service still recognizes it as a deletable backfill object.
+    """
+    stem = durable_poster_stem(source_key, job_id)
+    return f"{stem or source_key}{_BACKFILL_POSTER_MARKER}{uuid.uuid4()}.jpg"
 
 
-def _is_backfill_poster_path(poster_key: str, source_key: str) -> bool:
-    return _backfill_poster_source(poster_key) == source_key
+def _is_backfill_poster_path(poster_key: str, source_key: str, job_id: object = None) -> bool:
+    stem = _backfill_poster_source(poster_key)
+    if stem is None:
+        return False
+    if stem == source_key:
+        return True
+    durable_stem = durable_poster_stem(source_key, job_id)
+    return durable_stem is not None and stem == durable_stem
 
 
 def _backfill_poster_source(poster_key: str) -> str | None:
     return backfill_poster_source(poster_key)
 
 
-def _poster_matches_source(poster_key: str, source_key: str) -> bool:
-    """Accept live deterministic posters and UUID-scoped backfill posters."""
-    return poster_key == poster_object_path(source_key) or _is_backfill_poster_path(
-        poster_key, source_key
-    )
+def _poster_matches_source(poster_key: str, source_key: str, job_id: object = None) -> bool:
+    """Accept live deterministic posters and UUID-scoped backfill posters.
+
+    Both the legacy sibling shape and the durable ``job-posters/`` shape count
+    as matching: rows written before and after the prefix change are equally
+    valid, and the stored key is authoritative.
+    """
+    if poster_key == poster_object_path(source_key):
+        return True
+    if job_id is not None and poster_key == poster_object_path(source_key, job_id=job_id):
+        return True
+    return _is_backfill_poster_path(poster_key, source_key, job_id)
 
 
 def _safe_owned_poster_path(raw_path: object, job: Job) -> str | None:
@@ -328,7 +349,8 @@ def _make_candidate(
         and owned_poster.lower().endswith((".jpg", ".jpeg", ".png", ".webp"))
     )
     poster_matches_source = bool(
-        owned_poster and (_poster_matches_source(owned_poster, source_key) or legacy_clip_thumbnail)
+        owned_poster
+        and (_poster_matches_source(owned_poster, source_key, job.id) or legacy_clip_thumbnail)
     )
     already_present = poster_matches_source if verify_existing else bool(poster_value)
 
@@ -760,7 +782,9 @@ def _post_commit_candidate_outcome(
 
 def _persist_poster(candidate: PosterCandidate, poster_key: str) -> str:
     """Reserve a UUID key only if the source is unchanged under a row lock."""
-    if candidate.source_key is None or not _poster_matches_source(poster_key, candidate.source_key):
+    if candidate.source_key is None or not _poster_matches_source(
+        poster_key, candidate.source_key, candidate.job_id
+    ):
         return "failed"
     with sync_session() as db:
         job = db.get(Job, candidate.job_id, with_for_update=True)
@@ -901,7 +925,9 @@ def _publish_reserved_poster(
     strict run either observes the completed object or replaces the missing
     reservation. No lifecycle-exempt orphan is created.
     """
-    if candidate.source_key is None or not _poster_matches_source(poster_key, candidate.source_key):
+    if candidate.source_key is None or not _poster_matches_source(
+        poster_key, candidate.source_key, candidate.job_id
+    ):
         return "failed"
     with sync_session() as db:
         job = db.get(Job, candidate.job_id, with_for_update=True)
@@ -1180,10 +1206,17 @@ def main(argv: list[str] | None = None) -> int:
                         if args.dry_run:
                             counts["would_generate"] += 1
                             handled_snapshots.add(snapshot_key)
+                            # Preview the key the real run would write: derive
+                            # the stem the same way so the durable prefix move
+                            # cannot silently desync the audit output.
+                            preview_stem = (
+                                durable_poster_stem(candidate.source_key, candidate.job_id)
+                                or candidate.source_key
+                            )
                             print(
                                 f"[dry-run] {candidate.job_id} {candidate.kind} "
                                 f"{candidate.source_key} -> "
-                                f"{candidate.source_key}{_BACKFILL_POSTER_MARKER}<uuid>.jpg",
+                                f"{preview_stem}{_BACKFILL_POSTER_MARKER}<uuid>.jpg",
                                 flush=True,
                             )
                             continue
@@ -1201,7 +1234,9 @@ def main(argv: list[str] | None = None) -> int:
                                 counts[outcome] += 1
                                 handled_snapshots.add(snapshot_key)
                             continue
-                        poster_key = _backfill_poster_object_path(candidate.source_key)
+                        poster_key = _backfill_poster_object_path(
+                            candidate.source_key, candidate.job_id
+                        )
                         persisted = _persist_poster(candidate, poster_key)
                         if persisted == "generated":
                             persisted = _publish_reserved_poster(

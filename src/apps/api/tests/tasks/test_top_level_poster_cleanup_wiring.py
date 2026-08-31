@@ -424,7 +424,10 @@ def test_single_video_finalizer_retargets_receipts_before_failed_cleanup(monkeyp
     monkeypatch.setattr(
         template_orchestrate,
         "poster_object_path",
-        lambda remote: new_base_poster if remote == new_base_source else _poster(remote, 99),
+        # The base-poster key is now job-scoped; the stub ignores the job id.
+        lambda remote, **_kwargs: (
+            new_base_poster if remote == new_base_source else _poster(remote, 99)
+        ),
     )
     monkeypatch.setattr(template_orchestrate, "copy_object", lambda *_args: None)
 

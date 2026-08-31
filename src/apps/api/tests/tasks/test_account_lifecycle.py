@@ -66,12 +66,15 @@ def test_purge_user_storage_covers_every_job_output_and_legacy_prefix() -> None:
         f"jobs/{job_id}/",
         f"music-jobs/{job_id}/",
         f"auto-music-jobs/{job_id}/",
+        # Durable posters live outside the video prefixes and would otherwise
+        # survive an account purge.
+        f"job-posters/{job_id}/",
         f"{user_id}/{job_id}/",
     ]
     assert object_calls == [raw_path]
     assert result == {
         "user_prefix_objects_deleted": 1,
-        "job_prefix_objects_deleted": 5,
+        "job_prefix_objects_deleted": 6,
         "raw_paths_deleted": 1,
     }
 
