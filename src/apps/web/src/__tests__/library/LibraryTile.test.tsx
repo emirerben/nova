@@ -682,10 +682,29 @@ it("keeps an explicitly unavailable pinned poster as a static editor link", () =
   expect(mockGetMyJobPlaybackUrl).not.toHaveBeenCalled();
 });
 
-it("settles a posterless tile after bounded recovery with tap-to-play fallback", () => {
+it("does not declare a thumbnail dead just because client retries ran out", () => {
+  // Exhausting the recovery ladder only means "we stopped asking". It can only
+  // happen while the server's last answer was `repairing`, and a queued repair
+  // routinely outlives the ladder — so stating the terminal verdict here would
+  // report a failure the server never gave (DESIGN.md §7 D19).
   const { container } = render(
     <LibraryTile
-      job={{ ...baseJob, poster_url: null }}
+      job={{ ...baseJob, poster_url: null, poster_status: "repairing" }}
+      posterRecoveryExhausted
+    />,
+  );
+
+  expect(screen.queryByText("Thumbnail unavailable. Tap to play.")).not.toBeInTheDocument();
+  expect(screen.getByText("Ready to post")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Play preview" })).toBeInTheDocument();
+  expect(container.querySelector("video[src]")).toBeNull();
+  expect(mockGetMyJobPlaybackUrl).not.toHaveBeenCalled();
+});
+
+it("settles a posterless tile only on the server's terminal verdict", () => {
+  const { container } = render(
+    <LibraryTile
+      job={{ ...baseJob, poster_url: null, poster_status: "unavailable" }}
       posterRecoveryExhausted
     />,
   );

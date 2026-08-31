@@ -329,10 +329,15 @@ export default function LibraryTile({
     setPreviewStatus("playing");
   }, [clearPreviewAttemptDeadline]);
 
-  const posterUnavailable =
-    job.poster_status === "unavailable" ||
-    posterRecoveryExhausted ||
-    posterLoadFailed;
+  // Running out of client-side retries is NOT a verdict. The recovery ladder
+  // only keeps polling while the server says `repairing`, so exhaustion means
+  // "we stopped asking", never "the thumbnail is gone" — and a queued repair
+  // routinely outlives the ladder (150s task limit plus queue wait). Rendering
+  // the terminal copy here would state a failure the server never reported
+  // (DESIGN.md §7 D19: the client never declares failure from silence).
+  // `posterRecoveryExhausted` therefore only stops the polling, which
+  // WorkspaceHome already owns; the tile keeps its preparing state.
+  const posterUnavailable = job.poster_status === "unavailable" || posterLoadFailed;
   const posterRepairing =
     isReady && !job.poster_url && !posterUnavailable && !posterRefreshUnavailable;
   const posterRecoveryIdentity = libraryPosterIdentity(job);

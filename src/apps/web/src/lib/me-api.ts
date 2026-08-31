@@ -126,19 +126,34 @@ export function listMyJobs(opts?: { limit?: number; cursor?: string }): Promise<
   if (opts?.limit) qs.set("limit", String(opts.limit));
   if (opts?.cursor) qs.set("cursor", opts.cursor);
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
-  return request<LibraryPage>(`/jobs${suffix}`);
+  // Poster + playback URLs in this payload are short-lived signed URLs, so the
+  // list must never be served from a heuristic browser cache (Safari will do
+  // exactly that for a response carrying no cache directive). Matches the
+  // no-store already used by the refresh + playback-url siblings below.
+  return request<LibraryPage>(`/jobs${suffix}`, { cache: "no-store" });
 }
 
-/** Refresh poster metadata for a bounded set of already-loaded, owner-scoped jobs. */
+/**
+ * Refresh poster metadata for a bounded set of already-loaded, owner-scoped jobs.
+ *
+ * `brokenJobIds` (optional) is the subset whose poster URL the browser actually
+ * failed to load — the server verifies those poster objects still exist and
+ * re-repairs / marks them terminal. Omitted from the body when empty, and an
+ * API build that predates the field simply ignores it.
+ */
 export function refreshMyJobPosters(
   jobIds: string[],
   signal?: AbortSignal,
+  brokenJobIds?: string[],
 ): Promise<PosterRefreshResponse> {
   return request<PosterRefreshResponse>(`/jobs/posters/refresh`, {
     method: "POST",
     cache: "no-store",
     signal,
-    body: JSON.stringify({ job_ids: jobIds }),
+    body: JSON.stringify({
+      job_ids: jobIds,
+      ...(brokenJobIds?.length ? { broken_job_ids: brokenJobIds } : {}),
+    }),
   });
 }
 
