@@ -62,6 +62,9 @@ fi
 if [[ "$1 $2" == "machine start" ]]; then
   printf 'CALL\n' >> "$STUB_START_ARGS"
   printf '%s\n' "$@" >> "$STUB_START_ARGS"
+  if [[ -n "${STUB_START_MESSAGE:-}" ]]; then
+    printf '%s\n' "$STUB_START_MESSAGE" >&2
+  fi
   exit "${STUB_START_EXIT:-0}"
 fi
 
@@ -287,6 +290,8 @@ def _run(
     machine_sequence: list[list[dict]] | None = None,
     create_exit: int = 0,
     start_exit: int = 0,
+    start_message: str = "",
+    extra_env: dict[str, str] | None = None,
     destroy_exit: int = 0,
     curl_exit: int = 0,
     log_exit: int = 0,
@@ -344,10 +349,12 @@ def _run(
             "STUB_MACHINE_ID": MACHINE_ID,
             "STUB_CREATE_EXIT": str(create_exit),
             "STUB_START_EXIT": str(start_exit),
+            "STUB_START_MESSAGE": start_message,
             "STUB_DESTROY_EXIT": str(destroy_exit),
             "STUB_CURL_EXIT": str(curl_exit),
             "STUB_LOG_EXIT": str(log_exit),
             **{key: str(value) for key, value in paths.items()},
+            **(extra_env or {}),
         }
     )
     return subprocess.run(
@@ -662,6 +669,196 @@ def test_normal_run_creates_new_guard_after_clean_different_revision_receipt(
     ]
     assert f"nova_revision={EXPECTED_SHA}" in metadata_values
     assert f"nova_image_digest={DIGEST}" in metadata_values
+
+
+_IMAGE_PREPARING = (
+    "Error: could not start machine abc123def45678: failed to start VM "
+    "abc123def45678: failed_precondition: unable to start machine from current "
+    "state: 'created'"
+)
+
+
+def test_start_during_image_preparation_is_retried_not_fatal(tmp_path: Path) -> None:
+    """Fly refuses `machine start` while a created Machine still pulls its image.
+
+    Prod incident 2026-08-30: the launcher started the guard ~4s after create,
+    Fly answered failed_precondition, and the run aborted while the image pull
+    still had ~25s to go. The Machine was then parked, never having run.
+    """
+    created = _machine("created", include_start_event=False)
+    stopped = _machine("stopped")
+    result = _run(
+        tmp_path,
+        [_image()],
+        args=["--reconcile-only"],
+        start_exit=1,
+        start_message=_IMAGE_PREPARING,
+        machine_sequence=[*([_inventory(created)] * 8), _inventory(stopped)],
+    )
+
+    # Pre-fix this aborted the whole run; the retry is what lets the Machine
+    # start once Fly finishes preparing its image.
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "start.args").read_text().count("CALL") >= 2
+
+
+def test_start_failure_other_than_image_preparation_still_fails_closed(
+    tmp_path: Path,
+) -> None:
+    created = _machine("created", include_start_event=False)
+    result = _run(
+        tmp_path,
+        [_image()],
+        args=["--reconcile-only"],
+        start_exit=1,
+        start_message="Error: could not start machine: capacity exhausted",
+        machine_sequence=[_inventory(created), _inventory(created)],
+    )
+
+    assert result.returncode == 1
+    assert "retained" in result.stderr
+
+
+def test_never_started_stopped_guard_is_started_instead_of_dead_ending(
+    tmp_path: Path,
+) -> None:
+    """A Machine parked before it ever ran is recoverable, not forensic.
+
+    With no start and no exit event nothing executed, so no mutation can have
+    occurred. Failing closed here strands the stable guard name, which the
+    deploy workflow CASes too — one parked guard would block every later deploy.
+    """
+    never_ran = _machine("stopped", include_start_event=False, exit_code=None)
+    stopped = _machine("stopped")
+    result = _run(
+        tmp_path,
+        [_image()],
+        args=["--reconcile-only"],
+        machine_sequence=[
+            _inventory(never_ran),
+            _inventory(never_ran),
+            _inventory(never_ran),
+            _inventory(never_ran),
+            _inventory(stopped),
+        ],
+        extra_env={"POSTER_BACKFILL_NEVER_RAN_RESTARTS": "5"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert MACHINE_ID in (tmp_path / "start.args").read_text()
+
+
+def test_deploy_guard_acquisition_sweeps_a_guard_that_never_ran(tmp_path: Path) -> None:
+    """Debris must not deadlock deploys, and must never be restarted by one.
+
+    Prod incident 2026-08-30: a guard parked during image preparation held the
+    stable name that deploys CAS, and the acknowledgement recovery could not
+    clear it because that path requires a non-clean exit receipt this Machine
+    never produced. The deploy sweeps it instead — without ever starting it.
+    """
+    never_ran = _machine("stopped", include_start_event=False, exit_code=None)
+    # The inventory must actually LOSE the Machine after the destroy, or the run
+    # can never reach a successful acquisition and the test proves nothing about
+    # the deploy proceeding.
+    result = _run(
+        tmp_path,
+        [_image()],
+        args=["--acquire-deploy-guard"],
+        machine_sequence=[
+            _inventory(never_ran),
+            _inventory(never_ran),
+            _inventory(never_ran),
+            _inventory(),
+            _inventory(),
+            _inventory(_deploy_guard()),
+            _inventory(_deploy_guard()),
+        ],
+    )
+
+    assert result.returncode == 0, result.stderr
+    destroyed = (tmp_path / "destroy.args").read_text()
+    assert MACHINE_ID in destroyed
+    assert "--force" not in destroyed
+    assert not (tmp_path / "start.args").exists()
+    # The deploy guard was actually acquired afterwards.
+    assert "CALL" in (tmp_path / "create.args").read_text()
+
+
+def test_sweep_waits_for_the_destroy_to_settle_before_re_casing_the_name(
+    tmp_path: Path,
+) -> None:
+    """A stale list after the destroy must not hard-fail the deploy.
+
+    Fly can keep reporting a destroyed Machine (or report it `destroying`) for a
+    moment. The caller re-CASes this exact stable name right after the sweep, so
+    without proving absence first the create conflicts on a name that no longer
+    resolves and acquisition fails outright instead of retrying.
+    """
+    never_ran = _machine("stopped", include_start_event=False, exit_code=None)
+    result = _run(
+        tmp_path,
+        [_image()],
+        args=["--acquire-deploy-guard"],
+        machine_sequence=[
+            _inventory(never_ran),
+            _inventory(never_ran),
+            # Destroy issued here; Fly still reports the Machine twice.
+            _inventory(never_ran),
+            _inventory(never_ran),
+            _inventory(),
+            _inventory(),
+            _inventory(_deploy_guard()),
+            _inventory(_deploy_guard()),
+        ],
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert MACHINE_ID in (tmp_path / "destroy.args").read_text()
+
+
+def test_deploy_guard_acquisition_still_retains_a_guard_that_ran(tmp_path: Path) -> None:
+    """The sweep must not swallow a real failure that carries forensic value."""
+    ran_without_receipt = _machine("stopped", exit_code=None)
+    result = _run(
+        tmp_path,
+        [_image()],
+        args=["--acquire-deploy-guard"],
+        machine_sequence=[_inventory(ran_without_receipt)] * 3,
+    )
+
+    assert result.returncode == 1
+    assert "stopped without an exit receipt" in result.stderr
+    assert not (tmp_path / "destroy.args").exists()
+
+
+def test_never_started_restarts_are_bounded(tmp_path: Path) -> None:
+    never_ran = _machine("stopped", include_start_event=False, exit_code=None)
+    result = _run(
+        tmp_path,
+        [_image()],
+        args=["--reconcile-only"],
+        machine_sequence=[_inventory(never_ran)],
+        extra_env={"POSTER_BACKFILL_NEVER_RAN_RESTARTS": "2"},
+    )
+
+    assert result.returncode == 1
+    assert "parked before it ever started" in result.stderr
+    assert (tmp_path / "start.args").read_text().count("CALL") == 2
+
+
+def test_stopped_guard_that_actually_ran_is_still_retained(tmp_path: Path) -> None:
+    """The never-ran allowance must not weaken the real forensic guarantee."""
+    ran_without_receipt = _machine("stopped", exit_code=None)
+    result = _run(
+        tmp_path,
+        [_image()],
+        args=["--reconcile-only"],
+        machine_sequence=[_inventory(ran_without_receipt)] * 3,
+    )
+
+    assert result.returncode == 1
+    assert "stopped without an exit receipt" in result.stderr
+    assert not (tmp_path / "start.args").exists()
 
 
 def test_failed_or_missing_exit_receipt_is_retained_and_blocks(tmp_path: Path) -> None:

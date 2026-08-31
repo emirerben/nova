@@ -82,6 +82,29 @@ The launcher rejects a different ID, revision, digest, command, metadata
 contract, or Machine state. If the acknowledged retry fails again, it remains
 stopped for another diagnosis.
 
+### A guard that never ran needs no acknowledgement
+
+A Machine parked *before it ever started* is a different case, and the
+acknowledgement recovery above cannot clear it: that path requires a valid
+non-clean exit receipt, and a Machine that never started never produced one.
+Read its lifecycle with `fly machine status <id>` — `pending → created →
+stopped` with **no `start` and no `exit` event** proves the VM never executed
+its command, so no repair ran and no data was mutated.
+
+Fly can answer `machine start` with `failed_precondition: unable to start
+machine from current state: 'created'` while it is still preparing the ~1GB
+image; the launcher now treats only that exact transient as retryable and
+retries under its existing reconciliation deadline
+(`POSTER_BACKFILL_NEVER_RAN_RESTARTS`, default 3, bounds the restarts).
+
+Because this shape holds the stable guard name that **Fly Deploy** also CASes,
+a parked guard would otherwise block every later deploy with no in-tool
+recovery. `--acquire-deploy-guard` therefore destroys a guard with no start and
+no exit event and proceeds, recording no reconciled revision — so a later
+**Video Poster Backfill** run still performs the repair. A guard that actually
+ran and stopped without a receipt is still retained for inspection, and a
+deploy never restarts a backfill.
+
 If diagnosis proves that the deployed revision itself must be fixed and the
 same-image retry cannot succeed, merge the fix to `main`, then use the **Fly
 Deploy** workflow's narrow recovery input:
@@ -112,7 +135,12 @@ managed production fleet is again one healthy digest.
 ## Durable poster cleanup
 
 Backfilled posters use immutable
-`<source>.poster.backfill-<uuid>.jpg` keys. When a later render replaces one,
+`job-posters/<job-id>/<sha1(source)>.poster.backfill-<uuid>.jpg` keys. The
+`job-posters/` prefix matches no `infra/gcs-lifecycle.json` rule, so a poster
+can no longer be deleted by the lifecycle rule of the video it was extracted
+from (`music-jobs/*` at 24h, `jobs/*` at 30d). Runs made before that change
+wrote `<source>.poster.backfill-<uuid>.jpg` siblings; both shapes are read,
+and the key stored on the Job is authoritative. When a later render replaces one,
 the renderer commits a cleanup receipt on the Job before attempting deletion.
 Migration `0091` adds the sparse partial index used by the five-minute
 `sweep_job_storage_deletions` Beat task. The sweep processes a bounded number of
