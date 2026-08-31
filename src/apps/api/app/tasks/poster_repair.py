@@ -428,7 +428,7 @@ def _run_repair(job_id: str) -> str:
             # same source upload identical bytes to the SAME key: deleting it
             # here would strand the winner's row pointing at a dead object,
             # which is exactly the failure this feature exists to remove.
-            if not _references_poster_key(job, target, poster_key):
+            if _may_delete_poster_key(job, target, poster_key):
                 delete_object_best_effort(poster_key)
             return "stale_race"
 
@@ -473,16 +473,26 @@ def _run_repair(job_id: str) -> str:
         return "generated"
 
 
-def _references_poster_key(job: Any, target: _RepairTarget | None, poster_key: str) -> bool:
-    """True when the row already points at exactly the key we just uploaded.
+def _may_delete_poster_key(job: Any, target: _RepairTarget | None, poster_key: str) -> bool:
+    """Whether the loser of a race may drop the object it just uploaded.
 
     Poster keys are deterministic per (job, source), so a concurrent repair of
-    the same source writes identical bytes to the same key. When the winner has
-    adopted it, the loser must leave the object alone.
+    the same source writes identical bytes to the same key. Deleting one the
+    winner has adopted leaves its row pointing at nothing — the exact failure
+    this feature removes — so the delete requires positive proof of safety:
+
+    * the Job row is gone entirely (its own delete manifest owns the cleanup); or
+    * a target resolved and demonstrably references some OTHER key.
+
+    Anything unprovable (no target, unreadable plan, status moved out of ready
+    under us) keeps the object. An orphan costs storage; a dangling reference
+    costs the user their thumbnail.
     """
+    if job is None:
+        return True
     if target is None:
         return False
-    return _owned_poster(job, target.poster_value) == poster_key
+    return _owned_poster(job, target.poster_value) != poster_key
 
 
 def _variant_id_is_unique(plan: dict[str, Any] | None, target: _RepairTarget) -> bool:

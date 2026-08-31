@@ -1078,9 +1078,14 @@ async def _verify_broken_posters(
         if locked is None:
             continue
         locked_any = True
-        # Re-read the clips under the lock: the bulk read was unlocked, and the
-        # clip branch below MUTATES thumbnail_path.
-        locked_clips = await _relocked_ready_clips(db, job_id)
+        # Re-read the clips under the lock ONLY when the preview can actually
+        # reach the clip tier: the bulk read was unlocked and the clip branch
+        # MUTATES thumbnail_path, but a variant- or plan-backed preview never
+        # consults clips, so locking them there is pure round-trip cost on a
+        # client-polled endpoint. Same predicate the bulk read uses.
+        locked_clips = (
+            [] if _preview(locked) is not None else await _relocked_ready_clips(db, job_id)
+        )
         fresh = _preview(locked, locked_clips)
         if fresh is None or fresh.poster_path != preview.poster_path:
             continue

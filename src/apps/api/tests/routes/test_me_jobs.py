@@ -540,7 +540,7 @@ def test_refresh_posters_clears_and_repairs_a_broken_poster_whose_source_survive
             "poster_path": f"generative-jobs/{job.id}/output.jpg",
         }
     )
-    db = _db([_scalars([job]), _scalar(job), _scalars([])])
+    db = _db([_scalars([job]), _scalar(job)])
     _override(user, db)
     monkeypatch.setattr("app.routes.me.signed_get_url", MagicMock())
     # Poster object is gone (lifecycle-deleted); the source MP4 is still there.
@@ -579,7 +579,7 @@ def test_refresh_posters_settles_broken_poster_terminal_when_source_is_gone(
             "poster_path": f"music-jobs/{job.id}/output.jpg",
         }
     )
-    db = _db([_scalars([job]), _scalar(job), _scalars([])])
+    db = _db([_scalars([job]), _scalar(job)])
     _override(user, db)
     monkeypatch.setattr("app.routes.me.signed_get_url", MagicMock())
     monkeypatch.setattr("app.routes.me.object_exists_once", lambda path, *, timeout_s: False)
@@ -880,7 +880,7 @@ def test_refresh_posters_leaves_ambiguous_variant_ids_untouched(monkeypatch, rep
         "poster_path": f"generative-jobs/{job.id}/output.jpg",
     }
     job.assembly_plan["variants"] = [dict(variant), dict(variant)]
-    db = _db([_scalars([job]), _scalar(job), _scalars([])])
+    db = _db([_scalars([job]), _scalar(job)])
     _override(user, db)
     monkeypatch.setattr("app.routes.me.signed_get_url", lambda path, ttl: f"https://s/{path}")
     monkeypatch.setattr(
