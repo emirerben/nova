@@ -288,6 +288,7 @@ export function buildEditorCommitRequest({
   orientationDirty = false,
   orientation,
   guidedRevisionNumber,
+  baseGeneration,
   variant,
 }: {
   elements: TextElement[];
@@ -334,6 +335,9 @@ export function buildEditorCommitRequest({
   orientationDirty?: boolean;
   orientation?: "portrait" | "landscape";
   guidedRevisionNumber?: number | null;
+  /** Authoritative timeline CAS baseline, when the timeline was fetched
+   * separately from the status payload. */
+  baseGeneration?: string | null;
   variant: EditorCommitVariantBaseline;
 }): EditorCommitRequest {
   const mixEditable = canEditMusic(
@@ -435,7 +439,7 @@ export function buildEditorCommitRequest({
     title: titleDirty ? (title.trim() !== "" ? title.trim() : null) : undefined,
     lyrics: lyricsDirty ? lyrics : undefined,
     orientation: orientationDirty ? orientation : undefined,
-    base_generation: editorCommitBaseGeneration(variant),
+    base_generation: baseGeneration ?? editorCommitBaseGeneration(variant),
   };
 }
 
@@ -595,6 +599,15 @@ export class EditorCommitConflictError extends Error {
   }
 }
 
+/** A server response whose body has already been converted to user-safe,
+ * actionable validation copy by `formatEditorCommitError`. */
+export class EditorCommitValidationError extends Error {
+  constructor(detail: string) {
+    super(detail);
+    this.name = "EditorCommitValidationError";
+  }
+}
+
 /** Thrown when the commit never reached the server (offline, DNS failure, or
  * the request timed out). The working state is untouched — callers keep edits
  * and offer a retry. Distinct from server-side validation errors, which keep
@@ -660,7 +673,7 @@ export async function commitEditorSession(
     } catch {
       /* non-JSON body — keep the generic message */
     }
-    throw new Error(detail);
+    throw new EditorCommitValidationError(detail);
   }
   return (await res.json()) as EditorCommitResponse;
 }

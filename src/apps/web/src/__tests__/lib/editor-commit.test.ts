@@ -3,6 +3,7 @@ import {
   commitEditorSession,
   editorCommitBaseGeneration,
   EditorCommitConflictError,
+  EditorCommitValidationError,
   formatEditorCommitError,
   type EditorCommitResponse,
 } from "@/lib/editor-commit";
@@ -509,6 +510,45 @@ describe("buildEditorCommitRequest", () => {
 
     expect(body.mix).toBeUndefined();
     expect(body.base_generation).toBe("prod-gen");
+  });
+
+  it("uses the paired timeline baseline when the status variant is stale", () => {
+    const body = buildEditorCommitRequest({
+      elements: [],
+      textDirty: false,
+      timelineDirty: true,
+      slots: [
+        {
+          slotId: "video-a",
+          clipIndex: 0,
+          inS: 1.25,
+          durationS: 4.2,
+          durationBeats: null,
+          removed: false,
+        },
+        {
+          slotId: "video-b",
+          clipIndex: 1,
+          inS: 0,
+          durationS: 3,
+          durationBeats: null,
+          removed: true,
+        },
+      ],
+      titleDirty: false,
+      title: "",
+      // Status polling can still expose the previous generation while the
+      // timeline endpoint already returned the current revision token.
+      variant: { render_generation_id: "stale-generation" },
+      baseGeneration: "timeline-generation",
+    });
+
+    expect(body.base_generation).toBe("timeline-generation");
+    expect(body.timeline_slots).toHaveLength(2);
+    expect(body.timeline_slots?.[0]).toEqual(
+      expect.objectContaining({ in_s: 1.25, duration_s: 4.2, removed: false }),
+    );
+    expect(body.timeline_slots?.[1].removed).toBe(true);
   });
 
   it("stages music changes and omits stale timeline cuts", () => {
@@ -1070,6 +1110,50 @@ describe("formatEditorCommitError", () => {
       ).rejects.toEqual(
         expect.objectContaining<Partial<EditorCommitConflictError>>({
           message: "Kria's motion renderer changed. Refresh before saving Creator Blocks.",
+        }),
+      );
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("throws typed actionable validation errors for non-conflict server failures", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn().mockResolvedValue({
+      status: 422,
+      ok: false,
+      json: async () => ({ detail: "TIMELINE_TOO_LONG" }),
+    });
+    try {
+      await expect(
+        commitEditorSession("item", "variant", { base_generation: "generation" }),
+      ).rejects.toEqual(
+        expect.objectContaining<Partial<EditorCommitValidationError>>({
+          name: "EditorCommitValidationError",
+          message: "That timeline is longer than the maximum allowed length.",
+        }),
+      );
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("keeps a safe fallback for non-JSON server failures", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn().mockResolvedValue({
+      status: 500,
+      ok: false,
+      json: async () => {
+        throw new SyntaxError("not JSON");
+      },
+    });
+    try {
+      await expect(
+        commitEditorSession("item", "variant", { base_generation: "generation" }),
+      ).rejects.toEqual(
+        expect.objectContaining<Partial<EditorCommitValidationError>>({
+          name: "EditorCommitValidationError",
+          message: "Save failed (500)",
         }),
       );
     } finally {

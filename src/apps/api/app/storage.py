@@ -2,9 +2,13 @@
 
 import datetime
 import json
+import mimetypes
 import re
+import shutil
 from collections.abc import Iterator
 from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
+from urllib.parse import quote
 
 from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage as gcs
@@ -13,6 +17,61 @@ from google.oauth2 import service_account
 from app.config import settings
 
 _client: gcs.Client | None = None
+
+
+def _uses_local_storage() -> bool:
+    return settings.storage_provider.strip().lower() == "local"
+
+
+def local_object_path(object_path: str) -> Path:
+    """Resolve one fixture-owned object inside the configured local root.
+
+    Local storage is deliberately double-gated.  A production process cannot
+    activate it by changing only STORAGE_PROVIDER, and object names may never
+    escape the configured root.
+    """
+
+    if not _uses_local_storage() or not settings.e2e_fixtures:
+        raise RuntimeError("Local storage requires STORAGE_PROVIDER=local and E2E_FIXTURES=true")
+    root_value = settings.local_storage_root.strip()
+    if not root_value:
+        raise RuntimeError("LOCAL_STORAGE_ROOT is required for local fixture storage")
+    normalized = PurePosixPath(object_path)
+    if (
+        normalized.is_absolute()
+        or not normalized.parts
+        or any(part in {"", ".", ".."} for part in normalized.parts)
+    ):
+        raise ValueError("Unsafe local storage object path")
+    root = Path(root_value).expanduser().resolve()
+    candidate = root.joinpath(*normalized.parts).resolve()
+    if candidate != root and root not in candidate.parents:
+        raise ValueError("Unsafe local storage object path")
+    return candidate
+
+
+def _local_object_url(object_path: str) -> str:
+    base = settings.local_storage_base_url.rstrip("/")
+    if not base:
+        raise RuntimeError("LOCAL_STORAGE_BASE_URL is required for local fixture storage")
+    return f"{base}/{quote(object_path, safe='/')}"
+
+
+def _local_metadata(object_path: str) -> "ObjectMetadata":
+    path = local_object_path(object_path)
+    if not path.is_file():
+        raise FileNotFoundError(object_path)
+    stat = path.stat()
+    content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    generation = str(stat.st_mtime_ns)
+    return ObjectMetadata(
+        path=object_path,
+        generation=generation,
+        etag=f'"local-{generation}-{stat.st_size}"',
+        size=stat.st_size,
+        content_type=content_type,
+        md5_hash=None,
+    )
 
 
 @dataclass(frozen=True)
@@ -65,6 +124,11 @@ def get_gcp_credentials(
 
 def _get_client() -> gcs.Client:
     """Build a GCS client using the project-wide credential chain (see get_gcp_credentials)."""
+    if _uses_local_storage():
+        raise RuntimeError(
+            "Local fixture storage does not support browser-signed uploads; "
+            "use the server-side fixture import/proxy path instead"
+        )
     global _client
     if _client is None:
         project = settings.gcloud_project or None
@@ -262,6 +326,11 @@ def upload_local_file(local_path: str, object_path: str, content_type: str) -> N
     Used by the pool-asset proxy upload (plans/005): the API streams the browser's
     multipart file to disk, then pushes it here — no browser↔GCS CORS involved.
     """
+    if _uses_local_storage():
+        destination = local_object_path(object_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(local_path, destination)
+        return
     bucket = _get_client().bucket(settings.storage_bucket)
     bucket.blob(object_path).upload_from_filename(local_path, content_type=content_type)
 
@@ -302,6 +371,9 @@ def upload_public_read(local_path: str, object_path: str, content_type: str = "v
     URL TTL would point at a 404. Uses signed URLs instead of ACLs — compatible
     with uniform bucket-level access.
     """
+    if _uses_local_storage():
+        upload_local_file(local_path, object_path, content_type)
+        return _local_object_url(object_path)
     bucket = _get_client().bucket(settings.storage_bucket)
     blob = bucket.blob(object_path)
     blob.upload_from_filename(local_path, content_type=content_type)
@@ -316,6 +388,11 @@ def upload_bytes_public_read(
     data: bytes, object_path: str, content_type: str = "image/jpeg"
 ) -> str:  # noqa: E501
     """Upload raw bytes to GCS and return a signed URL valid for 1 day."""
+    if _uses_local_storage():
+        destination = local_object_path(object_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(data)
+        return _local_object_url(object_path)
     bucket = _get_client().bucket(settings.storage_bucket)
     blob = bucket.blob(object_path)
     blob.upload_from_string(data, content_type=content_type)
@@ -328,6 +405,9 @@ def upload_bytes_public_read(
 
 def download_to_file(object_path: str, local_path: str) -> None:
     """Download a GCS object to a local path (worker use only)."""
+    if _uses_local_storage():
+        shutil.copy2(local_object_path(object_path), local_path)
+        return
     bucket = _get_client().bucket(settings.storage_bucket)
     blob = bucket.blob(object_path)
     blob.download_to_filename(local_path)
@@ -340,6 +420,12 @@ def download_generation_to_file(
     generation: str,
 ) -> None:
     """Download exactly the storage generation previously validated by a worker."""
+    if _uses_local_storage():
+        metadata = _local_metadata(object_path)
+        if metadata.generation != str(generation):
+            raise FileNotFoundError(object_path)
+        shutil.copy2(local_object_path(object_path), local_path)
+        return
     bucket = _get_client().bucket(settings.storage_bucket)
     blob = bucket.blob(object_path, generation=int(generation))
     blob.download_to_filename(local_path)
@@ -354,6 +440,9 @@ def delete_object_best_effort(object_path: str) -> bool:
     correctness: a failure only costs storage, so it must never fail the caller.
     """
     try:
+        if _uses_local_storage():
+            local_object_path(object_path).unlink(missing_ok=True)
+            return True
         bucket = _get_client().bucket(settings.storage_bucket)
         bucket.blob(object_path).delete()
         return True
@@ -371,6 +460,12 @@ def delete_object_generation(object_path: str, *, generation: str) -> None:
     Unlike best-effort cleanup, callers use this to enforce a security boundary:
     a replaced object must never cause deletion of newer, unvalidated bytes.
     """
+    if _uses_local_storage():
+        metadata = _local_metadata(object_path)
+        if metadata.generation != str(generation):
+            raise PreconditionFailed("Local fixture generation changed")
+        local_object_path(object_path).unlink()
+        return
     bucket = _get_client().bucket(settings.storage_bucket)
     bucket.blob(object_path, generation=int(generation)).delete()
 
@@ -400,6 +495,21 @@ def delete_prefix_best_effort(prefix: str) -> int:
     """
     if len(prefix.strip("/")) < 3:
         raise ValueError(f"Refusing to delete an unsafe prefix: {prefix!r}")
+    if _uses_local_storage():
+        directory = local_object_path(prefix.rstrip("/"))
+        if not directory.exists():
+            return 0
+        files = [path for path in directory.rglob("*") if path.is_file()]
+        for path in files:
+            path.unlink(missing_ok=True)
+        for path in sorted(
+            (path for path in directory.rglob("*") if path.is_dir()),
+            key=lambda value: len(value.parts),
+            reverse=True,
+        ):
+            path.rmdir()
+        directory.rmdir()
+        return len(files)
     bucket = _get_client().bucket(settings.storage_bucket)
     deleted = 0
     try:
@@ -423,6 +533,10 @@ def signed_get_url(object_path: str, expiration_minutes: int = 5) -> str:
     on a 20-clip upload, short enough that a leaked URL is useless almost
     immediately.
     """
+    if _uses_local_storage():
+        if not local_object_path(object_path).is_file():
+            raise FileNotFoundError(object_path)
+        return _local_object_url(object_path)
     bucket = _get_client().bucket(settings.storage_bucket)
     blob = bucket.blob(object_path)
     return blob.generate_signed_url(
@@ -445,6 +559,10 @@ def signed_download_url(
     """
     safe_filename = re.sub(r"[^A-Za-z0-9._-]+", "", filename.replace("..", ""))
     safe_filename = safe_filename.lstrip(".")[:120] or "kria-video.mp4"
+    if _uses_local_storage():
+        if not local_object_path(object_path).is_file():
+            raise FileNotFoundError(object_path)
+        return f"{_local_object_url(object_path)}?download={quote(safe_filename)}"
     bucket = _get_client().bucket(settings.storage_bucket)
     blob = bucket.blob(object_path)
     return blob.generate_signed_url(
@@ -464,6 +582,9 @@ def copy_object_signed_url(src_object_path: str, dst_object_path: str) -> str:
     bytes (e.g. single_video templates where template_output and
     template_base are byte-identical).
     """
+    if _uses_local_storage():
+        copy_object(src_object_path, dst_object_path)
+        return _local_object_url(dst_object_path)
     bucket = _get_client().bucket(settings.storage_bucket)
     src_blob = bucket.blob(src_object_path)
     dst_blob = bucket.copy_blob(src_blob, bucket, dst_object_path)
@@ -482,6 +603,11 @@ def copy_object(src_object_path: str, dst_object_path: str) -> None:
     that only need the durable copy to exist (e.g. the generative clip-editor's
     per-job source snapshots), not a playback URL for it.
     """
+    if _uses_local_storage():
+        destination = local_object_path(dst_object_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(local_object_path(src_object_path), destination)
+        return
     bucket = _get_client().bucket(settings.storage_bucket)
     src_blob = bucket.blob(src_object_path)
     bucket.copy_blob(src_blob, bucket, dst_object_path)
@@ -489,6 +615,8 @@ def copy_object(src_object_path: str, dst_object_path: str) -> None:
 
 def object_metadata(object_path: str) -> ObjectMetadata:
     """Return immutable identity and HTTP metadata for an owned GCS object."""
+    if _uses_local_storage():
+        return _local_metadata(object_path)
     bucket = _get_client().bucket(settings.storage_bucket)
     blob = bucket.get_blob(object_path)
     if blob is None or blob.generation is None:
@@ -512,6 +640,8 @@ def object_metadata_once(object_path: str, *, timeout_s: float) -> ObjectMetadat
     """
     if timeout_s <= 0:
         raise ValueError("timeout_s must be positive")
+    if _uses_local_storage():
+        return _local_metadata(object_path)
     bucket = _get_client().bucket(settings.storage_bucket)
     blob = bucket.get_blob(object_path, timeout=timeout_s, retry=None)
     if blob is None or blob.generation is None:
@@ -533,6 +663,15 @@ def copy_object_generation(
     source_generation: str,
 ) -> ObjectMetadata:
     """Copy exactly one source generation, failing if the render changed."""
+    if _uses_local_storage():
+        metadata = _local_metadata(src_object_path)
+        if metadata.generation != str(source_generation):
+            raise PreconditionFailed("Local fixture generation changed")
+        destination = local_object_path(dst_object_path)
+        if not destination.exists():
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(local_object_path(src_object_path), destination)
+        return _local_metadata(dst_object_path)
     bucket = _get_client().bucket(settings.storage_bucket)
     src_blob = bucket.blob(src_object_path, generation=int(source_generation))
     try:
@@ -560,6 +699,19 @@ def iter_object_range(
     """Stream a GCS byte range in bounded chunks (``end`` is inclusive)."""
     if start < 0 or chunk_size <= 0:
         raise ValueError("invalid object range")
+    if _uses_local_storage():
+        with local_object_path(object_path).open("rb") as handle:
+            handle.seek(start)
+            remaining = None if end is None else end - start + 1
+            while remaining is None or remaining > 0:
+                requested = chunk_size if remaining is None else min(chunk_size, remaining)
+                chunk = handle.read(requested)
+                if not chunk:
+                    break
+                yield chunk
+                if remaining is not None:
+                    remaining -= len(chunk)
+        return
     blob = _get_client().bucket(settings.storage_bucket).blob(object_path)
     cursor = start
     while end is None or cursor <= end:
@@ -578,6 +730,8 @@ def iter_object_range(
 
 def object_exists(object_path: str) -> bool:
     """Check whether a GCS object exists. Used for GCS path validation."""
+    if _uses_local_storage():
+        return local_object_path(object_path).is_file()
     bucket = _get_client().bucket(settings.storage_bucket)
     blob = bucket.blob(object_path)
     return blob.exists()
@@ -591,6 +745,8 @@ def object_exists_once(object_path: str, *, timeout_s: float) -> bool:
     """
     if timeout_s <= 0:
         raise ValueError("timeout_s must be positive")
+    if _uses_local_storage():
+        return local_object_path(object_path).is_file()
     bucket = _get_client().bucket(settings.storage_bucket)
     blob = bucket.blob(object_path)
     return blob.exists(timeout=timeout_s, retry=None)
@@ -604,6 +760,9 @@ def delete_object_once(object_path: str, *, timeout_s: float) -> bool:
     """
     if timeout_s <= 0:
         raise ValueError("timeout_s must be positive")
+    if _uses_local_storage():
+        local_object_path(object_path).unlink(missing_ok=True)
+        return True
     bucket = _get_client().bucket(settings.storage_bucket)
     try:
         bucket.blob(object_path).delete(timeout=timeout_s, retry=None)
