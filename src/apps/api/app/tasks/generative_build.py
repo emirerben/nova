@@ -1683,6 +1683,32 @@ def _run_generative_job_impl(
             job.mode = "generative"
         db.commit()
         all_candidates = job.all_candidates or {}
+        # Main Creator's confirmed render contract is validated again at the
+        # worker boundary.  The strategy is inert JSON until this point; only
+        # these bounded fields are projected into the existing render inputs.
+        creator_strategy = None
+        if all_candidates.get("creator_strategy"):
+            from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+
+            creator_strategy = CreativeStrategy.model_validate(all_candidates["creator_strategy"])
+        creator_opening_title = (
+            creator_strategy.opening_title if creator_strategy is not None else None
+        )
+        creator_font_family = creator_strategy.font_family if creator_strategy is not None else None
+        creator_text_color = creator_strategy.text_color if creator_strategy is not None else None
+        raw_creator_strategy = all_candidates.get("creator_strategy") or {}
+        # CreativeStrategy supplies balanced/24s defaults for planning.  Those
+        # defaults are not confirmed render constraints: applying them here
+        # would change ordinary Creator renders. Only non-default values that
+        # survived the typed API boundary become worker inputs.
+        raw_target_duration_s = raw_creator_strategy.get("target_duration_s")
+        creator_target_duration_s = (
+            float(raw_target_duration_s)
+            if raw_target_duration_s is not None and float(raw_target_duration_s) != 24
+            else None
+        )
+        raw_pacing = raw_creator_strategy.get("pacing")
+        creator_pacing = raw_pacing if raw_pacing in {"fast", "relaxed"} else None
         speech_cleanup_contract = str(
             (job.assembly_plan or {}).get("speech_cleanup_contract") or "legacy_auto"
         )
@@ -2009,15 +2035,28 @@ def _run_generative_job_impl(
         def _text_then_style():
             if _narrated_voiceover:
                 return None, {}, "default"
-            text, form = _run_text_agents(
-                clip_metas,
-                hero,
-                job_id=job_id,
-                language=language,
-                persona=persona,
-                filming_guide=filming_guide_candidates,
-                clip_notes=clip_notes_candidates,
-            )
+            if creator_opening_title is not None:
+                # Confirmed copy is not advisory prompt context.  Keep the
+                # existing style selector for the surrounding look, but never
+                # let intro_writer replace the exact title.
+                import types as _types  # noqa: PLC0415
+
+                text = _types.SimpleNamespace(
+                    text=creator_opening_title,
+                    highlight_word=None,
+                    word_roles=None,
+                )
+                form = {}
+            else:
+                text, form = _run_text_agents(
+                    clip_metas,
+                    hero,
+                    job_id=job_id,
+                    language=language,
+                    persona=persona,
+                    filming_guide=filming_guide_candidates,
+                    clip_notes=clip_notes_candidates,
+                )
             # Creator Agent M1: if the user has a pinned style_set_id, bypass the
             # per-render AgenticStyleSelectorAgent and use it directly. This ensures
             # a consistent visual identity across all of a creator's edits. When
@@ -2181,6 +2220,11 @@ def _run_generative_job_impl(
             prefer_narrated_voiceover=(job.mode == "content_plan"),
             narrative_shot_count=narrative_shot_count,
         )
+        if creator_opening_title and archetype in {
+            "subtitled",
+            "narrated",
+        }:
+            raise ValueError(f"opening_title is not supported by the {archetype} renderer")
         if archetype == "montage" and creator_clip_order:
             preserved_order = _creator_preserved_narrative_order(creator_clip_order, clip_id_to_gcs)
             if preserved_order:
@@ -2302,6 +2346,10 @@ def _run_generative_job_impl(
                         variant_dir=variant_dir,
                         style_set_id=style_set_id,
                         user_style_knobs=user_style_knobs,
+                        font_family_override=creator_font_family,
+                        text_color_override=creator_text_color,
+                        creator_target_duration_s=creator_target_duration_s,
+                        creator_pacing=creator_pacing,
                         language=language,
                         landscape_fit=landscape_fit,
                         silence_cut_disabled=silence_cut_disabled,
@@ -2349,6 +2397,10 @@ def _run_generative_job_impl(
                         variant_dir=variant_dir,
                         style_set_id=style_set_id,
                         user_style_knobs=user_style_knobs,
+                        font_family_override=creator_font_family,
+                        text_color_override=creator_text_color,
+                        creator_target_duration_s=creator_target_duration_s,
+                        creator_pacing=creator_pacing,
                         narrative_order=narrative_order,
                         filming_guide=filming_guide_candidates,
                         allow_sequence=False,
@@ -2372,6 +2424,10 @@ def _run_generative_job_impl(
                         variant_dir=variant_dir,
                         style_set_id=style_set_id,
                         user_style_knobs=user_style_knobs,
+                        font_family_override=creator_font_family,
+                        text_color_override=creator_text_color,
+                        creator_target_duration_s=creator_target_duration_s,
+                        creator_pacing=creator_pacing,
                         narrative_order=None,
                         filming_guide=None,
                         allow_sequence=False,
@@ -2395,6 +2451,10 @@ def _run_generative_job_impl(
                         variant_dir=variant_dir,
                         style_set_id=style_set_id,
                         user_style_knobs=user_style_knobs,
+                        font_family_override=creator_font_family,
+                        text_color_override=creator_text_color,
+                        creator_target_duration_s=creator_target_duration_s,
+                        creator_pacing=creator_pacing,
                         narrative_order=narrative_order,
                         filming_guide=(
                             filming_guide_candidates if narrative_shot_count > 0 else None
@@ -3903,6 +3963,7 @@ def _resolve_regen_text(
     persisted_word_roles: list[str] | None = None,
     persisted_behind_subject: bool | None = None,
     persisted_position: str | None = None,
+    confirmed_text: str | None = None,
 ) -> tuple:
     """Return (agent_text, agent_form, text_mode) without running the LLM when possible.
 
@@ -3977,6 +4038,24 @@ def _resolve_regen_text(
         # makes the variant fast-reburn eligible, so later lyric-override
         # dispatches silently skip lyric re-injection (2026-07-18 E2E bug).
         return None, None, "lyrics"
+
+    if confirmed_text and not persisted_text:
+        # A confirmed Creator title is an execution input, not a prompt hint.
+        # This branch is primarily for retrying a failed first render before a
+        # variant had a persisted intro_text receipt.
+        agent_text = _types.SimpleNamespace(
+            text=confirmed_text,
+            highlight_word=None,
+            word_roles=None,
+        )
+        agent_form = {
+            "effect": "karaoke-line",
+            "layout": persisted_layout or "linear",
+            "behind_subject": bool(persisted_behind_subject),
+        }
+        if persisted_position:
+            agent_form["position"] = persisted_position
+        return agent_text, agent_form, "agent_text"
 
     if persisted_text and existing_text_mode == "agent_text":
         # Reuse persisted text — NO LLM call.
@@ -8862,6 +8941,26 @@ def _run_regenerate_variant(
         if job.status == _CANCELLED_JOB_STATUS:
             log.info("generative_regenerate_cancelled_job_skipped", job_id=job_id)
             return
+        all_candidates = job.all_candidates or {}
+        creator_strategy = None
+        if all_candidates.get("creator_strategy"):
+            from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+
+            creator_strategy = CreativeStrategy.model_validate(all_candidates["creator_strategy"])
+        creator_opening_title = (
+            creator_strategy.opening_title if creator_strategy is not None else None
+        )
+        creator_font_family = creator_strategy.font_family if creator_strategy is not None else None
+        creator_text_color = creator_strategy.text_color if creator_strategy is not None else None
+        raw_creator_strategy = all_candidates.get("creator_strategy") or {}
+        raw_target_duration_s = raw_creator_strategy.get("target_duration_s")
+        creator_target_duration_s = (
+            float(raw_target_duration_s)
+            if raw_target_duration_s is not None and float(raw_target_duration_s) != 24
+            else None
+        )
+        raw_pacing = raw_creator_strategy.get("pacing")
+        creator_pacing = raw_pacing if raw_pacing in {"fast", "relaxed"} else None
         clip_paths_gcs = (job.all_candidates or {}).get("clip_paths", []) or []
         # Re-renders inherit the language the user chose at job creation. Legacy
         # jobs (pre-language-field) default to "en". Frontend NEVER passes language
@@ -9002,6 +9101,13 @@ def _run_regenerate_variant(
                 else "resync_beats"
             )
         existing_text_mode = existing.get("text_mode", "agent_text")
+        # Creator target fields are also persisted on the variant. This keeps a
+        # re-assembly hermetic even if a job's all_candidates predates the
+        # strategy read or a mixed-version worker sees partial state.
+        creator_target_duration_s = existing.get(
+            "creator_target_duration_s", creator_target_duration_s
+        )
+        creator_pacing = existing.get("creator_pacing", creator_pacing)
         inherited_lyrics_enabled = existing.get("lyrics_enabled")
         inherited_lyric_line_overrides = (
             None if new_track_id is not None else existing.get("lyric_line_overrides")
@@ -9277,6 +9383,7 @@ def _run_regenerate_variant(
             persisted_layout=persisted_layout,
             persisted_word_roles=persisted_word_roles,
             persisted_position=_persisted_intro_position(existing),
+            confirmed_text=creator_opening_title,
         )
         _used_fast_path = False
         fast_created_storage: list[str] = []
@@ -9561,6 +9668,7 @@ def _run_regenerate_variant(
                 persisted_word_roles=persisted_word_roles,
                 persisted_behind_subject=existing.get("intro_behind_subject"),
                 persisted_position=_persisted_intro_position(existing),
+                confirmed_text=creator_opening_title,
             )
         else:
             # PERF/TODO: this re-runs the full clip ingest (re-download + re-Gemini
@@ -9640,6 +9748,7 @@ def _run_regenerate_variant(
                 persisted_word_roles=persisted_word_roles,
                 persisted_behind_subject=existing.get("intro_behind_subject"),
                 persisted_position=_persisted_intro_position(existing),
+                confirmed_text=creator_opening_title,
             )
 
             # Rhythm-mode quote authoring on a full re-render (same grounding
@@ -9731,6 +9840,8 @@ def _run_regenerate_variant(
                 style_set_id=resolved_style_set_id,
                 intro_size_override_px=resolved_size_override_px,
                 user_style_knobs=existing_user_style_knobs,
+                creator_target_duration_s=creator_target_duration_s,
+                creator_pacing=creator_pacing,
                 narrative_order=narrative_order_regen,
                 filming_guide=(filming_guide_regen if narrative_shot_count_regen > 0 else None),
                 assembly_steps_override=assembly_steps_override,
@@ -11840,6 +11951,8 @@ def _render_generative_variant(
     style_set_id: str | None = None,
     intro_size_override_px: int | None = None,
     user_style_knobs: dict | None = None,
+    creator_target_duration_s: float | None = None,
+    creator_pacing: str | None = None,
     narrative_order: list[str] | None = None,
     filming_guide: list[dict] | None = None,
     assembly_steps_override: list | None = None,
@@ -12088,6 +12201,13 @@ def _render_generative_variant(
         "lyric_line_overrides": lyric_line_overrides or None,
         "lyric_overlay_snapshot": None,
     }
+    # Confirmed Main Creator constraints are receipts only when a Creator
+    # strategy supplied them. Omitting these keys for ordinary jobs preserves
+    # the legacy variant shape byte-for-byte.
+    if creator_target_duration_s is not None:
+        base["creator_target_duration_s"] = creator_target_duration_s
+    if creator_pacing is not None:
+        base["creator_pacing"] = creator_pacing
     if strict_day_vlog:
         base["day_vlog_renderer_version"] = spec.get("day_vlog_renderer_version")
     # Self-narration can intentionally fall back to the montage renderer when
@@ -12165,7 +12285,12 @@ def _render_generative_variant(
                 single_hero_order,
                 available_footage_s=available_footage_s,
                 clip_durations_s=durations,
-                max_duration_s=float(settings.output_max_duration_s),
+                max_duration_s=min(
+                    float(settings.output_max_duration_s),
+                    creator_target_duration_s
+                    if creator_target_duration_s is not None
+                    else float(settings.output_max_duration_s),
+                ),
             )
             min_slots = len(single_hero_recipe["slots"])
             base["hero_clip_id"] = single_hero_order[0]
@@ -12221,7 +12346,7 @@ def _render_generative_variant(
                 _cands.append(voice_dur)
             voiceover_target_s = min(_cands)
             recipe_dict = _build_no_music_recipe(
-                clip_metas, voiceover_target_s, min_slots=min_slots
+                clip_metas, voiceover_target_s, min_slots=min_slots, pacing=creator_pacing
             )
         elif track is not None:
             if not track.audio_gcs_path:
@@ -12233,10 +12358,23 @@ def _render_generative_variant(
             effective_music_window = _effective_music_window(
                 track,
                 requested_start_s=spec.get("music_start_s"),
-                requested_duration_s=spec.get("music_window_video_duration_s"),
+                requested_duration_s=(
+                    spec.get("music_window_video_duration_s")
+                    if spec.get("music_window_video_duration_s") is not None
+                    else creator_target_duration_s
+                ),
                 fallback_footage_s=effective_available_footage_s,
             )
             track_config = effective_music_window["track_config"]
+            if creator_pacing is not None:
+                # The beat recipe owns cut cadence. Adjust its bounded grouping
+                # before generation so pace changes the actual assembly slots,
+                # while min_slots below still protects every assigned shot.
+                track_config = dict(track_config)
+                current_n = max(1, int(track_config.get("slot_every_n_beats", 8)))
+                track_config["slot_every_n_beats"] = (
+                    max(1, current_n // 2) if creator_pacing == "fast" else min(32, current_n * 2)
+                )
             base["music_start_s"] = effective_music_window["start_s"]
             if effective_music_window["validated"]:
                 base["music_window_video_duration_s"] = effective_music_window["duration_s"]
@@ -12258,12 +12396,29 @@ def _render_generative_variant(
                 effective_available_footage_s,
                 filming_guide=filming_guide,
                 min_slots=min_slots,
+                target_duration_s=creator_target_duration_s,
+                pacing=creator_pacing,
             )
 
         if strict_single_hero:
             # A matched track may still provide the audio bed, but it must never
             # decide the visual slot count or ownership of this guided format.
             recipe_dict = single_hero_recipe
+
+        # The Creator pace is now represented by actual slot cadence/transition
+        # fields above, not just a write-only receipt. For music, the beat
+        # grouping is adjusted before recipe generation below.
+        if creator_pacing is not None:
+            recipe_dict["pacing_style"] = {"relaxed": "slow", "fast": "fast"}[creator_pacing]
+            if creator_pacing == "relaxed":
+                for index, slot in enumerate(recipe_dict.get("slots") or []):
+                    if index:
+                        slot["transition_in"] = "crossfade"
+                        slot["transition_duration_s"] = 0.3
+            elif creator_pacing == "fast":
+                for slot in recipe_dict.get("slots") or []:
+                    slot["transition_in"] = "cut"
+                    slot["transition_duration_s"] = 0.0
 
         if strict_day_vlog:
             # The generic matcher may choose a transition style from a recipe;
@@ -12281,9 +12436,12 @@ def _render_generative_variant(
                     "day_vlog could not allocate one timeline slot per filming-guide shot.",
                 )
             for index, slot in enumerate(recipe_dict["slots"]):
-                slot["transition_in"] = "cut" if index == 0 else "crossfade"
-                slot["transition_duration_s"] = 0.0 if index == 0 else _DAY_VLOG_MAX_TRANSITION_S
-            recipe_dict["transition_style"] = "crossfade"
+                relaxed = creator_pacing != "fast"
+                slot["transition_in"] = "cut" if index == 0 or not relaxed else "crossfade"
+                slot["transition_duration_s"] = (
+                    0.0 if index == 0 or not relaxed else _DAY_VLOG_MAX_TRANSITION_S
+                )
+            recipe_dict["transition_style"] = "cut" if creator_pacing == "fast" else "crossfade"
             recipe_total = sum(
                 float(slot.get("target_duration_s", slot.get("target_duration", 0.0)) or 0.0)
                 for slot in recipe_dict["slots"]
@@ -13149,6 +13307,10 @@ def _render_talking_head_variant(
     style_set_id: str | None = None,
     intro_size_override_px: int | None = None,
     user_style_knobs: dict | None = None,
+    font_family_override: str | None = None,
+    text_color_override: str | None = None,
+    creator_target_duration_s: float | None = None,
+    creator_pacing: str | None = None,
     language: str = "en",
     landscape_fit: str = "fill",
     silence_cut_disabled: bool = False,
@@ -13236,6 +13398,10 @@ def _render_talking_head_variant(
         "silence_cut_outcome": None,
         "speech_cleanup_failure_reason": None,
     }
+    if creator_target_duration_s is not None:
+        base["creator_target_duration_s"] = creator_target_duration_s
+    if creator_pacing is not None:
+        base["creator_pacing"] = creator_pacing
 
     try:
         # SpineExtractionError (corrupt spine) is re-raised below for the job-level
@@ -13293,7 +13459,11 @@ def _render_talking_head_variant(
             clip_paths=clip_id_to_local,
             clip_metas=clip_metas,
             probe_map=probe_map,
-            target_duration_s=available_footage_s or None,
+            target_duration_s=(
+                min(available_footage_s, creator_target_duration_s)
+                if creator_target_duration_s is not None and available_footage_s > 0
+                else (creator_target_duration_s or available_footage_s or None)
+            ),
             output_path=base_path,
             tmpdir=variant_dir,
             job_id=job_id,
@@ -13362,6 +13532,8 @@ def _render_talking_head_variant(
                 size_override_px=intro_size_override_px,
                 user_style_knobs=user_style_knobs,
                 language=language,
+                font_family_override=font_family_override,
+                text_color_override=text_color_override,
             )
             # Sticky (pre-gate) decision — no override kwarg here: talking_head has
             # no fast-reburn / re-render path (v1), so there is no task kwarg to
@@ -18304,6 +18476,8 @@ def _build_no_music_recipe(
     *,
     filming_guide: list[dict] | None = None,
     min_slots: int = 0,
+    target_duration_s: float | None = None,
+    pacing: str | None = None,
 ) -> dict:
     """A song-free recipe: one slot per clip (capped), even-split of the footage.
 
@@ -18330,13 +18504,20 @@ def _build_no_music_recipe(
 
     # Narrative payoff weighting: proportional slot durations from the guide.
     guide_durs = _extract_guide_durations(filming_guide or [], n)
+    # A confirmed Creator target is bounded by the source footage. The
+    # downstream assembler still owns final short-clip clamping, but the
+    # recipe/matcher must see the requested duration so it can allocate the
+    # same windows that are ultimately rendered.
+    effective_duration_s = float(available_footage_s)
+    if target_duration_s is not None:
+        effective_duration_s = min(effective_duration_s, max(0.0, float(target_duration_s)))
     if guide_durs is not None:
         total_guide = sum(guide_durs)
         slot_durs = [
-            max(0.5, round(float(available_footage_s) * (d / total_guide), 3)) for d in guide_durs
+            max(0.5, round(effective_duration_s * (d / total_guide), 3)) for d in guide_durs
         ]
     else:
-        per = max(0.5, round(float(available_footage_s) / n, 3))
+        per = max(0.5, round(effective_duration_s / n, 3))
         slot_durs = [per] * n
 
     slots = [
@@ -18353,6 +18534,28 @@ def _build_no_music_recipe(
         for i in range(n)
     ]
     total_duration = round(sum(slot_durs), 3)
+    pacing_style = {"relaxed": "slow", "fast": "fast"}.get(pacing, "medium")
+    if pacing == "relaxed" and min_slots <= 0 and n > 1:
+        # A relaxed Creator cut is allowed to reuse the matcher pool with
+        # fewer, longer shots. Do this only for an explicit constraint; the
+        # legacy/no-strategy recipe retains its historical slot count.
+        n = max(1, math.ceil(n / 2))
+        slot_durs = [max(0.5, round(effective_duration_s / n, 3))] * n
+        total_duration = round(sum(slot_durs), 3)
+        slots = [
+            {
+                "position": i + 1,
+                "target_duration_s": slot_durs[i],
+                "slot_type": "broll",
+                "energy": 5.0,
+                "priority": 5,
+                "text_overlays": [],
+                "transition_in": "crossfade" if i else "cut",
+                "transition_duration_s": 0.3 if i else 0.0,
+                "speed_factor": 1.0,
+            }
+            for i in range(n)
+        ]
     return {
         "shot_count": n,
         "total_duration_s": total_duration,
@@ -18360,7 +18563,7 @@ def _build_no_music_recipe(
         "slots": slots,
         "beat_timestamps_s": [],
         "sync_style": "freeform",
-        "pacing_style": "medium",
+        "pacing_style": pacing_style,
         "color_grade": "none",
         "transition_style": "cut",
         "copy_tone": "energetic",

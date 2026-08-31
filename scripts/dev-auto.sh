@@ -34,10 +34,12 @@ if [[ -f "$PID_FILE" ]]; then
   sleep 1
 fi
 
-# Also free this worktree's selected ports in case of orphan processes.
+# Do not kill processes found on shared dev ports here. Another worktree may
+# own them; tracked PIDs above are the only processes this checkout may stop.
+# A port conflict is reported by uvicorn/Next.js in its scoped log instead.
 for port in "$web_port" "$api_port"; do
   pids=$(lsof -ti ":$port" 2>/dev/null || true)
-  [[ -n "$pids" ]] && kill -9 $pids 2>/dev/null || true
+  [[ -n "$pids" ]] && log "Port :$port is already in use; leaving its process untouched."
 done
 
 # ── 2. Verify prerequisites ───────────────────────────────────────────────────
@@ -102,6 +104,9 @@ export NEXTAUTH_URL="${NOVA_DEV_NEXTAUTH_URL:-http://localhost:$web_port}"
 if [[ "$STORAGE_PROVIDER" == "local" && -z "${NOVA_DEV_LOCAL_STORAGE_BASE_URL:-}" ]]; then
   export LOCAL_STORAGE_BASE_URL="http://127.0.0.1:$api_port/dev-qa/storage"
 fi
+export NOVA_CELERY_QUEUE_NAMESPACE="$(bash "$REPO/scripts/dev-namespace.sh" "$REPO")"
+CELERY_DEV_QUEUES="celery,plan-jobs,overlay-jobs,creator-guided-jobs"
+log "Celery namespace: $NOVA_CELERY_QUEUE_NAMESPACE (Redis key prefix nova-dev:$NOVA_CELERY_QUEUE_NAMESPACE:)"
 
 # ── 5. Run migrations ─────────────────────────────────────────────────────────
 log "Running alembic migrations..."
@@ -119,7 +124,9 @@ log "Starting API on :$api_port (uvicorn --reload)..."
 echo $! >> "$PID_FILE"
 
 # ── 7. Start worker (hot reload via watchfiles) ──────────────────────────────
-# -Q celery,plan-jobs,overlay-jobs,creator-guided-jobs: drain the default queue, the content-plan
+# -Q celery,plan-jobs,overlay-jobs,creator-guided-jobs: drain the canonical
+# queues. The Celery Redis transport prefixes their physical keys with the
+# worktree namespace above, so explicit queue= dispatches are isolated too.
 # render queue (per-item + activation renders are routed to plan-jobs via
 # enqueue_orchestrator_sync), AND the SFX/media-overlay edit queue (sound-effects
 # + overlay renders route to overlay-jobs via dispatch_set_sound_effects /
@@ -132,7 +139,7 @@ log "Starting Celery worker (watchfiles auto-restart on .py changes)..."
 (
   cd "$REPO/src/apps/api"
   exec .venv/bin/watchfiles --filter python \
-    ".venv/bin/celery -A app.worker:celery_app worker --loglevel=info --concurrency=2 --pool=${CELERY_POOL:-prefork} -Q celery,plan-jobs,overlay-jobs,creator-guided-jobs" \
+    ".venv/bin/celery -A app.worker:celery_app worker --loglevel=info --concurrency=2 --pool=${CELERY_POOL:-prefork} -Q $CELERY_DEV_QUEUES -n worker-${NOVA_CELERY_QUEUE_NAMESPACE}@%h" \
     app
 ) > "$DEV_DIR/worker.log" 2>&1 &
 echo $! >> "$PID_FILE"
@@ -149,7 +156,7 @@ log "Starting overlay worker (--pool=solo for macOS fork-safety)..."
   exec .venv/bin/celery -A app.worker:celery_app worker \
     --pool=solo --loglevel=info \
     -Q overlay-jobs \
-    -n worker-overlay@%h
+    -n overlay-${NOVA_CELERY_QUEUE_NAMESPACE}@%h
 ) >> "$DEV_DIR/worker.log" 2>&1 &
 echo $! >> "$PID_FILE"
 
@@ -166,7 +173,7 @@ sleep 2
 log ""
 log "Dev environment started:"
 log "  API:      http://localhost:$api_port   (reload on .py edits)"
-log "  Worker:   celery               (restart on .py edits via watchfiles)"
+log "  Worker:   celery [$NOVA_CELERY_QUEUE_NAMESPACE] (restart on .py edits via watchfiles)"
 log "  Frontend: http://localhost:$web_port   (Next.js HMR)"
 log ""
 log "Logs:"

@@ -135,6 +135,22 @@ def test_strategy_carries_bounded_editorial_decisions() -> None:
         CreativeStrategy(optional_treatments=["sfx", "sfx"])
 
 
+def test_strategy_exact_render_fields_use_registry_and_color_contract() -> None:
+    strategy = CreativeStrategy(
+        opening_title=" Emir Olympics ",
+        font_family="rascal",
+        text_color="yellow",
+    )
+
+    assert strategy.opening_title == "Emir Olympics"
+    assert strategy.font_family == "Rascal"
+    assert strategy.text_color == "#FFD24A"
+    with pytest.raises(ValidationError):
+        CreativeStrategy(font_family="not-a-font")
+    with pytest.raises(ValidationError):
+        CreativeStrategy(text_color="chartreuse")
+
+
 def _target_kwargs() -> dict[str, str | int]:
     return {
         "expected_manifest_hash": "a" * 64,

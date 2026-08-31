@@ -36,6 +36,7 @@ from app.agents._schemas.creator_agent import (
     ReviewDecision,
     SetLicensedSfxCommand,
     canonical_context_hash,
+    normalize_creator_text_color,
 )
 from app.agents._schemas.creator_policy import (
     MAX_MAIN_CREATOR_SELECTED_MEDIA,
@@ -333,6 +334,100 @@ def _confirmed_creator_request(events: list[CreatorAgentEvent], current_message:
     if current_message.strip() and (not messages or messages[-1] != current_message.strip()):
         messages.append(current_message.strip())
     return "\n".join(messages)[:1000]
+
+
+def _apply_explicit_render_intent(
+    strategy: CreativeStrategy, creator_request: str
+) -> CreativeStrategy:
+    """Promote explicit creator wording into the typed render contract.
+
+    The Main Creator model may describe an exact title/style in prose while the
+    original v1 schema only had advisory ``intro_hook``.  This deterministic
+    extractor runs at the authenticated planning boundary, fills only missing
+    typed fields, and never creates executable operations. Unsupported styles
+    are ignored here and therefore cannot reach a renderer without schema
+    validation.
+    """
+
+    request = " ".join(str(creator_request or "").split())
+    # These fields become pixels, so only explicit creator-authored wording may
+    # populate them. Clear any model-authored values first, then promote the
+    # bounded request matches below. This prevents a plausible-but-wrong model
+    # title/style from overriding the user's exact copy.
+    updates: dict[str, object] = {
+        "opening_title": None,
+        "font_family": None,
+        "text_color": None,
+    }
+    title_match = re.search(
+        r"\b(?:opening\s+)?(?:title|intro|hook)\s*(?:text|copy)?\s*"
+        r"(?:is|to|should\s+say|as|:)?\s*[\"'“](.{1,280}?)[\"'”]",
+        request,
+        re.IGNORECASE,
+    )
+    if title_match is None:
+        # Chat-first users commonly omit quoting for a short title. Stop at
+        # the first comma or style qualifier so the rest of the request can
+        # never become on-screen copy.
+        title_match = re.search(
+            r"\b(?:opening\s+)?(?:title|intro|hook)\s*(?:text|copy)?\s*"
+            r"(?:is|to|should\s+say|as|:)?\s*"
+            r"([A-Za-z0-9][^,\n]{0,279}?)(?=\s*(?:,|$)|\s+(?:using|with|font|colou?r)\b)",
+            request,
+            re.IGNORECASE,
+        )
+    if title_match and title_match.group(1).strip():
+        updates["opening_title"] = title_match.group(1).strip()
+
+    from app.agents._schemas.text_element import _ALLOWED_FONTS  # noqa: PLC0415
+
+    # Match the canonical registry names directly (longest first), rather
+    # than greedily capturing prose such as “using Rascal” as the font.
+    for name in sorted(_ALLOWED_FONTS, key=len, reverse=True):
+        escaped = re.escape(name)
+        if re.search(
+            rf"(?<!\w){escaped}(?!\w)\s+font\b|"
+            rf"\b(?:font|typeface)\s*(?:is|to|:)?\s*{escaped}(?!\w)|"
+            rf"(?<!\w){escaped}(?!\w)(?=\s*(?:,|$))",
+            request,
+            re.IGNORECASE,
+        ):
+            updates["font_family"] = name
+            break
+
+    color_match = re.search(
+        r"\b(?:text\s+)?colou?r\s*(?:is|to|:)?\s*(#[0-9A-Fa-f]{6}|[A-Za-z]+)\b"
+        r"|\b(?:make|set)\s+(?:the\s+)?(?:text|title|intro)\s+"
+        r"(#[0-9A-Fa-f]{6}|yellow|gold|white|black)\b"
+        r"|\b(yellow|gold|white|black)\s+(?:text|title|intro)\b",
+        # Also accept a comma-delimited style list such as
+        # "title Emir Olympics, Rascal, yellow".
+        # The bounded vocabulary keeps arbitrary adjectives out.
+        request,
+        re.IGNORECASE,
+    )
+    if color_match is None:
+        color_match = re.search(
+            r"\b(yellow|gold|white|black)(?=\s*(?:,|$))",
+            request,
+            re.IGNORECASE,
+        )
+    if color_match:
+        updates["text_color"] = normalize_creator_text_color(
+            color_match.group(1) or color_match.group(2) or color_match.group(3)
+        )
+
+    if re.search(r"\b(?:fast|snappy|quick)\s+(?:pace|pacing)\b", request, re.IGNORECASE):
+        updates["pacing"] = "fast"
+    elif re.search(r"\b(?:relaxed|slow|calm)\s+(?:pace|pacing)\b", request, re.IGNORECASE):
+        updates["pacing"] = "relaxed"
+    elif re.search(r"\bbalanced\s+(?:pace|pacing)\b", request, re.IGNORECASE):
+        updates["pacing"] = "balanced"
+
+    target_duration_s = recognize_total_duration_s(request)
+    if target_duration_s is not None:
+        updates["target_duration_s"] = target_duration_s
+    return CreativeStrategy.model_validate({**strategy.model_dump(mode="json"), **updates})
 
 
 def _requests_preserved_clip_order(creator_request: str) -> bool:
@@ -751,7 +846,14 @@ def _fallback_strategy(manifest: Any, *, user_message: str = "") -> CreativeStra
 def _strict_creator_format(edit_format: str) -> bool:
     """Formats that must fail visibly instead of falling back to montage."""
 
-    return edit_format in {"day_vlog", "single_hero"}
+    return edit_format in {
+        "day_vlog",
+        "single_hero",
+        "subtitled",
+        "narrated",
+        "narrated_planned",
+        "narrated_ready",
+    }
 
 
 def _auto_iteration_already_finalized(session: CreatorAgentSession) -> bool:
@@ -1116,6 +1218,7 @@ async def _run_planning_turn(
             # Model-authored media references are repaired only at this trust
             # boundary. The subsequent compiler remains strict, so persisted
             # plans can contain only IDs from the authoritative manifest.
+            strategy = _apply_explicit_render_intent(strategy, creator_request)
             strategy = normalize_creator_strategy_media(
                 manifest, strategy, repair_model_output=True
             )

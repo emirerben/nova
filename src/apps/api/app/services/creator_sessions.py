@@ -463,6 +463,9 @@ def compile_active_plan(
         "story_structure": list(getattr(strategy, "story_structure", []) or []),
         "caption_style": getattr(strategy, "caption_style", None),
         "intro_hook": getattr(strategy, "intro_hook", None),
+        "opening_title": getattr(strategy, "opening_title", None),
+        "font_family": getattr(strategy, "font_family", None),
+        "text_color": getattr(strategy, "text_color", None),
         "target_duration_s": strategy.target_duration_s,
         "edit_plan": edit_plan.model_dump(mode="json", exclude_none=True),
     }

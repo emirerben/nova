@@ -542,6 +542,22 @@ def test_build_no_music_recipe_no_guide_is_uniform():
     assert durations[0] == durations[1] == durations[2]
 
 
+def test_creator_no_music_recipe_honors_duration_and_relaxed_pacing():
+    metas = [_Meta(f"c{i}", 10.0) for i in range(4)]
+    recipe = gb._build_no_music_recipe(
+        metas,
+        available_footage_s=40.0,
+        target_duration_s=12.0,
+        pacing="relaxed",
+    )
+
+    assert recipe["pacing_style"] == "slow"
+    assert recipe["total_duration_s"] == 12.0
+    assert len(recipe["slots"]) == 2
+    assert recipe["slots"][1]["transition_in"] == "crossfade"
+    assert recipe["slots"][1]["transition_duration_s"] == 0.3
+
+
 def test_available_footage_sums_probes():
     pm = {"/a.mp4": _Probe(3.0), "/b.mp4": _Probe(4.5)}
     assert gb._available_footage_s(pm) == 7.5
@@ -3010,6 +3026,28 @@ def test_regenerate_reuses_persisted_intro_text():
     assert llm_called["called"] is False
     assert agent_text is not None
     assert agent_text.text == "My hook text"
+    assert text_mode == "agent_text"
+
+
+def test_regenerate_uses_confirmed_creator_title_without_llm():
+    llm_called = {"called": False}
+
+    def _run_text_agents_fn():
+        llm_called["called"] = True
+        return types.SimpleNamespace(text="LLM text", highlight_word=None), {}
+
+    agent_text, _agent_form, text_mode = gb._resolve_regen_text(
+        override_text=None,
+        remove_text=False,
+        existing_text_mode="agent_text",
+        persisted_text=None,
+        persisted_highlight=None,
+        run_text_agents_fn=_run_text_agents_fn,
+        confirmed_text="Emir Olympics",
+    )
+
+    assert llm_called["called"] is False
+    assert agent_text.text == "Emir Olympics"
     assert text_mode == "agent_text"
 
 

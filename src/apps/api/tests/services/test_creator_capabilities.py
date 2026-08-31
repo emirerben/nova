@@ -509,6 +509,27 @@ def test_compile_rejects_format_whose_renderer_flag_is_off(monkeypatch) -> None:
         )
 
 
+def test_compile_rejects_exact_opening_title_on_caption_owned_formats(monkeypatch) -> None:
+    _enable_guided(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "subtitled_archetype_enabled", True)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="subtitled",
+        media=[{"media_id": "clip-1", "kind": "video"}],
+    )
+
+    with pytest.raises(ValueError, match="opening_title is not supported"):
+        capabilities.compile_strategy_to_plan(
+            manifest,
+            CreativeStrategy(
+                edit_format="subtitled",
+                opening_title="Emir Olympics",
+                render_program="native",
+                selected_media_ids=["clip-1"],
+            ),
+        )
+
+
 def test_cadence_forces_guided_renderer_even_with_original_audio(monkeypatch) -> None:
     _enable_guided(monkeypatch)
     manifest = capabilities.resolve_creator_manifest(

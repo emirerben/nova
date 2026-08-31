@@ -308,6 +308,16 @@ def compile_strategy_to_plan(
     """
 
     strategy = normalize_creator_strategy_media(manifest, strategy)
+    if strategy.opening_title and strategy.edit_format in {
+        "subtitled",
+        "narrated",
+        "narrated_planned",
+        "narrated_ready",
+    }:
+        # These lanes own captions/voiceover text and do not render a hero
+        # intro. Fail at the plan boundary rather than silently dropping a
+        # confirmed opening title in the worker.
+        raise ValueError(f"opening_title is not supported by the {strategy.edit_format} renderer")
     strategy_format = coerce_edit_format(strategy.edit_format)
     effective_program = strategy.render_program
     selected_media_ids = list(strategy.selected_media_ids)
