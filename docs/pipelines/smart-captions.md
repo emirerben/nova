@@ -261,6 +261,26 @@ transcript_terms — the table exists to map phonetically dissimilar pairs
 required. Word IDs and timestamps never change; untrusted rewrites are rejected.
 Non-Smart caption correction keeps its original behavior.
 
+### Punctuation restore (`CAPTION_PUNCTUATION_ENABLED`, default `true`)
+
+`_transcribe_openai` gets two things back from Whisper: a punctuated full text
+and a timed word stream with neither punctuation nor case.
+`align_punctuated_text()` (`app/pipeline/transcribe.py`) walks them together and
+copies the punctuation onto the timed words. The matcher is casefold+strip, with
+a `k<=3` merge for numbers the two streams split differently and a bounded
+2-token resync for small drifts. ANY residual mismatch bails the WHOLE
+transcript back to the raw timed words — fail-open, never a partially aligned
+caption track. `_transcribe_local` is unaffected. `false` is byte-identical.
+
+### Correction model
+
+`SUBTITLED_CAPTION_CORRECTION_ENABLED` (default `true`) is the switch: it fixes
+whisper mishearings one cue at a time, and cue timing is preserved. The model is
+`CAPTION_CORRECTION_MODEL`, default `gpt-4o` — the mini variant was evaluated and
+missed Turkish case errors 4 times out of 4, so it is not a safe cost swap.
+`SUBTITLED_ARCHETYPE_ENABLED` itself has been ON in production since 2026-07-02
+even though the code default is `false`.
+
 ## Licensed music bed
 
 - **Selection:** `_resolve_smart_music_treatment` in `tasks/generative_build.py`

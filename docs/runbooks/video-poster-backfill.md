@@ -4,6 +4,11 @@ Use this runbook to repair retained real-user videos whose Library tile has no
 usable poster. The workflow generates source-matched JPEGs without re-rendering
 the videos, then proves that a second strict scan has no work left.
 
+There are two actuators. This document leads with the batch **Video Poster
+Backfill** workflow (bounded, audited, leaves a receipt); the in-product
+on-demand repair that heals the long tail as users browse is documented under
+[On-demand repair](#on-demand-repair-tasksrepair_job_poster).
+
 ## Safety contract
 
 - Run only the GitHub **Video Poster Backfill** workflow on `main`.
@@ -148,6 +153,69 @@ Jobs and receipts, verifies both ownership and the committed replacement, and
 retries transient storage failures. Account deletion also includes both sides
 of every receipt.
 
+## On-demand repair (`tasks.repair_job_poster`)
+
+The batch workflow above is the bulk actuator. The second one runs in the
+product: when a signed-in user opens the Library, `POST /me/jobs/posters/refresh`
+enqueues `tasks.repair_job_poster` (`app/tasks/poster_repair.py`) for an owned
+`ready` job whose preview has no poster, and the tile self-heals on the next
+refresh. Use it for the long tail; use the workflow when you want a bounded,
+audited sweep with a receipt.
+
+### Enable it — queue first, then the flag
+
+The task downloads the full source MP4 into the RAM-backed `/tmp` and runs
+ffmpeg. That is the workload that OOM'd the 1GB `light`/Beat machine on
+2026-08-02, so it must never land there, and it must never land on the default
+`celery` queue where it would head-of-line-block the concurrency=1 render
+worker. Set the queue **before** flipping the flag:
+
+```bash
+fly secrets set POSTER_REPAIR_QUEUE=autoplace-jobs --app nova-video
+fly machine restart <api-machine-id>
+fly machine restart <worker-machine-id>
+
+# Only after the queue setting is live on both process groups:
+fly secrets set POSTER_ONDEMAND_REPAIR_ENABLED=true --app nova-video
+fly machine restart <api-machine-id>
+fly machine restart <worker-machine-id>
+```
+
+`POSTER_REPAIR_QUEUE` defaults to `celery` in code so local `dev-auto.sh` keeps
+working — it consumes no autoplace queue. `worker.py` pins the route in
+`task_routes`, so the queue is a property of the task, not of each dispatcher.
+
+### Rollback
+
+```bash
+fly secrets set POSTER_ONDEMAND_REPAIR_ENABLED=false --app nova-video
+fly machine restart <id>   # api + worker
+```
+
+Off is byte-identical to the pure re-signer: no marker writes, no dispatch, and
+an already-queued task re-checks the flag and drains as `disabled`. Persisted
+terminal verdicts stop being honored too, so a storage incident that minted
+`expired_source` in bulk is fully reverted by the flag alone.
+
+### Read the outcome
+
+Every run logs `poster_repair_outcome` with a short outcome string (`generated`
+on success, plus `disabled`, `not_repairable`, `expired_source`, `bad_id`, …);
+an unexpected exception logs
+`poster_repair_failed` and the task returns `error` rather than raising — repair
+is fail-open by contract.
+
+State lives on `Job.assembly_plan["_poster_repair"]`: `video_path` (the source
+the verdict is bound to, so a re-render voids it), `attempts` (incremented only
+on a real extraction failure — never by a deploy or a worker death), `terminal`,
+and `enqueued_at`. After `MAX_POSTER_REPAIR_ATTEMPTS` (3) real failures the
+marker goes terminal as `attempts_exhausted`; a source object that no longer
+exists goes terminal as `expired_source`. Either verdict surfaces to the tile as
+`poster_status: "unavailable"` — an honest end state instead of a spinner. The
+route dedupes to at most one repair per job per 10 minutes and caps enqueues per
+request, so a page of posterless history is repaired over several refreshes
+rather than in one burst.
+
 ## Production acceptance
 
 After the backfill is green, validate a signed-in mobile-sized Library session:
@@ -158,6 +226,11 @@ After the backfill is green, validate a signed-in mobile-sized Library session:
   requests of at most 200 owner-scoped job IDs; the no-store response returns
   only poster URL, stable identity, and `ready` / `repairing` / `unavailable`
   status, and omits missing or foreign jobs;
+- every response carrying a short-TTL signed URL reaches the browser with
+  `Cache-Control: no-store` — `GET /me/jobs` and the two routes above set it,
+  and `src/apps/web/src/lib/api-proxy.ts` forwards the upstream directive
+  instead of dropping it. Check the header at the browser, not just at Fly: a
+  proxy that strips it lets Safari heuristically cache expiring links;
 - a posterless tile makes `GET /me/jobs/{job_id}/playback-url` only after Play;
 - the returned fresh URL mounts exactly one preview, and starting another stops
   the previous one;
