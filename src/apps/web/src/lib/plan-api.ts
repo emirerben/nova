@@ -2380,6 +2380,10 @@ export interface PlanItemVariant {
     removed?: Array<{ start_s: number; end_s: number; reason: string }>;
     time_saved_s?: number;
     outcome?: "applied" | "no_change" | "insufficient_source_speech";
+    // required_v1 budget clamp (plans/019 addendum) — present only when clamped.
+    clamped?: boolean;
+    proposed_removed_s?: number;
+    clamp_budget_s?: number;
   } | null;
   silence_cut_outcome?: "applied" | "no_change" | "insufficient_source_speech" | null;
   speech_cleanup_failure_reason?: string | null;
