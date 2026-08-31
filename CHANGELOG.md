@@ -5,10 +5,12 @@ All notable changes to this project will be documented in this file.
 ## [0.59.1.0] — 2026-08-31
 
 ### Fixed
-- **Videos you made before thumbnails existed can finally get one.** Opening your library used to leave older videos stuck behind a spinner that restarted every time the page loaded, because nothing in Kria had ever created a thumbnail for them and nothing was able to. Kria now generates the missing thumbnail on demand when you look at the library, and a video whose original footage is genuinely gone says so plainly instead of spinning forever.
 - **Thumbnails stop disappearing days after a video is made.** They were being stored beside the video file, so the cleanup that removes old footage took the thumbnail with it. Thumbnails now live somewhere that cleanup never touches.
-- **A tile no longer claims your thumbnail is gone when it is still being made.** Running out of retries only stops Kria asking; the tile settles into a still, honest state that points out the video itself is ready to open, and "unavailable" is now reserved for a thumbnail that really cannot be produced.
+- **A tile no longer claims your thumbnail is gone while it is still being made.** Running out of retries only stops Kria asking; the tile settles into a still, honest state that points out the video itself is ready to open, and "unavailable" is now reserved for a thumbnail that really cannot be produced.
 - **The library stops serving stale images from the browser cache.** Cache instructions from the API were being stripped before they reached the browser, so short-lived image links could be reused after they expired.
+
+### Added
+- **Kria can now repair a missing library thumbnail by itself.** Videos made before thumbnails existed had none, and nothing in Kria was able to create one for them — so their tiles sat behind a spinner that restarted on every page load. Kria can now generate the missing thumbnail while you browse, and a video whose original footage is genuinely gone settles on a clear answer instead of spinning. Ships turned off (`POSTER_ONDEMAND_REPAIR_ENABLED`); existing videos are repaired in bulk by the Video Poster Backfill workflow.
 
 ### Changed
 - **Deploys can no longer be blocked by a leftover repair machine.** A one-off maintenance machine that never started used to wedge the shared lock every deploy needs, with no way to recover in tooling. Deploys now clear a machine that provably did nothing, while one that actually ran is still kept for inspection.
