@@ -394,6 +394,20 @@ def test_marker_rebinds_and_resets_attempts_when_the_video_path_changes(
 # ── Kill switch + non-repairable rows ─────────────────────────────────────────
 
 
+def test_repair_ships_off_by_default() -> None:
+    """Default-false-then-flip. Already-deployed frontends poll the refresh
+    endpoint in bursts, so a default-true ship is a zero-canary activation:
+    the first deploy would fan every posterless tile in the fleet out into a
+    full-MP4 download. The queue default must also stay `celery` so local
+    `dev-auto.sh` (which consumes no autoplace queue) keeps working.
+    """
+    from app.config import Settings
+
+    fields = Settings.model_fields
+    assert fields["poster_ondemand_repair_enabled"].default is False
+    assert fields["poster_repair_queue"].default == "celery"
+
+
 def test_flag_off_is_a_no_op_that_never_touches_the_database(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -442,3 +456,144 @@ def test_marker_field_matches_the_route_constant() -> None:
     from app.routes import me
 
     assert me._POSTER_REPAIR_MARKER_FIELD == pr.POSTER_REPAIR_MARKER_FIELD
+
+
+# ── Malformed input + corrupt state ───────────────────────────────────────────
+
+
+def test_unparseable_job_id_is_rejected_before_any_row_is_locked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A poisoned queue message must not open a session, let alone a lock."""
+    session = _FakeSession(None)
+    calls = _wire(monkeypatch, session)
+
+    assert pr._run_repair("not-a-uuid") == "bad_id"
+    assert session.locks == []
+    assert session.commits == 0
+    assert calls["generate"] == []
+
+
+def test_corrupt_assembly_plan_is_preserved_not_coerced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-dict plan is forensic state: bail rather than overwrite it with {}."""
+    job = _FakeJob(status="template_ready")
+    job.assembly_plan = ["corrupted", "by", "a", "bad", "write"]
+    session = _FakeSession(job)
+    calls = _wire(monkeypatch, session)
+
+    assert pr._run_repair(str(job.id)) == "corrupt_plan"
+    assert job.assembly_plan == ["corrupted", "by", "a", "bad", "write"]
+    assert session.commits == 0
+    assert calls["generate"] == []
+
+
+def test_celery_wrapper_swallows_every_exception(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail-open by contract: a raising body must never bubble into Celery.
+
+    `max_retries=0` + `acks_late` means a raised exception would be logged as a
+    task failure and the poster would never be retried; the tile would spin
+    while the queue reported red.
+    """
+
+    def _boom(_job_id: str) -> str:
+        raise RuntimeError("gcs is on fire")
+
+    monkeypatch.setattr(pr, "_run_repair", _boom)
+
+    assert pr.repair_job_poster(str(uuid.uuid4())) == "error"
+
+    # …and a normal outcome still reaches the caller unchanged.
+    monkeypatch.setattr(pr, "_run_repair", lambda job_id: "generated")
+    assert pr.repair_job_poster(str(uuid.uuid4())) == "generated"
+
+
+# ── Stale races that must not mint a false verdict ────────────────────────────
+
+
+def test_rerender_during_the_source_probe_blocks_the_expired_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing OLD source says nothing about the NEW one.
+
+    Settling `expired_source` here would be a verdict on stale evidence, and
+    the library would show "Thumbnail unavailable" for a video that renders
+    fine.
+    """
+    job = _FakeJob()
+    job.assembly_plan = _variant_plan(job.id)
+    session = _FakeSession(job)
+    _wire(monkeypatch, session, source_exists=False)
+
+    def _probe_then_rerender(_path: str) -> bool:
+        job.assembly_plan["variants"][0]["video_path"] = f"generative-jobs/{job.id}/rerender.mp4"
+        job.assembly_plan["variants"][0]["render_generation_id"] = "gen-2"
+        return False
+
+    monkeypatch.setattr("app.storage.object_exists", _probe_then_rerender)
+
+    assert pr._run_repair(str(job.id)) == "stale_race"
+    assert pr.POSTER_REPAIR_MARKER_FIELD not in job.assembly_plan
+    assert session.commits == 0
+
+
+def test_rerender_during_extraction_does_not_charge_the_new_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Attempts are charged to the source that actually failed, or to nothing.
+
+    Charging the fresh render for the superseded source's failure is how a
+    false `attempts_exhausted` gets minted three refreshes later.
+    """
+    job = _FakeJob()
+    job.assembly_plan = _variant_plan(job.id)
+    session = _FakeSession(job)
+
+    def _concurrent_rerender() -> None:
+        job.assembly_plan["variants"][0]["video_path"] = f"generative-jobs/{job.id}/rerender.mp4"
+
+    _wire(monkeypatch, session, poster_key=None, on_generate=_concurrent_rerender)
+
+    assert pr._run_repair(str(job.id)) == "stale_race"
+    assert pr.POSTER_REPAIR_MARKER_FIELD not in job.assembly_plan
+    assert session.commits == 0
+
+
+def test_clip_row_changed_under_the_lock_discards_the_upload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`populate_existing` exists so the locked re-read can disagree.
+
+    The unlocked `_ready_clips` scan and the locked `db.get` are modelled as
+    two different rows here — exactly the divergence the refresh guards against
+    — and a concurrent render's thumbnail must win over this task's upload.
+    """
+    job = _FakeJob(status="clips_ready", assembly_plan=None)
+    stale = _FakeClip(job_id=job.id, rank=0, video_path=f"{job.user_id}/{job.id}/run/a.mp4")
+
+    class _DivergingSession(_FakeSession):
+        def get(self, model: Any, pk: Any, **kwargs: Any) -> Any:
+            row = super().get(model, pk, **kwargs)
+            if model is JobClip and row is not None:
+                assert kwargs.get("populate_existing") is True, (
+                    "the locked clip re-read must bypass the identity map"
+                )
+                fresh = _FakeClip(
+                    job_id=row.job_id,
+                    rank=row.rank,
+                    video_path=row.video_path,
+                    # A concurrent render already wrote its own thumbnail.
+                    thumbnail_path=f"job-posters/{job.id}/winner.poster.jpg",
+                )
+                fresh.id = row.id
+                return fresh
+            return row
+
+    session = _DivergingSession(job, clips=[stale])
+    calls = _wire(monkeypatch, session, poster_key="job-posters/loser/abc.poster.jpg")
+
+    assert pr._run_repair(str(job.id)) == "stale_race"
+    assert calls["deleted"] == ["job-posters/loser/abc.poster.jpg"]
+    assert stale.thumbnail_path is None
+    assert session.commits == 0

@@ -669,6 +669,312 @@ def test_list_sets_cache_control_no_store(monkeypatch) -> None:
     assert response.headers["cache-control"] == "no-store"
 
 
+def test_refresh_posters_caps_the_enqueue_burst_per_request(monkeypatch, repair_task) -> None:
+    """A posterless history page must not become one MP4 download per tile.
+
+    The remainder is picked up by the client's next refresh, so the bound costs
+    latency, never correctness.
+    """
+    from app.routes.me import _MAX_POSTER_REPAIR_ENQUEUES
+
+    user = _user()
+    jobs = [_posterless_job(user.id) for _ in range(_MAX_POSTER_REPAIR_ENQUEUES + 2)]
+    db = _db([_scalars(jobs), *[_scalar(job) for job in jobs[:_MAX_POSTER_REPAIR_ENQUEUES]]])
+    _override(user, db)
+    monkeypatch.setattr("app.routes.me.signed_get_url", MagicMock())
+
+    response = client.post(
+        "/me/jobs/posters/refresh",
+        json={"job_ids": [str(job.id) for job in jobs]},
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()["jobs"]) == len(jobs)
+    assert repair_task.apply_async.call_count == _MAX_POSTER_REPAIR_ENQUEUES
+    # Only the jobs inside the budget were locked and stamped.
+    stamped = [job for job in jobs if "_poster_repair" in job.assembly_plan]
+    assert len(stamped) == _MAX_POSTER_REPAIR_ENQUEUES
+    assert all("_poster_repair" not in job.assembly_plan for job in jobs[-2:])
+
+
+def test_refresh_posters_survives_a_broker_publish_failure(monkeypatch, repair_task) -> None:
+    """A dead broker must not 500 the library, and must not stop the batch.
+
+    The marker is already committed, so the only cost of a lost publish is that
+    the repair waits for the dedupe window to lapse.
+    """
+    user = _user()
+    first = _posterless_job(user.id)
+    second = _posterless_job(user.id)
+    db = _db([_scalars([first, second]), _scalar(first), _scalar(second)])
+    _override(user, db)
+    monkeypatch.setattr("app.routes.me.signed_get_url", MagicMock())
+    repair_task.apply_async.side_effect = [ConnectionError("broker down"), None]
+
+    response = client.post(
+        "/me/jobs/posters/refresh",
+        json={"job_ids": [str(first.id), str(second.id)]},
+    )
+
+    assert response.status_code == 200
+    assert [j["poster_status"] for j in response.json()["jobs"]] == ["repairing", "repairing"]
+    # One failed publish does not abort the loop.
+    assert repair_task.apply_async.call_count == 2
+
+
+def test_refresh_posters_leaves_a_poster_alone_when_the_probe_is_inconclusive(
+    monkeypatch, repair_task
+) -> None:
+    """A degraded GCS must never be read as "the thumbnail is gone".
+
+    Blanking a live poster on a transient probe error would turn one storage
+    blip into a library-wide regeneration burst.
+    """
+    user = _user()
+    job = _job(
+        user_id=user.id,
+        status="music_ready",
+        mode="music",
+        job_type="music",
+        assembly_plan={"output_path": "music-jobs/PLACEHOLDER/output.mp4"},
+    )
+    job.assembly_plan.update(
+        {
+            "output_path": f"music-jobs/{job.id}/output.mp4",
+            "poster_path": f"music-jobs/{job.id}/output.jpg",
+        }
+    )
+    db = _db([_scalars([job])])
+    _override(user, db)
+    monkeypatch.setattr("app.routes.me.signed_get_url", lambda path, ttl: f"https://s/{path}")
+
+    def _explode(path, *, timeout_s):
+        raise TimeoutError("storage probe timed out")
+
+    monkeypatch.setattr("app.routes.me.object_exists_once", _explode)
+
+    response = client.post(
+        "/me/jobs/posters/refresh",
+        json={"job_ids": [str(job.id)], "broken_job_ids": [str(job.id)]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["jobs"][0]["poster_status"] == "ready"
+    assert job.assembly_plan["poster_path"] == f"music-jobs/{job.id}/output.jpg"
+    assert "_poster_repair" not in job.assembly_plan
+    repair_task.apply_async.assert_not_called()
+    db.commit.assert_not_awaited()
+
+
+def test_refresh_posters_leaves_a_live_poster_alone_when_the_probe_finds_it(
+    monkeypatch, repair_task
+) -> None:
+    """A client-side `<img>` failure can be the client's fault (CDN, offline).
+
+    The object still exists, so the stored key stays and nothing is enqueued.
+    """
+    user = _user()
+    job = _job(
+        user_id=user.id,
+        status="music_ready",
+        mode="music",
+        job_type="music",
+        assembly_plan={"output_path": "music-jobs/PLACEHOLDER/output.mp4"},
+    )
+    job.assembly_plan.update(
+        {
+            "output_path": f"music-jobs/{job.id}/output.mp4",
+            "poster_path": f"music-jobs/{job.id}/output.jpg",
+        }
+    )
+    db = _db([_scalars([job])])
+    _override(user, db)
+    monkeypatch.setattr("app.routes.me.signed_get_url", lambda path, ttl: f"https://s/{path}")
+    monkeypatch.setattr("app.routes.me.object_exists_once", lambda path, *, timeout_s: True)
+
+    response = client.post(
+        "/me/jobs/posters/refresh",
+        json={"job_ids": [str(job.id)], "broken_job_ids": [str(job.id)]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["jobs"][0]["poster_status"] == "ready"
+    assert job.assembly_plan["poster_path"] == f"music-jobs/{job.id}/output.jpg"
+    repair_task.apply_async.assert_not_called()
+    db.commit.assert_not_awaited()
+
+
+def test_refresh_posters_ignores_broken_ids_outside_the_requested_batch(
+    monkeypatch, repair_task
+) -> None:
+    """`broken_job_ids` is client input: it must not widen the owned batch."""
+    user = _user()
+    job = _posterless_job(user.id)
+    db = _db([_scalars([job]), _scalar(job)])
+    _override(user, db)
+    monkeypatch.setattr("app.routes.me.signed_get_url", MagicMock())
+    probed: list[str] = []
+
+    def _probe(path, *, timeout_s):
+        probed.append(path)
+        return False
+
+    monkeypatch.setattr("app.routes.me.object_exists_once", _probe)
+
+    response = client.post(
+        "/me/jobs/posters/refresh",
+        json={"job_ids": [str(job.id)], "broken_job_ids": [str(uuid.uuid4())]},
+    )
+
+    assert response.status_code == 200
+    assert probed == [], "an unowned/unrequested id must never reach storage"
+    repair_task.apply_async.assert_called_once_with(args=[str(job.id)], queue="celery")
+
+
+def test_refresh_posters_enqueues_when_the_marker_timestamp_is_unusable(
+    monkeypatch, repair_task
+) -> None:
+    """A corrupt freshness stamp must fail OPEN (repair) not CLOSED (spin).
+
+    A marker written by a future/older writer with a non-ISO `enqueued_at` would
+    otherwise suppress every repair for that job forever.
+    """
+    user = _user()
+    job = _posterless_job(user.id)
+    job.assembly_plan["_poster_repair"] = {
+        "video_path": f"jobs/{job.id}/output.mp4",
+        "attempts": 1,
+        "terminal": None,
+        "enqueued_at": "not-a-timestamp",
+    }
+    db = _db([_scalars([job]), _scalar(job)])
+    _override(user, db)
+    monkeypatch.setattr("app.routes.me.signed_get_url", MagicMock())
+
+    response = client.post("/me/jobs/posters/refresh", json={"job_ids": [str(job.id)]})
+
+    assert response.status_code == 200
+    repair_task.apply_async.assert_called_once_with(args=[str(job.id)], queue="celery")
+    marker = job.assembly_plan["_poster_repair"]
+    assert marker["enqueued_at"] != "not-a-timestamp"
+    # The enqueue path never touches the failure counter.
+    assert marker["attempts"] == 1
+
+
+def test_refresh_posters_leaves_ambiguous_variant_ids_untouched(monkeypatch, repair_task) -> None:
+    """Historical JSONB does not enforce unique variant ids.
+
+    Clearing "the first match" could blank a different variant's live poster,
+    so an ambiguous row is left exactly as it is.
+    """
+    user = _user()
+    job = _job(
+        user_id=user.id,
+        status="variants_ready",
+        assembly_plan={"variants": []},
+    )
+    variant = {
+        "variant_id": "primary",
+        "render_status": "ready",
+        "video_path": f"generative-jobs/{job.id}/output.mp4",
+        "poster_path": f"generative-jobs/{job.id}/output.jpg",
+    }
+    job.assembly_plan["variants"] = [dict(variant), dict(variant)]
+    db = _db([_scalars([job]), _scalar(job)])
+    _override(user, db)
+    monkeypatch.setattr("app.routes.me.signed_get_url", lambda path, ttl: f"https://s/{path}")
+    monkeypatch.setattr(
+        "app.routes.me.object_exists_once",
+        lambda path, *, timeout_s: path.endswith(".mp4"),
+    )
+
+    response = client.post(
+        "/me/jobs/posters/refresh",
+        json={"job_ids": [str(job.id)], "broken_job_ids": [str(job.id)]},
+    )
+
+    assert response.status_code == 200
+    assert [v["poster_path"] for v in job.assembly_plan["variants"]] == [
+        f"generative-jobs/{job.id}/output.jpg",
+        f"generative-jobs/{job.id}/output.jpg",
+    ]
+    assert "_poster_repair" not in job.assembly_plan
+    repair_task.apply_async.assert_not_called()
+
+
+def test_refresh_posters_clears_a_dead_jobclip_thumbnail_and_repairs_it(
+    monkeypatch, repair_task
+) -> None:
+    """The legacy JobClip-backed library row is a first-class repair target.
+
+    Its thumbnail lives on a column, not in JSONB, so it takes the third branch
+    of the clear path — the one a variant/plan-output test never reaches.
+    """
+    user = _user()
+    job = _job(user_id=user.id, status="clips_ready", mode=None, job_type="default")
+    clip = MagicMock(
+        id=uuid.uuid4(),
+        job_id=job.id,
+        rank=1,
+        render_status="ready",
+        video_path=f"{user.id}/{job.id}/task-runs/run/clip_1.mp4",
+        thumbnail_path=f"{user.id}/{job.id}/task-runs/run/thumb_1.jpg",
+    )
+    db = _db([_scalars([job]), _scalars([clip]), _scalar(job)])
+    _override(user, db)
+    monkeypatch.setattr("app.routes.me.signed_get_url", lambda path, ttl: f"signed://{path}")
+    monkeypatch.setattr(
+        "app.routes.me.object_exists_once",
+        lambda path, *, timeout_s: path.endswith(".mp4"),
+    )
+
+    response = client.post(
+        "/me/jobs/posters/refresh",
+        json={"job_ids": [str(job.id)], "broken_job_ids": [str(job.id)]},
+    )
+
+    assert response.status_code == 200
+    item = response.json()["jobs"][0]
+    assert item["poster_url"] is None
+    assert item["poster_status"] == "repairing"
+    assert clip.thumbnail_path is None
+    assert job.assembly_plan["_poster_repair"]["terminal"] is None
+    repair_task.apply_async.assert_called_once_with(args=[str(job.id)], queue="celery")
+
+
+def test_refresh_posters_skips_a_job_whose_assembly_plan_is_corrupt(
+    monkeypatch, repair_task
+) -> None:
+    """A non-dict plan is forensic state; the marker write bails rather than
+    replacing it with a fresh dict. The tile keeps spinning, but nothing in the
+    row is destroyed and the request still succeeds for every other job."""
+    user = _user()
+    job = _job(user_id=user.id, status="clips_ready", mode=None, job_type="default")
+    job.assembly_plan = ["corrupted"]
+    clip = MagicMock(
+        id=uuid.uuid4(),
+        job_id=job.id,
+        rank=1,
+        render_status="ready",
+        video_path=f"{user.id}/{job.id}/task-runs/run/clip_1.mp4",
+        thumbnail_path=None,
+    )
+    healthy = _posterless_job(user.id)
+    db = _db([_scalars([job, healthy]), _scalars([clip]), _scalar(job), _scalar(healthy)])
+    _override(user, db)
+    monkeypatch.setattr("app.routes.me.signed_get_url", MagicMock())
+
+    response = client.post(
+        "/me/jobs/posters/refresh",
+        json={"job_ids": [str(job.id), str(healthy.id)]},
+    )
+
+    assert response.status_code == 200
+    assert job.assembly_plan == ["corrupted"]
+    # The corrupt row is skipped; the healthy sibling in the same batch is not.
+    repair_task.apply_async.assert_called_once_with(args=[str(healthy.id)], queue="celery")
+
+
 @pytest.mark.parametrize(
     "job_ids",
     [

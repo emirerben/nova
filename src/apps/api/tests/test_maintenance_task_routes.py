@@ -85,3 +85,24 @@ def test_maintenance_task_names_have_no_explicit_queue_kwarg_in_beat_schedule() 
             f"{queue_override!r}, which conflicts with task_routes routing "
             f"it to 'maintenance'"
         )
+
+
+def test_poster_repair_queue_is_a_property_of_the_task_not_the_dispatcher() -> None:
+    """A bare `repair_job_poster.delay(...)` must not reach the render worker.
+
+    Without this `task_routes` entry a future dispatcher that forgets `queue=`
+    falls back to the default `celery` queue — the concurrency=1 render worker
+    — and head-of-line-blocks renders behind a full-MP4 download.
+
+    It must also stay OUT of the blanket maintenance rule: that lane is the 1GB
+    `light`/Beat machine, and this task downloads a full MP4 into RAM-backed
+    /tmp — exactly the workload of the 2026-08-02 OOM.
+    """
+    from app.config import settings
+    from app.worker import MAINTENANCE_TASK_NAMES, celery_app
+
+    route = celery_app.conf.task_routes.get("tasks.repair_job_poster")
+
+    assert route == {"queue": settings.poster_repair_queue}
+    assert "tasks.repair_job_poster" not in MAINTENANCE_TASK_NAMES
+    assert route["queue"] != "maintenance"
