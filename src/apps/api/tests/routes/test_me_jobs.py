@@ -383,6 +383,292 @@ def test_refresh_posters_signing_failure_stays_repairable(monkeypatch) -> None:
     ]
 
 
+# ── On-demand poster repair (POSTER_ONDEMAND_REPAIR_ENABLED) ─────────────────
+
+
+def _stub_library_signers(monkeypatch) -> None:
+    """Keep list tests offline — the real signer is slow and needs credentials."""
+    monkeypatch.setattr(
+        "app.routes.me.signed_get_url",
+        lambda path, ttl: f"https://resigned.example/{path}",
+    )
+    monkeypatch.setattr(
+        "app.routes.me.signed_download_url",
+        lambda path, filename, expiration_minutes: f"https://download.example/{filename}",
+    )
+
+
+@pytest.fixture
+def repair_task(monkeypatch):
+    """Flag the actuator on and capture every enqueue it makes."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "poster_ondemand_repair_enabled", True)
+    monkeypatch.setattr(settings, "poster_repair_queue", "celery")
+    task = MagicMock()
+    monkeypatch.setattr("app.tasks.poster_repair.repair_job_poster", task)
+    monkeypatch.setattr("app.routes.me.flag_modified", MagicMock())
+    return task
+
+
+def _posterless_job(user_id: uuid.UUID) -> MagicMock:
+    job = _job(
+        user_id=user_id,
+        status="template_ready",
+        mode="template",
+        job_type="template",
+        assembly_plan={"output_path": "jobs/PLACEHOLDER/output.mp4"},
+    )
+    job.assembly_plan["output_path"] = f"jobs/{job.id}/output.mp4"
+    return job
+
+
+def test_refresh_posters_enqueues_repair_and_stamps_marker_for_ready_missing_poster(
+    monkeypatch, repair_task
+) -> None:
+    user = _user()
+    job = _posterless_job(user.id)
+    db = _db([_scalars([job]), _scalar(job)])
+    _override(user, db)
+    monkeypatch.setattr("app.routes.me.signed_get_url", MagicMock())
+
+    response = client.post("/me/jobs/posters/refresh", json={"job_ids": [str(job.id)]})
+
+    assert response.status_code == 200
+    assert response.json()["jobs"][0]["poster_status"] == "repairing"
+    marker = job.assembly_plan["_poster_repair"]
+    assert marker["video_path"] == f"jobs/{job.id}/output.mp4"
+    # Enqueue stamps freshness only — a deploy or worker death must never be
+    # able to mint a false `attempts_exhausted`.
+    assert marker["attempts"] == 0
+    assert marker["terminal"] is None
+    assert isinstance(marker["enqueued_at"], str)
+    db.commit.assert_awaited()
+    repair_task.apply_async.assert_called_once_with(args=[str(job.id)], queue="celery")
+    # The marker write happens under a per-job FOR UPDATE re-select.
+    locked = db.execute.await_args_list[1].args[0]
+    assert "FOR UPDATE" in str(locked.compile())
+
+
+def test_refresh_posters_dispatch_uses_configured_repair_queue(monkeypatch, repair_task) -> None:
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "poster_repair_queue", "autoplace-jobs")
+    user = _user()
+    job = _posterless_job(user.id)
+    db = _db([_scalars([job]), _scalar(job)])
+    _override(user, db)
+    monkeypatch.setattr("app.routes.me.signed_get_url", MagicMock())
+
+    response = client.post("/me/jobs/posters/refresh", json={"job_ids": [str(job.id)]})
+
+    assert response.status_code == 200
+    assert repair_task.apply_async.call_args.kwargs["queue"] == "autoplace-jobs"
+
+
+def test_refresh_posters_skips_enqueue_when_marker_fresh_or_attempts_exhausted(
+    monkeypatch, repair_task
+) -> None:
+    user = _user()
+    fresh = _posterless_job(user.id)
+    fresh.assembly_plan["_poster_repair"] = {
+        "video_path": f"jobs/{fresh.id}/output.mp4",
+        "attempts": 0,
+        "terminal": None,
+        "enqueued_at": datetime.now(UTC).isoformat(),
+    }
+    exhausted = _posterless_job(user.id)
+    exhausted.assembly_plan["_poster_repair"] = {
+        "video_path": f"jobs/{exhausted.id}/output.mp4",
+        "attempts": 3,
+        "terminal": "attempts_exhausted",
+        "enqueued_at": "2026-01-01T00:00:00+00:00",
+    }
+    db = _db([_scalars([fresh, exhausted])])
+    _override(user, db)
+    monkeypatch.setattr("app.routes.me.signed_get_url", MagicMock())
+
+    response = client.post(
+        "/me/jobs/posters/refresh",
+        json={"job_ids": [str(fresh.id), str(exhausted.id)]},
+    )
+
+    assert response.status_code == 200
+    assert [j["poster_status"] for j in response.json()["jobs"]] == ["repairing", "unavailable"]
+    repair_task.apply_async.assert_not_called()
+    db.commit.assert_not_awaited()
+    assert db.execute.await_count == 1  # no FOR UPDATE re-select at all
+
+
+def test_refresh_posters_flag_off_is_byte_identical_no_writes_no_dispatch(monkeypatch) -> None:
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "poster_ondemand_repair_enabled", False)
+    task = MagicMock()
+    monkeypatch.setattr("app.tasks.poster_repair.repair_job_poster", task)
+    user = _user()
+    job = _posterless_job(user.id)
+    db = _db([_scalars([job])])
+    _override(user, db)
+    monkeypatch.setattr("app.routes.me.signed_get_url", MagicMock())
+
+    response = client.post(
+        "/me/jobs/posters/refresh",
+        json={"job_ids": [str(job.id)], "broken_job_ids": [str(job.id)]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["jobs"][0]["poster_status"] == "repairing"
+    assert "_poster_repair" not in job.assembly_plan
+    assert db.execute.await_count == 1
+    db.commit.assert_not_awaited()
+    task.apply_async.assert_not_called()
+
+
+def test_refresh_posters_clears_and_repairs_a_broken_poster_whose_source_survives(
+    monkeypatch, repair_task
+) -> None:
+    user = _user()
+    job = _job(
+        user_id=user.id,
+        status="variants_ready",
+        assembly_plan={"variants": [{"variant_id": "primary", "render_status": "ready"}]},
+    )
+    job.assembly_plan["variants"][0].update(
+        {
+            "video_path": f"generative-jobs/{job.id}/output.mp4",
+            "poster_path": f"generative-jobs/{job.id}/output.jpg",
+        }
+    )
+    db = _db([_scalars([job]), _scalar(job)])
+    _override(user, db)
+    monkeypatch.setattr("app.routes.me.signed_get_url", MagicMock())
+    # Poster object is gone (lifecycle-deleted); the source MP4 is still there.
+    monkeypatch.setattr(
+        "app.routes.me.object_exists_once",
+        lambda path, *, timeout_s: path.endswith(".mp4"),
+    )
+
+    response = client.post(
+        "/me/jobs/posters/refresh",
+        json={"job_ids": [str(job.id)], "broken_job_ids": [str(job.id)]},
+    )
+
+    assert response.status_code == 200
+    item = response.json()["jobs"][0]
+    assert item["poster_url"] is None
+    assert item["poster_status"] == "repairing"
+    assert job.assembly_plan["variants"][0]["poster_path"] is None
+    repair_task.apply_async.assert_called_once_with(args=[str(job.id)], queue="celery")
+
+
+def test_refresh_posters_settles_broken_poster_terminal_when_source_is_gone(
+    monkeypatch, repair_task
+) -> None:
+    user = _user()
+    job = _job(
+        user_id=user.id,
+        status="music_ready",
+        mode="music",
+        job_type="music",
+        assembly_plan={"output_path": "music-jobs/PLACEHOLDER/output.mp4"},
+    )
+    job.assembly_plan.update(
+        {
+            "output_path": f"music-jobs/{job.id}/output.mp4",
+            "poster_path": f"music-jobs/{job.id}/output.jpg",
+        }
+    )
+    db = _db([_scalars([job]), _scalar(job)])
+    _override(user, db)
+    monkeypatch.setattr("app.routes.me.signed_get_url", MagicMock())
+    monkeypatch.setattr("app.routes.me.object_exists_once", lambda path, *, timeout_s: False)
+
+    response = client.post(
+        "/me/jobs/posters/refresh",
+        json={"job_ids": [str(job.id)], "broken_job_ids": [str(job.id)]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["jobs"][0]["poster_status"] == "unavailable"
+    assert job.assembly_plan["poster_path"] is None
+    assert job.assembly_plan["_poster_repair"]["terminal"] == "expired_source"
+    repair_task.apply_async.assert_not_called()
+
+
+def test_list_marks_terminal_repair_marker_unavailable_only_for_matching_video_path(
+    monkeypatch,
+) -> None:
+    from app.config import settings
+
+    _stub_library_signers(monkeypatch)
+    monkeypatch.setattr(settings, "poster_ondemand_repair_enabled", True)
+    user = _user()
+    settled = _posterless_job(user.id)
+    settled.assembly_plan["_poster_repair"] = {
+        "video_path": f"jobs/{settled.id}/output.mp4",
+        "attempts": 0,
+        "terminal": "expired_source",
+        "enqueued_at": "2026-01-01T00:00:00+00:00",
+    }
+    rerendered = _posterless_job(user.id)
+    rerendered.assembly_plan["_poster_repair"] = {
+        "video_path": f"jobs/{rerendered.id}/SUPERSEDED.mp4",
+        "attempts": 3,
+        "terminal": "attempts_exhausted",
+        "enqueued_at": "2026-01-01T00:00:00+00:00",
+    }
+    db = _db([_scalars([settled, rerendered]), _rows([]), _scalars([]), _scalars([])])
+    _override(user, db)
+
+    response = client.get("/me/jobs")
+
+    assert response.status_code == 200
+    # A stale verdict must never mask the freshly re-rendered video's poster.
+    assert [j["poster_status"] for j in response.json()["jobs"]] == ["unavailable", "repairing"]
+
+
+def test_flag_off_ignores_persisted_terminal_verdicts(monkeypatch) -> None:
+    """The kill switch is a complete rollback, verdicts included.
+
+    A storage incident can mint ``expired_source`` in bulk; flipping the flag
+    off must restore the pre-actuator classification for those rows rather than
+    leaving them terminally unavailable with nothing left to repair them.
+    """
+    from app.config import settings
+
+    _stub_library_signers(monkeypatch)
+    monkeypatch.setattr(settings, "poster_ondemand_repair_enabled", False)
+    user = _user()
+    job = _posterless_job(user.id)
+    job.assembly_plan["_poster_repair"] = {
+        "video_path": f"jobs/{job.id}/output.mp4",
+        "attempts": 3,
+        "terminal": "expired_source",
+        "enqueued_at": "2026-01-01T00:00:00+00:00",
+    }
+    db = _db([_scalars([job]), _rows([]), _scalars([]), _scalars([])])
+    _override(user, db)
+
+    response = client.get("/me/jobs")
+
+    assert response.status_code == 200
+    assert response.json()["jobs"][0]["poster_status"] == "repairing"
+
+
+def test_list_sets_cache_control_no_store(monkeypatch) -> None:
+    _stub_library_signers(monkeypatch)
+    user = _user()
+    job = _posterless_job(user.id)
+    db = _db([_scalars([job]), _rows([]), _scalars([]), _scalars([])])
+    _override(user, db)
+
+    response = client.get("/me/jobs")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+
+
 @pytest.mark.parametrize(
     "job_ids",
     [

@@ -18,9 +18,10 @@ cross-user references on add-to-plan return 404 (not 403) so we don't leak which
 
 from __future__ import annotations
 
+import copy
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 from urllib.parse import urlparse
 
@@ -32,6 +33,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.auth import CurrentUser
 from app.config import settings
@@ -64,7 +66,7 @@ from app.services.job_storage_paths import (
 )
 from app.services.token_crypto import decrypt_token
 from app.services.video_poster_cleanup import VIDEO_POSTER_BACKFILL_CLEANUP_FIELD
-from app.storage import signed_download_url, signed_get_url
+from app.storage import object_exists_once, signed_download_url, signed_get_url
 
 log = structlog.get_logger()
 router = APIRouter()
@@ -79,6 +81,22 @@ _DEFAULT_LIMIT = 24
 _MAX_LIMIT = 60
 _MAX_PREVIEW_CLIPS = 50
 _MAX_POSTER_REFRESH_JOBS = 200
+# Per-request ceiling on poster-repair work. A 24-tile page of posterless
+# history would otherwise enqueue 24 MP4 downloads in one burst; later refreshes
+# pick up the remainder. Shared by the broken-poster verification pass and the
+# missing-poster enqueue pass.
+_MAX_POSTER_REPAIR_ENQUEUES = 20
+# Per-probe ceiling for the broken-poster existence checks. Two probes per job
+# against a 20-job budget must stay well inside the client's 10s abort.
+_POSTER_PROBE_TIMEOUT_S = 1.5
+# Dedupe window: at most one repair per job per ~10 minutes, which also bounds
+# the herd when the client's recovery scheduler re-posts on every page load.
+_POSTER_REPAIR_MARKER_FRESH_S = 600.0
+# Marker namespace on `Job.assembly_plan`. Mirrors
+# `app/tasks/poster_repair.POSTER_REPAIR_MARKER_FIELD` — the task cannot import
+# it from a route module (layering, see services/job_storage_paths.py), so the
+# two constants are pinned equal by tests/tasks/test_poster_repair.py.
+_POSTER_REPAIR_MARKER_FIELD = "_poster_repair"
 OPEN_IN_EDITOR_NOT_READY_DETAIL = "Video is not ready to open in the editor."
 OPEN_IN_EDITOR_LINK_CONFLICT_DETAIL = "Video is linked to a different plan item."
 DELETE_JOB_NOT_TERMINAL_DETAIL = "This video is still being prepared or posted."
@@ -112,9 +130,10 @@ def _tiktok_delete_blocked(publication: TikTokPublication) -> bool:
 # The persisted `output_url` (both per-variant and single-output job shapes) is a
 # 1-day-TTL signed URL minted at render time; the underlying blob persists forever
 # (see agents/DECISIONS.md "Storage retention"). Re-sign from the stored relative
-# path on every read so the library grid never serves an expired signature past
-# 24h — mirrors `PLAYBACK_URL_TTL_MIN` / `_variants_for_response` in
-# routes/generative_jobs.py.
+# path on every read so the library grid never serves an expired signature —
+# mirrors `PLAYBACK_URL_TTL_MIN` / `_variants_for_response` in
+# routes/generative_jobs.py. 360 minutes = 6h (the comment here previously
+# claimed 24h and had drifted from the value).
 PLAYBACK_URL_TTL_MIN = 360
 
 
@@ -491,14 +510,163 @@ def _library_poster_status(
     only an expired browser URL have no owned source object to repair and are
     terminally ``unavailable``. In-flight jobs remain ``repairing`` until their
     preview shape is finalized.
+
+    A persisted repair verdict (``expired_source`` / ``attempts_exhausted``) is
+    honored ONLY while it is still bound to the CURRENT source object: a
+    re-render mints a new ``video_path``, and a stale verdict must never mask a
+    fresh video's poster.
+
+    The verdict is also gated on the repair flag so the kill switch stays a
+    complete rollback. A storage incident can mint ``expired_source`` verdicts
+    in bulk; flipping the flag off must restore the previous classification for
+    those rows too, not leave them terminally ``unavailable`` while the actuator
+    that wrote them is disabled.
     """
     if poster_url:
         return "ready"
     if _derived_status(job) == "generating":
         return "repairing"
     if _derived_status(job) == "ready" and preview is not None and preview.video_path:
+        if settings.poster_ondemand_repair_enabled:
+            marker = _poster_repair_marker(job)
+            if marker.get("terminal") and marker.get("video_path") == preview.video_path:
+                return "unavailable"
         return "repairing"
     return "unavailable"
+
+
+def _poster_repair_marker(job: Job) -> dict[str, Any]:
+    """The task-owned repair marker, or an empty dict when absent/corrupt."""
+    plan = job.assembly_plan if isinstance(job.assembly_plan, dict) else {}
+    marker = plan.get(_POSTER_REPAIR_MARKER_FIELD)
+    return marker if isinstance(marker, dict) else {}
+
+
+def _poster_repair_is_blocked(marker: dict[str, Any], video_path: str, now: datetime) -> bool:
+    """Whether a repair enqueue must be skipped for this source object."""
+    if marker.get("video_path") != video_path:
+        # The source changed under the marker (re-render): the old verdict and
+        # the old freshness stamp are both void.
+        return False
+    if marker.get("terminal"):
+        return True
+    stamped = marker.get("enqueued_at")
+    if not isinstance(stamped, str):
+        return False
+    try:
+        when = datetime.fromisoformat(stamped)
+    except ValueError:
+        return False
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return (now - when).total_seconds() < _POSTER_REPAIR_MARKER_FRESH_S
+
+
+def _stamp_poster_repair_marker(
+    job: Job,
+    *,
+    video_path: str,
+    now: datetime,
+    terminal: str | None = None,
+) -> bool:
+    """Refresh (or rebind) the dedupe marker under an already-held row lock.
+
+    Never touches ``attempts``: that counter increments ONLY inside the task on
+    a real extraction failure, so a deploy or a worker death can never mint a
+    false ``attempts_exhausted``.
+    """
+    if job.assembly_plan is not None and not isinstance(job.assembly_plan, dict):
+        return False
+    plan = copy.deepcopy(job.assembly_plan or {})
+    stored = plan.get(_POSTER_REPAIR_MARKER_FIELD)
+    marker = dict(stored) if isinstance(stored, dict) else {}
+    if marker.get("video_path") != video_path:
+        marker = {}
+    attempts = marker.get("attempts")
+    plan[_POSTER_REPAIR_MARKER_FIELD] = {
+        "video_path": video_path,
+        "attempts": (
+            attempts if isinstance(attempts, int) and not isinstance(attempts, bool) else 0
+        ),
+        "terminal": terminal if terminal is not None else marker.get("terminal"),
+        "enqueued_at": now.isoformat(),
+    }
+    job.assembly_plan = plan
+    flag_modified(job, "assembly_plan")
+    return True
+
+
+def _clear_preview_poster(
+    job: Job,
+    clips: list[JobClip] | None,
+    preview: _LibraryPreview,
+) -> bool:
+    """Blank the poster field whose object no longer exists in storage.
+
+    Only ever clears a field whose CURRENT value still normalizes to exactly the
+    probed poster path, so a concurrent render's fresh poster is never dropped.
+    """
+    expected = preview.poster_path
+    if not expected:
+        return False
+    if job.assembly_plan is not None and not isinstance(job.assembly_plan, dict):
+        return False
+    plan = copy.deepcopy(job.assembly_plan or {})
+    if preview.variant_id:
+        variants = plan.get("variants")
+        matches = (
+            [
+                variant
+                for variant in variants
+                if isinstance(variant, dict)
+                and str(variant.get("variant_id") or "") == preview.variant_id
+            ]
+            if isinstance(variants, list)
+            else []
+        )
+        # Historical JSONB rows do not enforce unique variant IDs; an ambiguous
+        # match is left alone rather than mutating the first one.
+        if len(matches) != 1:
+            return False
+        if owned_job_output_path(matches[0].get("poster_path"), job) != expected:
+            return False
+        matches[0]["poster_path"] = None
+        job.assembly_plan = plan
+        flag_modified(job, "assembly_plan")
+        return True
+    if owned_job_output_path(plan.get("poster_path"), job) == expected:
+        plan["poster_path"] = None
+        job.assembly_plan = plan
+        flag_modified(job, "assembly_plan")
+        return True
+    for clip in clips or []:
+        if clip.render_status != "ready":
+            continue
+        if owned_job_output_path(clip.thumbnail_path, job) == expected:
+            clip.thumbnail_path = None
+            return True
+    return False
+
+
+def _dispatch_poster_repairs(job_ids: list[uuid.UUID]) -> None:
+    """Fire-and-forget enqueue; a publish failure only delays the repair."""
+    try:
+        from app.tasks.poster_repair import repair_job_poster  # noqa: PLC0415
+    except Exception as exc:  # noqa: BLE001 — never fail a poster refresh
+        log.warning("poster_repair_import_failed", error=str(exc))
+        return
+    for job_id in job_ids:
+        try:
+            repair_job_poster.apply_async(
+                args=[str(job_id)],
+                queue=settings.poster_repair_queue,
+            )
+        except Exception as exc:  # noqa: BLE001 — isolate one failed publish
+            log.warning(
+                "poster_repair_dispatch_failed",
+                job_id=str(job_id),
+                error_class=type(exc).__name__,
+            )
 
 
 def _to_library_job(
@@ -612,6 +780,14 @@ class LibraryPosterRefreshRequest(BaseModel):
         min_length=1,
         max_length=_MAX_POSTER_REFRESH_JOBS,
     )
+    # Jobs whose poster URL the client could not load (`<img>` error). Their
+    # stored poster key is probed against storage so a lifecycle-deleted poster
+    # stops reading "ready" forever. Optional and defaulted, so an already
+    # deployed client that omits it behaves exactly as before.
+    broken_job_ids: list[uuid.UUID] = Field(
+        default_factory=list,
+        max_length=_MAX_POSTER_REFRESH_JOBS,
+    )
 
 
 class LibraryPosterRefreshJob(BaseModel):
@@ -628,6 +804,7 @@ class LibraryPosterRefreshResponse(BaseModel):
 @router.get("/jobs", response_model=LibraryResponse)
 async def list_my_jobs(
     user: CurrentUser,
+    response: Response,
     limit: int = Query(_DEFAULT_LIMIT, ge=1, le=_MAX_LIMIT),
     cursor: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
@@ -636,7 +813,13 @@ async def list_my_jobs(
 
     Keyset-paginated on `created_at` (indexed): pass the prior page's `next_cursor`
     back as `cursor` to fetch older rows.
+
+    `no-store`: every URL in this payload is a short-TTL signed URL and the
+    poster/render state changes underneath it, so a heuristically cached copy
+    (Safari does this for directive-less GETs) serves dead links and stale
+    tiles. Matches the refresh + playback endpoints.
     """
+    response.headers["Cache-Control"] = "no-store"
     # Manual drafts are resumable through their plan item, but are not finished
     # videos and must never appear in the library before first export.
     q = select(Job).where(Job.user_id == user.id, Job.status != "draft")
@@ -746,6 +929,166 @@ async def list_my_jobs(
         ],
         next_cursor=next_cursor,
     )
+
+
+async def _lock_owned_job(db: AsyncSession, job_id: uuid.UUID, user_id: uuid.UUID) -> Job | None:
+    """Re-select one owned Job `FOR UPDATE`, bypassing the identity-map cache.
+
+    The bulk select above already cached this row, so without
+    ``populate_existing`` SQLAlchemy would hand back the stale snapshot and the
+    marker would be computed from pre-lock state (precedent: the plan/persona
+    locks in `_provision_editor_plan`).
+
+    ``load_only`` mirrors the bulk read's column pruning: without it this
+    re-select pulls every Job column — including the heavy `transcript`,
+    `all_candidates`, `probe_metadata` and append-only `pipeline_trace` JSONB —
+    for up to `_MAX_POSTER_REPAIR_ENQUEUES` rows per request on a
+    client-polled endpoint.
+    """
+    return (
+        await db.execute(
+            select(Job)
+            .options(
+                load_only(
+                    Job.id,
+                    Job.user_id,
+                    Job.status,
+                    Job.assembly_plan,
+                    Job.mode,
+                    Job.job_type,
+                )
+            )
+            .where(Job.id == job_id, Job.user_id == user_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+
+
+async def _verify_broken_posters(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    jobs: list[Job],
+    clips_by_job: dict[uuid.UUID, list[JobClip]],
+    broken_ids: set[uuid.UUID],
+    budget: int,
+) -> tuple[list[uuid.UUID], int]:
+    """Probe client-reported broken posters and clear/settle the dead ones.
+
+    Without this a lifecycle-deleted poster object keeps reading
+    ``poster_status="ready"`` forever (the stored key still signs offline), so
+    the repair actuator would never fire for it.
+    """
+    targets: list[tuple[Job, _LibraryPreview]] = []
+    for job in jobs:
+        if len(targets) >= budget:
+            break
+        if job.id not in broken_ids or _derived_status(job) != "ready":
+            continue
+        preview = _preview(job, clips_by_job.get(job.id))
+        if preview is None or not preview.poster_path or not preview.video_path:
+            continue
+        targets.append((job, preview))
+    if not targets:
+        return [], budget
+
+    def probe() -> list[tuple[uuid.UUID, _LibraryPreview, bool]]:
+        """(job_id, preview, source_alive) for posters storage no longer has."""
+        dead: list[tuple[uuid.UUID, _LibraryPreview, bool]] = []
+        for job, preview in targets:
+            try:
+                # Bounded, non-retrying: this runs inside a request the client
+                # abandons after POSTER_REFRESH_TIMEOUT_MS (10s), and the
+                # retrying `object_exists` can burn that whole budget on one
+                # slow object while pinning a threadpool thread and a DB
+                # connection. Anything inconclusive is left untouched below.
+                if object_exists_once(preview.poster_path, timeout_s=_POSTER_PROBE_TIMEOUT_S):
+                    continue
+                source_alive = object_exists_once(
+                    preview.video_path, timeout_s=_POSTER_PROBE_TIMEOUT_S
+                )
+            except Exception as exc:  # noqa: BLE001 — inconclusive: change nothing
+                log.warning(
+                    "library_poster_probe_failed",
+                    job_id=str(job.id),
+                    error_class=type(exc).__name__,
+                )
+                continue
+            dead.append((job.id, preview, source_alive))
+        return dead
+
+    probed = await run_in_threadpool(probe)
+    now = datetime.now(UTC)
+    dispatch: list[uuid.UUID] = []
+    dirty = False
+    for job_id, preview, source_alive in probed:
+        if budget <= 0:
+            break
+        locked = await _lock_owned_job(db, job_id, user_id)
+        if locked is None:
+            continue
+        fresh = _preview(locked, clips_by_job.get(job_id))
+        if fresh is None or fresh.poster_path != preview.poster_path:
+            continue
+        if not _clear_preview_poster(locked, clips_by_job.get(job_id), fresh):
+            continue
+        # Source gone too ⇒ nothing can ever be re-extracted: settle terminal so
+        # the tile reads an honest "Thumbnail unavailable".
+        _stamp_poster_repair_marker(
+            locked,
+            video_path=fresh.video_path,
+            now=now,
+            terminal=None if source_alive else "expired_source",
+        )
+        dirty = True
+        budget -= 1
+        if source_alive:
+            dispatch.append(job_id)
+    if dirty:
+        await db.commit()
+    return dispatch, budget
+
+
+async def _enqueue_poster_repairs(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    jobs: list[Job],
+    clips_by_job: dict[uuid.UUID, list[JobClip]],
+    budget: int,
+) -> tuple[list[uuid.UUID], int]:
+    """Stamp the dedupe marker for every posterless ready job, then enqueue."""
+    now = datetime.now(UTC)
+    dispatch: list[uuid.UUID] = []
+    dirty = False
+    for job in jobs:
+        if budget <= 0:
+            break
+        if _derived_status(job) != "ready":
+            continue
+        preview = _preview(job, clips_by_job.get(job.id))
+        if preview is None or not preview.video_path or preview.poster_path:
+            continue
+        if _poster_repair_is_blocked(_poster_repair_marker(job), preview.video_path, now):
+            continue
+        locked = await _lock_owned_job(db, job.id, user_id)
+        if locked is None:
+            continue
+        # Re-derive everything from the locked row: a render may have finished
+        # (or another request may have stamped the marker) since the bulk read.
+        preview = _preview(locked, clips_by_job.get(job.id))
+        if preview is None or not preview.video_path or preview.poster_path:
+            continue
+        if _poster_repair_is_blocked(_poster_repair_marker(locked), preview.video_path, now):
+            continue
+        if not _stamp_poster_repair_marker(locked, video_path=preview.video_path, now=now):
+            continue
+        dirty = True
+        budget -= 1
+        dispatch.append(job.id)
+    if dirty:
+        # Commit BEFORE enqueue: the worker must never see a marker-free row.
+        await db.commit()
+    return dispatch, budget
 
 
 @router.post("/jobs/posters/refresh", response_model=LibraryPosterRefreshResponse)
@@ -862,7 +1205,30 @@ async def refresh_library_posters(
             )
         return refreshed
 
+    # Poster repair (POSTER_ONDEMAND_REPAIR_ENABLED). Off ⇒ byte-identical to
+    # the pure re-signer: no marker writes, no commits, no dispatch.
+    budget = _MAX_POSTER_REPAIR_ENQUEUES
+    dispatch: list[uuid.UUID] = []
+    repair_enabled = settings.poster_ondemand_repair_enabled
+    if repair_enabled:
+        broken_ids = {job_id for job_id in body.broken_job_ids if job_id in jobs_by_id}
+        if broken_ids:
+            # Runs BEFORE signing so a cleared poster is reported as
+            # `repairing` in this same response instead of one round-trip later.
+            verified, budget = await _verify_broken_posters(
+                db, user.id, ordered_jobs, clips_by_job, broken_ids, budget
+            )
+            dispatch.extend(verified)
+
     refreshed = await run_in_threadpool(sign_ordered_posters)
+
+    if repair_enabled:
+        # Budget is not read again: this is the last pass that spends it.
+        enqueued, _ = await _enqueue_poster_repairs(db, user.id, ordered_jobs, clips_by_job, budget)
+        dispatch.extend(enqueued)
+        if dispatch:
+            await run_in_threadpool(_dispatch_poster_repairs, dispatch)
+
     response.headers["Cache-Control"] = "no-store"
     return LibraryPosterRefreshResponse(jobs=list(refreshed))
 

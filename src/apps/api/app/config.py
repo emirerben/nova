@@ -1023,6 +1023,35 @@ class Settings(BaseSettings):
     # only after both queued-aware upload surfaces are deployed.
     pool_asset_queued_status_enabled: bool = False
 
+    poster_ondemand_repair_enabled: bool = Field(
+        default=False,
+        description="On-demand library poster repair. When true, "
+        "POST /me/jobs/posters/refresh stops being a pure re-signer: for owned "
+        "ready jobs whose preview has no poster it stamps a `_poster_repair` "
+        "marker and enqueues `tasks.repair_job_poster`, which extracts + uploads "
+        "the missing poster and persists the RELATIVE key into the same field the "
+        "render path writes. Default false (repo rollout culture: "
+        "default-false-then-flip) — already-deployed frontends poll this endpoint "
+        "in bursts, so a default-true ship would be a zero-canary activation. Off "
+        "is byte-identical to the pre-feature endpoint: no marker writes, no "
+        "dispatch, and any already-queued task re-checks this flag and no-ops. "
+        "Enable AFTER setting POSTER_REPAIR_QUEUE: `fly secrets set "
+        "POSTER_ONDEMAND_REPAIR_ENABLED=true --app nova-video` + machine restart "
+        "(api + worker). Rollback: `fly secrets set "
+        "POSTER_ONDEMAND_REPAIR_ENABLED=false --app nova-video` + restart.",
+    )
+    poster_repair_queue: str = Field(
+        default="celery",
+        description="Celery queue for `tasks.repair_job_poster`. The code default "
+        "keeps local `dev-auto.sh` working (it consumes no autoplace queue). In "
+        "production set POSTER_REPAIR_QUEUE=autoplace-jobs BEFORE flipping "
+        "POSTER_ONDEMAND_REPAIR_ENABLED so full-MP4 downloads land on the 2GB "
+        "autoplace machine — never on the 1GB `light`/Beat machine (the "
+        "2026-08-02 OOM class) and never head-of-line-blocking the concurrency=1 "
+        "render worker. Roll back with `fly secrets set POSTER_REPAIR_QUEUE=celery "
+        "--app nova-video` + machine restart (api + worker).",
+    )
+
     # Zero-click auto-apply (plan 007, decision D2-B + G3-A): after a plan-item
     # generate render finalizes, matched visuals are burned in WITHOUT review on
     # speech-bearing variants. Dedicated kill switch — turning THIS off in prod
