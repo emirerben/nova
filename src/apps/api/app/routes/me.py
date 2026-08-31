@@ -19,6 +19,7 @@ cross-user references on add-to-plan return 404 (not 403) so we don't leak which
 from __future__ import annotations
 
 import copy
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -86,9 +87,13 @@ _MAX_POSTER_REFRESH_JOBS = 200
 # pick up the remainder. Shared by the broken-poster verification pass and the
 # missing-poster enqueue pass.
 _MAX_POSTER_REPAIR_ENQUEUES = 20
-# Per-probe ceiling for the broken-poster existence checks. Two probes per job
-# against a 20-job budget must stay well inside the client's 10s abort.
+# Ceilings for the broken-poster existence checks. The per-probe timeout alone
+# is NOT a latency bound: 20 jobs x 2 sequential probes x 1.5s is 60s, six times
+# the client's POSTER_REFRESH_TIMEOUT_MS abort. The wall-clock budget is what
+# actually bounds the pass; whatever it does not reach is simply picked up by
+# the next refresh, which is the same self-healing loop the feature already runs.
 _POSTER_PROBE_TIMEOUT_S = 1.5
+_POSTER_PROBE_BUDGET_S = 4.0
 # Dedupe window: at most one repair per job per ~10 minutes, which also bounds
 # the herd when the client's recovery scheduler re-posts on every page load.
 _POSTER_REPAIR_MARKER_FRESH_S = 600.0
@@ -995,7 +1000,13 @@ async def _verify_broken_posters(
     def probe() -> list[tuple[uuid.UUID, _LibraryPreview, bool]]:
         """(job_id, preview, source_alive) for posters storage no longer has."""
         dead: list[tuple[uuid.UUID, _LibraryPreview, bool]] = []
+        probe_deadline = time.monotonic() + _POSTER_PROBE_BUDGET_S
         for job, preview in targets:
+            if time.monotonic() >= probe_deadline:
+                # Out of budget: leave the rest for the next refresh rather than
+                # holding a threadpool thread and a DB connection past the
+                # client's abort.
+                break
             try:
                 # Bounded, non-retrying: this runs inside a request the client
                 # abandons after POSTER_REFRESH_TIMEOUT_MS (10s), and the
@@ -1046,6 +1057,12 @@ async def _verify_broken_posters(
             dispatch.append(job_id)
     if dirty:
         await db.commit()
+    else:
+        # Every `continue` above bailed out AFTER taking a FOR UPDATE lock.
+        # Without this the locks stay held for the rest of the request — across
+        # the signing threadpool hop and the Celery dispatch — blocking deletes
+        # and re-renders of jobs this pass decided not to touch.
+        await db.rollback()
     return dispatch, budget
 
 
@@ -1088,6 +1105,9 @@ async def _enqueue_poster_repairs(
     if dirty:
         # Commit BEFORE enqueue: the worker must never see a marker-free row.
         await db.commit()
+    else:
+        # Release locks taken by candidates that turned out to need no write.
+        await db.rollback()
     return dispatch, budget
 
 

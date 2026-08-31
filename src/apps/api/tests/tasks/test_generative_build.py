@@ -2404,10 +2404,13 @@ def test_generated_poster_cleanup_collects_durable_prefix_orphans(monkeypatch):
     foreign = "job-posters/22222222-2222-2222-2222-222222222222/other.poster.jpg"
     job = _FakeJob(assembly_plan={"variants": [{"variant_id": "v1", "poster_path": referenced}]})
     deleted: list[str] = []
+    # Assert through the REAL `_delete_cancelled_job_objects` down to the
+    # storage sink. Stubbing the inner helper hides the case this test exists
+    # for: widening only the caller's filter leaves the durable key to be
+    # dropped at the next boundary and orphaned forever.
     monkeypatch.setattr(
-        gb,
-        "_delete_cancelled_job_objects",
-        lambda _job_id, paths: deleted.extend(paths),
+        "app.storage.delete_object_best_effort",
+        lambda path: deleted.append(path) or True,
     )
 
     gb._delete_generated_poster_objects_if_unreferenced(

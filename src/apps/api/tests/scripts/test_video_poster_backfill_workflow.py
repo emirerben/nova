@@ -816,6 +816,32 @@ def test_sweep_waits_for_the_destroy_to_settle_before_re_casing_the_name(
     assert MACHINE_ID in (tmp_path / "destroy.args").read_text()
 
 
+def test_sweep_refuses_to_proceed_when_the_destroy_never_settles(tmp_path: Path) -> None:
+    """The absence proof must be load-bearing, not decorative.
+
+    Without this, replacing `prove_swept_backfill_guard_absent`'s body with a
+    bare `return 0` leaves every other launcher test green — the sweep would
+    hand a name that Fly still reports back to the CAS that re-creates it.
+    Here Fly never stops reporting the guard, so the proof must fail closed.
+    """
+    never_ran = _machine("stopped", include_start_event=False, exit_code=None)
+    result = _run(
+        tmp_path,
+        [_image()],
+        args=["--acquire-deploy-guard"],
+        machine_sequence=[_inventory(never_ran)],
+    )
+
+    assert result.returncode == 1
+    assert "still present after destroy" in result.stderr
+    # It really did attempt the destroy — this is the post-destroy proof failing,
+    # not an earlier guard rejecting the Machine.
+    assert MACHINE_ID in (tmp_path / "destroy.args").read_text()
+    assert "CALL" not in (tmp_path / "create.args").read_text() if (
+        tmp_path / "create.args"
+    ).exists() else True
+
+
 def test_deploy_guard_acquisition_still_retains_a_guard_that_ran(tmp_path: Path) -> None:
     """The sweep must not swallow a real failure that carries forensic value."""
     ran_without_receipt = _machine("stopped", exit_code=None)

@@ -939,12 +939,20 @@ def _delete_cancelled_job_objects(job_id: str, paths: list[str]) -> None:
     to cancellation therefore owns its cleanup; merely dropping the DB write
     would leak the uploaded object forever.  Callers must pass only keys created
     by the losing attempt; this helper never walks persisted Job state.
+
+    Extracted posters are job-scoped but live on their own lifecycle-exempt
+    prefix, so they must be accepted here too — widening only the caller's
+    filter leaves the durable keys to be silently dropped at this boundary and
+    orphaned on a prefix nothing ever expires.
     """
-    prefix = f"generative-jobs/{job_id}/"
+    prefixes = (
+        f"generative-jobs/{job_id}/",
+        JOB_POSTER_PATH_PREFIX.format(job_id=job_id),
+    )
     exact_paths = {
         path
         for path in paths
-        if isinstance(path, str) and path.startswith(prefix) and ".." not in path
+        if isinstance(path, str) and path.startswith(prefixes) and ".." not in path
     }
     if not exact_paths:
         return
