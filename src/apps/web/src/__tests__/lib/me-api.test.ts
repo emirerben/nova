@@ -29,6 +29,22 @@ describe("me-api client", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/me/jobs", expect.any(Object));
   });
 
+  it("listMyJobs opts out of the browser cache", async () => {
+    // Every poster/playback URL in this page is a short-TTL signed URL, and
+    // Safari heuristically caches directive-less GETs — a cached page serves
+    // dead links and stale poster_status long after the server moved on.
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValue(jsonResponse(200, { jobs: [], next_cursor: null }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await listMyJobs();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/me/jobs",
+      expect.objectContaining({ cache: "no-store" }),
+    );
+  });
+
   it("listMyJobs forwards limit + cursor as query params", async () => {
     const fetchMock = jest
       .fn()
@@ -87,6 +103,31 @@ describe("me-api client", () => {
         body: JSON.stringify({ job_ids: ["j1", "j2"] }),
       }),
     );
+  });
+
+  it("reports posters the browser could not load as broken_job_ids", async () => {
+    // The server verifies these poster objects still exist; without the field
+    // a lifecycle-deleted poster reads `ready` forever and never gets repaired.
+    const fetchMock = jest.fn().mockResolvedValue(jsonResponse(200, { jobs: [] }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await refreshMyJobPosters(["j1", "j2"], undefined, ["j2"]);
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body as string)).toEqual({
+      job_ids: ["j1", "j2"],
+      broken_job_ids: ["j2"],
+    });
+  });
+
+  it("omits broken_job_ids entirely when nothing failed to load", async () => {
+    // Omitted rather than sent empty so an API build predating the field sees
+    // exactly the body it always saw.
+    const fetchMock = jest.fn().mockResolvedValue(jsonResponse(200, { jobs: [] }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await refreshMyJobPosters(["j1"], undefined, []);
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body as string)).toEqual({ job_ids: ["j1"] });
   });
 
   it("addJobToPlan POSTs the day_index", async () => {

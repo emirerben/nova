@@ -24,33 +24,54 @@ mid-relay (tracked in TODOS.md "Upload follow-ups").
 
 ## GCS bucket lifecycle (`gcs-lifecycle.json`)
 
-Deletes per-job objects after 1 day. Scoped by prefix so curated assets persist.
-This is the retention list published in the Privacy Policy (§8) at `/privacy` —
-keep the two in sync when either changes.
+Deletes per-job objects on a per-prefix age. Scoped by prefix so curated assets
+persist. This is the retention list published in the Privacy Policy (§8) at
+`/privacy` — keep the two in sync when either changes. This section is the
+per-prefix table CLAUDE.md's "Storage retention" points at; every rule in
+`gcs-lifecycle.json` must appear below.
 
 **Deleted after 1 day:**
 - `dev-user/*` — raw uploads and rendered clips from anonymous job submissions
 - `music-jobs/*` — final music-sync outputs
 - `music-lyrics-previews/*` — lyric-preview renders
 - `voiceover-uploads/*` — user-recorded voiceover audio
+- `training-exports/*` — generated edit-training artifact bundles
 - `transcript-cache/*` — cached Whisper transcripts, keyed by content hash (see
   `pipeline/transcribe.py::transcribe_whisper_cached`). Content-hash keying means
   these entries have no link back to a user, so account deletion can't find and
   purge them — the 24h TTL is what actually bounds the exposure.
+
+**Deleted after 30 days:**
+- `jobs/*` — template-mode job inputs and outputs
+- `00000000-0000-0000-0000-000000000001/*` — the anonymous upload prefix
 
 **Persists forever (not matched by any bucket rule — auth landed, see
 "Re-evaluate when" below; account deletion is the removal path for live assets,
 see `routes/me.py::confirm_account_deletion` + `docs/legal/README.md`):**
 - `users/{user_id}/*` — plan clips, plan-pool footage, activation seed batches
 - `generative-jobs/{job_id}/*` — rendered outputs + preprocessed sources
+- `job-posters/{job_id}/*` — Library tile thumbnails extracted from a job's video
 - `music/*` — admin-curated music track library
 - `templates/*` — template assets (posters, audio)
 
+`job-posters/` is deliberately outside every video prefix (v0.59.1.0). Posters
+used to be written as a sibling of the video (`<source>.poster.jpg`), so they
+inherited the source's rule and a Library tile went blank when the source was
+deleted — 24h for `music-jobs/*`, 30 days for `jobs/*`. A thumbnail has to
+outlive its source, so it lives on a prefix no rule matches. The prefix is
+listed in `JOB_OUTPUT_PREFIXES` (`app/services/job_storage_paths.py`), so
+account deletion still removes a user's posters along with their videos.
+Consequence: a music/template tile can now show a real thumbnail for a source
+MP4 the lifecycle rule already deleted — playback fails cleanly, and the
+retention question is tracked in TODOS.md.
+
 The application deletes one narrow superseded-asset class inside persistent job
-prefixes: immutable `*.poster.backfill-<uuid>.jpg` objects. A renderer journals a
-durable replacement receipt on the Job before changing the visible poster; the
-five-minute bounded maintenance sweep verifies the replacement and removes the
-old object. Do not delete or rewrite these receipts manually. See
+prefixes: immutable `job-posters/<job-id>/<sha1(source)>.poster.backfill-<uuid>.jpg`
+objects (pre-v0.59.1.0 runs wrote `<source>.poster.backfill-<uuid>.jpg` siblings;
+both shapes are read, and the key stored on the Job is authoritative). A renderer
+journals a durable replacement receipt on the Job before changing the visible
+poster; the five-minute bounded maintenance sweep verifies the replacement and
+removes the old object. Do not delete or rewrite these receipts manually. See
 [`docs/runbooks/video-poster-backfill.md`](../docs/runbooks/video-poster-backfill.md).
 
 ### Apply

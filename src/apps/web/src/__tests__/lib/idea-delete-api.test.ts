@@ -146,6 +146,7 @@ describe("authenticated proxy response transport", () => {
       (response as unknown as { headers: HeadersInit }).headers,
     );
     expect(Object.fromEntries(forwardedHeaders.entries())).toEqual({
+      "cache-control": "private, max-age=0",
       "content-type": "application/json",
       "x-correlation-id": expect.any(String),
       "x-request-id": expect.any(String),
@@ -154,7 +155,11 @@ describe("authenticated proxy response transport", () => {
     expect(forwardedHeaders.get("content-length")).toBeNull();
     expect(forwardedHeaders.get("transfer-encoding")).toBeNull();
     expect(forwardedHeaders.get("set-cookie")).toBeNull();
-    expect(forwardedHeaders.get("cache-control")).toBeNull();
+    // Cache directives are deliberately allowlisted (unlike the transport
+    // headers above): stripping them meant the API's `Cache-Control: no-store`
+    // never reached the browser, so Safari could heuristically cache library
+    // responses that carry short-lived signed poster/playback URLs.
+    expect(forwardedHeaders.get("cache-control")).toBe("private, max-age=0");
     expect(arrayBuffer).toHaveBeenCalledTimes(1);
   });
 
@@ -187,6 +192,7 @@ describe("authenticated proxy response transport", () => {
     expect(response.status).toBe(200);
     expect((response as unknown as { body: unknown }).body).toBeNull();
     expect((response as unknown as { headers: HeadersInit }).headers).toEqual({
+      "Cache-Control": "private, max-age=0",
       "Content-Type": "application/json",
       "X-Correlation-Id": expect.any(String),
       "X-Request-Id": expect.any(String),

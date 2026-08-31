@@ -133,7 +133,7 @@ def _try_upload_video_poster(
 ) -> str | None:
     """Poster generation is fail-open for an otherwise valid render."""
     try:
-        return upload_video_poster(local_video_path, video_object_path)
+        return upload_video_poster(local_video_path, video_object_path, job_id=job_id)
     except Exception as exc:  # noqa: BLE001 - poster is a derived asset
         log.warning(
             "video_poster_upload_failed",
@@ -7469,7 +7469,9 @@ def _run_single_video_job(
             job_id=job_id,
             source_kind="single_video_output",
         )
-        base_poster_path = poster_object_path(gcs_base_path) if poster_path else None
+        base_poster_path = (
+            poster_object_path(gcs_base_path, job_id=job_id) if poster_path else None
+        )
         if poster_path and base_poster_path:
             try:
                 copy_object(poster_path, base_poster_path)

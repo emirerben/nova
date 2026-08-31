@@ -220,6 +220,13 @@ async function proxy(
   // turning a successful upstream DELETE into a 500 at the proxy boundary.
   const bodylessResponse =
     req.method === "HEAD" || [204, 205, 304].includes(upstreamRes.status);
+  // Cache directives are the one upstream response header worth adding to the
+  // allowlist: without it, `Cache-Control: no-store` set by the API (e.g.
+  // GET /me/jobs, the poster refresh, playback-url) never reaches the browser,
+  // and Safari may heuristically cache responses carrying short-lived signed
+  // URLs. Verified: no API route sets a public/shared-cacheable directive, so
+  // forwarding is strictly safer than stripping.
+  const upstreamCacheControl = upstreamRes.headers.get("cache-control");
   try {
     const resBody = bodylessResponse ? null : await upstreamRes.arrayBuffer();
     return new NextResponse(resBody, {
@@ -230,6 +237,7 @@ async function proxy(
       // (Fly currently serves JSON with zstd), so keep this boundary allowlisted.
       headers: {
         "Content-Type": upstreamRes.headers.get("content-type") ?? "application/json",
+        ...(upstreamCacheControl ? { "Cache-Control": upstreamCacheControl } : {}),
         "X-Request-Id": requestId,
         "X-Correlation-Id": correlationId,
       },

@@ -213,6 +213,86 @@ describe("WorkspaceHome (basic home)", () => {
     expect(screen.getByText("Your finished videos will appear here.")).toBeInTheDocument();
   });
 
+  it("pins the poster backoff ladders — recovery carries the slow server-repair tail", () => {
+    // The 60s/120s tail exists because the refresh endpoint now enqueues a
+    // real server-side poster repair; the old ~46s budget latched the tile to
+    // "Thumbnail unavailable" before a queued repair could finish.
+    expect([...POSTER_RECOVERY_DELAYS_MS]).toEqual([
+      1_500, 3_000, 6_000, 12_000, 24_000, 60_000, 120_000,
+    ]);
+    // Separate budget: network failures of the refresh call itself, NOT extended.
+    expect([...POSTER_REFRESH_TRANSPORT_DELAYS_MS]).toEqual([
+      1_500, 3_000, 6_000, 12_000, 24_000,
+    ]);
+  });
+
+  it("adopts a poster that only lands on the slow 60s repair attempt, with no reload", async () => {
+    jest.useFakeTimers();
+    const missing = { ...job("j1"), poster_url: null };
+    // The server-side repair finishes just after the pre-tail budget would
+    // have given up, so this attempt only exists thanks to the 60s delay.
+    const slowTailAttempt = POSTER_RECOVERY_DELAYS_MS.indexOf(60_000) + 1;
+    expect(slowTailAttempt).toBeGreaterThan(5);
+    const repaired = {
+      id: missing.id,
+      poster_url: "https://example.test/j1.poster.jpg?sig=repaired",
+      poster_identity: missing.poster_identity,
+      poster_status: "ready",
+    };
+    let attempts = 0;
+    mockListMyJobs.mockResolvedValue({ jobs: [missing], next_cursor: null });
+    mockRefreshMyJobPosters.mockImplementation(async () => {
+      attempts += 1;
+      return attempts < slowTailAttempt
+        ? {
+            jobs: [
+              {
+                id: missing.id,
+                poster_url: null,
+                poster_identity: missing.poster_identity,
+                poster_status: "repairing",
+              },
+            ],
+          }
+        : { jobs: [repaired] };
+    });
+
+    renderHome();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    for (const delay of POSTER_RECOVERY_DELAYS_MS.slice(0, slowTailAttempt - 1)) {
+      await act(async () => {
+        jest.advanceTimersByTime(delay);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    }
+
+    // Past the old ~46s budget: still spinning, still trying — not latched.
+    expect(mockRefreshMyJobPosters).toHaveBeenCalledTimes(slowTailAttempt - 1);
+    expect(screen.getByTestId("tile-j1")).toHaveAttribute("data-poster-url", "");
+    expect(screen.getByTestId("tile-j1")).toHaveAttribute(
+      "data-poster-recovery-exhausted",
+      "false",
+    );
+
+    await act(async () => {
+      jest.advanceTimersByTime(POSTER_RECOVERY_DELAYS_MS[slowTailAttempt - 1]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockRefreshMyJobPosters).toHaveBeenCalledTimes(slowTailAttempt);
+    expect(screen.getByTestId("tile-j1")).toHaveAttribute(
+      "data-poster-url",
+      repaired.poster_url,
+    );
+    // The grid was fetched exactly once: the poster appeared without a reload.
+    expect(mockListMyJobs).toHaveBeenCalledTimes(1);
+  });
+
   it("refreshes a missing ready poster with bounded backoff and adopts the JPEG", async () => {
     jest.useFakeTimers();
     const missing = { ...job("j1"), poster_url: null };
@@ -242,9 +322,11 @@ describe("WorkspaceHome (basic home)", () => {
 
     expect(mockListMyJobs).toHaveBeenCalledTimes(1);
     expect(mockRefreshMyJobPosters).toHaveBeenCalledTimes(1);
+    // No poster URL was ever handed to the browser, so nothing is "broken".
     expect(mockRefreshMyJobPosters).toHaveBeenCalledWith(
       ["j1"],
       expect.any(AbortSignal),
+      [],
     );
     expect(screen.getByTestId("tile-j1")).toHaveAttribute(
       "data-poster-url",
@@ -294,9 +376,12 @@ describe("WorkspaceHome (basic home)", () => {
     });
 
     expect(mockRefreshMyJobPosters).toHaveBeenCalledTimes(1);
+    // The poster URL loaded into a broken <img>, so the id is reported as
+    // broken for server-side object verification.
     expect(mockRefreshMyJobPosters).toHaveBeenCalledWith(
       ["legacy"],
       expect.any(AbortSignal),
+      ["legacy"],
     );
   });
 
@@ -449,13 +534,20 @@ describe("WorkspaceHome (basic home)", () => {
       jobs: [firstRender],
       next_cursor: null,
     });
-    mockRefreshMyJobPosters
-      .mockResolvedValueOnce({ jobs: [posterMetadata(firstRender)] })
-      .mockResolvedValueOnce({ jobs: [posterMetadata(firstRender)] })
-      .mockResolvedValueOnce({ jobs: [posterMetadata(firstRender)] })
-      .mockResolvedValueOnce({ jobs: [posterMetadata(firstRender)] })
-      .mockResolvedValueOnce({ jobs: [posterMetadata(secondRender)] })
-      .mockResolvedValue({ jobs: [posterMetadata(secondRender)] });
+    // The re-render lands on the LAST attempt of the budget, whatever its
+    // length — the point is that a changed identity resets the budget rather
+    // than latching the tile as exhausted.
+    let attempts = 0;
+    mockRefreshMyJobPosters.mockImplementation(async () => {
+      attempts += 1;
+      return {
+        jobs: [
+          posterMetadata(
+            attempts < POSTER_RECOVERY_DELAYS_MS.length ? firstRender : secondRender,
+          ),
+        ],
+      };
+    });
 
     renderHome();
     await act(async () => {
@@ -474,14 +566,18 @@ describe("WorkspaceHome (basic home)", () => {
       "false",
     );
     expect(mockListMyJobs).toHaveBeenCalledTimes(1);
-    expect(mockRefreshMyJobPosters).toHaveBeenCalledTimes(5);
+    expect(mockRefreshMyJobPosters).toHaveBeenCalledTimes(
+      POSTER_RECOVERY_DELAYS_MS.length,
+    );
 
     await act(async () => {
       jest.advanceTimersByTime(POSTER_RECOVERY_DELAYS_MS[0]);
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(mockRefreshMyJobPosters).toHaveBeenCalledTimes(6);
+    expect(mockRefreshMyJobPosters).toHaveBeenCalledTimes(
+      POSTER_RECOVERY_DELAYS_MS.length + 1,
+    );
   });
 
   it("refreshes a missing poster in a loaded page beyond the first 60 rows", async () => {
@@ -528,6 +624,7 @@ describe("WorkspaceHome (basic home)", () => {
     expect(mockRefreshMyJobPosters).toHaveBeenCalledWith(
       ["j61"],
       expect.any(AbortSignal),
+      [],
     );
     expect(screen.getByTestId("tile-j61")).toHaveAttribute(
       "data-poster-url",
