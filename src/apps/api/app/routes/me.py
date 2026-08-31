@@ -970,6 +970,44 @@ async def _lock_owned_job(db: AsyncSession, job_id: uuid.UUID, user_id: uuid.UUI
     ).scalar_one_or_none()
 
 
+async def _relocked_ready_clips(db: AsyncSession, job_id: uuid.UUID) -> list[JobClip]:
+    """Re-read one job's ready clips under the held Job lock, refreshed.
+
+    The bulk clip select earlier in the request read these rows UNLOCKED, and
+    `_clear_preview_poster` blanks `JobClip.thumbnail_path`. Without a locked,
+    `populate_existing` re-read, that comparison runs against the cached
+    pre-lock value and can null a thumbnail a concurrent repair just wrote —
+    orphaning its object on a prefix nothing expires. `poster_repair.py` guards
+    the same mutation the same way; the Job lock is already held, so taking the
+    clip locks in that order keeps the two paths deadlock-free.
+    """
+    return list(
+        (
+            await db.execute(
+                select(JobClip)
+                .options(
+                    load_only(
+                        JobClip.id,
+                        JobClip.job_id,
+                        JobClip.rank,
+                        JobClip.render_status,
+                        JobClip.video_path,
+                        JobClip.thumbnail_path,
+                        JobClip.created_at,
+                    )
+                )
+                .where(JobClip.job_id == job_id, JobClip.render_status == "ready")
+                .order_by(JobClip.rank, JobClip.created_at, JobClip.id)
+                .limit(_MAX_PREVIEW_CLIPS)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
 async def _verify_broken_posters(
     db: AsyncSession,
     user_id: uuid.UUID,
@@ -1032,16 +1070,21 @@ async def _verify_broken_posters(
     now = datetime.now(UTC)
     dispatch: list[uuid.UUID] = []
     dirty = False
+    locked_any = False
     for job_id, preview, source_alive in probed:
         if budget <= 0:
             break
         locked = await _lock_owned_job(db, job_id, user_id)
         if locked is None:
             continue
-        fresh = _preview(locked, clips_by_job.get(job_id))
+        locked_any = True
+        # Re-read the clips under the lock: the bulk read was unlocked, and the
+        # clip branch below MUTATES thumbnail_path.
+        locked_clips = await _relocked_ready_clips(db, job_id)
+        fresh = _preview(locked, locked_clips)
         if fresh is None or fresh.poster_path != preview.poster_path:
             continue
-        if not _clear_preview_poster(locked, clips_by_job.get(job_id), fresh):
+        if not _clear_preview_poster(locked, locked_clips, fresh):
             continue
         # Source gone too ⇒ nothing can ever be re-extracted: settle terminal so
         # the tile reads an honest "Thumbnail unavailable".
@@ -1055,14 +1098,17 @@ async def _verify_broken_posters(
         budget -= 1
         if source_alive:
             dispatch.append(job_id)
-    if dirty:
+    # Commit whenever a lock was taken, even if nothing was written: a `continue`
+    # after `_lock_owned_job` would otherwise hold that FOR UPDATE for the rest
+    # of the request — across the signing threadpool hop and the Celery dispatch
+    # — blocking deletes and re-renders of jobs this pass decided not to touch.
+    # It must be commit, never rollback: AsyncSession expires every ORM attribute
+    # on rollback (expire_on_commit=False covers only commit), and `ordered_jobs`
+    # / `clips_by_job` are read again afterwards from a threadpool thread, where
+    # an expired-attribute reload raises MissingGreenlet (the same hazard is
+    # documented in routes/plan_items.py).
+    if dirty or locked_any:
         await db.commit()
-    else:
-        # Every `continue` above bailed out AFTER taking a FOR UPDATE lock.
-        # Without this the locks stay held for the rest of the request — across
-        # the signing threadpool hop and the Celery dispatch — blocking deletes
-        # and re-renders of jobs this pass decided not to touch.
-        await db.rollback()
     return dispatch, budget
 
 
@@ -1077,6 +1123,7 @@ async def _enqueue_poster_repairs(
     now = datetime.now(UTC)
     dispatch: list[uuid.UUID] = []
     dirty = False
+    locked_any = False
     for job in jobs:
         if budget <= 0:
             break
@@ -1090,6 +1137,7 @@ async def _enqueue_poster_repairs(
         locked = await _lock_owned_job(db, job.id, user_id)
         if locked is None:
             continue
+        locked_any = True
         # Re-derive everything from the locked row: a render may have finished
         # (or another request may have stamped the marker) since the bulk read.
         preview = _preview(locked, clips_by_job.get(job.id))
@@ -1102,12 +1150,12 @@ async def _enqueue_poster_repairs(
         dirty = True
         budget -= 1
         dispatch.append(job.id)
-    if dirty:
-        # Commit BEFORE enqueue: the worker must never see a marker-free row.
+    # Commit BEFORE enqueue: the worker must never see a marker-free row. Also
+    # runs when a lock was taken but nothing written, so those locks are
+    # released — commit, never rollback, because a rollback would expire the
+    # identity map these rows are still read from (see the verify pass).
+    if dirty or locked_any:
         await db.commit()
-    else:
-        # Release locks taken by candidates that turned out to need no write.
-        await db.rollback()
     return dispatch, budget
 
 

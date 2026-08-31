@@ -422,8 +422,14 @@ def _run_repair(job_id: str) -> str:
             or not _variant_id_is_unique(plan, target)
         ):
             # Stale race: a re-render (or another repairer) moved the ground
-            # under us. Drop the freshly uploaded object so no orphan survives.
-            delete_object_best_effort(poster_key)
+            # under us. Drop the freshly uploaded object so no orphan survives —
+            # UNLESS the winner adopted this very key. Poster keys are
+            # deterministic per (job, source), so two concurrent repairs of the
+            # same source upload identical bytes to the SAME key: deleting it
+            # here would strand the winner's row pointing at a dead object,
+            # which is exactly the failure this feature exists to remove.
+            if not _references_poster_key(job, target, poster_key):
+                delete_object_best_effort(poster_key)
             return "stale_race"
 
         if target.kind == "job_clip":
@@ -441,7 +447,8 @@ def _run_repair(job_id: str) -> str:
                 or clip.thumbnail_path != target.poster_value
                 or _owned_poster(job, clip.video_path) != target.source_key
             ):
-                delete_object_best_effort(poster_key)
+                if clip is None or _owned_poster(job, clip.thumbnail_path) != poster_key:
+                    delete_object_best_effort(poster_key)
                 return "stale_race"
             clip.thumbnail_path = poster_key
         elif target.kind == "job_output":
@@ -464,6 +471,18 @@ def _run_repair(job_id: str) -> str:
         _stage_plan(job, plan)
         db.commit()
         return "generated"
+
+
+def _references_poster_key(job: Any, target: _RepairTarget | None, poster_key: str) -> bool:
+    """True when the row already points at exactly the key we just uploaded.
+
+    Poster keys are deterministic per (job, source), so a concurrent repair of
+    the same source writes identical bytes to the same key. When the winner has
+    adopted it, the loser must leave the object alone.
+    """
+    if target is None:
+        return False
+    return _owned_poster(job, target.poster_value) == poster_key
 
 
 def _variant_id_is_unique(plan: dict[str, Any] | None, target: _RepairTarget) -> bool:

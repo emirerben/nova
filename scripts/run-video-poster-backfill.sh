@@ -482,8 +482,16 @@ start_backfill_machine() {
 # allowance here a Machine parked during image preparation is a permanent dead
 # end that also blocks the next deploy, because deploys CAS this same name.
 machine_never_ran() {
-  jq -e '[.events[]? | select(.type == "start" or .type == "exit")] | length == 0' \
-    >/dev/null
+  # Requires POSITIVE evidence: `.events` must be a readable array that contains
+  # no start and no exit. `.events[]?` alone would treat an absent or malformed
+  # field as "never ran" and sweep a Machine whose receipt simply could not be
+  # read — destroying the forensics the acknowledgement path depends on. flyctl
+  # omits empty fields (`omitempty`), so this shape is reachable, and an
+  # unreadable inventory must fall through to retain-for-inspection.
+  jq -e '
+    (.events | type) == "array"
+    and ([.events[] | select(.type == "start" or .type == "exit")] | length == 0)
+  ' >/dev/null
 }
 
 reconcile_backfill_machine() {
