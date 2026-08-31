@@ -846,6 +846,15 @@ def test_editor_commit_request_counts_only_active_slots_for_capacity() -> None:
     assert sum(not row.removed for row in payload.timeline_slots or []) == 103
 
 
+@pytest.mark.parametrize("field", ["sound_effects", "media_overlays"])
+def test_editor_commit_request_bounds_full_replacement_lanes(field: str) -> None:
+    with pytest.raises(ValidationError):
+        gj.EditorCommitRequest(
+            base_generation="g1",
+            **{field: [{"id": f"row-{index}"} for index in range(101)]},
+        )
+
+
 def test_editor_commit_openapi_exposes_media_visual_block_contract():
     schema = json.dumps(gj.EditorCommitRequest.model_json_schema()["properties"]["visual_blocks"])
 
@@ -2517,6 +2526,45 @@ def test_editor_commit_preserves_curated_sfx_with_item_scope(monkeypatch):
     )
 
 
+@pytest.mark.parametrize(
+    "sound_effects",
+    [
+        [{"id": "broken", "src_gcs_path": None}],
+        [
+            {
+                "id": "duplicate",
+                "src_gcs_path": "sound-effects/pop.mp3",
+                "at_s": 1.0,
+            },
+            {
+                "id": "duplicate",
+                "src_gcs_path": "sound-effects/pop.mp3",
+                "at_s": 2.0,
+            },
+        ],
+    ],
+)
+def test_editor_commit_rejects_invalid_or_duplicate_sfx_without_partial_write(
+    monkeypatch, sound_effects
+):
+    _arm(monkeypatch)
+    job = _job()
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(sound_effects=sound_effects),
+            user_id="u123",
+            plan_item_id="item",
+        )
+
+    assert exc.value.status_code == 422
+    assert "No changes were saved" in str(exc.value.detail)
+    assert job.assembly_plan == before
+
+
 def test_editor_commit_rejects_overlay_from_another_plan_item(monkeypatch):
     _arm(monkeypatch)
     job = _job()
@@ -2544,6 +2592,49 @@ def test_editor_commit_rejects_overlay_from_another_plan_item(monkeypatch):
 
     assert exc.value.status_code == 422
     assert "users/u123/plan/item/" in str(exc.value.detail)
+    assert job.assembly_plan == before
+
+
+@pytest.mark.parametrize(
+    "media_overlays",
+    [
+        [{"id": "broken", "kind": "image", "src_gcs_path": None}],
+        [
+            {
+                "id": "duplicate",
+                "kind": "image",
+                "src_gcs_path": "users/u123/plan/item/overlays/one.png",
+                "start_s": 0.0,
+                "end_s": 1.0,
+            },
+            {
+                "id": "duplicate",
+                "kind": "image",
+                "src_gcs_path": "users/u123/plan/item/overlays/two.png",
+                "start_s": 1.0,
+                "end_s": 2.0,
+            },
+        ],
+    ],
+)
+def test_editor_commit_rejects_invalid_or_duplicate_overlays_without_partial_write(
+    monkeypatch, media_overlays
+):
+    _arm(monkeypatch)
+    job = _job()
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(media_overlays=media_overlays),
+            user_id="u123",
+            plan_item_id="item",
+        )
+
+    assert exc.value.status_code == 422
+    assert "No changes were saved" in str(exc.value.detail)
     assert job.assembly_plan == before
 
 
@@ -5979,7 +6070,8 @@ def test_guided_lane_projection_uses_stable_segment_ids_for_repeated_media_and_p
     projected = raw["sound_effects"][0]
     assert projected["segment_id"] == "segment-second"
     assert projected["at_s"] == pytest.approx(0.5)
-    assert projected["end_s"] == pytest.approx(1.0)
+    assert "end_s" not in projected
+    gj._validate_projected_guided_lane_shapes(raw)
 
 
 def test_guided_lane_projection_creates_tombstone_when_anchored_interval_is_deleted():
@@ -6034,6 +6126,255 @@ def test_guided_lane_projection_creates_tombstone_when_anchored_interval_is_dele
             },
         }
     ]
+
+
+def test_guided_lane_projection_preserves_new_output_clock_records_and_drops_partial_removals():
+    old_segments = [
+        {
+            "segment_id": "first",
+            "media_id": "m1",
+            "source_start_s": 0.0,
+            "source_end_s": 1.0,
+            "duration_s": 1.0,
+            "output_start_s": 0.0,
+            "output_end_s": 1.0,
+        },
+        {
+            "segment_id": "second",
+            "media_id": "m2",
+            "source_start_s": 0.0,
+            "source_end_s": 2.0,
+            "duration_s": 2.0,
+            "output_start_s": 1.0,
+            "output_end_s": 3.0,
+        },
+    ]
+    new_segments = [old_segments[0]]
+    existing = {
+        "id": "text-existing",
+        "text": "Existing",
+        "start_s": 0.5,
+        "end_s": 1.5,
+        "role": "generative_intro",
+    }
+    new_bar = {
+        "id": "text-added",
+        "text": "Added after the extension",
+        "start_s": 1.1,
+        "end_s": 1.3,
+        "role": "generative_intro",
+    }
+    raw = {
+        "text_elements": [existing, new_bar],
+        "sound_effects": [],
+        "media_overlays": [],
+        "visual_blocks": [],
+        "motion_scenes": [],
+        "tombstones": [],
+    }
+
+    gj._project_guided_revision_lanes(
+        raw,
+        old_segments=old_segments,
+        new_segments=new_segments,
+        baseline_lanes={"text_elements": [existing]},
+    )
+
+    # Existing content crossing the removed segment loses only its end anchor;
+    # it is dropped and tombstoned rather than collapsed to a zero-length bar.
+    assert raw["text_elements"] == [new_bar]
+    assert raw["tombstones"][0]["record_id"] == "text-existing"
+    assert raw["tombstones"][0]["reason"] == "anchored_interval_removed"
+    assert raw["tombstones"][0]["record"] == existing
+    assert all(row["end_s"] > row["start_s"] for row in raw["text_elements"])
+    gj._validate_projected_guided_lane_shapes(raw)
+
+
+@pytest.mark.parametrize(
+    ("lane", "record"),
+    [
+        (
+            "text_elements",
+            {**_VALID_ELEMENT, "id": "zero-text", "start_s": 1.0, "end_s": 1.0},
+        ),
+        ("media_overlays", {"id": "zero-overlay", "start_s": 1.0, "end_s": 1.0}),
+        ("visual_blocks", {"id": "negative-block", "start_s": 1.0, "end_s": 0.5}),
+        ("sound_effects", {"id": "negative-sfx", "at_s": -1.0}),
+        (
+            "motion_scenes",
+            {"id": "zero-motion", "start_frame": 10, "end_frame_exclusive": 10},
+        ),
+    ],
+)
+def test_guided_projected_lane_shape_validator_rejects_invalid_records(lane: str, record: dict):
+    raw = {
+        "text_elements": [],
+        "sound_effects": [],
+        "media_overlays": [],
+        "visual_blocks": [],
+        "motion_scenes": [],
+        "tombstones": [],
+    }
+    raw[lane] = [record]
+
+    with pytest.raises(HTTPException) as exc_info:
+        gj._validate_projected_guided_lane_shapes(raw)
+
+    assert exc_info.value.detail["code"] == "GUIDED_REVISION_INVALID"
+
+
+def test_guided_lane_projection_reanchors_existing_motion_scene_after_reorder():
+    old_segments = [
+        {
+            "segment_id": "first",
+            "media_id": "m1",
+            "source_start_s": 0.0,
+            "source_end_s": 2.0,
+            "duration_s": 2.0,
+            "output_start_s": 0.0,
+            "output_end_s": 2.0,
+        },
+        {
+            "segment_id": "second",
+            "media_id": "m2",
+            "source_start_s": 0.0,
+            "source_end_s": 2.0,
+            "duration_s": 2.0,
+            "output_start_s": 2.0,
+            "output_end_s": 4.0,
+        },
+    ]
+    new_segments = [
+        {**old_segments[1], "output_start_s": 0.0, "output_end_s": 2.0},
+        {**old_segments[0], "output_start_s": 2.0, "output_end_s": 4.0},
+    ]
+    motion = {
+        "id": "existing-motion",
+        "segment_id": "second",
+        "start_frame": 75,
+        "end_frame_exclusive": 105,
+    }
+    raw = {
+        "text_elements": [],
+        "sound_effects": [],
+        "media_overlays": [],
+        "visual_blocks": [],
+        "motion_scenes": [motion],
+        "tombstones": [],
+    }
+
+    gj._project_guided_revision_lanes(
+        raw,
+        old_segments=old_segments,
+        new_segments=new_segments,
+        baseline_lanes={"motion_scenes": [motion]},
+    )
+
+    assert raw["motion_scenes"] == [
+        {
+            **motion,
+            "start_frame": 15,
+            "end_frame_exclusive": 45,
+        }
+    ]
+    gj._validate_projected_guided_lane_shapes(raw)
+
+
+def test_guided_lane_projection_preserves_new_records_in_every_editable_lane():
+    old_segments = [
+        {
+            "segment_id": "first",
+            "media_id": "m1",
+            "source_start_s": 0.0,
+            "source_end_s": 1.0,
+            "duration_s": 1.0,
+            "output_start_s": 0.0,
+            "output_end_s": 1.0,
+        }
+    ]
+    new_segments = [
+        *old_segments,
+        {
+            "segment_id": "added-tail",
+            "media_id": "m2",
+            "source_start_s": 0.0,
+            "source_end_s": 1.0,
+            "duration_s": 1.0,
+            "output_start_s": 1.0,
+            "output_end_s": 2.0,
+        },
+    ]
+    new_lanes = {
+        "text_elements": [{**_VALID_ELEMENT, "id": "new-text", "start_s": 1.1, "end_s": 1.4}],
+        "sound_effects": [{"id": "new-sfx", "at_s": 1.2}],
+        "media_overlays": [{"id": "new-overlay", "start_s": 1.1, "end_s": 1.6}],
+        "visual_blocks": [{"id": "new-block", "start_s": 1.0, "end_s": 1.8}],
+        "motion_scenes": [{"id": "new-motion", "start_frame": 33, "end_frame_exclusive": 54}],
+        "tombstones": [],
+    }
+
+    raw = copy.deepcopy(new_lanes)
+    gj._project_guided_revision_lanes(
+        raw,
+        old_segments=old_segments,
+        new_segments=new_segments,
+        baseline_lanes={
+            "text_elements": [],
+            "sound_effects": [],
+            "media_overlays": [],
+            "visual_blocks": [],
+            "motion_scenes": [],
+        },
+    )
+
+    assert raw == new_lanes
+    gj._validate_projected_guided_lane_shapes(raw)
+
+
+def test_guided_lane_projection_does_not_shift_explicitly_retimed_lanes():
+    old_segments = [
+        {
+            "segment_id": "first",
+            "media_id": "m1",
+            "source_start_s": 0.0,
+            "source_end_s": 1.0,
+            "duration_s": 1.0,
+            "output_start_s": 0.0,
+            "output_end_s": 1.0,
+        },
+        {
+            "segment_id": "second",
+            "media_id": "m2",
+            "source_start_s": 0.0,
+            "source_end_s": 1.0,
+            "duration_s": 1.0,
+            "output_start_s": 1.0,
+            "output_end_s": 2.0,
+        },
+    ]
+    new_segments = [old_segments[1], old_segments[0]]
+    text = {**_VALID_ELEMENT, "id": "existing-text", "start_s": 0.2, "end_s": 0.8}
+    overlay = {"id": "existing-overlay", "start_s": 0.25, "end_s": 0.75}
+    raw = {
+        "text_elements": [text],
+        "sound_effects": [],
+        "media_overlays": [overlay],
+        "visual_blocks": [],
+        "motion_scenes": [],
+        "tombstones": [],
+    }
+
+    gj._project_guided_revision_lanes(
+        raw,
+        old_segments=old_segments,
+        new_segments=new_segments,
+        baseline_lanes={"text_elements": [text], "media_overlays": [overlay]},
+        authored_lanes={"text_elements", "media_overlays"},
+    )
+
+    assert raw["text_elements"] == [text]
+    assert raw["media_overlays"] == [overlay]
+    gj._validate_projected_guided_lane_shapes(raw)
 
 
 def test_guided_timeline_projection_uses_left_segment_transition_and_parent_id(monkeypatch):
@@ -6213,6 +6554,119 @@ def test_guided_timeline_projection_accepts_production_scale_103_slot_commit(mon
     assert [row["id"] for row in updated["text_elements"]] == ["guided-title"]
     assert [row["id"] for row in result["text_elements"]] == ["guided-title"]
     assert result["tombstones"] == []
+
+
+def _guided_text_revision_fixture() -> dict:
+    text = [
+        {
+            **_VALID_ELEMENT,
+            "id": f"approved-{index}",
+            "start_s": index * 0.5,
+            "end_s": index * 0.5 + 0.4,
+        }
+        for index in range(6)
+    ]
+    return {
+        "revision_number": 1,
+        "text_elements": text,
+        "sound_effects": [],
+        "media_overlays": [],
+        "visual_blocks": [],
+        "motion_scenes": [],
+        "tombstones": [],
+    }
+
+
+def test_guided_v2_text_identity_accepts_additions_and_server_deletions() -> None:
+    current = _guided_text_revision_fixture()
+    additions = [
+        {
+            **_VALID_ELEMENT,
+            "id": f"user-{index}",
+            "text": f"User bar {index}",
+            "start_s": 3.0 + index * 0.1,
+            "end_s": 3.05 + index * 0.1,
+        }
+        for index in range(18)
+    ]
+
+    active, tombstones = gj._guided_text_revision_state(
+        current, [*current["text_elements"], *additions]
+    )
+
+    assert len(active) == 24
+    assert {row["id"] for row in active} == {
+        *[f"approved-{index}" for index in range(6)],
+        *[f"user-{index}" for index in range(18)],
+    }
+    assert tombstones == []
+
+    # Omitting an approved row is a deletion.  The server, not the browser,
+    # creates the tombstone from the exact prior record.
+    active, tombstones = gj._guided_text_revision_state(current, current["text_elements"][:-1])
+    assert [row["id"] for row in active] == [f"approved-{index}" for index in range(5)]
+    assert len(tombstones) == 1
+    assert tombstones[0]["lane"] == "text_elements"
+    assert tombstones[0]["record_id"] == "approved-5"
+    assert tombstones[0]["record"] == current["text_elements"][-1]
+
+    # A later full replacement may restore only the same text-lane tombstone.
+    deleted = {**current, "text_elements": active, "tombstones": tombstones}
+    restored, remaining = gj._guided_text_revision_state(deleted, current["text_elements"])
+    assert [row["id"] for row in restored] == [f"approved-{index}" for index in range(6)]
+    assert remaining == []
+
+
+@pytest.mark.parametrize(
+    "submitted, current_update",
+    [
+        (
+            [{**_VALID_ELEMENT, "id": "approved-0"}, {**_VALID_ELEMENT, "id": "approved-0"}],
+            {},
+        ),
+        (
+            [{**_VALID_ELEMENT, "id": "motion-1"}],
+            {"motion_scenes": [{"id": "motion-1"}]},
+        ),
+        (
+            [{**_VALID_ELEMENT, "id": "approved-0", "removed": True}],
+            {},
+        ),
+        (
+            [{**_VALID_ELEMENT, "id": "deleted-1"}],
+            {"tombstones": [{"lane": "sound_effects", "record_id": "deleted-1", "record": {}}]},
+        ),
+    ],
+)
+def test_guided_v2_text_identity_rejects_ambiguous_or_forged_rows(
+    submitted, current_update
+) -> None:
+    current = {**_guided_text_revision_fixture(), **current_update}
+
+    with pytest.raises(HTTPException) as exc_info:
+        gj._guided_text_revision_state(current, submitted)
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail["code"] == "GUIDED_TEXT_IDENTITY_MISMATCH"
+
+
+def test_guided_v2_text_deletion_fails_closed_at_tombstone_capacity() -> None:
+    current = _guided_text_revision_fixture()
+    current["tombstones"] = [
+        {
+            "lane": "text_elements",
+            "record_id": f"previously-deleted-{index}",
+            "reason": "user_removed",
+            "record": {"id": f"previously-deleted-{index}"},
+        }
+        for index in range(gj.MAX_GUIDED_EDITOR_TOMBSTONES)
+    ]
+
+    with pytest.raises(HTTPException) as exc_info:
+        gj._guided_text_revision_state(current, [])
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail["code"] == "GUIDED_TOMBSTONE_LIMIT"
 
 
 def test_guided_timeline_rejects_transition_when_feature_is_disabled(monkeypatch):

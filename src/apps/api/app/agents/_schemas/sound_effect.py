@@ -83,7 +83,9 @@ def validate_sfx_gcs_path(path: str) -> None:
         raise ValueError(f"SFX asset must be under one of {allowed}, got: {path!r}")
 
 
-def coerce_sound_effects(raw: list | None) -> list[SoundEffectPlacement] | None:
+def coerce_sound_effects(
+    raw: list | None, *, dropped_indices: list[int] | None = None
+) -> list[SoundEffectPlacement] | None:
     """Parse + coerce a raw list into validated SoundEffectPlacement objects.
 
     Returns None when the list is empty/None so callers can use the clean
@@ -91,18 +93,22 @@ def coerce_sound_effects(raw: list | None) -> list[SoundEffectPlacement] | None:
     invariant (the render path never fires when this is falsy).
 
     Non-raising on individual bad entries: they are dropped rather than failing
-    the entire placement set.
+    the entire placement set. User-facing full-replacement endpoints must pass
+    ``dropped_indices`` and reject the request if any indices are reported.
     """
     if not raw:
         return None
     result: list[SoundEffectPlacement] = []
-    for item in raw:
+    for idx, item in enumerate(raw):
         if not isinstance(item, dict):
+            if dropped_indices is not None:
+                dropped_indices.append(idx)
             continue
         try:
             result.append(SoundEffectPlacement.model_validate(item))
         except Exception:  # noqa: BLE001 — bad entry → skip
-            pass
+            if dropped_indices is not None:
+                dropped_indices.append(idx)
     return result or None
 
 

@@ -109,6 +109,7 @@ import { DEFAULT_TEXT_PRESET, TEXT_PRESETS, type TextPreset } from "@/lib/text-p
 import {
   applyCopilotOps,
   applyCopilotOpsAtomic,
+  textActionsChangeTextSection,
   type ApplyCopilotOpsContext,
   type ApplyCopilotOpsResult,
 } from "@/lib/edit-copilot/apply-ops";
@@ -1572,6 +1573,18 @@ export default function EditorShell({
   const getCurrent = useCallback(
     (): EditorDocument => ({
       bars: state.bars,
+      // Dirty flags are part of the document's save intent, not a property
+      // that can be inferred from the bars. In particular, a timeline-only
+      // command still snapshots the text bars; inferring `true` on restore
+      // would make undo/retry send an unsolicited text_elements section.
+      textDirty,
+      captionDirty,
+      sfxDirty,
+      overlaysDirty,
+      visualBlocksDirty,
+      motionScenesDirty,
+      cameraEffectsDirty,
+      titleDirty,
       slots: localSlots,
       sfx: localSfx,
       overlays: localOverlays,
@@ -1599,6 +1612,14 @@ export default function EditorShell({
     }),
     [
       state.bars,
+      textDirty,
+      captionDirty,
+      sfxDirty,
+      overlaysDirty,
+      visualBlocksDirty,
+      motionScenesDirty,
+      cameraEffectsDirty,
+      titleDirty,
       localSlots,
       localSfx,
       localOverlays,
@@ -1654,23 +1675,30 @@ export default function EditorShell({
       setCaptionMetaDirty(doc.captionMetaDirty ?? false);
       setCaptionMetaPatch(doc.captionMetaPatch ?? {});
       if (introControlsEditable) setTitle(doc.title);
+      // New history snapshots carry the exact section intent. Older drafts
+      // predate these fields, so retain the conservative inference only for
+      // that recovery path.
       setTextDirty(
-        doc.bars.some((bar) => !isCaptionBar(bar) && (lyricsOptionalActive || !isLyricBar(bar))),
+        doc.textDirty ??
+          doc.bars.some((bar) => !isCaptionBar(bar) && (lyricsOptionalActive || !isLyricBar(bar))),
       );
-      setCaptionDirty(doc.bars.some(isCaptionBar));
+      setCaptionDirty(doc.captionDirty ?? doc.bars.some(isCaptionBar));
       // Sections the active variant can't accept (e.g. visual_blocks on a
       // lyrics variant, sfx/overlays gated off) ride along in the undo
       // snapshot as an untouched echo — don't blanket-dirty them, or the next
       // save ships a section the backend editor-commit guard 422s the WHOLE
       // commit for (see agents/DECISIONS.md undo/redo dirty-flag bug).
-      if (sfxAllowed) setSfxDirty(true);
-      if (overlaysAllowed) setOverlaysDirty(true);
-      if (visualBlocksAllowed) setVisualBlocksDirty(true);
-      if (motionScenesAllowed) setMotionScenesDirty(true);
-      if (capabilities?.camera_effects !== false) {
-        setCameraEffectsDirty(!cameraEffectsEqual(doc.cameraEffects, variant?.camera_effects));
-      }
-      if (introControlsEditable) setTitleDirty(true);
+      setSfxDirty(doc.sfxDirty ?? (sfxAllowed ? true : false));
+      setOverlaysDirty(doc.overlaysDirty ?? (overlaysAllowed ? true : false));
+      setVisualBlocksDirty(doc.visualBlocksDirty ?? (visualBlocksAllowed ? true : false));
+      setMotionScenesDirty(doc.motionScenesDirty ?? (motionScenesAllowed ? true : false));
+      setCameraEffectsDirty(
+        doc.cameraEffectsDirty ??
+          (capabilities?.camera_effects !== false
+            ? !cameraEffectsEqual(doc.cameraEffects, variant?.camera_effects)
+            : false),
+      );
+      setTitleDirty(doc.titleDirty ?? (introControlsEditable ? true : false));
       // Undo of a delete (or redo of an add) resurrects a bar → re-select it
       // (plan §5 — the one selection rule that reaches into undo).
       const resurrected = doc.bars.find((b) => !beforeIds.has(b.id));
@@ -5615,21 +5643,7 @@ export default function EditorShell({
       })) {
         setCaptionDirty(true);
       }
-      if (
-        lyricsOptionalActive ||
-        result.textActions.some((action) => {
-          if (action.type === "ADD_TEXT") return true;
-          if (action.type === "PATCH_BARS") {
-            return action.patches.some((patch) => {
-              const bar = state.bars.find((candidate) => candidate.id === patch.id);
-              return !isCaptionBar(bar) && !isLyricBar(bar);
-            });
-          }
-          if (!("id" in action)) return false;
-          const bar = state.bars.find((candidate) => candidate.id === action.id);
-          return !isCaptionBar(bar) && !isLyricBar(bar);
-        })
-      ) {
+      if (textActionsChangeTextSection(result.textActions, state.bars, lyricsOptionalActive)) {
         setTextDirty(true);
       }
       if (result.nextSlots) {

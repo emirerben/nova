@@ -46,6 +46,18 @@ export const EDITOR_HISTORY_DEPTH = 50;
 /** The full working document the stack snapshots (document state only). */
 export interface EditorDocument {
   bars: TextElementBar[];
+  /** Section dirty state must travel with undo snapshots. Inferring this from
+   * the presence of bars makes undoing a timeline-only edit incorrectly send
+   * the text lane on the next Save. Optional for backwards-compatible draft
+   * recovery; new snapshots always include both flags. */
+  textDirty?: boolean;
+  captionDirty?: boolean;
+  sfxDirty?: boolean;
+  overlaysDirty?: boolean;
+  visualBlocksDirty?: boolean;
+  motionScenesDirty?: boolean;
+  cameraEffectsDirty?: boolean;
+  titleDirty?: boolean;
   slots: DraftSlot[] | null;
   sfx?: SoundEffectPlacement[];
   overlays?: MediaOverlay[];
@@ -218,6 +230,20 @@ export function deserializeDraft(raw: string | null | undefined): SerializedDraf
       baseGeneration: parsed.baseGeneration,
       doc: {
         bars: doc.bars as TextElementBar[],
+        ...(typeof doc.textDirty === "boolean" ? { textDirty: doc.textDirty } : {}),
+        ...(typeof doc.captionDirty === "boolean" ? { captionDirty: doc.captionDirty } : {}),
+        ...(typeof doc.sfxDirty === "boolean" ? { sfxDirty: doc.sfxDirty } : {}),
+        ...(typeof doc.overlaysDirty === "boolean" ? { overlaysDirty: doc.overlaysDirty } : {}),
+        ...(typeof doc.visualBlocksDirty === "boolean"
+          ? { visualBlocksDirty: doc.visualBlocksDirty }
+          : {}),
+        ...(typeof doc.motionScenesDirty === "boolean"
+          ? { motionScenesDirty: doc.motionScenesDirty }
+          : {}),
+        ...(typeof doc.cameraEffectsDirty === "boolean"
+          ? { cameraEffectsDirty: doc.cameraEffectsDirty }
+          : {}),
+        ...(typeof doc.titleDirty === "boolean" ? { titleDirty: doc.titleDirty } : {}),
         slots: Array.isArray(doc.slots) ? (doc.slots as DraftSlot[]) : null,
         ...(Array.isArray(doc.sfx) ? { sfx: doc.sfx as SoundEffectPlacement[] } : {}),
         ...(Array.isArray(doc.overlays) ? { overlays: doc.overlays as MediaOverlay[] } : {}),
