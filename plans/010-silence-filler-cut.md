@@ -412,6 +412,13 @@ geometry shifts.
 > and cut-apply failures visible as typed `speech_cleanup_failed` results. The
 > 40% removal rail itself is unchanged. See
 > `plans/019-speech-cleanup-render-contract-fix.md` for the cutover contract.
+>
+> **2026-08-31 (v0.59.2.0):** under explicit-consent `required_v1` the
+> over-budget bail-out is replaced by a clamp to
+> `MAX_REMOVAL_FRAC_REQUIRED=0.55` (`SPEECH_CLEANUP_BUDGET_CLAMP_ENABLED`,
+> default on) — the 0.4 rail below now applies only to auto/legacy paths, and
+> the persisted `silence_cut` summary gains additive
+> `clamped`/`proposed_removed_s`/`clamp_budget_s` keys. See the 019 addendum.
 
 | Failure | Handling | User sees |
 |---|---|---|

@@ -41,6 +41,16 @@ The `reframe` stage also carries the heavy-source downscale guard's events
 (`app/pipeline/source_guard.py`, v0.12.2.0): `source_guard_downscaled`,
 `source_guard_downscale_failed`, `source_guard_budget_exhausted`.
 
+The `silence_cut` stage (emitted from the tasks layer, `generative_build.py`)
+carries the speech-cleanup engine's decisions: `silence_cut_config`,
+`silence_cut_plan`, `silence_cut_bailout`, `silence_cut_clamped`,
+`silence_cut_analysis_failed`, `silence_cut_apply_failed`,
+`silence_cut_required_failed`, `silence_cut_skipped_disabled`,
+`silence_cut_skipped_no_audio`, `silence_cut_rule2_disabled`,
+`retake_detector_failed`. `silence_cut_clamped` (v0.59.2.0) records the
+explicit-consent budget clamp: proposed vs delivered removal seconds plus the
+budget (`proposed_removed_s` / `time_saved_s` / `clamp_budget_s`).
+
 ## Template-scoped sibling
 
 `/admin/templates/{id}` has a "Debug" tab backed by `GET /admin/templates/{id}/debug`

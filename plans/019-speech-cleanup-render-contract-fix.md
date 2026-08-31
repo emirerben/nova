@@ -1,6 +1,7 @@
 # Speech cleanup render contract fix
 
-**Status:** Implemented locally; production `opt_in` cutover complete; code release and canaries pending
+**Status:** Implemented locally; production `opt_in` cutover complete; code release and canaries pending.
+**2026-08-31 addendum** (ships v0.59.2.0): over-budget `required_v1` plans now clamp to the explicit-consent budget instead of hard-failing with `unsafe_plan` — see "Addendum 2026-08-31: explicit-consent budget clamp" below. The "40% rail stays unchanged" statement in Outcome now applies only to auto/legacy paths.
 **Target:** `origin/main@e76befe2` (2026-08-25)
 **Incident:** A mobile Talking to camera upload completed storage, probe, transcription,
 music matching, and planning, but both render attempts ended in `variants_failed`
@@ -314,6 +315,13 @@ Canary gates:
   `Create without cleanup`.
 - Historical legacy unsafe-plan canary renders ready and records only the bailout.
 
+> **2026-08-31 addendum note:** with `SPEECH_CLEANUP_BUDGET_CLAMP_ENABLED=true`
+> (default, v0.59.2.0) the On unsafe-plan canary instead renders a CLEANED,
+> budget-clamped video and records `silence_cut_clamped`; the typed
+> `speech_cleanup_failed/unsafe_plan` gate applies only with the clamp switched
+> off. The clamp switch is the new first rung of the rollback ladder, before
+> `SPEECH_CLEANUP_MODE=disabled`.
+
 Use `SPEECH_CLEANUP_MODE=disabled` if the opt-in capability itself must be paused.
 Use `SILENCE_CUT_ENABLED=false` only as the engine emergency switch; an in-flight
 `required_v1` job will correctly fail `engine_unavailable` rather than publish an
@@ -472,9 +480,11 @@ could never succeed because the analysis is content-deterministic.
 Decision (approved by Yasin, option A of the 2026-08-31 investigation): under
 `required_v1`, `build_cut_plan(over_budget_policy="clamp")` now clamps the
 removal set to `min(MAX_REMOVAL_FRAC_REQUIRED·dur, dur − MIN_OUTPUT_S) −
-CLAMP_BUDGET_SLACK_S` (0.55 / 1 ms) — largest removals kept whole first, the
-first non-fitting removal trimmed (edge-anchored for lead/trail cuts,
-symmetric mid-clip), remainder dropped. The clamp is traced
+CLAMP_BUDGET_SLACK_S` (0.55 / 1 ms) — removals kept whole while they fit
+(edge cuts charged first — hardening 4 below — then largest first),
+non-fitting removals trimmed into the leftover budget (edge-anchored for
+lead/trail cuts, symmetric mid-clip), sub-MIN_CUT_S remainders dropped;
+later removals still compete for budget a snap left unspent. The clamp is traced
 (`silence_cut_clamped` event: proposed vs delivered vs budget) and persisted
 additively on the summary (`clamped`/`proposed_removed_s`/`clamp_budget_s`).
 `legacy_auto`/`off_v1` and the default bailout policy stay byte-identical;
