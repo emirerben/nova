@@ -27,6 +27,7 @@ from app.routes import (
     content_plans,
     creator_agent,
     creator_workspace,
+    dev_qa_storage,
     generative_jobs,
     landing,
     manual_drafts,
@@ -209,6 +210,7 @@ app.include_router(templates.router, prefix="/templates", tags=["templates"])
 app.include_router(tiktok.router, prefix="/tiktok", tags=["tiktok"])
 app.include_router(waitlist.router, tags=["waitlist"])
 app.include_router(landing.router, prefix="/landing-clips", tags=["landing"])
+app.include_router(dev_qa_storage.router, prefix="/dev-qa/storage", tags=["dev-qa"])
 
 
 @app.get("/health")

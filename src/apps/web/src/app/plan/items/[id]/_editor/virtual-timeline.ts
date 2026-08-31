@@ -13,6 +13,9 @@ const roundMillis = (value: number) => Math.round(value * 1000) / 1000;
 
 export interface VirtualTimelineEntry {
   kind: "clip";
+  /** Guided timelines may contain still images. They share the clip-window
+   * shape, but must never be handed to an HTMLVideoElement. */
+  mediaKind?: "image" | "video";
   slotIndex: number;
   slotKey: string;
   clipIndex: number;
@@ -86,6 +89,8 @@ export interface VirtualTransitionPreview {
   progress: number;
   carouselEntry?: VirtualCarouselEntry;
   carouselRole?: "incoming" | "outgoing";
+  outgoingEntry: VirtualEntry;
+  incomingEntry: VirtualEntry;
 }
 
 export function virtualDeckLookPresetsAtTime(
@@ -222,12 +227,13 @@ function outputToDraftTime(timeline: VirtualTimeline, outputTimeS: number): numb
 
 export function buildVirtualTimeline(
   slots: DraftSlot[],
-  clips: Pick<TimelineClip, "clip_index" | "signed_url">[],
+  clips: Pick<TimelineClip, "clip_index" | "signed_url" | "kind">[],
   grid: number[] = [],
   carousel?: VirtualCarouselSplice | null,
   baselineSlots: DraftSlot[] = slots,
 ): VirtualTimeline {
   const clipUrlByIndex = new Map(clips.map((clip) => [clip.clip_index, clip.signed_url]));
+  const clipKindByIndex = new Map(clips.map((clip) => [clip.clip_index, clip.kind]));
   const windows = slotWindows(slots, grid);
   const baselineWindows = slotWindows(baselineSlots, grid);
   const clipEntries: VirtualTimelineEntry[] = [];
@@ -245,6 +251,7 @@ export function buildVirtualTimeline(
       : 0;
     clipEntries.push({
       kind: "clip",
+      mediaKind: clipKindByIndex.get(slot.clipIndex) === "image" ? "image" : "video",
       slotIndex,
       slotKey: slot.key,
       clipIndex: slot.clipIndex,
@@ -490,6 +497,8 @@ export function transitionPreviewAtTime(
           : entry.transitionAfter,
       durationS,
       progress: Math.max(0, Math.min(1, (timeS - startS) / durationS)),
+      outgoingEntry: entry,
+      incomingEntry: next,
       ...(carouselEntry
         ? {
             carouselEntry,
@@ -573,4 +582,18 @@ export function slotsDifferFromBaseline(
     }
   }
   return false;
+}
+
+export function shouldPreserveTimelineDraft(
+  seededVariantId: string | null,
+  currentVariantId: string,
+  seededBaseline: DraftSlot[] | null,
+  localSlots: DraftSlot[] | null,
+): boolean {
+  return (
+    seededVariantId === currentVariantId &&
+    seededBaseline != null &&
+    localSlots != null &&
+    slotsDifferFromBaseline(seededBaseline, localSlots)
+  );
 }

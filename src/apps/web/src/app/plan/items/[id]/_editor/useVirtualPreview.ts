@@ -42,7 +42,7 @@ export interface UseVirtualPreviewOptions {
   enabled: boolean;
   slots: DraftSlot[];
   baselineSlots?: DraftSlot[];
-  clips: Pick<TimelineClip, "clip_index" | "signed_url">[];
+  clips: Pick<TimelineClip, "clip_index" | "signed_url" | "kind">[];
   grid: number[];
   /** Staged carousel-moment block to splice into the virtual timeline
    * (undefined/null = no block this session). See `VirtualCarouselSplice`. */
@@ -115,6 +115,7 @@ export interface VirtualPreviewController {
   pause: () => void;
   toggle: () => void;
   seekTo: (timeS: number) => void;
+  onSourceError?: () => void;
 }
 
 function otherDeck(deck: Deck): Deck {
@@ -301,12 +302,13 @@ export function useVirtualPreview({
   const publishPlaybackTime = useCallback(
     (
       timeS: number,
-      { forceCommit = false, publishFrame = true }: {
+      { forceCommit = false, publishFrame = true, throttleCommit = false }: {
         forceCommit?: boolean;
         publishFrame?: boolean;
+        throttleCommit?: boolean;
       } = {},
     ) => {
-      if (!frameDrivenRef.current) {
+      if (!frameDrivenRef.current && !throttleCommit) {
         publishCommittedTime(timeS);
         return;
       }
@@ -423,7 +425,7 @@ export function useVirtualPreview({
       const next = nextVirtualEntry(timelineRef.current, afterEntryIndex);
       // A carousel block has no video source to preload — the mounted
       // preview component owns rendering that window.
-      if (!next || next.kind !== "clip" || !next.sourceUrl) return;
+      if (!next || next.kind !== "clip" || next.mediaKind === "image" || !next.sourceUrl) return;
       loadDeck(deck, next, next.inS, false);
     },
     [loadDeck],
@@ -437,6 +439,7 @@ export function useVirtualPreview({
         !entry ||
         !next ||
         next.kind !== "clip" ||
+        next.mediaKind === "image" ||
         !next.sourceUrl ||
         next.overlapBeforeS <= 0 ||
         virtualTimeS < next.startS ||
@@ -510,7 +513,9 @@ export function useVirtualPreview({
     const running = carouselClockRef.current;
     if (!running) return;
     const entry = timelineRef.current.entries[running.entryIndex];
-    if (!entry || entry.kind === "clip" || !playingRef.current) {
+    const staticEntry =
+      entry?.kind === "carousel" || (entry?.kind === "clip" && entry.mediaKind === "image");
+    if (!entry || !staticEntry || !playingRef.current) {
       // Timeline changed shape (edit) or playback stopped out-of-band —
       // don't keep driving a clock nothing asked for anymore.
       carouselClockRef.current = null;
@@ -519,7 +524,10 @@ export function useVirtualPreview({
     const endS = entry.startS + entry.durationS;
     const elapsedS = (performance.now() - running.startWallMs) / 1000;
     const virtualTimeS = Math.min(endS, running.startVirtualS + elapsedS);
-    publishPlaybackTime(virtualTimeS);
+    // Static windows have no media element to provide a naturally throttled
+    // timeupdate cadence. Keep their rAF clock internal and commit React state
+    // at the same bounded cadence used by frame-driven video playback.
+    publishPlaybackTime(virtualTimeS, { throttleCommit: true });
     // Music is the master clock (see the sync-policy note at the top of this
     // file): "soft" mode only forward-catches a stall, never rewinds a
     // running track, same as the clip-to-clip boundary swap below.
@@ -579,6 +587,31 @@ export function useVirtualPreview({
         // `onLoadedMetadata`, a beat of black/frozen frame exactly where the
         // clip-to-clip crossfade path never has one. Mirrors the clip
         // branch's own preload of its neighboring deck below.
+        preloadNext(otherDeck(activeDeckRef.current), mapping.entryIndex);
+        syncMusicToVirtualTime(mapping.virtualTimeS, play);
+        publishCommittedTime(mapping.virtualTimeS);
+        if (play) {
+          startCarouselClock(mapping.entryIndex, mapping.virtualTimeS);
+        } else {
+          stopCarouselClock();
+        }
+        return;
+      }
+      if (mapping.entry.mediaKind === "image") {
+        // Still images are timeline media, not video decks. Keep both decks
+        // paused and let EditorCanvas render the signed image URL for this
+        // mapped window. A wall-clock is required while playing because an
+        // image element has no media timeupdate events to advance the edit.
+        cancelDeckFrameClock("a");
+        cancelDeckFrameClock("b");
+        videoARef.current?.pause();
+        videoBRef.current?.pause();
+        deckSlotRef.current.a = null;
+        deckSlotRef.current.b = null;
+        // Keep the next video warm while a still image owns the output
+        // window. This makes the image→video handoff use the same ready deck
+        // path as video→video transitions instead of starting a cold source
+        // exactly at the boundary.
         preloadNext(otherDeck(activeDeckRef.current), mapping.entryIndex);
         syncMusicToVirtualTime(mapping.virtualTimeS, play);
         publishCommittedTime(mapping.virtualTimeS);
@@ -652,7 +685,7 @@ export function useVirtualPreview({
       // leave a stale clock racing the deck it's about to hand off to.
       stopCarouselClock();
       const next = nextVirtualEntry(timelineRef.current, entryIndex);
-      if (next && next.kind !== "clip") {
+      if (next && (next.kind !== "clip" || next.mediaKind === "image")) {
         // Advancing INTO a carousel block: no deck to swap onto. Re-route
         // through showMapping's carousel gate (pauses both decks, keeps the
         // music/time moving) rather than duplicating that logic here.
@@ -999,5 +1032,6 @@ export function useVirtualPreview({
     pause,
     toggle,
     seekTo,
+    onSourceError: handleSourceError,
   };
 }

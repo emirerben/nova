@@ -4,6 +4,7 @@ process.env.NEXT_PUBLIC_SOUND_EFFECTS_ENABLED = "true";
 
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { EditorCommitValidationError } from "@/lib/editor-commit";
 import type {
   EditorCapabilities,
   PlanItem,
@@ -296,6 +297,27 @@ describe("EditorShell linked text-card deletion", () => {
     expect(screen.getByRole("button", { name: /^Text row 1, Locked title,/ })).toBeInTheDocument();
     expect(mockToast).toHaveBeenCalledWith("Story text is locked.", expect.objectContaining({ duration: 2600 }));
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("shows the server's actionable Save validation error instead of masking it", async () => {
+    await renderShell(makeVariant([linkedText("title-1", "Needs a save")]));
+    fireEvent.click(screen.getByRole("button", { name: /^Text row 1, Needs a save,/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete selected" }));
+    mockCommitEditorSession.mockRejectedValueOnce(
+      new EditorCommitValidationError(
+        "One of the clips ran out of footage. Trim it and try again.",
+      ),
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("One of the clips ran out of footage. Trim it and try again."),
+      ).toBeInTheDocument(),
+    );
   });
 
   it("atomically converts a legacy card on first edit and Undo restores the legacy representation", async () => {

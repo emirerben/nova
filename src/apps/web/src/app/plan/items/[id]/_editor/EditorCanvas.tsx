@@ -1200,6 +1200,36 @@ export default function EditorCanvas({
     return dissolveOutDisplacementScaleAt(progress, cssPixelsPerCanvasPixel, true);
   };
   const committedVirtualFrame = virtualFrameStateAt(currentTime);
+  const virtualImageDecks = useMemo(() => {
+    if (!virtualPreview) return null;
+    const mapping = mapVirtualTime(virtualPreview.timeline, currentTime);
+    const transition = transitionPreviewAtTime(virtualPreview.timeline, currentTime);
+    const otherDeck = virtualPreview.activeDeck === "a" ? "b" : "a";
+    const result: Partial<Record<"a" | "b", string>> = {};
+    if (transition) {
+      if (
+        transition.outgoingEntry.kind === "clip" &&
+        transition.outgoingEntry.mediaKind === "image" &&
+        transition.outgoingEntry.sourceUrl
+      ) {
+        result[virtualPreview.activeDeck] = transition.outgoingEntry.sourceUrl;
+      }
+      if (
+        transition.incomingEntry.kind === "clip" &&
+        transition.incomingEntry.mediaKind === "image" &&
+        transition.incomingEntry.sourceUrl
+      ) {
+        result[otherDeck] = transition.incomingEntry.sourceUrl;
+      }
+    } else if (
+      mapping?.entry.kind === "clip" &&
+      mapping.entry.mediaKind === "image" &&
+      mapping.entry.sourceUrl
+    ) {
+      result[virtualPreview.activeDeck] = mapping.entry.sourceUrl;
+    }
+    return result;
+  }, [currentTime, virtualPreview]);
 
   // Keep stable media DOM out of React's decoded-frame render path. Only the
   // compositor styles that actually change with time are written here; the
@@ -1354,16 +1384,61 @@ export default function EditorCanvas({
             </PlaybackFrame>
             {virtualPreview ? (
               <>
+                {(["a", "b"] as const).map((deck) => {
+                  const imageUrl = virtualImageDecks?.[deck];
+                  if (!imageUrl) return null;
+                  const styles = lookPreviewStyles(
+                    virtualDeckLookPresets[deck],
+                    virtualDeckLookAdjustments[deck],
+                  );
+                  return (
+                    <div
+                      key={`virtual-image-${deck}`}
+                      className="pointer-events-none absolute inset-0 overflow-hidden"
+                      style={virtualDeckStyleAt(
+                        deck,
+                        committedVirtualFrame.virtualTransition,
+                        committedVirtualFrame.transitionProgress,
+                      )}
+                      data-virtual-preview-image-deck={deck}
+                    >
+                      {/* Signed source URLs must remain byte-identical to the timeline
+                          response; Next Image would proxy/transform them separately. */}
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={imageUrl}
+                        alt=""
+                        data-virtual-preview-image="true"
+                        className="pointer-events-none absolute inset-0 h-full w-full object-cover"
+                        style={{
+                          objectPosition: "center",
+                          zIndex: EDITOR_STAGE_Z.video,
+                          ...styles.video,
+                        }}
+                        draggable={false}
+                        onError={virtualPreview.onSourceError}
+                      />
+                      {lookPreviewLayers(
+                        virtualDeckLookPresets[deck],
+                        virtualDeckLookAdjustments[deck],
+                      )}
+                    </div>
+                  );
+                })}
                 <div
                   ref={virtualDeckAContainerRef}
                   className="pointer-events-none absolute inset-0 overflow-hidden"
-                  style={virtualDeckStyleAt(
-                    "a",
-                    committedVirtualFrame.virtualTransition,
-                    committedVirtualFrame.transitionProgress,
-                  )}
                   data-look-preview-deck="a"
+                  data-virtual-preview-video-hidden={virtualImageDecks?.a ? "true" : undefined}
                   data-look-preset={virtualDeckLookPresets.a}
+                  style={{
+                    ...virtualDeckStyleAt(
+                      "a",
+                      committedVirtualFrame.virtualTransition,
+                      committedVirtualFrame.transitionProgress,
+                    ),
+                    ...(virtualImageDecks?.a ? { display: "none" } : {}),
+                  }}
                 >
                   <video
                     {...virtualVideoAProps}
@@ -1379,13 +1454,17 @@ export default function EditorCanvas({
                 <div
                   ref={virtualDeckBContainerRef}
                   className="pointer-events-none absolute inset-0 overflow-hidden"
-                  style={virtualDeckStyleAt(
-                    "b",
-                    committedVirtualFrame.virtualTransition,
-                    committedVirtualFrame.transitionProgress,
-                  )}
                   data-look-preview-deck="b"
+                  data-virtual-preview-video-hidden={virtualImageDecks?.b ? "true" : undefined}
                   data-look-preset={virtualDeckLookPresets.b}
+                  style={{
+                    ...virtualDeckStyleAt(
+                      "b",
+                      committedVirtualFrame.virtualTransition,
+                      committedVirtualFrame.transitionProgress,
+                    ),
+                    ...(virtualImageDecks?.b ? { display: "none" } : {}),
+                  }}
                 >
                   <video
                     {...virtualVideoBProps}

@@ -449,6 +449,69 @@ def test_guided_v2_conventional_save_projects_timeline_audio_and_orientation(mon
     )
 
 
+def test_guided_v2_timeline_only_save_mints_and_enqueues_a_full_render(monkeypatch) -> None:
+    """A timeline-only Save must never persist a revision without rendering it."""
+    _arm(monkeypatch)
+    from app.config import settings
+    from app.schemas.guided_edit_revision import normalize_guided_editor_revision
+
+    monkeypatch.setattr(settings, "guided_story_editor_v2_enabled", True, raising=False)
+    job = _job()
+    variant = job.assembly_plan["variants"][0]
+    variant["resolved_archetype"] = "guided_story"
+    baseline = gj.variant_render_baseline(variant)
+    current = normalize_guided_editor_revision(
+        {
+            "approval_proposal_version": 1,
+            "approval_media_digest": "a" * 64,
+            "revision_number": 1,
+            "base_generation": baseline,
+            "sources": [
+                {
+                    "media_id": "m0",
+                    "gcs_path": f"generative-jobs/{job.id}/sources/clip.mp4",
+                    "generation": "1",
+                    "kind": "video",
+                    "duration_s": 10.0,
+                }
+            ],
+            "segments": [
+                {
+                    "segment_id": "s1",
+                    "media_id": "m0",
+                    "source_start_s": 0.0,
+                    "source_end_s": 2.0,
+                    "duration_s": 2.0,
+                }
+            ],
+        }
+    )
+    monkeypatch.setattr(gj, "_guided_v2_revision", lambda *_args: current)
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            timeline_slots=[
+                gj.TimelineSlotEdit(
+                    slot_id="s1",
+                    clip_index=0,
+                    in_s=0.2,
+                    duration_s=2.3,
+                )
+            ],
+            guided_revision_number=1,
+        ),
+    )
+
+    updated = job.assembly_plan["variants"][0]
+    assert prep["has_render_section"] is True
+    assert prep["guided_revision_render"] is True
+    assert prep["generation"] != baseline
+    assert updated["render_generation_id"] == prep["generation"]
+    assert updated["base_video_stale"] is True
+
+
 def test_guided_timeline_response_preserves_source_pool_and_tombstones() -> None:
     response = gj.TimelineResponse(
         editable=True,
@@ -469,6 +532,73 @@ def test_guided_timeline_response_preserves_source_pool_and_tombstones() -> None
 
     assert response["source_pool"][0]["generation"] == "7"
     assert response["tombstones"][0]["record_id"] == "title-1"
+
+
+def test_guided_timeline_projection_signs_browser_safe_image_preview(monkeypatch) -> None:
+    job = _job()
+    variant = job.assembly_plan["variants"][0]
+    image_path = "users/u/plan/i/pool/photo.heic"
+    preview_path = f"{image_path}.preview.jpg"
+    revision = {
+        "revision_number": 3,
+        "sources": [
+            {
+                "media_id": "image-1",
+                "gcs_path": image_path,
+                "generation": "7",
+                "kind": "image",
+                "duration_s": 1.0,
+            },
+            {
+                "media_id": "video-1",
+                "gcs_path": "users/u/plan/i/pool/clip.mp4",
+                "generation": "8",
+                "kind": "video",
+                "duration_s": 5.0,
+            },
+        ],
+        "segments": [
+            {
+                "segment_id": "image-segment",
+                "media_id": "image-1",
+                "duration_s": 0.2,
+                "output_start_s": 0.0,
+                "output_end_s": 0.2,
+            }
+        ],
+        "audio": {"mode": "none"},
+    }
+    monkeypatch.setattr(gj, "_guided_v2_revision", lambda *_args: revision)
+    monkeypatch.setattr(gj, "signed_get_url", lambda path, _ttl: f"https://signed/{path}")
+
+    projected = gj._guided_v2_timeline_projection(
+        job,
+        variant,
+        image_preview_paths={image_path: preview_path},
+    )
+
+    assert projected["clips"][0]["signed_url"] == f"https://signed/{preview_path}"
+    assert projected["clips"][0]["kind"] == "image"
+    assert projected["clips"][1]["signed_url"] == ("https://signed/users/u/plan/i/pool/clip.mp4")
+    assert projected["slots"][0]["source_gcs_path"] == image_path
+
+
+@pytest.mark.asyncio
+async def test_guided_timeline_image_preview_paths_returns_owned_ready_derivatives() -> None:
+    result = MagicMock()
+    result.all.return_value = [
+        ("users/u/plan/i/pool/photo.heic", "users/u/plan/i/pool/photo.heic.preview.jpg"),
+    ]
+    db = AsyncMock()
+    db.execute.return_value = result
+
+    paths = await gj.guided_timeline_image_preview_paths(db, uuid.uuid4())
+
+    assert paths == {"users/u/plan/i/pool/photo.heic": "users/u/plan/i/pool/photo.heic.preview.jpg"}
+    statement = db.execute.await_args.args[0]
+    assert "plan_item_assets.status" in str(statement)
+    assert "plan_item_assets.kind" in str(statement)
+    assert "plan_item_assets.preview_gcs_path" in str(statement)
 
 
 def test_guided_v2_rejects_background_music_section(monkeypatch) -> None:

@@ -76,6 +76,7 @@ import {
   editorCommitBaseGeneration,
   EditorCommitConflictError,
   EditorCommitNetworkError,
+  EditorCommitValidationError,
   type AcceptedSuggestionRef,
   type EditorCommitBackgroundMusic,
   type EditorCommitLyricsRequest,
@@ -279,6 +280,7 @@ import type { EditorLayoutMode } from "./useEditorLayoutMode";
 import {
   projectBaseTime,
   projectBaseRange,
+  shouldPreserveTimelineDraft,
   slotsDifferFromBaseline,
   virtualDeckLookAdjustmentsAtTime,
   virtualDeckLookPresetsAtTime,
@@ -1238,12 +1240,54 @@ export default function EditorShell({
   const clip = useClipTimeline(itemId, timelineVariantId, "plan-item");
   const [localSlots, setLocalSlots] = useState<DraftSlot[] | null>(null);
   const slotsSeededRef = useRef<string | null>(null);
+  const slotsSeededVariantRef = useRef<string | null>(null);
+  const slotsSeededBaselineRef = useRef<DraftSlot[] | null>(null);
+  const timelineSeedIdentity =
+    variant && timelineVariantId === variant.variant_id
+      ? [
+          variant.variant_id,
+          clip.revisionNumber ?? "",
+          clip.baseGeneration ?? "",
+          clip.revisionHash ?? "",
+          variant.render_generation_id ?? variant.render_finished_at ?? "",
+        ].join(":")
+      : null;
   useEffect(() => {
     if (!variant || timelineVariantId !== variant.variant_id || clip.loadState !== "ready") return;
-    if (slotsSeededRef.current === variant?.variant_id) return;
-    slotsSeededRef.current = variant?.variant_id ?? null;
+    // The timeline endpoint is the authoritative source for the guided
+    // revision/CAS tokens. It can refresh without the status endpoint
+    // changing the variant id (for example after a render or a signed-source
+    // retry). Keep a genuinely dirty local draft, but re-seed a clean draft
+    // from the refreshed server state so the timeline, preview, and Save
+    // payload cannot drift apart.
+    const sameServerIdentity = slotsSeededRef.current === timelineSeedIdentity;
+    if (sameServerIdentity && localSlots != null) return;
+    const preserveDirtyDraft = shouldPreserveTimelineDraft(
+      slotsSeededVariantRef.current,
+      variant.variant_id,
+      slotsSeededBaselineRef.current,
+      localSlots,
+    );
+    // Mark the server identity even when a dirty draft is intentionally kept;
+    // otherwise every render after a refresh would repeatedly evaluate the
+    // same clean/dirty decision and a clean seed would loop forever.
+    slotsSeededRef.current = timelineSeedIdentity;
+    slotsSeededVariantRef.current = variant.variant_id;
+    slotsSeededBaselineRef.current = clip.state.baseline.map((slot) => ({ ...slot }));
+    if (preserveDirtyDraft) return;
     setLocalSlots(clip.state.slots.map((s) => ({ ...s })));
-  }, [clip.loadState, clip.state.slots, timelineVariantId, variant]);
+  }, [
+    clip.baseGeneration,
+    clip.loadState,
+    clip.revisionHash,
+    clip.revisionNumber,
+    clip.state.baseline,
+    clip.state.slots,
+    localSlots,
+    timelineSeedIdentity,
+    timelineVariantId,
+    variant,
+  ]);
   useEffect(() => {
     const nextVariantId = variant?.variant_id ?? null;
     const changedVariant = musicHydratedVariantIdRef.current !== nextVariantId;
@@ -6254,6 +6298,12 @@ export default function EditorShell({
         orientationDirty,
         orientation,
         guidedRevisionNumber: guidedStoryV2 ? clip.revisionNumber : undefined,
+        baseGeneration: guidedStoryV2 ? clip.baseGeneration : undefined,
+        // Guided timeline GET returns the revision number and its paired
+        // render baseline. Prefer that pair over the independently-polled
+        // status variant: during a render those two responses can be one
+        // generation apart, which otherwise turns a valid extend+delete into
+        // a baseline-conflict Save and leaves the preview stale.
         variant,
       });
       const latestCopilotTurn = lastAppliedTurnRef.current;
@@ -6361,7 +6411,11 @@ export default function EditorShell({
         networkSaveErrorRef.current = err instanceof EditorCommitNetworkError;
         setSaveState("error");
         setSaveMessage(
-          "We couldn't save your edits. Try again.",
+          (err instanceof EditorCommitValidationError ||
+            err instanceof EditorCommitNetworkError) &&
+            err.message
+            ? err.message
+            : "We couldn't save your edits. Try again.",
         );
       }
     }
@@ -6375,6 +6429,7 @@ export default function EditorShell({
     router,
     clipDirty,
     clip.revisionNumber,
+    clip.baseGeneration,
     slots,
     mixDirty,
     mixLevel,

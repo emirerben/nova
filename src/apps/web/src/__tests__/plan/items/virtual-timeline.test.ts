@@ -7,6 +7,7 @@ import {
   projectBaseRange,
   projectBaseTime,
   nextVirtualEntry,
+  shouldPreserveTimelineDraft,
   slotsDifferFromBaseline,
   transitionPreviewAtTime,
   unprojectOutputRange,
@@ -42,6 +43,46 @@ const clips = [
   { clip_index: 1, signed_url: "https://source.example/b.mp4" },
   { clip_index: 2, signed_url: "https://source.example/c.mp4" },
 ];
+
+it("keeps image media typed when a mixed cut is resized and a neighbor is removed", () => {
+  const mixed = buildVirtualTimeline(
+    [
+      slot({ key: "video-a", clipIndex: 0, inS: 1.25, durationS: 4.2 }),
+      slot({ key: "image", clipIndex: 1, durationS: 0.2 }),
+      slot({ key: "video-b", clipIndex: 2, durationS: 3, removed: true }),
+    ],
+    [
+      { clip_index: 0, signed_url: "https://source.example/a.mp4", kind: "video" },
+      { clip_index: 1, signed_url: "https://source.example/still.jpg", kind: "image" },
+      { clip_index: 2, signed_url: "https://source.example/b.mp4", kind: "video" },
+    ],
+  );
+
+  expect(mixed.entries).toEqual([
+    expect.objectContaining({
+      slotKey: "video-a",
+      mediaKind: "video",
+      inS: 1.25,
+      durationS: 4.2,
+      startS: 0,
+    }),
+    expect.objectContaining({ slotKey: "image", mediaKind: "image", startS: 4.2 }),
+  ]);
+  expect(mapVirtualTime(mixed, 0)?.sourceTimeS).toBe(1.25);
+  expect(mapVirtualTime(mixed, 4.19)?.sourceTimeS).toBeCloseTo(5.44);
+  expect(mixed.totalDurationS).toBe(4.4);
+  expect(mixed.hasMissingSource).toBe(false);
+});
+
+it("re-seeds a clean refreshed timeline but preserves a dirty local draft", () => {
+  const seeded = [slot({ key: "video-a", inS: 1, durationS: 3 })];
+  const cleanLocal = seeded.map((entry) => ({ ...entry }));
+  const dirtyLocal = seeded.map((entry) => ({ ...entry, durationS: 4.2 }));
+
+  expect(shouldPreserveTimelineDraft("variant-a", "variant-a", seeded, cleanLocal)).toBe(false);
+  expect(shouldPreserveTimelineDraft("variant-a", "variant-a", seeded, dirtyLocal)).toBe(true);
+  expect(shouldPreserveTimelineDraft("variant-a", "variant-b", seeded, dirtyLocal)).toBe(false);
+});
 
 describe("virtual timeline", () => {
   it.each(["intro", "middle", "outro"] as const)(
@@ -381,13 +422,49 @@ describe("virtual timeline", () => {
       clips,
     );
 
-    expect(transitionPreviewAtTime(timeline, 0.4)).toEqual({
-      kind: "flash",
-      durationS: 0.15,
-      progress: expect.closeTo(1 / 3, 5),
-    });
+    expect(transitionPreviewAtTime(timeline, 0.4)).toEqual(
+      expect.objectContaining({
+        kind: "flash",
+        durationS: 0.15,
+        progress: expect.closeTo(1 / 3, 5),
+        outgoingEntry: expect.objectContaining({ slotKey: "a" }),
+        incomingEntry: expect.objectContaining({ slotKey: "b" }),
+      }),
+    );
     expect(transitionPreviewAtTime(timeline, 0.2)).toBeNull();
     expect(transitionPreviewAtTime(timeline, 0.5)).toBeNull();
+  });
+
+  it("identifies still-image transition roles for the canvas compositor", () => {
+    const timeline = buildVirtualTimeline(
+      [
+        slot({
+          key: "image",
+          clipIndex: 1,
+          durationS: 1,
+          transitionAfter: "crossfade",
+          transitionDurationS: 0.3,
+        }),
+        slot({ key: "video", clipIndex: 0, durationS: 2 }),
+      ],
+      [
+        { clip_index: 0, signed_url: "https://source.example/a.mp4", kind: "video" },
+        { clip_index: 1, signed_url: "https://source.example/still.jpg", kind: "image" },
+      ],
+    );
+
+    expect(transitionPreviewAtTime(timeline, 0.8)).toEqual(
+      expect.objectContaining({
+        outgoingEntry: expect.objectContaining({
+          slotKey: "image",
+          mediaKind: "image",
+        }),
+        incomingEntry: expect.objectContaining({
+          slotKey: "video",
+          mediaKind: "video",
+        }),
+      }),
+    );
   });
 
   it("projects multiple mixed transition overlaps into preview timing", () => {
