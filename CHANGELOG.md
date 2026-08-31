@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.59.1.0] — 2026-08-31
+
+### Fixed
+- **Guided-story saves now accept newly added Kria text without weakening edit identity.** Existing text can be changed, removed, or restored exactly once, while duplicate, forged, cross-lane, or oversized identity changes fail atomically instead of surfacing `GUIDED_TEXT_IDENTITY_MISMATCH` after a valid edit.
+- **Timeline-only edits no longer detach the live preview from the saved result.** Exact dirty-lane intent survives undo, retry, and restore; inherited lanes project once through trims, deletions, and reordering, while newly authored lanes are not shifted a second time.
+- **Related editor inputs now fail closed instead of being partially accepted.** Malformed, duplicate, or oversized sound-effect and media-overlay replacements are rejected before mutation, and compact bulk-media selector aliases use the same complete-fit checks as their expanded forms.
+
 ## [0.58.1.1] — 2026-08-30
 
 ### Added
