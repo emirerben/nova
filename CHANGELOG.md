@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.59.2.0] — 2026-08-31
+
+### Fixed
+- **Turning Speech cleanup on finally works on the clips that need it most.** A talking-to-camera clip with lots of pauses and filler words used to fail the entire render with "Speech cleanup couldn't finish" — and retrying could never succeed, because the engine refused any plan that removed more than 40% of the clip and treated that refusal as a fatal error. With cleanup explicitly on, Kria now trims the biggest pauses and fillers up to a safe budget (never leaving less than 3 seconds of video) and delivers the cleaned edit. Clips you already saw fail will succeed on their next render after this ships.
+- **Cleanup cuts can no longer slice through the middle of a word.** When a cut has to be shortened to fit the budget, its edges now snap clear of every spoken word, so no half-syllable survives next to a jump cut.
+- **Review-approved manual cuts always make it into the video.** A cut you explicitly approved in the speech-cut review flow is exempt from the budget and can never be dropped or shortened by the cleanup engine.
+
+### Added
+- **`SPEECH_CLEANUP_BUDGET_CLAMP_ENABLED` kill switch** (default on). Turning it off restores the previous strict behavior — a visible "cleanup couldn't finish" failure instead of a budgeted trim — as an emergency rollback only.
+- **Cleanup transparency in the admin debug view.** When a plan is trimmed to the consent budget, the job trace and the saved edit record how much removal was proposed, how much was delivered, and what the budget was.
+
 ## [0.59.1.0] — 2026-08-31
 
 ### Fixed

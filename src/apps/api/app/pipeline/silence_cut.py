@@ -19,6 +19,7 @@ apply step (``reframe_and_export(keep_segments=…)``); see plans/010.
                       4. retake spans       (outward-snapped, never mid-word)
                       5. hygiene: MIN_CUT_S drop → merge →
                          micro-fragment absorb → safety rails
+                         (over_budget_policy: bailout | consent clamp)
                                                 │
                                                 ▼
                     CutPlan(keep_segments, removed, time_saved_s)
@@ -55,7 +56,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from itertools import pairwise, product
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 # Whisper bias prompt for the CUT path: passed as whisper-1's ``prompt`` /
 # faster-whisper's ``initial_prompt`` (transcribe(..., verbatim_prompt=…)) so the
@@ -90,6 +91,16 @@ PAD_S = 0.12  # breathing room every kept word keeps on both flanks
 PAD_ACOUSTIC_S = 0.15  # thicker flank for cuts silencedetect cannot confirm (rule 2)
 MIN_CUT_S = 0.18  # removals shorter than this are not worth a jump cut
 MAX_REMOVAL_FRAC = 0.4  # total removal above this fraction of the clip bails out
+# Explicit-consent removal budget (over_budget_policy="clamp"): a creator who
+# turned Speech cleanup ON asked for the dead air to go, so instead of bailing
+# out the plan is clamped to this fraction (largest removals first). Chosen so
+# a filler-heavy clip still keeps ~45% of its runtime; MIN_OUTPUT_S remains the
+# hard floor via the budget formula min(frac·dur, dur − MIN_OUTPUT_S) − slack.
+MAX_REMOVAL_FRAC_REQUIRED = 0.55
+# Float-safety margin subtracted from the clamp budget so trimmed spans can
+# never round past the MIN_OUTPUT_S rail (1 ulp of trim arithmetic did exactly
+# that on 5.0–6.67s clips). Millisecond-scale: imperceptible on any timeline.
+CLAMP_BUDGET_SLACK_S = 0.001
 MIN_OUTPUT_S = 3.0  # cut output shorter than this bails out
 MIN_CLIP_S = 5.0  # clips shorter than this are never cut
 LEAD_KEEP_S = 0.3  # leading silence is trimmed down to this much, not to zero
@@ -235,6 +246,13 @@ class CutPlan:
     time_saved_s: float
     version: int = 1
     bailout_reason: str | None = None
+    # over_budget_policy="clamp" only: True when the proposed removal set was
+    # reduced to fit the explicit-consent budget; the pre-clamp total and the
+    # budget are kept for the pipeline trace. Always False/None for the default
+    # bailout policy so legacy plans stay byte-identical.
+    clamped: bool = False
+    proposed_removed_s: float | None = None
+    clamp_budget_s: float | None = None
 
 
 def no_op_plan(duration_s: float, bailout_reason: str | None = None) -> CutPlan:
@@ -603,6 +621,179 @@ def _complement(removals: list[Removal], duration_s: float) -> list[tuple[float,
     return segments
 
 
+def _snap_boundary_out_of_words(
+    t: float, words: list[_CutWord], *, direction: Literal["right", "left"]
+) -> float:
+    """Move a trimmed-removal boundary clear of words, PAD_S included.
+
+    A trim boundary landing mid-word would resurrect a PARTIAL word — a
+    mid-vocalization jump cut — violating remap_words' precondition that
+    removals never intrude into kept words; a boundary landing within PAD_S
+    of a word it resurrects would keep the word with sub-pad clearance to
+    the cut (adversarial finding, 2026-08-31 — a surviving "um" 40ms before
+    a jump cut). The guard zone is therefore the word plus its PAD_S flank
+    on the cut side. Snapping always SHRINKS the removal (start boundaries
+    move right past the word + PAD_S, end boundaries move left before it −
+    PAD_S), so the word is kept whole, padded, and the budget can only be
+    under-spent. Fixpoint loop: a snapped boundary can land in a neighboring
+    word's zone; each snap moves strictly in one direction, so it terminates.
+    """
+    changed = True
+    while changed:
+        changed = False
+        for word in words:
+            in_zone = (
+                word.start + _EPS < t < word.end + PAD_S - _EPS
+                if direction == "right"
+                else word.start - PAD_S + _EPS < t < word.end - _EPS
+            )
+            if in_zone:
+                t = (word.end + PAD_S) if direction == "right" else (word.start - PAD_S)
+                changed = True
+    return t
+
+
+def _clamp_removals_to_budget(
+    removals: list[Removal],
+    budget_s: float,
+    duration_s: float,
+    *,
+    words: list[_CutWord],
+    protected_spans: Sequence[tuple[float, float]] = (),
+) -> list[Removal]:
+    """Reduce a removal set to fit ``budget_s``, edge cuts first.
+
+    Deterministic greedy: EDGE cuts (leading/trailing dead air) are charged
+    before interior cuts — an edge trim is perceptually free (no jump cut)
+    and a dropped LEAD cut ships a dead-air opening that violates the 2-3s
+    hook window (adversarial finding, 2026-08-31) — then interior cuts by
+    descending duration with a start_s tiebreak (the MAX_REMOVALS cap's
+    ordering). Whole removals are kept while they fit; removals that do not
+    fit are TRIMMED into the remaining budget instead of dropped — otherwise
+    a clip whose dead air is one contiguous block (a long trailing silence)
+    would clamp to a no-op. Trims anchor to the clip edge for edge cuts (a
+    shrunk lead cut must still start at 0, a shrunk trail cut must still
+    reach the clip end) and shrink symmetrically for interior removals so
+    the residual gap stays balanced; every trimmed boundary is then snapped
+    clear of words (see `_snap_boundary_out_of_words`). A snap can shrink
+    (or drop) the trim, so the loop keeps charging the TRUE kept span and
+    lets later removals use the leftover budget. Remainders below MIN_CUT_S
+    are not worth a jump cut and are skipped. Dropping/shrinking removals
+    only ever ENLARGES the adjacent keep fragments, so
+    `_absorb_micro_fragments` invariants survive unchanged.
+
+    Edge classification is by KEPT WORDS, not raw clip coordinates: a
+    removal with no kept word before it trims as a lead cut and one with no
+    kept word after it as a trail cut, even when silencedetect closed the
+    range a little inside the container (audio stream shorter than video).
+    A removal that is both (no words at all) trims symmetrically.
+
+    ``protected_spans`` (the caller's forced/manual-review intervals):
+    `_validate_speech_cut_publication` requires every forced interval to stay
+    covered by the rendered plan, so the clamp never drops or trims through
+    one. When the overlapping removals fit the budget WHOLE they are kept
+    whole (charged first). When they do not — `_merge_removals` can fuse a
+    tiny forced cut into a huge detected silence block, and protecting the
+    whole merged carrier would blow the budget or trip the MIN_OUTPUT_S rail
+    (red-team finding, 2026-08-31) — each protected removal is shrunk to its
+    per-forced-span INTERSECTIONS, never their hull: two far-apart forced
+    cuts in one carrier must not drag the dead gap between them along
+    (adversarial finding, 2026-08-31). A forced set that alone exceeds the
+    budget is still kept in full: explicit manual cuts outrank the consent
+    budget, and the caller's MIN_OUTPUT_S rail backstops a pathological set.
+    NOTE: no live dispatch reaches the protected branch today — required_v1
+    analyses run with include_retakes=False, so review candidates (the only
+    forced_removals writer) never exist on clamp-policy jobs; the protection
+    is armed for when candidates ship on required jobs.
+    """
+
+    def _protected_intersections(removal: Removal) -> list[Removal]:
+        return [
+            Removal(
+                start_s=max(removal.start_s, lo),
+                end_s=min(removal.end_s, hi),
+                reason=removal.reason,
+            )
+            for lo, hi in sorted(protected_spans)
+            if min(removal.end_s, hi) - max(removal.start_s, lo) > _EPS
+        ]
+
+    protected: list[Removal] = []
+    unprotected: list[Removal] = []
+    intersections: list[Removal] = []
+    for removal in removals:
+        overlaps = _protected_intersections(removal)
+        if not overlaps:
+            unprotected.append(removal)
+        else:
+            protected.append(removal)
+            intersections.extend(overlaps)
+    if sum(r.end_s - r.start_s for r in protected) <= budget_s + _EPS:
+        kept: list[Removal] = list(protected)
+    else:
+        kept = intersections
+
+    def _edge_kind(removal: Removal) -> str:
+        touches_start = removal.start_s <= _EPS
+        touches_end = removal.end_s >= duration_s - _EPS
+        if touches_start and touches_end:
+            return "interior"  # whole-clip removal: balanced trim
+        if touches_start:
+            return "lead"
+        if touches_end:
+            return "trail"
+        # Perceptual fallback (adversarial finding, 2026-08-31): silencedetect
+        # can close a trailing range a little inside the container (audio
+        # stream shorter than video) — classify by kept words instead of raw
+        # coordinates so such a block still trims edge-anchored.
+        no_word_before = not any(word.end <= removal.start_s + _EPS for word in words)
+        no_word_after = not any(word.start >= removal.end_s - _EPS for word in words)
+        if no_word_before and no_word_after:
+            return "interior"  # ambiguous (no words at all): balanced trim
+        if no_word_before:
+            return "lead"
+        if no_word_after:
+            return "trail"
+        return "interior"
+
+    kinds = {id(r): _edge_kind(r) for r in unprotected}
+    ordered = sorted(
+        unprotected,
+        key=lambda r: (
+            0 if kinds[id(r)] in ("lead", "trail") else 1,
+            -(r.end_s - r.start_s),
+            r.start_s,
+        ),
+    )
+    remaining = budget_s - sum(r.end_s - r.start_s for r in kept)
+    for removal in ordered:
+        if remaining <= _EPS:
+            break
+        span = removal.end_s - removal.start_s
+        if span <= remaining + _EPS:
+            kept.append(removal)
+            remaining -= span
+            continue
+        if remaining < MIN_CUT_S - _EPS:
+            continue
+        kind = kinds[id(removal)]
+        if kind == "lead":  # stay anchored at the clip start
+            lo = removal.start_s
+            hi = _snap_boundary_out_of_words(removal.start_s + remaining, words, direction="left")
+        elif kind == "trail":  # stay anchored at the clip end
+            lo = _snap_boundary_out_of_words(removal.end_s - remaining, words, direction="right")
+            hi = removal.end_s
+        else:  # interior: shrink symmetrically around the center
+            center = (removal.start_s + removal.end_s) / 2.0
+            lo = _snap_boundary_out_of_words(center - remaining / 2.0, words, direction="right")
+            hi = _snap_boundary_out_of_words(center + remaining / 2.0, words, direction="left")
+        if hi - lo >= MIN_CUT_S - _EPS:
+            kept.append(Removal(start_s=lo, end_s=hi, reason=removal.reason))
+            remaining -= hi - lo
+    kept.sort(key=lambda r: (r.start_s, r.end_s))
+    return kept
+
+
 def build_cut_plan(
     words: Sequence[Any] | None,
     silences: Sequence[tuple[float, float]] | None,
@@ -611,6 +802,7 @@ def build_cut_plan(
     retake_spans: Sequence[tuple[int, int]] | None = None,
     forced_removals: Sequence[Removal | dict[str, Any]] | None = None,
     include_silence_and_fillers: bool = True,
+    over_budget_policy: Literal["bailout", "clamp"] = "bailout",
 ) -> CutPlan:
     """Detect silence/filler/retake cuts and return the plan.
 
@@ -622,6 +814,17 @@ def build_cut_plan(
 
     Safety rails each return a no-op plan with a distinct
     ``bailout_reason``; the caller reads the plan and emits pipeline events.
+
+    ``over_budget_policy`` decides what an over-budget removal total does.
+    ``"bailout"`` (default, legacy/auto paths — byte-identical to the
+    pre-parameter behavior) trips the MAX_REMOVAL_FRAC rail and returns a
+    no-op plan. ``"clamp"`` (explicit opt-in / required_v1 paths) instead
+    keeps the largest removals up to
+    ``min(MAX_REMOVAL_FRAC_REQUIRED·duration, duration − MIN_OUTPUT_S) −
+    CLAMP_BUDGET_SLACK_S`` —
+    the clips that need cleanup the most are exactly the ones that exceed
+    the auto-path rail, and an explicit On must produce a cleaned render,
+    not a hard failure (plans/019 addendum, prod jobs 2026-08-25/31).
     """
     duration = float(duration_s)
     cut_words = _normalize_words(words)
@@ -638,6 +841,7 @@ def build_cut_plan(
         raw.extend(_acoustic_removals(cut_words, silence_spans, duration))
         raw.extend(_pause_removals(cut_words, silence_spans, duration))
     raw.extend(_retake_removals(cut_words, retake_spans, duration))
+    forced_spans: list[tuple[float, float]] = []
     for forced in forced_removals or []:
         try:
             if isinstance(forced, Removal):
@@ -650,6 +854,7 @@ def build_cut_plan(
                         reason=str(forced.get("reason") or "manual_review"),
                     )
                 )
+            forced_spans.append((max(0.0, raw[-1].start_s), min(duration, raw[-1].end_s)))
         except (KeyError, TypeError, ValueError):
             # Corrupt optional JSON can never make a render fail.
             continue
@@ -668,11 +873,40 @@ def build_cut_plan(
         removals = sorted(removals[:MAX_REMOVALS], key=lambda r: (r.start_s, r.end_s))
     total_removed = sum(r.end_s - r.start_s for r in removals)
 
-    if total_removed > MAX_REMOVAL_FRAC * duration:
+    clamped = False
+    proposed_removed_s: float | None = None
+    clamp_budget_s: float | None = None
+    if over_budget_policy == "clamp":
+        # CLAMP_BUDGET_SLACK_S guarantees `duration − total ≥ MIN_OUTPUT_S`
+        # survives float arithmetic: trimmed spans recompute with ~1 ulp of
+        # rounding, which on the binding `duration − MIN_OUTPUT_S` leg
+        # (5.0–6.67s clips) tripped the epsilon-free output rail below and
+        # resurrected the strict unsafe_plan failure. 1 ms is imperceptible
+        # and dwarfs any accumulated error (≤ ~1e-13 over MAX_REMOVALS spans).
+        clamp_budget_s = max(
+            0.0,
+            min(MAX_REMOVAL_FRAC_REQUIRED * duration, duration - MIN_OUTPUT_S)
+            - CLAMP_BUDGET_SLACK_S,
+        )
+        if total_removed > clamp_budget_s + _EPS:
+            proposed_removed_s = total_removed
+            removals = _clamp_removals_to_budget(
+                removals,
+                clamp_budget_s,
+                duration,
+                words=cut_words,
+                protected_spans=forced_spans,
+            )
+            total_removed = sum(r.end_s - r.start_s for r in removals)
+            clamped = True
+    elif total_removed > MAX_REMOVAL_FRAC * duration:
         return no_op_plan(duration, bailout_reason=BAILOUT_MAX_REMOVAL)
-    # Defense in depth: unreachable with the shipped constants (a clip passing
-    # both rails above retains ≥ (1−MAX_REMOVAL_FRAC)·MIN_CLIP_S = MIN_OUTPUT_S)
-    # but pinned so a future constant change cannot ship a 2-second video.
+    # Defense in depth: unreachable with the shipped constants for detected
+    # cuts (a bailout-policy plan retains ≥ (1−MAX_REMOVAL_FRAC)·MIN_CLIP_S =
+    # MIN_OUTPUT_S; a clamped plan retains ≥ MIN_OUTPUT_S + slack by the
+    # budget formula). Under the clamp it remains REACHABLE by protected
+    # forced/manual removals, which are exempt from the budget — a forced set
+    # so large it leaves <3s of clip must still bail rather than ship it.
     if duration - total_removed < MIN_OUTPUT_S:
         return no_op_plan(duration, bailout_reason=BAILOUT_OUTPUT_TOO_SHORT)
 
@@ -680,6 +914,9 @@ def build_cut_plan(
         keep_segments=_complement(removals, duration),
         removed=removals,
         time_saved_s=total_removed,
+        clamped=clamped,
+        proposed_removed_s=proposed_removed_s,
+        clamp_budget_s=clamp_budget_s,
     )
 
 
@@ -722,10 +959,28 @@ def remap_words(words: Sequence[Any] | None, plan: CutPlan) -> list[dict]:
 # ---------------------------------------------------------------------------------
 
 
+def clamp_metadata(plan: CutPlan) -> dict[str, Any]:
+    """Additive clamp keys shared by every serializer and trace event.
+
+    Empty for un-clamped plans so legacy shapes stay byte-identical; one key
+    vocabulary (``clamped``/``proposed_removed_s``/``clamp_budget_s``) across
+    the persisted summary, the plan event payload, and the task-layer
+    ``silence_cut_clamped`` trace event.
+    """
+    if not plan.clamped:
+        return {}
+    return {
+        "clamped": True,
+        "proposed_removed_s": round(plan.proposed_removed_s or 0.0, 3),
+        "clamp_budget_s": round(plan.clamp_budget_s or 0.0, 3),
+    }
+
+
 def plan_summary(plan: CutPlan, *, original_duration_s: float | None = None) -> dict[str, Any]:
     """Persisted ``variants[i]['silence_cut']`` shape — single source of truth
-    (admin strip contract)."""
-    return {
+    (admin strip contract). Clamp keys are ADDITIVE and appear only on clamped
+    plans so every pre-clamp summary stays byte-identical."""
+    summary = {
         "removed": [
             {"start_s": round(r.start_s, 3), "end_s": round(r.end_s, 3), "reason": r.reason}
             for r in plan.removed
@@ -736,6 +991,8 @@ def plan_summary(plan: CutPlan, *, original_duration_s: float | None = None) -> 
             round(original_duration_s, 3) if original_duration_s is not None else None
         ),
     }
+    summary.update(clamp_metadata(plan))
+    return summary
 
 
 def plan_event_payload(
@@ -756,7 +1013,7 @@ def plan_event_payload(
     reasons: dict[str, int] = {}
     for removal in plan.removed:
         reasons[removal.reason] = reasons.get(removal.reason, 0) + 1
-    return {
+    payload = {
         "variant_id": variant_id,
         "removed_count": len(plan.removed),
         "time_saved_s": round(plan.time_saved_s, 3),
@@ -764,5 +1021,7 @@ def plan_event_payload(
         "retake_spans": retake_spans,
         "applied": applied,
         "cut_reused": cut_reused,
-        **(extra or {}),
+        **clamp_metadata(plan),
     }
+    payload.update(extra or {})
+    return payload

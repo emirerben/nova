@@ -317,6 +317,20 @@ class Settings(BaseSettings):
         "+ worker restart — byte-identical to pre-feature behavior.",
     )
 
+    speech_cleanup_budget_clamp_enabled: bool = Field(
+        default=True,
+        description="Explicit-consent removal clamp for required_v1 speech cleanup "
+        "(plans/019 addendum). When a creator turns Speech cleanup ON and the "
+        "proposed removal exceeds the auto-path safety rail, the plan is clamped "
+        "to MAX_REMOVAL_FRAC_REQUIRED (largest removals first, MIN_OUTPUT_S "
+        "floor) instead of hard-failing the render with unsafe_plan — filler-"
+        "heavy clips are the feature's target and must produce a cleaned video. "
+        "legacy_auto/off_v1 paths are untouched. Emergency rollback ONLY (restores "
+        "the deterministic unsafe_plan render failure for over-budget clips): "
+        "`fly secrets set SPEECH_CLEANUP_BUDGET_CLAMP_ENABLED=false --app "
+        "nova-video` + worker restart.",
+    )
+
     retake_cut_enabled: bool = Field(
         default=False,
         description="Retake/restart cutting inside the silence-cut stage "
