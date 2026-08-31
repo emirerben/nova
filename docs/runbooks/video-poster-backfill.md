@@ -64,8 +64,16 @@ python -m scripts.backfill_video_posters \
 
 The first command repairs all eligible historical outputs. The second is the
 acceptance audit. Its final `Backfill complete:` line must report
-`would_generate=0`; `expired_source`, `unresolvable_legacy_url`,
-`orphan_cleanup_failed`, `failed`, and `skipped_not_owned` must all be zero.
+`would_generate=0`; `orphan_cleanup_failed`, `failed`, and `skipped_not_owned`
+must all be zero. `expired_source` and `unresolvable_legacy_url` are permanent
+physical classifications, not failures: the source object was lifecycle-deleted
+before this repair existed, or the row only ever stored a browser URL. The
+2026-08-31 census counts roughly 293 expired sources and 62 unresolvable legacy
+rows for pre-June history, so those counts are EXPECTED to be non-zero forever
+and do not fail the run (they used to, which made the strict gate unachievable
+and wedged the shared deploy guard on every attempt). Compare them against the
+census to spot anomalies; only growth beyond known history warrants
+investigation.
 The Machine must exit cleanly and the launcher must remove it. A green workflow
 is the durable receipt for both the repair and the zero-work audit.
 

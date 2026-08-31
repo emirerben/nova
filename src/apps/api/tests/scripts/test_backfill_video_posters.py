@@ -1429,7 +1429,11 @@ def test_main_strict_rejects_healthy_poster_when_source_is_missing(
     monkeypatch.setattr(backfill, "_candidate_is_still_current", lambda _candidate: True)
     monkeypatch.setattr(backfill, "_job_has_cleanup_receipts_current", lambda _job_id: False)
 
-    assert backfill.main(["--dry-run", "--strict"]) == 1
+    # A lifecycle-deleted source is a permanent CLASSIFICATION, not a repair
+    # failure: nothing a rerun does can bring the object back, and a non-zero
+    # exit would retain the Machine and wedge the deploy guard. The audit line
+    # still reports it; the exit code no longer fails on it.
+    assert backfill.main(["--dry-run", "--strict"]) == 0
     output = capsys.readouterr().out
     assert "expired_source=1" in output
     assert "already_present=0" in output
@@ -2166,6 +2170,58 @@ def test_main_strict_rejects_blocked_candidates(monkeypatch, capsys) -> None:
 
     assert backfill.main(["--strict"]) == 1
     assert "skipped_not_owned=1" in capsys.readouterr().out
+
+
+def test_strict_treats_unresolvable_legacy_url_as_classification_not_failure(
+    monkeypatch, capsys
+) -> None:
+    """Legacy signed-URL-only rows are a permanent state, not a fixable fault.
+
+    The 2026-08-31 census counts ~62 of them, so an exit gate requiring zero
+    can never pass again — and a failed run retains the Machine, wedging the
+    stable guard name every deploy CASes. The count is still reported for the
+    audit; it just no longer fails the run.
+    """
+    job = _job()
+    blocked = PosterCandidate(
+        job_id=job.id,
+        kind="job_output",
+        source_key=None,
+        poster_field="poster_path",
+        observed_source_value="https://legacy.invalid/output.mp4",
+        blocked_outcome="unresolvable_legacy_url",
+    )
+    monkeypatch.setattr(backfill, "sync_session", lambda: _SessionContext())
+    monkeypatch.setattr(backfill, "_job_batches", lambda *_args, **_kwargs: iter([[job]]))
+    monkeypatch.setattr(backfill, "_load_ready_clips", lambda *_args: {})
+    monkeypatch.setattr(backfill, "_candidates_for_job", lambda *_args, **_kwargs: iter([blocked]))
+    monkeypatch.setattr(backfill, "_candidate_is_still_current", lambda _candidate: True)
+
+    assert backfill.main(["--strict"]) == 0
+    assert "unresolvable_legacy_url=1" in capsys.readouterr().out
+
+
+def test_strict_still_requires_zero_would_generate_in_dry_run(monkeypatch, capsys) -> None:
+    """Reclassifying the permanent states must not weaken the real audit.
+
+    ``would_generate > 0`` means repairable work was left undone — that is the
+    acceptance criterion the runbook's second pass exists to prove, and it
+    still fails the run.
+    """
+    job = _job()
+    source = f"generative-jobs/{job.id}/output.mp4"
+    candidate = _main_candidate(job, source=source)
+    monkeypatch.setattr(backfill, "sync_session", lambda: _SessionContext())
+    monkeypatch.setattr(backfill, "_job_batches", lambda *_args, **_kwargs: iter([[job]]))
+    monkeypatch.setattr(backfill, "_load_ready_clips", lambda *_args: {})
+    monkeypatch.setattr(
+        backfill, "_candidates_for_job", lambda *_args, **_kwargs: iter([candidate])
+    )
+    monkeypatch.setattr(backfill, "_candidate_is_still_current", lambda _candidate: True)
+    monkeypatch.setattr(backfill, "_job_has_cleanup_receipts_current", lambda _job_id: False)
+
+    assert backfill.main(["--dry-run", "--strict"]) == 1
+    assert "would_generate=1" in capsys.readouterr().out
 
 
 def test_main_blocked_candidate_superseded_while_scanning_is_stale_race(

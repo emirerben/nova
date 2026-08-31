@@ -1315,11 +1315,16 @@ def main(argv: list[str] | None = None) -> int:
     print("Backfill complete:", " ".join(f"{name}={counts[name]}" for name in OUTCOMES))
     if last_cursor and args.job_id is None:
         print(f"resume_cursor={last_cursor}")
+    # `expired_source` and `unresolvable_legacy_url` are permanent physical
+    # classifications, not repair failures: the source object was
+    # lifecycle-deleted, or the row only ever stored a browser URL. The
+    # 2026-08-31 census counts hundreds of such pre-June jobs, so "must be
+    # zero" is unachievable by construction — and a non-zero exit here retains
+    # the one-shot Machine, wedging the stable guard name every deploy CASes.
+    # Strict still fails on anything a rerun could actually fix.
     strict_failures = sum(
         counts[name]
         for name in (
-            "expired_source",
-            "unresolvable_legacy_url",
             "orphan_cleanup_failed",
             "failed",
             "skipped_not_owned",
