@@ -460,6 +460,66 @@ Synthesized from this review's findings. Each task derives from a verified issue
 +====================================================================+
 ```
 
+## Addendum 2026-08-31: explicit-consent budget clamp
+
+The strict promise above ("unsafe/error ⇒ typed failure") shipped, and prod
+immediately proved its blind spot: three deterministic `unsafe_plan` failures
+(jobs ca380890/12ccbd80/5c798650, one 10.0s talking-to-camera clip with ~6.1s
+of pauses + fillers, Aug 25–31). A clip whose dead air exceeds the 40% auto
+rail is exactly the clip the feature exists for, and "Retry speech cleanup"
+could never succeed because the analysis is content-deterministic.
+
+Decision (approved by Yasin, option A of the 2026-08-31 investigation): under
+`required_v1`, `build_cut_plan(over_budget_policy="clamp")` now clamps the
+removal set to `min(MAX_REMOVAL_FRAC_REQUIRED·dur, dur − MIN_OUTPUT_S) −
+CLAMP_BUDGET_SLACK_S` (0.55 / 1 ms) — largest removals kept whole first, the
+first non-fitting removal trimmed (edge-anchored for lead/trail cuts,
+symmetric mid-clip), remainder dropped. The clamp is traced
+(`silence_cut_clamped` event: proposed vs delivered vs budget) and persisted
+additively on the summary (`clamped`/`proposed_removed_s`/`clamp_budget_s`).
+`legacy_auto`/`off_v1` and the default bailout policy stay byte-identical;
+the "never silently publish uncleaned output" rule holds — the render is
+CLEANED, up to budget. Kill switch `SPEECH_CLEANUP_BUDGET_CLAMP_ENABLED=false`
+restores this plan's original typed-failure contract.
+
+Three hardenings from the adversarial review of the first implementation:
+1. **1 ms budget slack** — trimmed spans recompute with ~1 ulp of float error;
+   on the binding `dur − MIN_OUTPUT_S` leg (5.0–6.67 s clips) that tripped the
+   epsilon-free output rail and resurrected `unsafe_plan` (~18 % of short
+   over-budget clips in the reviewer's fuzz run).
+2. **Word-snapped trims** — a trim boundary landing strictly inside a word
+   would resurrect a partial vocalization; boundaries now snap out of word
+   interiors (always shrinking, + PAD_S), preserving remap_words' precondition
+   that removals never intrude into kept words.
+3. **Forced removals are protected** — `_validate_speech_cut_publication`
+   requires every forced/manual-review interval to stay covered by the
+   rendered plan, so protected removals are charged against the budget first
+   and never dropped or trimmed (a pathological forced set can still hit the
+   MIN_OUTPUT_S rail, which correctly bails rather than shipping a <3 s clip).
+
+A second adversarial round (ship-stage red team + fresh-context subagent)
+hardened three more edges before landing:
+4. **Edge cuts are charged first** — the duration-ordered greedy could spend
+   the whole budget on mid/trail blocks and drop the LEAD cut, shipping a
+   dead-air opening against the hook-window rule; lead/trail cuts (classified
+   by kept words, not raw coordinates, so a silencedetect range closing inside
+   the container still counts) now outrank interior cuts.
+5. **Forced protection covers per-span intersections, never their hull** —
+   two far-apart forced cuts in one merged carrier no longer drag the dead
+   gap between them into the protected set. (The protected branch is armed
+   but unreachable today: required_v1 runs `include_retakes=False`, so review
+   candidates — the only forced_removals writer — cannot exist on clamp jobs.)
+6. **Snap guard zones include the PAD_S flank** — a trim boundary landing
+   just after a formerly-removed word resurrected it with sub-pad clearance
+   to the jump cut; the boundary now clears word + PAD_S.
+Deferred with TODO entries: trim boundaries inside tokenless acoustic-filler
+regions (P2) and merged-carrier flank recovery (P3).
+
+Pins: `TestOverBudgetClamp` (pure module: greedy/anchors/snap/protection/
+float-band/lead-priority/intersections/pad-clearance) and the
+required/kill-switch/parity/flag-default tests in
+`tests/tasks/test_generative_build_silence_cut.py`.
+
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |

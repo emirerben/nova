@@ -13873,6 +13873,7 @@ def _silence_cut_analysis(
                 MIN_CLIP_S,
                 SILENCE_CUT_VERBATIM_PROMPT,
                 build_cut_plan,
+                clamp_metadata,
                 no_op_plan,
             )
             from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
@@ -13921,6 +13922,16 @@ def _silence_cut_analysis(
                     job_id=job_id,
                     source_fingerprint=source_fingerprint or cache_key or clip_path,
                 )
+            # Explicit opt-in (required_v1) clamps an over-budget removal set to
+            # the consent budget instead of bailing — the bailout would be
+            # escalated to a deterministic unsafe_plan render failure by every
+            # strict caller (plans/019 addendum). Kill switch restores the
+            # pre-clamp hard-fail; legacy_auto keeps the bailout rail untouched.
+            over_budget_policy = (
+                "clamp"
+                if analysis_policy == "required_v1" and settings.speech_cleanup_budget_clamp_enabled
+                else "bailout"
+            )
             plan = build_cut_plan(
                 transcript.words,
                 silences,
@@ -13928,6 +13939,7 @@ def _silence_cut_analysis(
                 retake_spans=retake_spans,
                 forced_removals=forced_removals,
                 include_silence_and_fillers=silence_enabled,
+                over_budget_policy=over_budget_policy,
             )
             review_candidates = [
                 candidate
@@ -13942,6 +13954,19 @@ def _silence_cut_analysis(
                 # Safety rail tripped → the plan is a no-op; callers render uncut.
                 record_pipeline_event(
                     "silence_cut", "silence_cut_bailout", {"reason": plan.bailout_reason}
+                )
+            if plan.clamped:
+                # Explicit-consent budget applied: the proposed removal total is
+                # traced so the admin view can show how much cleanup was asked
+                # for vs delivered (removal-fraction contract from the fix).
+                record_pipeline_event(
+                    "silence_cut",
+                    "silence_cut_clamped",
+                    {
+                        "time_saved_s": round(plan.time_saved_s, 3),
+                        "removal_count": len(plan.removed),
+                        **clamp_metadata(plan),
+                    },
                 )
             entry.update(
                 words=list(transcript.words),

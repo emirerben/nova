@@ -25,6 +25,7 @@ from app.pipeline.silence_cut import (
     BAILOUT_OUTPUT_TOO_SHORT,
     KEPT_GAP_S,
     MAX_REMOVAL_FRAC,
+    MAX_REMOVAL_FRAC_REQUIRED,
     MAX_REMOVALS,
     MIN_CLIP_S,
     MIN_CUT_S,
@@ -488,6 +489,383 @@ class TestSafetyRails:
         # A plan passing both the clip-length and removal-fraction rails always
         # retains at least MIN_OUTPUT_S — the output rail is defense in depth.
         assert (1 - MAX_REMOVAL_FRAC) * MIN_CLIP_S >= MIN_OUTPUT_S
+
+
+# ---------------------------------------------------------------------------------
+# Explicit-consent budget clamp (over_budget_policy="clamp")
+# ---------------------------------------------------------------------------------
+
+
+def assert_partition(plan: CutPlan, duration: float):
+    """keep_segments + removed must exactly tile [0, duration]."""
+    intervals = sorted(
+        [(lo, hi, "keep") for lo, hi in plan.keep_segments]
+        + [(r.start_s, r.end_s, "cut") for r in plan.removed]
+    )
+    cursor = 0.0
+    for lo, hi, _kind in intervals:
+        assert lo == pytest.approx(cursor, abs=1e-6), intervals
+        assert hi > lo
+        cursor = hi
+    assert cursor == pytest.approx(duration, abs=1e-6)
+
+
+def clamp_budget(duration: float) -> float:
+    return (
+        min(MAX_REMOVAL_FRAC_REQUIRED * duration, duration - MIN_OUTPUT_S)
+        - silence_cut.CLAMP_BUDGET_SLACK_S
+    )
+
+
+class TestOverBudgetClamp:
+    """required_v1 contract: an over-budget removal set is clamped to the
+    explicit-consent budget instead of tripping the auto-path bailout — the
+    2026-08-25/31 prod incidents (three deterministic `unsafe_plan` render
+    failures on one filler-heavy talking-to-camera clip) are the regression
+    this class pins. Default policy stays byte-identical (TestSafetyRails)."""
+
+    def test_over_budget_clamps_instead_of_bailing(self):
+        # Same geometry as test_max_removal_exceeded_bailout: one 8.25s pause
+        # removal on a 10s clip. Clamp trims it symmetrically to the 5.499s
+        # budget (5.5 − slack) instead of returning the no-op bailout plan.
+        words = [w("a", 0.5, 1.0), w("b", 9.5, 9.9)]
+        plan = build_cut_plan(words, [(1.0, 9.5)], 10.0, over_budget_policy="clamp")
+
+        assert plan.bailout_reason is None
+        assert plan.clamped is True
+        assert plan.clamp_budget_s == pytest.approx(clamp_budget(10.0))
+        assert plan.proposed_removed_s == pytest.approx(8.25)
+        assert plan.time_saved_s == pytest.approx(clamp_budget(10.0))
+        assert_spans([(r.start_s, r.end_s) for r in plan.removed], [(2.5005, 7.9995)])
+        assert_spans(plan.keep_segments, [(0.0, 2.5005), (7.9995, 10.0)])
+        assert_partition(plan, 10.0)
+        assert 10.0 - plan.time_saved_s >= MIN_OUTPUT_S
+
+    def test_bailout_policy_is_the_default_and_unchanged(self):
+        words = [w("a", 0.5, 1.0), w("b", 9.5, 9.9)]
+        implicit = build_cut_plan(words, [(1.0, 9.5)], 10.0)
+        explicit = build_cut_plan(words, [(1.0, 9.5)], 10.0, over_budget_policy="bailout")
+        for plan in (implicit, explicit):
+            assert plan.bailout_reason == BAILOUT_MAX_REMOVAL
+            assert plan.clamped is False
+            assert plan.proposed_removed_s is None
+
+    # ── direct unit coverage of the greedy/trim/anchor mechanics ─────────────
+    # (via _clamp_removals_to_budget: build_cut_plan treats every
+    # forced_removals entry as protected, so raw geometry fixtures go straight
+    # to the helper the way build_cut_plan calls it for DETECTED removals)
+
+    def test_greedy_keeps_largest_removals_and_drops_the_rest(self):
+        removals = [
+            Removal(start_s=1.0, end_s=7.0, reason="silence"),
+            Removal(start_s=8.0, end_s=13.0, reason="silence"),
+            Removal(start_s=14.0, end_s=17.0, reason="silence"),
+            Removal(start_s=18.0, end_s=18.5, reason="silence"),
+        ]
+        kept = silence_cut._clamp_removals_to_budget(removals, 11.0, 20.0, words=[])
+        assert_spans([(r.start_s, r.end_s) for r in kept], [(1.0, 7.0), (8.0, 13.0)])
+
+    def test_trim_is_symmetric_for_mid_clip_removals(self):
+        removals = [Removal(start_s=1.0, end_s=9.0, reason="silence")]
+        kept = silence_cut._clamp_removals_to_budget(removals, 5.5, 10.0, words=[])
+        assert_spans([(r.start_s, r.end_s) for r in kept], [(2.25, 7.75)])
+
+    def test_trim_anchors_trailing_removal_at_clip_end(self):
+        # A mid-clip symmetric shrink here would strand dead air AFTER the
+        # cut, at the very end of the video.
+        removals = [Removal(start_s=3.0, end_s=10.0, reason="silence")]
+        kept = silence_cut._clamp_removals_to_budget(removals, 5.5, 10.0, words=[])
+        assert_spans([(r.start_s, r.end_s) for r in kept], [(4.5, 10.0)])
+
+    def test_trim_anchors_leading_removal_at_zero(self):
+        removals = [Removal(start_s=0.0, end_s=7.0, reason="silence")]
+        kept = silence_cut._clamp_removals_to_budget(removals, 5.5, 10.0, words=[])
+        assert_spans([(r.start_s, r.end_s) for r in kept], [(0.0, 5.5)])
+
+    def test_trim_boundary_snaps_out_of_word_interiors(self):
+        # The symmetric trim of (1.0, 9.0) to 5.5s would start at 2.25 —
+        # strictly inside "ummm" (2.2–2.6). The boundary must snap past the
+        # word (+PAD_S) so no partial word is resurrected (remap_words
+        # precondition: removals never intrude into kept words).
+        removals = [Removal(start_s=1.0, end_s=9.0, reason="silence")]
+        words = silence_cut._normalize_words([w("ummm", 2.2, 2.6)])
+        kept = silence_cut._clamp_removals_to_budget(removals, 5.5, 10.0, words=words)
+        assert_spans([(r.start_s, r.end_s) for r in kept], [(2.6 + silence_cut.PAD_S, 7.75)])
+
+    def test_protected_spans_survive_the_clamp_whole(self):
+        # `_validate_speech_cut_publication` demands every forced interval stay
+        # covered — the protected removal is charged first and kept WHOLE even
+        # though largest-first ordering preferred the 6s block; the detected
+        # block then trims into the 0.5s leftover budget.
+        removals = [
+            Removal(start_s=1.0, end_s=7.0, reason="silence"),
+            Removal(start_s=8.0, end_s=12.5, reason="retake_review"),
+        ]
+        kept = silence_cut._clamp_removals_to_budget(
+            removals, 5.0, 20.0, words=[], protected_spans=[(8.0, 12.5)]
+        )
+        assert_spans([(r.start_s, r.end_s) for r in kept], [(3.75, 4.25), (8.0, 12.5)])
+
+    def test_sub_min_cut_leftover_budget_skips_instead_of_micro_trimming(self):
+        # After keeping the 6s block only 0.05s of budget remains — below
+        # MIN_CUT_S, so the next removal is SKIPPED whole (a 50ms jump cut is
+        # not worth it), never trimmed into a micro-cut.
+        removals = [
+            Removal(start_s=1.0, end_s=7.0, reason="silence"),
+            Removal(start_s=8.0, end_s=8.3, reason="silence"),
+        ]
+        kept = silence_cut._clamp_removals_to_budget(removals, 6.05, 20.0, words=[])
+        assert_spans([(r.start_s, r.end_s) for r in kept], [(1.0, 7.0)])
+
+    def test_snap_cascade_collapsing_below_min_cut_drops_the_trimmed_removal(self):
+        # Leading-anchored trim of (0, 8) to a 0.5s budget puts the end
+        # boundary at 0.5 — inside "word" (0.4–0.62), so it snaps LEFT to
+        # 0.4 − PAD_S = 0.28 and the 0.28s remainder is still kept.
+        removals = [Removal(start_s=0.0, end_s=8.0, reason="silence")]
+        one_word = silence_cut._normalize_words([w("word", 0.4, 0.62)])
+        kept = silence_cut._clamp_removals_to_budget(removals, 0.5, 10.0, words=one_word)
+        assert_spans([(r.start_s, r.end_s) for r in kept], [(0.0, 0.4 - PAD_S)])
+
+        # With a neighboring word under the snapped landing spot the fixpoint
+        # loop cascades (0.28 is inside "early" 0.05–0.33 → 0.05 − PAD_S < 0)
+        # and the collapsed remainder falls below MIN_CUT_S — the removal must
+        # be DROPPED entirely, never emitted as a degenerate/negative span.
+        two_words = silence_cut._normalize_words([w("early", 0.05, 0.33), w("word", 0.4, 0.62)])
+        kept = silence_cut._clamp_removals_to_budget(removals, 0.5, 10.0, words=two_words)
+        assert kept == []
+
+    # ── build_cut_plan-level behavior ────────────────────────────────────────
+
+    def test_forced_removals_survive_clamp_via_build_cut_plan(self):
+        # Detected pause removals compete for the budget; the user-approved
+        # forced cut must come through untouched (publication validation).
+        words = [
+            w("k1", 0.2, 0.8),
+            w("k2", 7.5, 8.0),
+            w("k3", 14.6, 15.2),
+            w("k4", 17.2, 17.8),
+            w("k5", 18.7, 19.3),
+        ]
+        silences = [(1.1, 7.2), (8.3, 14.3)]
+        plan = build_cut_plan(
+            words,
+            silences,
+            20.0,
+            forced_removals=[{"start_s": 18.0, "end_s": 18.5, "reason": "retake_review"}],
+            over_budget_policy="clamp",
+        )
+
+        assert plan.bailout_reason is None
+        assert plan.clamped is True
+        assert any(r.start_s <= 18.0 + 1e-6 and r.end_s >= 18.5 - 1e-6 for r in plan.removed), (
+            plan.removed
+        )
+        assert plan.time_saved_s <= clamp_budget(20.0) + 1e-6
+        assert_partition(plan, 20.0)
+
+    def test_protected_forced_overload_still_bails_output_too_short(self):
+        # The one rail the clamp deliberately cannot lift: forced/manual
+        # removals are budget-exempt (protected), so a forced set that leaves
+        # <MIN_OUTPUT_S of clip must still bail with output_too_short rather
+        # than ship a 1.1s video (the REACHABLE defense-in-depth branch).
+        plan = build_cut_plan(
+            [w("hi", 0.15, 0.45), w("bye", 9.6, 9.85)],
+            [],
+            10.0,
+            forced_removals=[{"start_s": 0.6, "end_s": 9.5, "reason": "manual_review"}],
+            include_silence_and_fillers=False,
+            over_budget_policy="clamp",
+        )
+
+        assert plan.bailout_reason == BAILOUT_OUTPUT_TOO_SHORT
+        assert plan.removed == []
+        assert plan.clamped is False  # bailout plan carries no clamp metadata
+        assert_spans(plan.keep_segments, [(0.0, 10.0)])
+
+    def test_lead_cut_survives_budget_competition(self):
+        # Adversarial regression (2026-08-31): edge cuts are charged FIRST —
+        # a duration-ordered greedy spent the budget on mid/trail blocks and
+        # dropped the lead cut, shipping a ~2.7s dead-air OPENING in exactly
+        # the filler-heavy clips this feature targets (hook-window rule).
+        words = [w("hey", 2.8, 3.4), w("ok", 9.0, 9.6)]
+        silences = [(0.0, 2.7), (3.7, 8.9), (9.7, 15.0)]
+        plan = build_cut_plan(words, silences, 15.0, over_budget_policy="clamp")
+
+        assert plan.bailout_reason is None
+        assert any(r.start_s <= 1e-6 for r in plan.removed), plan.removed  # lead cut kept
+        assert any(r.end_s >= 15.0 - 1e-6 for r in plan.removed), plan.removed  # trail too
+        assert plan.time_saved_s <= clamp_budget(15.0) + 1e-6
+        assert_partition(plan, 15.0)
+
+    def test_far_apart_forced_spans_protect_intersections_not_hull(self):
+        # Adversarial regression (2026-08-31): two tiny forced cuts at
+        # opposite ends of one merged dead-air carrier must protect ONLY the
+        # forced intersections — a hull would drag the whole dead gap along,
+        # blowing the budget or resurrecting the output rail's unsafe_plan.
+        words = [w("k1", 0.2, 0.8), w("k2", 9.0, 9.6)]
+        silences = [(1.1, 8.7)]
+        forced = [
+            {"start_s": 1.5, "end_s": 1.75, "reason": "retake_review"},
+            {"start_s": 8.0, "end_s": 8.25, "reason": "retake_review"},
+        ]
+        plan = build_cut_plan(
+            words, silences, 10.0, forced_removals=forced, over_budget_policy="clamp"
+        )
+
+        assert plan.bailout_reason is None
+        for lo, hi in [(1.5, 1.75), (8.0, 8.25)]:
+            assert any(r.start_s <= lo + 1e-6 and r.end_s >= hi - 1e-6 for r in plan.removed), (
+                lo,
+                hi,
+                plan.removed,
+            )
+        assert plan.time_saved_s == pytest.approx(0.5)  # intersections only, no hull
+        assert_partition(plan, 10.0)
+
+    def test_trim_boundary_keeps_pad_clearance_to_resurrected_words(self):
+        # Adversarial regression (2026-08-31): a trim boundary landing just
+        # AFTER a formerly-removed word resurrected it with sub-PAD_S
+        # clearance to the jump cut (a surviving "um" 40ms before the cut).
+        # The snap guard zone includes the word's PAD_S flank on the cut side.
+        removals = [Removal(start_s=2.0, end_s=10.0, reason="silence")]
+        words = silence_cut._normalize_words([w("um", 4.3, 4.46)])
+        kept = silence_cut._clamp_removals_to_budget(removals, 5.5, 10.0, words=words)
+        assert_spans([(r.start_s, r.end_s) for r in kept], [(4.46 + PAD_S, 10.0)])
+
+    def test_merged_forced_carrier_shrinks_to_envelope_not_whole(self):
+        # Red-team regression (2026-08-31): a tiny forced cut that MERGES with
+        # a huge detected silence block must not protect the whole 17.6s
+        # carrier — that would blow the budget or resurrect the output rail's
+        # unsafe_plan. The carrier shrinks to the forced ENVELOPE: coverage
+        # preserved, no bailout, nothing ships over budget.
+        words = [w("k1", 0.2, 0.8), w("k2", 18.7, 19.3)]
+        silences = [(1.1, 18.4)]
+        forced = [{"start_s": 18.4, "end_s": 18.7, "reason": "retake_review"}]
+
+        plan = build_cut_plan(
+            words, silences, 20.0, forced_removals=forced, over_budget_policy="clamp"
+        )
+        assert plan.bailout_reason is None
+        assert plan.clamped is True
+        assert any(r.start_s <= 18.4 + 1e-6 and r.end_s >= 18.7 - 1e-6 for r in plan.removed), (
+            plan.removed
+        )
+        assert plan.time_saved_s <= clamp_budget(20.0) + 1e-6
+        assert_partition(plan, 20.0)
+
+        # Same clip without the forced cut clamps normally to the full budget.
+        no_forced = build_cut_plan(words, silences, 20.0, over_budget_policy="clamp")
+        assert no_forced.bailout_reason is None
+        assert no_forced.time_saved_s == pytest.approx(clamp_budget(20.0))
+
+    def test_short_clip_float_band_never_resurrects_output_too_short(self):
+        # Adversarial-review critical repro: on 5.0–6.67s clips the
+        # duration−MIN_OUTPUT_S budget leg binds and 1 ulp of trim rounding
+        # used to trip the epsilon-free output rail, resurrecting the strict
+        # unsafe_plan failure. The budget slack must make this impossible.
+        words = [w("hi", 0.1, 0.638), w("ok", 5.821, 6.288)]
+        plan = build_cut_plan(words, [(0.638, 5.821)], 6.338, over_budget_policy="clamp")
+
+        assert plan.bailout_reason is None
+        assert plan.clamped is True
+        assert 6.338 - plan.time_saved_s >= MIN_OUTPUT_S
+        assert_partition(plan, 6.338)
+
+    def test_clamp_budget_respects_min_output_floor(self):
+        # At MIN_CLIP_S the frac budget (2.75s) exceeds what MIN_OUTPUT_S
+        # permits (2.0s − slack) — the floor must win and the output stays
+        # above MIN_OUTPUT_S with no output_too_short bailout.
+        words = [w("hi", 0.1, 0.4), w("yo", 4.7, 4.95)]
+        plan = build_cut_plan(words, [(0.5, 4.6)], MIN_CLIP_S, over_budget_policy="clamp")
+
+        assert plan.bailout_reason is None
+        assert plan.clamped is True
+        assert plan.clamp_budget_s == pytest.approx(clamp_budget(MIN_CLIP_S))
+        assert plan.time_saved_s == pytest.approx(clamp_budget(MIN_CLIP_S))
+        assert MIN_CLIP_S - plan.time_saved_s >= MIN_OUTPUT_S
+
+    def test_between_auto_rail_and_budget_renders_unclamped(self):
+        # The 40–55% band: over the auto rail but under the consent budget —
+        # the clamp policy must pass the FULL plan through untouched while the
+        # default policy bails (pins the band where the two policies differ).
+        words = [w("hi", 0.3, 0.8), w("there", 9.7, 10.2)]
+        forced = [{"start_s": 1.0, "end_s": 9.5, "reason": "retake_review"}]
+
+        default_plan = build_cut_plan(
+            words, [], 20.0, forced_removals=forced, include_silence_and_fillers=False
+        )
+        assert default_plan.bailout_reason == BAILOUT_MAX_REMOVAL
+
+        plan = build_cut_plan(
+            words,
+            [],
+            20.0,
+            forced_removals=forced,
+            include_silence_and_fillers=False,
+            over_budget_policy="clamp",
+        )
+        assert plan.bailout_reason is None
+        assert plan.clamped is False
+        assert plan.time_saved_s == pytest.approx(8.5)
+
+    def test_clamp_under_budget_plan_is_untouched(self):
+        plan = build_cut_plan(lexical_fixture(), [], DUR, over_budget_policy="clamp")
+        baseline = build_cut_plan(lexical_fixture(), [], DUR)
+
+        assert plan.clamped is False
+        assert plan.proposed_removed_s is None
+        assert plan.removed == baseline.removed
+        assert plan.keep_segments == baseline.keep_segments
+        assert plan.time_saved_s == pytest.approx(baseline.time_saved_s)
+
+    def test_incident_clip_shape_default_bails_clamp_renders(self):
+        # Sanitized geometry of the 2026-08-31 prod incident (job ca380890):
+        # a 10.0s talking-to-camera clip with three short speech bursts,
+        # filler tokens, and ~6.1s of pauses. ~6.4s proposed removal trips the
+        # 40% auto rail; under explicit consent the clamp must deliver a real
+        # cleaned plan instead of the deterministic unsafe_plan dead end.
+        words = [
+            w("um", 0.2, 0.5),
+            w("deneme", 0.6, 1.3),
+            w("simdi", 2.2, 2.5),
+            w("deneme", 2.6, 3.0),
+            w("yapiyorum", 3.1, 3.5),
+            w("um", 6.8, 7.0),
+            w("um", 7.1, 7.3),
+            w("simdi", 7.4, 7.7),
+            w("soyle", 7.8, 8.1),
+        ]
+        silences = [(1.3, 2.2), (3.5, 6.8), (8.1, 10.0)]
+
+        default_plan = build_cut_plan(words, silences, 10.0)
+        assert default_plan.bailout_reason == BAILOUT_MAX_REMOVAL
+
+        clamped_plan = build_cut_plan(words, silences, 10.0, over_budget_policy="clamp")
+        assert clamped_plan.bailout_reason is None
+        assert clamped_plan.clamped is True
+        assert clamped_plan.removed  # a real cut set survives
+        assert clamped_plan.time_saved_s <= clamp_budget(10.0) + 1e-6
+        assert 10.0 - clamped_plan.time_saved_s >= MIN_OUTPUT_S
+        assert_partition(clamped_plan, 10.0)
+
+    def test_clamp_metadata_gated_out_of_legacy_summary_and_payload(self):
+        # Un-clamped plans must serialize byte-identically to the pre-clamp
+        # shape (admin strip contract + finalize whitelist).
+        plain = build_cut_plan(lexical_fixture(), [], DUR)
+        summary = plan_summary(plain, original_duration_s=DUR)
+        assert set(summary) == {"removed", "time_saved_s", "version", "original_duration_s"}
+        payload = plan_event_payload(plain, variant_id="v", retake_spans=0, applied=True)
+        assert "clamped" not in payload
+
+        words = [w("a", 0.5, 1.0), w("b", 9.5, 9.9)]
+        clamped = build_cut_plan(words, [(1.0, 9.5)], 10.0, over_budget_policy="clamp")
+        summary = plan_summary(clamped, original_duration_s=10.0)
+        assert summary["clamped"] is True
+        assert summary["proposed_removed_s"] == pytest.approx(8.25)
+        assert summary["clamp_budget_s"] == pytest.approx(clamp_budget(10.0))
+        payload = plan_event_payload(clamped, variant_id="v", retake_spans=0, applied=True)
+        assert payload["clamped"] is True
+        assert payload["proposed_removed_s"] == pytest.approx(8.25)
 
 
 # ---------------------------------------------------------------------------------

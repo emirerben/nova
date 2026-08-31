@@ -436,9 +436,13 @@ def test_legacy_unsafe_bailout_renders_uncut(monkeypatch, tmp_path):
     assert res["silence_cut"] is None
 
 
-def test_required_unsafe_bailout_fails_with_typed_reason(monkeypatch, tmp_path):
+def test_required_unsafe_bailout_kill_switch_restores_typed_failure(monkeypatch, tmp_path):
+    """SPEECH_CLEANUP_BUDGET_CLAMP_ENABLED=false pins the pre-clamp contract:
+    an over-budget required plan bails and the render fails with the typed
+    unsafe_plan reason (emergency rollback path — never a silent uncut ship)."""
     monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
     monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    monkeypatch.setattr(gb.settings, "speech_cleanup_budget_clamp_enabled", False, raising=False)
     calls = _patch_pipeline(
         monkeypatch,
         words=BAILOUT_WORDS,
@@ -453,6 +457,58 @@ def test_required_unsafe_bailout_fails_with_typed_reason(monkeypatch, tmp_path):
     assert res["speech_cleanup_failure_reason"] == "unsafe_plan"
     assert calls["reframe"] == []
     assert _events_named(calls, "silence_cut_required_failed")
+    assert not _events_named(calls, "silence_cut_clamped")
+
+
+def test_required_over_budget_clamps_and_renders(monkeypatch, tmp_path):
+    """THE incident regression (prod jobs ca380890/12ccbd80/5c798650): an
+    explicit Speech cleanup On with an over-budget removal set must deliver a
+    clamped cleaned render — not the deterministic unsafe_plan dead end."""
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    monkeypatch.setattr(gb.settings, "speech_cleanup_budget_clamp_enabled", True, raising=False)
+    calls = _patch_pipeline(
+        monkeypatch,
+        words=BAILOUT_WORDS,
+        silences=BAILOUT_SILENCES,
+        duration=BAILOUT_DURATION,
+    )
+
+    res = _render(monkeypatch, tmp_path, speech_cleanup_contract="required_v1")
+
+    assert res["ok"] is True
+    assert res["speech_cleanup_failure_reason"] is None
+    assert not _events_named(calls, "silence_cut_required_failed")
+    assert not _events_named(calls, "silence_cut_bailout")
+
+    # The 8.0s proposed trailing-silence cut is trimmed to the 5.499s explicit-
+    # consent budget (5.5 − float slack) — anchored at the clip END (no
+    # stranded dead air after the cut) — and applied inside the reframe with
+    # the punch-in constant.
+    reframe = calls["reframe"][0]
+    assert reframe["keep_segments"] == pytest.approx([(0.0, 4.501)])
+    assert reframe["keep_segments_punch_in"] == KEEP_SEGMENTS_PUNCH_IN
+
+    # Trace records asked-for vs delivered removal (admin debug contract) —
+    # same key vocabulary as plan_summary/plan_event_payload (clamp_metadata).
+    events = _events_named(calls, "silence_cut_clamped")
+    assert events and events[0][2]["proposed_removed_s"] == pytest.approx(8.0)
+    assert events[0][2]["time_saved_s"] == pytest.approx(5.499)
+    assert events[0][2]["clamp_budget_s"] == pytest.approx(5.499)
+
+    # Persisted summary carries the additive clamp keys (+ the required_v1
+    # outcome marker the subtitled path stamps on applied cleanups).
+    assert res["silence_cut"] == {
+        "removed": [{"start_s": 4.501, "end_s": BAILOUT_DURATION, "reason": "silence"}],
+        "time_saved_s": 5.499,
+        "version": 1,
+        "original_duration_s": BAILOUT_DURATION,
+        "clamped": True,
+        "proposed_removed_s": 8.0,
+        "clamp_budget_s": 5.499,
+        "outcome": "applied",
+    }
+    assert res["silence_cut_outcome"] == "applied"
 
 
 def test_short_clip_bails_before_any_asr_spend(monkeypatch, tmp_path):
@@ -1484,9 +1540,12 @@ def test_talking_head_bailout_renders_uncut(monkeypatch, tmp_path):
     assert not _events_named(calls, "silence_cut_plan")
 
 
-def test_talking_head_required_bailout_fails_with_typed_reason(monkeypatch, tmp_path):
+def test_talking_head_required_bailout_kill_switch_restores_typed_failure(monkeypatch, tmp_path):
+    """Flag-off pin for the multi-clip speech path — same rollback contract as
+    the subtitled twin above (visible typed failure, never a silent uncut)."""
     monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
     monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    monkeypatch.setattr(gb.settings, "speech_cleanup_budget_clamp_enabled", False, raising=False)
     calls = _patch_th_full(monkeypatch, words=BAILOUT_WORDS, silences=BAILOUT_SILENCES)
 
     res = _render_th(
@@ -1501,6 +1560,40 @@ def test_talking_head_required_bailout_fails_with_typed_reason(monkeypatch, tmp_
     assert res["error_class"] == "speech_cleanup_failed"
     assert res["speech_cleanup_failure_reason"] == "unsafe_plan"
     assert calls["reframe"] == []
+
+
+def test_talking_head_required_over_budget_clamps_and_renders(monkeypatch, tmp_path):
+    """Renderer parity: the talking_head strict path clamps exactly like the
+    subtitled one — the assembler's unsafe_plan escalation must not fire."""
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    monkeypatch.setattr(gb.settings, "speech_cleanup_budget_clamp_enabled", True, raising=False)
+    calls = _patch_th_full(monkeypatch, words=BAILOUT_WORDS, silences=BAILOUT_SILENCES, cut_dur=4.5)
+
+    res = _render_th(
+        monkeypatch,
+        tmp_path,
+        probe_map=_th_probe_map(duration=BAILOUT_DURATION),
+        target=BAILOUT_DURATION,
+        speech_cleanup_contract="required_v1",
+    )
+
+    assert res["ok"] is True
+    assert res["speech_cleanup_failure_reason"] is None
+    assert not _events_named(calls, "silence_cut_required_failed")
+    spine = next(c for c in calls["reframe"] if c["input"].endswith("a.mp4"))
+    assert spine["keep_segments"] == pytest.approx([(0.0, 4.501)])
+    events = _events_named(calls, "silence_cut_clamped")
+    assert events and events[0][2]["proposed_removed_s"] == pytest.approx(8.0)
+    assert res["silence_cut"]["clamped"] is True
+    assert res["silence_cut"]["time_saved_s"] == pytest.approx(5.499)
+
+
+def test_budget_clamp_flag_defaults_on():
+    """The clamp must be the DEFAULT contract — flag-off is emergency-only."""
+    from app.config import Settings
+
+    assert Settings.model_fields["speech_cleanup_budget_clamp_enabled"].default is True
 
 
 @pytest.mark.parametrize("failure_reason", ["analysis_failed", "analysis_no_plan"])
