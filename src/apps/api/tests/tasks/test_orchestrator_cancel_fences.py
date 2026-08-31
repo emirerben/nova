@@ -992,3 +992,30 @@ def test_cleanup_refuses_stable_or_user_paths(monkeypatch) -> None:
     )
 
     assert deleted == ["jobs/job-1/task-runs/run-1/template_output.mp4"]
+
+
+def test_cleanup_collects_job_scoped_durable_posters(monkeypatch) -> None:
+    """Durable posters are per-attempt outputs living outside ``task-runs``.
+
+    They sit on the lifecycle-exempt poster prefix precisely so nothing expires
+    them, so refusing them here would strand a JPEG forever. Another job's
+    poster and a traversal attempt must still be refused.
+    """
+    from app.tasks import _job_cancel_fence as fence
+
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        "app.storage.delete_object_best_effort",
+        lambda path: deleted.append(path) or True,
+    )
+
+    fence.delete_task_owned_outputs(
+        "job-1",
+        [
+            "job-posters/job-1/abc123.poster.jpg",
+            "job-posters/job-2/def456.poster.jpg",
+            "job-posters/job-1/../job-2/evil.poster.jpg",
+        ],
+    )
+
+    assert deleted == ["job-posters/job-1/abc123.poster.jpg"]
