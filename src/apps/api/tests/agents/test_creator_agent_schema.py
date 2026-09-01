@@ -28,6 +28,7 @@ from app.agents._schemas.creator_agent import (
     canonical_context_hash,
     canonical_manifest_hash,
 )
+from app.agents.main_creator import _repair_action_envelope
 
 
 def _strategy() -> CreativeStrategy:
@@ -58,6 +59,21 @@ def test_agent_output_is_discriminated_and_strict() -> None:
         CREATOR_AGENT_OUTPUT_ADAPTER.validate_python(
             {"kind": "ask_user", "question": "Which cut?", "reason_code": "x", "url": "bad"}
         )
+
+
+def test_known_nested_summary_typo_is_repaired_before_strict_parse() -> None:
+    repaired = _repair_action_envelope(
+        {
+            "kind": "propose_strategy",
+            "strategy": {"summary": "A sports montage", "edit_format": "montage"},
+        }
+    )
+
+    assert isinstance(repaired, dict)
+    assert repaired["summary"] == "A sports montage"
+    assert "summary" not in repaired["strategy"]
+    parsed = CREATOR_AGENT_OUTPUT_ADAPTER.validate_python(repaired)
+    assert isinstance(parsed, ProposeStrategy)
 
 
 def test_context_hash_is_canonical_and_manifest_hash_excludes_self() -> None:

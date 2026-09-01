@@ -32,6 +32,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -1697,6 +1698,16 @@ def _run_generative_job_impl(
         creator_font_family = creator_strategy.font_family if creator_strategy is not None else None
         creator_text_color = creator_strategy.text_color if creator_strategy is not None else None
         raw_creator_strategy = all_candidates.get("creator_strategy") or {}
+        # Context labels are a server-derived, confirmation-gated lane alongside
+        # the exact opening title.  Keep this as opaque JSON at the worker edge;
+        # `_context_sport_text_elements` applies the closed sport allowlist before
+        # anything can reach pixels.
+        creator_context_label = raw_creator_strategy.get(
+            "context_label",
+            raw_creator_strategy.get("context_labels")
+            or raw_creator_strategy.get("contextual_labels")
+            or [],
+        )
         # CreativeStrategy supplies balanced/24s defaults for planning.  Those
         # defaults are not confirmed render constraints: applying them here
         # would change ordinary Creator renders. Only non-default values that
@@ -2407,6 +2418,7 @@ def _run_generative_job_impl(
                         language=language,
                         landscape_fit=landscape_fit,
                         montage_preset=montage_preset,
+                        creator_context_label=creator_context_label,
                         strict_day_vlog=True,
                     )
                 elif spec.get("archetype") == "single_hero":
@@ -2434,6 +2446,7 @@ def _run_generative_job_impl(
                         language=language,
                         landscape_fit=landscape_fit,
                         montage_preset=montage_preset,
+                        creator_context_label=creator_context_label,
                         strict_single_hero=True,
                     )
                 else:
@@ -2465,6 +2478,7 @@ def _run_generative_job_impl(
                         montage_preset=montage_preset,
                         speech_cleanup_contract=speech_cleanup_contract,
                         speech_cleanup_fallback_reason=archetype_fallback_reason,
+                        creator_context_label=creator_context_label,
                     )
                 record_render_stage(
                     "variant_render",
@@ -7057,6 +7071,12 @@ def _reburn_text_on_base(
                         "sequence_mode": None,
                         "sequence_quote": None,
                     }
+            overlays.extend(
+                _context_sport_burn_dicts(
+                    existing.get("context_label_text_elements") or [],
+                    video_duration_s=base_dur,
+                )
+            )
             _matte_provider, reburn_matte_path, overlays = _resolve_subject_matte_for_burn(
                 video_path=local_base,
                 overlays=overlays,
@@ -7072,6 +7092,35 @@ def _reburn_text_on_base(
             _burn_text_for_variant(local_base, overlays, final_path, matte=_matte_provider)
 
             # Detect silent copy-through (burn failed with non-empty overlays)
+            if (
+                overlays
+                and os.path.exists(final_path)
+                and os.path.getsize(final_path) == os.path.getsize(local_base)
+            ):
+                raise RuntimeError(
+                    f"burn_text_overlays_skia copy-through detected on {base_gcs_path}; "
+                    "marking reburn as failed"
+                )
+        elif text_mode == "agent_text" and existing.get("context_label_text_elements"):
+            # Label-only variants have no intro object to rebuild, but the
+            # confirmed contextual lane must survive style/timeline reburns.
+            overlays = _context_sport_burn_dicts(
+                existing.get("context_label_text_elements") or [],
+                video_duration_s=base_dur,
+            )
+            _matte_provider, reburn_matte_path, overlays = _resolve_subject_matte_for_burn(
+                video_path=local_base,
+                overlays=overlays,
+                tmpdir=tmpdir,
+                cached_matte_path=existing.get("subject_matte_path"),
+                upload_key_base=reburn_output_key,
+                duration_s=base_dur,
+                job_id=job_id,
+                variant_id=variant_id,
+                cut_boundaries_s=_variant_slot_boundaries(existing),
+                created_storage_paths=created_storage_paths,
+            )
+            _burn_text_for_variant(local_base, overlays, final_path, matte=_matte_provider)
             if (
                 overlays
                 and os.path.exists(final_path)
@@ -7121,6 +7170,7 @@ def _reburn_text_on_base(
             "style_set_id": resolved_style_set_id,
             "orientation": orientation,
             "text_mode": text_mode,
+            "context_label_text_elements": existing.get("context_label_text_elements") or [],
             "render_status": "ready",
             "ok": True,
             "render_finished_at": datetime.utcnow().isoformat() + "Z",
@@ -8228,6 +8278,297 @@ def _build_ai_timeline(
         return None
 
 
+# Context labels deliberately use a closed vocabulary.  Clip understanding is
+# model output, and arbitrary model prose must never become on-screen copy.  The
+# Creator route may add more evidence fields over time; this worker boundary only
+# trusts a canonical sport token plus the server's confidence receipt.
+_CONTEXT_SPORT_ALIASES: dict[str, str] = {
+    "basketball": "Basketball",
+    "hoops": "Basketball",
+    "tennis": "Tennis",
+    "football": "Football",
+    "soccer": "Football",
+    "futbol": "Football",
+    "volleyball": "Volleyball",
+    "baseball": "Baseball",
+    "softball": "Softball",
+    "hockey": "Hockey",
+    "ice_hockey": "Hockey",
+    "golf": "Golf",
+    "rugby": "Rugby",
+    "cricket": "Cricket",
+    "boxing": "Boxing",
+    "wrestling": "Wrestling",
+    "swimming": "Swimming",
+    "cycling": "Cycling",
+    "skateboarding": "Skateboarding",
+    "skating": "Skating",
+    "surfing": "Surfing",
+    "skiing": "Skiing",
+    "snowboarding": "Snowboarding",
+    "gymnastics": "Gymnastics",
+    "athletics": "Athletics",
+    "track_and_field": "Athletics",
+}
+_CONTEXT_LABEL_MIN_CONFIDENCE = 0.8
+
+
+def _canonical_context_sport_labels(
+    raw_labels: object,
+    clip_id_to_gcs: dict[str, str],
+    clip_metas: list | None = None,
+) -> list[dict[str, Any]]:
+    """Validate the server-derived context-label receipt at the worker edge.
+
+    The schema/route owns the confirmation and provenance fence. This second
+    boundary is intentionally defensive because ``all_candidates`` is JSONB and
+    old or mixed-version workers can receive values outside the typed schema.
+    Only ``source=detected_sport``, ``position=bottom_right``, ``size=small`` and
+    a canonical allowlisted sport survive. Unknown/low-confidence labels are
+    omitted rather than copied into pixels.
+    """
+    # The typed Creator contract is a singular intent. Resolve its label text
+    # from the structured clip-metadata receipt, never from model-authored text.
+    if isinstance(raw_labels, dict):
+        if (
+            str(raw_labels.get("kind") or "").casefold() != "sport"
+            or str(raw_labels.get("source") or "").casefold() != "clip_metadata"
+            or str(raw_labels.get("placement") or "").casefold() != "bottom_right"
+            or str(raw_labels.get("size") or "").casefold() != "small"
+            or raw_labels.get("per_clip") is not True
+        ):
+            return []
+        resolved: list[dict[str, Any]] = []
+        for meta in clip_metas or []:
+            clip_id = str(getattr(meta, "clip_id", "") or "")
+            if clip_id not in clip_id_to_gcs:
+                continue
+            value = getattr(meta, "detected_sport", None) or getattr(meta, "sport", None)
+            # Older ClipMetadata rows carry only the structured subject label.
+            # It is still constrained by the canonical allowlist below; no
+            # free-form moment description is inspected for on-screen copy.
+            if not value:
+                value = getattr(meta, "detected_subject", None)
+            confidence = getattr(meta, "sport_confidence", None)
+            resolved.append(
+                {
+                    "source": "detected_sport",
+                    "clip_id": clip_id,
+                    "sport": value,
+                    "position": "bottom_right",
+                    "size": "small",
+                    **({"confidence": confidence} if confidence is not None else {}),
+                }
+            )
+        raw_labels = resolved
+    if not isinstance(raw_labels, list):
+        return []
+    clip_ids = list(clip_id_to_gcs)
+    accepted: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for raw in raw_labels:
+        if not isinstance(raw, dict):
+            continue
+        if str(raw.get("source") or "").strip().casefold() != "detected_sport":
+            continue
+        if str(raw.get("position") or "").strip().casefold() != "bottom_right":
+            continue
+        if str(raw.get("size") or "").strip().casefold() != "small":
+            continue
+        if raw.get("trusted") is False:
+            continue
+        confidence = raw.get("confidence", raw.get("score"))
+        if confidence is not None:
+            try:
+                if (
+                    not math.isfinite(float(confidence))
+                    or float(confidence) < _CONTEXT_LABEL_MIN_CONFIDENCE
+                ):
+                    continue
+            except (TypeError, ValueError):
+                continue
+        value = raw.get("sport", raw.get("value", raw.get("label")))
+        if not isinstance(value, str):
+            continue
+        token = value.strip().casefold().replace("-", "_").replace(" ", "_")
+        canonical = _CONTEXT_SPORT_ALIASES.get(token)
+        if canonical is None:
+            # Structured detected_subject values are descriptive (e.g.
+            # "basketball player") rather than a single enum. Accept only one
+            # unambiguous allowlisted sport token, and reject mixed sports.
+            words = [part for part in re.split(r"[^a-z0-9]+", token) if part]
+            matches = {
+                _CONTEXT_SPORT_ALIASES[word] for word in words if word in _CONTEXT_SPORT_ALIASES
+            }
+            canonical = next(iter(matches)) if len(matches) == 1 else None
+        if canonical is None:
+            continue
+
+        clip_id: str | None = None
+        raw_clip_id = raw.get("clip_id") or raw.get("clip_ref") or raw.get("media_id")
+        if isinstance(raw_clip_id, str) and raw_clip_id in clip_id_to_gcs:
+            clip_id = raw_clip_id
+        else:
+            raw_index = raw.get("clip_index", raw.get("source_clip_index"))
+            if (
+                isinstance(raw_index, int)
+                and not isinstance(raw_index, bool)
+                and 0 <= raw_index < len(clip_ids)
+            ):
+                clip_id = clip_ids[raw_index]
+        if clip_id is None:
+            continue
+        key = (clip_id, canonical)
+        if key in seen:
+            continue
+        seen.add(key)
+        accepted.append(
+            {
+                "clip_id": clip_id,
+                "sport": canonical,
+                "source": "detected_sport",
+                "position": "bottom_right",
+                "size": "small",
+                **({"confidence": float(confidence)} if confidence is not None else {}),
+            }
+        )
+    return accepted
+
+
+def _context_sport_text_elements(
+    raw_labels: object,
+    *,
+    steps: list,
+    resolved_plans: list[dict],
+    clip_id_to_gcs: dict[str, str],
+    clip_metas: list | None = None,
+    video_duration_s: float,
+) -> list[dict]:
+    """Build timed TextElement snapshots for constrained per-slot sport labels.
+
+    Times are derived from the post-resolution plans in the same order as the
+    assembled steps. Labels repeat when a source clip is used in multiple slots;
+    no slot duration or downstream timeline is modified.
+    """
+    labels = _canonical_context_sport_labels(raw_labels, clip_id_to_gcs, clip_metas)
+    if not labels or len(steps) != len(resolved_plans):
+        return []
+    by_clip = {row["clip_id"]: row["sport"] for row in labels}
+    from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
+
+    elements: list[dict] = []
+    for slot_index, (step, plan, start_s, end_s) in enumerate(
+        _context_output_slot_windows(steps, resolved_plans)
+    ):
+        try:
+            duration_s = float(plan.get("duration_s") or 0.0)
+        except (TypeError, ValueError):
+            duration_s = 0.0
+        if duration_s <= 0:
+            continue
+        clip_id = str(getattr(step, "clip_id", "") or "")
+        sport = by_clip.get(clip_id)
+        if sport:
+            element = TextElement(
+                text=sport,
+                start_s=max(0.0, start_s),
+                end_s=min(float(video_duration_s), end_s),
+                role="generative_sequence",
+                position="custom",
+                x_frac=0.86,
+                y_frac=0.91,
+                font_family="Inter-Bold",
+                size_class="small",
+                color="#FFFFFF",
+                highlight_color="#FFFFFF",
+                alignment="right",
+                effect="static",
+                z=8,
+                source_params={
+                    "source": "context_sport",
+                    "key": f"{clip_id}:{slot_index}:{start_s:.3f}:{end_s:.3f}",
+                    "identity": (f"context_sport:{clip_id}:{slot_index}:{start_s:.3f}:{end_s:.3f}"),
+                    "context_label_source": "detected_sport",
+                    "context_label_position": "bottom_right",
+                    "context_label_size": "small",
+                    "source_clip_id": clip_id,
+                },
+            )
+            if element.end_s > element.start_s:
+                elements.append(element.model_dump(exclude_none=True))
+    return elements
+
+
+def _context_output_slot_windows(
+    steps: list,
+    resolved_plans: list[dict],
+) -> list[tuple[Any, dict, float, float]]:
+    """Return each slot's actual output-clock window, including xfade overlap.
+
+    ``_join_or_concat`` groups hard cuts and sends visual boundaries to
+    ``join_with_transitions``. Its xfade filter starts the next slot before the
+    prior slot ends by ``min(requested, previous * 0.3, next * 0.3)``. Mirror that
+    bounded arithmetic here so labels stay attached to the visible source
+    through crossfades while the persisted AI timeline remains unchanged.
+    """
+    if len(steps) != len(resolved_plans):
+        return []
+    from app.pipeline.transitions import (  # noqa: PLC0415
+        DEFAULT_TRANSITION_DURATION_S,
+        translate_transition,
+    )
+
+    windows: list[tuple[Any, dict, float, float]] = []
+    cursor_s = 0.0
+    previous_duration_s = 0.0
+    for index, (step, plan) in enumerate(zip(steps, resolved_plans)):
+        try:
+            duration_s = max(0.0, float(plan.get("duration_s") or 0.0))
+        except (TypeError, ValueError):
+            duration_s = 0.0
+        overlap_s = 0.0
+        if index > 0:
+            raw_transition = str((getattr(step, "slot", None) or {}).get("transition_in", "none"))
+            transition = translate_transition(raw_transition)
+            if transition != "none":
+                requested = (getattr(step, "slot", None) or {}).get("transition_duration_s")
+                try:
+                    requested_s = (
+                        DEFAULT_TRANSITION_DURATION_S if requested is None else float(requested)
+                    )
+                    overlap_s = max(
+                        0.0,
+                        min(
+                            requested_s,
+                            previous_duration_s * 0.3,
+                            duration_s * 0.3,
+                        ),
+                    )
+                except (TypeError, ValueError):
+                    overlap_s = 0.0
+        start_s = max(0.0, cursor_s - overlap_s)
+        end_s = start_s + duration_s
+        windows.append((step, plan, start_s, end_s))
+        cursor_s = end_s
+        previous_duration_s = duration_s
+    return windows
+
+
+def _context_sport_burn_dicts(elements: list[dict], video_duration_s: float) -> list[dict]:
+    """Compile contextual TextElements through the shared renderer contract."""
+    if not elements:
+        return []
+    from app.agents._schemas.text_element import coerce_text_elements  # noqa: PLC0415
+    from app.pipeline.generative_overlays import build_overlays_from_text_elements  # noqa: PLC0415
+
+    parsed = coerce_text_elements(elements) or []
+    return build_overlays_from_text_elements(
+        parsed,
+        video_duration_s=float(video_duration_s),
+        independent_box_alignment=True,
+    )
+
+
 def _prepare_timeline_assembly(
     timeline_slots: list[dict],
     clip_paths_gcs: list[str],
@@ -8953,6 +9294,12 @@ def _run_regenerate_variant(
         creator_font_family = creator_strategy.font_family if creator_strategy is not None else None
         creator_text_color = creator_strategy.text_color if creator_strategy is not None else None
         raw_creator_strategy = all_candidates.get("creator_strategy") or {}
+        creator_context_label = raw_creator_strategy.get(
+            "context_label",
+            raw_creator_strategy.get("context_labels")
+            or raw_creator_strategy.get("contextual_labels")
+            or [],
+        )
         raw_target_duration_s = raw_creator_strategy.get("target_duration_s")
         creator_target_duration_s = (
             float(raw_target_duration_s)
@@ -9864,6 +10211,7 @@ def _run_regenerate_variant(
                 speech_cleanup_contract=speech_cleanup_contract_regen,
                 speech_cleanup_fallback_reason=speech_cleanup_fallback_reason_regen,
                 behind_subject_override=text_behind_subject,
+                creator_context_label=creator_context_label,
                 lyrics_enabled=inherited_lyrics_enabled,
                 lyric_line_overrides=inherited_lyric_line_overrides,
                 orientation=effective_orientation,
@@ -11974,6 +12322,7 @@ def _render_generative_variant(
     montage_preset: str = "classic",
     speech_cleanup_contract: str = "legacy_auto",
     speech_cleanup_fallback_reason: str | None = None,
+    creator_context_label: dict | list[dict] | None = None,
     behind_subject_override: bool | None = None,
     lyrics_enabled: bool | None = None,
     lyric_line_overrides: dict | None = None,
@@ -12183,6 +12532,10 @@ def _render_generative_variant(
         "intro_font_family": font_family_override,
         "intro_effect": effect_override,
         "intro_text_color": text_color_override,
+        # Server-derived contextual labels are persisted as TextElement snapshots
+        # after assembly. They remain separate from user-authored text_elements so
+        # editor mutations cannot accidentally erase or authorize model prose.
+        "context_label_text_elements": None,
         "intro_cluster_hero_font": cluster_hero_font_override,
         "intro_cluster_body_font": cluster_body_font_override,
         "intro_cluster_accent_font": cluster_accent_font_override,
@@ -12549,6 +12902,20 @@ def _render_generative_variant(
             base["intro_placement"] = _intro_placement_from_params(
                 _at_params, has_candidates=bool(text_placement_candidates)
             )
+        elif text_mode == "agent_text" and creator_context_label:
+            # A context-label request must still have a real text-free base even
+            # when the optional intro writer returns no title. The burn stage
+            # uses this inert linear params object to skip title generation and
+            # append only the validated per-slot labels below.
+            _at_params = {
+                "text": "",
+                "effect": "static",
+                "layout": "linear",
+                "position": "center",
+                "text_color": "#FFFFFF",
+                "highlight_color": "#FFD24A",
+                "text_anchor": "center",
+            }
 
         # Propagate the shot-count floor into the recipe so consolidate_slots
         # (template_matcher.py:231-242) doesn't collapse below it. The builders
@@ -12921,6 +13288,20 @@ def _render_generative_variant(
 
         if not os.path.exists(audio_mixed_path) or os.path.getsize(audio_mixed_path) == 0:
             raise RuntimeError(f"variant {variant_id} produced empty audio-mixed output")
+
+        # Materialize confirmed contextual labels only after the final matcher
+        # steps and post-resolution durations are known. This keeps each label
+        # attached to the exact output slot without changing the AI timeline.
+        context_label_elements = _context_sport_text_elements(
+            creator_context_label,
+            clip_metas=clip_metas,
+            steps=steps,
+            resolved_plans=resolved_plans,
+            clip_id_to_gcs=clip_id_to_gcs,
+            video_duration_s=sum(float(p.get("duration_s") or 0.0) for p in resolved_plans),
+        )
+        if context_label_elements:
+            base["context_label_text_elements"] = context_label_elements
         if strict_day_vlog or strict_single_hero:
             try:
                 actual_duration_s = float(_probe_duration(audio_mixed_path))
@@ -12942,7 +13323,7 @@ def _render_generative_variant(
         # For agent_text variants: upload the text-free base for fast-reburn, then
         # burn text on top to produce the final output. Lyrics variants cache the
         # lyric-burned, user-text-free base so user TextElements can layer above it.
-        if text_mode == "agent_text" and agent_text is not None:
+        if text_mode == "agent_text" and (agent_text is not None or creator_context_label):
             from app.pipeline.generative_overlays import (  # noqa: PLC0415
                 build_persistent_intro_overlays,
             )
@@ -13154,6 +13535,15 @@ def _render_generative_variant(
             else:
                 overlays = _static_intro_overlays()
                 _apply_static_layout(overlays)
+            overlays.extend(
+                _context_sport_burn_dicts(
+                    context_label_elements,
+                    video_duration_s=base_dur,
+                )
+            )
+            if agent_text is None:
+                base["intro_layout"] = None
+                base["intro_mode"] = None
             _burn_agent_text_overlays_with_matte(overlays, final_path)
 
             # D20: copy-through detection ported from the fast-reburn path. A
@@ -19240,6 +19630,7 @@ def _finalize_job(
                     # whose authored text is edited through PUT /text-elements.
                     "text_elements": r.get("text_elements"),
                     "text_elements_user_edited": r.get("text_elements_user_edited"),
+                    "context_label_text_elements": r.get("context_label_text_elements"),
                     # Lyrics editor state — MUST survive finalization or the editor
                     # sees no lyric projections and capabilities report
                     # no_renderable_lyrics until the first re-render. Pinned by

@@ -29,6 +29,7 @@ from app.agents._runtime import RunContext, TerminalError
 from app.agents._schemas.creator_agent import (
     ApplySpeechCutCommand,
     AskUser,
+    ContextLabelIntent,
     CreativeStrategy,
     CreatorCraftBundle,
     CreatorEditPlan,
@@ -358,10 +359,11 @@ def _apply_explicit_render_intent(
         "opening_title": None,
         "font_family": None,
         "text_color": None,
+        "context_label": None,
     }
     title_match = re.search(
         r"\b(?:opening\s+)?(?:title|intro|hook)\s*(?:text|copy)?\s*"
-        r"(?:is|to|should\s+say|as|:)?\s*[\"'“](.{1,280}?)[\"'”]",
+        r"(?:is|to|should\s+say|as|:)?\s*[\"'“‘](.{1,280}?)[\"'”’]",
         request,
         re.IGNORECASE,
     )
@@ -415,6 +417,26 @@ def _apply_explicit_render_intent(
     if color_match:
         updates["text_color"] = normalize_creator_text_color(
             color_match.group(1) or color_match.group(2) or color_match.group(3)
+        )
+
+    # This is intent, not model-authored copy. The trusted render pipeline
+    # must resolve the actual label from server-side evidence before rendering.
+    sport_label_requested = bool(
+        re.search(
+            r"\b(?:name|label|text)\s+(?:of\s+)?(?:the\s+)?sports?\b"
+            r"|\b(?:label|identify|show|display|add)\b.{0,80}\b(?:each\s+)?sports?\b"
+            r"|\bsports?\b.{0,80}\b(?:bottom\s+right|bottom-right)\b",
+            request,
+            re.IGNORECASE,
+        )
+    )
+    if sport_label_requested:
+        updates["context_label"] = ContextLabelIntent(
+            kind="sport",
+            source="clip_metadata",
+            placement="bottom_right",
+            size="small",
+            per_clip=True,
         )
 
     if re.search(r"\b(?:fast|snappy|quick)\s+(?:pace|pacing)\b", request, re.IGNORECASE):

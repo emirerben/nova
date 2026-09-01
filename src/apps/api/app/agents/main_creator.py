@@ -29,7 +29,7 @@ from app.schemas.edit_proposal import (
     rejects_round_robin_cadence,
 )
 
-MAIN_CREATOR_PROMPT_VERSION = "2026-08-29-v10"
+MAIN_CREATOR_PROMPT_VERSION = "2026-09-01-v11"
 
 
 class MainCreatorInput(BaseModel):
@@ -85,7 +85,9 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             data = json.loads(raw_text)
             if not isinstance(data, dict):
                 raise ValueError("response is not an object")
-            action = CREATOR_AGENT_OUTPUT_ADAPTER.validate_python(data.get("action"))
+            action = CREATOR_AGENT_OUTPUT_ADAPTER.validate_python(
+                _repair_action_envelope(data.get("action"))
+            )
             if isinstance(action, ProposeStrategy):
                 # Share the compiler's exact policy: guided planning never
                 # echoes opaque IDs, while native planning remains bounded to
@@ -147,9 +149,35 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
         return "\nReturn only the documented JSON envelope with one valid action object."
 
 
+def _repair_action_envelope(action: object) -> object:
+    """Repair only the known harmless nested-summary envelope typo.
+
+    Some model responses put a proposal summary inside ``strategy`` although
+    the documented envelope puts it beside ``strategy``. Move only a string
+    summary when the destination is absent; all other malformed or unknown
+    fields remain subject to the strict adapter and fail closed.
+    """
+
+    if not isinstance(action, dict) or action.get("kind") != "propose_strategy":
+        return action
+    strategy = action.get("strategy")
+    if not isinstance(strategy, dict):
+        return action
+    nested_summary = strategy.get("summary")
+    if "summary" in action or not isinstance(nested_summary, str):
+        return action
+    repaired_strategy = dict(strategy)
+    repaired_strategy.pop("summary", None)
+    repaired = dict(action)
+    repaired["strategy"] = repaired_strategy
+    repaired["summary"] = nested_summary
+    return repaired
+
+
 __all__ = [
     "MAIN_CREATOR_PROMPT_VERSION",
     "MainCreatorAgent",
     "MainCreatorInput",
     "MainCreatorOutput",
+    "_repair_action_envelope",
 ]

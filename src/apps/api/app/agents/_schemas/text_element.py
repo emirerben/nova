@@ -1219,7 +1219,12 @@ def text_elements_for_variant(
             lyric_elems = [
                 elem for entry in snapshot if (elem := _element_from_lyric_snapshot(entry))
             ]
-    return _base_text_elements_for_variant(v) + lyric_elems
+    context_elems = coerce_text_elements(v.get("context_label_text_elements") or []) or []
+    return (
+        _base_text_elements_for_variant(v)
+        + [elem for elem in context_elems if not elem.removed]
+        + lyric_elems
+    )
 
 
 def _base_text_elements_for_variant(v: dict) -> list[TextElement]:

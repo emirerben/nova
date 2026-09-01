@@ -39,7 +39,11 @@ def _owned_path(media_id: str) -> str:
 
 
 def _exact_request() -> str:
-    return "title Emir Olympics, Rascal, yellow, best moments"
+    return (
+        "Create an edit of the best moments. Add the title ‘Emir Olympics’ using Rascal "
+        "font. Make the text yellow. Add a small text of the name of the sport being "
+        "played on the bottom right"
+    )
 
 
 def _request() -> Request:
@@ -62,6 +66,13 @@ def _exact_strategy_payload() -> dict:
         "opening_title": "Emir Olympics",
         "font_family": "Rascal",
         "text_color": "yellow",
+        "context_label": {
+            "kind": "sport",
+            "source": "clip_metadata",
+            "placement": "bottom_right",
+            "size": "small",
+            "per_clip": True,
+        },
         "story_structure": ["Use the best moments"],
     }
 
@@ -76,6 +87,25 @@ def test_exact_chat_request_is_promoted_to_typed_creator_fields() -> None:
     assert parsed.opening_title == "Emir Olympics"
     assert parsed.font_family == "Rascal"
     assert parsed.text_color == "#FFD24A"
+    assert parsed.context_label is not None
+    assert parsed.context_label.model_dump(mode="json") == {
+        "kind": "sport",
+        "source": "clip_metadata",
+        "placement": "bottom_right",
+        "size": "small",
+        "per_clip": True,
+    }
+
+
+def test_context_label_is_not_invented_from_unrelated_request() -> None:
+    from app.routes.creator_agent import _apply_explicit_render_intent
+
+    parsed = _apply_explicit_render_intent(
+        CreativeStrategy(context_label={"kind": "sport"}),
+        "Use the strongest moments and keep the energy up.",
+    )
+
+    assert parsed.context_label is None
 
 
 def test_production_repro_exact_copy_overrides_model_authored_style() -> None:
@@ -237,6 +267,13 @@ def test_exact_chat_request_mints_normal_content_plan_job_with_executable_constr
     assert persisted["opening_title"] == "Emir Olympics"
     assert persisted["font_family"] == "Rascal"
     assert persisted["text_color"] == "#FFD24A"
+    assert persisted["context_label"] == {
+        "kind": "sport",
+        "source": "clip_metadata",
+        "placement": "bottom_right",
+        "size": "small",
+        "per_clip": True,
+    }
     assert persisted["story_structure"] == ["Use the best moments"]
 
 
@@ -263,6 +300,8 @@ def test_creator_capability_manifest_cannot_promise_unadvertised_exact_changes(
     assert plan.strategy.opening_title == "Emir Olympics"
     assert plan.strategy.font_family == "Rascal"
     assert plan.strategy.text_color == "#FFD24A"
+    assert plan.strategy.context_label is not None
+    assert plan.strategy.context_label.placement == "bottom_right"
     assert plan.strategy.story_structure == ["Use the best moments"]
     # No unadvertised command family may be synthesized from exact fields.
     assert {command.command for command in plan.commands} <= {

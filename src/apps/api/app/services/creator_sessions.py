@@ -474,6 +474,8 @@ def compile_active_plan(
         receipt["creator_request"] = clean_request
     if strategy.mixed_media_timing is not None:
         receipt["mixed_media_timing"] = strategy.mixed_media_timing.model_dump(mode="json")
+    if strategy.context_label is not None:
+        receipt["context_label"] = strategy.context_label.model_dump(mode="json")
     if strategy.montage_cadence is not None:
         receipt["montage_cadence"] = strategy.montage_cadence.model_dump(mode="json")
     receipt["plan_hash"] = canonical_context_hash(receipt)

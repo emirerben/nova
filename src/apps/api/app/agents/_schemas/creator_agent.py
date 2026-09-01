@@ -202,6 +202,22 @@ CreativePace = Literal["relaxed", "balanced", "fast"]
 AudioStrategy = Literal["licensed_music", "original_audio", "voiceover"]
 CaptionStyle = Literal["none", "clean", "kinetic", "karaoke", "editorial", "auto"]
 OptionalTreatment = Literal["overlays", "sfx", "transitions", "looks"]
+ContextLabelKind = Literal["sport"]
+ContextLabelSource = Literal["clip_metadata", "user_provided"]
+
+
+class ContextLabelIntent(_CreatorModel):
+    """Bounded intent for a trusted pipeline-resolved contextual label.
+
+    This carries no label text. Clip metadata is descriptive evidence and must
+    be resolved and confirmed by the trusted render pipeline before rendering.
+    """
+
+    kind: ContextLabelKind = "sport"
+    source: ContextLabelSource = "clip_metadata"
+    placement: Literal["bottom_right"] = "bottom_right"
+    size: Literal["small"] = "small"
+    per_clip: bool = True
 
 
 class CreativeStrategy(_CreatorModel):
@@ -245,6 +261,13 @@ class CreativeStrategy(_CreatorModel):
         validation_alias=AliasChoices("text_color", "intro_text_color", "color"),
         max_length=16,
         description="Confirmed intro color (#RRGGBB or a supported color alias).",
+    )
+    context_label: ContextLabelIntent | None = Field(
+        default=None,
+        description=(
+            "Confirmed request for a server-resolved contextual label; this carries "
+            "no model-authored label text."
+        ),
     )
     pacing: CreativePace = "balanced"
     target_duration_s: int = Field(default=24, ge=3, le=60, exclude_if=lambda value: value == 24)
@@ -1006,6 +1029,7 @@ __all__ = [
     "CreatorEditPlan",
     "CreatorLimits",
     "CreatorMediaRef",
+    "ContextLabelIntent",
     "CreatorRevisionProposal",
     "CreatorReviewEvidence",
     "CreatorReviewReceipt",

@@ -2396,6 +2396,21 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
             action.strategy.render_program != "native"
         ):
             failures.append("audio-led strategy is not native")
+        normalized_request = " ".join(input.user_message.casefold().split())
+        if "sport" in normalized_request and (
+            "bottom right" in normalized_request or "bottom-right" in normalized_request
+        ):
+            context_label = action.strategy.context_label
+            if context_label is None:
+                failures.append("explicit per-clip sport label request was dropped")
+            elif (
+                context_label.kind != "sport"
+                or context_label.source != "clip_metadata"
+                or context_label.placement != "bottom_right"
+                or context_label.size != "small"
+                or context_label.per_clip is not True
+            ):
+                failures.append("sport label request was not preserved exactly")
         return failures
     if agent_name == "nova.plan.conformance_feedback":
         return check_conformance_feedback(output)
