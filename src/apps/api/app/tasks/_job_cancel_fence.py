@@ -61,11 +61,21 @@ def delete_task_owned_outputs(job_id: str, object_paths: Iterable[str]) -> None:
     outside the private ``task-runs`` namespace makes an accidental future call
     with a stable Job key fail closed instead of deleting forensic or user data.
     """
+    from app.services.job_storage_paths import JOB_POSTER_PATH_PREFIX  # noqa: PLC0415
     from app.storage import delete_object_best_effort  # noqa: PLC0415
+
+    # Extracted posters are job-scoped but live outside ``task-runs`` (they sit
+    # on the lifecycle-exempt poster prefix so a source video's expiry rule
+    # cannot delete them). They are per-attempt outputs like any other, and
+    # refusing them here would strand a JPEG on a prefix nothing ever expires.
+    poster_prefix = JOB_POSTER_PATH_PREFIX.format(job_id=job_id)
 
     for object_path in dict.fromkeys(path for path in object_paths if path):
         owns_job_segment = f"/{job_id}/" in f"/{object_path.lstrip('/')}"
-        if TASK_RUN_PATH_SEGMENT not in object_path or not owns_job_segment:
+        job_scoped_poster = object_path.startswith(poster_prefix) and ".." not in object_path
+        if (TASK_RUN_PATH_SEGMENT not in object_path and not job_scoped_poster) or (
+            not owns_job_segment
+        ):
             log.error(
                 "task_output_cleanup_refused_non_owned_path",
                 job_id=job_id,

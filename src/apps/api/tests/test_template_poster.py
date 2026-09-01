@@ -7,8 +7,10 @@ Behaviour under test (post brightness-retry change):
 - If every FFmpeg attempt fails entirely, raises PosterExtractionError.
 """
 
+import hashlib
 import shutil
 import subprocess
+import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -251,6 +253,78 @@ def test_video_poster_object_path_is_deterministic():
     assert poster_object_path("jobs/job-1/output.mp4") == "jobs/job-1/output.mp4.poster.jpg"
 
 
+def test_video_poster_object_path_uses_durable_prefix_with_job_id():
+    """A job-scoped poster must not inherit the video prefix's lifecycle rule."""
+    from app.services.template_poster import poster_object_path
+
+    job_id = "4bfd1ff0-3f27-4a3c-9f6c-9f8b8d1a1a11"
+    key = poster_object_path("music-jobs/job-1/output.mp4", job_id=job_id)
+
+    digest = hashlib.sha1(b"music-jobs/job-1/output.mp4").hexdigest()
+    assert key == f"job-posters/{job_id}/{digest}.poster.jpg"
+    assert key.endswith(".poster.jpg")
+
+
+def test_video_poster_object_path_is_deterministic_per_source_object():
+    """Same source ⇒ same key, so a renderer and a repair collide benignly."""
+    from app.services.template_poster import poster_object_path
+
+    first = poster_object_path("jobs/job-1/output.mp4", job_id="job-1")
+    second = poster_object_path("jobs/job-1/output.mp4", job_id="job-1")
+    other_source = poster_object_path("jobs/job-1/base.mp4", job_id="job-1")
+    other_job = poster_object_path("jobs/job-1/output.mp4", job_id="job-2")
+
+    assert first == second
+    assert first != other_source
+    assert first != other_job
+
+    # A UUID caller must reach the same durable key as its string form, not be
+    # silently demoted to the lifecycle-bound sibling.
+    job_uuid = uuid.uuid4()
+    assert poster_object_path("jobs/j/output.mp4", job_id=job_uuid) == poster_object_path(
+        "jobs/j/output.mp4", job_id=str(job_uuid)
+    )
+    assert poster_object_path("jobs/j/output.mp4", job_id=job_uuid).startswith(
+        f"job-posters/{job_uuid}/"
+    )
+
+
+@pytest.mark.parametrize(
+    "job_id",
+    [None, "", "   ", "../escape", "job/nested", "job id"],
+    ids=["none", "empty", "blank", "traversal", "slash", "space"],
+)
+def test_video_poster_object_path_falls_back_to_legacy_sibling(job_id):
+    """Unusable ids keep today's sibling key instead of escaping the prefix."""
+    from app.services.template_poster import poster_object_path
+
+    assert (
+        poster_object_path("jobs/job-1/output.mp4", job_id=job_id)
+        == "jobs/job-1/output.mp4.poster.jpg"
+    )
+
+
+def test_upload_video_poster_writes_durable_key_when_job_id_is_known(monkeypatch, tmp_path):
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"mp4")
+    uploads: list[tuple[bytes, str]] = []
+    monkeypatch.setattr("app.services.template_poster.extract_poster_bytes", lambda _: b"jpeg")
+    monkeypatch.setattr(
+        "app.services.template_poster.upload_bytes_public_read",
+        lambda data, path, content_type: uploads.append((data, path)),
+    )
+
+    poster_path = upload_video_poster(
+        str(source),
+        "music-jobs/job-1/output.mp4",
+        job_id="job-1",
+    )
+
+    digest = hashlib.sha1(b"music-jobs/job-1/output.mp4").hexdigest()
+    assert poster_path == f"job-posters/job-1/{digest}.poster.jpg"
+    assert uploads == [(b"jpeg", poster_path)]
+
+
 def test_generate_and_upload_from_gcs_downloads_exact_video_key(monkeypatch):
     downloaded = {}
 
@@ -261,13 +335,48 @@ def test_generate_and_upload_from_gcs_downloads_exact_video_key(monkeypatch):
     monkeypatch.setattr("app.services.template_poster.download_to_file", fake_download)
     monkeypatch.setattr(
         "app.services.template_poster.upload_video_poster",
-        lambda local_path, video_path: f"{video_path}.poster.jpg",
+        lambda local_path, video_path, *, job_id=None: f"{video_path}.poster.jpg:{job_id}",
     )
 
     result = generate_and_upload_from_gcs("generative-jobs/job-1/output.mp4", job_id="job-1")
 
-    assert result == "generative-jobs/job-1/output.mp4.poster.jpg"
+    # The job id must reach the key derivation, not just the log line.
+    assert result == "generative-jobs/job-1/output.mp4.poster.jpg:job-1"
     assert downloaded["path"] == "generative-jobs/job-1/output.mp4"
+
+
+def test_generate_and_upload_from_gcs_returns_durable_relative_key(monkeypatch):
+    """Lane contract: the caller gets a relative key back, never a signed URL."""
+    monkeypatch.setattr("app.services.template_poster.download_to_file", lambda *_args: None)
+    monkeypatch.setattr("app.services.template_poster.os.path.isfile", lambda _path: True)
+    monkeypatch.setattr("app.services.template_poster.extract_poster_bytes", lambda _: b"jpeg")
+    monkeypatch.setattr(
+        "app.services.template_poster.upload_bytes_public_read",
+        lambda *_args, **_kwargs: "https://storage.googleapis.com/bucket/signed",
+    )
+
+    job_id = "4bfd1ff0-3f27-4a3c-9f6c-9f8b8d1a1a11"
+    result = generate_and_upload_from_gcs(
+        f"generative-jobs/{job_id}/output.mp4",
+        job_id=job_id,
+        source_kind="poster_repair",
+    )
+
+    digest = hashlib.sha1(f"generative-jobs/{job_id}/output.mp4".encode()).hexdigest()
+    assert result == f"job-posters/{job_id}/{digest}.poster.jpg"
+
+
+def test_durable_poster_key_is_readable_through_the_job_output_allowlist():
+    """The new prefix must survive the ownership check on the read path."""
+    from types import SimpleNamespace
+
+    from app.services.job_storage_paths import owned_job_output_path
+    from app.services.template_poster import poster_object_path
+
+    job = SimpleNamespace(id=uuid.uuid4(), user_id=uuid.uuid4())
+    key = poster_object_path(f"music-jobs/{job.id}/output.mp4", job_id=str(job.id))
+
+    assert owned_job_output_path(key, job) == key
 
 
 def test_generate_and_upload_from_gcs_is_fail_open_when_poster_extraction_fails(monkeypatch):

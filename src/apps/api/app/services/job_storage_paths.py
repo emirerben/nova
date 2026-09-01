@@ -13,11 +13,21 @@ from urllib.parse import unquote, urlparse
 from app.config import settings
 from app.models import Job
 
+# Job-scoped, lifecycle-exempt home for extracted posters. Named here rather
+# than in services/template_poster.py so cleanup paths can bound a delete to
+# this prefix without importing the ffmpeg/storage-heavy poster module.
+JOB_POSTER_PATH_PREFIX = "job-posters/{job_id}/"
+
 JOB_OUTPUT_PREFIXES = (
     "generative-jobs/{job_id}/",
     "jobs/{job_id}/",
     "music-jobs/{job_id}/",
     "auto-music-jobs/{job_id}/",
+    # Posters live off the video prefixes so a GCS lifecycle rule written for
+    # the source video cannot delete the thumbnail (see JOB_POSTER_PREFIX in
+    # services/template_poster.py). Legacy sibling poster keys stay readable
+    # through the video prefixes above; the stored path is authoritative.
+    JOB_POSTER_PATH_PREFIX,
 )
 
 

@@ -517,6 +517,28 @@ The variant sits "rendering" until the 60-min reaper (`tasks/reaper.py`)
 converts it to a failed badge; the user recovers by re-tapping Apply. See
 agents/DECISIONS.md (2026-07-11) for the reusable rule.
 
+### Subtitled text lane (`SUBTITLED_TEXT_LANE_ENABLED`)
+
+Compose order is the whole contract: user-authored text elements burn (Skia)
+onto the caption-free base FIRST, captions LAST so they are always topmost.
+`_compose_subtitled_final` owns that order, and all three write paths route
+through it — caption Apply, text fast-reburn, and re-transcribe. A subtitled
+text fast-reburn mints a NEW GCS key and deletes the old one rather than
+overwriting, because a CDN would otherwise serve the stale frame.
+
+The Vercel twin `NEXT_PUBLIC_SUBTITLED_TEXT_LANE_ENABLED` gates
+`isTextLaneEligible`: subtitled stays excluded from browser instant-edit, so
+every subtitled text change is a server Apply. Flip Fly first, then Vercel.
+
+### Transparent overlay cards (`MEDIA_OVERLAY_ALPHA_ENABLED`)
+
+Alpha detection is apply-time (`image_has_alpha`) — the render decides from the
+actual bytes, not from stored analysis. The `has_alpha` field in the analysis
+JSONB (v4) is informational only, and staleness is kind-aware so adding it did
+not invalidate existing v3 *video* analyses. Image pip cards only: fullscreen
+always flattens and video cards are unaffected; the final composite stays
+pinned to `yuv420p`.
+
 ## Speech map + SFX auto-suggestions (word-level sound design)
 
 **Speech map.** `_variants_for_response` (routes/generative_jobs.py) attaches

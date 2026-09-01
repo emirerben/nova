@@ -317,6 +317,20 @@ class Settings(BaseSettings):
         "+ worker restart — byte-identical to pre-feature behavior.",
     )
 
+    speech_cleanup_budget_clamp_enabled: bool = Field(
+        default=True,
+        description="Explicit-consent removal clamp for required_v1 speech cleanup "
+        "(plans/019 addendum). When a creator turns Speech cleanup ON and the "
+        "proposed removal exceeds the auto-path safety rail, the plan is clamped "
+        "to MAX_REMOVAL_FRAC_REQUIRED (largest removals first, MIN_OUTPUT_S "
+        "floor) instead of hard-failing the render with unsafe_plan — filler-"
+        "heavy clips are the feature's target and must produce a cleaned video. "
+        "legacy_auto/off_v1 paths are untouched. Emergency rollback ONLY (restores "
+        "the deterministic unsafe_plan render failure for over-budget clips): "
+        "`fly secrets set SPEECH_CLEANUP_BUDGET_CLAMP_ENABLED=false --app "
+        "nova-video` + worker restart.",
+    )
+
     retake_cut_enabled: bool = Field(
         default=False,
         description="Retake/restart cutting inside the silence-cut stage "
@@ -1028,6 +1042,35 @@ class Settings(BaseSettings):
     # Keep response compatibility during the backend-first rollout. Set true
     # only after both queued-aware upload surfaces are deployed.
     pool_asset_queued_status_enabled: bool = False
+
+    poster_ondemand_repair_enabled: bool = Field(
+        default=False,
+        description="On-demand library poster repair. When true, "
+        "POST /me/jobs/posters/refresh stops being a pure re-signer: for owned "
+        "ready jobs whose preview has no poster it stamps a `_poster_repair` "
+        "marker and enqueues `tasks.repair_job_poster`, which extracts + uploads "
+        "the missing poster and persists the RELATIVE key into the same field the "
+        "render path writes. Default false (repo rollout culture: "
+        "default-false-then-flip) — already-deployed frontends poll this endpoint "
+        "in bursts, so a default-true ship would be a zero-canary activation. Off "
+        "is byte-identical to the pre-feature endpoint: no marker writes, no "
+        "dispatch, and any already-queued task re-checks this flag and no-ops. "
+        "Enable AFTER setting POSTER_REPAIR_QUEUE: `fly secrets set "
+        "POSTER_ONDEMAND_REPAIR_ENABLED=true --app nova-video` + machine restart "
+        "(api + worker). Rollback: `fly secrets set "
+        "POSTER_ONDEMAND_REPAIR_ENABLED=false --app nova-video` + restart.",
+    )
+    poster_repair_queue: str = Field(
+        default="celery",
+        description="Celery queue for `tasks.repair_job_poster`. The code default "
+        "keeps local `dev-auto.sh` working (it consumes no autoplace queue). In "
+        "production set POSTER_REPAIR_QUEUE=autoplace-jobs BEFORE flipping "
+        "POSTER_ONDEMAND_REPAIR_ENABLED so full-MP4 downloads land on the 2GB "
+        "autoplace machine — never on the 1GB `light`/Beat machine (the "
+        "2026-08-02 OOM class) and never head-of-line-blocking the concurrency=1 "
+        "render worker. Roll back with `fly secrets set POSTER_REPAIR_QUEUE=celery "
+        "--app nova-video` + machine restart (api + worker).",
+    )
 
     # Zero-click auto-apply (plan 007, decision D2-B + G3-A): after a plan-item
     # generate render finalizes, matched visuals are burned in WITHOUT review on

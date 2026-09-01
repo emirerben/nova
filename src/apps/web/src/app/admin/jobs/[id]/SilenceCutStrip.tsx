@@ -6,7 +6,8 @@
  * Job.assembly_plan.variants[i].silence_cut:
  *
  *   { removed: [{ start_s, end_s, reason }], time_saved_s,
- *     original_duration_s, version }
+ *     original_duration_s, version,
+ *     clamped?, proposed_removed_s?, clamp_budget_s? }  // required_v1 budget clamp
  *
  * The strip spans the ORIGINAL (pre-cut) duration; each removed range is a
  * band colored by reason, positioned proportionally. A header legend names
@@ -42,6 +43,14 @@ export interface SilenceCut {
    */
   original_duration_s?: number | null;
   version?: number;
+  /**
+   * Explicit-consent budget clamp (plans/019 addendum) — present only when a
+   * required_v1 over-budget plan was clamped: proposed vs delivered removal
+   * plus the consent budget, all in seconds.
+   */
+  clamped?: boolean;
+  proposed_removed_s?: number;
+  clamp_budget_s?: number;
 }
 
 // ── Band layout (pure, exported for tests) ───────────────────────────────────

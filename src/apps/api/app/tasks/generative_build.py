@@ -83,6 +83,7 @@ from app.services.job_phases import (
     record_phase,
     record_sub_phase,
 )
+from app.services.job_storage_paths import JOB_POSTER_PATH_PREFIX
 from app.services.speech_cleanup import SpeechCleanupFailure
 from app.services.template_poster import generate_and_upload_from_gcs
 from app.services.video_poster_cleanup import (
@@ -938,12 +939,20 @@ def _delete_cancelled_job_objects(job_id: str, paths: list[str]) -> None:
     to cancellation therefore owns its cleanup; merely dropping the DB write
     would leak the uploaded object forever.  Callers must pass only keys created
     by the losing attempt; this helper never walks persisted Job state.
+
+    Extracted posters are job-scoped but live on their own lifecycle-exempt
+    prefix, so they must be accepted here too — widening only the caller's
+    filter leaves the durable keys to be silently dropped at this boundary and
+    orphaned on a prefix nothing ever expires.
     """
-    prefix = f"generative-jobs/{job_id}/"
+    prefixes = (
+        f"generative-jobs/{job_id}/",
+        JOB_POSTER_PATH_PREFIX.format(job_id=job_id),
+    )
     exact_paths = {
         path
         for path in paths
-        if isinstance(path, str) and path.startswith(prefix) and ".." not in path
+        if isinstance(path, str) and path.startswith(prefixes) and ".." not in path
     }
     if not exact_paths:
         return
@@ -975,7 +984,13 @@ def _delete_generated_poster_objects_if_unreferenced(
     wins the row-lock race. Both attempts derive the same poster sibling; the
     losing attempt must not delete the winner's poster during cleanup.
     """
-    prefix = f"generative-jobs/{job_id}/"
+    # Legacy posters are siblings of the variant video; durable posters live on
+    # the lifecycle-exempt job-poster prefix. Both are job-scoped and both must
+    # be collectable, or a losing reburn strands a JPEG that nothing expires.
+    prefixes = (
+        f"generative-jobs/{job_id}/",
+        JOB_POSTER_PATH_PREFIX.format(job_id=job_id),
+    )
 
     def is_generated_poster(path: str) -> bool:
         if path.endswith(".poster.jpg"):
@@ -986,7 +1001,7 @@ def _delete_generated_poster_objects_if_unreferenced(
         path
         for path in paths
         if isinstance(path, str)
-        and path.startswith(prefix)
+        and path.startswith(prefixes)
         and is_generated_poster(path)
         and ".." not in path
     }
@@ -13858,6 +13873,7 @@ def _silence_cut_analysis(
                 MIN_CLIP_S,
                 SILENCE_CUT_VERBATIM_PROMPT,
                 build_cut_plan,
+                clamp_metadata,
                 no_op_plan,
             )
             from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
@@ -13906,6 +13922,16 @@ def _silence_cut_analysis(
                     job_id=job_id,
                     source_fingerprint=source_fingerprint or cache_key or clip_path,
                 )
+            # Explicit opt-in (required_v1) clamps an over-budget removal set to
+            # the consent budget instead of bailing — the bailout would be
+            # escalated to a deterministic unsafe_plan render failure by every
+            # strict caller (plans/019 addendum). Kill switch restores the
+            # pre-clamp hard-fail; legacy_auto keeps the bailout rail untouched.
+            over_budget_policy = (
+                "clamp"
+                if analysis_policy == "required_v1" and settings.speech_cleanup_budget_clamp_enabled
+                else "bailout"
+            )
             plan = build_cut_plan(
                 transcript.words,
                 silences,
@@ -13913,6 +13939,7 @@ def _silence_cut_analysis(
                 retake_spans=retake_spans,
                 forced_removals=forced_removals,
                 include_silence_and_fillers=silence_enabled,
+                over_budget_policy=over_budget_policy,
             )
             review_candidates = [
                 candidate
@@ -13927,6 +13954,19 @@ def _silence_cut_analysis(
                 # Safety rail tripped → the plan is a no-op; callers render uncut.
                 record_pipeline_event(
                     "silence_cut", "silence_cut_bailout", {"reason": plan.bailout_reason}
+                )
+            if plan.clamped:
+                # Explicit-consent budget applied: the proposed removal total is
+                # traced so the admin view can show how much cleanup was asked
+                # for vs delivered (removal-fraction contract from the fix).
+                record_pipeline_event(
+                    "silence_cut",
+                    "silence_cut_clamped",
+                    {
+                        "time_saved_s": round(plan.time_saved_s, 3),
+                        "removal_count": len(plan.removed),
+                        **clamp_metadata(plan),
+                    },
                 )
             entry.update(
                 words=list(transcript.words),

@@ -41,7 +41,16 @@ import { CreatorWorkspacePanel } from "./CreatorWorkspacePanel";
 const CREATOR_WORKSPACE_UPLOADS_ENABLED =
   process.env.NEXT_PUBLIC_MAIN_CREATOR_AGENT_FREEFORM_UPLOADS_ENABLED === "true";
 
-export const POSTER_RECOVERY_DELAYS_MS = [1_500, 3_000, 6_000, 12_000, 24_000] as const;
+// Missing-poster budget. The two slow tail attempts exist because
+// POST /me/jobs/posters/refresh now ENQUEUES a server-side poster repair
+// (download the source MP4, extract a frame, upload, persist the key), which
+// routinely takes longer than the old ~46s ladder. Without the tail, a repair
+// that finishes at t=50s is only visible after a full page reload.
+export const POSTER_RECOVERY_DELAYS_MS = [
+  1_500, 3_000, 6_000, 12_000, 24_000, 60_000, 120_000,
+] as const;
+// Separate budget: transport/network failures of the refresh call itself.
+// Deliberately NOT extended — a dead network is not a slow repair.
 export const POSTER_REFRESH_TRANSPORT_DELAYS_MS = [1_500, 3_000, 6_000, 12_000, 24_000] as const;
 export const POSTER_ERROR_REFRESH_DEBOUNCE_MS = 400;
 export const POSTER_REFRESH_TIMEOUT_MS = 10_000;
@@ -85,11 +94,12 @@ interface PosterRecoveryState {
 async function refreshPostersWithTimeout(
   jobIds: string[],
   controller: AbortController,
+  brokenJobIds: string[] = [],
 ) {
   let timeoutId: number | null = null;
   try {
     return await Promise.race([
-      refreshMyJobPosters(jobIds, controller.signal),
+      refreshMyJobPosters(jobIds, controller.signal, brokenJobIds),
       new Promise<never>((_, reject) => {
         timeoutId = window.setTimeout(() => {
           controller.abort();
@@ -335,6 +345,17 @@ export function WorkspaceHome({ plan, onRefresh, onError }: WorkspaceHomeProps) 
       const requestedJobsById = new Map(
         jobsRef.current.map((job) => [job.id, job]),
       );
+      // Posters the browser was handed a URL for and still could not load —
+      // usually a lifecycle-deleted poster object. Reported so the server can
+      // verify the object and either re-repair it or mark it terminal; a
+      // missing-poster job (no URL at all) is not "broken", just unbuilt.
+      const brokenPosterJobIds = requestedIds.filter((jobId) => {
+        const currentJob = requestedJobsById.get(jobId);
+        if (!currentJob?.poster_url) return false;
+        return failedPosterKeysRef.current.has(
+          libraryPosterRecoveryKey(currentJob),
+        );
+      });
 
       const recordTransportFailure = (jobId: string, failedAt: number) => {
         const currentJob = requestedJobsById.get(jobId);
@@ -350,7 +371,7 @@ export function WorkspaceHome({ plan, onRefresh, onError }: WorkspaceHomeProps) 
             : Infinity;
       };
 
-      void refreshPostersWithTimeout(requestedIds, controller)
+      void refreshPostersWithTimeout(requestedIds, controller, brokenPosterJobIds)
         .then(({ jobs: refreshedJobs }) => {
           if (requestId !== posterRefreshRequestIdRef.current) return;
           const completedAt = Date.now();

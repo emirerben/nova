@@ -137,3 +137,25 @@ def test_render_orchestrator_time_limits_under_visibility_timeout() -> None:
             f"{task_name}.soft_time_limit ({soft}) > time_limit ({hard}); the soft "
             "grace period must precede the hard SIGKILL."
         )
+
+
+def test_poster_repair_time_limits_under_visibility_timeout() -> None:
+    """`tasks.repair_job_poster` is not a render orchestrator (deliberately kept
+    out of `_RENDER_ORCHESTRATORS`, which is documented as render-only), but it
+    runs `acks_late` and downloads a full MP4 — so the same redelivery
+    invariant applies: the soft limit must fire before the broker can hand the
+    same job to a second worker.
+    """
+    visibility_timeout = _extract_visibility_timeout(_read_source("app/worker.py"))
+    decorator = _extract_celery_task_decorator(
+        _read_source("app/tasks/poster_repair.py"),
+        "tasks.repair_job_poster",
+    )
+    hard = _extract_limit_kwarg(decorator, "time_limit")
+    soft = _extract_limit_kwarg(decorator, "soft_time_limit")
+
+    assert (soft, hard) == (150, 180), (
+        "poster repair's budget is one bounded download + one FFmpeg seek; "
+        "raising it needs a conscious decision, not a drift."
+    )
+    assert soft <= hard < visibility_timeout

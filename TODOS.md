@@ -8,6 +8,28 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## Speech-cleanup budget clamp — deferrals (from red-team review, 2026-08-31)
+
+### Clamp trim boundaries vs tokenless acoustic-filler regions
+**What:** `_clamp_removals_to_budget` snaps trimmed boundaries out of WORD
+interiors only; a boundary landing inside a `filler_acoustic` region (soundful
+gap whisper left tokenless) or the acoustic segment of a merged removal can
+still produce a mid-vocalization jump cut, and the snap always pads with
+`PAD_S` (0.12) even where the original cut wore `PAD_ACOUSTIC_S` (0.15).
+Low frequency, minor audible artifact — needs pre-merge component provenance
+carried through `_merge_removals` to fix cleanly.
+**Priority:** P2
+
+### Envelope mode gives up merged-carrier flanks
+**What:** When a forced/manual cut merges into an over-budget detected silence
+block, the carrier shrinks to the forced envelope (coverage preserved, no
+bailout) but the detected flanks are given up entirely instead of competing
+for the leftover budget — cleanup under-delivers on exactly those clips.
+Recovering flanks needs envelope-anchored trims to avoid word-free micro
+keep-fragments between the flank cut and the envelope cut.
+**Priority:** P3
+**Decision:** 726ad4cf (gstack decision log, 2026-08-31)
+
 ## Guided-story / guided-edit train — deferred follow-ups (from #847–#862, backlog audit 2026-08-21)
 
 Context: the guided-story/guided-edit train (#847–#862, the AI-designed-edit
@@ -1840,3 +1862,80 @@ that gate + test together, consciously.
 **Effort:** S (CC: ~20min)
 **Priority:** P3
 **Depends on:** —
+
+## Library poster durability — follow-ups (from the poster-repair plan, 2026-08-30)
+
+Three items scoped out of the on-demand poster-repair PR (durable
+`job-posters/` prefix + `repair_job_poster` actuator + client slow tail).
+Each is real but orthogonal to making blank tiles self-heal — one is a
+product decision, two are known debt the repair work exposed. Root-cause
+investigation and decision log: `~/.claude/plans/investigate-bug-video-thumbnails-jiggly-snail.md`.
+
+### Retention decision: should music/template job SOURCES outlive their lifecycle windows?
+**What:** Posters now live on the lifecycle-exempt `job-posters/` prefix, so
+they survive their source video. A music-mode tile older than 24h (or a
+template-mode tile older than 30d) therefore shows a real thumbnail for a
+source MP4 that `infra/gcs-lifecycle.json` already deleted: playback fails
+cleanly, but the tile looks playable right up until the user taps it.
+**Why:** The honest-failure behavior is acceptable, not good — the user sees
+a video that they cannot play, with no explanation of why it evaporated.
+This is a product-level retention question (what does "your videos" promise
+for a user-owned job?), not a bug with a local fix.
+**How:** Decide first: extend the source lifetime for user-owned jobs
+(lifecycle rule change on `music-jobs/*` / `jobs/*`, or copy the selected
+output to a durable prefix at render time), OR suppress dead-source tiles in
+the library (source `object_exists` check feeding a terminal tile state).
+Then implement the chosen branch. Start: `infra/gcs-lifecycle.json` (the
+24h/30d rules), `routes/me.py` playback-url (where the dead source surfaces
+today).
+**Effort:** M (CC: ~1h once the product call is made; the decision is the
+long pole)
+**Priority:** P2
+**Depends on:** durable `job-posters/` prefix shipped (this train).
+
+### Library list never refetches after mount
+**What:** `WorkspaceHome` calls `listMyJobs()` exactly once, from a
+mount-effect `load()`. There is no focus/`visibilitychange` revalidation and
+no polling, so a tile that was "Rendering…" when the page loaded stays
+"Rendering…" until the user manually reloads — even after the render has
+long since finished. Only poster metadata self-updates (via the bounded
+poster-recovery scheduler), because that has its own refresh endpoint.
+**Why:** The user's mental model is "my video will appear here when it's
+done"; today it appears only if they happen to reload after it finishes.
+Cheap to fix, and it removes the last reason a correct backend state stays
+invisible in the grid.
+**How:** Revalidate `load()` on window focus + `visibilitychange`, with a
+minimum interval so tab-flipping can't hammer `GET /me/jobs`; optionally
+poll while any loaded job is non-terminal, stopping when none are. Follow
+the plans/014 polling conventions rather than inventing a new cadence, and
+keep the poster-recovery refs intact across a refetch (they are keyed by
+poster identity, so a merge-in-place update is safe). Start:
+`WorkspaceHome.tsx` `load()`.
+**Effort:** S (CC: ~30min)
+**Priority:** P3
+**Depends on:** —
+
+### Preview-resolution logic exists in three places
+**What:** "Which object is this job's preview?" — ready variants by rank →
+top-level plan → lowest-ranked ready `JobClip` — is now implemented three
+times: `_preview` in `routes/me.py`, `_candidates_for_job` in
+`scripts/backfill_video_posters.py`, and the new `app/tasks/poster_repair.py`.
+The triplication was accepted knowingly for v1 (see the plan's D-review, code
+quality [P2]) because the layering rule at the top of
+`app/services/job_storage_paths.py` forbids a background task importing the
+API surface.
+**Why:** Three copies of one resolution order means a future change to
+variant ranking (or to what counts as "ready") silently diverges between what
+the library shows, what the backfill repairs, and what the on-demand repair
+generates — a class of bug that is invisible until a user reports a
+thumbnail that doesn't match the video.
+**How:** Extract one service-layer resolver (job row + clips in, preview
+candidate out) that routes and tasks can both import without either
+depending on the other, then delete the three private copies. Keep the
+existing behavior pinned by the current tests while doing it — this is a
+consolidation, not a redesign. Start: the
+`services/job_storage_paths.py` neighborhood (same layer, same import
+direction).
+**Effort:** M (CC: ~45min)
+**Priority:** P3
+**Depends on:** `app/tasks/poster_repair.py` shipped (this train).

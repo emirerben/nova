@@ -421,10 +421,17 @@ def test_single_video_finalizer_retargets_receipts_before_failed_cleanup(monkeyp
         "_try_upload_video_poster",
         lambda _local, remote, **_kwargs: new_poster if remote == new_source else new_base_poster,
     )
+    # Keyword-only `job_id`, recorded rather than swallowed: a `**_kwargs` stub
+    # keeps passing if the call site stops threading the job id, silently
+    # restoring the lifecycle-bound sibling key this change removes.
+    seen_poster_job_ids: list[str] = []
     monkeypatch.setattr(
         template_orchestrate,
         "poster_object_path",
-        lambda remote: new_base_poster if remote == new_base_source else _poster(remote, 99),
+        lambda remote, *, job_id: (
+            seen_poster_job_ids.append(job_id)
+            or (new_base_poster if remote == new_base_source else _poster(remote, 99))
+        ),
     )
     monkeypatch.setattr(template_orchestrate, "copy_object", lambda *_args: None)
 
@@ -441,6 +448,10 @@ def test_single_video_finalizer_retargets_receipts_before_failed_cleanup(monkeyp
     )
 
     assert job.status == "template_ready"
+    # The base-poster key must be job-scoped, or it lands back on a prefix a
+    # lifecycle rule deletes.
+    assert seen_poster_job_ids, "poster_object_path was never called with a job id"
+    assert set(seen_poster_job_ids) == {job_id}
     _assert_primary_chain(
         job,
         prior_paths,

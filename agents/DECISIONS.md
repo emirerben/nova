@@ -154,6 +154,61 @@ Pinned by `test_variants_for_response_resigns_ready_variant` in
 `tests/routes/test_generative_jobs.py`. Admin debug/list views still show stored (stale)
 URLs — follow-up.
 
+### [2026-08-31] Posters moved off the video prefix — a thumbnail must outlive its source (v0.59.1.0)
+
+**Incident:** the mobile Library showed older videos stuck behind a permanent
+spinner. Two independent causes, both storage-shaped.
+
+1. Posters were written as a sibling of the video (`<source>.poster.jpg`), so they
+   inherited the source's lifecycle rule. A music-mode poster died at 24h with
+   `music-jobs/*`, a template-mode poster at 30d with `jobs/*` — days after the
+   video was made, the tile went blank with no way back.
+2. Videos rendered before the poster feature existed never had a poster at all,
+   and nothing in the product could mint one after the fact. The batch **Video
+   Poster Backfill** workflow was the only actuator, and it had never been
+   dispatched (zero runs as of 2026-08-30).
+
+**Decision:** posters live on their own job-scoped, lifecycle-exempt prefix,
+`job-posters/{job_id}/{sha1(source)}.poster.jpg`, named once in
+`services/job_storage_paths.JOB_POSTER_PATH_PREFIX` so cleanup paths can bound a
+delete to it without importing the ffmpeg-heavy poster module. The prefix matches
+no rule in `infra/gcs-lifecycle.json`, so the thumbnail can no longer be deleted
+by the retention rule of the video it was extracted from. Legacy sibling keys stay
+readable; the key stored on the Job row is authoritative. Writers:
+`services/template_poster.py` plus every render path that mints a poster —
+`tasks/generative_build.py` (the main Library path), the template, music, and
+auto-music orchestrators, `scripts/backfill_video_posters.py`, and
+`tasks/poster_repair.py`.
+
+**Actuator:** `app/tasks/poster_repair.py` (`tasks.repair_job_poster`), enqueued
+by `POST /me/jobs/posters/refresh` when an owned ready job's preview has no
+poster. The endpoint stops being a pure re-signer only under
+`POSTER_ONDEMAND_REPAIR_ENABLED` (default false) — already-deployed frontends
+poll it in bursts, so a default-true ship would have been a zero-canary
+activation. Off is byte-identical to the pre-feature endpoint: no marker writes,
+no dispatch, and an already-queued task re-checks the flag and no-ops.
+
+**Queue ordering is the operational trap.** The task downloads the full source MP4
+into the RAM-backed `/tmp` and runs ffmpeg — the exact workload that OOM'd the 1GB
+`light`/Beat machine on 2026-08-02. So `repair_job_poster` is deliberately NOT in
+`MAINTENANCE_TASK_NAMES`, and `POSTER_REPAIR_QUEUE` must be set to
+`autoplace-jobs` (2GB) **before** the flag is enabled. The route is pinned in
+`worker.py`'s `task_routes` rather than passed at each dispatch, so a future bare
+`repair_job_poster.delay(...)` cannot silently land on the default `celery` queue
+and head-of-line-block the concurrency=1 render worker. The code default stays
+`celery` because `dev-auto.sh` consumes no autoplace queue.
+
+**Known consequence (tracked in TODOS.md):** a poster now outlives its source for
+music/template modes, so a tile older than its source's retention window shows a
+real thumbnail for an MP4 that GCS already deleted. Playback fails cleanly; the
+retention question ("what does *your videos* promise?") is a product decision, not
+a local fix.
+
+Guards: `tests/services/test_job_storage_paths.py`,
+`tests/tasks/test_poster_repair.py`, `tests/routes/test_me_jobs.py`,
+`tests/test_template_poster.py`, `tests/tasks/test_task_time_limits.py`.
+Runbook: `docs/runbooks/video-poster-backfill.md`.
+
 ---
 
 ## Celery time-limit invariant (extracted from CLAUDE.md for size)
@@ -191,6 +246,33 @@ Kill-switch byte-identical test:
 
 Apply: `fly secrets set LYRIC_DYNAMIC_CROSSFADE_ENABLED=false --app nova-video` then
 `fly machine restart <id>` on the worker process group.
+
+### FULLSCREEN_CUTAWAYS_ENABLED — the version-skew trap (review C8, plans/009)
+
+**Background:** `FULLSCREEN_CUTAWAYS_ENABLED` (Fly, default false) gates the AI
+fullscreen branch. Its Vercel twin `NEXT_PUBLIC_FULLSCREEN_CUTAWAYS_ENABLED`
+gates something different: the MANUAL popover promote affordances.
+
+**Why the order matters:** a new web build talking to an OLD api bakes a manual
+fullscreen request as a pip — the api's `extra="ignore"` silently strips
+`display_mode` off the payload, so the user asks for fullscreen and gets a pip
+card with no error. Keep the Vercel twin FALSE until the Fly deploy is live:
+**Fly first, then Vercel.**
+
+Rule (g) fails closed without ANALYSIS_VERSION-3 pixel dims; the backfill
+re-analyzes on first match. Render-side rollback is `MEDIA_OVERLAYS_ENABLED`.
+Guards: `tests/test_overlay_fullscreen_rules.py` (kill-switch byte-identical
+off) and the dual preset pins in `tests/test_media_overlay_command.py`
+(fullscreen pass = `preset=fast` + shared 1500s budget + one-shot veryfast
+retry).
+
+### POSTER_ONDEMAND_REPAIR_ENABLED / POSTER_REPAIR_QUEUE — set the queue first
+
+Full narrative in "Storage retention incidents" above. The one-line rule: the
+repair task downloads a full MP4 and runs ffmpeg, so `POSTER_REPAIR_QUEUE` must
+be `autoplace-jobs` (2GB) **before** `POSTER_ONDEMAND_REPAIR_ENABLED` flips —
+enabling the flag while the queue still points at `celery` puts full-MP4
+downloads on the concurrency=1 render worker.
 
 ---
 
