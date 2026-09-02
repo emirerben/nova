@@ -1654,10 +1654,17 @@ def compile_guided_runtime_plan(
             for row in normalized_revision.get("tombstones") or []
             if row.get("lane") == "text_elements" and row.get("record_id")
         ]
-        if set(revision_text_ids) | set(tombstoned_text_ids) != set(approved_text_ids):
+        revision_text_id_set = set(revision_text_ids)
+        tombstoned_text_id_set = set(tombstoned_text_ids)
+        if (
+            len(revision_text_ids) != len(revision_text_id_set)
+            or len(tombstoned_text_ids) != len(tombstoned_text_id_set)
+            or revision_text_id_set.intersection(tombstoned_text_id_set)
+            or not set(approved_text_ids).issubset(revision_text_id_set | tombstoned_text_id_set)
+        ):
             raise GuidedStoryError(
                 "guided_story_revision_invalid",
-                "Active and tombstoned text identities must match the approved story text.",
+                "Approved text identities must remain active or tombstoned exactly once.",
             )
         # Music swaps are post-approval editor revisions. The route pins the
         # selected ready track's exact object generation; the worker then

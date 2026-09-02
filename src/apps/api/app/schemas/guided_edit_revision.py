@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -25,6 +26,21 @@ GUIDED_EDITOR_FPS = MOTION_FPS
 GUIDED_EDITOR_FRAME_S = 1.0 / GUIDED_EDITOR_FPS
 GUIDED_EDITOR_SCHEMA_VERSION = 1
 GUIDED_EDITOR_RENDERER_VERSION = "guided-story-editor-v2"
+
+# Lane records are persisted as untyped JSON because each renderer owns a
+# different payload shape.  Their IDs are nevertheless part of the guided
+# revision's canonical identity contract.  Keep the limit aligned with the
+# other guided editor identity fields (segment IDs and parent IDs).
+GUIDED_EDITOR_LANES = (
+    "text_elements",
+    "sound_effects",
+    "media_overlays",
+    "visual_blocks",
+    "motion_scenes",
+    "custom_effects",
+)
+GUIDED_EDITOR_RECORD_ID_MAX_LENGTH = 100
+MAX_GUIDED_EDITOR_TOMBSTONES = 200
 
 
 class GuidedEditorSource(BaseModel):
@@ -123,10 +139,13 @@ class GuidedEditorRevision(BaseModel):
     motion_scenes: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
     custom_effects: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
     lane_hashes: dict[str, str] = Field(default_factory=dict)
-    tombstones: list[dict[str, Any]] = Field(default_factory=list, max_length=200)
+    tombstones: list[dict[str, Any]] = Field(
+        default_factory=list, max_length=MAX_GUIDED_EDITOR_TOMBSTONES
+    )
 
     @model_validator(mode="after")
     def validate_revision(self) -> GuidedEditorRevision:
+        validate_guided_revision_lane_identities(self)
         source_ids = {source.media_id for source in self.sources}
         if len(source_ids) != len(self.sources):
             raise ValueError("guided editor source IDs must be unique")
@@ -163,6 +182,98 @@ class GuidedEditorRevision(BaseModel):
         ):
             raise ValueError("guided editor revision state hash is stale")
         return self
+
+
+def validate_guided_revision_lane_identities(
+    revision: GuidedEditorRevision | Mapping[str, Any],
+) -> None:
+    """Validate the cross-lane identity boundary of a guided revision.
+
+    The lane payloads intentionally remain flexible JSON dictionaries, but
+    their identity is not flexible: every active record must have one stable,
+    bounded string ID, and IDs are globally unique across lanes.  Tombstones
+    use the same global identity namespace and must point at one of the known
+    lanes.  Keeping this check next to the canonical revision schema prevents
+    route-specific validators from accepting subtly different identity rules.
+
+    This function raises ``ValueError`` so callers that validate a plain JSON
+    dict get the same failure semantics as ``GuidedEditorRevision``.  It does
+    not normalize or mutate records; a caller must explicitly remove a
+    tombstone when restoring its record, so an active record and its tombstone
+    can never coexist in a normalized revision.
+    """
+
+    raw: Mapping[str, Any]
+    if isinstance(revision, GuidedEditorRevision):
+        raw = revision.model_dump(mode="python")
+    elif isinstance(revision, Mapping):
+        raw = revision
+    else:  # pragma: no cover - public type is intentionally narrow
+        raise TypeError("guided revision must be a mapping")
+
+    def bounded_identity(value: object, *, field: str) -> str:
+        if not isinstance(value, str):
+            raise ValueError(f"{field} must be a string")
+        identity = value.strip()
+        if not identity:
+            raise ValueError(f"{field} must be nonblank")
+        if identity != value:
+            raise ValueError(f"{field} must not contain surrounding whitespace")
+        if len(identity) > GUIDED_EDITOR_RECORD_ID_MAX_LENGTH:
+            raise ValueError(f"{field} exceeds {GUIDED_EDITOR_RECORD_ID_MAX_LENGTH} characters")
+        return identity
+
+    active_by_id: dict[str, tuple[str, int]] = {}
+    for lane in GUIDED_EDITOR_LANES:
+        records = raw.get(lane) or []
+        if not isinstance(records, Sequence) or isinstance(records, (str, bytes)):
+            raise ValueError(f"guided editor {lane} must be a list")
+        for index, record in enumerate(records):
+            if not isinstance(record, Mapping):
+                raise ValueError(f"guided editor {lane}[{index}] must be an object")
+            record_id = bounded_identity(record.get("id"), field=f"{lane}[{index}].id")
+            prior = active_by_id.get(record_id)
+            if prior is not None:
+                prior_lane, prior_index = prior
+                raise ValueError(
+                    "guided editor record ID must be unique across lanes: "
+                    f"{record_id!r} appears in {prior_lane}[{prior_index}] and "
+                    f"{lane}[{index}]"
+                )
+            active_by_id[record_id] = (lane, index)
+
+    tombstones = raw.get("tombstones") or []
+    if not isinstance(tombstones, Sequence) or isinstance(tombstones, (str, bytes)):
+        raise ValueError("guided editor tombstones must be a list")
+    tombstone_by_id: dict[str, tuple[str, int]] = {}
+    for index, tombstone in enumerate(tombstones):
+        if not isinstance(tombstone, Mapping):
+            raise ValueError(f"guided editor tombstones[{index}] must be an object")
+        lane = tombstone.get("lane")
+        if lane not in GUIDED_EDITOR_LANES:
+            raise ValueError(
+                f"guided editor tombstones[{index}].lane must be one of "
+                f"{', '.join(GUIDED_EDITOR_LANES)}"
+            )
+        record_id = bounded_identity(
+            tombstone.get("record_id"),
+            field=f"tombstones[{index}].record_id",
+        )
+        if record_id in active_by_id:
+            active_lane, active_index = active_by_id[record_id]
+            raise ValueError(
+                "guided editor tombstone collides with active record ID: "
+                f"{record_id!r} ({active_lane}[{active_index}])"
+            )
+        prior = tombstone_by_id.get(record_id)
+        if prior is not None:
+            prior_lane, prior_index = prior
+            raise ValueError(
+                "guided editor tombstone record IDs must be unique: "
+                f"{record_id!r} appears in tombstones[{prior_index}] ({prior_lane}) "
+                f"and tombstones[{index}] ({lane})"
+            )
+        tombstone_by_id[record_id] = (str(lane), index)
 
 
 def guided_editor_state_hash(
