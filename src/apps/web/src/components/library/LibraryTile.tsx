@@ -329,10 +329,15 @@ export default function LibraryTile({
     setPreviewStatus("playing");
   }, [clearPreviewAttemptDeadline]);
 
-  const posterUnavailable =
-    job.poster_status === "unavailable" ||
-    posterRecoveryExhausted ||
-    posterLoadFailed;
+  // Running out of client-side retries is NOT a verdict. The recovery ladder
+  // only keeps polling while the server says `repairing`, so exhaustion means
+  // "we stopped asking", never "the thumbnail is gone" — and a queued repair
+  // routinely outlives the ladder (150s task limit plus queue wait). Rendering
+  // the terminal copy here would state a failure the server never reported
+  // (DESIGN.md §7 D19: the client never declares failure from silence).
+  // `posterRecoveryExhausted` instead selects a settled, non-verdict state
+  // below, so the tile stops animating without ever claiming the poster is gone.
+  const posterUnavailable = job.poster_status === "unavailable" || posterLoadFailed;
   const posterRepairing =
     isReady && !job.poster_url && !posterUnavailable && !posterRefreshUnavailable;
   const posterRecoveryIdentity = libraryPosterIdentity(job);
@@ -407,6 +412,19 @@ export default function LibraryTile({
         <ImageOff className="h-5 w-5" />
       </span>
       <span className="text-sm font-medium">Thumbnail temporarily unavailable</span>
+    </div>
+  ) : posterRepairing && posterRecoveryExhausted && href ? (
+    // Polling has stopped but the server never gave a verdict. A spinner here
+    // would keep animating work that is no longer happening, and the terminal
+    // copy would state a failure the server never reported (DESIGN.md §7 D19).
+    // Settle into a still, honest state that names the one thing the user can
+    // actually do — the video itself plays fine, only its thumbnail is missing.
+    <div
+      role="status"
+      className="flex h-full w-full flex-col items-center justify-center gap-2 bg-zinc-100 p-5 text-center text-[#3f3f46]"
+    >
+      <span className="text-sm font-medium">Still preparing this thumbnail</span>
+      <span className="text-xs">Your video is ready — open it any time.</span>
     </div>
   ) : posterRepairing && href ? (
     <div

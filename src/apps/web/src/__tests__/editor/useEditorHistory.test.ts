@@ -105,6 +105,58 @@ describe("undoSnapshot / redoSnapshot", () => {
     expect(redone!.history.future).toHaveLength(0);
   });
 
+  it("keeps text intent separate from timeline snapshots", () => {
+    const beforeTimelineEdit = doc([bar("canonical")], {
+      textDirty: false,
+      captionDirty: false,
+      slots: [{ key: "clip-1" } as never],
+    });
+    const afterTimelineEdit = doc([bar("canonical")], {
+      textDirty: false,
+      captionDirty: false,
+      slots: [{ key: "clip-1", durationS: 1.5 } as never],
+    });
+    const recorded = recordSnapshot(initEditorHistoryState(), beforeTimelineEdit);
+    const undone = undoSnapshot(recorded, afterTimelineEdit)!;
+
+    expect(undone.doc.textDirty).toBe(false);
+    expect(undone.doc.captionDirty).toBe(false);
+    expect(undone.doc.bars).toEqual(beforeTimelineEdit.bars);
+  });
+
+  it("restores only the text section after a text-only undo", () => {
+    const beforeTextEdit = doc([bar("canonical")], {
+      textDirty: false,
+      captionDirty: false,
+      sfxDirty: false,
+      overlaysDirty: false,
+      visualBlocksDirty: false,
+      motionScenesDirty: false,
+      cameraEffectsDirty: false,
+      titleDirty: false,
+    });
+    const afterTextEdit = doc([bar("canonical", "edited")], {
+      textDirty: true,
+      captionDirty: false,
+      sfxDirty: false,
+      overlaysDirty: false,
+      visualBlocksDirty: false,
+      motionScenesDirty: false,
+      cameraEffectsDirty: false,
+      titleDirty: false,
+    });
+    const recorded = recordSnapshot(initEditorHistoryState(), beforeTextEdit);
+    const undone = undoSnapshot(recorded, afterTextEdit)!;
+
+    expect(undone.doc.textDirty).toBe(false);
+    expect(undone.doc.sfxDirty).toBe(false);
+    expect(undone.doc.overlaysDirty).toBe(false);
+    expect(undone.doc.visualBlocksDirty).toBe(false);
+    expect(undone.doc.motionScenesDirty).toBe(false);
+    expect(undone.doc.cameraEffectsDirty).toBe(false);
+    expect(undone.doc.titleDirty).toBe(false);
+  });
+
   it("undo and redo preserve a clip look change", () => {
     const original = doc([], {
       slots: [{ key: "s0", lookPreset: "none" } as never],
@@ -152,6 +204,8 @@ describe("serializeDraft / deserializeDraft", () => {
       background: { type: "gradient", from: "#111111", to: "#26382F", angle_deg: 90 },
     };
     const d = doc([bar("a"), bar("b")], {
+      textDirty: true,
+      captionDirty: false,
       slots: [
         {
           key: "s0",
@@ -192,6 +246,21 @@ describe("serializeDraft / deserializeDraft", () => {
       lyricsEnabled: undefined,
       orientation: "landscape",
     });
+  });
+
+  it("round-trips section dirty intent for add/delete retries", () => {
+    const d = doc([bar("canonical"), bar("kria-addition")], {
+      textDirty: true,
+      captionDirty: false,
+    });
+    const parsed = deserializeDraft(serializeDraft("item-1", "job-1", "v1", "gen-1", d));
+
+    expect(parsed!.doc.textDirty).toBe(true);
+    expect(parsed!.doc.captionDirty).toBe(false);
+    expect(parsed!.doc.bars.map((entry) => entry.id)).toEqual([
+      "canonical",
+      "kria-addition",
+    ]);
   });
 
   it("returns null for malformed / foreign input", () => {

@@ -153,7 +153,7 @@ def _try_upload_video_poster(
     rank: int,
 ) -> str | None:
     try:
-        return upload_video_poster(local_video_path, video_object_path)
+        return upload_video_poster(local_video_path, video_object_path, job_id=job_id)
     except Exception as exc:  # noqa: BLE001 - poster is a derived asset
         log.warning(
             "video_poster_upload_failed",

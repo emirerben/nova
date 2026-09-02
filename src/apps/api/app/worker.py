@@ -62,6 +62,11 @@ celery_app = Celery(
         "app.tasks.edit_training_artifacts",
         "app.tasks.creator_quality_review",
         "app.tasks.creator_workspace",
+        # Deliberately NOT in MAINTENANCE_TASK_NAMES: repair_job_poster downloads
+        # a full MP4 into the RAM-backed /tmp, which is exactly the workload that
+        # OOM'd the 1GB `light`/Beat machine on 2026-08-02. It is dispatched with
+        # an explicit `queue=settings.poster_repair_queue` instead.
+        "app.tasks.poster_repair",
     ],
 )
 
@@ -170,7 +175,14 @@ celery_app.conf.update(
     # listed here keeps Celery's normal resolution (the task's own `queue=`
     # kwarg if one was passed at dispatch time, else the default `celery`
     # queue) — this dict is additive, not a full routing table.
-    task_routes={name: {"queue": "maintenance"} for name in MAINTENANCE_TASK_NAMES},
+    task_routes={
+        **{name: {"queue": "maintenance"} for name in MAINTENANCE_TASK_NAMES},
+        # Make the queue a property of the TASK, not of each dispatcher. A
+        # future bare `repair_job_poster.delay(...)` would otherwise land on
+        # the default `celery` queue — the concurrency=1 render worker — and
+        # head-of-line-block renders behind a full-MP4 download.
+        "tasks.repair_job_poster": {"queue": settings.poster_repair_queue},
+    },
     # Beat schedule — picked up only by the Beat scheduler, which runs
     # embedded (`-B`) in the `light` process (see fly.toml). Other worker
     # processes ignore this dict, so it's safe to define unconditionally.

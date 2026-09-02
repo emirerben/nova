@@ -2408,6 +2408,36 @@ def test_generated_poster_cleanup_keeps_a_winning_reference(monkeypatch):
     assert deleted == [orphaned]
 
 
+def test_generated_poster_cleanup_collects_durable_prefix_orphans(monkeypatch):
+    """Durable posters live off ``generative-jobs/`` and must still be collected.
+
+    Their prefix matches no lifecycle rule by design, so an orphan there is
+    permanent. A referenced durable poster and another job's are still spared.
+    """
+    job_id = "11111111-1111-1111-1111-111111111111"
+    referenced = f"job-posters/{job_id}/winner.poster.jpg"
+    orphaned = f"job-posters/{job_id}/loser.poster.jpg"
+    foreign = "job-posters/22222222-2222-2222-2222-222222222222/other.poster.jpg"
+    job = _FakeJob(assembly_plan={"variants": [{"variant_id": "v1", "poster_path": referenced}]})
+    deleted: list[str] = []
+    # Assert through the REAL `_delete_cancelled_job_objects` down to the
+    # storage sink. Stubbing the inner helper hides the case this test exists
+    # for: widening only the caller's filter leaves the durable key to be
+    # dropped at the next boundary and orphaned forever.
+    monkeypatch.setattr(
+        "app.storage.delete_object_best_effort",
+        lambda path: deleted.append(path) or True,
+    )
+
+    gb._delete_generated_poster_objects_if_unreferenced(
+        job_id,
+        [referenced, orphaned, foreign],
+        locked_job=job,
+    )
+
+    assert deleted == [orphaned]
+
+
 # ── assembly_plan RMW writers must row-lock (lost-update guard) ─────────────────
 #
 # Every writer that does a read-modify-write of Job.assembly_plan must SELECT ...

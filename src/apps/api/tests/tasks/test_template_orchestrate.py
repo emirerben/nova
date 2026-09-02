@@ -15,6 +15,8 @@ from app.pipeline.agents.gemini_analyzer import (
     TemplateRecipe,
 )
 
+_POSTER_JOB_ID = str(uuid.uuid4())
+
 
 def _make_clip_meta(clip_id: str = "clip_a", degraded: bool = False) -> ClipMeta:
     return ClipMeta(
@@ -47,7 +49,7 @@ def test_video_poster_upload_failure_is_fail_open(monkeypatch):
     monkeypatch.setattr(
         task,
         "upload_video_poster",
-        lambda *_args: (_ for _ in ()).throw(RuntimeError("poster unavailable")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("poster unavailable")),
     )
 
     assert (
@@ -6038,3 +6040,28 @@ class TestSinglePassRuntimeFallback:
                 )
             mock_single.assert_called_once()
             mock_reframe.assert_called_once()
+
+
+def test_video_poster_upload_uses_durable_job_prefix(monkeypatch):
+    """Render-path pin: the poster key must not inherit the video's lifecycle."""
+    import app.tasks.template_orchestrate as task
+    from app.services.template_poster import poster_object_path
+
+    seen: dict[str, object] = {}
+
+    def fake_upload(local_path, video_object_path, *, job_id=None):
+        seen.update(local=local_path, remote=video_object_path, job_id=job_id)
+        return poster_object_path(video_object_path, job_id=job_id)
+
+    monkeypatch.setattr(task, "upload_video_poster", fake_upload)
+
+    poster_path = task._try_upload_video_poster(
+        "/tmp/output.mp4",
+        f"jobs/{_POSTER_JOB_ID}/task-runs/run-1/output.mp4",
+        job_id=_POSTER_JOB_ID,
+        source_kind="template_output",
+    )
+
+    assert seen["job_id"] == _POSTER_JOB_ID
+    assert poster_path.startswith(f"job-posters/{_POSTER_JOB_ID}/")
+    assert poster_path.endswith(".poster.jpg")

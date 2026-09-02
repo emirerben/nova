@@ -3,7 +3,7 @@
 Each seek attempt uses one FFmpeg subprocess (NEVER MoviePy / VideoFileClip —
 see CLAUDE.md); extraction tries up to six offsets within a 90-second budget.
 The template helper writes to ``templates/<id>/poster.jpg``.  Job-output
-helpers write a deterministic ``<video-object>.poster.jpg`` sibling and return
+helpers write a deterministic key under ``job-posters/<job-id>/`` and return
 that relative key so callers can persist it without storing a signed URL.
 
 The first 1.5s of some templates is a fade-in, so the historical fixed-seek
@@ -15,11 +15,13 @@ silently emit a black frame.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import subprocess
 import tempfile
 import time
+import uuid
 from dataclasses import dataclass
 
 import structlog
@@ -49,6 +51,29 @@ POSTER_TOTAL_BUDGET_S = 90
 _SHOWINFO_STATS_RE = re.compile(r"mean:\[\s*([\d.]+)[^]]*\]\s+stdev:\[\s*([\d.]+)")
 _YAVG_RE = re.compile(r"YAVG\s*[:=]\s*([\d.]+)")
 _YDEV_RE = re.compile(r"YDEV\s*[:=]\s*([\d.]+)")
+
+# Job posters used to be written as a ``<video>.poster.jpg`` sibling, which
+# made them inherit the video prefix's GCS lifecycle rule
+# (infra/gcs-lifecycle.json): ``music-jobs/*`` posters were deleted after 24h
+# and ``jobs/*`` after 30d, so library tiles silently lost their thumbnails.
+# No lifecycle rule matches ``job-posters/``, and unmatched prefixes persist,
+# so posters written here survive for every render mode.
+JOB_POSTER_PREFIX = "job-posters"
+# A job id becomes a path segment, so it must not be able to escape the prefix
+# it names. Any path-safe token is accepted (job ids are UUIDs in production,
+# but tests use short slugs); anything containing a separator or longer than
+# 64 chars falls back to the legacy sibling key.
+_SAFE_JOB_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _durable_job_id(job_id: object) -> str | None:
+    if isinstance(job_id, uuid.UUID):
+        # A UUID caller must not be silently demoted to the legacy prefix.
+        return str(job_id)
+    if not isinstance(job_id, str):
+        return None
+    token = job_id.strip()
+    return token if _SAFE_JOB_ID_RE.match(token) else None
 
 
 class PosterExtractionError(RuntimeError):
@@ -213,16 +238,50 @@ def extract_poster_bytes(local_video_path: str) -> bytes:
     return brightest.jpeg
 
 
-def poster_object_path(video_object_path: str) -> str:
-    """Return the deterministic JPEG sibling for a playable video object."""
+def durable_poster_stem(video_object_path: str, job_id: object) -> str | None:
+    """Return ``job-posters/<job-id>/<sha1(source)>`` for a job-owned video.
+
+    The digest keeps the key deterministic per source object: a renderer and a
+    later repair generating a poster for the same immutable video write
+    identical bytes to the same key, which is the benign-collision property the
+    old sibling keys had. Returns ``None`` when no usable job id is available,
+    so callers can fall back to the legacy sibling key.
+    """
+    token = _durable_job_id(job_id)
+    if token is None or not isinstance(video_object_path, str) or not video_object_path:
+        return None
+    digest = hashlib.sha1(video_object_path.encode("utf-8")).hexdigest()
+    return f"{JOB_POSTER_PREFIX}/{token}/{digest}"
+
+
+def poster_object_path(
+    video_object_path: str,
+    *,
+    job_id: str | uuid.UUID | None = None,
+) -> str:
+    """Return the deterministic poster key for a playable video object.
+
+    With a ``job_id`` the poster lands on the lifecycle-exempt
+    ``job-posters/`` prefix (see ``JOB_POSTER_PREFIX``). Without one it keeps
+    the legacy ``<video>.poster.jpg`` sibling so existing callers — and every
+    key already persisted in ``assembly_plan`` — keep resolving.
+    """
+    stem = durable_poster_stem(video_object_path, job_id)
+    if stem is not None:
+        return f"{stem}.poster.jpg"
     return f"{video_object_path}.poster.jpg"
 
 
-def upload_video_poster(local_video_path: str, video_object_path: str) -> str:
-    """Extract and upload a poster next to a browser-visible video object."""
+def upload_video_poster(
+    local_video_path: str,
+    video_object_path: str,
+    *,
+    job_id: str | uuid.UUID | None = None,
+) -> str:
+    """Extract and upload a poster for a browser-visible video object."""
     if not os.path.isfile(local_video_path):
         raise PosterExtractionError(f"video source does not exist: {local_video_path}")
-    poster_path = poster_object_path(video_object_path)
+    poster_path = poster_object_path(video_object_path, job_id=job_id)
     poster_bytes = extract_poster_bytes(local_video_path)
     upload_bytes_public_read(poster_bytes, poster_path, content_type="image/jpeg")
     log.info(
@@ -253,7 +312,7 @@ def generate_and_upload_from_gcs(
         local_path = f"{tmpdir}/source.mp4"
         try:
             download_to_file(video_object_path, local_path)
-            return upload_video_poster(local_path, video_object_path)
+            return upload_video_poster(local_path, video_object_path, job_id=job_id)
         except Exception as exc:  # noqa: BLE001 - poster is fail-open by contract
             log.warning(
                 "video_poster_extract_failed",

@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.59.0.0] — 2026-08-30
+## [0.59.4.0] — 2026-09-02
 
 ### Added
 - **Kria is now the canonical signed-in creation workspace.** A durable project rail and creative chat guide creators through Montage, Narrated, or Talking to camera, direct video/image/audio uploads, explicit render confirmation, ready results, and confirmation-gated revisions around the existing full editor.
@@ -16,6 +16,38 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Creation mutations are revision-fenced, idempotent, and owner-scoped.** Upload attachment, session binding, confirmation dispatch, exact-generation revisions, variant retries, archive actions, stale tabs, and iframe leave/discard messages preserve authoritative state across retries and races.
 - **Recovery no longer loses a creator's work.** Failed uploads can retry or be removed individually, attached media rehydrates after refresh, offline polling shows reconnecting state, project switches cannot accept stale async responses, and stale-revision reloads preserve composer text.
+- **Exact per-clip sport labels now reach the rendered cut and editor.** Requests such as “show the sport in small text at the bottom right” compile trusted clip metadata into timed, editable Tennis or Basketball text instead of being acknowledged and dropped.
+
+## [0.59.3.0] — 2026-09-01
+
+### Fixed
+- **Guided-story saves now accept newly added Kria text without weakening edit identity.** Existing text can be changed, removed, or restored exactly once, while duplicate, forged, cross-lane, or oversized identity changes fail atomically instead of surfacing `GUIDED_TEXT_IDENTITY_MISMATCH` after a valid edit.
+- **Timeline-only edits no longer detach the live preview from the saved result.** Exact dirty-lane intent survives undo, retry, and restore; inherited lanes project once through trims, deletions, and reordering, while newly authored lanes are not shifted a second time.
+- **Related editor inputs now fail closed instead of being partially accepted.** Malformed, duplicate, or oversized sound-effect and media-overlay replacements are rejected before mutation, and compact bulk-media selector aliases use the same complete-fit checks as their expanded forms.
+
+## [0.59.2.0] — 2026-08-31
+
+### Fixed
+- **Turning Speech cleanup on finally works on the clips that need it most.** A talking-to-camera clip with lots of pauses and filler words used to fail the entire render with "Speech cleanup couldn't finish" — and retrying could never succeed, because the engine refused any plan that removed more than 40% of the clip and treated that refusal as a fatal error. With cleanup explicitly on, Kria now trims the biggest pauses and fillers up to a safe budget (never leaving less than 3 seconds of video) and delivers the cleaned edit. Clips you already saw fail will succeed on their next render after this ships.
+- **Cleanup cuts can no longer slice through the middle of a word.** When a cut has to be shortened to fit the budget, its edges now snap clear of every spoken word, so no half-syllable survives next to a jump cut.
+- **Review-approved manual cuts always make it into the video.** A cut you explicitly approved in the speech-cut review flow is exempt from the budget and can never be dropped or shortened by the cleanup engine.
+
+### Added
+- **`SPEECH_CLEANUP_BUDGET_CLAMP_ENABLED` kill switch** (default on). Turning it off restores the previous strict behavior — a visible "cleanup couldn't finish" failure instead of a budgeted trim — as an emergency rollback only.
+- **Cleanup transparency in the admin debug view.** When a plan is trimmed to the consent budget, the job trace and the saved edit record how much removal was proposed, how much was delivered, and what the budget was.
+
+## [0.59.1.0] — 2026-08-31
+
+### Fixed
+- **Thumbnails stop disappearing days after a video is made.** They were being stored beside the video file, so the cleanup that removes old footage took the thumbnail with it. Thumbnails now live somewhere that cleanup never touches.
+- **A tile no longer claims your thumbnail is gone while it is still being made.** Running out of retries only stops Kria asking; the tile settles into a still, honest state that points out the video itself is ready to open, and "unavailable" is now reserved for a thumbnail that really cannot be produced.
+- **The library stops serving stale images from the browser cache.** Cache instructions from the API were being stripped before they reached the browser, so short-lived image links could be reused after they expired.
+
+### Added
+- **Kria can now repair a missing library thumbnail by itself.** Videos made before thumbnails existed had none, and nothing in Kria was able to create one for them — so their tiles sat behind a spinner that restarted on every page load. Kria can now generate the missing thumbnail while you browse, and a video whose original footage is genuinely gone settles on a clear answer instead of spinning. Ships turned off (`POSTER_ONDEMAND_REPAIR_ENABLED`); existing videos are repaired in bulk by the Video Poster Backfill workflow.
+
+### Changed
+- **Deploys can no longer be blocked by a leftover repair machine.** A one-off maintenance machine that never started used to wedge the shared lock every deploy needs, with no way to recover in tooling. Deploys now clear a machine that provably did nothing, while one that actually ran is still kept for inspection.
 
 ## [0.58.1.1] — 2026-08-30
 

@@ -1067,6 +1067,91 @@ def test_runtime_compiles_approved_unused_image_and_video_sources() -> None:
     assert by_id["added-video"]["image_motion"] is None
 
 
+def test_runtime_revision_accepts_user_added_text_and_preserves_approval_provenance() -> None:
+    guided = _guided_snapshot(catalog_extra=True)
+    canonical = compile_execution_plan(guided, track=None)
+    revision = guided_editor_revision_from_approval(
+        proposal_version=guided["proposal_version"],
+        media_digest=guided["media_digest"],
+        snapshot=guided["approved_proposal"],
+        execution_plan=canonical,
+    )
+    added = {
+        "id": "user-added-scoreline",
+        "text": "Beating your rival after 10 years",
+        "start_s": 0.0,
+        "end_s": 1.0,
+        "role": "generative_intro",
+    }
+    revision["text_elements"].append(added)
+    revision["state_hash"] = ""
+
+    runtime = compile_guided_runtime_plan(canonical, guided, revision)
+
+    assert [row["id"] for row in runtime["text_elements"]][-1] == added["id"]
+    assert runtime["editor_approved_text_ids"] == [row["id"] for row in canonical["text_elements"]]
+
+
+def test_runtime_revision_accepts_server_tombstone_for_deleted_approved_text() -> None:
+    guided = _guided_snapshot(catalog_extra=True)
+    canonical = compile_execution_plan(guided, track=None)
+    revision = guided_editor_revision_from_approval(
+        proposal_version=guided["proposal_version"],
+        media_digest=guided["media_digest"],
+        snapshot=guided["approved_proposal"],
+        execution_plan=canonical,
+    )
+    removed = revision["text_elements"].pop(0)
+    revision["tombstones"] = [
+        {
+            "lane": "text_elements",
+            "record_id": removed["id"],
+            "reason": "user_removed",
+            "record": removed,
+        }
+    ]
+    revision["state_hash"] = ""
+
+    runtime = compile_guided_runtime_plan(canonical, guided, revision)
+
+    assert removed["id"] not in {row["id"] for row in runtime["text_elements"]}
+    assert runtime["editor_tombstones"][0]["record_id"] == removed["id"]
+
+
+@pytest.mark.parametrize("identity_fault", ["missing", "duplicate", "active_and_tombstoned"])
+def test_runtime_revision_rejects_ambiguous_approved_text_identity(
+    identity_fault: str,
+) -> None:
+    guided = _guided_snapshot(catalog_extra=True)
+    canonical = compile_execution_plan(guided, track=None)
+    revision = guided_editor_revision_from_approval(
+        proposal_version=guided["proposal_version"],
+        media_digest=guided["media_digest"],
+        snapshot=guided["approved_proposal"],
+        execution_plan=canonical,
+    )
+    approved = revision["text_elements"][0]
+    if identity_fault == "missing":
+        revision["text_elements"] = revision["text_elements"][1:]
+    elif identity_fault == "duplicate":
+        revision["text_elements"].append(dict(approved))
+    else:
+        revision["tombstones"] = [
+            {
+                "lane": "text_elements",
+                "record_id": approved["id"],
+                "reason": "user_removed",
+                "record": approved,
+            }
+        ]
+    revision["state_hash"] = ""
+
+    with pytest.raises(GuidedStoryError) as exc_info:
+        compile_guided_runtime_plan(canonical, guided, revision)
+
+    assert exc_info.value.code == "guided_story_revision_invalid"
+
+
 def test_runtime_revision_preserves_looks_transition_order_and_music_window() -> None:
     guided = _guided_snapshot(catalog_extra=True)
     canonical = compile_execution_plan(guided, track=None)
@@ -1160,6 +1245,15 @@ def test_runtime_revision_removes_music_and_receipt_records_v2_provenance(
         snapshot=guided["approved_proposal"],
         execution_plan=canonical,
     )
+    revision["text_elements"].append(
+        {
+            "id": "user-added-receipt-text",
+            "text": "Going to the Champions League after 17 years",
+            "start_s": 1.0,
+            "end_s": 2.0,
+            "role": "generative_intro",
+        }
+    )
     revision["audio"] = {"mode": "none", "removed": True}
     revision["state_hash"] = ""
     runtime = compile_guided_runtime_plan(canonical, guided, revision)
@@ -1238,6 +1332,8 @@ def test_runtime_revision_removes_music_and_receipt_records_v2_provenance(
     assert receipt["segment_order"] == [moment["moment_id"] for moment in moment_receipts]
     assert receipt["music_removed"] is True
     assert receipt["music"] is None
+    assert receipt["expected_text_ids"][-1] == "user-added-receipt-text"
+    assert "user-added-receipt-text" not in receipt["approved_text_ids"]
     assert receipt["actual_duration_s"] == pytest.approx(
         runtime["resolved_duration_s"] + (1 / 30), abs=0.001
     )

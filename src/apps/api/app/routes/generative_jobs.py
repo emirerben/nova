@@ -62,9 +62,12 @@ from app.routes.admin_music import _validate_clip_path_prefixes, _validate_voice
 from app.routes.music_jobs import classify_slot_kind
 from app.routes.waitlist import get_real_ip
 from app.schemas.guided_edit_revision import (
+    GUIDED_EDITOR_LANES,
+    MAX_GUIDED_EDITOR_TOMBSTONES,
     guided_editor_revision_from_approval,
     guided_editor_state_hash,
     normalize_guided_editor_revision,
+    validate_guided_revision_lane_identities,
 )
 from app.schemas.montage_preset import MASONRY_MONTAGE_PRESET, is_collage_montage_preset
 from app.services.content_plan_persona import (
@@ -1000,8 +1003,8 @@ class EditorCommitRequest(BaseModel):
     background_music: EditorCommitBackgroundMusic | None = None
     lyrics: LyricsSectionRequest | None = None
     orientation: str | None = None
-    sound_effects: list[dict] | None = None
-    media_overlays: list[dict] | None = None
+    sound_effects: list[dict] | None = Field(default=None, max_length=100)
+    media_overlays: list[dict] | None = Field(default=None, max_length=100)
     visual_blocks: list[VisualBlock] | None = None
     motion_scenes: list[dict] | None = None
     motion_runtime_hash: str | None = None
@@ -3204,6 +3207,12 @@ def validate_media_overlays_for_user(
                     "No changes were saved."
                 ),
             )
+        ids = [card.id for card in cards]
+        if len(set(ids)) != len(ids):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Overlay card IDs must be unique. No changes were saved.",
+            )
         for card in cards:
             try:
                 validate_overlay_gcs_path(card.src_gcs_path)
@@ -3277,7 +3286,23 @@ def validate_sound_effects_for_user(
     )
     validated: list[dict] = []
     if sfx_raw:
-        placements = coerce_sound_effects(sfx_raw) or []
+        dropped_indices: list[int] = []
+        placements = coerce_sound_effects(sfx_raw, dropped_indices=dropped_indices) or []
+        if dropped_indices:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"{len(dropped_indices)} of {len(sfx_raw)} sound effect(s) "
+                    f"failed validation (indices: {dropped_indices}). "
+                    "No changes were saved."
+                ),
+            )
+        ids = [placement.id for placement in placements]
+        if len(set(ids)) != len(ids):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Sound effect IDs must be unique. No changes were saved.",
+            )
         for placement in placements:
             try:
                 validate_sfx_gcs_path(placement.src_gcs_path)
@@ -6863,16 +6888,22 @@ def _project_guided_revision_lanes(
     *,
     old_segments: list[dict[str, Any]],
     new_segments: list[dict[str, Any]],
+    baseline_lanes: dict[str, Any] | None = None,
+    authored_lanes: set[str] | None = None,
 ) -> None:
     """Project baseline-clock lane records through one structural edit.
 
-    The browser keeps authored lane times in the baseline coordinate system.
-    This mapper resolves each endpoint through media/source time, which makes
-    trims, split, repeated sources, deletion, and reorder deterministic. Exact
-    overlap boundaries are right-biased by iterating later segments first.
+    Lanes omitted from the Save remain in the baseline coordinate system, so
+    this mapper resolves their endpoints through media/source time. Explicitly
+    submitted full-replacement lanes are already authored against the staged
+    output clock and are left untouched. This keeps trims, splits, repeated
+    sources, deletion, and reorder deterministic without double-shifting a
+    simultaneous lane retime. Exact overlap boundaries are right-biased by
+    iterating later segments first.
     """
 
     fps = 30.0
+    old_raw = copy.deepcopy(baseline_lanes if baseline_lanes is not None else raw)
 
     def window(segment: dict[str, Any]) -> tuple[float, float, float, float]:
         output_start = float(segment.get("output_start_s") or 0.0)
@@ -6938,19 +6969,32 @@ def _project_guided_revision_lanes(
     tombstones = list(raw.get("tombstones") or [])
     lane_time_fields = {
         "text_elements": ("start_s", "end_s"),
-        "sound_effects": ("at_s", "end_s"),
         "media_overlays": ("start_s", "end_s"),
         "visual_blocks": ("start_s", "end_s"),
     }
     for lane, (start_field, end_field) in lane_time_fields.items():
+        if lane in (authored_lanes or set()):
+            continue
+        current_lane_ids = {
+            str(value.get("id"))
+            for value in old_raw.get(lane) or []
+            if isinstance(value, dict) and value.get("id")
+        }
         projected_values: list[dict[str, Any]] = []
         for value in raw.get(lane) or []:
             if not isinstance(value, dict) or start_field not in value:
                 projected_values.append(value)
                 continue
+            # New records are already authored in the submitted revision's
+            # output clock.  Projecting them through the old timeline would
+            # either shift them twice or drop them when they sit in a newly
+            # extended tail.  Existing records alone need source-time mapping.
+            if str(value.get("id") or "") not in current_lane_ids:
+                projected_values.append(value)
+                continue
             start = project(float(value[start_field]))
             end = project(float(value.get(end_field, value[start_field])))
-            if start is None and end is None:
+            if start is None or end is None:
                 tombstones.append(
                     {
                         "lane": lane,
@@ -6961,9 +7005,6 @@ def _project_guided_revision_lanes(
                     }
                 )
                 continue
-            start = start or end
-            end = end or start
-            assert start is not None and end is not None
             updated = dict(value)
             updated[start_field] = start[0]
             updated[end_field] = max(start[0], end[0])
@@ -6971,14 +7012,65 @@ def _project_guided_revision_lanes(
             projected_values.append(updated)
         raw[lane] = projected_values
 
+    # Sound effects are point placements, not intervals.  Project only their
+    # firing point and never invent an `end_s` field (the SFX schema has no
+    # such field).  A point whose anchor was removed is tombstoned.
+    current_sfx_ids = {
+        str(value.get("id"))
+        for value in old_raw.get("sound_effects") or []
+        if isinstance(value, dict) and value.get("id")
+    }
+    if "sound_effects" in (authored_lanes or set()):
+        projected_sfx = list(raw.get("sound_effects") or [])
+        raw["sound_effects"] = projected_sfx
+    else:
+        projected_sfx = []
+    if "sound_effects" not in (authored_lanes or set()):
+        for value in raw.get("sound_effects") or []:
+            if not isinstance(value, dict) or "at_s" not in value:
+                projected_sfx.append(value)
+                continue
+            if str(value.get("id") or "") not in current_sfx_ids:
+                projected_sfx.append(value)
+                continue
+            point = project(float(value["at_s"]))
+            if point is None:
+                tombstones.append(
+                    {
+                        "lane": "sound_effects",
+                        "record_id": str(value.get("id") or ""),
+                        "segment_id": value.get("segment_id"),
+                        "reason": "anchored_interval_removed",
+                        "record": value,
+                    }
+                )
+                continue
+            updated = dict(value)
+            updated["at_s"] = point[0]
+            updated.pop("end_s", None)
+            updated["segment_id"] = point[1]
+            projected_sfx.append(updated)
+        raw["sound_effects"] = projected_sfx
+
     projected_motion: list[dict[str, Any]] = []
+    current_motion_ids = {
+        str(value.get("id"))
+        for value in old_raw.get("motion_scenes") or []
+        if isinstance(value, dict) and value.get("id")
+    }
     for value in raw.get("motion_scenes") or []:
+        if "motion_scenes" in (authored_lanes or set()):
+            projected_motion.append(value)
+            continue
         if not isinstance(value, dict) or "start_frame" not in value:
+            projected_motion.append(value)
+            continue
+        if str(value.get("id") or "") not in current_motion_ids:
             projected_motion.append(value)
             continue
         start = project(float(value["start_frame"]) / fps)
         end = project(float(value.get("end_frame_exclusive", value["start_frame"])) / fps)
-        if start is None and end is None:
+        if start is None or end is None:
             tombstones.append(
                 {
                     "lane": "motion_scenes",
@@ -6989,16 +7081,208 @@ def _project_guided_revision_lanes(
                 }
             )
             continue
-        start = start or end
-        end = end or start
-        assert start is not None and end is not None
         updated = dict(value)
         updated["start_frame"] = round(start[0] * fps)
         updated["end_frame_exclusive"] = max(updated["start_frame"] + 1, round(end[0] * fps))
         updated["segment_id"] = start[1]
         projected_motion.append(updated)
     raw["motion_scenes"] = projected_motion
-    raw["tombstones"] = tombstones[-200:]
+    if len(tombstones) > MAX_GUIDED_EDITOR_TOMBSTONES:
+        raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_TOMBSTONE_LIMIT")
+    raw["tombstones"] = tombstones
+
+
+def _validate_projected_guided_lane_shapes(raw: dict[str, Any]) -> None:
+    """Fail closed if timeline projection leaves an invalid lane record."""
+
+    try:
+        validate_guided_revision_lane_identities(raw)
+    except (TypeError, ValueError) as exc:
+        raise _timeline_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_REVISION_INVALID"
+        ) from exc
+
+    lane_time_fields = {
+        "text_elements": ("start_s", "end_s"),
+        "media_overlays": ("start_s", "end_s"),
+        "visual_blocks": ("start_s", "end_s"),
+    }
+    for lane, (start_field, end_field) in lane_time_fields.items():
+        for value in raw.get(lane) or []:
+            start = value.get(start_field)
+            end = value.get(end_field)
+            try:
+                if float(end) <= float(start):
+                    raise ValueError
+            except (TypeError, ValueError):
+                raise _timeline_error(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_REVISION_INVALID"
+                ) from None
+
+    for value in raw.get("sound_effects") or []:
+        if not isinstance(value, dict) or not isinstance(value.get("id"), str):
+            raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_REVISION_INVALID")
+        try:
+            if not math.isfinite(float(value.get("at_s"))) or float(value["at_s"]) < 0:
+                raise ValueError
+        except (KeyError, TypeError, ValueError):
+            raise _timeline_error(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_REVISION_INVALID"
+            ) from None
+
+    for value in raw.get("motion_scenes") or []:
+        try:
+            if float(value.get("end_frame_exclusive")) <= float(value.get("start_frame")):
+                raise ValueError
+        except (TypeError, ValueError):
+            raise _timeline_error(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_REVISION_INVALID"
+            ) from None
+
+
+def _guided_text_revision_state(
+    current: dict[str, Any], submitted: list[dict]
+) -> tuple[list[dict], list[dict]]:
+    """Resolve a guided text replacement against the canonical revision.
+
+    Guided text is a full-replacement section, but its IDs have different
+    provenance classes: IDs already in the revision may be edited, omitted IDs
+    are deletions (recorded by the server), tombstoned text IDs may be restored,
+    and a unique ID with no prior identity is a new user-authored bar.  The
+    caller only installs the returned lists after every section has validated,
+    so an identity failure cannot partially stage a revision.
+    """
+
+    def identity(value: object) -> str | None:
+        if not isinstance(value, str) or not value.strip():
+            return None
+        return value.strip()
+
+    # A revision is also an integrity boundary. Refuse a corrupt prior
+    # document rather than allowing a client to exploit an ambiguous identity.
+    try:
+        validate_guided_revision_lane_identities(current)
+    except (TypeError, ValueError) as exc:
+        raise _timeline_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_TEXT_IDENTITY_MISMATCH"
+        ) from exc
+
+    lane_ids: dict[str, set[str]] = {lane: set() for lane in GUIDED_EDITOR_LANES}
+    for lane in GUIDED_EDITOR_LANES:
+        for row in current.get(lane) or []:
+            if not isinstance(row, dict):
+                raise _timeline_error(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_TEXT_IDENTITY_MISMATCH"
+                )
+            row_id = identity(row.get("id"))
+            if row_id is None or row_id in lane_ids[lane]:
+                raise _timeline_error(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_TEXT_IDENTITY_MISMATCH"
+                )
+            lane_ids[lane].add(row_id)
+
+    all_lane_ids: set[str] = set()
+    for ids in lane_ids.values():
+        if all_lane_ids.intersection(ids):
+            raise _timeline_error(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_TEXT_IDENTITY_MISMATCH"
+            )
+        all_lane_ids.update(ids)
+
+    tombstones = list(current.get("tombstones") or [])
+    tombstone_by_id: dict[str, dict] = {}
+    tombstone_lane_by_id: dict[str, str] = {}
+    for tombstone in tombstones:
+        if not isinstance(tombstone, dict):
+            raise _timeline_error(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_TEXT_IDENTITY_MISMATCH"
+            )
+        tombstone_id = identity(tombstone.get("record_id"))
+        lane = tombstone.get("lane")
+        if tombstone_id is None or lane not in GUIDED_EDITOR_LANES:
+            raise _timeline_error(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_TEXT_IDENTITY_MISMATCH"
+            )
+        if tombstone_id in tombstone_by_id or tombstone_id in all_lane_ids:
+            raise _timeline_error(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_TEXT_IDENTITY_MISMATCH"
+            )
+        tombstone_by_id[tombstone_id] = tombstone
+        tombstone_lane_by_id[tombstone_id] = str(lane)
+
+    text_rows = [row for row in current.get("text_elements") or [] if isinstance(row, dict)]
+    text_by_id = {identity(row.get("id")): row for row in text_rows}
+    text_ids = {row_id for row_id in text_by_id if row_id is not None}
+
+    submitted_ids: set[str] = set()
+    resolved: list[dict] = []
+    for row in submitted:
+        if not isinstance(row, dict):
+            raise _timeline_error(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_TEXT_IDENTITY_MISMATCH"
+            )
+        row_id = identity(row.get("id"))
+        # Tombstones are server-authored.  Accepting a client-provided removed
+        # row would let it forge a deletion record or cross-lane restoration.
+        if row_id is None or row_id in submitted_ids or row.get("removed") is True:
+            raise _timeline_error(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_TEXT_IDENTITY_MISMATCH"
+            )
+        submitted_ids.add(row_id)
+
+        if row_id in lane_ids["text_elements"]:
+            resolved.append(row)
+            continue
+        if row_id in tombstone_by_id:
+            if tombstone_lane_by_id[row_id] != "text_elements":
+                raise _timeline_error(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_TEXT_IDENTITY_MISMATCH"
+                )
+            # A tombstone can only restore its own record.  The row has already
+            # passed TextElement validation, so its authored fields are allowed
+            # to be edited while restoring the same identity.
+            resolved.append(row)
+            continue
+
+        # IDs are globally scoped across editor lanes.  A newly-authored text
+        # bar may not shadow a motion/overlay/card identity, even if that ID is
+        # not currently visible in the text lane.
+        if any(row_id in ids for lane, ids in lane_ids.items() if lane != "text_elements"):
+            raise _timeline_error(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_TEXT_IDENTITY_MISMATCH"
+            )
+        if row_id in tombstone_by_id:
+            raise _timeline_error(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_TEXT_IDENTITY_MISMATCH"
+            )
+        resolved.append(row)
+
+    # Full-replacement deletion is intentionally server-derived.  Keep the
+    # exact prior record in the tombstone so restore is deterministic and does
+    # not resurrect a different generated/projection element on reload.
+    missing_ids = text_ids - submitted_ids
+    resolved_tombstones = [
+        tombstone
+        for tombstone in tombstones
+        if not (
+            tombstone.get("lane") == "text_elements"
+            and identity(tombstone.get("record_id")) in submitted_ids
+        )
+    ]
+    for missing_id in sorted(missing_ids):
+        prior = text_by_id[missing_id]
+        resolved_tombstones.append(
+            {
+                "lane": "text_elements",
+                "record_id": missing_id,
+                "segment_id": prior.get("segment_id"),
+                "reason": "user_removed",
+                "record": dict(prior),
+            }
+        )
+    if len(resolved_tombstones) > MAX_GUIDED_EDITOR_TOMBSTONES:
+        raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_TOMBSTONE_LIMIT")
+    return resolved, resolved_tombstones
 
 
 def _guided_v2_revision_from_commit(
@@ -7046,22 +7330,9 @@ def _guided_v2_revision_from_commit(
     if payload.orientation is not None:
         raw["orientation"] = payload.orientation
     if text_elements is not None:
-        current_text_ids = {
-            str(row.get("id")) for row in current.get("text_elements") or [] if row.get("id")
-        }
-        approved_text_ids = current_text_ids | {
-            str(row.get("record_id"))
-            for row in current.get("tombstones") or []
-            if row.get("lane") == "text_elements" and row.get("record_id")
-        }
-        submitted_text_ids = {str(row.get("id")) for row in text_elements if row.get("id")}
-        if not current_text_ids.issubset(submitted_text_ids) or not submitted_text_ids.issubset(
-            approved_text_ids
-        ):
-            raise _timeline_error(
-                status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_TEXT_IDENTITY_MISMATCH"
-            )
-        raw["text_elements"] = text_elements
+        raw["text_elements"], raw["tombstones"] = _guided_text_revision_state(
+            current, text_elements
+        )
     if sound_effects is not None:
         raw["sound_effects"] = sound_effects
     if media_overlays is not None:
@@ -7133,7 +7404,20 @@ def _guided_v2_revision_from_commit(
             raw,
             old_segments=list(current["segments"]),
             new_segments=list(raw["segments"]),
+            baseline_lanes=current,
+            authored_lanes={
+                lane
+                for lane, value in (
+                    ("text_elements", text_elements),
+                    ("sound_effects", sound_effects),
+                    ("media_overlays", media_overlays),
+                    ("visual_blocks", visual_blocks),
+                    ("motion_scenes", motion_scenes),
+                )
+                if value is not None
+            },
         )
+        _validate_projected_guided_lane_shapes(raw)
     if payload.music_window is not None:
         effective_track_id = payload.music_track_id or variant.get("music_track_id")
         if (

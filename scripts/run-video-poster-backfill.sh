@@ -210,6 +210,28 @@ prove_acknowledged_backfill_guard_absent() {
   fail "Acknowledged failed backfill Machine $machine_id is still present after destroy; refusing deploy."
 }
 
+# Same contract as prove_acknowledged_backfill_guard_absent, for the guard the
+# deploy sweeps when it was parked before ever running. Kept separate so the
+# failure message names the sweep rather than an acknowledgement the operator
+# never made.
+prove_swept_backfill_guard_absent() {
+  local machine_id="$1"
+  local attempt list_json
+  for ((attempt = 1; attempt <= guard_resolve_attempts; attempt++)); do
+    list_json="$(machine_list)" || \
+      fail "Could not verify removal of swept poster backfill Machine $machine_id."
+    validate_reserved_inventory "$list_json"
+    if ! machine_by_id "$machine_id" <<<"$list_json" >/dev/null \
+      && ! machine_by_guard_name <<<"$list_json" >/dev/null; then
+      return 0
+    fi
+    if (( attempt < guard_resolve_attempts )); then
+      sleep "$poll_interval_s"
+    fi
+  done
+  fail "Swept poster backfill Machine $machine_id is still present after destroy; refusing deploy."
+}
+
 # New guards carry an owner plus a fixed-duration metadata lease. The lease is
 # validated structurally before it is trusted for reclaim decisions.
 common_guard_contract_is_valid() {
@@ -423,6 +445,55 @@ prove_backfill_guard_image_is_live() {
     fail "Poster backfill guard image is no longer the exact production digest; it was retained and never started."
 }
 
+# A freshly created Machine is not startable until Fly finishes preparing its
+# image. Fly answers `machine start` during that window with a
+# failed_precondition naming the 'created' state; the Machine becomes startable
+# on its own moments later. Only that exact transient is retryable — the
+# reconciliation loop re-reads state, re-proves the contract, and retries under
+# its own deadline. Every other start failure still fails closed.
+start_is_retryable_precondition() {
+  local start_output="$1"
+  [[ "$start_output" == *"unable to start machine from current state: 'created'"* ]]
+}
+
+# Start a guard Machine, tolerating only the image-preparation precondition
+# above. Returns non-zero when the caller should wait and retry.
+start_backfill_machine() {
+  local machine_id="$1"
+  local context="$2"
+  local start_output start_status
+  start_output="$(flyctl machine start --app "$app_name" "$machine_id" 2>&1)"
+  start_status=$?
+  printf '%s\n' "$start_output"
+  if (( start_status == 0 )); then
+    return 0
+  fi
+  if start_is_retryable_precondition "$start_output"; then
+    echo "Machine $machine_id is still preparing its image; will retry the start."
+    return 1
+  fi
+  fail "Could not start $context poster backfill Machine $machine_id; its guard was retained."
+}
+
+# A Machine that reached 'stopped' having never published a start or exit event
+# never executed its command, so no mutation can have occurred and there is
+# nothing to inspect. `deploy_guard_contract_is_valid` already encodes exactly
+# this "never ran" predicate for the dormant deploy guard; without the same
+# allowance here a Machine parked during image preparation is a permanent dead
+# end that also blocks the next deploy, because deploys CAS this same name.
+machine_never_ran() {
+  # Requires POSITIVE evidence: `.events` must be a readable array that contains
+  # no start and no exit. `.events[]?` alone would treat an absent or malformed
+  # field as "never ran" and sweep a Machine whose receipt simply could not be
+  # read — destroying the forensics the acknowledgement path depends on. flyctl
+  # omits empty fields (`omitempty`), so this shape is reachable, and an
+  # unreadable inventory must fall through to retain-for-inspection.
+  jq -e '
+    (.events | type) == "array"
+    and ([.events[] | select(.type == "start" or .type == "exit")] | length == 0)
+  ' >/dev/null
+}
+
 reconcile_backfill_machine() {
   local machine_id="$1"
   local legacy="${2:-false}"
@@ -430,6 +501,8 @@ reconcile_backfill_machine() {
   local list_json machine_json state revision exit_receipt exit_event exit_summary
   local exit_timestamp retry_exit_timestamp=""
   local retry_started=false logs_retrieved=true
+  local never_ran_restarts=0
+  local never_ran_restart_limit="${POSTER_BACKFILL_NEVER_RAN_RESTARTS:-3}"
 
   while true; do
     list_json="$(machine_list)" || fail "Could not list Fly Machines."
@@ -460,8 +533,7 @@ reconcile_backfill_machine() {
       created)
         prove_backfill_guard_image_is_live "$machine_json"
         echo "Resuming created poster backfill Machine $machine_id..."
-        flyctl machine start --app "$app_name" "$machine_id" || \
-          fail "Could not start created poster backfill Machine $machine_id; its guard was retained."
+        start_backfill_machine "$machine_id" "created" || true
         ;;
       starting|started|stopping|replacing)
         echo "Waiting for poster backfill Machine $machine_id ($state)..."
@@ -472,6 +544,44 @@ reconcile_backfill_machine() {
           logs_retrieved=false
         fi
         if ! exit_receipt="$(latest_exit_receipt <<<"$machine_json")"; then
+          # A deploy must never be made to wait out a five-hour repair it did
+          # not ask for. It also must not be permanently deadlocked by debris:
+          # a guard with no start and no exit event ran nothing, holds no
+          # receipt, and has no forensic value — but it does hold the stable
+          # name deploys CAS. The acknowledgement recovery cannot clear this
+          # shape (it requires a non-clean exit receipt), so the deploy sweeps
+          # it. A guard that actually RAN is still retained, below.
+          if [[ "$mode" == "--acquire-deploy-guard" ]] && machine_never_ran <<<"$machine_json"; then
+            echo "Removing poster backfill guard $machine_id: parked before it ever ran, so it holds no receipt to preserve."
+            flyctl machine destroy --app "$app_name" "$machine_id" || \
+              fail "Never-started poster backfill guard $machine_id could not be destroyed; it was retained."
+            # Absence must be PROVEN before returning. The caller re-CASes this
+            # exact stable name moments later, and Fly's list can still report
+            # the destroyed Machine (or report it `destroying`, which is not a
+            # valid contract state): the create then conflicts on a name whose
+            # Machine no longer resolves, and acquire_deploy_guard fails hard
+            # instead of retrying. The acknowledged-failure path proves absence
+            # for the same reason.
+            prove_swept_backfill_guard_absent "$machine_id"
+            # Deliberately no RECONCILED_REVISION: nothing was repaired, so a
+            # later `run` must still perform the backfill.
+            return 0
+          fi
+          # Restarting is only ever right for a run that WANTS the backfill.
+          if [[ "$mode" != "--acquire-deploy-guard" ]] && machine_never_ran <<<"$machine_json"; then
+            if (( never_ran_restarts >= never_ran_restart_limit )); then
+              fail "Poster backfill Machine $machine_id was parked before it ever started $never_ran_restarts times; it was retained for inspection."
+            fi
+            never_ran_restarts=$((never_ran_restarts + 1))
+            prove_backfill_guard_image_is_live "$machine_json"
+            echo "Starting poster backfill Machine $machine_id, parked before it ever ran (attempt $never_ran_restarts/$never_ran_restart_limit)..."
+            start_backfill_machine "$machine_id" "never-started" || true
+            if (( SECONDS >= deadline )); then
+              fail "Poster backfill Machine $machine_id exceeded the reconciliation deadline; it was retained for inspection."
+            fi
+            sleep "$poll_interval_s"
+            continue
+          fi
           fail "Poster backfill Machine $machine_id stopped without an exit receipt; it was retained for inspection."
         fi
         exit_receipt_is_well_formed <<<"$exit_receipt" || \
@@ -912,8 +1022,10 @@ run_backfill() {
         resolve_production_image true
         [[ "$digest" == "$acquired_digest" ]] || \
           fail "Production image changed after backfill guard acquisition; the created guard was retained and never started."
-        flyctl machine start --app "$app_name" "$machine_id" || \
-          fail "Could not start poster backfill Machine $machine_id; its guard was retained."
+        # A retryable image-preparation precondition is not fatal here: the
+        # reconciliation below re-reads the Machine, re-proves the contract,
+        # and starts it under its own bounded deadline.
+        start_backfill_machine "$machine_id" "acquired" || true
       fi
       reconcile_backfill_machine "$machine_id" false
       if [[ "$RECONCILED_REVISION" == "$expected_sha" ]]; then
