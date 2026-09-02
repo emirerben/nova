@@ -155,6 +155,28 @@ class _NullCtx:
         return False
 
 
+def test_background_variant_field_writer_respects_required_speech_lock(monkeypatch) -> None:
+    variant = _variant(overlay_suggest_status="idle")
+    job = _Job(variant)
+    job.assembly_plan["_speech_cleanup_internal"] = {
+        "required_speech_generation_locks": {VARIANT_ID: uuid.uuid4().hex}
+    }
+    state: dict = {}
+    db = _Sess(job, [], state=state)
+    monkeypatch.setattr("sqlalchemy.orm.attributes.flag_modified", lambda *_args: None)
+
+    result = ap._persist_variant_fields(
+        db,
+        JOB_ID,
+        VARIANT_ID,
+        {"overlay_suggest_status": "matching"},
+    )
+
+    assert result is None
+    assert variant["overlay_suggest_status"] == "idle"
+    assert db.commits == 0
+
+
 class _PoolAsset:
     def __init__(self, *, kind: str = "image"):
         self.id = uuid.uuid4()

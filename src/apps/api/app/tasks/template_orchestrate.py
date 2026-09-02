@@ -2471,7 +2471,7 @@ def _analyze_clips_with_cache(
     return compact, clip_metas_ordered, file_refs_ordered, probe_map, failed_count
 
 
-def _analyze_clips_parallel(
+def _analyze_clips_parallel_indexed(
     file_refs: list,
     local_paths: list[str],
     probe_map: dict | None = None,
@@ -2479,18 +2479,21 @@ def _analyze_clips_parallel(
     *,
     job_id: str | None = None,
     record_sub_phases: bool = False,
-) -> tuple[list[ClipMeta], int]:
-    """Analyze all clips with Gemini in parallel.
+) -> tuple[list[tuple[int, ClipMeta]], list[int]]:
+    """Analyze clips in parallel while retaining their authoritative input slots.
 
-    Returns (successful_metas, failed_count).
+    Returns ``(successful_records, failed_slots)``. Successful records retain
+    completion order for byte-compatible downstream behavior, but each carries
+    the original input index so identity-aware callers never infer ownership
+    from completion order, a path basename, or a Gemini matcher id.
     Per-clip failures are logged but don't raise — caller applies threshold.
     probe_map is used in the Whisper fallback path to get clip duration without
     a second FFprobe call.
     filter_hint biases best_moments selection per-template (e.g. "ball in frame"
     for football templates).
     """
-    clip_metas: list[ClipMeta] = []
-    failed_count = 0
+    clip_metas: list[tuple[int, ClipMeta]] = []
+    failed_slots: list[int] = []
 
     def _analyze_one(args: tuple[int, object | None, str]) -> tuple[ClipMeta | None, str | None]:
         idx, ref, path = args
@@ -2637,18 +2640,41 @@ def _analyze_clips_parallel(
     with ThreadPoolExecutor(
         max_workers=min(len(file_refs), _GEMINI_PARALLEL_CAP),
     ) as pool:
-        futures = [
-            pool.submit(_analyze_one, (i, ref, path))
+        futures = {
+            pool.submit(_analyze_one, (i, ref, path)): i
             for i, (ref, path) in enumerate(zip(file_refs, local_paths))
-        ]
+        }
         for future in as_completed(futures):
+            source_slot = futures[future]
             meta, error = future.result()
             if meta is not None:
-                clip_metas.append(meta)
+                clip_metas.append((source_slot, meta))
             else:
-                failed_count += 1
+                failed_slots.append(source_slot)
 
-    return clip_metas, failed_count
+    return clip_metas, failed_slots
+
+
+def _analyze_clips_parallel(
+    file_refs: list,
+    local_paths: list[str],
+    probe_map: dict | None = None,
+    filter_hint: str = "",
+    *,
+    job_id: str | None = None,
+    record_sub_phases: bool = False,
+) -> tuple[list[ClipMeta], int]:
+    """Compatibility wrapper returning completion-ordered metadata + count."""
+
+    indexed, failed_slots = _analyze_clips_parallel_indexed(
+        file_refs,
+        local_paths,
+        probe_map,
+        filter_hint,
+        job_id=job_id,
+        record_sub_phases=record_sub_phases,
+    )
+    return [meta for _source_slot, meta in indexed], len(failed_slots)
 
 
 # ── Fallback helpers ──────────────────────────────────────────────────────────
@@ -7469,9 +7495,7 @@ def _run_single_video_job(
             job_id=job_id,
             source_kind="single_video_output",
         )
-        base_poster_path = (
-            poster_object_path(gcs_base_path, job_id=job_id) if poster_path else None
-        )
+        base_poster_path = poster_object_path(gcs_base_path, job_id=job_id) if poster_path else None
         if poster_path and base_poster_path:
             try:
                 copy_object(poster_path, base_poster_path)

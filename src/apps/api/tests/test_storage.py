@@ -4,6 +4,7 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+from billiard.exceptions import SoftTimeLimitExceeded
 
 from app import storage
 
@@ -226,6 +227,206 @@ def test_object_exists_once_propagates_storage_outage():
         pytest.raises(RuntimeError, match="HEAD unavailable"),
     ):
         storage.object_exists_once("jobs/j/output.poster.jpg", timeout_s=3.0)
+
+
+def test_delete_prefix_verified_proves_empty_after_delete_and_relist():
+    blobs = [MagicMock(), MagicMock()]
+    bucket = MagicMock()
+    bucket.list_blobs.side_effect = [blobs, []]
+    client = MagicMock()
+    client.bucket.return_value = bucket
+
+    with patch.object(storage, "_get_client", return_value=client):
+        result = storage.delete_prefix_verified("generative-jobs/job/attempt/", timeout_s=3.0)
+
+    assert result == storage.PrefixDeletionResult(
+        status="verified_empty",
+        listed=2,
+        deleted=2,
+        failed=0,
+        remaining=0,
+    )
+    for blob in blobs:
+        blob.delete.assert_called_once_with(timeout=3.0, retry=None)
+
+
+def test_delete_prefix_verified_caps_timed_page_and_retains_remaining_work():
+    cap = storage.VERIFIED_PREFIX_DELETE_OBJECT_CAP
+    blobs = [MagicMock(name=f"blob-{index}") for index in range(cap + 1)]
+    remaining_blob = blobs[-1]
+    bucket = MagicMock()
+    bucket.list_blobs.side_effect = [blobs, [remaining_blob]]
+    client = MagicMock()
+    client.bucket.return_value = bucket
+
+    with patch.object(storage, "_get_client", return_value=client):
+        result = storage.delete_prefix_verified(
+            "generative-jobs/job/attempt/",
+            timeout_s=3.0,
+        )
+
+    assert result.status == "partial"
+    assert result.listed == cap + 1
+    assert result.deleted == cap
+    assert result.remaining == 1
+    for blob in blobs[:cap]:
+        blob.delete.assert_called_once()
+    remaining_blob.delete.assert_not_called()
+    first_list = bucket.list_blobs.call_args_list[0].kwargs
+    proof_list = bucket.list_blobs.call_args_list[1].kwargs
+    assert first_list["max_results"] == cap + 1
+    assert first_list["page_size"] == cap + 1
+    assert proof_list["max_results"] == 1
+    assert proof_list["page_size"] == 1
+
+
+def test_delete_prefix_verified_total_deadline_fails_closed(monkeypatch):
+    blob = MagicMock()
+    bucket = MagicMock()
+    bucket.list_blobs.return_value = [blob]
+    client = MagicMock()
+    client.bucket.return_value = bucket
+    clock = iter([0.0, 0.0, 13.0, 13.0])
+    monkeypatch.setattr(storage.time, "monotonic", lambda: next(clock))
+
+    with patch.object(storage, "_get_client", return_value=client):
+        result = storage.delete_prefix_verified(
+            "generative-jobs/job/attempt/",
+            timeout_s=3.0,
+        )
+
+    assert result.status == "unavailable"
+    assert result.remaining is None
+    blob.delete.assert_not_called()
+    assert bucket.list_blobs.call_count == 1
+
+
+def test_delete_prefix_verified_distinguishes_list_failure_from_empty():
+    bucket = MagicMock()
+    bucket.list_blobs.side_effect = RuntimeError("listing unavailable")
+    client = MagicMock()
+    client.bucket.return_value = bucket
+
+    with patch.object(storage, "_get_client", return_value=client):
+        result = storage.delete_prefix_verified("generative-jobs/job/attempt/")
+
+    assert result.status == "unavailable"
+    assert result.listed == 0
+    assert result.remaining is None
+
+
+def test_delete_prefix_verified_retains_partial_delete_for_retry():
+    deleted_blob = MagicMock()
+    failed_blob = MagicMock()
+    failed_blob.delete.side_effect = RuntimeError("delete unavailable")
+    bucket = MagicMock()
+    bucket.list_blobs.side_effect = [[deleted_blob, failed_blob], [failed_blob]]
+    client = MagicMock()
+    client.bucket.return_value = bucket
+
+    with patch.object(storage, "_get_client", return_value=client):
+        result = storage.delete_prefix_verified("generative-jobs/job/attempt/")
+
+    assert result == storage.PrefixDeletionResult(
+        status="partial",
+        listed=2,
+        deleted=1,
+        failed=1,
+        remaining=1,
+    )
+
+
+def test_delete_prefix_verified_eventual_retry_reaches_verified_empty():
+    blob = MagicMock()
+    blob.delete.side_effect = [RuntimeError("transient"), None]
+    bucket = MagicMock()
+    bucket.list_blobs.side_effect = [[blob], [blob], [blob], []]
+    client = MagicMock()
+    client.bucket.return_value = bucket
+
+    with patch.object(storage, "_get_client", return_value=client):
+        first = storage.delete_prefix_verified("generative-jobs/job/attempt/")
+        second = storage.delete_prefix_verified("generative-jobs/job/attempt/")
+
+    assert first.status == "partial"
+    assert second.status == "verified_empty"
+    assert second.deleted == 1
+
+
+def test_delete_prefix_verified_never_claims_success_when_relist_fails():
+    blob = MagicMock()
+    bucket = MagicMock()
+    bucket.list_blobs.side_effect = [[blob], RuntimeError("relist unavailable")]
+    client = MagicMock()
+    client.bucket.return_value = bucket
+
+    with patch.object(storage, "_get_client", return_value=client):
+        result = storage.delete_prefix_verified("generative-jobs/job/attempt/")
+
+    assert result.status == "unavailable"
+    assert result.deleted == 1
+    assert result.remaining is None
+
+
+def test_delete_prefix_best_effort_keeps_legacy_integer_contract():
+    blob = MagicMock()
+    bucket = MagicMock()
+    bucket.list_blobs.return_value = [blob]
+    client = MagicMock()
+    client.bucket.return_value = bucket
+
+    with patch.object(storage, "_get_client", return_value=client):
+        assert storage.delete_prefix_best_effort("generative-jobs/job/attempt/") == 1
+    bucket.list_blobs.assert_called_once_with(prefix="generative-jobs/job/attempt/")
+
+
+def test_delete_prefix_verified_propagates_task_soft_timeout():
+    bucket = MagicMock()
+    bucket.list_blobs.side_effect = SoftTimeLimitExceeded()
+    client = MagicMock()
+    client.bucket.return_value = bucket
+
+    with (
+        patch.object(storage, "_get_client", return_value=client),
+        pytest.raises(SoftTimeLimitExceeded),
+    ):
+        storage.delete_prefix_verified("generative-jobs/job/attempt/")
+
+
+def test_delete_prefix_verified_local_fixture_rechecks_empty(tmp_path):
+    object_root = tmp_path / "objects"
+    nested = object_root / "generative-jobs" / "job" / "attempt" / "nested"
+    nested.mkdir(parents=True)
+    (nested / "one.mp4").write_bytes(b"one")
+    (nested / "two.jpg").write_bytes(b"two")
+
+    with (
+        patch.object(storage.settings, "storage_provider", "local"),
+        patch.object(storage.settings, "e2e_fixtures", True),
+        patch.object(storage.settings, "local_storage_root", str(object_root)),
+    ):
+        result = storage.delete_prefix_verified("generative-jobs/job/attempt/")
+
+    assert result == storage.PrefixDeletionResult(
+        status="verified_empty",
+        listed=2,
+        deleted=2,
+        failed=0,
+        remaining=0,
+    )
+    assert not (object_root / "generative-jobs" / "job" / "attempt").exists()
+
+
+def test_delete_prefix_verified_local_missing_prefix_is_verified_empty(tmp_path):
+    with (
+        patch.object(storage.settings, "storage_provider", "local"),
+        patch.object(storage.settings, "e2e_fixtures", True),
+        patch.object(storage.settings, "local_storage_root", str(tmp_path)),
+    ):
+        result = storage.delete_prefix_verified("generative-jobs/job/missing/")
+
+    assert result.status == "verified_empty"
+    assert result.remaining == 0
 
 
 def test_object_metadata_once_uses_bounded_request_without_sdk_retry():

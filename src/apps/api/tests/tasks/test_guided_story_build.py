@@ -83,7 +83,12 @@ def test_audio_led_dual_contract_skips_guided_and_reaches_native_ingest(monkeypa
     monkeypatch.setattr(gb, "_lock_owned_entry_job", lambda _db, _job_id: (job, None))
     monkeypatch.setattr(gb, "mark_started", lambda _job_id: None)
     monkeypatch.setattr(gb, "record_phase", lambda *args, **kwargs: None)
-    monkeypatch.setattr(gb, "_persist_durable_sources", lambda _job_id, paths: paths)
+    monkeypatch.setattr(gb, "_provision_clip_source_identity", lambda _job_id: None)
+    monkeypatch.setattr(
+        gb,
+        "_persist_durable_sources",
+        lambda _job_id, paths, **_kwargs: paths,
+    )
     monkeypatch.setattr(
         gb,
         "_run_guided_story_job",
@@ -161,7 +166,12 @@ def test_unknown_future_intent_does_not_reactivate_guided_snapshot(monkeypatch) 
     monkeypatch.setattr(gb, "_lock_owned_entry_job", lambda _db, _job_id: (job, None))
     monkeypatch.setattr(gb, "mark_started", lambda _job_id: None)
     monkeypatch.setattr(gb, "record_phase", lambda *args, **kwargs: None)
-    monkeypatch.setattr(gb, "_persist_durable_sources", lambda _job_id, paths: paths)
+    monkeypatch.setattr(gb, "_provision_clip_source_identity", lambda _job_id: None)
+    monkeypatch.setattr(
+        gb,
+        "_persist_durable_sources",
+        lambda _job_id, paths, **_kwargs: paths,
+    )
     monkeypatch.setattr(
         gb,
         "_run_guided_story_job",
@@ -613,11 +623,14 @@ def test_guided_failure_keeps_job_non_ready_and_persists_machine_code(monkeypatc
     monkeypatch.setattr(
         gb,
         "_fail_job",
-        lambda job_id, detail, failure_reason=None: captured.update(
-            job_id=job_id,
-            detail=detail,
-            failure_reason=failure_reason,
-            status="processing_failed",
+        lambda job_id, detail, failure_reason=None: (
+            captured.update(
+                job_id=job_id,
+                detail=detail,
+                failure_reason=failure_reason,
+                status="processing_failed",
+            )
+            or True
         ),
     )
 
@@ -657,8 +670,8 @@ def test_guided_story_error_persists_a_user_facing_render_failure(monkeypatch) -
     monkeypatch.setattr(
         gb,
         "_fail_job",
-        lambda job_id, detail, failure_reason=None: failed.update(
-            job_id=job_id, detail=detail, failure_reason=failure_reason
+        lambda job_id, detail, failure_reason=None: (
+            failed.update(job_id=job_id, detail=detail, failure_reason=failure_reason) or True
         ),
     )
 

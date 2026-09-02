@@ -99,6 +99,13 @@ from app.services.creator_sessions import (
 from app.services.edit_direction_planner import round_robin_capacity_s
 from app.services.job_phases import mark_reattempt
 from app.services.job_status import PLAN_ITEM_JOB_READY, PLAN_ITEM_JOB_TERMINAL
+from app.services.public_assembly_plan import project_public_assembly_plan
+from app.services.speech_cleanup_terminal import classify_route_speech_cut_rollback
+from app.services.variant_generation_guard import (
+    VariantInitialRenderInProgress,
+    assert_required_speech_dispatch_quiescent,
+    assert_variant_generation_editable,
+)
 
 log = structlog.get_logger()
 router = APIRouter()
@@ -175,6 +182,23 @@ class CreatorSessionResponse(BaseModel):
     auto_iteration: dict | None = None
     created_at: str
     updated_at: str
+
+
+def _assert_variant_generation_editable_or_409(job: Job, variant_id: str) -> None:
+    """Reject creator writes while an initial required-speech render is private."""
+
+    try:
+        assert_variant_generation_editable(job, variant_id)
+    except VariantInitialRenderInProgress as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="variant_initial_render_in_progress",
+        ) from exc
+
+
+def _creator_session_response(session: CreatorAgentSession) -> CreatorSessionResponse:
+    payload = project_public_assembly_plan(serialize_session(session))
+    return CreatorSessionResponse.model_validate(payload)
 
 
 def _require_feature(user_id: uuid.UUID, *, execution: bool = False) -> None:
@@ -308,7 +332,7 @@ async def _session_for_start_event(
 async def _response(db: AsyncSession, session: CreatorAgentSession) -> CreatorSessionResponse:
     await db.commit()
     loaded = await _load_session(db, session.id, session.creator_id, session.plan_item_id)
-    return CreatorSessionResponse.model_validate(serialize_session(loaded))
+    return _creator_session_response(loaded)
 
 
 def _conversation(events: list[CreatorAgentEvent]) -> list[dict[str, str]]:
@@ -1115,7 +1139,7 @@ async def get_creator_session(
     session = await _load_session(db, session.id, user.id, item.id, for_update=True)
     if await reconcile_render_state(db, session):
         return await _response(db, session)
-    return CreatorSessionResponse.model_validate(serialize_session(session))
+    return _creator_session_response(session)
 
 
 @router.post("/{item_id}/creator-agent/session", response_model=CreatorSessionResponse)
@@ -1815,7 +1839,7 @@ def _craft_response(receipt: CreatorAgentExecution) -> CreatorCraftResponse:
         status=str(receipt.status),
         receipt_id=str(receipt.id),
         generation=(str(result.get("generation")) if result.get("generation") else None),
-        preview=preview,
+        preview=project_public_assembly_plan(preview),
     )
 
 
@@ -1829,6 +1853,27 @@ def _stable_manifest_fingerprint(manifest: Any) -> str:
     return canonical_context_hash(payload)
 
 
+def _speech_craft_control_matches(
+    assembly_plan: dict[str, Any] | None,
+    *,
+    operation_id: str | None,
+    generation: str,
+    variant_id: str | None = None,
+) -> bool:
+    """Return whether one private speech operation still owns its generation."""
+
+    if not operation_id or not generation:
+        return False
+    control = (assembly_plan or {}).get("speech_cut_control")
+    if not isinstance(control, dict):
+        return False
+    return bool(
+        control.get("operation_id") == operation_id
+        and control.get("render_generation_id") == generation
+        and (variant_id is None or control.get("variant_id") == variant_id)
+    )
+
+
 async def _rollback_craft_commit(
     db: AsyncSession,
     *,
@@ -1838,16 +1883,18 @@ async def _rollback_craft_commit(
     previous_assembly_plan: dict | None,
     variant_id: str,
     generation: str,
+    speech_cut_operation_id: str | None = None,
     error: Exception,
     previous_job_state: dict[str, Any] | None = None,
     previous_session_state: dict[str, Any] | None = None,
-) -> None:
+) -> str:
     """Undo only this craft generation when broker publication fails.
 
-    The target generation is the compare-and-swap guard.  Restore the exact
-    target variant and speech-cut fields owned by this craft, while retaining
-    sibling variants and unrelated assembly-plan keys committed during broker
-    publication.
+    The public target generation is the compare-and-swap guard for an ordinary
+    editor craft. Required-v1 speech craft deliberately leaves that row on the
+    last-good generation, so its private operation + generation pair is the
+    ownership guard instead. Restore only when the applicable guard still
+    matches, retaining sibling variants and unrelated assembly-plan keys.
     """
 
     creator_owned_keys = (
@@ -1872,19 +1919,47 @@ async def _rollback_craft_commit(
         )
     locked_job = await db.get(Job, job_id, populate_existing=True, with_for_update=True)
     generation_still_owned = False
+    enqueue_uncertain = False
     if locked_job is not None:
-        variants = list((locked_job.assembly_plan or {}).get("variants") or [])
-        current_index = next(
-            (
+        current_assembly = copy.deepcopy(locked_job.assembly_plan or {})
+        variants = list(current_assembly.get("variants") or [])
+        if speech_cut_operation_id:
+            rollback_disposition = classify_route_speech_cut_rollback(
+                current_assembly,
+                variant_id=variant_id,
+                operation_id=speech_cut_operation_id,
+                generation=generation,
+            )
+            matching_indexes = [
                 index
                 for index, value in enumerate(variants)
-                if value.get("variant_id") == variant_id
-                and value.get("render_generation_id") == generation
-            ),
-            None,
-        )
+                if isinstance(value, dict) and value.get("variant_id") == variant_id
+            ]
+            current_index = matching_indexes[0] if len(matching_indexes) == 1 else None
+            generation_still_owned = bool(
+                rollback_disposition == "eligible" and current_index is not None
+            )
+            # Exact control plus any worker claim/private reservation means the
+            # broker publication may have succeeded despite its failed response.
+            # Preserve every owner and let the worker or terminalizer decide.
+            enqueue_uncertain = rollback_disposition == "enqueue_uncertain" or (
+                rollback_disposition == "eligible" and current_index is None
+            )
+        else:
+            current_index = next(
+                (
+                    index
+                    for index, value in enumerate(variants)
+                    if value.get("variant_id") == variant_id
+                    and value.get("render_generation_id") == generation
+                ),
+                None,
+            )
+            generation_still_owned = current_index is not None
         if current_index is not None:
-            generation_still_owned = True
+            if not generation_still_owned:
+                current_index = None
+        if current_index is not None:
             previous_variants = list((previous_assembly_plan or {}).get("variants") or [])
             previous_variant = next(
                 (
@@ -1901,7 +1976,6 @@ async def _rollback_craft_commit(
             # Restore only this target variant. Sibling variants and unrelated
             # top-level assembly state may have been committed while the
             # broker call was in flight and must survive the rollback.
-            current_assembly = copy.deepcopy(locked_job.assembly_plan or {})
             current_assembly["variants"] = variants
             previous_owned = (previous_assembly_plan or {}).get("_creator_craft_owned")
             if not isinstance(previous_owned, dict):
@@ -1943,16 +2017,35 @@ async def _rollback_craft_commit(
                 setattr(locked_session, field, previous_session_state.get(field))
     failed_receipt = await db.get(CreatorAgentExecution, receipt_id, with_for_update=True)
     if failed_receipt is not None:
-        failed_receipt.status = "failed"
-        failed_receipt.error = {
-            "code": "craft_enqueue_failed",
-            "message": str(error)[:300],
-            "job_id": str(job_id),
-            "generation": generation,
-            "rolled_back": True,
-        }
-        failed_receipt.completed_at = datetime.now(UTC)
+        if enqueue_uncertain:
+            # ``running`` is the existing resumable receipt state. A retry with
+            # the same idempotency key re-publishes the deterministic task id;
+            # worker ownership prevents duplicate rendering/publication.
+            failed_receipt.status = "running"
+            failed_receipt.error = {
+                "code": "craft_enqueue_uncertain",
+                "message": str(error)[:300],
+                "job_id": str(job_id),
+                "generation": generation,
+                "rolled_back": False,
+            }
+            failed_receipt.completed_at = None
+        else:
+            failed_receipt.status = "failed"
+            failed_receipt.error = {
+                "code": "craft_enqueue_failed",
+                "message": str(error)[:300],
+                "job_id": str(job_id),
+                "generation": generation,
+                "rolled_back": generation_still_owned,
+            }
+            failed_receipt.completed_at = datetime.now(UTC)
     await db.commit()
+    return (
+        "enqueue_uncertain"
+        if enqueue_uncertain
+        else ("rolled_back" if generation_still_owned else "not_owned")
+    )
 
 
 async def _resolve_creator_overlay_asset(
@@ -2074,6 +2167,14 @@ def _stage_creator_speech_cut(
 
     from app.pipeline.speech_cut_state import accept_candidate
 
+    _assert_variant_generation_editable_or_409(job, variant_id)
+    try:
+        assert_required_speech_dispatch_quiescent(job, variant_id)
+    except VariantInitialRenderInProgress as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="variant_initial_render_in_progress",
+        ) from exc
     variant = next(
         (
             v
@@ -2118,9 +2219,22 @@ def _stage_creator_speech_cut(
     # ApplySpeechCutCommand's cut revision is separate from the creator session
     # integer revision envelope and is checked by the candidate state machine.
     operation_id = uuid.uuid4().hex
+    render_generation_id = uuid.uuid4().hex
     previous_variants = list((job.assembly_plan or {}).get("variants") or [])
-    updated.update({"ok": False, "render_status": "rendering", "speech_cut_last_error": None})
-    variants = [updated if v.get("variant_id") == variant_id else v for v in previous_variants]
+    updated.update(
+        {
+            "ok": False,
+            "render_status": "rendering",
+            "render_generation_id": render_generation_id,
+            "speech_cut_last_error": None,
+        }
+    )
+    required_atomic = (job.assembly_plan or {}).get("speech_cleanup_contract") == "required_v1"
+    variants = (
+        previous_variants
+        if required_atomic
+        else [updated if v.get("variant_id") == variant_id else v for v in previous_variants]
+    )
     control = {
         "variant_id": variant_id,
         "forced_removals": updated["speech_cut_in_flight"]["desired_forced_removals"],
@@ -2128,13 +2242,18 @@ def _stage_creator_speech_cut(
         "prior_disabled": (job.assembly_plan or {}).get("silence_cut_disabled") is True,
         "operation": request,
         "operation_id": operation_id,
+        "render_generation_id": render_generation_id,
         "finalizer_claim": None,
         "revision": request["revision"],
         "in_flight": updated["speech_cut_in_flight"],
     }
     job.assembly_plan = {
         **(job.assembly_plan or {}),
-        "silence_cut_disabled": False,
+        "silence_cut_disabled": (
+            bool((job.assembly_plan or {}).get("silence_cut_disabled"))
+            if required_atomic
+            else False
+        ),
         "speech_cut_control": control,
         "speech_cut_previous_variant": variant,
         "speech_cut_previous_variants": previous_variants,
@@ -2144,7 +2263,7 @@ def _stage_creator_speech_cut(
     job.status = "processing"
     flag_modified(job, "assembly_plan")
     mark_reattempt(job)
-    return request, operation_id, variant
+    return request, operation_id, updated
 
 
 async def _execute_creator_craft(
@@ -2216,6 +2335,26 @@ async def _execute_creator_craft(
     if body.expected_ownership_epoch != int(plan_row.ownership_epoch or 0):
         raise HTTPException(status_code=409, detail="Creator ownership changed")
 
+    try:
+        expected_job_id = uuid.UUID(body.expected_job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="Creator render target changed") from exc
+    job = await db.get(Job, expected_job_id, populate_existing=True, with_for_update=True)
+    if (
+        job is None
+        or job.user_id != user.id
+        or job.content_plan_item_id != item.id
+        or int(job.content_plan_ownership_epoch or 0) != body.expected_ownership_epoch
+        or item.current_job_id != job.id
+    ):
+        raise HTTPException(status_code=409, detail="Creator render target changed")
+    if receipt is None or (receipt.status == "running" and not recovering_prepared):
+        _assert_variant_generation_editable_or_409(job, body.expected_variant_id)
+    if job.status not in PLAN_ITEM_JOB_READY and not (
+        recovering_prepared and job.status == "processing"
+    ):
+        raise HTTPException(status_code=409, detail="Creator render target changed")
+
     manifest, _media_context = await resolve_item_creator_context(db, item, persona=persona)
     full_manifest_match = (
         body.expected_manifest_hash == manifest.manifest_hash
@@ -2230,23 +2369,6 @@ async def _execute_creator_craft(
     if not full_manifest_match and not stable_manifest_match:
         raise HTTPException(status_code=409, detail="Creator capability manifest changed")
 
-    try:
-        expected_job_id = uuid.UUID(body.expected_job_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail="Creator render target changed") from exc
-    job = await db.get(Job, expected_job_id, populate_existing=True, with_for_update=True)
-    if (
-        job is None
-        or job.user_id != user.id
-        or job.content_plan_item_id != item.id
-        or int(job.content_plan_ownership_epoch or 0) != body.expected_ownership_epoch
-        or item.current_job_id != job.id
-        or (
-            job.status not in PLAN_ITEM_JOB_READY
-            and not (recovering_prepared and job.status == "processing")
-        )
-    ):
-        raise HTTPException(status_code=409, detail="Creator render target changed")
     previous_job_state = {
         "status": job.status,
         "started_at": (job.started_at.isoformat() if getattr(job, "started_at", None) else None),
@@ -2262,7 +2384,18 @@ async def _execute_creator_craft(
 
     if receipt is not None and receipt.status == "succeeded":
         recorded_result = receipt.result if isinstance(receipt.result, dict) else {}
-        if current_generation != str(recorded_result.get("generation") or ""):
+        recorded_generation = str(recorded_result.get("generation") or "")
+        recorded_speech_operation_id = recorded_result.get("speech_cut_operation_id")
+        generation_matches = current_generation == recorded_generation or (
+            isinstance(recorded_speech_operation_id, str)
+            and _speech_craft_control_matches(
+                job.assembly_plan,
+                operation_id=recorded_speech_operation_id,
+                generation=recorded_generation,
+                variant_id=body.expected_variant_id,
+            )
+        )
+        if not recorded_generation or not generation_matches:
             raise HTTPException(status_code=409, detail="Creator craft execution is stale")
         return _craft_response(receipt)
 
@@ -2272,7 +2405,17 @@ async def _execute_creator_craft(
     prepared = existing_result.get("prepared") if isinstance(existing_result, dict) else None
     if prepared is not None:
         generation = str(existing_result.get("generation") or "")
-        if not generation or current_generation != generation:
+        speech_operation_id = existing_result.get("speech_cut_operation_id")
+        generation_matches = current_generation == generation or (
+            isinstance(speech_operation_id, str)
+            and _speech_craft_control_matches(
+                job.assembly_plan,
+                operation_id=speech_operation_id,
+                generation=generation,
+                variant_id=body.expected_variant_id,
+            )
+        )
+        if not generation or not generation_matches:
             raise HTTPException(status_code=409, detail="Creator craft execution is stale")
         recorded_pins = existing_result.get("pins")
         if isinstance(recorded_pins, dict):
@@ -2293,7 +2436,6 @@ async def _execute_creator_craft(
             previous_job_state = existing_result["previous_job_state"]
         if isinstance(existing_result.get("previous_session_state"), dict):
             previous_session_state = existing_result["previous_session_state"]
-        speech_operation_id = existing_result.get("speech_cut_operation_id")
     else:
         if manage_session_state:
             attempts = int(getattr(session, "render_attempts", 0) or 0)
@@ -2355,6 +2497,9 @@ async def _execute_creator_craft(
             },
         }
         speech_operation_id: str | None = None
+        speech_generation: str | None = None
+        speech_staged_variant: dict[str, Any] | None = None
+        speech_public_variants: list[dict[str, Any]] | None = None
         resolved_sfx: dict[str, Any] | None = None
         try:
             speech_commands = [
@@ -2363,10 +2508,26 @@ async def _execute_creator_craft(
             if len(speech_commands) > 1:
                 raise CreatorCraftValidationError("Only one speech-cut command is allowed")
             if speech_commands:
-                _request, speech_operation_id, _prior_variant = _stage_creator_speech_cut(
+                _request, speech_operation_id, speech_staged_variant = _stage_creator_speech_cut(
                     job,
                     variant_id=body.expected_variant_id,
                     command=speech_commands[0],
+                )
+                control = (job.assembly_plan or {}).get("speech_cut_control")
+                speech_generation = str(
+                    control.get("render_generation_id") if isinstance(control, dict) else ""
+                )
+                if not _speech_craft_control_matches(
+                    job.assembly_plan,
+                    operation_id=speech_operation_id,
+                    generation=speech_generation,
+                    variant_id=body.expected_variant_id,
+                ):
+                    raise CreatorCraftValidationError(
+                        "Speech-cut staging lost generation ownership"
+                    )
+                speech_public_variants = copy.deepcopy(
+                    (job.assembly_plan or {}).get("speech_cut_previous_variants") or []
                 )
             sfx_commands = [
                 command for command in body.commands if isinstance(command, SetLicensedSfxCommand)
@@ -2403,19 +2564,34 @@ async def _execute_creator_craft(
                 )
             )
             if has_editor_sections:
+                if speech_operation_id:
+                    # The editor gateway validates against the client-pinned
+                    # last-good generation. Speech staging may already have
+                    # placed its private desired state on the legacy public row,
+                    # so validate the editor lanes against the exact pre-craft
+                    # vector and combine them below under the speech token.
+                    job.assembly_plan = {
+                        **(job.assembly_plan or {}),
+                        "variants": copy.deepcopy(speech_public_variants or []),
+                    }
                 prepared = prepare_editor_commit(
                     job,
                     body.expected_variant_id,
                     editor_commit,
                     user_id=str(user.id),
                     plan_item_id=str(item.id),
+                    speech_cut_owner=(
+                        (speech_operation_id, speech_generation)
+                        if speech_operation_id and speech_generation
+                        else None
+                    ),
                 )
                 if speech_operation_id:
                     # The speech rerender projects creator-authored lanes from
-                    # this snapshot onto its freshly rebuilt source. Include
-                    # the same-bundle SFX/caption/timeline changes; the separate
-                    # previous_variants snapshot remains the rollback source.
-                    staged_variant = next(
+                    # this private working snapshot onto its rebuilt source.
+                    # Normalize the editor preparer's temporary generation to
+                    # the one generation already owned by speech_cut_control.
+                    editor_staged_variant = next(
                         (
                             value
                             for value in (job.assembly_plan or {}).get("variants") or []
@@ -2423,24 +2599,78 @@ async def _execute_creator_craft(
                         ),
                         None,
                     )
-                    if staged_variant is not None:
-                        job.assembly_plan = {
-                            **(job.assembly_plan or {}),
-                            "speech_cut_previous_variant": copy.deepcopy(staged_variant),
+                    if editor_staged_variant is None or speech_staged_variant is None:
+                        raise CreatorCraftValidationError("Speech-cut staged variant disappeared")
+                    working_variant = copy.deepcopy(editor_staged_variant)
+                    for field in (
+                        "speech_cut_candidates",
+                        "speech_cut_forced_removals",
+                        "speech_cuts_disabled",
+                        "speech_cut_in_flight",
+                        "speech_cut_revision",
+                        "speech_cut_last_error",
+                    ):
+                        if field in speech_staged_variant:
+                            working_variant[field] = copy.deepcopy(speech_staged_variant[field])
+                    working_variant.update(
+                        {
+                            "render_generation_id": speech_generation,
+                            "render_status": "rendering",
+                            "ok": False,
                         }
+                    )
+                    prepared["generation"] = speech_generation
+                    required_atomic = (job.assembly_plan or {}).get(
+                        "speech_cleanup_contract"
+                    ) == "required_v1"
+                    public_variants = (
+                        copy.deepcopy(speech_public_variants or [])
+                        if required_atomic
+                        else [
+                            copy.deepcopy(working_variant)
+                            if value.get("variant_id") == body.expected_variant_id
+                            else value
+                            for value in (speech_public_variants or [])
+                        ]
+                    )
+                    job.assembly_plan = {
+                        **(job.assembly_plan or {}),
+                        "speech_cut_previous_variant": working_variant,
+                        "speech_cut_previous_variants": copy.deepcopy(speech_public_variants or []),
+                        "variants": public_variants,
+                    }
             elif speech_operation_id:
-                # Speech-only bundles do not have an editor section. Mint the
-                # same token the existing speech rerender uses while retaining
-                # the candidate state staged above in this transaction.
-                generation = uuid.uuid4().hex
-                staged_variants = list((job.assembly_plan or {}).get("variants") or [])
-                for staged in staged_variants:
-                    if staged.get("variant_id") == body.expected_variant_id:
-                        staged["render_generation_id"] = generation
-                        staged["render_status"] = "rendering"
-                job.assembly_plan = {**(job.assembly_plan or {}), "variants": staged_variants}
+                if speech_staged_variant is None or not speech_generation:
+                    raise CreatorCraftValidationError("Speech-cut staged variant disappeared")
+                working_variant = copy.deepcopy(speech_staged_variant)
+                working_variant.update(
+                    {
+                        "render_generation_id": speech_generation,
+                        "render_status": "rendering",
+                        "ok": False,
+                    }
+                )
+                required_atomic = (job.assembly_plan or {}).get(
+                    "speech_cleanup_contract"
+                ) == "required_v1"
+                public_variants = (
+                    copy.deepcopy(speech_public_variants or [])
+                    if required_atomic
+                    else [
+                        copy.deepcopy(working_variant)
+                        if value.get("variant_id") == body.expected_variant_id
+                        else value
+                        for value in (speech_public_variants or [])
+                    ]
+                )
+                job.assembly_plan = {
+                    **(job.assembly_plan or {}),
+                    "speech_cut_previous_variant": working_variant,
+                    "speech_cut_previous_variants": copy.deepcopy(speech_public_variants or []),
+                    "variants": public_variants,
+                }
                 prepared = {
-                    "generation": generation,
+                    "generation": speech_generation,
                     "has_render_section": True,
                     "sections": {"speech_cut": True},
                     "speech_cut_operation_id": speech_operation_id,
@@ -2503,6 +2733,7 @@ async def _execute_creator_craft(
     if receipt.id is None:
         raise HTTPException(status_code=409, detail="Creator craft receipt is unavailable")
     receipt_id = receipt.id
+    enqueue_uncertain = False
     try:
         craft_task_id = f"creator-craft-{receipt_id}-{generation}"
         if speech_operation_id:
@@ -2522,7 +2753,7 @@ async def _execute_creator_craft(
             )
     except Exception as exc:  # noqa: BLE001 — committed state must be rolled back
         if previous_assembly_plan is not None:
-            await _rollback_craft_commit(
+            rollback_disposition = await _rollback_craft_commit(
                 db,
                 receipt_id=receipt_id,
                 session_id=session.id,
@@ -2530,10 +2761,12 @@ async def _execute_creator_craft(
                 previous_assembly_plan=previous_assembly_plan,
                 variant_id=body.expected_variant_id,
                 generation=generation,
+                speech_cut_operation_id=speech_operation_id,
                 error=exc,
                 previous_job_state=previous_job_state,
                 previous_session_state=(previous_session_state if manage_session_state else None),
             )
+            enqueue_uncertain = rollback_disposition == "enqueue_uncertain"
         else:
             await db.rollback()
             failed_receipt = await db.get(CreatorAgentExecution, receipt_id, with_for_update=True)
@@ -2547,10 +2780,15 @@ async def _execute_creator_craft(
                 await db.commit()
         raise HTTPException(
             status_code=503,
-            detail="The creator treatment could not be queued; the current video is unchanged.",
+            detail=(
+                "The queue acknowledgement was interrupted; your render may still complete."
+                if enqueue_uncertain
+                else "The creator treatment could not be queued; the current video is unchanged."
+            ),
         ) from exc
 
     receipt.status = "succeeded"
+    receipt.error = None
     receipt.completed_at = datetime.now(UTC)
     response = _craft_response(receipt)
     await db.commit()
@@ -2622,15 +2860,15 @@ async def request_creator_auto_iteration(
     )
     if session.revision != body.expected_revision and not exact_duplicate_revision:
         raise HTTPException(status_code=409, detail="Creator session changed")
-    session.auto_iteration_opt_in = True
     budget = max(0, int(session.max_render_attempts or 0) - int(session.render_attempts or 0))
     decision = evaluate_auto_iteration(
         marker,
-        opted_in=session.auto_iteration_opt_in,
+        opted_in=True,
         render_budget_remaining=budget,
         automatic_revision_count=int(session.automatic_revision_count or 0),
     )
     if decision.decision != "eligible":
+        session.auto_iteration_opt_in = True
         await append_event(
             db,
             session,
@@ -2690,6 +2928,13 @@ async def request_creator_auto_iteration(
         )
     ):
         raise HTTPException(status_code=409, detail="Creator render generation changed")
+    if not prepared_recovery:
+        # This is outside the fail-open craft block: an initial required-speech
+        # owner is a write barrier, not an unavailable optional treatment. Do
+        # not persist opt-in/events/controller state or convert its stable 409
+        # into a successful session response.
+        _assert_variant_generation_editable_or_409(job, str(session.target_variant_id))
+    session.auto_iteration_opt_in = True
     manifest, _media_context = await resolve_item_creator_context(db, item, persona=persona)
     raw_bundle = auto_marker.get("bundle")
     if prepared_recovery or duplicate_running:
@@ -2765,7 +3010,6 @@ async def request_creator_auto_iteration(
                 "bundle": bundle.model_dump(mode="json"),
             },
         }
-        await db.commit()
     try:
         craft_state_token = _MANAGE_CRAFT_SESSION_STATE.set(False)
         try:

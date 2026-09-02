@@ -268,6 +268,63 @@ def test_publishable_output_rejects_missing_or_unready_variant() -> None:
         resolve_publishable_output(job, "song_text")
 
 
+def test_publishable_output_never_snapshots_control_owned_provisional_media() -> None:
+    job = _job()
+    provisional_path = f"generative-jobs/{job.id}/render-generations/generation-new/provisional.mp4"
+    job.assembly_plan = {
+        # The contract discriminator is deliberately absent: the independently
+        # persisted control must still make publication fail closed.
+        "speech_cut_control": {
+            "variant_id": "song_text",
+            "operation_id": "operation-a",
+            "render_generation_id": "generation-new",
+        },
+        "variants": [
+            {
+                "variant_id": "song_text",
+                "render_status": "ready",
+                "render_generation_id": "generation-new",
+                "video_path": provisional_path,
+                "output_url": "https://private.example/provisional",
+            }
+        ],
+    }
+
+    with (
+        patch("app.services.tiktok_publishable.storage.object_metadata") as metadata,
+        patch("app.services.tiktok_publishable.storage.signed_get_url") as sign,
+        pytest.raises(PublishableOutputError, match="not ready"),
+    ):
+        resolve_publishable_output(job, "song_text")
+
+    metadata.assert_not_called()
+    sign.assert_not_called()
+
+
+def test_publishable_output_does_not_synthesize_legacy_path_for_active_plan() -> None:
+    job = _job()
+    job.mode = "template"
+    job.job_type = "template"
+    job.assembly_plan = {
+        "speech_cut_control": {
+            "variant_id": "subtitled",
+            "operation_id": "operation-a",
+            "render_generation_id": "generation-new",
+        },
+        "output_url": "https://private.example/provisional",
+    }
+
+    with (
+        patch("app.services.tiktok_publishable.storage.object_metadata") as metadata,
+        patch("app.services.tiktok_publishable.storage.signed_get_url") as sign,
+        pytest.raises(PublishableOutputError, match="not ready"),
+    ):
+        resolve_publishable_output(job)
+
+    metadata.assert_not_called()
+    sign.assert_not_called()
+
+
 @pytest.mark.parametrize("status", ["queued", "rendering", "posting", "cancelled"])
 def test_publishable_output_requires_terminal_ready_job(status: str) -> None:
     job = _job()

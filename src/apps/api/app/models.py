@@ -530,6 +530,18 @@ class Job(Base):
                 "AND assembly_plan ? '_poster_backfill_cleanup_receipts'"
             ),
         ),
+        Index(
+            "idx_jobs_storage_attempt_cleanup_sweep",
+            "updated_at",
+            "id",
+            postgresql_where=text(
+                "jsonb_typeof(assembly_plan -> '_speech_cleanup_internal') = 'object' "
+                "AND ((assembly_plan -> '_speech_cleanup_internal') "
+                "? 'durable_source_copy_pending' "
+                "OR (assembly_plan -> '_speech_cleanup_internal') "
+                "? 'render_generation_cleanup_pending')"
+            ),
+        ),
     )
 
 
@@ -545,7 +557,9 @@ class JobStorageDeletion(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     job_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    object_paths: Mapped[list] = mapped_column(JSONB, nullable=False)
+    # Legacy rows store ``list[str]``. Version 2 stores a mapping with exact
+    # paths plus verified-prefix entries and their quiescence deadlines.
+    object_paths: Mapped[list | dict] = mapped_column(JSONB, nullable=False)
     # pending → processing → completed. A failed processing attempt returns
     # to pending with next_attempt_at set for the durable sweeper.
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")

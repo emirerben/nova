@@ -9,8 +9,11 @@ local-render) per CLAUDE.md.
 
 from __future__ import annotations
 
+import copy
 import types
+import uuid
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -103,6 +106,182 @@ def test_ingest_clip_metadata_cache_hit_skips_upload_and_analysis(monkeypatch, t
     assert result["hero"] is cached[0]
     assert result["clip_id_to_gcs"] == {"cached_a": "gcs/a.mp4", "cached_b": "gcs/b.mp4"}
     assert cached[0].clip_path.endswith("0.mp4")
+
+
+def _patch_indexed_ingest_io(monkeypatch, tmp_path) -> None:
+    import app.pipeline.source_guard as source_guard
+    import app.tasks.template_orchestrate as template_orchestrate
+
+    monkeypatch.setattr(gb, "_load_preprocessed_source_cache", lambda *a, **k: None)
+    monkeypatch.setattr(gb, "_record_render_subphase", lambda *a, **k: None)
+    monkeypatch.setattr(source_guard, "downscale_oversized_sources", lambda *a, **k: None)
+    monkeypatch.setattr(
+        template_orchestrate,
+        "_download_clips_parallel",
+        lambda paths, _tmpdir: [
+            str(tmp_path / f"source-{slot}.mp4") for slot, _path in enumerate(paths)
+        ],
+    )
+    monkeypatch.setattr(
+        template_orchestrate,
+        "_probe_clips",
+        lambda paths: {path: _Probe(6.0) for path in paths},
+    )
+    monkeypatch.setattr(
+        "app.services.pipeline_trace.record_pipeline_event",
+        lambda *_args, **_kwargs: None,
+    )
+
+
+def test_ingest_indexed_cache_binds_reverse_completion_records_to_source_slots(
+    monkeypatch, tmp_path
+) -> None:
+    import app.tasks.template_orchestrate as template_orchestrate
+    from app.services.speech_cleanup_identity import (
+        CLIP_METADATA_IDENTITY_INDEX_KEY,
+        ClipSourceIdentity,
+        build_clip_metadata_identity_index,
+    )
+
+    paths = ["gcs/source-a.mp4", "gcs/source-b.mp4"]
+    source_ids = (str(uuid.uuid4()), str(uuid.uuid4()))
+    identity = ClipSourceIdentity("assigned", tuple(paths), source_ids)
+    meta_a = _Meta("clip-a", 2.0)
+    meta_b = _Meta("clip-b", 9.0)
+    envelope = build_clip_metadata_identity_index(
+        # Gemini completion order is deliberately reversed.
+        records=[
+            (1, "clip-b", gb._clip_meta_to_cache(meta_b)),
+            (0, "clip-a", gb._clip_meta_to_cache(meta_a)),
+        ],
+        failed_source_slots=[],
+        source_instance_ids=source_ids,
+    )
+    candidates = {
+        "clip_metadata_cache": {
+            "version": gb._CLIP_METADATA_CACHE_VERSION,
+            "fingerprint": gb._cache_fingerprint(paths),
+            "clip_metas": [
+                gb._clip_meta_to_cache(meta_b),
+                gb._clip_meta_to_cache(meta_a),
+            ],
+        },
+        CLIP_METADATA_IDENTITY_INDEX_KEY: envelope,
+    }
+    _patch_indexed_ingest_io(monkeypatch, tmp_path)
+    monkeypatch.setattr(gb, "_read_all_candidates", lambda _job_id: candidates)
+    monkeypatch.setattr(gb, "_speech_cleanup_identity_for_paths", lambda *_a: identity)
+    monkeypatch.setattr(
+        template_orchestrate,
+        "_upload_clips_parallel",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("cache hit uploaded clips")),
+    )
+    monkeypatch.setattr(
+        template_orchestrate,
+        "_analyze_clips_parallel_indexed",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("cache hit ran Gemini")),
+    )
+
+    result = gb._ingest_clips(paths, str(tmp_path), job_id=str(uuid.uuid4()))
+
+    assert result["clip_id_to_gcs"] == {
+        "clip-a": paths[0],
+        "clip-b": paths[1],
+    }
+    assert result["clip_id_to_local"]["clip-a"].endswith("source-0.mp4")
+    assert result["clip_id_to_local"]["clip-b"].endswith("source-1.mp4")
+    assignments = result["speech_cleanup_assignment_by_clip_id"]
+    assert assignments["clip-a"].source_slot == 0
+    assert assignments["clip-b"].source_slot == 1
+
+
+def test_ingest_legacy_cache_hit_with_malformed_v2_skips_gemini_but_disables_assignment(
+    monkeypatch, tmp_path
+) -> None:
+    import app.tasks.template_orchestrate as template_orchestrate
+    from app.services.speech_cleanup_identity import (
+        CLIP_METADATA_IDENTITY_INDEX_KEY,
+        ClipSourceIdentity,
+    )
+
+    paths = ["gcs/source-a.mp4", "gcs/source-b.mp4"]
+    source_ids = (str(uuid.uuid4()), str(uuid.uuid4()))
+    identity = ClipSourceIdentity("assigned", tuple(paths), source_ids)
+    cached = [_Meta("clip-a", 2.0), _Meta("clip-b", 9.0)]
+    candidates = {
+        "clip_metadata_cache": {
+            "version": gb._CLIP_METADATA_CACHE_VERSION,
+            "fingerprint": gb._cache_fingerprint(paths),
+            "clip_metas": [gb._clip_meta_to_cache(meta) for meta in cached],
+        },
+        CLIP_METADATA_IDENTITY_INDEX_KEY: {"version": 2, "records": "malformed"},
+    }
+    _patch_indexed_ingest_io(monkeypatch, tmp_path)
+    monkeypatch.setattr(gb, "_read_all_candidates", lambda _job_id: candidates)
+    monkeypatch.setattr(gb, "_speech_cleanup_identity_for_paths", lambda *_a: identity)
+    monkeypatch.setattr(
+        template_orchestrate,
+        "_upload_clips_parallel",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("legacy hit uploaded clips")),
+    )
+
+    result = gb._ingest_clips(paths, str(tmp_path), job_id=str(uuid.uuid4()))
+
+    assert result["clip_metas"]
+    assert {
+        assignment.status for assignment in result["speech_cleanup_assignment_by_clip_id"].values()
+    } == {"identity_cache_unavailable"}
+
+
+def test_ingest_cache_miss_persists_legacy_and_indexed_metadata_envelopes(
+    monkeypatch, tmp_path
+) -> None:
+    import app.tasks.template_orchestrate as template_orchestrate
+    from app.services.speech_cleanup_identity import (
+        CLIP_METADATA_IDENTITY_INDEX_KEY,
+        ClipSourceIdentity,
+    )
+
+    paths = ["gcs/source-a.mp4", "gcs/source-b.mp4"]
+    source_ids = (str(uuid.uuid4()), str(uuid.uuid4()))
+    identity = ClipSourceIdentity("assigned", tuple(paths), source_ids)
+    meta_a = _Meta("clip-a", 2.0)
+    meta_b = _Meta("clip-b", 9.0)
+    stored: dict[str, object] = {}
+    _patch_indexed_ingest_io(monkeypatch, tmp_path)
+    monkeypatch.setattr(gb, "_read_all_candidates", lambda _job_id: {})
+    monkeypatch.setattr(gb, "_speech_cleanup_identity_for_paths", lambda *_a: identity)
+    monkeypatch.setattr(
+        template_orchestrate,
+        "_upload_clips_parallel",
+        lambda _paths: [
+            types.SimpleNamespace(name="clip-a"),
+            types.SimpleNamespace(name="clip-b"),
+        ],
+    )
+    monkeypatch.setattr(
+        template_orchestrate,
+        "_analyze_clips_parallel_indexed",
+        lambda *_a, **_k: ([(1, meta_b), (0, meta_a)], []),
+    )
+    monkeypatch.setattr(
+        gb,
+        "_merge_all_candidates",
+        lambda _job_id, patch: stored.update(patch) or True,
+    )
+
+    result = gb._ingest_clips(paths, str(tmp_path), job_id=str(uuid.uuid4()))
+
+    assert result["clip_id_to_gcs"] == {"clip-a": paths[0], "clip-b": paths[1]}
+    assert [meta["clip_id"] for meta in stored["clip_metadata_cache"]["clip_metas"]] == [
+        "clip-b",
+        "clip-a",
+    ]
+    records = stored[CLIP_METADATA_IDENTITY_INDEX_KEY]["records"]
+    assert [(record["source_slot"], record["clip_id"]) for record in records] == [
+        (1, "clip-b"),
+        (0, "clip-a"),
+    ]
 
 
 def test_ingest_preprocessed_cache_hit_skips_source_guard(monkeypatch, tmp_path) -> None:
@@ -292,7 +471,7 @@ def test_variant_storage_key_scopes_rerenders_without_changing_initial_keys() ->
         "generative-jobs/job/variant_1_song.mp4"
     )
     assert gb._variant_storage_key("job", "variant_1_song.mp4", "gen-123") == (
-        "generative-jobs/job/variant_1_song_gen123.mp4"
+        "generative-jobs/job/render-generations/gen123/variant_1_song.mp4"
     )
 
 
@@ -653,6 +832,1031 @@ def test_finalize_status_all_failed(monkeypatch):
     )
     gb._finalize_job("j", [{"variant_id": "a", "rank": 1, "text_mode": "lyrics", "ok": False}])
     assert seen["status"] == "variants_failed"
+
+
+def _required_speech_stage(job_id: str, result: dict, *, plan: dict | None = None) -> dict:
+    from app.services.speech_cleanup_terminal import (
+        close_required_speech_generation_uploads,
+        mark_required_speech_rendering,
+        reserve_required_speech_generation,
+        stage_required_speech_generation,
+    )
+
+    generation = result["render_generation_id"]
+    plan = copy.deepcopy(plan) if plan is not None else {"variants": []}
+    reserve_required_speech_generation(
+        plan,
+        job_id=job_id,
+        pending_variant={
+            "variant_id": result["variant_id"],
+            "rank": result["rank"],
+            "text_mode": result["text_mode"],
+            "render_generation_id": generation,
+            "render_status": "pending",
+            "ok": False,
+        },
+        generation=generation,
+        lease_expires_at=datetime.now(UTC) + timedelta(minutes=35),
+    )
+    mark_required_speech_rendering(
+        plan,
+        variant_id=result["variant_id"],
+        generation=generation,
+        render_started_at="2026-09-01T12:00:00Z",
+    )
+    stage_required_speech_generation(plan, result=result, generation=generation)
+    close_required_speech_generation_uploads(plan, generation=generation)
+    return plan
+
+
+def test_required_speech_finalize_atomically_consumes_private_stage(monkeypatch):
+    job_id = str(uuid.uuid4())
+    generation = uuid.uuid4().hex
+    result = {
+        "variant_id": "subtitled",
+        "rank": 1,
+        "text_mode": "none",
+        "render_generation_id": generation,
+        "render_status": "ready",
+        "ok": True,
+        "video_path": (
+            f"generative-jobs/{job_id}/render-generations/{generation}/variant_1_subtitled.mp4"
+        ),
+        "subject_matte_path": (
+            f"generative-jobs/{job_id}/render-generations/{generation}/"
+            "variant_1_subtitled.mp4.matte.v3.mp4"
+        ),
+        "output_url": "https://storage.example/signed",
+        "_speech_cleanup_outcome_context": {
+            "analysis_attempt_id": uuid.uuid4().hex,
+            "analysis_view": "full_clip",
+            "detector_version": "mixed-gap-v1",
+            "source_tag": "0123456789abcdef",
+            "selected_plan": "candidate",
+            "candidate_status": "ready",
+            "output_removal_count": 1,
+            "output_removed_ms": 572,
+        },
+    }
+    job = _FakeJob(
+        status="rendering",
+        job_id=job_id,
+        assembly_plan=_required_speech_stage(job_id, result),
+    )
+    job.user_id = uuid.uuid4()
+    job.pipeline_trace = []
+    _patch_job_session(monkeypatch, job)
+    monkeypatch.setattr(
+        gb,
+        "_reconcile_retired_variant_posters_after_terminal_commit",
+        lambda *args, **kwargs: None,
+    )
+
+    assert gb._finalize_job(
+        job_id,
+        [result],
+        required_speech_results={"subtitled": result},
+    )
+
+    assert job.status == "variants_ready"
+    assert len(job.assembly_plan["variants"]) == 1
+    published = job.assembly_plan["variants"][0]
+    assert published["variant_id"] == "subtitled"
+    assert published["render_generation_id"] == generation
+    assert published["render_status"] == "ready"
+    assert published["ok"] is True
+    assert published["video_path"] == result["video_path"]
+    assert published["output_url"] == result["output_url"]
+    assert "_speech_cleanup_outcome_context" not in published
+    assert "_speech_cleanup_internal" not in job.assembly_plan
+    outcome_events = [
+        event
+        for event in job.pipeline_trace
+        if event.get("event") == "speech_cleanup_render_outcome"
+    ]
+    assert len(outcome_events) == 1
+    assert outcome_events[0]["data"]["outcome"] == "published_applied"
+    assert outcome_events[0]["data"]["render_generation_id"] == generation
+
+
+def test_required_speech_finalize_rejects_changed_private_stage(monkeypatch):
+    from app.services.speech_cleanup_terminal import RequiredSpeechOwnershipError
+
+    job_id = str(uuid.uuid4())
+    generation = uuid.uuid4().hex
+    staged = {
+        "variant_id": "subtitled",
+        "rank": 1,
+        "text_mode": "none",
+        "render_generation_id": generation,
+        "render_status": "ready",
+        "ok": True,
+        "video_path": "generative-jobs/staged.mp4",
+        "_speech_cleanup_outcome_context": {
+            "analysis_attempt_id": uuid.uuid4().hex,
+            "analysis_view": "full_clip",
+            "detector_version": "mixed-gap-v1",
+            "source_tag": "0123456789abcdef",
+            "selected_plan": "candidate",
+            "candidate_status": "ready",
+            "output_removal_count": 1,
+            "output_removed_ms": 572,
+        },
+    }
+    expected = {**staged, "video_path": "generative-jobs/changed.mp4"}
+    original_plan = _required_speech_stage(job_id, staged)
+    job = _FakeJob(
+        status="rendering",
+        job_id=job_id,
+        assembly_plan=original_plan,
+    )
+    job.pipeline_trace = []
+    _patch_job_session(monkeypatch, job)
+
+    with pytest.raises(RequiredSpeechOwnershipError, match="staged_terminal_result_changed"):
+        gb._finalize_job(
+            job_id,
+            [expected],
+            required_speech_results={"subtitled": expected},
+        )
+
+    assert job.status == "rendering"
+    assert job.assembly_plan is original_plan
+    outcomes = [
+        event["data"]
+        for event in job.pipeline_trace
+        if event.get("event") == "speech_cleanup_render_outcome"
+    ]
+    assert len(outcomes) == 1
+    assert outcomes[0]["outcome"] == "discarded_finalization_rejected"
+    assert outcomes[0]["render_generation_id"] == generation
+
+    decision = gb._finalize_job_decision(
+        job_id,
+        [expected],
+        required_speech_results={"subtitled": expected},
+    )
+    assert decision.status == "failed"
+    assert isinstance(decision.error, RequiredSpeechOwnershipError)
+    assert (
+        len(
+            [
+                event
+                for event in job.pipeline_trace
+                if event.get("event") == "speech_cleanup_render_outcome"
+            ]
+        )
+        == 1
+    )
+
+
+def test_required_speech_stage_reports_and_records_superseded_generation(monkeypatch):
+    job_id = str(uuid.uuid4())
+    losing_generation = uuid.uuid4().hex
+    winning_generation = uuid.uuid4().hex
+    winning = {
+        "variant_id": "subtitled",
+        "rank": 1,
+        "text_mode": "none",
+        "render_generation_id": winning_generation,
+        "render_status": "ready",
+        "ok": True,
+        "video_path": (
+            f"generative-jobs/{job_id}/render-generations/{winning_generation}/winner.mp4"
+        ),
+    }
+    plan = _required_speech_stage(job_id, winning)
+    original_plan = copy.deepcopy(plan)
+    result = {
+        **winning,
+        "render_generation_id": losing_generation,
+        "video_path": (
+            f"generative-jobs/{job_id}/render-generations/{losing_generation}/loser.mp4"
+        ),
+        "_speech_cleanup_outcome_context": {
+            "analysis_attempt_id": uuid.uuid4().hex,
+            "analysis_view": "full_clip",
+            "detector_version": "mixed-gap-v1",
+            "source_tag": "0123456789abcdef",
+            "selected_plan": "candidate",
+            "candidate_status": "ready",
+            "output_removal_count": 1,
+            "output_removed_ms": 400,
+        },
+    }
+    job = _FakeJob(status="rendering", job_id=job_id, assembly_plan=plan)
+    job.pipeline_trace = []
+    _patch_job_session(monkeypatch, job)
+    monkeypatch.setattr(gb, "_attach_variant_posters", lambda result, **_kwargs: (result, []))
+
+    decision = gb._stage_required_speech_result_decision(
+        job_id,
+        result,
+        generation=losing_generation,
+    )
+
+    assert decision.status == "generation_superseded"
+    assert job.assembly_plan == original_plan
+    outcomes = [
+        event["data"]
+        for event in job.pipeline_trace
+        if event.get("event") == "speech_cleanup_render_outcome"
+    ]
+    assert len(outcomes) == 1
+    assert outcomes[0]["outcome"] == "discarded_superseded"
+    assert outcomes[0]["render_generation_id"] == losing_generation
+
+
+def test_required_speech_same_generation_claim_loser_is_not_terminal(monkeypatch):
+    job_id = str(uuid.uuid4())
+    generation = uuid.uuid4().hex
+    operation_id = uuid.uuid4().hex
+    result = {
+        "variant_id": "subtitled",
+        "rank": 1,
+        "text_mode": "none",
+        "render_generation_id": generation,
+        "render_status": "ready",
+        "ok": True,
+        "video_path": f"generative-jobs/{job_id}/render-generations/{generation}/output.mp4",
+        "_speech_cleanup_outcome_context": {
+            "analysis_attempt_id": uuid.uuid4().hex,
+            "analysis_view": "full_clip",
+            "detector_version": "mixed-gap-v1",
+            "source_tag": "0123456789abcdef",
+            "selected_plan": "candidate",
+            "candidate_status": "ready",
+            "output_removal_count": 1,
+            "output_removed_ms": 400,
+        },
+    }
+    plan = _required_speech_stage(job_id, result)
+    plan["speech_cut_control"] = {
+        "operation_id": operation_id,
+        "render_generation_id": generation,
+        "finalizer_claim": {
+            "operation_id": operation_id,
+            "attempt_id": "winning-attempt",
+            "render_generation_id": generation,
+        },
+    }
+    job = _FakeJob(status="rendering", job_id=job_id, assembly_plan=plan)
+    job.pipeline_trace = []
+    _patch_job_session(monkeypatch, job)
+    monkeypatch.setattr(gb, "_attach_variant_posters", lambda result, **_kwargs: (result, []))
+
+    decision = gb._stage_required_speech_result_decision(
+        job_id,
+        result,
+        generation=generation,
+        expected_operation_id=operation_id,
+        expected_attempt_id="losing-attempt",
+    )
+
+    assert decision.status == "claim_superseded"
+    assert job.pipeline_trace == []
+
+
+def test_required_speech_initial_winner_journals_replaced_matte_and_sidecar(monkeypatch):
+    job_id = str(uuid.uuid4())
+    generation = uuid.uuid4().hex
+    old_matte = f"generative-jobs/{job_id}/old.matte.v3.mp4"
+    result = {
+        "variant_id": "subtitled",
+        "rank": 1,
+        "text_mode": "none",
+        "render_generation_id": generation,
+        "render_status": "ready",
+        "ok": True,
+        "video_path": (f"generative-jobs/{job_id}/render-generations/{generation}/output.mp4"),
+        "subject_matte_path": (
+            f"generative-jobs/{job_id}/render-generations/{generation}/output.matte.v3.mp4"
+        ),
+        "output_url": "https://storage.example/new",
+        "_speech_cleanup_outcome_context": {
+            "analysis_attempt_id": uuid.uuid4().hex,
+            "analysis_view": "full_clip",
+            "detector_version": "mixed-gap-v1",
+            "source_tag": "0123456789abcdef",
+            "selected_plan": "candidate",
+            "candidate_status": "ready",
+            "output_removal_count": 1,
+            "output_removed_ms": 500,
+        },
+    }
+    old_video = f"generative-jobs/{job_id}/old.mp4"
+    plan = _required_speech_stage(
+        job_id,
+        result,
+        plan={
+            "speech_cleanup_contract": "required_v1",
+            "variants": [
+                {
+                    "variant_id": "subtitled",
+                    "rank": 1,
+                    "text_mode": "none",
+                    "render_status": "ready",
+                    "ok": True,
+                    "video_path": old_video,
+                    "subject_matte_path": old_matte,
+                }
+            ],
+        },
+    )
+    job = _FakeJob(status="rendering", job_id=job_id, assembly_plan=plan)
+    job.user_id = uuid.uuid4()
+    job.pipeline_trace = []
+    _patch_job_session(monkeypatch, job)
+    monkeypatch.setattr(
+        gb,
+        "_reconcile_retired_variant_posters_after_terminal_commit",
+        lambda *_args, **_kwargs: None,
+    )
+
+    assert gb._finalize_job(
+        job_id,
+        [result],
+        required_speech_results={"subtitled": result},
+    )
+
+    published = job.assembly_plan["variants"][0]
+    assert published["subject_matte_path"] == result["subject_matte_path"]
+    receipt = job.assembly_plan["_speech_cleanup_internal"]["render_generation_cleanup_pending"][0]
+    assert receipt["kind"] == "exact_keys"
+    assert set(receipt["paths"]) == {old_video, old_matte, f"{old_matte}.json"}
+
+
+def _required_speech_rerender_fixture(
+    job_id: str,
+    *,
+    generation: str,
+    operation_id: str,
+    attempt_id: str,
+) -> tuple[_FakeJob, dict]:
+    """Build the exact private/public ownership state between render and publish."""
+
+    candidate_id = "candidate-1"
+    result = {
+        "variant_id": "subtitled",
+        "rank": 1,
+        "text_mode": "none",
+        "resolved_archetype": "subtitled",
+        "render_generation_id": generation,
+        "render_status": "ready",
+        "ok": True,
+        "video_path": (
+            f"generative-jobs/{job_id}/render-generations/{generation}/variant_1_subtitled.mp4"
+        ),
+        "output_url": "https://storage.example/new-signed-url",
+        "silence_cut": {"removed": [{"start_s": 1.0, "end_s": 1.5, "reason": "filler_acoustic"}]},
+        "speech_cut_candidates": [
+            {
+                "candidate_id": candidate_id,
+                "start_s": 1.0,
+                "end_s": 1.5,
+                "status": "applying",
+            }
+        ],
+        "_speech_cleanup_outcome_context": {
+            "analysis_attempt_id": uuid.uuid4().hex,
+            "analysis_view": "full_clip",
+            "detector_version": "mixed-gap-v1",
+            "source_tag": "0123456789abcdef",
+            "selected_plan": "candidate",
+            "candidate_status": "ready",
+            "output_removal_count": 1,
+            "output_removed_ms": 500,
+        },
+    }
+    last_good = {
+        "variant_id": "subtitled",
+        "rank": 1,
+        "text_mode": "none",
+        "resolved_archetype": "subtitled",
+        "render_generation_id": uuid.uuid4().hex,
+        "render_status": "ready",
+        "ok": True,
+        "video_path": f"generative-jobs/{job_id}/last-good.mp4",
+        "subject_matte_path": f"generative-jobs/{job_id}/last-good.matte.v3.mp4",
+        "output_url": "https://storage.example/old-signed-url",
+    }
+    seed_plan = {
+        "speech_cleanup_contract": "required_v1",
+        "variants": [last_good],
+        **{
+            "speech_cut_previous_variant": last_good,
+            "speech_cut_previous_variants": [last_good],
+            "speech_cut_control": {
+                "variant_id": "subtitled",
+                "forced_removals": [{"start_s": 1.0, "end_s": 1.5, "reason": "filler_acoustic"}],
+                "desired_disabled": False,
+                "prior_disabled": False,
+                "operation": {
+                    "operation": "apply_speech_cut_candidate",
+                    "candidate_id": candidate_id,
+                },
+                "operation_id": operation_id,
+                "render_generation_id": generation,
+                "finalizer_claim": {
+                    "operation_id": operation_id,
+                    "attempt_id": attempt_id,
+                    "task_id": "task-1",
+                    "retry_number": 0,
+                    "claimed_at_epoch_s": 1.0,
+                    "render_generation_id": generation,
+                },
+            },
+        },
+    }
+    plan = _required_speech_stage(job_id, result, plan=seed_plan)
+    # A rerender keeps the upload guard open through caption/text/media compose;
+    # only the winning publish transaction may close and consume it.
+    plan["_speech_cleanup_internal"]["render_generation_cleanup_pending"][0]["upload_state"] = (
+        "writing"
+    )
+    job = _FakeJob(status="processing", job_id=job_id, assembly_plan=plan)
+    job.user_id = uuid.uuid4()
+    job.pipeline_trace = []
+    return job, result
+
+
+def _patch_speech_rerender_terminal_side_effects(monkeypatch, job: _FakeJob) -> None:
+    _patch_job_session(monkeypatch, job, noop_flag_modified=True)
+    monkeypatch.setattr(gb, "_reconcile_retired_variant_posters", lambda *a, **k: None)
+    monkeypatch.setattr(
+        gb,
+        "_reconcile_retired_variant_posters_after_terminal_commit",
+        lambda *a, **k: None,
+    )
+
+
+def test_speech_rerender_intermediate_finalize_retains_exact_private_owner(monkeypatch):
+    job_id = str(uuid.uuid4())
+    generation = uuid.uuid4().hex
+    operation_id = uuid.uuid4().hex
+    attempt_id = f"task-1:0:{uuid.uuid4().hex}"
+    job, result = _required_speech_rerender_fixture(
+        job_id,
+        generation=generation,
+        operation_id=operation_id,
+        attempt_id=attempt_id,
+    )
+    _patch_speech_rerender_terminal_side_effects(monkeypatch, job)
+
+    assert gb._finalize_job(
+        job_id,
+        [result],
+        expected_operation_id=operation_id,
+        expected_attempt_id=attempt_id,
+        required_speech_results={"subtitled": result},
+    )
+
+    internal = job.assembly_plan["_speech_cleanup_internal"]
+    assert internal["required_speech_generation_locks"] == {"subtitled": generation}
+    assert internal["staged_render_results"][f"subtitled:{generation}"] == result
+    assert internal["working_render_variants"][f"subtitled:{generation}"] == result
+    assert internal["render_generation_cleanup_pending"] == [
+        {
+            "generation": generation,
+            "prefix": f"generative-jobs/{job_id}/render-generations/{generation}/",
+            "upload_state": "writing",
+            "lease_expires_at": internal["render_generation_cleanup_pending"][0][
+                "lease_expires_at"
+            ],
+        }
+    ]
+    assert job.assembly_plan["speech_cut_control"]["render_generation_id"] == generation
+    public = job.assembly_plan["variants"][0]
+    assert public["video_path"] == f"generative-jobs/{job_id}/last-good.mp4"
+    assert public["render_generation_id"] != generation
+    assert public["render_status"] == "ready"
+    assert not [
+        event
+        for event in job.pipeline_trace
+        if event.get("event") == "speech_cleanup_render_outcome"
+    ]
+
+
+def test_speech_rerender_publish_consumes_owner_and_emits_one_terminal_outcome(monkeypatch):
+    job_id = str(uuid.uuid4())
+    generation = uuid.uuid4().hex
+    operation_id = uuid.uuid4().hex
+    attempt_id = f"task-1:0:{uuid.uuid4().hex}"
+    job, result = _required_speech_rerender_fixture(
+        job_id,
+        generation=generation,
+        operation_id=operation_id,
+        attempt_id=attempt_id,
+    )
+    _patch_speech_rerender_terminal_side_effects(monkeypatch, job)
+    assert gb._finalize_job(
+        job_id,
+        [result],
+        expected_operation_id=operation_id,
+        expected_attempt_id=attempt_id,
+        required_speech_results={"subtitled": result},
+    )
+
+    gb._publish_speech_cut_rerender(
+        job_id,
+        expected_operation_id=operation_id,
+        expected_attempt_id=attempt_id,
+    )
+
+    internal = job.assembly_plan["_speech_cleanup_internal"]
+    assert set(internal) == {"render_generation_cleanup_pending"}
+    exact_receipt = internal["render_generation_cleanup_pending"][0]
+    assert exact_receipt["kind"] == "exact_keys"
+    assert set(exact_receipt["paths"]) == {
+        f"generative-jobs/{job_id}/last-good.mp4",
+        f"generative-jobs/{job_id}/last-good.matte.v3.mp4",
+        f"generative-jobs/{job_id}/last-good.matte.v3.mp4.json",
+    }
+    assert job.assembly_plan["speech_cut_control"] is None
+    published = job.assembly_plan["variants"][0]
+    assert published["render_generation_id"] == generation
+    assert published["speech_cut_candidates"][0]["status"] == "accepted"
+    assert published["speech_cut_last_receipt"]["render_generation_id"] == generation
+    outcome_events = [
+        event
+        for event in job.pipeline_trace
+        if event.get("event") == "speech_cleanup_render_outcome"
+    ]
+    assert len(outcome_events) == 1
+    assert outcome_events[0]["data"]["outcome"] == "published_applied"
+    assert outcome_events[0]["data"]["render_generation_id"] == generation
+
+
+def test_speech_rerender_compose_uses_claim_generation_end_to_end(monkeypatch):
+    job_id = str(uuid.uuid4())
+    generation = uuid.uuid4().hex
+    operation_id = uuid.uuid4().hex
+    attempt_id = f"task-1:0:{uuid.uuid4().hex}"
+    job, result = _required_speech_rerender_fixture(
+        job_id,
+        generation=generation,
+        operation_id=operation_id,
+        attempt_id=attempt_id,
+    )
+    public_before = copy.deepcopy(job.assembly_plan["variants"])
+    _patch_job_session(monkeypatch, job)
+    reburn_generations: list[str | None] = []
+
+    def _reburn(*_args, **kwargs):
+        reburn_generations.append(kwargs.get("storage_generation"))
+        return {
+            "variant_id": "subtitled",
+            "render_generation_id": generation,
+            "video_path": (
+                f"generative-jobs/{job_id}/render-generations/{generation}/captioned.mp4"
+            ),
+            "output_url": "https://storage.example/captioned",
+            "render_status": "ready",
+            "ok": True,
+        }
+
+    monkeypatch.setattr(
+        gb,
+        "_attach_variant_posters",
+        lambda patch, **_kwargs: (dict(patch), []),
+    )
+    monkeypatch.setattr(
+        gb,
+        "_update_variant_entry",
+        lambda *_args, **_kwargs: pytest.fail("private compose wrote public variants"),
+    )
+    monkeypatch.setattr(gb, "_reburn_text_on_base", _reburn)
+    monkeypatch.setattr(
+        gb,
+        "_compose_required_speech_private_media_layers",
+        lambda **_kwargs: {
+            "variant_id": "subtitled",
+            "render_generation_id": generation,
+            "video_path": (
+                f"generative-jobs/{job_id}/render-generations/{generation}/captioned.mp4"
+            ),
+            "output_url": "https://storage.example/composed",
+            "render_status": "ready",
+            "ok": True,
+        },
+    )
+    monkeypatch.setattr(gb, "_assert_speech_cut_finalize_claim", lambda *a, **k: None)
+
+    gb._compose_speech_cut_rerender(
+        job_id,
+        expected_operation_id=operation_id,
+        expected_attempt_id=attempt_id,
+    )
+
+    assert reburn_generations == [generation]
+    assert job.assembly_plan["variants"] == public_before
+    staged = job.assembly_plan["_speech_cleanup_internal"]["staged_render_results"][
+        f"subtitled:{generation}"
+    ]
+    assert staged["output_url"] == "https://storage.example/composed"
+    assert staged["render_status"] == "ready"
+
+
+def test_speech_rerender_retry_rotates_generation_and_keeps_closed_cleanup_debt(monkeypatch):
+    job_id = str(uuid.uuid4())
+    old_generation = uuid.uuid4().hex
+    operation_id = uuid.uuid4().hex
+    old_attempt_id = f"task-1:0:{uuid.uuid4().hex}"
+    job, _result = _required_speech_rerender_fixture(
+        job_id,
+        generation=old_generation,
+        operation_id=operation_id,
+        attempt_id=old_attempt_id,
+    )
+    _patch_job_session(monkeypatch, job, noop_flag_modified=True)
+
+    assert gb._claim_speech_cut_finalize(
+        job_id,
+        operation_id,
+        f"task-1:1:{uuid.uuid4().hex}",
+        task_id="task-1",
+        retry_number=1,
+    )
+
+    control = job.assembly_plan["speech_cut_control"]
+    new_generation = control["render_generation_id"]
+    assert new_generation != old_generation
+    assert control["finalizer_claim"]["render_generation_id"] == new_generation
+    public = job.assembly_plan["variants"][0]
+    assert public["render_generation_id"] != new_generation
+    assert public["video_path"] == f"generative-jobs/{job_id}/last-good.mp4"
+    assert public["render_status"] == "ready"
+    internal = job.assembly_plan["_speech_cleanup_internal"]
+    assert "required_speech_generation_locks" not in internal
+    assert "staged_render_results" not in internal
+    assert "working_render_variants" not in internal
+    assert "terminal_pending" not in internal
+    assert internal["render_generation_cleanup_pending"] == [
+        {
+            "generation": old_generation,
+            "prefix": f"generative-jobs/{job_id}/render-generations/{old_generation}/",
+            "upload_state": "closed",
+            "lease_expires_at": internal["render_generation_cleanup_pending"][0][
+                "lease_expires_at"
+            ],
+        }
+    ]
+
+
+def test_speech_rerender_retry_missing_cleanup_receipt_fails_closed(monkeypatch):
+    job_id = str(uuid.uuid4())
+    generation = uuid.uuid4().hex
+    operation_id = uuid.uuid4().hex
+    old_attempt_id = f"task-1:0:{uuid.uuid4().hex}"
+    job, _result = _required_speech_rerender_fixture(
+        job_id,
+        generation=generation,
+        operation_id=operation_id,
+        attempt_id=old_attempt_id,
+    )
+    job.assembly_plan["_speech_cleanup_internal"].pop("render_generation_cleanup_pending")
+    original_plan = copy.deepcopy(job.assembly_plan)
+    _patch_job_session(monkeypatch, job, noop_flag_modified=True)
+
+    assert not gb._claim_speech_cut_finalize(
+        job_id,
+        operation_id,
+        f"task-1:1:{uuid.uuid4().hex}",
+        task_id="task-1",
+        retry_number=1,
+    )
+    assert job.assembly_plan == original_plan
+
+
+def test_speech_rerender_timeout_restores_expired_exact_owner(monkeypatch):
+    """At the soft boundary, the claim-owned writer restores the last-good vector."""
+
+    job_id = str(uuid.uuid4())
+    generation = uuid.uuid4().hex
+    operation_id = uuid.uuid4().hex
+    attempt_id = f"task-1:0:{uuid.uuid4().hex}"
+    job, _result = _required_speech_rerender_fixture(
+        job_id,
+        generation=generation,
+        operation_id=operation_id,
+        attempt_id=attempt_id,
+    )
+    receipt = job.assembly_plan["_speech_cleanup_internal"]["render_generation_cleanup_pending"][0]
+    receipt["lease_expires_at"] = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+    last_good = copy.deepcopy(job.assembly_plan["speech_cut_previous_variants"])
+    _patch_speech_rerender_terminal_side_effects(monkeypatch, job)
+
+    assert gb._restore_failed_speech_cut_rerender(
+        job_id,
+        "Speech cleanup timed out before publication.",
+        expected_operation_id=operation_id,
+        expected_attempt_id=attempt_id,
+    )
+
+    assert job.status == "variants_ready"
+    assert job.assembly_plan["speech_cut_control"] is None
+    assert (
+        job.assembly_plan["variants"][0]["render_generation_id"]
+        == last_good[0]["render_generation_id"]
+    )
+    assert job.assembly_plan["variants"][0]["render_status"] == "ready"
+    internal = job.assembly_plan["_speech_cleanup_internal"]
+    assert "required_speech_generation_locks" not in internal
+    assert "staged_render_results" not in internal
+    assert "working_render_variants" not in internal
+    assert internal["render_generation_cleanup_pending"][0]["upload_state"] == "closed"
+
+
+def _initial_required_resume_fixture(job_id: str, generation: str) -> tuple[_FakeJob, dict]:
+    result = {
+        "variant_id": "subtitled",
+        "rank": 1,
+        "text_mode": "none",
+        "music_track_id": None,
+        "render_generation_id": generation,
+        "render_status": "ready",
+        "ok": True,
+        "video_path": (f"generative-jobs/{job_id}/render-generations/{generation}/output.mp4"),
+        "output_url": "https://storage.example/signed",
+        "_speech_cleanup_outcome_context": {
+            "analysis_attempt_id": "trace-1",
+            "analysis_view": "full_clip",
+            "detector_version": "mixed-gap-v1",
+            "source_tag": "0123456789abcdef",
+            "selected_plan": "candidate",
+            "candidate_status": "ready",
+            "output_removal_count": 1,
+            "output_removed_ms": 572,
+        },
+    }
+    return (
+        _FakeJob(
+            status="rendering",
+            job_id=job_id,
+            assembly_plan=_required_speech_stage(job_id, result),
+        ),
+        result,
+    )
+
+
+def test_initial_required_retry_resumes_only_exact_proven_stage(monkeypatch):
+    job_id = str(uuid.uuid4())
+    generation = uuid.uuid4().hex
+    job, result = _initial_required_resume_fixture(job_id, generation)
+    original_plan = copy.deepcopy(job.assembly_plan)
+    _patch_job_session(monkeypatch, job)
+    monkeypatch.setattr("app.storage.object_exists_once", lambda _path, *, timeout_s: True)
+
+    reservation = gb._reserve_required_speech_pending(
+        job_id,
+        {
+            "variant_id": "subtitled",
+            "rank": 1,
+            "text_mode": "none",
+            "music_track_id": None,
+            "render_generation_id": uuid.uuid4().hex,
+            "render_status": "pending",
+            "ok": False,
+        },
+        generation=uuid.uuid4().hex,
+    )
+
+    assert reservation == {"generation": generation, "resumed_result": result}
+    assert job.assembly_plan == original_plan
+
+
+def test_initial_required_retry_rotates_unprovable_stage_in_same_commit(monkeypatch):
+    job_id = str(uuid.uuid4())
+    old_generation = uuid.uuid4().hex
+    new_generation = uuid.uuid4().hex
+    job, _result = _initial_required_resume_fixture(job_id, old_generation)
+    _patch_job_session(monkeypatch, job)
+    monkeypatch.setattr("app.storage.object_exists_once", lambda _path, *, timeout_s: False)
+
+    reservation = gb._reserve_required_speech_pending(
+        job_id,
+        {
+            "variant_id": "subtitled",
+            "rank": 1,
+            "text_mode": "none",
+            "music_track_id": None,
+            "render_generation_id": new_generation,
+            "render_status": "pending",
+            "ok": False,
+        },
+        generation=new_generation,
+    )
+
+    assert reservation == {"generation": new_generation, "resumed_result": None}
+    assert job.assembly_plan["variants"][0]["render_generation_id"] == new_generation
+    internal = job.assembly_plan["_speech_cleanup_internal"]
+    assert internal["required_speech_generation_locks"] == {"subtitled": new_generation}
+    assert "staged_render_results" not in internal
+    assert "terminal_pending" not in internal
+    receipts = internal["render_generation_cleanup_pending"]
+    assert [(receipt["generation"], receipt["upload_state"]) for receipt in receipts] == [
+        (old_generation, "closed"),
+        (new_generation, "writing"),
+    ]
+
+
+def test_cancelled_pre_reservation_speech_control_cannot_be_adopted_by_late_worker(monkeypatch):
+    from app.services.speech_cleanup_terminal import terminalize_required_speech_generations
+
+    job_id = str(uuid.uuid4())
+    generation = uuid.uuid4().hex
+    operation_id = uuid.uuid4().hex
+    public = {
+        "variant_id": "subtitled",
+        "render_generation_id": uuid.uuid4().hex,
+        "render_status": "ready",
+        "ok": True,
+    }
+    plan = {
+        "speech_cleanup_contract": "required_v1",
+        "variants": [copy.deepcopy(public)],
+        "speech_cut_control": {
+            "variant_id": "subtitled",
+            "operation_id": operation_id,
+            "render_generation_id": generation,
+            "prior_disabled": False,
+            "finalizer_claim": None,
+        },
+        "speech_cut_previous_variant": copy.deepcopy(public),
+        "speech_cut_previous_variants": [copy.deepcopy(public)],
+    }
+    cancelled = terminalize_required_speech_generations(plan, job_id=job_id)
+    assert cancelled.status == "terminalized"
+    job = _FakeJob(status="cancelled", job_id=job_id, assembly_plan=cancelled.plan)
+    _patch_job_session(monkeypatch, job)
+    stored = copy.deepcopy(job.assembly_plan)
+
+    reservation = gb._reserve_required_speech_pending(
+        job_id,
+        {
+            "variant_id": "subtitled",
+            "render_generation_id": generation,
+            "render_status": "pending",
+            "ok": False,
+        },
+        generation=generation,
+        expected_operation_id=operation_id,
+        expected_attempt_id="attempt-a",
+    )
+
+    assert reservation is None
+    assert job.assembly_plan == stored
+    assert job.assembly_plan["speech_cut_control"] is None
+    assert "_speech_cleanup_internal" not in job.assembly_plan
+
+
+def test_late_required_reservation_uses_absolute_task_entry_deadline(monkeypatch):
+    job_id = str(uuid.uuid4())
+    generation = uuid.uuid4().hex
+    job = _FakeJob(status="rendering", job_id=job_id, assembly_plan={"variants": []})
+    _patch_job_session(monkeypatch, job)
+    task_started_at = datetime.now(UTC) - timedelta(minutes=28)
+    task_deadline = task_started_at + timedelta(seconds=gb._REQUIRED_SPEECH_UPLOAD_LEASE_S)
+    token = gb._REQUIRED_SPEECH_UPLOAD_DEADLINE.set(task_deadline)
+    pending = {
+        "variant_id": "subtitled",
+        "rank": 1,
+        "text_mode": "none",
+        "music_track_id": None,
+        "render_generation_id": generation,
+        "render_status": "pending",
+        "ok": False,
+    }
+    try:
+        reservation = gb._reserve_required_speech_pending(
+            job_id,
+            pending,
+            generation=generation,
+        )
+    finally:
+        gb._REQUIRED_SPEECH_UPLOAD_DEADLINE.reset(token)
+
+    assert reservation == {"generation": generation, "resumed_result": None}
+    receipt = job.assembly_plan["_speech_cleanup_internal"]["render_generation_cleanup_pending"][0]
+    assert datetime.fromisoformat(receipt["lease_expires_at"]) == task_deadline
+
+    with pytest.raises(gb._RequiredSpeechAttemptBusy) as caught:
+        gb._reserve_required_speech_pending(
+            job_id,
+            {**pending, "render_generation_id": uuid.uuid4().hex},
+            generation=uuid.uuid4().hex,
+        )
+    assert caught.value.reason == "uploads_still_active"
+    assert 0 < caught.value.retry_after_s <= 2 * 60
+
+
+def test_soft_timeout_waits_through_bounded_parent_child_deadline_skew(monkeypatch):
+    fixed_now = datetime(2026, 9, 2, 12, 0, tzinfo=UTC)
+    deadline = fixed_now + timedelta(seconds=0.25)
+    token = gb._REQUIRED_SPEECH_UPLOAD_DEADLINE.set(deadline)
+    sleeps: list[float] = []
+    monkeypatch.setattr(gb.time, "sleep", sleeps.append)
+    try:
+        waited = gb._wait_for_required_speech_soft_deadline(now=fixed_now)
+    finally:
+        gb._REQUIRED_SPEECH_UPLOAD_DEADLINE.reset(token)
+
+    assert waited is True
+    assert sleeps == [pytest.approx(0.25 + gb._REQUIRED_SPEECH_SOFT_TIMEOUT_WAIT_MARGIN_S)]
+
+
+def test_soft_timeout_refuses_to_wait_for_nonlocal_lease(monkeypatch):
+    fixed_now = datetime(2026, 9, 2, 12, 0, tzinfo=UTC)
+    deadline = fixed_now + timedelta(seconds=gb._REQUIRED_SPEECH_SOFT_TIMEOUT_WAIT_MAX_S + 0.001)
+    token = gb._REQUIRED_SPEECH_UPLOAD_DEADLINE.set(deadline)
+    monkeypatch.setattr(
+        gb.time,
+        "sleep",
+        lambda _seconds: pytest.fail("an over-bound lease must never be waited out or revoked"),
+    )
+    try:
+        waited = gb._wait_for_required_speech_soft_deadline(now=fixed_now)
+    finally:
+        gb._REQUIRED_SPEECH_UPLOAD_DEADLINE.reset(token)
+
+    assert waited is False
+
+
+def test_claim_acquisition_refuses_fresh_or_malformed_foreign_claim(monkeypatch):
+    job_id = str(uuid.uuid4())
+    generation = uuid.uuid4().hex
+    operation_id = uuid.uuid4().hex
+    job, _result = _required_speech_rerender_fixture(
+        job_id,
+        generation=generation,
+        operation_id=operation_id,
+        attempt_id="foreign-attempt",
+    )
+    claim = job.assembly_plan["speech_cut_control"]["finalizer_claim"]
+    claim.update(task_id="foreign-task", claimed_at_epoch_s=100.0)
+    _patch_job_session(monkeypatch, job, noop_flag_modified=True)
+    monkeypatch.setattr(gb.time, "time", lambda: 101.0)
+    original = copy.deepcopy(job.assembly_plan)
+
+    assert not gb._claim_speech_cut_finalize(
+        job_id,
+        operation_id,
+        "new-attempt",
+        task_id="new-task",
+        retry_number=0,
+    )
+    assert job.assembly_plan == original
+
+    job.assembly_plan["speech_cut_control"]["finalizer_claim"]["claimed_at_epoch_s"] = "bad"
+    malformed = copy.deepcopy(job.assembly_plan)
+    assert not gb._claim_speech_cut_finalize(
+        job_id,
+        operation_id,
+        "new-attempt",
+        task_id="new-task",
+        retry_number=0,
+    )
+    assert job.assembly_plan == malformed
+
+
+@pytest.mark.parametrize(
+    "private_state",
+    [
+        "malformed",
+        {"required_speech_generation_locks": []},
+        {"required_speech_generation_locks": {"subtitled": 123}},
+        {"staged_render_results": []},
+        {"staged_render_results": {"subtitled:generation": "malformed"}},
+        {"working_render_variants": []},
+        {"terminal_pending": []},
+    ],
+)
+def test_claim_recovery_fails_closed_on_malformed_private_state(
+    monkeypatch,
+    private_state,
+):
+    job_id = str(uuid.uuid4())
+    generation = uuid.uuid4().hex
+    operation_id = uuid.uuid4().hex
+    job, _result = _required_speech_rerender_fixture(
+        job_id,
+        generation=generation,
+        operation_id=operation_id,
+        attempt_id="released-attempt",
+    )
+    job.assembly_plan["speech_cut_control"]["finalizer_claim"]["released"] = True
+    job.assembly_plan["_speech_cleanup_internal"] = copy.deepcopy(private_state)
+    _patch_job_session(monkeypatch, job, noop_flag_modified=True)
+    original = copy.deepcopy(job.assembly_plan)
+
+    assert not gb._claim_speech_cut_finalize(
+        job_id,
+        operation_id,
+        "new-attempt",
+        task_id="new-task",
+        retry_number=1,
+    )
+    assert job.assembly_plan == original
 
 
 def _patch_promoted_job_graph(
@@ -2152,18 +3356,284 @@ def test_softtimelimit_marks_processing_failed_not_frozen(monkeypatch):
     monkeypatch.setattr(gb, "_run_generative_job", _boom)
     monkeypatch.setattr(gb, "_owned_job_task_fence", _accepted_owned_job_fence)
     captured: dict = {}
-    monkeypatch.setattr(
-        gb,
-        "_fail_job",
-        lambda jid, detail, failure_reason=None: captured.update(
-            job_id=jid, detail=detail, reason=failure_reason
-        ),
-    )
+
+    def _capture_failure(jid, detail, failure_reason=None):
+        captured.update(job_id=jid, detail=detail, reason=failure_reason)
+        return True
+
+    monkeypatch.setattr(gb, "_fail_job", _capture_failure)
 
     gb.orchestrate_generative_job.run("22222222-2222-2222-2222-222222222222")
 
     assert captured["reason"] == "processing_timeout"
     assert "timed out" in captured["detail"].lower()
+
+
+def test_softtimelimit_reraises_when_required_owner_cannot_terminalize(monkeypatch):
+    """A blocked timeout rollback is a failed task, never a successful task result."""
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    monkeypatch.setattr(
+        gb,
+        "_run_generative_job",
+        lambda _job_id: (_ for _ in ()).throw(SoftTimeLimitExceeded()),
+    )
+    monkeypatch.setattr(gb, "_owned_job_task_fence", _accepted_owned_job_fence)
+    monkeypatch.setattr(gb, "_fail_job", lambda *_args, **_kwargs: False)
+
+    with pytest.raises(SoftTimeLimitExceeded):
+        gb.orchestrate_generative_job.run("22222222-2222-2222-2222-222222222222")
+
+
+def test_softtimelimit_retries_terminalization_after_exact_deadline_skew(monkeypatch):
+    """A near-future lease gets one post-deadline terminalization attempt."""
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    monkeypatch.setattr(
+        gb,
+        "_run_generative_job",
+        lambda _job_id: (_ for _ in ()).throw(SoftTimeLimitExceeded()),
+    )
+    monkeypatch.setattr(gb, "_owned_job_task_fence", _accepted_owned_job_fence)
+    decisions = iter((False, True))
+    failure_calls: list[str] = []
+
+    def _fail_after_deadline(_job_id, detail, **_kwargs):
+        failure_calls.append(detail)
+        return next(decisions)
+
+    monkeypatch.setattr(gb, "_fail_job", _fail_after_deadline)
+    monkeypatch.setattr(gb, "_wait_for_required_speech_soft_deadline", lambda: True)
+
+    gb.orchestrate_generative_job.run("22222222-2222-2222-2222-222222222222")
+
+    assert len(failure_calls) == 2
+
+
+@pytest.mark.parametrize("terminalized", [False, True])
+def test_required_speech_failure_requires_terminal_commit(monkeypatch, terminalized):
+    """A typed required-speech failure is ACKed only after failure state commits."""
+
+    error = gb.SpeechCleanupFailure("analysis_failed")
+    failure_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(gb, "_owned_job_task_fence", _accepted_owned_job_fence)
+    monkeypatch.setattr(
+        gb,
+        "_run_generative_job",
+        lambda _job_id: (_ for _ in ()).throw(error),
+    )
+    monkeypatch.setattr(gb, "mark_failed_phase", lambda _job_id: None)
+
+    def _fail(_job_id, detail, **kwargs):
+        failure_calls.append({"detail": detail, **kwargs})
+        return terminalized
+
+    monkeypatch.setattr(gb, "_fail_job", _fail)
+
+    job_id = "22222222-2222-2222-2222-222222222222"
+    if terminalized:
+        gb.orchestrate_generative_job.run(job_id)
+    else:
+        with pytest.raises(gb.SpeechCleanupFailure) as caught:
+            gb.orchestrate_generative_job.run(job_id)
+        assert caught.value is error
+
+    assert failure_calls == [
+        {
+            "detail": str(error),
+            "failure_reason": "speech_cleanup_failed",
+            "speech_cleanup_failure_reason": "analysis_failed",
+        }
+    ]
+
+
+@pytest.mark.parametrize("terminalized", [False, True])
+def test_generic_orchestrator_failure_requires_terminal_commit(monkeypatch, terminalized):
+    """An unexpected render failure is ACKed only after failure state commits."""
+
+    error = RuntimeError("render failed after required-speech reservation")
+    failure_calls: list[str] = []
+    monkeypatch.setattr(gb, "_owned_job_task_fence", _accepted_owned_job_fence)
+    monkeypatch.setattr(
+        gb,
+        "_run_generative_job",
+        lambda _job_id: (_ for _ in ()).throw(error),
+    )
+    monkeypatch.setattr(gb, "mark_failed_phase", lambda _job_id: None)
+    monkeypatch.setattr(
+        gb,
+        "_fail_job",
+        lambda _job_id, detail, **_kwargs: failure_calls.append(detail) or terminalized,
+    )
+
+    job_id = "22222222-2222-2222-2222-222222222222"
+    if terminalized:
+        gb.orchestrate_generative_job.run(job_id)
+    else:
+        with pytest.raises(RuntimeError, match="render failed after required-speech reservation"):
+            gb.orchestrate_generative_job.run(job_id)
+
+    assert failure_calls == [str(error)]
+
+
+def test_speech_rerender_softtimeout_requires_exact_rollback(monkeypatch):
+    """Speech-cut timeout success requires the claim-owned rollback to commit."""
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    operation_id = uuid.uuid4().hex
+    captured: dict[str, str] = {}
+    monkeypatch.setattr(gb, "_owned_job_task_fence", _accepted_owned_job_fence)
+    monkeypatch.setattr(gb, "_claim_speech_cut_finalize", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        gb,
+        "_run_generative_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(SoftTimeLimitExceeded()),
+    )
+
+    def _blocked_restore(job_id, _error, **kwargs):
+        captured.update(
+            job_id=job_id,
+            operation_id=kwargs["expected_operation_id"],
+            attempt_id=kwargs["expected_attempt_id"],
+        )
+        return False
+
+    monkeypatch.setattr(gb, "_restore_failed_speech_cut_rerender", _blocked_restore)
+    monkeypatch.setattr(
+        gb,
+        "mark_finished",
+        lambda _job_id: pytest.fail("blocked rollback must not mark the task finished"),
+    )
+
+    with pytest.raises(SoftTimeLimitExceeded):
+        gb.rerender_speech_timing.run(
+            "22222222-2222-2222-2222-222222222222",
+            operation_id,
+        )
+
+    assert captured["operation_id"] == operation_id
+    assert captured["attempt_id"]
+
+
+def test_speech_rerender_softtimeout_retries_exact_rollback_after_deadline(monkeypatch):
+    """The post-deadline retry keeps the same operation and attempt CAS."""
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    operation_id = uuid.uuid4().hex
+    restore_calls: list[tuple[str, str]] = []
+    decisions = iter((False, True))
+    finished: list[str] = []
+    monkeypatch.setattr(gb, "_owned_job_task_fence", _accepted_owned_job_fence)
+    monkeypatch.setattr(gb, "_claim_speech_cut_finalize", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        gb,
+        "_run_generative_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(SoftTimeLimitExceeded()),
+    )
+
+    def _restore(_job_id, _error, **kwargs):
+        restore_calls.append((kwargs["expected_operation_id"], kwargs["expected_attempt_id"]))
+        return next(decisions)
+
+    monkeypatch.setattr(gb, "_restore_failed_speech_cut_rerender", _restore)
+    monkeypatch.setattr(gb, "_wait_for_required_speech_soft_deadline", lambda: True)
+    monkeypatch.setattr(gb, "mark_finished", finished.append)
+
+    job_id = "22222222-2222-2222-2222-222222222222"
+    gb.rerender_speech_timing.run(job_id, operation_id)
+
+    assert len(restore_calls) == 2
+    assert restore_calls[0] == restore_calls[1]
+    assert restore_calls[0][0] == operation_id
+    assert restore_calls[0][1]
+    assert finished == [job_id]
+
+
+@pytest.mark.parametrize("restored", [False, True])
+def test_speech_rerender_exhausted_db_retry_requires_exact_rollback(monkeypatch, restored):
+    """An exhausted DB retry is ACKed only after claim-owned rollback commits."""
+    import contextlib
+
+    from sqlalchemy.exc import OperationalError
+
+    import app.services.pipeline_trace as pt
+
+    operation_id = uuid.uuid4().hex
+    error = OperationalError("SELECT 1", {}, RuntimeError("db unavailable"))
+    restore_calls: list[tuple[str, str]] = []
+    finished: list[str] = []
+    monkeypatch.setattr(gb, "_owned_job_task_fence", _accepted_owned_job_fence)
+    monkeypatch.setattr(gb, "_claim_speech_cut_finalize", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        gb,
+        "_run_generative_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(error),
+    )
+
+    def _restore(_job_id, _error, **kwargs):
+        restore_calls.append((kwargs["expected_operation_id"], kwargs["expected_attempt_id"]))
+        return restored
+
+    monkeypatch.setattr(gb, "_restore_failed_speech_cut_rerender", _restore)
+    monkeypatch.setattr(gb, "mark_finished", finished.append)
+    monkeypatch.setattr(pt, "pipeline_trace_for", lambda _job_id: contextlib.nullcontext())
+    monkeypatch.setattr(gb, "job_heartbeat", lambda _job_id: contextlib.nullcontext())
+
+    job_id = "22222222-2222-2222-2222-222222222222"
+    task = gb.rerender_speech_timing
+    task.push_request(id="speech-db-retry", retries=task.max_retries)
+    try:
+        if restored:
+            task.run(job_id, operation_id)
+        else:
+            with pytest.raises(OperationalError):
+                task.run(job_id, operation_id)
+    finally:
+        task.pop_request()
+
+    assert restore_calls[0][0] == operation_id
+    assert restore_calls[0][1]
+    assert finished == ([job_id] if restored else [])
+
+
+@pytest.mark.parametrize("restored", [False, True])
+def test_speech_rerender_generic_failure_requires_exact_rollback(monkeypatch, restored):
+    """A render/compose error is ACKed only after claim-owned rollback commits."""
+    import contextlib
+
+    import app.services.pipeline_trace as pt
+
+    operation_id = uuid.uuid4().hex
+    error = RuntimeError("compose failed")
+    restore_calls: list[tuple[str, str]] = []
+    finished: list[str] = []
+    monkeypatch.setattr(gb, "_owned_job_task_fence", _accepted_owned_job_fence)
+    monkeypatch.setattr(gb, "_claim_speech_cut_finalize", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        gb,
+        "_run_generative_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(error),
+    )
+
+    def _restore(_job_id, _error, **kwargs):
+        restore_calls.append((kwargs["expected_operation_id"], kwargs["expected_attempt_id"]))
+        return restored
+
+    monkeypatch.setattr(gb, "_restore_failed_speech_cut_rerender", _restore)
+    monkeypatch.setattr(gb, "mark_finished", finished.append)
+    monkeypatch.setattr(pt, "pipeline_trace_for", lambda _job_id: contextlib.nullcontext())
+    monkeypatch.setattr(gb, "job_heartbeat", lambda _job_id: contextlib.nullcontext())
+
+    job_id = "22222222-2222-2222-2222-222222222222"
+    if restored:
+        gb.rerender_speech_timing.run(job_id, operation_id)
+    else:
+        with pytest.raises(RuntimeError, match="compose failed"):
+            gb.rerender_speech_timing.run(job_id, operation_id)
+
+    assert restore_calls[0][0] == operation_id
+    assert restore_calls[0][1]
+    assert finished == ([job_id] if restored else [])
 
 
 def test_terminal_status_skips_rerun(monkeypatch):
@@ -2231,7 +3701,11 @@ def test_run_generative_job_forwards_masonry_preset_to_montage_renderer(monkeypa
 
     monkeypatch.setattr(gb, "record_phase", lambda *a, **k: None, raising=False)
     monkeypatch.setattr(pt, "record_pipeline_event", lambda *a, **k: None, raising=False)
-    monkeypatch.setattr(gb, "_persist_durable_sources", lambda _job_id, paths: paths)
+    monkeypatch.setattr(
+        gb,
+        "_persist_durable_sources",
+        lambda _job_id, paths, **_kwargs: paths,
+    )
     monkeypatch.setattr(
         gb,
         "_ingest_clips",
@@ -2241,6 +3715,7 @@ def test_run_generative_job_forwards_masonry_preset_to_montage_renderer(monkeypa
             "clip_id_to_local": {"c1": "/tmp/clip.mp4"},
             "probe_map": {"/tmp/clip.mp4": _Probe(12.0)},
             "hero": _Meta("c1", 5.0),
+            "speech_cleanup_assignment_by_clip_id": {},
         },
     )
     monkeypatch.setattr(gb, "_pretonemap_hdr_clips", lambda *a, **k: 0)
@@ -2258,10 +3733,10 @@ def test_run_generative_job_forwards_masonry_preset_to_montage_renderer(monkeypa
     monkeypatch.setattr(gb, "_set_status", lambda *a, **k: None)
     monkeypatch.setattr(gb, "_persist_archetype_fallback", lambda *a, **k: None)
     monkeypatch.setattr(gb, "_existing_variants", lambda *a, **k: [])
-    monkeypatch.setattr(gb, "_update_variant_entry", lambda *a, **k: None)
-    monkeypatch.setattr(gb, "_upsert_variant_entry", lambda *a, **k: None)
+    monkeypatch.setattr(gb, "_update_variant_entry", lambda *a, **k: True)
+    monkeypatch.setattr(gb, "_upsert_variant_entry", lambda *a, **k: True)
     monkeypatch.setattr(gb, "_maybe_add_text_elements_snapshot", lambda *a, **k: None)
-    monkeypatch.setattr(gb, "_finalize_job", lambda *a, **k: None)
+    monkeypatch.setattr(gb, "_finalize_job", lambda *a, **k: True)
     monkeypatch.setattr(gb, "_maybe_autoplace_after_finalize", lambda *a, **k: None)
 
     seen: dict[str, str] = {}
@@ -2623,7 +4098,7 @@ def test_phase_instrumentation_trunk_order(monkeypatch):
     monkeypatch.setattr(gb, "_owned_job_task_fence", _accepted_owned_job_fence)
     monkeypatch.setattr(pt, "pipeline_trace_for", lambda job_id: contextlib.nullcontext())
     # Suppress _fail_job so we can test the happy path without DB
-    monkeypatch.setattr(gb, "_fail_job", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(gb, "_fail_job", lambda *a, **k: True, raising=False)
 
     gb.orchestrate_generative_job.run("11111111-1111-1111-1111-111111111111")
 
@@ -2643,7 +4118,7 @@ def test_mark_failed_phase_on_fatal_error(monkeypatch):
     _patch_run_generative_job_failure(monkeypatch, RuntimeError("fatal"))
     monkeypatch.setattr(gb, "_owned_job_task_fence", _accepted_owned_job_fence)
     monkeypatch.setattr(pt, "pipeline_trace_for", lambda job_id: contextlib.nullcontext())
-    monkeypatch.setattr(gb, "_fail_job", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(gb, "_fail_job", lambda *a, **k: True, raising=False)
 
     gb.orchestrate_generative_job.run("22222222-2222-2222-2222-222222222222")
 
@@ -2651,6 +4126,45 @@ def test_mark_failed_phase_on_fatal_error(monkeypatch):
     assert "mark_failed_phase" in fn_names
     # mark_finished must NOT be called on failure.
     assert "mark_finished" not in fn_names
+
+
+def test_required_speech_busy_retries_after_first_defer_budget(monkeypatch):
+    """A live upload lease is deferred, never ACKed or terminally failed."""
+    import contextlib
+
+    import app.services.pipeline_trace as pt
+
+    calls = _patch_phase_fns(monkeypatch)
+    _patch_run_generative_job_failure(
+        monkeypatch,
+        gb._RequiredSpeechAttemptBusy("uploads_still_active", retry_after_s=12.2),
+    )
+    monkeypatch.setattr(gb, "_owned_job_task_fence", _accepted_owned_job_fence)
+    monkeypatch.setattr(pt, "pipeline_trace_for", lambda _job_id: contextlib.nullcontext())
+    monkeypatch.setattr(gb, "job_heartbeat", lambda _job_id: contextlib.nullcontext())
+    captured: dict = {}
+
+    class RetryDispatched(Exception):
+        pass
+
+    def _retry(**kwargs):
+        captured.update(kwargs)
+        raise RetryDispatched
+
+    task = gb.orchestrate_generative_job
+    monkeypatch.setattr(task, "retry", _retry)
+    task.push_request(id="required-speech-redelivery", retries=8)
+    try:
+        with pytest.raises(RetryDispatched):
+            task.run("22222222-2222-2222-2222-222222222222")
+    finally:
+        task.pop_request()
+
+    assert captured["countdown"] == 18
+    assert captured["max_retries"] == gb._REQUIRED_SPEECH_BUSY_MAX_RETRIES
+    assert isinstance(captured["exc"], gb._RequiredSpeechAttemptBusy)
+    assert "mark_finished" not in [call[0] for call in calls]
+    assert "mark_failed_phase" not in [call[0] for call in calls]
 
 
 def test_audio_led_guided_conflict_is_terminal_with_stable_reason(monkeypatch):
@@ -2667,8 +4181,8 @@ def test_audio_led_guided_conflict_is_terminal_with_stable_reason(monkeypatch):
     monkeypatch.setattr(
         gb,
         "_fail_job",
-        lambda jid, detail, failure_reason=None: captured.update(
-            job_id=jid, detail=detail, reason=failure_reason
+        lambda jid, detail, failure_reason=None: (
+            captured.update(job_id=jid, detail=detail, reason=failure_reason) or True
         ),
         raising=False,
     )

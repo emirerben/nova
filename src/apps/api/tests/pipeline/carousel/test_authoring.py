@@ -544,7 +544,11 @@ def test_initial_pending_upsert_persists_authored_carousel_moment(monkeypatch):
 
     monkeypatch.setattr(gb, "record_phase", lambda *a, **k: None, raising=False)
     monkeypatch.setattr(pt, "record_pipeline_event", lambda *a, **k: None, raising=False)
-    monkeypatch.setattr(gb, "_persist_durable_sources", lambda _job_id, paths: paths)
+    monkeypatch.setattr(
+        gb,
+        "_persist_durable_sources",
+        lambda _job_id, paths, **_kwargs: paths,
+    )
     metas = [_GBMeta("c1", 5.0), _GBMeta("c2", 4.0), _GBMeta("c3", 6.0)]
     monkeypatch.setattr(
         gb,
@@ -569,7 +573,10 @@ def test_initial_pending_upsert_persists_authored_carousel_moment(monkeypatch):
     monkeypatch.setattr(gb, "_set_status", lambda *a, **k: None)
     monkeypatch.setattr(gb, "_persist_archetype_fallback", lambda *a, **k: None)
     monkeypatch.setattr(gb, "_existing_variants", lambda *a, **k: [])
-    monkeypatch.setattr(gb, "_update_variant_entry", lambda *a, **k: None)
+    # The production helper is a generation/terminal-state CAS and returns
+    # whether the transition was accepted.  A rejected transition deliberately
+    # cancels the render before it writes a ready result.
+    monkeypatch.setattr(gb, "_update_variant_entry", lambda *a, **k: True)
     monkeypatch.setattr(gb, "_maybe_add_text_elements_snapshot", lambda *a, **k: None)
     monkeypatch.setattr(gb, "_finalize_job", lambda *a, **k: None)
     monkeypatch.setattr(gb, "_maybe_autoplace_after_finalize", lambda *a, **k: None)
@@ -588,7 +595,11 @@ def test_initial_pending_upsert_persists_authored_carousel_moment(monkeypatch):
     )
 
     upserts: list[dict] = []
-    monkeypatch.setattr(gb, "_upsert_variant_entry", lambda jid, entry: upserts.append(dict(entry)))
+    monkeypatch.setattr(
+        gb,
+        "_upsert_variant_entry",
+        lambda jid, entry: (upserts.append(dict(entry)), True)[1],
+    )
 
     gb._run_generative_job("55555555-5555-5555-5555-555555555555")
 

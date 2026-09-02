@@ -118,6 +118,21 @@ def _load_uncancelled_job(db, job_id: str, *, for_update: bool = False) -> Job |
     return job
 
 
+def _variant_generation_is_editable(job: Job, variant_id: str) -> bool:
+    """Background-writer form of the required-speech generation barrier."""
+
+    from app.services.variant_generation_guard import (  # noqa: PLC0415
+        VariantInitialRenderInProgress,
+        assert_variant_generation_editable,
+    )
+
+    try:
+        assert_variant_generation_editable(job, variant_id)
+    except VariantInitialRenderInProgress:
+        return False
+    return True
+
+
 def _delete_task_created_frames(job_id: str, object_paths: list[str]) -> None:
     """Delete exact frame keys created by a cancelled materialization attempt."""
     from app.storage import delete_object_best_effort  # noqa: PLC0415
@@ -310,6 +325,7 @@ def _clear_visual_block_attempts(job_id: str, variant_ids: list[str]) -> None:
         for variant in variants:
             if (
                 variant.get("variant_id") in wanted
+                and _variant_generation_is_editable(job, str(variant.get("variant_id")))
                 and not variant.get("visual_blocks")
                 and variant.get("visual_blocks_autoplan_attempted")
             ):
@@ -482,6 +498,8 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
                 job = _load_uncancelled_job(db, job_id, for_update=True)
                 variants = list((job.assembly_plan or {}).get("variants") or []) if job else []
                 fresh = next((row for row in variants if row.get("variant_id") == variant_id), None)
+                if fresh is not None and not _variant_generation_is_editable(job, variant_id):
+                    return
                 source_changed = fresh is None or any(
                     fresh.get(key) != value for key, value in source_revision.items()
                 )
@@ -607,6 +625,8 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
             target = next((row for row in variants if row.get("variant_id") == variant_id), None)
             if target is None:
                 return
+            if not _variant_generation_is_editable(job, variant_id):
+                return
             if not _planner_revision_matches(target, planning_revision):
                 target["visual_blocks_autoplan_attempted"] = False
                 from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
@@ -631,6 +651,8 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
             variants = list((job.assembly_plan or {}).get("variants") or [])
             target = next((row for row in variants if row.get("variant_id") == variant_id), None)
             if target is None or target.get("visual_blocks"):
+                return
+            if not _variant_generation_is_editable(job, variant_id):
                 return
             if not _planner_revision_matches(target, planning_revision):
                 target["visual_blocks_autoplan_attempted"] = False
@@ -691,7 +713,11 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
                         (row for row in variants if row.get("variant_id") == variant_id),
                         None,
                     )
-                    if target is not None and target.get("render_generation_id") == render_gen_id:
+                    if (
+                        target is not None
+                        and _variant_generation_is_editable(job, variant_id)
+                        and target.get("render_generation_id") == render_gen_id
+                    ):
                         target.pop("visual_blocks", None)
                         target.pop("visual_blocks_base_path", None)
                         target["visual_blocks_autoplan_attempted"] = False
@@ -1275,9 +1301,7 @@ def analyze_pool_asset(
                         asset_id,
                         attempt_token=attempt_token,
                         media_status=(
-                            "ready"
-                            if not preview_required or bool(preview_path)
-                            else "failed"
+                            "ready" if not preview_required or bool(preview_path) else "failed"
                         ),
                         preview_path=preview_path,
                         preview_generation=preview_generation,
@@ -1300,9 +1324,7 @@ def analyze_pool_asset(
                         asset_id,
                         attempt_token=attempt_token,
                         media_status=(
-                            "ready"
-                            if not preview_required or bool(preview_path)
-                            else "failed"
+                            "ready" if not preview_required or bool(preview_path) else "failed"
                         ),
                         preview_path=preview_path,
                         preview_generation=preview_generation,
@@ -1617,7 +1639,7 @@ def _persist_variant_fields(
     """Row-locked read-modify-write of one variant's keys (decision 4A pattern).
     Returns the FRESH variant dict (pre-update) for occupied-interval reads."""
     job = _load_uncancelled_job(db, job_id, for_update=True)
-    if job is None:
+    if job is None or not _variant_generation_is_editable(job, variant_id):
         return None
     variants = list((job.assembly_plan or {}).get("variants") or [])
     fresh = None
@@ -1854,6 +1876,8 @@ def match_overlay_suggestions(
                 target = next((v for v in variants if v.get("variant_id") == variant_id), None)
                 if target is None:
                     return
+                if not _variant_generation_is_editable(job, variant_id):
+                    return
                 if not _overlay_suggest_attempt_matches(target, attempt_token):
                     return
                 # Plan 009: fullscreen data sources, named (eng review E11).
@@ -1930,6 +1954,8 @@ def match_overlay_suggestions(
                         if fresh_variant is None or not _overlay_suggest_attempt_matches(
                             fresh_variant, attempt_token
                         ):
+                            return
+                        if not _variant_generation_is_editable(job, variant_id):
                             return
                         fresh = list((fresh_variant or {}).get("overlay_suggestions") or [])
                         if not fresh:

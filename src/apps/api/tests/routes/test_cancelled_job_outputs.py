@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -141,9 +142,7 @@ async def test_cancelled_template_status_and_eval_hide_outputs(monkeypatch) -> N
         "comparison_grid_url": "https://stale.example/grid.jpg",
     }
     monkeypatch.setattr(app_settings, "eval_harness_enabled", True, raising=False)
-    payload = await template_jobs.get_template_job_eval(
-        str(job.id), db=_async_db_returning(job)
-    )
+    payload = await template_jobs.get_template_job_eval(str(job.id), db=_async_db_returning(job))
     assert payload["slots"][0]["slot_url"] is None
     assert payload["output_url"] is None
     assert payload["comparison_grid_url"] is None
@@ -159,6 +158,74 @@ async def test_cancelled_music_status_hides_assembly_plan() -> None:
     )
     assert response.assembly_plan is None
     assert response.error_detail is None
+
+
+@pytest.mark.asyncio
+async def test_template_status_projects_private_generation_and_identity_state() -> None:
+    private_plan = {
+        "output_url": "https://safe.example/output.mp4",
+        "variants": [
+            {
+                "variant_id": "subtitled",
+                "clip_source_instance_ids": ["private-source-id"],
+                "nested": {"clip_metadata_identity_index_v2": {"secret": True}},
+            }
+        ],
+        "_speech_cleanup_internal": {
+            "required_speech_generation_locks": {"subtitled": "private-generation"},
+            "staged_render_results": {"subtitled:private-generation": {"secret": True}},
+        },
+    }
+    stored = copy.deepcopy(private_plan)
+    job = _job(
+        status="template_ready",
+        job_type="template",
+        mode="template",
+        assembly_plan=private_plan,
+        all_candidates={"clip_source_instance_ids": ["also-private"]},
+    )
+
+    response = await template_jobs.get_template_job_status(
+        str(job.id),
+        current_user=SimpleNamespace(id=job.user_id),
+        db=_async_db_returning(job),
+    )
+
+    payload = response.model_dump()
+    assert payload["assembly_plan"] == {
+        "output_url": "https://safe.example/output.mp4",
+        "variants": [{"variant_id": "subtitled", "nested": {}}],
+    }
+    assert "all_candidates" not in payload
+    assert job.assembly_plan == stored
+
+
+@pytest.mark.asyncio
+async def test_music_status_projects_private_generation_and_identity_state() -> None:
+    private_plan = {
+        "output_url": "https://safe.example/music.mp4",
+        "_speech_cleanup_internal": {"terminal_pending": {"secret": True}},
+        "clip_metadata_identity_index_v2": {"private": True},
+    }
+    stored = copy.deepcopy(private_plan)
+    job = _job(
+        status="music_ready",
+        job_type="music",
+        mode="music",
+        assembly_plan=private_plan,
+        all_candidates={"clip_source_instance_ids": ["also-private"]},
+    )
+
+    response = await music_jobs.get_music_job_status(
+        str(job.id),
+        current_user=SimpleNamespace(id=job.user_id),
+        db=_async_db_returning(job),
+    )
+
+    payload = response.model_dump()
+    assert payload["assembly_plan"] == {"output_url": "https://safe.example/music.mp4"}
+    assert "all_candidates" not in payload
+    assert job.assembly_plan == stored
 
 
 @pytest.mark.asyncio
@@ -182,9 +249,7 @@ async def test_retext_commits_locked_mutation_before_broker_publish(monkeypatch)
     db.commit = AsyncMock(side_effect=lambda: order.append("commit"))
     monkeypatch.setattr(generative_jobs, "_load_generative_job", load)
     monkeypatch.setattr(generative_jobs, "dispatch_retext", dispatch)
-    monkeypatch.setattr(
-        generative_jobs, "_publish_committed_variant_render", publish_committed
-    )
+    monkeypatch.setattr(generative_jobs, "_publish_committed_variant_render", publish_committed)
 
     await generative_jobs.retext(
         str(job.id),
@@ -238,9 +303,7 @@ async def test_failed_post_commit_publish_restores_only_matching_generation() ->
         variant_id="song_text",
         render_generation_id="new-generation",
         previous_variant=previous,
-        rollback_fields=frozenset(
-            {"render_status", "render_generation_id", "render_started_at"}
-        ),
+        rollback_fields=frozenset({"render_status", "render_generation_id", "render_started_at"}),
         previous_started_at=None,
         attempted_started_at=attempted_at,
     )

@@ -87,6 +87,17 @@ from app.services.media_overlay_preview import (
     nonblank_str,
 )
 from app.services.nova_steps import NovaStep, project_nova_steps
+from app.services.public_assembly_plan import (
+    project_public_assembly_plan,
+    project_public_assembly_plan_with_metadata,
+)
+from app.services.speech_cleanup_terminal import classify_route_speech_cut_rollback
+from app.services.variant_generation_guard import (
+    VariantInitialRenderInProgress,
+    assert_required_speech_dispatch_quiescent,
+    assert_variant_generation_editable,
+    required_speech_generation_lock,
+)
 from app.smart_edit.schemas import SemanticRole
 from app.storage import signed_get_url
 
@@ -1353,6 +1364,15 @@ def _lazy_backfill_media_overlay_previews(job: Job) -> bool:
         if not isinstance(v, dict):
             next_variants.append(v)
             continue
+        variant_id = str(v.get("variant_id") or "")
+        try:
+            if variant_id:
+                assert_variant_generation_editable(job, variant_id)
+        except VariantInitialRenderInProgress:
+            # Malformed private ownership fails closed. A read may still return the
+            # existing snapshot, but it must not create or persist a hidden write.
+            next_variants.append(v)
+            continue
         raw_overlays = v.get("media_overlays")
         if not raw_overlays:
             next_variants.append(v)
@@ -1433,7 +1453,7 @@ def _collect_media_overlay_preview_stamps(job: Job) -> dict[str, str]:
 
 async def _persist_media_overlay_preview_backfill(
     db: AsyncSession, job_id: uuid.UUID, preview_by_src: dict[str, str]
-) -> None:
+) -> set[str]:
     """Persist lazily-backfilled HEIC overlay preview paths under a row lock.
 
     The status read computes these previews from an UNLOCKED snapshot; committing
@@ -1445,15 +1465,34 @@ async def _persist_media_overlay_preview_backfill(
     have discarded the unlocked snapshot's pending mutation first (db.rollback()).
     """
     if not preview_by_src:
-        return
+        return set()
     job = await db.get(Job, job_id, with_for_update=True)
     if job is None or getattr(job, "status", None) == "cancelled":
-        return
+        return set()
     variants = list((job.assembly_plan or {}).get("variants") or [])
     changed = False
+    retry_after_unlock: set[str] = set()
     next_variants: list[dict] = []
     for v in variants:
         if not isinstance(v, dict) or not v.get("media_overlays"):
+            next_variants.append(v)
+            continue
+        variant_id = str(v.get("variant_id") or "")
+        try:
+            if variant_id:
+                assert_variant_generation_editable(job, variant_id)
+        except VariantInitialRenderInProgress:
+            # The lock may have appeared after the unlocked status snapshot
+            # computed its preview. Reads stay available, but the fresh-row
+            # merge must fail closed instead of racing terminal publication.
+            retry_after_unlock.update(
+                src
+                for card in v.get("media_overlays") or []
+                if isinstance(card, dict)
+                and (src := nonblank_str(card.get("src_gcs_path")))
+                and not nonblank_str(card.get("preview_gcs_path"))
+                and src in preview_by_src
+            )
             next_variants.append(v)
             continue
         next_cards: list[object] = []
@@ -1472,6 +1511,7 @@ async def _persist_media_overlay_preview_backfill(
     if changed:
         job.assembly_plan = {**(job.assembly_plan or {}), "variants": next_variants}
         await db.commit()
+    return retry_after_unlock
 
 
 def _variants_for_response(job: Job) -> list[dict]:
@@ -1506,14 +1546,19 @@ def _variants_for_response(job: Job) -> list[dict]:
     )
 
     out: list[dict] = []
-    for v in _variants_of(job):
+    projection = project_public_assembly_plan_with_metadata(job.assembly_plan or {})
+    public_plan = projection.value
+    public_variants = public_plan.get("variants") if isinstance(public_plan, dict) else None
+    for v in public_variants if isinstance(public_variants, list) else []:
         video_path = v.get("video_path")
+        variant_id = str(v.get("variant_id") or "video")
+        masked_last_good = variant_id in projection.masked_last_good_variant_ids
         # Re-sign whenever a rendered video exists — NOT only when "ready". A variant
         # whose re-render FAILED keeps its last good `video_path`, and that video must
-        # stay playable past the 24h signature expiry. Only an in-flight re-render
-        # ("rendering") keeps the stored URL untouched: the player holds the base/last
-        # frame until the poll flips the status.
-        if video_path and v.get("render_status") != "rendering":
+        # stay playable past the 24h signature expiry. A normal in-flight re-render
+        # keeps its stored URL untouched, but required-speech projection substitutes
+        # the exact last-good path; that public path is safe and must also be refreshed.
+        if video_path and (v.get("render_status") != "rendering" or masked_last_good):
             try:
                 v = {**v, "output_url": signed_get_url(video_path, PLAYBACK_URL_TTL_MIN)}
             except Exception:  # noqa: BLE001 — one bad sign must not 500 the poll
@@ -1526,7 +1571,6 @@ def _variants_for_response(job: Job) -> list[dict]:
                 )
                 # fall through with the stored (possibly stale) output_url
             try:
-                variant_id = str(v.get("variant_id") or "video")
                 v = {
                     **v,
                     "download_url": storage.signed_download_url(
@@ -1804,7 +1848,7 @@ def _variants_for_response(job: Job) -> list[dict]:
             "editor_capabilities": _editor_capabilities(job, v),
         }
         out.append(v)
-    return out
+    return project_public_assembly_plan(out)
 
 
 def _find_variant(job: Job, variant_id: str) -> dict | None:
@@ -1957,6 +2001,30 @@ _GUIDED_STORY_TEXT_REQUIRED_ERROR = {
 }
 
 
+def _assert_variant_generation_editable_or_409(job: Job, variant_id: str) -> None:
+    """Map the private generation barrier onto the stable public route error."""
+
+    try:
+        assert_variant_generation_editable(job, variant_id)
+    except VariantInitialRenderInProgress as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="variant_initial_render_in_progress",
+        ) from exc
+
+
+def _assert_required_speech_dispatch_quiescent_or_409(job: Job, variant_id: str) -> None:
+    """Map an in-flight sibling onto the stable editor conflict response."""
+
+    try:
+        assert_required_speech_dispatch_quiescent(job, variant_id)
+    except VariantInitialRenderInProgress as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="variant_initial_render_in_progress",
+        ) from exc
+
+
 def require_editable_variant(job: Job, variant_id: str, *, allow_guided_text: bool = False) -> dict:
     """Return the variant; 404 if unknown, 409 if it's already re-rendering."""
     if getattr(job, "status", None) == "cancelled":
@@ -1964,6 +2032,7 @@ def require_editable_variant(job: Job, variant_id: str, *, allow_guided_text: bo
             status_code=status.HTTP_409_CONFLICT,
             detail="Cancelled videos cannot be edited.",
         )
+    _assert_variant_generation_editable_or_409(job, variant_id)
     variant = _find_variant(job, variant_id)
     if variant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
@@ -2452,7 +2521,12 @@ def _is_editable_caption_variant(variant: dict) -> bool:
 
 
 async def _patch_narrated_variant(
-    job_id: uuid.UUID, variant_id: str, mutation: dict, db: AsyncSession
+    job_id: uuid.UUID,
+    variant_id: str,
+    mutation: dict,
+    db: AsyncSession,
+    *,
+    validate_mutation: Callable[[], None] | None = None,
 ) -> None:
     """Row-locked read-modify-write of one narrated variant's `assembly_plan` entry.
 
@@ -2471,6 +2545,9 @@ async def _patch_narrated_variant(
             status_code=status.HTTP_409_CONFLICT,
             detail="Cancelled videos cannot be edited.",
         )
+    _assert_variant_generation_editable_or_409(job, variant_id)
+    if validate_mutation is not None:
+        validate_mutation()
     plan = dict(job.assembly_plan or {})
     variants = list(plan.get("variants") or [])
     target = next((v for v in variants if v.get("variant_id") == variant_id), None)
@@ -2523,11 +2600,13 @@ async def persist_variant_caption_font(
     """
     from app.pipeline.narrated_assembler import is_valid_caption_font  # noqa: PLC0415
 
-    if not is_valid_caption_font(caption_font):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Unknown caption font.",
-        )
+    def _validate_caption_font() -> None:
+        if not is_valid_caption_font(caption_font):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Unknown caption font.",
+            )
+
     await _patch_narrated_variant(
         job_id,
         variant_id,
@@ -2536,6 +2615,7 @@ async def persist_variant_caption_font(
             "caption_font_user_edited": True,
         },
         db,
+        validate_mutation=_validate_caption_font,
     )
 
 
@@ -2549,12 +2629,12 @@ async def dispatch_set_caption_position(
     enqueue — the reburn's start write is token-checked, so an enqueue that
     outruns the commit would strand the variant in "rendering" forever.
     """
-    req = CaptionPositionRequest(y_frac=y_frac)
     result = await db.execute(select(Job).where(Job.id == job_id).with_for_update())
     job = result.scalar_one_or_none()
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
     variant = require_editable_variant(job, variant_id)  # 404 unknown / 409 if rendering
+    req = CaptionPositionRequest(y_frac=y_frac)
     if not _is_editable_caption_variant(variant):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -2594,13 +2674,20 @@ async def persist_variant_caption_style(
 ) -> None:
     """Persist sentence/word caption style on a caption variant. No re-render — the
     editor previews the choice; Apply reburns in the chosen style."""
-    if caption_style not in _CAPTION_STYLES:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Unknown caption style.",
-        )
+
+    def _validate_caption_style() -> None:
+        if caption_style not in _CAPTION_STYLES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Unknown caption style.",
+            )
+
     await _patch_narrated_variant(
-        job_id, variant_id, {"voiceover_caption_style": caption_style}, db
+        job_id,
+        variant_id,
+        {"voiceover_caption_style": caption_style},
+        db,
+        validate_mutation=_validate_caption_style,
     )
 
 
@@ -2632,6 +2719,7 @@ def _mark_variant_rendering(job: Job, variant_id: str) -> str:
     from the stored one, so minting a token on a dispatch path whose task does not
     carry it would strand the variant in "rendering" forever.
     """
+    _assert_variant_generation_editable_or_409(job, variant_id)
     render_gen_id = uuid.uuid4().hex
     render_enqueued_at = datetime.utcnow().isoformat() + "Z"
     variants = list((job.assembly_plan or {}).get("variants") or [])
@@ -2689,17 +2777,17 @@ async def dispatch_retranscribe_captions(
     Row-locked re-fetch + COMMIT BEFORE the enqueue — same rationale as
     `dispatch_apply_captions` (the task's start write is token-checked).
     """
+    result = await db.execute(select(Job).where(Job.id == job_id).with_for_update())
+    job = result.scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
+    variant = require_editable_variant(job, variant_id)  # 404 unknown / 409 if rendering
     lang = (language or "").strip().lower()
     if lang not in _SUBTITLED_CAPTION_LANGUAGES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Unsupported caption language.",
         )
-    result = await db.execute(select(Job).where(Job.id == job_id).with_for_update())
-    job = result.scalar_one_or_none()
-    if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
-    variant = require_editable_variant(job, variant_id)  # 404 unknown / 409 if rendering
     if variant.get("resolved_archetype") != "subtitled":
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -2762,6 +2850,11 @@ async def dispatch_apply_custom_effect(
         validate_effect_spec,
     )
 
+    result = await db.execute(select(Job).where(Job.id == job_id).with_for_update())
+    job = result.scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
+    variant = require_editable_variant(job, variant_id)  # 404 unknown / 409 if rendering
     try:
         spec = validate_effect_spec(effect_raw)
     except EffectValidationError as exc:
@@ -2769,12 +2862,6 @@ async def dispatch_apply_custom_effect(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"code": "invalid_effect_spec", "reason": exc.reason, "detail": exc.detail},
         ) from exc
-
-    result = await db.execute(select(Job).where(Job.id == job_id).with_for_update())
-    job = result.scalar_one_or_none()
-    if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
-    variant = require_editable_variant(job, variant_id)  # 404 unknown / 409 if rendering
     if not variant.get("base_video_path") and not variant.get("video_path"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -2829,6 +2916,7 @@ def dispatch_apply_speech_cut_candidate(
     from app.pipeline.speech_cut_state import accept_candidate  # noqa: PLC0415
 
     variant = require_editable_variant(job, variant_id)
+    _assert_required_speech_dispatch_quiescent_or_409(job, variant_id)
     if not settings.retake_cut_enabled:
         raise _timeline_error(404, "automatic_cut_disabled")
     if variant.get("resolved_archetype") not in {"subtitled", "talking_head"}:
@@ -2855,10 +2943,13 @@ def dispatch_apply_speech_cut_candidate(
             "speech_cut_last_error": None,
         }
     )
-    variants = [
-        updated if v.get("variant_id") == variant_id else v
-        for v in (job.assembly_plan or {}).get("variants") or []
-    ]
+    plan = job.assembly_plan or {}
+    previous_variants = list(plan.get("variants") or [])
+    variants = (
+        previous_variants
+        if plan.get("speech_cleanup_contract") == "required_v1"
+        else [updated if v.get("variant_id") == variant_id else v for v in previous_variants]
+    )
     control = {
         "variant_id": variant_id,
         "forced_removals": updated["speech_cut_in_flight"]["desired_forced_removals"],
@@ -2866,18 +2957,18 @@ def dispatch_apply_speech_cut_candidate(
         "prior_disabled": (job.assembly_plan or {}).get("silence_cut_disabled") is True,
         "operation": request,
         "operation_id": operation_id,
+        "render_generation_id": render_gen_id,
         "finalizer_claim": None,
         "revision": request["revision"],
         "in_flight": updated["speech_cut_in_flight"],
         "execution_contract": "reviewed_cut_v1",
     }
-    plan = job.assembly_plan or {}
     job.assembly_plan = {
         **plan,
         "silence_cut_disabled": _legacy_silence_flag_for_operation(plan, False),
         "speech_cut_control": control,
         "speech_cut_previous_variant": variant,
-        "speech_cut_previous_variants": list((job.assembly_plan or {}).get("variants") or []),
+        "speech_cut_previous_variants": previous_variants,
         "speech_cut_last_error": None,
         "variants": variants,
     }
@@ -2899,6 +2990,7 @@ def dispatch_restore_original_timing(
     from app.pipeline.speech_cut_state import restore_original_timing  # noqa: PLC0415
 
     variant = require_editable_variant(job, variant_id)
+    _assert_required_speech_dispatch_quiescent_or_409(job, variant_id)
     if variant.get("resolved_archetype") not in {"subtitled", "talking_head"}:
         raise _timeline_error(422, "automatic_cut_unavailable")
     try:
@@ -2906,20 +2998,23 @@ def dispatch_restore_original_timing(
     except ValueError as exc:
         raise _timeline_error(409, str(exc)) from exc
     operation_id = uuid.uuid4().hex
+    render_gen_id = uuid.uuid4().hex
     request["operation_id"] = operation_id
     updated.update(
         {
             "ok": False,
             "render_status": "rendering",
-            "render_generation_id": uuid.uuid4().hex,
+            "render_generation_id": render_gen_id,
             "speech_cut_last_error": None,
         }
     )
-    variants = [
-        updated if v.get("variant_id") == variant_id else v
-        for v in (job.assembly_plan or {}).get("variants") or []
-    ]
     plan = job.assembly_plan or {}
+    previous_variants = list(plan.get("variants") or [])
+    variants = (
+        previous_variants
+        if plan.get("speech_cleanup_contract") == "required_v1"
+        else [updated if v.get("variant_id") == variant_id else v for v in previous_variants]
+    )
     job.assembly_plan = {
         **plan,
         "silence_cut_disabled": _legacy_silence_flag_for_operation(plan, True),
@@ -2930,13 +3025,14 @@ def dispatch_restore_original_timing(
             "prior_disabled": (job.assembly_plan or {}).get("silence_cut_disabled") is True,
             "operation": request,
             "operation_id": operation_id,
+            "render_generation_id": render_gen_id,
             "finalizer_claim": None,
             "revision": request["revision"],
             "in_flight": updated["speech_cut_in_flight"],
             "execution_contract": "restore_original_v1",
         },
         "speech_cut_previous_variant": variant,
-        "speech_cut_previous_variants": list((job.assembly_plan or {}).get("variants") or []),
+        "speech_cut_previous_variants": previous_variants,
         "speech_cut_last_error": None,
         "variants": variants,
     }
@@ -2947,27 +3043,67 @@ def dispatch_restore_original_timing(
 
 
 def rollback_speech_cut_dispatch(
-    job: Job, error: str, *, expected_operation_id: str | None = None
-) -> None:
-    """Restore the exact last-good state when queue publication fails."""
+    job: Job,
+    error: str,
+    *,
+    expected_operation_id: str,
+    expected_generation_id: str,
+    expected_variant_id: str,
+) -> Literal["rolled_back", "not_owned", "enqueue_uncertain"]:
+    """Restore only an exact, freshly locked, unclaimed route dispatch."""
     from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
 
     plan = job.assembly_plan or {}
-    prior = plan.get("speech_cut_previous_variant")
-    control = plan.get("speech_cut_control") or {}
-    if expected_operation_id and control.get("operation_id") != expected_operation_id:
-        return
-    if not isinstance(prior, dict):
-        return
-    previous_variants = plan.get("speech_cut_previous_variants")
-    variants = (
-        list(previous_variants)
-        if isinstance(previous_variants, list)
-        else [
-            prior if v.get("variant_id") == control.get("variant_id") else v
-            for v in plan.get("variants") or []
-        ]
+    disposition = classify_route_speech_cut_rollback(
+        plan,
+        variant_id=expected_variant_id,
+        operation_id=expected_operation_id,
+        generation=expected_generation_id,
     )
+    if disposition != "eligible":
+        return disposition
+    prior = plan.get("speech_cut_previous_variant")
+    control = plan.get("speech_cut_control")
+    assert isinstance(control, dict)
+    if (
+        not isinstance(prior, dict)
+        or prior.get("variant_id") != expected_variant_id
+        or prior.get("render_status") in {"pending", "rendering"}
+    ):
+        return "enqueue_uncertain"
+    previous_variants = plan.get("speech_cut_previous_variants")
+    if isinstance(previous_variants, list) and all(
+        isinstance(value, dict) for value in previous_variants
+    ):
+        snapshot_ids = [value.get("variant_id") for value in previous_variants]
+        if (
+            any(not isinstance(value, str) or not value for value in snapshot_ids)
+            or len(snapshot_ids) != len(set(snapshot_ids))
+            or snapshot_ids.count(expected_variant_id) != 1
+            or next(
+                value
+                for value in previous_variants
+                if value.get("variant_id") == expected_variant_id
+            )
+            != prior
+        ):
+            return "enqueue_uncertain"
+        variants = copy.deepcopy(previous_variants)
+    else:
+        current_variants = plan.get("variants")
+        if not isinstance(current_variants, list) or any(
+            not isinstance(value, dict) for value in current_variants
+        ):
+            return "enqueue_uncertain"
+        matches = [
+            index
+            for index, value in enumerate(current_variants)
+            if value.get("variant_id") == expected_variant_id
+        ]
+        if len(matches) != 1:
+            return "enqueue_uncertain"
+        variants = copy.deepcopy(current_variants)
+        variants[matches[0]] = copy.deepcopy(prior)
     job.assembly_plan = {
         **plan,
         "silence_cut_disabled": bool(control.get("prior_disabled")),
@@ -2979,6 +3115,7 @@ def rollback_speech_cut_dispatch(
     }
     job.status = "variants_ready"
     flag_modified(job, "assembly_plan")
+    return "rolled_back"
 
 
 def dispatch_change_style(
@@ -3369,6 +3506,7 @@ def dispatch_set_media_overlays(
     invoking the thunk. Otherwise a fast worker could rebake a deleted sibling
     or discard its token-checked start write against the old generation.
     """
+    _assert_variant_generation_editable_or_409(job, variant_id)
     from app.config import settings as _settings  # noqa: PLC0415
 
     if not _settings.media_overlays_enabled:
@@ -3504,6 +3642,7 @@ def dispatch_set_sound_effects(
     deferred-enqueue thunk the caller MUST invoke only after `await
     db.commit()` (R1-1 — the reburn's start write is token-checked).
     """
+    _assert_variant_generation_editable_or_409(job, variant_id)
     from app.config import settings as _settings  # noqa: PLC0415
 
     if not _settings.sound_effects_enabled:
@@ -3795,6 +3934,7 @@ def dispatch_set_text_elements(
       - Sets render_status='rendering' when render=True
       - Replaces job.assembly_plan (SQLAlchemy change tracking via flag_modified)
     """
+    _assert_variant_generation_editable_or_409(job, variant_id)
     if not _TEXT_ELEMENTS_ENABLED:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -4104,16 +4244,16 @@ async def dispatch_set_orientation(
     revision_number: int | None = None,
     base_generation: str | None = None,
 ) -> None:
+    result = await db.execute(select(Job).where(Job.id == job.id).with_for_update())
+    locked_job = result.scalar_one_or_none()
+    if locked_job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    _assert_variant_generation_editable_or_409(locked_job, variant_id)
     if not _LANDSCAPE_OUTPUT_ENABLED:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Landscape output is not available.",
         )
-
-    result = await db.execute(select(Job).where(Job.id == job.id).with_for_update())
-    locked_job = result.scalar_one_or_none()
-    if locked_job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     candidate = _find_variant(locked_job, variant_id)
     if candidate is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
@@ -4192,16 +4332,16 @@ async def dispatch_set_lyrics(
     enabled: object = _UNSET,
     line_overrides: object = _UNSET,
 ) -> None:
+    result = await db.execute(select(Job).where(Job.id == job.id).with_for_update())
+    locked_job = result.scalar_one_or_none()
+    if locked_job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    _assert_variant_generation_editable_or_409(locked_job, variant_id)
     if not _LYRICS_EDITOR_ENABLED:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Lyrics editing is not available.",
         )
-
-    result = await db.execute(select(Job).where(Job.id == job.id).with_for_update())
-    locked_job = result.scalar_one_or_none()
-    if locked_job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     variant = require_editable_variant(locked_job, variant_id)
     track = None
     if variant.get("music_track_id"):
@@ -5751,21 +5891,69 @@ def dispatch_get_timeline(
     Read-only and side-effect free; never raises for an ineligible variant — it
     reports `editable=False` + `reason` so the frontend can render the right copy.
     """
-    variant = _find_variant(job, variant_id)
+    projection = project_public_assembly_plan_with_metadata(job.assembly_plan)
+    public_plan = projection.value
+    public_variants = public_plan.get("variants") if isinstance(public_plan, dict) else None
+    variant = (
+        next(
+            (
+                row
+                for row in public_variants
+                if isinstance(row, dict) and row.get("variant_id") == variant_id
+            ),
+            None,
+        )
+        if isinstance(public_variants, list)
+        else None
+    )
     if variant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
-    if variant.get("resolved_archetype") == "guided_story" and (
-        getattr(settings, "guided_story_editor_v2_enabled", False)
-        or isinstance(variant.get("guided_edit_revision"), dict)
+    if variant_id in projection.media_unavailable_variant_ids:
+        # Projection deliberately removed every media locator for an unproved
+        # private speech generation.  Do not rebuild a second public view from
+        # raw ``all_candidates`` or guided state after that privacy decision.
+        return {
+            "editable": False,
+            "reason": "no_timeline",
+            "beat_grid": [],
+            "total_duration_s": 0.0,
+            "has_user_edits": False,
+            "edit_wide_look_presets": [],
+            "slots": [],
+            "clips": [],
+        }
+    if (
+        variant_id not in projection.masked_last_good_variant_ids
+        and variant.get("resolved_archetype") == "guided_story"
+        and (
+            getattr(settings, "guided_story_editor_v2_enabled", False)
+            or isinstance(variant.get("guided_edit_revision"), dict)
+        )
     ):
-        return _guided_v2_timeline_projection(
-            job,
-            variant,
-            image_preview_paths=image_preview_paths,
+        return project_public_assembly_plan(
+            _guided_v2_timeline_projection(
+                job,
+                variant,
+                image_preview_paths=image_preview_paths,
+            )
         )
     reason = _timeline_ineligibility(job, variant)
     ai_slots, user_slots, beat_grid = _timeline_parts(variant)
-    clip_paths = list((job.all_candidates or {}).get("clip_paths") or [])
+    if variant_id in projection.masked_last_good_variant_ids:
+        # The exact rollback vector is public, but raw job candidates are not
+        # part of that proof.  Re-sign only its own source snapshot.
+        candidate_snapshot = variant.get("candidate_snapshot")
+        safe_paths = (
+            candidate_snapshot.get("clip_paths") if isinstance(candidate_snapshot, dict) else None
+        )
+        clip_paths = (
+            list(safe_paths)
+            if isinstance(safe_paths, list)
+            and all(isinstance(path, str) and path for path in safe_paths)
+            else []
+        )
+    else:
+        clip_paths = list((job.all_candidates or {}).get("clip_paths") or [])
     projected_story_duration_s: float | None = None
     # Guided stories deliberately have no editable legacy ``ai_timeline``;
     # their immutable, verified cut lives in ``story_timeline`` instead.  Still
@@ -5862,37 +6050,39 @@ def dispatch_get_timeline(
             }
         )
 
-    return {
-        "editable": reason is None,
-        "reason": reason,
-        "beat_grid": beat_grid,
-        "total_duration_s": round(total, 3),
-        "has_user_edits": has_user_edits,
-        "edit_wide_look_presets": (
-            list(EDIT_WIDE_LOOK_PRESETS)
-            if reason is None and settings.edit_wide_looks_enabled
-            else []
-        ),
-        "slots": [
-            {
-                **dict(s),
-                "look_preset": (preset := normalize_look_preset(s.get("look_preset"))),
-                "look_adjustments": (
-                    controls.model_dump()
-                    if (
-                        controls := normalize_look_adjustments(
-                            preset,
-                            s.get("look_adjustments"),
+    return project_public_assembly_plan(
+        {
+            "editable": reason is None,
+            "reason": reason,
+            "beat_grid": beat_grid,
+            "total_duration_s": round(total, 3),
+            "has_user_edits": has_user_edits,
+            "edit_wide_look_presets": (
+                list(EDIT_WIDE_LOOK_PRESETS)
+                if reason is None and settings.edit_wide_looks_enabled
+                else []
+            ),
+            "slots": [
+                {
+                    **dict(s),
+                    "look_preset": (preset := normalize_look_preset(s.get("look_preset"))),
+                    "look_adjustments": (
+                        controls.model_dump()
+                        if (
+                            controls := normalize_look_adjustments(
+                                preset,
+                                s.get("look_adjustments"),
+                            )
                         )
-                    )
-                    is not None
-                    else None
-                ),
-            }
-            for s in effective
-        ],
-        "clips": clips,
-    }
+                        is not None
+                        else None
+                    ),
+                }
+                for s in effective
+            ],
+            "clips": clips,
+        }
+    )
 
 
 def _lyric_seed_elements_from_snapshot(snapshot: list) -> list[dict]:
@@ -6024,6 +6214,7 @@ async def persist_user_timeline(
     job = await db.get(Job, uuid.UUID(str(job_id)), with_for_update=True)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    _assert_variant_generation_editable_or_409(job, variant_id)
     plan = dict(job.assembly_plan or {})
     variants = list(plan.get("variants") or [])
     for i, v in enumerate(variants):
@@ -6657,6 +6848,7 @@ async def dispatch_edit_timeline(
     """
     from app.config import settings  # noqa: PLC0415
 
+    _assert_variant_generation_editable_or_409(job, variant_id)
     candidate_variant = _find_variant(job, variant_id)
     if candidate_variant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
@@ -7293,6 +7485,7 @@ def prepare_editor_commit(
     background_music_track: MusicTrack | None = None,
     plan_item_id: str | None = None,
     visual_assets: dict[str, dict] | None = None,
+    speech_cut_owner: tuple[str, str] | None = None,
 ) -> dict:
     """Validate ALL sections, compare the baseline, then stage ONE atomic write.
 
@@ -7312,6 +7505,29 @@ def prepare_editor_commit(
     render_status="rendering"; a title-only commit stages nothing here and
     kicks no render.
     """
+    if speech_cut_owner is None:
+        _assert_variant_generation_editable_or_409(job, variant_id)
+    else:
+        operation_id, generation = speech_cut_owner
+        control = (job.assembly_plan or {}).get("speech_cut_control")
+        try:
+            private_generation = required_speech_generation_lock(job, variant_id)
+        except VariantInitialRenderInProgress as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="variant_initial_render_in_progress",
+            ) from exc
+        if (
+            not isinstance(control, dict)
+            or control.get("variant_id") != variant_id
+            or control.get("operation_id") != operation_id
+            or control.get("render_generation_id") != generation
+            or private_generation not in {None, generation}
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="variant_initial_render_in_progress",
+            )
     variant = _find_variant(job, variant_id)
     if variant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
@@ -9007,7 +9223,12 @@ async def get_generative_job_status(
         stamps = _collect_media_overlay_preview_stamps(job)
         job_pk = job.id
         await db.rollback()
-        await _persist_media_overlay_preview_backfill(db, job_pk, stamps)
+        retry_after_unlock = await _persist_media_overlay_preview_backfill(db, job_pk, stamps)
+        # The conversion happened from an unlocked snapshot. If a required
+        # generation reserved the variant before the fresh merge, let the first
+        # post-terminal poll try again instead of poisoning the process-local
+        # dedupe marker with an unpersisted result.
+        _HEIF_PREVIEW_BACKFILL_ATTEMPTED.difference_update(retry_after_unlock)
     return response
 
 

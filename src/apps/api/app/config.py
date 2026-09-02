@@ -331,6 +331,22 @@ class Settings(BaseSettings):
         "nova-video` + worker restart.",
     )
 
+    speech_cleanup_mixed_gap_mode: Literal["off", "shadow", "apply"] = Field(
+        default="off",
+        description="Required-v1 mixed-gap filler detector rollout. off preserves the "
+        "legacy detector byte-for-byte; shadow evaluates and records V2 while rendering "
+        "the baseline; apply may render a validated V2 candidate for sources inside the "
+        "stable rollout bucket. legacy_auto and off_v1 always ignore this setting.",
+    )
+
+    speech_cleanup_mixed_gap_rollout_percent: int = Field(
+        default=0,
+        ge=0,
+        le=100,
+        description="Stable source-instance percentage eligible for mixed-gap apply mode. "
+        "Missing or invalid source identity downgrades apply to shadow.",
+    )
+
     retake_cut_enabled: bool = Field(
         default=False,
         description="Retake/restart cutting inside the silence-cut stage "

@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import CurrentUserOrSynthetic, ensure_job_owner
 from app.database import AsyncSessionLocal, get_db
 from app.models import Job, VideoTemplate
+from app.services.public_assembly_plan import project_public_assembly_plan
 from app.services.template_validation import (
     get_template_or_404,
     require_ready,
@@ -253,9 +254,7 @@ async def list_template_jobs(
     offset: int = Query(default=0, ge=0),
 ) -> TemplateJobListResponse:
     """List template jobs ordered by created_at DESC. Scoped to the current user."""
-    base_query = (
-        select(Job).where(Job.user_id == current_user.id).where(Job.job_type == "template")
-    )
+    base_query = select(Job).where(Job.user_id == current_user.id).where(Job.job_type == "template")
 
     # Count total
     count_result = await db.execute(select(func.count()).select_from(base_query.subquery()))
@@ -405,7 +404,7 @@ async def get_template_job_debug(
         if tpl:
             template_recipe = tpl.recipe_cached
 
-    assembly_plan = job.assembly_plan or {}
+    assembly_plan = project_public_assembly_plan(job.assembly_plan) or {}
     steps = assembly_plan.get("steps", [])
     clip_ids_used = [s.get("clip_id") for s in steps]
     clips_used_unique = len(set(clip_ids_used))
@@ -447,7 +446,7 @@ async def get_template_job_eval(
     if job is None or job.job_type != "template":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
-    assembly_plan = job.assembly_plan or {}
+    assembly_plan = project_public_assembly_plan(job.assembly_plan) or {}
     cancelled = job.status == "cancelled"
     steps = assembly_plan.get("steps", [])
 
@@ -492,9 +491,7 @@ async def get_template_job_eval(
         "slots": slots_eval,
         "template_url": template_url,
         "output_url": None if cancelled else assembly_plan.get("output_url"),
-        "comparison_grid_url": (
-            None if cancelled else assembly_plan.get("comparison_grid_url")
-        ),
+        "comparison_grid_url": (None if cancelled else assembly_plan.get("comparison_grid_url")),
     }
 
 
@@ -520,7 +517,9 @@ async def get_template_job_status(
         job_id=str(job.id),
         status=job.status,
         template_id=job.template_id,
-        assembly_plan=None if job.status == "cancelled" else job.assembly_plan,
+        assembly_plan=(
+            None if job.status == "cancelled" else project_public_assembly_plan(job.assembly_plan)
+        ),
         error_detail=None if job.status == "cancelled" else job.error_detail,
         failure_reason=job.failure_reason,
         current_phase=job.current_phase,

@@ -13,7 +13,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -362,6 +362,84 @@ class TestJobDebug:
         assert body["job"]["pipeline_trace"] is None
         assert body["render_summary"] is None
 
+    def test_debug_projects_private_assembly_controls_but_keeps_timing_trace(self, client):
+        import copy
+
+        j = _job_row(
+            all_candidates={
+                "clip_paths": ["source.mp4"],
+                "clip_source_instance_ids": ["private-source-id"],
+                "clip_metadata_identity_index_v2": {"records": []},
+            },
+            assembly_plan={
+                "title": "visible",
+                "_speech_cleanup_internal": {"required_speech_generation_locks": {"v": "g"}},
+                "variants": [
+                    {
+                        "variant_id": "v",
+                        "candidate": {
+                            "clip_source_instance_ids": ["private-source-id"],
+                            "clip_metadata_identity_index_v2": {"records": []},
+                            "clip_paths": ["source.mp4"],
+                        },
+                    }
+                ],
+            },
+            pipeline_trace=[
+                {
+                    "stage": "speech_cleanup",
+                    "event": "analysis_receipt",
+                    "data": {"all_candidates": [{"candidate_id": "candidate-a"}]},
+                }
+            ],
+        )
+        stored_candidates = copy.deepcopy(j.all_candidates)
+        stored = copy.deepcopy(j.assembly_plan)
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+
+            async def _gen():
+                db = AsyncMock()
+                job_res = MagicMock()
+                job_res.scalar_one_or_none.return_value = j
+                clips_res = MagicMock()
+                clips_res.scalars.return_value.all.return_value = []
+                mt_res = MagicMock()
+                mt_res.scalar_one_or_none.return_value = None
+                runs_res = MagicMock()
+                runs_res.scalars.return_value.all.return_value = []
+                track_runs_res = MagicMock()
+                track_runs_res.scalars.return_value.all.return_value = []
+                db.execute = AsyncMock(
+                    side_effect=[job_res, clips_res, mt_res, runs_res, track_runs_res]
+                )
+                yield db
+
+            app.dependency_overrides[get_db] = _gen
+            try:
+                res = client.get(
+                    f"/admin/jobs/{j.id}/debug",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        body = res.json()["job"]
+        assert body["assembly_plan"] == {
+            "title": "visible",
+            "variants": [{"variant_id": "v", "candidate": {"clip_paths": ["source.mp4"]}}],
+        }
+        assert body["all_candidates"] == {
+            "clip_paths": ["source.mp4"],
+            "clip_source_instance_ids": ["private-source-id"],
+        }
+        assert body["pipeline_trace"][0]["data"]["all_candidates"] == [
+            {"candidate_id": "candidate-a"}
+        ]
+        assert j.all_candidates == stored_candidates
+        assert j.assembly_plan == stored
+
     def test_debug_payload_includes_render_summary(self, client):
         created = datetime(2026, 7, 24, 10, 0, tzinfo=UTC)
         j = _job_row(
@@ -554,6 +632,46 @@ class TestCancelJob:
 
         return _gen
 
+    @staticmethod
+    def _claimed_speech_plan(task_id: object, *, malformed: str | None = None) -> dict:
+        operation_id = uuid.uuid4().hex
+        generation = uuid.uuid4().hex
+        retry_number = 0
+        attempt_id = (
+            f"{task_id}:{retry_number}:{uuid.uuid4().hex}" if isinstance(task_id, str) else None
+        )
+        claim = {
+            "operation_id": operation_id,
+            "attempt_id": attempt_id,
+            "task_id": task_id,
+            "retry_number": retry_number,
+            "claimed_at_epoch_s": datetime.now(UTC).timestamp(),
+            "render_generation_id": generation,
+        }
+        if malformed == "generation_mismatch":
+            claim["render_generation_id"] = uuid.uuid4().hex
+        if malformed == "attempt_mismatch":
+            claim["attempt_id"] = f"other-task:0:{uuid.uuid4().hex}"
+        last_good = {
+            "variant_id": "subtitled",
+            "render_generation_id": uuid.uuid4().hex,
+            "render_status": "ready",
+            "ok": True,
+        }
+        return {
+            "speech_cleanup_contract": "required_v1",
+            "variants": [last_good],
+            "speech_cut_control": {
+                "variant_id": "subtitled",
+                "operation_id": operation_id,
+                "render_generation_id": generation,
+                "prior_disabled": False,
+                "finalizer_claim": claim,
+            },
+            "speech_cut_previous_variant": last_good,
+            "speech_cut_previous_variants": [last_good],
+        }
+
     def test_invalid_uuid_returns_400(self, client):
         with patch("app.routes.admin.settings") as s:
             s.admin_api_key = VALID_TOKEN
@@ -658,6 +776,102 @@ class TestCancelJob:
         # 30s countdown so the still-dying worker can finish writing
         # to GCS before cleanup deletes the prefix.
         mock_cleanup.apply_async.assert_called_once_with(args=[str(j.id)], countdown=30)
+
+    @pytest.mark.parametrize(
+        "task_kind",
+        [
+            pytest.param("plan", id="plan-item-task"),
+            pytest.param("creator", id="creator-task"),
+        ],
+    )
+    def test_cancel_revokes_exact_live_speech_claim_task(self, client, task_kind):
+        original_task_id = str(uuid.uuid4())
+        speech_task_id = str(uuid.uuid4())
+        speech_plan = self._claimed_speech_plan(speech_task_id)
+        if task_kind == "creator":
+            generation = speech_plan["speech_cut_control"]["render_generation_id"]
+            speech_task_id = f"creator-craft-{uuid.uuid4()}-{generation}"
+            claim = speech_plan["speech_cut_control"]["finalizer_claim"]
+            claim["task_id"] = speech_task_id
+            claim["attempt_id"] = f"{speech_task_id}:0:{uuid.uuid4().hex}"
+        j = _job_row(
+            status="processing",
+            celery_task_id=original_task_id,
+            assembly_plan=speech_plan,
+        )
+        from app.worker import celery_app  # noqa: PLC0415
+
+        with (
+            patch("app.routes.admin.settings") as settings_mock,
+            patch.object(celery_app, "control") as control_mock,
+            patch("app.tasks.maintenance.cleanup_cancelled_job") as cleanup_mock,
+        ):
+            settings_mock.admin_api_key = VALID_TOKEN
+            control_mock.revoke = MagicMock()
+            cleanup_mock.apply_async = MagicMock()
+            app.dependency_overrides[get_db] = self._db_gen_for_cancel(j)
+            try:
+                response = client.post(
+                    f"/admin/jobs/{j.id}/cancel",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert response.status_code == 200
+        assert response.json()["revoke_dispatched"] is True
+        assert control_mock.revoke.call_args_list == [
+            call(original_task_id, terminate=True, signal="SIGTERM"),
+            call(speech_task_id, terminate=True, signal="SIGTERM"),
+        ]
+
+    @pytest.mark.parametrize(
+        ("speech_task_id", "malformed"),
+        [
+            (None, None),
+            ("../untrusted-task", None),
+            (str(uuid.uuid4()), "generation_mismatch"),
+            (str(uuid.uuid4()), "attempt_mismatch"),
+        ],
+        ids=["absent", "invalid-characters", "owner-mismatch", "attempt-mismatch"],
+    )
+    def test_cancel_never_revokes_unproven_speech_task_id(
+        self,
+        client,
+        speech_task_id,
+        malformed,
+    ):
+        original_task_id = str(uuid.uuid4())
+        j = _job_row(
+            status="processing",
+            celery_task_id=original_task_id,
+            assembly_plan=self._claimed_speech_plan(speech_task_id, malformed=malformed),
+        )
+        from app.worker import celery_app  # noqa: PLC0415
+
+        with (
+            patch("app.routes.admin.settings") as settings_mock,
+            patch.object(celery_app, "control") as control_mock,
+            patch("app.tasks.maintenance.cleanup_cancelled_job") as cleanup_mock,
+        ):
+            settings_mock.admin_api_key = VALID_TOKEN
+            control_mock.revoke = MagicMock()
+            cleanup_mock.apply_async = MagicMock()
+            app.dependency_overrides[get_db] = self._db_gen_for_cancel(j)
+            try:
+                response = client.post(
+                    f"/admin/jobs/{j.id}/cancel",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert response.status_code == 200
+        control_mock.revoke.assert_called_once_with(
+            original_task_id,
+            terminate=True,
+            signal="SIGTERM",
+        )
 
     def test_importing_cancel_revokes_import_and_fails_unsubmitted_tiktok_receipt(self, client):
         task_id = str(uuid.uuid4())
@@ -773,6 +987,254 @@ class TestCancelJob:
 
         assert res.status_code == 409
         assert "terminal" in res.json()["detail"].lower()
+
+    def test_cancel_rolls_back_required_speech_control_before_worker_reservation(self, client):
+        """Cancel wins the control-only window and makes every later worker CAS stale."""
+
+        job_id = uuid.uuid4()
+        generation = uuid.uuid4().hex
+        last_good = {
+            "variant_id": "subtitled",
+            "render_generation_id": uuid.uuid4().hex,
+            "render_status": "ready",
+            "ok": True,
+            "video_path": f"generative-jobs/{job_id}/last-good.mp4",
+        }
+        desired_working = {
+            **last_good,
+            "render_generation_id": generation,
+            "render_status": "rendering",
+            "ok": False,
+            "media_overlays": [{"id": "creator-edit"}],
+        }
+        job = _job_row(
+            id=job_id,
+            status="processing",
+            celery_task_id=str(uuid.uuid4()),
+            assembly_plan={
+                "speech_cleanup_contract": "required_v1",
+                "silence_cut_disabled": False,
+                "variants": [last_good],
+                "speech_cut_control": {
+                    "variant_id": "subtitled",
+                    "operation_id": "operation-a",
+                    "render_generation_id": generation,
+                    "prior_disabled": True,
+                    "finalizer_claim": None,
+                },
+                "speech_cut_previous_variant": desired_working,
+                "speech_cut_previous_variants": [last_good],
+            },
+        )
+        captured: dict[str, object] = {}
+
+        async def _gen():
+            db = AsyncMock()
+            job_res = MagicMock()
+            job_res.scalar_one_or_none.return_value = job
+            publication_res = MagicMock()
+            publication_res.scalars.return_value.all.return_value = []
+            update_res = MagicMock(rowcount=1)
+
+            async def _execute(statement):
+                if "select_job" not in captured:
+                    captured["select_job"] = statement
+                    return job_res
+                if "publication" not in captured:
+                    captured["publication"] = statement
+                    return publication_res
+                captured["update"] = statement
+                return update_res
+
+            db.execute = _execute
+            db.commit = AsyncMock()
+            db.rollback = AsyncMock()
+            yield db
+
+        from app.worker import celery_app  # noqa: PLC0415
+
+        with (
+            patch("app.routes.admin.settings") as settings_mock,
+            patch.object(celery_app, "control") as control_mock,
+            patch("app.tasks.maintenance.cleanup_cancelled_job") as cleanup_mock,
+        ):
+            settings_mock.admin_api_key = VALID_TOKEN
+            control_mock.revoke = MagicMock()
+            cleanup_mock.apply_async = MagicMock()
+            app.dependency_overrides[get_db] = _gen
+            try:
+                response = client.post(
+                    f"/admin/jobs/{job_id}/cancel",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert response.status_code == 200
+        params = captured["update"].compile().params
+        cancelled_plan = params["assembly_plan"]
+        assert cancelled_plan["variants"] == [last_good]
+        assert cancelled_plan["silence_cut_disabled"] is True
+        assert cancelled_plan["speech_cut_control"] is None
+        assert cancelled_plan["speech_cut_previous_variant"] is None
+        assert cancelled_plan["speech_cut_previous_variants"] is None
+        assert "_speech_cleanup_internal" not in cancelled_plan
+
+    def test_terminal_gap_cancel_retains_fresh_private_owner_until_safe_reap(self, client):
+        """A terminal-looking status can still own unpublished compose bytes.
+
+        Cancellation is immediate, but a fresh claim/upload lease remains
+        privately owned until revocation settles and a later row-locked reaper
+        can close it. The last-good public variant never changes.
+        """
+        from datetime import timedelta
+
+        from app.services.speech_cleanup_terminal import (
+            mark_required_speech_rendering,
+            reserve_required_speech_generation,
+            stage_required_speech_generation,
+        )
+
+        job_id = uuid.uuid4()
+        generation = uuid.uuid4().hex
+        prior = {
+            "variant_id": "subtitled",
+            "resolved_archetype": "subtitled",
+            "render_status": "ready",
+            "render_generation_id": "generation-old",
+            "ok": True,
+            "video_path": f"generative-jobs/{job_id}/last-good.mp4",
+            "output_url": "https://storage/last-good",
+        }
+        plan = {
+            "speech_cleanup_contract": "required_v1",
+            "variants": [prior],
+            "speech_cut_control": {
+                "variant_id": "subtitled",
+                "operation_id": "operation-a",
+                "render_generation_id": generation,
+                "prior_disabled": False,
+                "finalizer_claim": {
+                    "operation_id": "operation-a",
+                    "attempt_id": "attempt-a",
+                    "render_generation_id": generation,
+                    "claimed_at_epoch_s": datetime.now(UTC).timestamp(),
+                },
+            },
+            "speech_cut_previous_variant": prior,
+            "speech_cut_previous_variants": [prior],
+        }
+        reserve_required_speech_generation(
+            plan,
+            job_id=str(job_id),
+            pending_variant={
+                **prior,
+                "render_status": "pending",
+                "render_generation_id": generation,
+                "ok": False,
+            },
+            generation=generation,
+            lease_expires_at=datetime.now(UTC) + timedelta(minutes=35),
+        )
+        mark_required_speech_rendering(
+            plan,
+            variant_id="subtitled",
+            generation=generation,
+            render_started_at=datetime.now(UTC).isoformat(),
+        )
+        stage_required_speech_generation(
+            plan,
+            generation=generation,
+            result={
+                "variant_id": "subtitled",
+                "rank": 1,
+                "text_mode": "none",
+                "render_generation_id": generation,
+                "render_status": "ready",
+                "ok": True,
+                "video_path": (
+                    f"generative-jobs/{job_id}/render-generations/{generation}/core.mp4"
+                ),
+                "output_url": "https://storage/provisional",
+                "_speech_cleanup_outcome_context": {
+                    "analysis_attempt_id": "analysis-a",
+                    "analysis_view": "full_clip",
+                    "detector_version": "mixed-gap-v2",
+                    "source_tag": "0123456789abcdef",
+                    "selected_plan": "candidate",
+                    "candidate_status": "ready",
+                    "output_removal_count": 1,
+                    "output_removed_ms": 572,
+                },
+            },
+        )
+        j = _job_row(
+            id=job_id,
+            status="variants_ready",
+            celery_task_id=str(uuid.uuid4()),
+            assembly_plan=plan,
+        )
+        captured: dict[str, object] = {}
+
+        async def _gen():
+            db = AsyncMock()
+            job_res = MagicMock()
+            job_res.scalar_one_or_none.return_value = j
+            publication_res = MagicMock()
+            publication_res.scalars.return_value.all.return_value = []
+            update_res = MagicMock(rowcount=1)
+
+            async def _execute(statement):
+                if not captured:
+                    captured["select_job"] = statement
+                    return job_res
+                if "publication" not in captured:
+                    captured["publication"] = statement
+                    return publication_res
+                captured["update"] = statement
+                return update_res
+
+            db.execute = _execute
+            db.commit = AsyncMock()
+            db.rollback = AsyncMock()
+            yield db
+
+        from app.worker import celery_app  # noqa: PLC0415
+
+        with (
+            patch("app.routes.admin.settings") as s,
+            patch.object(celery_app, "control") as mock_control,
+            patch("app.tasks.maintenance.cleanup_cancelled_job") as mock_cleanup,
+        ):
+            s.admin_api_key = VALID_TOKEN
+            mock_control.revoke = MagicMock()
+            mock_cleanup.apply_async = MagicMock()
+            app.dependency_overrides[get_db] = _gen
+            try:
+                res = client.post(
+                    f"/admin/jobs/{job_id}/cancel",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        params = captured["update"].compile().params
+        cancelled_plan = params["assembly_plan"]
+        assert cancelled_plan["variants"] == [prior]
+        assert cancelled_plan["speech_cut_control"]["operation_id"] == "operation-a"
+        assert cancelled_plan["_speech_cleanup_internal"]["required_speech_generation_locks"] == {
+            "subtitled": generation
+        }
+        receipts = cancelled_plan["_speech_cleanup_internal"]["render_generation_cleanup_pending"]
+        assert receipts[0]["generation"] == generation
+        assert receipts[0]["upload_state"] == "writing"
+        trace = params["pipeline_trace"]
+        assert [
+            event["data"]["outcome"]
+            for event in trace
+            if event["event"] == "speech_cleanup_render_outcome"
+        ] == []
 
 
 # ── Silence-cut disable endpoint ─────────────────────────────────────────────

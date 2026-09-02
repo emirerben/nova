@@ -816,6 +816,41 @@ def _commit_req(**kw) -> gj.EditorCommitRequest:
     return gj.EditorCommitRequest(**kw)
 
 
+def test_editor_commit_control_barrier_requires_exact_internal_speech_owner(monkeypatch) -> None:
+    _arm(monkeypatch)
+    job = _job()
+    operation_id = uuid.uuid4().hex
+    generation = uuid.uuid4().hex
+    job.assembly_plan["speech_cut_control"] = {
+        "variant_id": "song_text",
+        "operation_id": operation_id,
+        "render_generation_id": generation,
+    }
+    request = _commit_req(title="Creator-owned title")
+
+    with pytest.raises(HTTPException) as blocked:
+        gj.prepare_editor_commit(job, "song_text", request)
+    assert blocked.value.status_code == 409
+    with pytest.raises(HTTPException) as superseded:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            request,
+            speech_cut_owner=("older-operation", generation),
+        )
+    assert superseded.value.status_code == 409
+
+    prepared = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        request,
+        speech_cut_owner=(operation_id, generation),
+    )
+
+    assert prepared["generation"] == "2026-07-01T00:00:00Z"
+    assert job.assembly_plan["speech_cut_control"]["operation_id"] == operation_id
+
+
 def test_editor_commit_request_accepts_120_active_slots_and_rejects_121() -> None:
     slot = {"clip_index": 0, "in_s": 0.0, "duration_s": 0.1}
 

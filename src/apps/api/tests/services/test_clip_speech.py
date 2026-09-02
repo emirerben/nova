@@ -11,10 +11,12 @@ import pytest
 
 from app.services import clip_speech
 from app.services.clip_speech import (
+    SilenceDetectionResult,
     _merge_intervals,
     _silence_intervals,
     _silent_seconds,
     detect_silences,
+    detect_silences_with_status,
     speech_coverage,
 )
 
@@ -139,6 +141,19 @@ def test_ffmpeg_exception_is_zero():
         patch.object(clip_speech, "probe_video", return_value=_probe()),
         patch.object(clip_speech.subprocess, "run", side_effect=OSError("no ffmpeg")),
     ):
+        assert speech_coverage("x.mp4") == 0.0
+
+
+def test_speech_coverage_parse_failure_is_zero(monkeypatch):
+    with (
+        patch.object(clip_speech, "probe_video", return_value=_probe()),
+        patch.object(clip_speech.subprocess, "run", return_value=_ffmpeg_result("")),
+    ):
+        monkeypatch.setattr(
+            clip_speech,
+            "_silent_seconds",
+            lambda _stderr, _duration: (_ for _ in ()).throw(ValueError("bad parse")),
+        )
         assert speech_coverage("x.mp4") == 0.0
 
 
@@ -339,3 +354,123 @@ def test_detect_silences_honors_custom_min_silence():
 def test_detect_silences_honors_custom_noise_floor():
     cmd, _ = _captured_detect_silences_cmd(noise_db=-35.5, min_silence_s=0.1)
     assert "silencedetect=noise=-35.5dB:d=0.1" in cmd
+
+
+# ── status-bearing companion ─────────────────────────────────────────────────
+
+
+def test_detect_silences_status_ok_distinguishes_real_zero_markers():
+    with (
+        patch.object(clip_speech, "probe_video", return_value=_probe()),
+        patch.object(clip_speech.subprocess, "run", return_value=_ffmpeg_result("")),
+    ):
+        result = detect_silences_with_status("x.mp4")
+
+    assert result == SilenceDetectionResult(spans=(), status="ok")
+
+
+@pytest.mark.parametrize(
+    ("probe", "run_side_effect", "run_result", "expected"),
+    [
+        (RuntimeError("boom"), None, None, "probe_failed"),
+        (_probe(duration_s=0.0), None, None, "invalid_duration"),
+        (_probe(duration_s=float("nan")), None, None, "invalid_duration"),
+        (_probe(has_audio=False), None, None, "no_audio"),
+        (
+            _probe(),
+            subprocess.TimeoutExpired(cmd="ffmpeg", timeout=60),
+            None,
+            "ffmpeg_timeout",
+        ),
+        (_probe(), OSError("missing"), None, "ffmpeg_failed"),
+        (_probe(), None, _ffmpeg_result("bad", returncode=1), "ffmpeg_nonzero"),
+    ],
+)
+def test_detect_silences_status_reports_bounded_failure(
+    probe, run_side_effect, run_result, expected
+):
+    probe_patch = (
+        patch.object(clip_speech, "probe_video", side_effect=probe)
+        if isinstance(probe, Exception)
+        else patch.object(clip_speech, "probe_video", return_value=probe)
+    )
+    with (
+        probe_patch,
+        patch.object(
+            clip_speech.subprocess,
+            "run",
+            side_effect=run_side_effect,
+            return_value=run_result,
+        ) as run,
+    ):
+        result = detect_silences_with_status("x.mp4")
+
+    assert result == SilenceDetectionResult(spans=(), status=expected)
+    if expected in {"probe_failed", "invalid_duration", "no_audio"}:
+        run.assert_not_called()
+
+
+def test_detect_silences_status_parse_failure_is_bounded(monkeypatch):
+    with (
+        patch.object(clip_speech, "probe_video", return_value=_probe()),
+        patch.object(clip_speech.subprocess, "run", return_value=_ffmpeg_result("")),
+    ):
+        monkeypatch.setattr(
+            clip_speech,
+            "_ordered_silence_intervals",
+            lambda _stderr, _duration: (_ for _ in ()).throw(ValueError("bad parse")),
+        )
+        result = detect_silences_with_status("x.mp4")
+
+    assert result == SilenceDetectionResult(spans=(), status="parse_failed")
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        # End without a preceding start.
+        "silence_end: 2.0 | silence_duration: 2.0\n",
+        # A second start while the first interval is still open.
+        "silence_start: 1.0\nsilence_start: 2.0\nsilence_end: 3.0\n",
+        # Matching marker types, but a reversed pair.
+        "silence_start: 4.0\nsilence_end: 2.0\n",
+        # Complete pairs whose source timestamps move backwards/overlap.
+        ("silence_start: 4.0\nsilence_end: 6.0\nsilence_start: 5.0\nsilence_end: 7.0\n"),
+        # EOF while an interval remains open is not a calibrated status result.
+        "silence_start: 8.0\n",
+        # A marker label with an invalid numeric payload must not disappear.
+        "silence_start: not-a-number\n",
+    ],
+)
+def test_detect_silences_status_rejects_malformed_marker_streams(stderr):
+    with (
+        patch.object(clip_speech, "probe_video", return_value=_probe()),
+        patch.object(clip_speech.subprocess, "run", return_value=_ffmpeg_result(stderr)),
+    ):
+        result = detect_silences_with_status("x.mp4")
+
+    assert result == SilenceDetectionResult(spans=(), status="parse_failed")
+
+
+def test_legacy_detect_silences_keeps_permissive_unclosed_eof_behavior():
+    stderr = "silence_start: 8.0\n"
+    with (
+        patch.object(clip_speech, "probe_video", return_value=_probe()),
+        patch.object(clip_speech.subprocess, "run", return_value=_ffmpeg_result(stderr)),
+    ):
+        assert detect_silences("x.mp4") == [(8.0, 10.0)]
+
+
+def test_legacy_detect_silences_does_not_delegate_to_strict_status_parser(monkeypatch):
+    monkeypatch.setattr(
+        clip_speech,
+        "detect_silences_with_status",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not be called")),
+    )
+    stderr = "silence_start: 2.0\nsilence_end: 4.0\nsilence_start: 3.0\nsilence_end: 5.0\n"
+    with (
+        patch.object(clip_speech, "probe_video", return_value=_probe()),
+        patch.object(clip_speech.subprocess, "run", return_value=_ffmpeg_result(stderr)),
+    ):
+        # Historical index-pair + merge behavior is deliberately unchanged.
+        assert detect_silences("x.mp4") == [(2.0, 5.0)]
