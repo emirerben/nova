@@ -11,14 +11,11 @@ ingested_via: put_page
 ## Speech-cleanup budget clamp — deferrals (from red-team review, 2026-08-31)
 
 ### Clamp trim boundaries vs tokenless acoustic-filler regions
-**What:** `_clamp_removals_to_budget` snaps trimmed boundaries out of WORD
-interiors only; a boundary landing inside a `filler_acoustic` region (soundful
-gap whisper left tokenless) or the acoustic segment of a merged removal can
-still produce a mid-vocalization jump cut, and the snap always pads with
-`PAD_S` (0.12) even where the original cut wore `PAD_ACOUSTIC_S` (0.15).
-Low frequency, minor audible artifact — needs pre-merge component provenance
-carried through `_merge_removals` to fix cleanly.
+**What:** `_clamp_removals_to_budget` now carries atomic lexical/acoustic filler
+provenance through merge and clamp, so a budget boundary cannot cut through a
+tokenless vocalization or silently downgrade its padding semantics.
 **Priority:** P2
+**Completed:** v0.60.0.0 (2026-09-02)
 
 ### Envelope mode gives up merged-carrier flanks
 **What:** When a forced/manual cut merges into an over-budget detected silence
