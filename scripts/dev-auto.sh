@@ -105,7 +105,7 @@ if [[ "$STORAGE_PROVIDER" == "local" && -z "${NOVA_DEV_LOCAL_STORAGE_BASE_URL:-}
   export LOCAL_STORAGE_BASE_URL="http://127.0.0.1:$api_port/dev-qa/storage"
 fi
 export NOVA_CELERY_QUEUE_NAMESPACE="$(bash "$REPO/scripts/dev-namespace.sh" "$REPO")"
-CELERY_DEV_QUEUES="celery,plan-jobs,overlay-jobs,creator-guided-jobs"
+CELERY_DEV_QUEUES="celery,plan-jobs,overlay-jobs,creator-guided-jobs,creator-render-v2"
 log "Celery namespace: $NOVA_CELERY_QUEUE_NAMESPACE (Redis key prefix nova-dev:$NOVA_CELERY_QUEUE_NAMESPACE:)"
 
 # ── 5. Run migrations ─────────────────────────────────────────────────────────

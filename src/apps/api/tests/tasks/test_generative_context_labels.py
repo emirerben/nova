@@ -94,7 +94,7 @@ def test_context_sport_elements_follow_resolved_slots_without_timeline_ripple():
     ]
     assert all(
         (e["position"], e["x_frac"], e["y_frac"], e["size_class"], e["alignment"])
-        == ("custom", 0.86, 0.91, "small", "right")
+        == ("custom", 0.86, 0.86, "small", "right")
         for e in elements
     )
     assert all(e["role"] == "generative_sequence" for e in elements)
@@ -107,7 +107,7 @@ def test_context_sport_elements_follow_resolved_slots_without_timeline_ripple():
         ("Basketball", 5.0, 6.0),
     ]
     assert all(
-        (o["position_x_frac"], o["position_y_frac"], o["text_anchor"]) == (0.86, 0.91, "right")
+        (o["position_x_frac"], o["position_y_frac"], o["text_anchor"]) == (0.86, 0.86, "right")
         for o in burn
     )
 

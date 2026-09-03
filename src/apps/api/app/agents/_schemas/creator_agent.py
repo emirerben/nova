@@ -26,6 +26,7 @@ from pydantic import (
 
 from app.agents._schemas.edit_format import EditFormat, RenderProgram
 from app.schemas.edit_proposal import (
+    BeatLayout,
     MixedMediaTimingProfile,
     MontageAudioPlan,
     MontageCadenceConstraint,
@@ -267,6 +268,13 @@ class CreativeStrategy(_CreatorModel):
         description=(
             "Confirmed request for a server-resolved contextual label; this carries "
             "no model-authored label text."
+        ),
+    )
+    image_layout: BeatLayout | None = Field(
+        default=None,
+        description=(
+            "Confirmed image-only layout. supporting_card shows the full image; "
+            "fullscreen fills the canvas with a cover crop."
         ),
     )
     pacing: CreativePace = "balanced"

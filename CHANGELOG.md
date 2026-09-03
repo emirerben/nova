@@ -2,21 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.59.4.0] — 2026-09-02
+## [0.59.4.0] — 2026-09-03
 
 ### Added
-- **Kria is now the canonical signed-in creation workspace.** A durable project rail and creative chat guide creators through Montage, Narrated, or Talking to camera, direct video/image/audio uploads, explicit render confirmation, ready results, and confirmation-gated revisions around the existing full editor.
+- **Kria is now the canonical signed-in creation workspace.** A durable project rail and creative chat guide creators through Montage, Narrated, or Talking to camera, PlanItem Clips/Visuals/voiceover inputs, explicit render confirmation, ready results, and confirmation-gated revisions around the existing full editor.
 - **Creation conversations survive refreshes and devices without becoming a second render state machine.** Owner-scoped append-only threads project typed Creator Agent events while Plan Items and Jobs remain authoritative for media, rendering, variants, and editor state.
 - **The new flow includes deterministic QA and operational rollback coverage.** Desktop, mobile, 200% zoom, reduced motion, offline/stale recovery, partial renders, retry states, embedded-editor messaging, deployment order, and kill-switch behavior are documented and regression-tested.
+- **Chat-first can launch to a controlled account cohort.** The API accepts an exact email/UUID allowlist, returns the normal legacy-fallback 404 for everyone else, and can expand the cohort without rebuilding the frontend.
 
 ### Changed
 - **Legacy creation entry points now converge on Kria.** `/plan/new`, `/create`, `/create/manual`, `/library`, and `/generative` preserve compatible links while redirecting into the canonical chat or Gallery state; the former plan experience remains available only through the emergency kill switch.
 - **Chat-first creation ships enabled by default.** Backend capability fallback handles deploy skew safely, while network and server failures remain visible instead of silently returning creators to the legacy product.
+- **Chat media now follows the existing PlanItem contract.** Primary video clips keep the same format-specific count, size, and MIME limits; supporting photos/videos use Visuals; Narrated uses the established voice recorder.
 
 ### Fixed
 - **Creation mutations are revision-fenced, idempotent, and owner-scoped.** Upload attachment, session binding, confirmation dispatch, exact-generation revisions, variant retries, archive actions, stale tabs, and iframe leave/discard messages preserve authoritative state across retries and races.
 - **Recovery no longer loses a creator's work.** Failed uploads can retry or be removed individually, attached media rehydrates after refresh, offline polling shows reconnecting state, project switches cannot accept stale async responses, and stale-revision reloads preserve composer text.
 - **Exact per-clip sport labels now reach the rendered cut and editor.** Requests such as “show the sport in small text at the bottom right” compile trusted clip metadata into timed, editable Tennis or Basketball text instead of being acknowledged and dropped.
+- **Exact creator-authored titles and styling survive the full render path.** Quoted title copy, supported fonts such as Rascal, and requested colors remain typed, confirmed inputs instead of being replaced by generated wording or default typography.
+- **Mixed photo/video edits respect the requested story structure.** Landscape photos use the same fit treatment as landscape video, photos can run as intentional groups, sport/context chapters stay together, source reuse is bounded, and broad selections reserve multiple distinct images instead of starving them behind video cuts.
 
 ## [0.59.3.0] — 2026-09-01
 

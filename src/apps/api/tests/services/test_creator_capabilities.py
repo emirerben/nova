@@ -89,6 +89,33 @@ def test_manifest_reports_setting_and_state_reasons(monkeypatch) -> None:
     assert ready.capabilities[capabilities.CAPABILITY_SELECT_READY_VARIANT].available is True
 
 
+def test_trusted_creator_can_use_guided_renderer_while_public_plan_api_is_dark(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(capabilities.settings, "guided_edit_capability_enabled", False)
+
+    public = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": "clip-1", "kind": "video"},
+            {"media_id": "asset-photo-1", "kind": "image"},
+        ],
+    )
+    creator = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[
+            {"media_id": "clip-1", "kind": "video"},
+            {"media_id": "asset-photo-1", "kind": "image"},
+        ],
+        guided_capability_enabled=True,
+    )
+
+    assert public.capabilities[capabilities.CAPABILITY_DRAFT_GUIDED_PROPOSAL].available is False
+    assert creator.capabilities[capabilities.CAPABILITY_DRAFT_GUIDED_PROPOSAL].available is True
+
+
 def test_manifest_reports_caption_style_from_live_creator_execution_flag(monkeypatch) -> None:
     monkeypatch.setattr(capabilities.settings, "main_creator_agent_execution_enabled", False)
     disabled = capabilities.resolve_creator_manifest(item_id="item-1")

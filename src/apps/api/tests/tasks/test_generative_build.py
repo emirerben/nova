@@ -4196,6 +4196,23 @@ def test_creator_preserved_narrative_order_uses_only_current_manifest_clips():
     ) == ["clip_1", "clip_0"]
 
 
+def test_full_rerender_keeps_creator_clip_order_authoritative(monkeypatch):
+    monkeypatch.setattr(gb.settings, "NARRATIVE_CLIP_ORDER_ENABLED", True)
+
+    assert gb._resolve_regen_narrative_order(
+        2,
+        [2, 0, 2, 99],
+        {"clip_0": "a.mp4", "clip_1": "b.mp4", "clip_2": "c.mp4"},
+        job_id="job-1",
+        resolved_archetype="montage",
+    ) == ["clip_2", "clip_0"]
+
+
+def test_worker_rejects_unversioned_creator_render_contract():
+    with pytest.raises(ValueError, match="Creator render contract version mismatch"):
+        gb._creator_strategy_from_candidates({"creator_strategy": {"edit_format": "montage"}})
+
+
 # ---------------------------------------------------------------------------
 # Cluster layout — _resolve_intro_overlay_params + _resolve_regen_text threading
 # ---------------------------------------------------------------------------

@@ -392,6 +392,13 @@ async def resolve_item_creator_context(
         catalog=catalog,
         current_edit=current_edit,
         has_ready_variant=has_ready_variant,
+        # Chat-first creation owns a trusted internal guided-proposal path.
+        # Keep the public Plan proposal API independently dark behind its
+        # rollout flag, but do not advertise a false-negative capability to
+        # the canonical Creator when its controller and execution path are on.
+        guided_capability_enabled=(
+            settings.guided_edit_capability_enabled or settings.creation_threads_enabled
+        ),
     )
     return manifest, media_context
 
@@ -476,6 +483,8 @@ def compile_active_plan(
         receipt["mixed_media_timing"] = strategy.mixed_media_timing.model_dump(mode="json")
     if strategy.context_label is not None:
         receipt["context_label"] = strategy.context_label.model_dump(mode="json")
+    if strategy.image_layout is not None:
+        receipt["image_layout"] = strategy.image_layout
     if strategy.montage_cadence is not None:
         receipt["montage_cadence"] = strategy.montage_cadence.model_dump(mode="json")
     receipt["plan_hash"] = canonical_context_hash(receipt)

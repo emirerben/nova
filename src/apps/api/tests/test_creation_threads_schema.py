@@ -37,13 +37,20 @@ def test_creation_thread_events_are_ordered_idempotent_and_append_only() -> None
     assert "uq_creation_thread_events_revision" in constraints
     assert "uq_creation_thread_events_client_id" in constraints
     assert "ck_creation_thread_events_role" in constraints
+    assert "idx_creation_thread_events_client_created" in {index.name for index in table.indexes}
     migration = Path(__file__).parents[1] / "app/migrations/versions/0092_creation_threads.py"
     source = migration.read_text()
     assert "creation_thread_events_append_only" in source
     assert "BEFORE UPDATE OR DELETE" in source
+    assert "BEFORE TRUNCATE ON creation_thread_events" in source
     assert "NOT EXISTS" in source
     assert "creation_threads WHERE id = OLD.thread_id" in source
     assert "jsonb_build_object" in source
+    assert "md5(pi.voiceover_gcs_path)" in source
+    assert "CASE WHEN pi.voiceover_gcs_path IS NOT NULL THEN 1 ELSE 0 END" in source
+    assert "LOCK TABLE creation_threads, creation_thread_events" in source
+    assert "IN ACCESS EXCLUSIVE MODE" in source
+    assert "Refusing to downgrade 0092 while creation thread data exists" in source
     assert "'gcs_path'" not in source
 
 

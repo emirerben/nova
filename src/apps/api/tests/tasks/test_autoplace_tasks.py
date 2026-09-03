@@ -30,6 +30,19 @@ VARIANT_ID = "original_text"
 USER_ID = "22222222-2222-2222-2222-222222222222"
 
 
+def test_placement_agent_shortlist_bounds_and_spans_large_visual_pool() -> None:
+    """A valid PlanItem pool above the agent's 20-item cap must not reject the run."""
+
+    assets = [{"id": f"asset-{index}"} for index in range(23)]
+
+    shortlisted = ap._shortlist_placement_assets(assets)
+
+    assert len(shortlisted) == 20
+    assert shortlisted[0]["id"] == "asset-0"
+    assert shortlisted[-1]["id"] == "asset-22"
+    assert len({asset["id"] for asset in shortlisted}) == 20
+
+
 def _variant(**over) -> dict:
     v = {
         "variant_id": VARIANT_ID,

@@ -68,9 +68,11 @@ from app.routes.generative_jobs import (
     visual_block_variant_duration,
 )
 from app.schemas.edit_proposal import (
+    MixedMediaTimingProfile,
     MontageCadenceConstraint,
     recognize_cadence_reuse_policy,
     recognize_explicit_cadence_reuse_policy,
+    recognize_image_layout,
     recognize_mixed_media_timing,
     recognize_round_robin_cadence,
     recognize_total_duration_s,
@@ -360,13 +362,23 @@ def _apply_explicit_render_intent(
         "font_family": None,
         "text_color": None,
         "context_label": None,
+        "image_layout": None,
     }
+    # Creators use both ``title 'Emir Olympics'`` and the equally natural
+    # ``'Emir Olympics' title``. Keep the quoted text bounded and require the
+    # title noun next to it so unrelated quoted direction never reaches pixels.
     title_match = re.search(
-        r"\b(?:opening\s+)?(?:title|intro|hook)\s*(?:text|copy)?\s*"
-        r"(?:is|to|should\s+say|as|:)?\s*[\"'“‘](.{1,280}?)[\"'”’]",
+        r"[\"'“‘](.{1,280}?)[\"'”’]\s+(?:opening\s+)?(?:title|intro|hook)\b",
         request,
         re.IGNORECASE,
     )
+    if title_match is None:
+        title_match = re.search(
+            r"\b(?:opening\s+)?(?:title|intro|hook)\s*(?:text|copy)?\s*"
+            r"(?:is|to|should\s+say|as|:)?\s*[\"'“‘](.{1,280}?)[\"'”’]",
+            request,
+            re.IGNORECASE,
+        )
     if title_match is None:
         # Chat-first users commonly omit quoting for a short title. Stop at
         # the first comma or style qualifier so the rest of the request can
@@ -438,6 +450,67 @@ def _apply_explicit_render_intent(
             size="small",
             per_clip=True,
         )
+
+    updates["image_layout"] = recognize_image_layout(request)
+
+    mixed_media_timing = recognize_mixed_media_timing(request)
+    if mixed_media_timing is None:
+        # The existing PlanItem contract represents the fastest supported
+        # still-image cadence as ``very_fast`` (0.5-0.8s). Creators often ask
+        # for that intent numerically, as in "photos ... 0.1 seconds", without
+        # also spelling out "hold videos longer". Requiring both phrases left
+        # valid pool images outside the guided proposal while the assistant
+        # still promised a photo sequence. Promote only an affirmative,
+        # sub-second photo request that explicitly places photos among videos.
+        normalized = request.casefold()
+        photo_subsecond = bool(
+            re.search(
+                r"\b(?:photos?|images?|stills?|pictures?)\b.{0,80}"
+                r"\b0?\.[0-9]+\s*(?:s|sec(?:ond)?s?)\b",
+                normalized,
+            )
+            or re.search(
+                r"\b(?:photos?|images?|stills?|pictures?)\b.{0,80}"
+                r"\b[1-9][0-9]{0,2}\s*(?:ms|milliseconds?)\b",
+                normalized,
+            )
+        )
+        has_video_context = bool(re.search(r"\b(?:videos?|clips?|footage)\b", normalized))
+        timing_negated = bool(
+            re.search(
+                r"\b(?:do not|don't|dont|never|not)\b.{0,40}"
+                r"\b(?:photos?|images?|stills?|pictures?)\b",
+                normalized,
+            )
+        )
+        if photo_subsecond and has_video_context and not timing_negated:
+            numeric_match = re.search(
+                r"\b(?:photos?|images?|stills?|pictures?)\b.{0,80}?"
+                r"\b(0?\.[0-9]+|[1-9][0-9]{0,2})\s*"
+                r"(?:s|sec(?:ond)?s?|ms|milliseconds?)\b",
+                normalized,
+            )
+            image_hold_s = None
+            if numeric_match:
+                image_hold_s = float(numeric_match.group(1))
+                if "ms" in numeric_match.group(0) or "millisecond" in numeric_match.group(0):
+                    image_hold_s /= 1000
+                if not 0.1 <= image_hold_s <= 0.8:
+                    image_hold_s = None
+            mixed_media_timing = MixedMediaTimingProfile(
+                image_hold="very_fast",
+                image_hold_s=image_hold_s,
+                video_hold="longer",
+                boundary_style="cut",
+            )
+    updates["mixed_media_timing"] = mixed_media_timing
+    if mixed_media_timing is not None:
+        # A rapid still sequence among longer video moments is an exact-cut
+        # montage contract. Keep the guided render program (so pool photos are
+        # first-class media), but send the specialist through its source-aware
+        # fast-cut schema instead of asking a story-beat plan to express
+        # sub-second image timing it cannot represent.
+        updates["direction"] = "fast_montage"
 
     if re.search(r"\b(?:fast|snappy|quick)\s+(?:pace|pacing)\b", request, re.IGNORECASE):
         updates["pacing"] = "fast"
@@ -1678,6 +1751,10 @@ def _seed_guided_specialist_brief(
             pace=plan.strategy.pacing,
             duration_s=plan.strategy.target_duration_s,
             creator_request=creator_request,
+            opening_title=plan.strategy.opening_title,
+            font_family=plan.strategy.font_family,
+            text_color=plan.strategy.text_color,
+            image_layout=plan.strategy.image_layout,
             mixed_media_timing=plan.strategy.mixed_media_timing,
             montage_audio=specialist_audio,
             montage_cadence=specialist_cadence,
@@ -1690,6 +1767,13 @@ def _seed_guided_specialist_brief(
         suggestions=[],
         ready_to_plan=True,
     )
+    # Keep legacy no-title briefs byte-compatible. These keys become part of
+    # the durable contract only when the creator explicitly supplied them.
+    stored_brief = (item.edit_proposal or {}).get("brief")
+    if isinstance(stored_brief, dict):
+        for field in ("opening_title", "font_family", "text_color", "image_layout"):
+            if getattr(plan.strategy, field) is None:
+                stored_brief.pop(field, None)
 
 
 def _confirmed_edit_plan(active: dict[str, Any]) -> CreatorEditPlan:
@@ -1731,6 +1815,30 @@ async def _concurrent_render_response(
         },
     )
     return await _response(db, conflicted)
+
+
+async def _lock_confirmed_render_graph(
+    db: AsyncSession,
+    *,
+    item_id: uuid.UUID,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    job_id: uuid.UUID,
+) -> CreatorAgentSession:
+    """Lock a dispatched render before binding it to the Creator session.
+
+    The generative worker enters through Plan -> Persona -> PlanItem -> Job.
+    Finalization must take those same locks before CreatorAgentSession: setting
+    ``target_job_id`` otherwise holds a Job foreign-key lock while a later
+    session flush asks PostgreSQL for PlanItem key-share, deadlocking against
+    a worker that already owns PlanItem and is waiting for Job.
+    """
+
+    item, _plan, _persona = await _owned_context(db, str(item_id), user_id, for_update=True)
+    job = await db.get(Job, job_id, populate_existing=True, with_for_update=True)
+    if job is None or job.user_id != user_id or job.content_plan_item_id != item.id:
+        raise RuntimeError("creator render job changed during finalization")
+    return await _load_session(db, session_id, user_id, item.id, for_update=True)
 
 
 async def confirm_creator_plan_controller(
@@ -2039,7 +2147,17 @@ async def confirm_creator_plan_controller(
         )
         return await _response(db, failed)
 
-    completed = await _load_session(db, creator_session_id, user_id, plan_item_id, for_update=True)
+    completed = (
+        await _lock_confirmed_render_graph(
+            db,
+            item_id=plan_item_id,
+            user_id=user_id,
+            session_id=creator_session_id,
+            job_id=job_id,
+        )
+        if job_id is not None
+        else await _load_session(db, creator_session_id, user_id, plan_item_id, for_update=True)
+    )
     if guided_generation_attempt_id is not None:
         completed.active_plan = {
             **(completed.active_plan or {}),

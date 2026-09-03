@@ -156,6 +156,11 @@ class GuidedStoryExecutionPlan(BaseModel):
     story_timeline: list[GuidedStoryMoment] = Field(min_length=1)
     beat_windows: list[GuidedStoryBeatWindow] = Field(min_length=1)
     text_elements: list[TextElement]
+    # Server-derived contextual labels are kept in their own lane. They are
+    # not editor-authored text and therefore must not become part of the
+    # approved text identity set, but they are still receipt-verified pixels.
+    context_label_intent: dict[str, Any] | None = None
+    context_label_text_elements: list[TextElement] = Field(default_factory=list)
     transition_policy: GuidedStoryTransitionPolicy
     mixed_media_timing: MixedMediaTimingProfile | None = None
     montage_cadence: MontageCadenceConstraint | None = Field(
@@ -247,6 +252,8 @@ class GuidedStoryRenderReceipt(BaseModel):
     actual_media_ids: list[str]
     expected_text_ids: list[str]
     actual_text_ids: list[str]
+    expected_context_label_ids: list[str] = Field(default_factory=list)
+    actual_context_label_ids: list[str] = Field(default_factory=list)
     approved_text_ids: list[str] | None = None
     text_edited_after_approval: bool = False
     media_count: int = Field(ge=1)
@@ -284,6 +291,7 @@ class GuidedStoryRenderReceipt(BaseModel):
             (self.expected_moment_ids, self.actual_moment_ids),
             (self.expected_media_ids, self.actual_media_ids),
             (self.expected_text_ids, self.actual_text_ids),
+            (self.expected_context_label_ids, self.actual_context_label_ids),
         )
         if any(expected != actual for expected, actual in pairs):
             raise ValueError("receipt expected/actual identities must match exactly")
@@ -316,6 +324,7 @@ def _quantize_quick_mixed_timeline(
     beat_windows: list[dict[str, Any]],
     *,
     target_s: float,
+    mixed_media_timing: MixedMediaTimingProfile | None = None,
 ) -> float:
     """Compile quick mixed-media holds to an exact, source-safe frame budget."""
 
@@ -323,23 +332,38 @@ def _quantize_quick_mixed_timeline(
     target_frames = max(1, int(round(float(target_s) * fps)))
     frame_counts: list[int] = []
     image_headroom: list[tuple[float, int]] = []
+    video_headroom: list[tuple[float, int, int]] = []
     original_video_end_s: dict[int, float] = {}
     floor_video_frames: dict[int, int] = {}
     for index, moment in enumerate(moments):
         desired_frames = float(moment["duration_s"]) * fps
         frames = max(1, int(math.floor(desired_frames + 1e-6)))
         if moment["kind"] == "image":
-            minimum_frames = int(math.ceil(0.5 * fps - 1e-6))
-            maximum_frames = int(math.floor(0.8 * fps + 1e-6))
+            bounds = mixed_media_hold_bounds("image", mixed_media_timing)
+            minimum_frames = int(math.ceil(bounds.minimum_s * fps - 1e-6))
+            maximum_frames = int(math.floor(bounds.maximum_s * fps + 1e-6))
             frames = min(maximum_frames, max(minimum_frames, frames))
             image_headroom.append((desired_frames - math.floor(desired_frames), index))
         else:
             original_video_end_s[index] = float(moment["source_end_s"])
+            bounds = mixed_media_hold_bounds("video", mixed_media_timing)
             floor_video_frames[index] = frames
-            if 1.5 - 0.001 <= float(moment["duration_s"]) < 1.5:
+            if bounds.minimum_s - 0.001 <= float(moment["duration_s"]) < bounds.minimum_s:
                 # Proposal source/output windows allow 1ms numeric tolerance.
                 # The near-minimum source still contains the 45th frame.
-                frames = int(math.ceil(1.5 * fps - 1e-6))
+                frames = int(math.ceil(bounds.minimum_s * fps - 1e-6))
+            source_span_s = max(
+                0.0,
+                float(moment["source_end_s"]) - float(moment["source_start_s"]),
+            )
+            source_max_frames = int(math.floor((source_span_s + 0.001) * fps + 1e-6))
+            maximum_frames = min(
+                int(math.floor(bounds.maximum_s * fps + 1e-6)),
+                source_max_frames,
+            )
+            video_headroom.append(
+                (desired_frames - math.floor(desired_frames), index, maximum_frames)
+            )
         frame_counts.append(frames)
 
     remaining_frames = target_frames - sum(frame_counts)
@@ -355,8 +379,22 @@ def _quantize_quick_mixed_timeline(
     for _fraction, index in sorted(image_headroom, reverse=True):
         if remaining_frames <= 0:
             break
-        maximum_frames = int(math.floor(0.8 * fps + 1e-6))
+        maximum_frames = int(
+            math.floor(mixed_media_hold_bounds("image", mixed_media_timing).maximum_s * fps + 1e-6)
+        )
         addition = min(remaining_frames, maximum_frames - frame_counts[index])
+        frame_counts[index] += addition
+        remaining_frames -= addition
+    # Rounded source windows can leave a safe fractional-frame remainder even
+    # after every still has reached its approved ceiling. Consume that
+    # remainder on video headroom, never below the existing video minimum and
+    # never beyond the source-owned window (plus the established 1ms tolerance).
+    for _fraction, index, maximum_frames in sorted(video_headroom, reverse=True):
+        if remaining_frames <= 0:
+            break
+        addition = min(remaining_frames, maximum_frames - frame_counts[index])
+        if addition <= 0:
+            continue
         frame_counts[index] += addition
         remaining_frames -= addition
     if remaining_frames:
@@ -679,7 +717,7 @@ def _allocate_beat_windows(
         ]
         quick_mixed_timing = uses_quick_photo_long_video_timing(mixed_media_timing)
         capacities_b = [
-            0.8
+            mixed_media_hold_bounds(ref.kind, mixed_media_timing).maximum_s
             if quick_mixed_timing and ref.kind == "image"
             else min(3.0, max(0.0, float(ref.duration_s or 0.0) - overlap))
             if quick_mixed_timing
@@ -693,7 +731,12 @@ def _allocate_beat_windows(
         else:
             floors.append(
                 sum(
-                    0.5 if ref.kind == "image" else min(1.5, float(ref.duration_s or 0.0))
+                    mixed_media_hold_bounds("image", mixed_media_timing).minimum_s
+                    if ref.kind == "image"
+                    else min(
+                        mixed_media_hold_bounds("video", mixed_media_timing).minimum_s,
+                        float(ref.duration_s or 0.0),
+                    )
                     for ref in beat_refs
                 )
             )
@@ -818,10 +861,10 @@ def _allocate_beat_durations(
         min_moment_s * len(refs)
         if not quick_mixed_timing
         else sum(
-            mixed_media_hold_bounds(ref.kind).minimum_s
+            mixed_media_hold_bounds(ref.kind, mixed_media_timing).minimum_s
             if ref.kind == "image"
             else min(
-                mixed_media_hold_bounds(ref.kind).minimum_s,
+                mixed_media_hold_bounds(ref.kind, mixed_media_timing).minimum_s,
                 float(ref.duration_s or 0.0),
             )
             for ref in refs
@@ -837,7 +880,9 @@ def _allocate_beat_durations(
     for ref, overlap in zip(refs, overlaps_s, strict=True):
         if ref.kind == "image":
             capacities.append(
-                mixed_media_hold_bounds(ref.kind).maximum_s if quick_mixed_timing else math.inf
+                mixed_media_hold_bounds(ref.kind, mixed_media_timing).maximum_s
+                if quick_mixed_timing
+                else math.inf
             )
             continue
         source_duration = float(ref.duration_s or 0.0)
@@ -853,7 +898,7 @@ def _allocate_beat_durations(
                 f"Video {ref.source_filename or ref.media_id} is too short to show clearly.",
             )
         capacities.append(
-            min(mixed_media_hold_bounds(ref.kind).maximum_s, capacity)
+            min(mixed_media_hold_bounds(ref.kind, mixed_media_timing).maximum_s, capacity)
             if quick_mixed_timing
             else capacity
         )
@@ -862,20 +907,20 @@ def _allocate_beat_durations(
         allocated = [min_moment_s for _ref in refs]
     else:
         allocated = [
-            mixed_media_hold_bounds(ref.kind).preferred_s
+            mixed_media_hold_bounds(ref.kind, mixed_media_timing).preferred_s
             if ref.kind == "image"
             else min(
-                mixed_media_hold_bounds(ref.kind).preferred_s,
+                mixed_media_hold_bounds(ref.kind, mixed_media_timing).preferred_s,
                 float(ref.duration_s or 0.0),
             )
             for ref in refs
         ]
         allocated = [
             max(
-                mixed_media_hold_bounds(ref.kind).minimum_s
+                mixed_media_hold_bounds(ref.kind, mixed_media_timing).minimum_s
                 if ref.kind == "image"
                 else min(
-                    mixed_media_hold_bounds(ref.kind).minimum_s,
+                    mixed_media_hold_bounds(ref.kind, mixed_media_timing).minimum_s,
                     float(ref.duration_s or 0.0),
                 ),
                 value,
@@ -947,10 +992,10 @@ def _allocate_beat_durations(
             floor = (
                 min_moment_s
                 if not quick_mixed_timing
-                else mixed_media_hold_bounds(refs[index].kind).minimum_s
+                else mixed_media_hold_bounds(refs[index].kind, mixed_media_timing).minimum_s
                 if refs[index].kind == "image"
                 else min(
-                    mixed_media_hold_bounds(refs[index].kind).minimum_s,
+                    mixed_media_hold_bounds(refs[index].kind, mixed_media_timing).minimum_s,
                     float(refs[index].duration_s or 0.0),
                 )
             )
@@ -978,7 +1023,9 @@ def _text_elements(
 ) -> list[dict]:
     total_s = float(snapshot.duration_s)
     title_end = min(total_s, 3.2 if snapshot.direction != "fast_montage" else 2.2)
-    if snapshot.montage_text_bindings and snapshot.fast_cuts:
+    # Explicit Main Creator copy is immutable. Specialist montage bindings are
+    # advisory and must not replace a confirmed title with generated words.
+    if snapshot.montage_text_bindings and snapshot.fast_cuts and not snapshot.opening_title:
         text_by_source = {entry.media_id: entry.text for entry in snapshot.montage_text_bindings}
         elements: list[dict] = []
         for cut, window in zip(snapshot.fast_cuts, beat_windows, strict=True):
@@ -995,9 +1042,11 @@ def _text_elements(
                     position="custom" if compiler_version >= 3 else "bottom",
                     x_frac=0.5 if compiler_version >= 3 else None,
                     y_frac=0.78 if compiler_version >= 3 else None,
-                    font_family="Fraunces" if compiler_version >= 3 else "Inter-Bold",
+                    font_family=snapshot.font_family
+                    or ("Fraunces" if compiler_version >= 3 else "Inter-Bold"),
                     size_px=58 if compiler_version >= 3 else 50,
-                    color="#FFF8F0" if compiler_version >= 3 else "#FFFFFF",
+                    color=snapshot.text_color
+                    or ("#FFF8F0" if compiler_version >= 3 else "#FFFFFF"),
                     highlight_color="#D9FF70" if compiler_version >= 3 else "#6FE7F7",
                     stroke_width=0 if compiler_version >= 3 else 4,
                     shadow_enabled=True,
@@ -1023,9 +1072,10 @@ def _text_elements(
                 position="custom" if compiler_version >= 3 else "top",
                 x_frac=0.5 if compiler_version >= 3 else None,
                 y_frac=0.16 if compiler_version >= 3 else None,
-                font_family="Fraunces" if compiler_version >= 3 else "Inter-Bold",
+                font_family=snapshot.font_family
+                or ("Fraunces" if compiler_version >= 3 else "Inter-Bold"),
                 size_px=(92 if compiler_version >= 3 else 78),
-                color="#FFF8F0" if compiler_version >= 3 else "#FFFFFF",
+                color=snapshot.text_color or ("#FFF8F0" if compiler_version >= 3 else "#FFFFFF"),
                 highlight_color="#D9FF70" if compiler_version >= 3 else "#6FE7F7",
                 stroke_width=0 if compiler_version >= 3 else 5,
                 shadow_enabled=True,
@@ -1044,9 +1094,9 @@ def _text_elements(
                 end_s=title_end,
                 role="generative_intro",
                 position="top",
-                font_family="Inter-Bold",
+                font_family=snapshot.font_family or "Inter-Bold",
                 size_px=78 if snapshot.direction == "fast_montage" else 84,
-                color="#FFFFFF",
+                color=snapshot.text_color or "#FFFFFF",
                 highlight_color="#6FE7F7",
                 stroke_width=5,
                 shadow_enabled=True,
@@ -1090,9 +1140,9 @@ def _text_elements(
             position="custom",
             x_frac=0.5,
             y_frac=0.16,
-            font_family="Fraunces",
+            font_family=snapshot.font_family or "Fraunces",
             size_px=92 if snapshot.direction == "fast_montage" else 104,
-            color="#FFF8F0",
+            color=snapshot.text_color or "#FFF8F0",
             highlight_color="#D9FF70",
             stroke_width=0,
             shadow_enabled=True,
@@ -1224,7 +1274,11 @@ def _compile_execution_plan_version(
                     "kind": ref.kind,
                     "gcs_path": ref.gcs_path,
                     "generation": ref.generation,
-                    "layout": "fullscreen",
+                    "layout": (
+                        snapshot.image_layout
+                        if ref.kind == "image" and snapshot.image_layout is not None
+                        else "fullscreen"
+                    ),
                     "source_start_s": round(float(cut.source_start_s), 3),
                     "source_end_s": round(resolved_source_end_s, 3),
                     "output_start_s": start_s,
@@ -1256,6 +1310,7 @@ def _compile_execution_plan_version(
                 moments,
                 beat_windows,
                 target_s=cursor,
+                mixed_media_timing=mixed_timing,
             )
         normalized_track = _music_payload(track, duration_s=cursor)
         try:
@@ -1280,9 +1335,12 @@ def _compile_execution_plan_version(
                 ),
                 transition_policy={"type": "none", "duration_s": 0.0},
                 typography=(
-                    {"style_id": "guided_story_v2", "font": "Fraunces"}
+                    {"style_id": "guided_story_v2", "font": snapshot.font_family or "Fraunces"}
                     if compiler_version >= 3
-                    else {"style_id": "guided_story_v1", "font": "Inter-Bold"}
+                    else {
+                        "style_id": "guided_story_v1",
+                        "font": snapshot.font_family or "Inter-Bold",
+                    }
                 ),
                 music=normalized_track,
             )
@@ -1365,7 +1423,11 @@ def _compile_execution_plan_version(
                     "kind": ref.kind,
                     "gcs_path": ref.gcs_path,
                     "generation": ref.generation,
-                    "layout": beat.layout,
+                    "layout": (
+                        snapshot.image_layout
+                        if ref.kind == "image" and snapshot.image_layout is not None
+                        else beat.layout
+                    ),
                     "source_start_s": source_start,
                     "source_end_s": source_end,
                     "output_start_s": round(cursor, 3),
@@ -1394,6 +1456,7 @@ def _compile_execution_plan_version(
             moments,
             beat_windows,
             target_s=cursor,
+            mixed_media_timing=mixed_timing,
         )
 
     normalized_track = _music_payload(track, duration_s=cursor)
@@ -1434,9 +1497,9 @@ def _compile_execution_plan_version(
                 "duration_s": transition_duration_s,
             },
             typography=(
-                {"style_id": "guided_story_v2", "font": "Fraunces"}
+                {"style_id": "guided_story_v2", "font": snapshot.font_family or "Fraunces"}
                 if compiler_version >= 3
-                else {"style_id": "guided_story_v1", "font": "Inter-Bold"}
+                else {"style_id": "guided_story_v1", "font": snapshot.font_family or "Inter-Bold"}
             ),
             music=normalized_track,
         )
@@ -1548,10 +1611,25 @@ def validate_execution_plan(plan: object, guided_snapshot: object) -> dict[str, 
         compiler_version=validated.compiler_version,
     )
     normalized = validated.model_dump(mode="json", exclude_none=False)
+    # Context-label TextElements are a server-derived projection of the
+    # approved metadata and the current output timeline. They are deliberately
+    # not part of the proposal compiler's editor-authored text contract and are
+    # rematerialized by the worker on each render/revision.
+    normalized.pop("context_label_text_elements", None)
+    canonical.pop("context_label_text_elements", None)
+    # The intent is persisted by the Creator dispatch envelope rather than the
+    # proposal compiler. It is independently constrained by the worker's
+    # closed allowlist before any label can reach pixels.
+    normalized.pop("context_label_intent", None)
+    canonical.pop("context_label_intent", None)
     if normalized != canonical:
         raise GuidedStoryError(
             "guided_story_snapshot_invalid", "The saved render plan was changed after approval."
         )
+    normalized["context_label_intent"] = validated.context_label_intent
+    normalized["context_label_text_elements"] = [
+        element.model_dump(mode="json") for element in validated.context_label_text_elements
+    ]
     return normalized
 
 
@@ -1783,6 +1861,56 @@ def compile_guided_runtime_plan(
                 "editor_approved_text_ids": approved_text_ids,
             }
         )
+        # A timeline revision can split, reorder, or reuse sources. Rebuild the
+        # server-derived labels against the revision's output windows so a label
+        # never leaks into a neighboring segment. The raw intent carries no
+        # copy; sport text is resolved from the approved clip metadata only.
+        context_intent = runtime_payload.get("context_label_intent")
+        if context_intent:
+            from app.tasks.generative_build import _canonical_context_sport_labels  # noqa: PLC0415
+
+            labels = _canonical_context_sport_labels(
+                context_intent,
+                {ref.media_id: ref.gcs_path for ref in snapshot.media},
+                matcher_clip_metas(snapshot),
+            )
+            by_clip = {row["clip_id"]: row["sport"] for row in labels}
+            context_elements: list[dict[str, Any]] = []
+            for index, moment in enumerate(moments):
+                sport = by_clip.get(str(moment.get("media_id") or ""))
+                start_s = float(moment.get("output_start_s") or 0.0)
+                end_s = float(moment.get("output_end_s") or 0.0)
+                if not sport or end_s <= start_s:
+                    continue
+                context_elements.append(
+                    TextElement(
+                        id=f"context-sport-{index}-{str(moment.get('moment_id') or '')}",
+                        text=sport,
+                        start_s=start_s,
+                        end_s=end_s,
+                        role="generative_sequence",
+                        position="custom",
+                        x_frac=0.86,
+                        # 0.86 leaves enough bottom margin for the same label
+                        # on both portrait and landscape canvases.
+                        y_frac=0.86,
+                        font_family="Inter-Bold",
+                        size_class="small",
+                        color="#FFFFFF",
+                        highlight_color="#FFFFFF",
+                        alignment="right",
+                        effect="static",
+                        z=8,
+                        source_params={
+                            "source": "context_sport",
+                            "context_label_source": "detected_sport",
+                            "context_label_position": "bottom_right",
+                            "context_label_size": "small",
+                            "source_clip_id": str(moment.get("media_id") or ""),
+                        },
+                    ).model_dump(mode="json", exclude_none=True)
+                )
+            runtime_payload["context_label_text_elements"] = context_elements
         runtime = GuidedStoryExecutionPlan.model_validate(runtime_payload)
         return runtime.model_dump(mode="json", exclude_none=False)
     except GuidedStoryError:
@@ -2302,7 +2430,10 @@ def _verify_receipt(
         if row["media_id"] not in actual_media:
             actual_media.append(row["media_id"])
     expected_text = [row["id"] for row in plan["text_elements"]]
-    actual_text = [row["element_id"] for row in text_receipts if row.get("visible")]
+    expected_context = [row["id"] for row in plan.get("context_label_text_elements") or []]
+    visible_text = [row["element_id"] for row in text_receipts if row.get("visible")]
+    actual_text = [element_id for element_id in visible_text if element_id in expected_text]
+    actual_context = [element_id for element_id in visible_text if element_id in expected_context]
     probe = probe_video(final_path)
     canvas = _story_canvas(str(plan["output_orientation"]))
     audio_codec = _audio_codec(final_path)
@@ -2326,6 +2457,7 @@ def _verify_receipt(
         and expected_moments == actual_moments
         and expected_media == actual_media
         and set(expected_text) == set(actual_text)
+        and expected_context == actual_context
         and len(media_receipts) == len(expected_media)
         and duration_ok
         and probe.width == canvas.width
@@ -2347,6 +2479,8 @@ def _verify_receipt(
         "actual_media_ids": actual_media,
         "expected_text_ids": expected_text,
         "actual_text_ids": actual_text,
+        "expected_context_label_ids": expected_context,
+        "actual_context_label_ids": actual_context,
         "media_count": len(actual_media),
         "image_count": len({r["media_id"] for r in moment_receipts if r["kind"] == "image"}),
         "video_count": len({r["media_id"] for r in moment_receipts if r["kind"] == "video"}),
@@ -2399,6 +2533,11 @@ def _verify_receipt(
         if set(expected_text) != set(actual_text):
             raise GuidedStoryError(
                 "guided_story_text_missing", "One or more approved text moments disappeared."
+            )
+        if expected_context != actual_context:
+            raise GuidedStoryError(
+                "guided_story_context_label_missing",
+                "One or more approved context labels disappeared.",
             )
         raise GuidedStoryError(
             "guided_story_receipt_mismatch", "The finished video did not match the approved edit."
@@ -2510,6 +2649,7 @@ def validate_ready_result(
     expected_beats = [row.beat_id for row in typed_plan.beat_windows]
     expected_moments = [row.moment_id for row in typed_plan.story_timeline]
     expected_text = [row.id for row in typed_plan.text_elements]
+    expected_context = [row.id for row in typed_plan.context_label_text_elements]
     current_text = [str(row.get("id")) for row in list(result.get("text_elements") or [])]
     approved_text = receipt.approved_text_ids or receipt.expected_text_ids
     timeline_by_media: dict[str, GuidedStoryMoment] = {}
@@ -2580,7 +2720,13 @@ def validate_ready_result(
             for row in receipt.moment_stages
         ]
         cadence_receipt_ok = staged_cadence_stages == expected_cadence_stages
-    staged_text = [str(row.get("element_id")) for row in receipt.text_stages if row.get("visible")]
+    staged_visible_text = [
+        str(row.get("element_id")) for row in receipt.text_stages if row.get("visible")
+    ]
+    staged_text = [element_id for element_id in staged_visible_text if element_id in expected_text]
+    staged_context = [
+        element_id for element_id in staged_visible_text if element_id in expected_context
+    ]
     exact_story = [row.model_dump(mode="json") for row in typed_plan.story_timeline]
     prefix = f"generative-jobs/{job_id}/"
     base_path = str(result.get("base_video_path") or "")
@@ -2620,6 +2766,8 @@ def validate_ready_result(
         and staged_moments == expected_moment_stages
         and cadence_receipt_ok
         and staged_text == receipt.actual_text_ids
+        and receipt.expected_context_label_ids == expected_context
+        and receipt.actual_context_label_ids == staged_context
         and receipt.expected_duration_s == typed_plan.resolved_duration_s
         and abs(receipt.actual_duration_s - typed_plan.resolved_duration_s)
         <= (
@@ -3158,28 +3306,54 @@ def render_execution_plan(
 
     final_path = os.path.join(tmpdir, "guided_story_final.mp4")
     elements = [TextElement.model_validate(row) for row in plan["text_elements"]]
-    if elements:
-        overlays = build_overlays_from_text_elements(
-            elements,
-            video_duration_s=float(plan["resolved_duration_s"]),
-            independent_box_alignment=True,
-        )
-        element_by_text = {
-            (element.text, element.start_s, element.end_s): element.id for element in elements
-        }
-        for overlay in overlays:
-            key = (
-                str(overlay.get("text") or ""),
-                float(overlay.get("start_s") or 0.0),
-                float(overlay.get("end_s") or 0.0),
+    context_elements = [
+        TextElement.model_validate(row) for row in plan.get("context_label_text_elements") or []
+    ]
+    render_elements = [*elements, *context_elements]
+    if render_elements:
+        # Context labels historically use ``generative_sequence`` so the editor
+        # can project them as a separate lane. The Skia renderer coalesces that
+        # role into one full-canvas sequence, however, which loses per-element
+        # receipt identity (and makes every label look absent to the strict
+        # verifier). Keep the lane projection but render these server-derived
+        # labels as independent burn sequences in the authoritative pass.
+        def compile_and_tag(source_elements: list[TextElement]) -> list[dict]:
+            compiled = build_overlays_from_text_elements(
+                source_elements,
+                video_duration_s=float(plan["resolved_duration_s"]),
+                independent_box_alignment=True,
             )
-            overlay["element_id"] = element_by_text.get(key)
+            by_timing = {
+                (element.text, element.start_s, element.end_s): element.id
+                for element in source_elements
+            }
+            for index, overlay in enumerate(compiled):
+                # Static context elements compile one-to-one. Positional tagging
+                # is intentional here: it survives the renderer's timestamp
+                # normalization and avoids matching on mutable display text.
+                if len(compiled) == len(source_elements) and index < len(source_elements):
+                    overlay["element_id"] = source_elements[index].id
+                    continue
+                key = (
+                    str(overlay.get("text") or ""),
+                    float(overlay.get("start_s") or 0.0),
+                    float(overlay.get("end_s") or 0.0),
+                )
+                overlay["element_id"] = by_timing.get(key)
+            return compiled
+
+        overlays = compile_and_tag(elements)
+        context_overlays = compile_and_tag(context_elements)
+        for overlay in context_overlays:
+            if overlay.get("role") == "generative_sequence":
+                overlay["role"] = "generative_context_label"
+        overlays.extend(context_overlays)
         text_receipts = burn_text_overlays_skia_with_evidence(
             clean_base,
             overlays,
             final_path,
             tmpdir,
-            required_element_ids=[row["id"] for row in plan["text_elements"]],
+            required_element_ids=[element.id for element in render_elements],
             canvas=canvas,
         )
     else:
@@ -3244,6 +3418,7 @@ def render_execution_plan(
         "orientation_reason": plan["output_orientation_reason"],
         "duration_s": plan["resolved_duration_s"],
         "text_elements": plan["text_elements"],
+        "context_label_text_elements": plan.get("context_label_text_elements") or [],
         "sound_effects": list(plan.get("editor_sound_effects") or []),
         "media_overlays": list(plan.get("editor_media_overlays") or []),
         "visual_blocks": list(plan.get("editor_visual_blocks") or []),

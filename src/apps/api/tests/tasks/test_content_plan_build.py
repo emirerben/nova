@@ -40,6 +40,10 @@ def test_mixed_media_guided_render_uses_deploy_fenced_queue() -> None:
     assert _guided_render_queue(None) == "plan-jobs"
 
 
+def test_chat_creator_render_uses_version_fenced_queue() -> None:
+    assert _guided_render_queue(None, {"edit_format": "montage"}) == "creator-render-v2"
+
+
 def test_cadence_guided_render_uses_deploy_fenced_queue() -> None:
     approved = {
         "snapshot": {

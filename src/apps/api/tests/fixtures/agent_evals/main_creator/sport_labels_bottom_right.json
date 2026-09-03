@@ -1,6 +1,6 @@
 {
   "agent": "nova.creator.main",
-  "prompt_version": "2026-09-01-v11",
+  "prompt_version": "2026-09-03-v12",
   "input": {
     "user_message": "Create an edit of the best moments. Add the title “Emir Olympics” using Rascal font. Make the text yellow. Add a small text of the name of the sport being played on the bottom right",
     "creator_context": "Personal sports-day footage.",
@@ -38,7 +38,7 @@
       "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     }
   },
-  "raw_text": "{\"action\":{\"kind\":\"propose_strategy\",\"strategy\":{\"direction\":\"fast_montage\",\"edit_format\":\"montage\",\"archetype\":\"montage\",\"audio_strategy\":\"licensed_music\",\"story_structure\":[\"Opening title\",\"Best sports moments\"],\"caption_style\":\"none\",\"intro_hook\":\"Emir Olympics in yellow Rascal type\",\"context_label\":{\"kind\":\"sport\",\"source\":\"clip_metadata\",\"placement\":\"bottom_right\",\"size\":\"small\",\"per_clip\":true},\"pacing\":\"fast\",\"target_duration_s\":24,\"render_program\":\"native\",\"selected_media_ids\":[\"clip-1\",\"clip-2\"],\"optional_treatments\":[],\"rationale\":\"Use the strongest moments and label the sport per clip without copying free-form metadata.\"},\"summary\":\"A fast sports montage with a title and small bottom-right sport labels.\"}}",
+  "raw_text": "{\"action\":{\"kind\":\"propose_strategy\",\"strategy\":{\"direction\":\"fast_montage\",\"edit_format\":\"montage\",\"archetype\":\"montage\",\"audio_strategy\":\"licensed_music\",\"story_structure\":[\"Opening title\",\"Best sports moments\"],\"caption_style\":\"none\",\"intro_hook\":\"Emir Olympics in yellow Rascal type\",\"opening_title\":\"Emir Olympics\",\"font_family\":\"Rascal\",\"text_color\":\"yellow\",\"context_label\":{\"kind\":\"sport\",\"source\":\"clip_metadata\",\"placement\":\"bottom_right\",\"size\":\"small\",\"per_clip\":true},\"pacing\":\"fast\",\"target_duration_s\":24,\"render_program\":\"native\",\"selected_media_ids\":[\"clip-1\",\"clip-2\"],\"optional_treatments\":[],\"rationale\":\"Use the strongest moments and label the sport per clip without copying free-form metadata.\"},\"summary\":\"A fast sports montage with a title and small bottom-right sport labels.\"}}",
   "output": {},
   "meta": {
     "source": "localhost-production-repro",

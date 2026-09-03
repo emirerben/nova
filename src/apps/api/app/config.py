@@ -93,6 +93,11 @@ class Settings(BaseSettings):
     # deploy skew can return a deliberate 404 and let the web app use its
     # legacy kill-switch experience.
     creation_threads_enabled: bool = True
+    # Optional account-scoped launch cohort. Comma-separated user emails or
+    # UUIDs; matching is exact and case-insensitive for email addresses. An
+    # unset/blank value preserves the global-flag behavior, while "*" makes an
+    # explicit all-users rollout easy to audit in hosted configuration.
+    creation_threads_user_allowlist: str = ""
 
     # Live speech-cleanup rollout state. New jobs always receive an explicit
     # required_v1/off_v1 contract; legacy_auto is historical-job compatibility

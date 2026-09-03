@@ -777,6 +777,7 @@ def test_confirmed_guided_strategy_becomes_specialist_brief(monkeypatch) -> None
             pacing="fast",
             render_program="guided",
             selected_media_ids=["clip-1"],
+            image_layout="supporting_card",
             mixed_media_timing=MixedMediaTimingProfile(
                 image_hold="very_fast", video_hold="longer", boundary_style="cut"
             ),
@@ -798,6 +799,7 @@ def test_confirmed_guided_strategy_becomes_specialist_brief(monkeypatch) -> None
         "pace": "fast",
         "duration_s": 24,
         "creator_request": creator_request,
+        "image_layout": "supporting_card",
         "mixed_media_timing": {
             "image_hold": "very_fast",
             "video_hold": "longer",
@@ -924,6 +926,25 @@ def test_truncated_main_creator_fallback_preserves_exact_mixed_media_request(
         "video_hold": "longer",
         "boundary_style": "cut",
     }
+
+
+def test_main_creator_preserves_photo_runs_and_ordered_sport_context(monkeypatch) -> None:
+    strategy = _fallback_strategy(
+        _manifest(monkeypatch),
+        user_message=(
+            "Amongst the videos, add groups of photos that transition in 0.1 seconds. "
+            "Group football, basketball, and beach volleyball sequentially by sport and context."
+        ),
+    )
+
+    assert strategy.mixed_media_timing is not None
+    assert strategy.mixed_media_timing.image_grouping == "runs"
+    assert strategy.mixed_media_timing.sequence_grouping == "sport_context"
+    assert strategy.mixed_media_timing.sequence_group_order == [
+        "football",
+        "basketball",
+        "beach_volleyball",
+    ]
 
 
 @pytest.mark.asyncio
@@ -2565,6 +2586,54 @@ async def test_start_locks_an_existing_session_before_appending(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
+async def test_confirm_completion_locks_plan_job_before_session(monkeypatch) -> None:
+    """Finalization must use the worker's Plan -> Item -> Job -> Session order."""
+
+    user_id = uuid.uuid4()
+    item = SimpleNamespace(id=uuid.uuid4())
+    plan = SimpleNamespace(id=uuid.uuid4())
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        content_plan_item_id=item.id,
+    )
+    session = SimpleNamespace(id=uuid.uuid4())
+    calls: list[str] = []
+
+    async def owned_context(*_args, **kwargs):
+        assert kwargs == {"for_update": True}
+        calls.append("plan_item")
+        return item, plan, SimpleNamespace()
+
+    async def get(model, object_id, **kwargs):
+        assert model is Job
+        assert object_id == job.id
+        assert kwargs == {"populate_existing": True, "with_for_update": True}
+        calls.append("job")
+        return job
+
+    async def load_session(*_args, **kwargs):
+        assert kwargs == {"for_update": True}
+        calls.append("session")
+        return session
+
+    db = SimpleNamespace(get=get)
+    monkeypatch.setattr(creator_routes, "_owned_context", owned_context)
+    monkeypatch.setattr(creator_routes, "_load_session", load_session)
+
+    completed = await creator_routes._lock_confirmed_render_graph(
+        db,
+        item_id=item.id,
+        user_id=user_id,
+        session_id=session.id,
+        job_id=job.id,
+    )
+
+    assert completed is session
+    assert calls == ["plan_item", "job", "session"]
+
+
+@pytest.mark.asyncio
 async def test_confirm_without_an_active_plan_returns_conflict(monkeypatch) -> None:
     user = SimpleNamespace(id=uuid.uuid4())
     item = SimpleNamespace(id=uuid.uuid4())
@@ -2737,6 +2806,7 @@ async def test_guided_confirm_returns_rendering_after_rollback_expires_loaded_ro
         side_effect=[
             (initial_item, plan, SimpleNamespace()),
             (live_item, plan, SimpleNamespace()),
+            (refreshed_item, plan, SimpleNamespace()),
             (refreshed_item, plan, SimpleNamespace()),
         ]
     )

@@ -75,6 +75,11 @@ describe("Header — isLight predicate", () => {
     expect(header!.className).toContain("bg-[#ffffff]");
   });
 
+  it("hides the global header on the bounded chat-first QA fixture", () => {
+    const { container } = renderWithPathname("/dev-qa/chat-first-creation");
+    expect(container.querySelector("header")).not.toBeInTheDocument();
+  });
+
   it("test_header_light_on_library: /library is light", () => {
     const { container } = renderWithPathname("/library");
     const header = container.querySelector("header");

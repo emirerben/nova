@@ -22,20 +22,34 @@ import {
   applyCreationAction, creationFormat, creationFormatLabel, creationJobFailed,
   creationJobPartial, creationJobReady, creationJobSettled, creationThreadMediaCount, createCreationThread,
   CreationThreadError, getCreationCapabilities, listCreationThreads, refreshCreationThread,
-  sendCreationMessage, threadMessages, uploadCreationMedia,
+  creationClipLimit, sendCreationMessage, threadMessages, uploadCreationMedia,
   type CreationFormat, type CreationThread,
 } from "@/lib/creation-thread-api";
 import { setChatFirstFallback } from "@/lib/chat-first";
 import { cn } from "@/lib/cn";
 import { listMyJobs, type LibraryJob } from "@/lib/me-api";
 import LibraryTile from "@/components/library/LibraryTile";
+import AssetPool from "@/app/plan/_components/AssetPool";
 
 const FORMATS: Array<{ value: CreationFormat; label: string; description: string }> = [
   { value: "montage", label: "Montage", description: "Music-led cuts from your strongest moments." },
   { value: "narrated_planned", label: "Narrated", description: "Let your voice guide the story." },
   { value: "subtitled", label: "Talking to camera", description: "A clean, captioned edit from your delivery." },
 ];
-const MAX_FILES = 20;
+const FORMAT_GUIDANCE: Record<CreationFormat, { title: string; description: string }> = {
+  montage: {
+    title: "Add clips",
+    description: "Three or more clips work best.",
+  },
+  narrated_planned: {
+    title: "Add clips and voiceover",
+    description: "Choose the footage for your story.",
+  },
+  subtitled: {
+    title: "Add your clip",
+    description: "Use one clip of you talking.",
+  },
+};
 
 function formatFromThread(thread: CreationThread | null): CreationFormat | null {
   return creationFormat(thread?.state.edit_format);
@@ -59,15 +73,6 @@ function projectStatusLabel(thread: CreationThread): string {
   if (thread.active_job_id) return "Rendering";
   if (creationThreadMediaCount(thread) > 0) return "Shaping direction";
   return "New project";
-}
-
-function hasAudioMedia(thread: CreationThread | null): boolean {
-  const media = thread?.state.media;
-  return Array.isArray(media) && media.some((entry) => {
-    if (!entry || typeof entry !== "object") return false;
-    const item = entry as Record<string, unknown>;
-    return item.kind === "audio" || (typeof item.content_type === "string" && item.content_type.startsWith("audio/"));
-  });
 }
 
 interface AttachedMedia {
@@ -136,7 +141,11 @@ export default function ChatCreationWorkspace({ onLegacyFallback }: ChatCreation
   const [galleryJobs, setGalleryJobs] = useState<LibraryJob[]>([]);
   const [formatPickerOpen, setFormatPickerOpen] = useState(false);
   const [availableFormats, setAvailableFormats] = useState<CreationFormat[]>(["montage", "narrated_planned", "subtitled"]);
+  const [capabilities, setCapabilities] = useState<Awaited<ReturnType<typeof getCreationCapabilities>>>(() => ({ formats: [] }));
+  const visualsEnabled = process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED === "true"
+    || process.env.NEXT_PUBLIC_GUIDED_EDIT_ENABLED === "true";
   const editorFrameRef = useRef<HTMLIFrameElement>(null);
+  const transcriptRef = useRef<HTMLDivElement>(null);
   const queuedMessageRef = useRef<{ threadId: string; message: string } | null>(null);
   const preparedRevisionRef = useRef<string | null>(null);
   const activeThreadIdRef = useRef<string | null>(null);
@@ -154,7 +163,8 @@ export default function ChatCreationWorkspace({ onLegacyFallback }: ChatCreation
   const load = useCallback(async () => {
     try {
       const [listed, capabilities] = await Promise.all([listCreationThreads(), getCreationCapabilities()]);
-      setAvailableFormats(capabilities.map((item) => item.edit_format));
+      setAvailableFormats(capabilities.formats.map((item) => item.edit_format));
+      setCapabilities(capabilities);
       setProjects(listed);
       const current = thread ? listed.find((item) => item.id === thread.id) : null;
       const summary = current ?? listed.find((item) => item.status === "active");
@@ -262,13 +272,27 @@ export default function ChatCreationWorkspace({ onLegacyFallback }: ChatCreation
   }, [acceptThreadResponse, thread]);
 
   const format = formatFromThread(thread);
+  const clipLimit = creationClipLimit(capabilities.formats, format);
   const mediaCount = creationThreadMediaCount(thread);
   const hasReady = Boolean(thread && creationJobReady(thread));
   const isPartial = Boolean(thread && creationJobPartial(thread));
   const messages = useMemo(() => thread ? threadMessages(thread) : [], [thread]);
+  const hasPendingConfirmation = messages.some((message) =>
+    message.artifact === "confirmation" || (message.artifact === "revision" && !hasReady),
+  );
+  const canConfirmDirection = !thread?.active_job_id || Boolean(thread && creationJobFailed(thread));
   const media = useMemo(() => attachedMedia(thread), [thread]);
+  const lastMessageId = messages[messages.length - 1]?.id;
   const latestAudio = [...media].reverse().find((item) => item.kind === "audio") ?? null;
+  const clipMedia = media.filter((item) => item.kind === "video");
+  const clipCount = clipMedia.length || (media.length === 0 ? mediaCount : 0);
   const accountName = session?.user?.name ?? session?.user?.email ?? "Account";
+
+  useEffect(() => {
+    const transcript = transcriptRef.current;
+    if (!transcript) return;
+    transcript.scrollTop = transcript.scrollHeight;
+  }, [hasReady, lastMessageId, thinking, thread?.id]);
 
   async function selectFormat(value: CreationFormat) {
     if (!thread || busy || (format && !formatPickerOpen) || !availableFormats.includes(value)) return;
@@ -296,9 +320,38 @@ export default function ChatCreationWorkspace({ onLegacyFallback }: ChatCreation
   async function attach(files: FileList | null) {
     if (!thread || !files?.length) return;
     const sourceThread = thread;
-    const chosen = Array.from(files).slice(0, MAX_FILES);
-    setPendingFiles((items) => [...items, ...chosen].slice(0, MAX_FILES));
-    setUploading(true); setError(null);
+    setError(null);
+    const incoming = Array.from(files);
+    const clipPolicy = thread.media_capabilities?.clips ?? capabilities.media?.clips;
+    const acceptedContentTypes = new Set(clipPolicy?.content_types ?? ["video/mp4", "video/quicktime"]);
+    const maxFileBytes = clipPolicy?.max_file_bytes;
+    const inferredContentType = (file: File) => {
+      const contentType = file.type.trim().toLowerCase();
+      return !contentType && /\.mp4$/i.test(file.name)
+        ? "video/mp4"
+        : !contentType && /\.mov$/i.test(file.name) ? "video/quicktime" : contentType;
+    };
+    const videoFiles = incoming.filter((file) => acceptedContentTypes.has(inferredContentType(file))
+      && (typeof maxFileBytes !== "number" || file.size <= maxFileBytes));
+    const rejectedVisuals = incoming.filter((file) => file.type.toLowerCase().startsWith("image/")).length;
+    const oversizedVideos = incoming.filter((file) => acceptedContentTypes.has(inferredContentType(file))
+      && typeof maxFileBytes === "number" && file.size > maxFileBytes).length;
+    const unsupportedFiles = incoming.length - videoFiles.length - rejectedVisuals - oversizedVideos;
+    const remaining = Math.max(0, clipLimit - clipCount - pendingFiles.length);
+    const chosen = videoFiles.slice(0, remaining);
+    if (rejectedVisuals > 0) {
+      setError("Photos and screenshots belong in Visuals. Add them from the supporting visuals card below.");
+    } else if (oversizedVideos > 0) {
+      setError("That video is larger than the PlanItem upload limit.");
+    } else if (unsupportedFiles > 0) {
+      setError("That video type isn’t supported. Choose an MP4 or MOV file.");
+    }
+    if (chosen.length < videoFiles.length) {
+      setError(`You can add up to ${clipLimit} primary clips for this PlanItem.`);
+    }
+    if (!chosen.length) return;
+    setPendingFiles((items) => [...items, ...chosen].slice(0, clipLimit));
+    setUploading(true);
     try {
       const next = await uploadCreationMedia(sourceThread, chosen, (progress, file) => {
         acceptThreadResponse(sourceThread.id, progress);
@@ -494,39 +547,41 @@ export default function ChatCreationWorkspace({ onLegacyFallback }: ChatCreation
   );
 
   const uploadArtifact = (
-    <ChatArtifactCard title={format === "narrated_planned" ? "Add footage and your voice" : "Add your footage"} description="Video, photos, and audio are welcome. You can add more later.">
+    <ChatArtifactCard title={format ? FORMAT_GUIDANCE[format].title : "Add clips"} description={format ? FORMAT_GUIDANCE[format].description : "Choose the footage for your story."}>
       {format === "narrated_planned" && !latestAudio ? <VoiceRecorder upload={uploadRecordedVoice} onVoiceover={() => undefined} /> : null}
       {format ? <Button type="button" variant="ghost" className="px-0 text-xs text-muted-foreground" onClick={() => setFormatPickerOpen(true)}>Change format</Button> : null}
-      <Dropzone compact accept="video/*,image/*,audio/*" multiple disabled={uploading} title={uploading ? "Uploading…" : "Choose files or drop them here"} subline="Up to 20 files" ariaLabel="Add footage, photos, or audio" inputAriaLabel="Upload video, image, or audio files" onFiles={(files) => void attach(files)} />
-      {mediaCount > 0 ? <div className="mt-3 flex items-center justify-between text-sm text-muted-foreground"><span role="status">{mediaCount} {mediaCount === 1 ? "file" : "files"} attached</span>{pendingFiles.length > 0 ? <span>Retrying {pendingFiles.length}…</span> : null}</div> : null}
+      <Dropzone compact accept="video/*" multiple={format !== "subtitled"} disabled={uploading || clipCount >= clipLimit} title={uploading ? "Uploading…" : clipCount >= clipLimit ? "Clip limit reached" : format === "subtitled" ? "Choose a clip or drop it here" : "Choose clips or drop them here"} subline={format === "subtitled" ? undefined : `Up to ${clipLimit} clips`} ariaLabel="Add primary video clips" inputAriaLabel="Upload primary video clips" onFiles={(files) => void attach(files)} />
       {pendingFiles.length > 0 ? <div className="mt-2 space-y-1">{pendingFiles.map((file) => <div key={`${file.name}-${file.size}`} className="flex items-center justify-between gap-2 rounded-md bg-muted px-2 py-1 text-xs"><span className="truncate">{file.name}</span><div className="flex shrink-0 items-center gap-1"><Button type="button" variant="ghost" size="sm" className="h-7 px-2" disabled={uploading} onClick={() => void retryFile(file)}>Retry</Button><Button type="button" variant="ghost" size="icon" className="size-7" aria-label={`Remove ${file.name}`} onClick={() => setPendingFiles((items) => items.filter((item) => item !== file))}><Trash2 className="size-3" /></Button></div></div>)}</div> : null}
+      {media.length > 0 && !thread?.active_job_id ? <div className="mt-2 space-y-1" role="list">{media.map((item) => <div key={item.media_id} className="flex items-center justify-between gap-2 rounded-md bg-muted px-3 py-2 text-sm" role="listitem"><span className="min-w-0 truncate">{item.filename}{item.kind === "audio" ? <span className="ml-2 text-xs text-muted-foreground">Voiceover</span> : null}</span><Button type="button" variant="ghost" size="icon" className="size-8 shrink-0" disabled={busy || uploading} aria-label={`Remove attached ${item.filename}`} onClick={() => void removeMedia(item.media_id)}><Trash2 className="size-4" /></Button></div>)}</div> : null}
     </ChatArtifactCard>
   );
 
-  const attachedMediaArtifact = media.length > 0 && !thread?.active_job_id ? (
-    <ChatArtifactCard title="Attached media" description="Remove anything you don’t want Kria to use before rendering.">
-      <div className="space-y-1" role="list">
-        {media.map((item) => <div key={item.media_id} className="flex items-center justify-between gap-2 rounded-md bg-muted px-3 py-2 text-sm" role="listitem"><span className="min-w-0 truncate">{item.filename}<span className="ml-2 text-xs capitalize text-muted-foreground">{item.kind}</span></span><Button type="button" variant="ghost" size="icon" className="size-8 shrink-0" disabled={busy || uploading} aria-label={`Remove attached ${item.filename}`} onClick={() => void removeMedia(item.media_id)}><Trash2 className="size-4" /></Button></div>)}
-      </div>
+  const visualsArtifact = visualsEnabled && thread?.active_plan_item_id && format
+    && (!thread.active_job_id || creationJobFailed(thread)) ? (
+    <ChatArtifactCard
+      title="Add visuals (optional)"
+      description="Photos, screenshots, or short supporting videos."
+      data-testid="creation-visuals-artifact"
+    >
+      <AssetPool itemId={thread.active_plan_item_id} embedded concise />
     </ChatArtifactCard>
   ) : null;
 
   const chat = (
     <section className="flex min-h-0 flex-1 flex-col" aria-label="Kria creation chat">
-      <header className="flex h-14 shrink-0 items-center justify-between border-b px-4 sm:px-6"><div className="min-w-0"><h1 className="truncate text-xl font-semibold">Create with Kria</h1><p className="truncate text-xs text-muted-foreground">{format ? `${creationFormatLabel(format)} · ${mediaCount} ${mediaCount === 1 ? "file" : "files"}` : "Start with a format, then tell me what you’re imagining"}</p></div><div className="flex items-center gap-1">{format && mediaCount > 0 && !thread?.active_job_id ? <Button type="button" variant="ghost" className="h-9 px-2 text-xs" onClick={() => setFormatPickerOpen(true)}>Change format</Button> : null}<Button type="button" variant="ghost" size="icon" className="size-11 md:hidden" aria-label="Open projects" onClick={() => setProjectsOpen(true)}><Menu /></Button></div></header>
-      <div className="min-h-0 flex-1 overflow-y-auto"><div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-6 sm:px-8">
+      <header className="flex h-14 shrink-0 items-center justify-between border-b px-4 sm:px-6"><div className="min-w-0"><h1 className="truncate text-xl font-semibold">Create with Kria</h1><p className="truncate text-xs text-muted-foreground">{format ? `${creationFormatLabel(format)} · ${clipCount} ${clipCount === 1 ? "clip" : "clips"}` : "Start with a format, then tell me what you’re imagining"}</p></div><Button type="button" variant="ghost" size="icon" className="size-11 md:hidden" aria-label="Open projects" onClick={() => setProjectsOpen(true)}><Menu /></Button></header>
+      <div ref={transcriptRef} role="log" aria-label="Conversation history" aria-live="polite" aria-relevant="additions text" tabIndex={0} className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]"><div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-6 sm:px-8">
         {!thread ? <div className="space-y-3" role="status"><div className="h-5 w-40 motion-safe:animate-pulse rounded bg-muted" /><div className="h-20 w-full motion-safe:animate-pulse rounded bg-muted" /></div> : null}
-        {messages.map((message) => <div key={message.id} className="space-y-3"><ChatBubble role={message.role}>{message.content}</ChatBubble>{message.artifact === "format" && (!format || formatPickerOpen) ? formatArtifact : null}{message.artifact === "upload" && !thread?.active_job_id ? uploadArtifact : null}{message.artifact === "voiceover" && !thread?.active_job_id ? uploadArtifact : null}{message.artifact === "confirmation" && !thread?.active_job_id ? <ChatArtifactCard badge={<Badge variant="secondary">Creative direction</Badge>} title={`${creationFormatLabel(format)} is ready to make`} description={typeof thread?.state.intent === "string" && thread.state.intent ? thread.state.intent : "I’ll find the strongest opening and shape your footage into a concise first cut."}><Button type="button" className="min-h-11 w-full" disabled={busy || mediaCount === 0} onClick={() => void confirm("generate")}><Sparkles />{busy ? "Starting…" : "Create this video"}</Button></ChatArtifactCard> : null}{message.artifact === "revision" && hasReady ? <ChatArtifactCard badge={<Badge variant="secondary">Revision ready</Badge>} title="Apply this direction?" description="This creates a new generation from the finished cut."><Button type="button" className="min-h-11 w-full" disabled={busy} onClick={() => void confirm("generate", { base_generation: thread?.job?.id })}><RefreshCw /> Create revision</Button></ChatArtifactCard> : null}</div>)}
+        {messages.map((message) => <div key={message.id} className="space-y-3"><ChatBubble role={message.role}>{message.content}</ChatBubble>{message.artifact === "format" && (!format || formatPickerOpen) ? formatArtifact : null}{message.artifact === "upload" && !thread?.active_job_id ? uploadArtifact : null}{message.artifact === "voiceover" && !thread?.active_job_id ? uploadArtifact : null}{(message.artifact === "confirmation" || (message.artifact === "revision" && !hasReady)) && canConfirmDirection ? <ChatArtifactCard badge={<Badge variant="secondary">Creative direction</Badge>} title={`${creationFormatLabel(format)} is ready to make`} description={typeof thread?.state.intent === "string" && thread.state.intent ? thread.state.intent : "I’ll find the strongest opening and shape your footage into a concise first cut."}><Button type="button" className="min-h-11 w-full" disabled={busy || clipCount === 0} onClick={() => void confirm("generate")}><Sparkles />{busy ? "Starting…" : "Create this video"}</Button></ChatArtifactCard> : null}{message.artifact === "revision" && hasReady ? <ChatArtifactCard badge={<Badge variant="secondary">Revision ready</Badge>} title="Apply this direction?" description="This creates a new generation from the finished cut."><Button type="button" className="min-h-11 w-full" disabled={busy} onClick={() => void confirm("generate", { base_generation: thread?.job?.id })}><RefreshCw /> Create revision</Button></ChatArtifactCard> : null}</div>)}
         {thread && (!format || formatPickerOpen) && !messages.some((message) => message.artifact === "format") ? formatArtifact : null}
-        {thread && format && mediaCount === 0 && !messages.some((message) => message.artifact === "upload" || message.artifact === "voiceover") ? uploadArtifact : null}
-        {thread && format === "narrated_planned" && mediaCount > 0 && !hasAudioMedia(thread) && !thread.active_job_id && !messages.some((message) => message.artifact === "upload" || message.artifact === "voiceover") ? uploadArtifact : null}
-        {attachedMediaArtifact}
+        {thread && format && !thread.active_job_id && !messages.some((message) => message.artifact === "upload" || message.artifact === "voiceover") ? uploadArtifact : null}
+        {visualsArtifact}
         {thinking ? <ChatThinking /> : null}
         {thread && thread.active_job_id && !hasReady && !creationJobFailed(thread) ? <ChatArtifactCard badge={<Badge variant="secondary">Rendering</Badge>} title="Kria is building your first cut…" description={thread.job?.current_phase ?? "Finding the story in your footage."}><div className="h-2 w-full motion-safe:animate-pulse rounded-full bg-muted" /></ChatArtifactCard> : null}
-        {thread && creationJobFailed(thread) ? <ChatArtifactCard badge={<Badge variant="destructive">Render needs attention</Badge>} title="Your project is safe" description={thread.job?.failure_reason ?? "The render did not finish, but your direction and footage are still here."}><div className="flex flex-wrap gap-2"><Button type="button" onClick={() => void confirm("retry")} disabled={busy}><RefreshCw /> Retry render</Button><Button type="button" variant="outline" onClick={() => setInput("Try a different opening and keep the pacing quick.")}>Adjust direction</Button></div></ChatArtifactCard> : null}
+        {thread && creationJobFailed(thread) && !hasPendingConfirmation ? <ChatArtifactCard badge={<Badge variant="destructive">Render needs attention</Badge>} title="Your project is safe" description={thread.job?.failure_reason ?? "The render did not finish, but your direction and footage are still here."}><div className="flex flex-wrap gap-2"><Button type="button" onClick={() => void confirm("retry")} disabled={busy}><RefreshCw /> Retry render</Button><Button type="button" variant="outline" onClick={() => setInput("Try a different opening and keep the pacing quick.")}>Adjust direction</Button></div></ChatArtifactCard> : null}
         {thread && hasReady ? <ChatArtifactCard badge={<Badge variant="secondary"><Check /> {isPartial ? "Partially ready" : "Ready"}</Badge>} title={isPartial ? "Your cut is ready; one variant needs another pass" : "Your cut is ready"} description={isPartial ? "The playable cut is available now. Retry the failed variant whenever you’re ready." : "Play it here, download it, open the editor, or keep chatting for a confirmed revision."}>{readyVariants(thread).length > 1 ? <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label="Available cuts">{readyVariants(thread).map((variant) => <Button key={variant.variant_id} type="button" variant={selectedReadyVariant?.variant_id === variant.variant_id ? "secondary" : "outline"} aria-pressed={selectedReadyVariant?.variant_id === variant.variant_id} disabled={busy} onClick={() => void selectVariant(variant.variant_id ?? "")}>{variantLabel(variant.variant_id)}</Button>)}</div> : null}<div className="flex flex-wrap gap-2">{selectedReadyVariant?.output_url ? <><Button type="button" onClick={() => window.open(selectedReadyVariant.output_url ?? "", "_blank", "noopener,noreferrer")}><Play /> Play</Button><Button type="button" variant="outline" asChild><a href={selectedReadyVariant.output_url ?? ""} download><Download /> Download</a></Button></> : null}<Button type="button" variant="outline" onClick={() => { setEditorOpen(true); setMobileTab("editor"); }} disabled={!thread.active_plan_item_id}><Pencil /> Open editor</Button>{isPartial && selectedFailedVariant?.variant_id ? <Button type="button" variant="ghost" onClick={() => void confirm("retry", { variant_id: selectedFailedVariant.variant_id })} disabled={busy}><RefreshCw /> Retry failed variant</Button> : null}</div></ChatArtifactCard> : null}
       </div></div>
-      <div className="shrink-0 border-t bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4"><form className="mx-auto flex max-w-2xl items-end gap-2 rounded-2xl border bg-background p-2 shadow-sm focus-within:ring-1 focus-within:ring-ring" onSubmit={(event) => { event.preventDefault(); void send(); }}><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Attach video, image, or audio" disabled={!thread || uploading || Boolean(thread?.active_job_id)} onClick={() => document.getElementById("creation-file-picker")?.click()}><Plus /></Button><input id="creation-file-picker" type="file" className="sr-only" accept="video/*,image/*,audio/*" multiple onChange={(event) => { void attach(event.target.files); event.target.value = ""; }} /><Textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="Tell Kria what you’re imagining…" aria-label="Message Kria" rows={1} className="max-h-32 min-h-11 resize-none border-0 bg-transparent py-3 shadow-none focus-visible:ring-0" /><Button type="submit" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Send message" disabled={!input.trim() || thinking || !thread}><ArrowUp /></Button></form>{offline ? <p className="mx-auto mt-2 flex max-w-2xl items-center gap-1 text-xs text-muted-foreground" role="status"><WifiOff className="size-3" /> Offline — messages stay in the composer until you reconnect.</p> : null}{pollReconnecting ? <p className="mx-auto mt-2 flex max-w-2xl items-center gap-1 text-xs text-muted-foreground" role="status"><RefreshCw className="size-3 motion-safe:animate-spin" /> Reconnecting to render status…</p> : null}{error ? <p className="mx-auto mt-2 max-w-2xl text-sm text-destructive" role="alert">{error}</p> : null}</div>
+      <div className="shrink-0 border-t bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4"><form className="mx-auto flex max-w-2xl items-end gap-2 rounded-2xl border bg-background p-2 shadow-sm focus-within:ring-1 focus-within:ring-ring" onSubmit={(event) => { event.preventDefault(); void send(); }}><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Attach primary video clips" disabled={!thread || uploading || Boolean(thread?.active_job_id) || clipCount >= clipLimit} onClick={() => document.getElementById("creation-file-picker")?.click()}><Plus /></Button><input id="creation-file-picker" type="file" className="sr-only" accept="video/*" multiple={format !== "subtitled"} onChange={(event) => { void attach(event.target.files); event.target.value = ""; }} /><Textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="Tell Kria what you’re imagining…" aria-label="Message Kria" rows={1} className="max-h-32 min-h-11 resize-none border-0 bg-transparent py-3 shadow-none focus-visible:ring-0" /><Button type="submit" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Send message" disabled={!input.trim() || thinking || !thread}><ArrowUp /></Button></form>{offline ? <p className="mx-auto mt-2 flex max-w-2xl items-center gap-1 text-xs text-muted-foreground" role="status"><WifiOff className="size-3" /> Offline — messages stay in the composer until you reconnect.</p> : null}{pollReconnecting ? <p className="mx-auto mt-2 flex max-w-2xl items-center gap-1 text-xs text-muted-foreground" role="status"><RefreshCw className="size-3 motion-safe:animate-spin" /> Reconnecting to render status…</p> : null}{error ? <p className="mx-auto mt-2 max-w-2xl text-sm text-destructive" role="alert">{error}</p> : null}</div>
     </section>
   );
 
@@ -534,5 +589,5 @@ export default function ChatCreationWorkspace({ onLegacyFallback }: ChatCreation
 
   if (galleryOpen) return <div className="flex h-dvh flex-col overflow-hidden bg-background"><header className="flex h-14 shrink-0 items-center justify-between border-b px-4"><h1 className="text-lg font-semibold">Gallery</h1><Button type="button" onClick={closeGallery}>Back to chat</Button></header><main className="min-h-0 flex-1 overflow-y-auto p-6"><ul className="mx-auto grid max-w-5xl grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">{galleryJobs.map((job) => <li key={job.id}><LibraryTile job={job} /></li>)}</ul>{galleryJobs.length === 0 ? <p className="mx-auto max-w-md py-16 text-center text-sm text-muted-foreground">Your finished cuts will appear here.</p> : null}</main></div>;
 
-  return <div className="relative flex h-dvh min-h-0 overflow-hidden bg-background text-foreground"><div className={cn("hidden md:block", sidebarHidden && "md:hidden")}>{sidebar}</div><Sheet open={projectsOpen} onOpenChange={setProjectsOpen}><SheetContent side="left" className="w-[260px] p-0 sm:max-w-[260px]"><SheetHeader className="sr-only"><SheetTitle>Projects</SheetTitle><SheetDescription>Move between creation projects and your gallery.</SheetDescription></SheetHeader>{sidebar}</SheetContent></Sheet><div className="flex min-w-0 flex-1 flex-col">{hasReady && editorOpen ? <div className="border-b p-2 lg:hidden"><Tabs value={mobileTab} onValueChange={(value) => setMobileTab(value as "chat" | "editor")}><TabsList className="grid h-11 w-full grid-cols-2"><TabsTrigger value="chat">Chat</TabsTrigger><TabsTrigger value="editor">Editor</TabsTrigger></TabsList></Tabs></div> : null}<div className="flex min-h-0 flex-1">{sidebarHidden ? <Button type="button" variant="ghost" size="icon" className="absolute left-2 top-2 z-10 hidden size-9 md:inline-flex" aria-label="Show project sidebar" onClick={() => setSidebarHidden(false)}><PanelLeftOpen /></Button> : null}<div className={cn("min-w-0 flex-1", hasReady && editorOpen && "lg:flex-none lg:w-[420px]", hasReady && mobileTab === "editor" && "hidden lg:block")}>{chat}</div>{hasReady && editorOpen ? <div className={cn("min-w-0 flex-1", mobileTab === "chat" ? "hidden lg:flex" : "flex")}>{editor}</div> : null}</div></div></div>;
+  return <div className="relative flex h-dvh min-h-0 overflow-hidden bg-background text-foreground"><div className={cn("hidden md:block", sidebarHidden && "md:hidden")}>{sidebar}</div><Sheet open={projectsOpen} onOpenChange={setProjectsOpen}><SheetContent side="left" className="w-[260px] p-0 sm:max-w-[260px]"><SheetHeader className="sr-only"><SheetTitle>Projects</SheetTitle><SheetDescription>Move between creation projects and your gallery.</SheetDescription></SheetHeader>{sidebar}</SheetContent></Sheet><div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{hasReady && editorOpen ? <div className="shrink-0 border-b p-2 lg:hidden"><Tabs value={mobileTab} onValueChange={(value) => setMobileTab(value as "chat" | "editor")}><TabsList className="grid h-11 w-full grid-cols-2"><TabsTrigger value="chat">Chat</TabsTrigger><TabsTrigger value="editor">Editor</TabsTrigger></TabsList></Tabs></div> : null}<div className="flex min-h-0 flex-1 overflow-hidden">{sidebarHidden ? <Button type="button" variant="ghost" size="icon" className="absolute left-2 top-2 z-10 hidden size-9 md:inline-flex" aria-label="Show project sidebar" onClick={() => setSidebarHidden(false)}><PanelLeftOpen /></Button> : null}<div className={cn("min-h-0 min-w-0 flex-1 flex-col overflow-hidden", hasReady && editorOpen && "lg:flex-none lg:w-[420px]", hasReady && mobileTab === "editor" ? "hidden lg:flex" : "flex")}>{chat}</div>{hasReady && editorOpen ? <div className={cn("min-h-0 min-w-0 flex-1 overflow-hidden", mobileTab === "chat" ? "hidden lg:flex" : "flex")}>{editor}</div> : null}</div></div></div>;
 }

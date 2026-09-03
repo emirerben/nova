@@ -520,8 +520,17 @@ def regenerate_content_plan(
 PLAN_JOBS_QUEUE = "plan-jobs"
 
 
-def _guided_render_queue(approved_proposal: dict | None) -> str:
+def _guided_render_queue(
+    approved_proposal: dict | None, creator_strategy: dict | None = None
+) -> str:
     """Route new guided timing snapshots only to current-version workers."""
+
+    if creator_strategy:
+        from app.services.edit_proposal_limits import (  # noqa: PLC0415
+            CREATOR_RENDER_CONTRACT_QUEUE,
+        )
+
+        return CREATOR_RENDER_CONTRACT_QUEUE
 
     if not isinstance(approved_proposal, dict):
         return PLAN_JOBS_QUEUE
@@ -986,6 +995,20 @@ def _dispatch_item_render(
                 for ref in approved_proposal["snapshot"]["media"]
             ],
         }
+        # Preserve only the typed contextual-label intent on the immutable
+        # guided snapshot. Label text is never copied from Creator JSON; the
+        # worker resolves it later from the approved clip metadata.
+        if creator_strategy:
+            from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+
+            try:
+                typed_creator_strategy = CreativeStrategy.model_validate(creator_strategy)
+            except Exception:  # noqa: BLE001 - the normal strategy boundary already failed closed
+                typed_creator_strategy = None
+            if typed_creator_strategy is not None and typed_creator_strategy.context_label:
+                snapshot["guided_edit"]["context_label_intent"] = (
+                    typed_creator_strategy.context_label.model_dump(mode="json")
+                )
         job.assembly_plan = snapshot
     elif creator_guided_attempt_id is not None:
         if not bypass_guided_edit_gate:
@@ -1030,7 +1053,7 @@ def _dispatch_item_render(
         enqueue_orchestrator_sync(
             orchestrate_generative_job,
             job_id,
-            queue=_guided_render_queue(approved_proposal),
+            queue=_guided_render_queue(approved_proposal, creator_strategy),
         )
     except Exception as exc:  # noqa: BLE001
         # Containment (plans/014 A1/C4): the Job row is already committed, and

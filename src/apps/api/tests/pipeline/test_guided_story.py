@@ -37,6 +37,7 @@ from app.schemas.edit_proposal import (
     MediaRef,
     MixedMediaTimingProfile,
     MontageCadenceConstraint,
+    MontageTextBinding,
     StoryBeat,
     canonical_media_digest,
 )
@@ -273,6 +274,16 @@ def test_fast_montage_compiles_exact_source_windows_and_optional_beats() -> None
     ]
     raw["approved_proposal"] = proposal.model_dump(mode="json")
     raw["media_digest"] = canonical_media_digest(proposal.media)
+    raw["media_identities"] = [
+        {
+            "lane": ref.lane,
+            "media_id": ref.media_id,
+            "gcs_path": ref.gcs_path,
+            "generation": ref.generation,
+            "kind": ref.kind,
+        }
+        for ref in proposal.media
+    ]
 
     plan = compile_execution_plan(
         raw,
@@ -419,6 +430,14 @@ def test_round_robin_cadence_survives_compile_without_beat_snapping() -> None:
 def test_mixed_media_timing_disables_legacy_beat_snap_below_photo_minimum() -> None:
     raw = _guided_snapshot(direction="fast_montage")
     proposal = EditProposalSnapshot.model_validate(raw["approved_proposal"])
+    proposal.media = [
+        ref for ref in proposal.media if ref.media_id in {"food-photo", "coast-video"}
+    ]
+    proposal.story_beats = [
+        beat
+        for beat in proposal.story_beats
+        if set(beat.media_ids) <= {"food-photo", "coast-video"}
+    ]
     proposal.duration_s = 3
     proposal.mixed_media_timing = MixedMediaTimingProfile(
         image_hold="very_fast",
@@ -446,6 +465,16 @@ def test_mixed_media_timing_disables_legacy_beat_snap_below_photo_minimum() -> N
     ]
     raw["approved_proposal"] = proposal.model_dump(mode="json")
     raw["media_digest"] = canonical_media_digest(proposal.media)
+    raw["media_identities"] = [
+        {
+            "lane": ref.lane,
+            "media_id": ref.media_id,
+            "gcs_path": ref.gcs_path,
+            "generation": ref.generation,
+            "kind": ref.kind,
+        }
+        for ref in proposal.media
+    ]
 
     plan = compile_execution_plan(
         raw,
@@ -587,6 +616,85 @@ def test_compiler_persists_editorial_text_defaults_without_strokes() -> None:
     assert all(element["stroke_width"] == 0.0 for element in thoughts)
     assert all(element["shadow_style"] == "standard" for element in thoughts)
     assert all(element["y_frac"] == 0.8 for element in thoughts)
+
+
+def test_creator_typography_is_authoritative_over_specialist_copy() -> None:
+    raw = _guided_snapshot(direction="fast_montage")
+    snapshot = EditProposalSnapshot.model_validate(raw["approved_proposal"])
+    snapshot = snapshot.model_copy(
+        update={
+            "title": "Emir Olympics",
+            "opening_title": "Emir Olympics",
+            "font_family": "Rascal",
+            "text_color": "#FFD24A",
+            "montage_text_bindings": [],
+        }
+    )
+    raw["approved_proposal"] = snapshot.model_dump(mode="json")
+
+    plan = compile_execution_plan(raw, track=None)
+
+    assert plan["typography"]["font"] == "Rascal"
+    assert plan["text_elements"][0]["text"] == "Emir Olympics"
+    assert plan["text_elements"][0]["font_family"] == "Rascal"
+    assert plan["text_elements"][0]["color"] == "#FFD24A"
+
+
+def test_creator_title_suppresses_generated_montage_bindings() -> None:
+    raw = _guided_snapshot(direction="fast_montage")
+    snapshot = EditProposalSnapshot.model_validate(raw["approved_proposal"])
+    snapshot = snapshot.model_copy(
+        update={
+            "title": "Emir Olympics",
+            "opening_title": "Emir Olympics",
+            "font_family": "Rascal",
+            "text_color": "#FFD24A",
+            "montage_text_bindings": [
+                MontageTextBinding(media_id="coast-video", text="A random generated title")
+            ],
+            "fast_cuts": [
+                FastMontageCut(
+                    cut_id="cut-1",
+                    media_id="coast-video",
+                    source_start_s=0,
+                    source_end_s=1,
+                    output_duration_s=1,
+                    role="hook",
+                ),
+                FastMontageCut(
+                    cut_id="cut-2",
+                    media_id="coast-video",
+                    source_start_s=1,
+                    source_end_s=2,
+                    output_duration_s=1,
+                    role="build",
+                ),
+                FastMontageCut(
+                    cut_id="cut-3",
+                    media_id="coast-video",
+                    source_start_s=2,
+                    source_end_s=3,
+                    output_duration_s=1,
+                    role="payoff",
+                ),
+            ],
+            "duration_s": 3,
+            "story_beats": [
+                StoryBeat(
+                    beat_id="beat-1",
+                    topic="Fast montage",
+                    thought="",
+                    media_ids=["coast-video"],
+                    duration_s=3,
+                )
+            ],
+        }
+    )
+    raw["approved_proposal"] = snapshot.model_dump(mode="json")
+
+    plan = compile_execution_plan(raw, track=None)
+
+    assert [element["text"] for element in plan["text_elements"]] == ["Emir Olympics"]
 
 
 def test_guided_story_text_defaults_reach_burn_dict_without_strokes() -> None:
@@ -842,6 +950,200 @@ def test_quick_mixed_frame_budget_keeps_near_minimum_video_at_45_frames() -> Non
     assert moments[0]["source_end_s"] == pytest.approx(1.499)
 
 
+def test_quick_mixed_frame_budget_uses_safe_video_headroom_after_photo_ceiling() -> None:
+    moments = [
+        {
+            "beat_id": "mixed",
+            "kind": "image",
+            "duration_s": 0.8,
+            "source_start_s": 0.0,
+            "source_end_s": 0.8,
+            "output_start_s": 0.0,
+            "output_end_s": 0.8,
+        },
+        {
+            "beat_id": "mixed",
+            "kind": "video",
+            "duration_s": 2.067,
+            "source_start_s": 0.0,
+            "source_end_s": 2.067,
+            "output_start_s": 0.8,
+            "output_end_s": 2.867,
+        },
+        {
+            "beat_id": "mixed",
+            "kind": "image",
+            "duration_s": 0.8,
+            "source_start_s": 0.0,
+            "source_end_s": 0.8,
+            "output_start_s": 2.867,
+            "output_end_s": 3.667,
+        },
+        {
+            "beat_id": "mixed",
+            "kind": "video",
+            "duration_s": 2.833,
+            "source_start_s": 0.0,
+            "source_end_s": 2.833,
+            "output_start_s": 3.667,
+            "output_end_s": 6.5,
+        },
+    ]
+    beat_windows = [
+        {
+            "beat_id": "mixed",
+            "approved_duration_s": 6.5,
+            "resolved_duration_s": 6.5,
+            "start_s": 0.0,
+            "end_s": 6.5,
+        }
+    ]
+
+    resolved = _quantize_quick_mixed_timeline(moments, beat_windows, target_s=6.5)
+
+    assert resolved == pytest.approx(6.5)
+    assert sum(moment["duration_s"] for moment in moments) == pytest.approx(6.5)
+    assert all(
+        moment["duration_s"] * 30 == pytest.approx(round(moment["duration_s"] * 30))
+        for moment in moments
+    )
+    # The last video safely receives the spare frame within its 1ms source
+    # tolerance instead of failing after all images are already at 0.8s.
+    assert moments[-1]["duration_s"] == pytest.approx(2.8333333)
+    assert moments[-1]["source_end_s"] == pytest.approx(2.833)
+
+
+def test_numeric_still_hold_compiles_to_three_frame_photos() -> None:
+    moments = [
+        {
+            "beat_id": "mixed",
+            "kind": "image",
+            "duration_s": 0.1,
+            "source_start_s": 0.0,
+            "source_end_s": 0.1,
+            "output_start_s": 0.0,
+            "output_end_s": 0.1,
+        },
+        {
+            "beat_id": "mixed",
+            "kind": "video",
+            "duration_s": 2.067,
+            "source_start_s": 0.0,
+            "source_end_s": 2.067,
+            "output_start_s": 0.1,
+            "output_end_s": 2.167,
+        },
+        {
+            "beat_id": "mixed",
+            "kind": "image",
+            "duration_s": 0.1,
+            "source_start_s": 0.0,
+            "source_end_s": 0.1,
+            "output_start_s": 2.167,
+            "output_end_s": 2.267,
+        },
+        {
+            "beat_id": "mixed",
+            "kind": "video",
+            "duration_s": 2.833,
+            "source_start_s": 0.0,
+            "source_end_s": 2.833,
+            "output_start_s": 2.267,
+            "output_end_s": 5.1,
+        },
+    ]
+
+    resolved = _quantize_quick_mixed_timeline(
+        moments,
+        [
+            {
+                "beat_id": "mixed",
+                "approved_duration_s": 5.1,
+                "resolved_duration_s": 5.1,
+                "start_s": 0.0,
+                "end_s": 5.1,
+            }
+        ],
+        target_s=5.1,
+        mixed_media_timing=MixedMediaTimingProfile(
+            image_hold="very_fast",
+            image_hold_s=0.1,
+            video_hold="longer",
+            boundary_style="cut",
+        ),
+    )
+
+    assert resolved == pytest.approx(5.1)
+    assert [moment["duration_s"] for moment in moments[::2]] == pytest.approx([0.1, 0.1])
+    assert all(
+        moment["duration_s"] * 30 == pytest.approx(round(moment["duration_s"] * 30))
+        for moment in moments
+    )
+
+
+def test_numeric_still_hold_is_accepted_by_full_execution_plan_compiler() -> None:
+    raw = _guided_snapshot(direction="fast_montage")
+    snapshot = EditProposalSnapshot.model_validate(raw["approved_proposal"])
+    snapshot.media = [
+        ref for ref in snapshot.media if ref.media_id in {"food-photo", "coast-video"}
+    ]
+    snapshot.story_beats = [
+        beat
+        for beat in snapshot.story_beats
+        if set(beat.media_ids) <= {"food-photo", "coast-video"}
+    ]
+    snapshot.duration_s = 3
+    snapshot.mixed_media_timing = MixedMediaTimingProfile(
+        image_hold="very_fast",
+        image_hold_s=0.1,
+        video_hold="longer",
+        boundary_style="cut",
+    )
+    snapshot.image_layout = "supporting_card"
+    snapshot.fast_cuts = [
+        FastMontageCut(
+            cut_id="photo-hook",
+            media_id="food-photo",
+            source_start_s=0.0,
+            source_end_s=0.1,
+            output_duration_s=0.1,
+            role="hook",
+        ),
+        FastMontageCut(
+            cut_id="video-payoff",
+            media_id="coast-video",
+            source_start_s=0.0,
+            source_end_s=2.9,
+            output_duration_s=2.9,
+            role="payoff",
+        ),
+    ]
+    raw["approved_proposal"] = snapshot.model_dump(mode="json")
+    raw["media_digest"] = canonical_media_digest(snapshot.media)
+    raw["media_identities"] = [
+        {
+            "lane": ref.lane,
+            "media_id": ref.media_id,
+            "gcs_path": ref.gcs_path,
+            "generation": ref.generation,
+            "kind": ref.kind,
+        }
+        for ref in snapshot.media
+    ]
+
+    plan = compile_execution_plan(raw, track=None)
+
+    photo = next(moment for moment in plan["story_timeline"] if moment["kind"] == "image")
+    assert photo["duration_s"] == pytest.approx(0.1)
+    assert photo["layout"] == "supporting_card"
+    assert all(
+        moment["layout"] == "fullscreen"
+        for moment in plan["story_timeline"]
+        if moment["kind"] == "video"
+    )
+    assert plan["resolved_duration_s"] == pytest.approx(3.0)
+
+
 def test_quick_mixed_profile_is_disabled_for_video_only_timeline() -> None:
     raw = _guided_snapshot(direction="fast_montage")
     snapshot = EditProposalSnapshot.model_validate(raw["approved_proposal"])
@@ -1065,6 +1367,56 @@ def test_runtime_compiles_approved_unused_image_and_video_sources() -> None:
     assert by_id["added-image"]["image_motion"] is None
     assert by_id["added-video"]["layout"] == "fullscreen"
     assert by_id["added-video"]["image_motion"] is None
+
+
+def test_runtime_revision_recomputes_server_context_labels_per_segment() -> None:
+    guided = _guided_snapshot(catalog_extra=True)
+    snapshot = EditProposalSnapshot.model_validate(guided["approved_proposal"])
+    sports_video = snapshot.media[0].model_copy(
+        update={"analysis": {"subject": "basketball player on court"}}
+    )
+    snapshot = snapshot.model_copy(update={"media": [sports_video, *snapshot.media[1:]]})
+    guided["approved_proposal"] = snapshot.model_dump(mode="json")
+    guided["media_digest"] = canonical_media_digest(snapshot.media)
+    guided["media_identities"] = [
+        {
+            "lane": ref.lane,
+            "media_id": ref.media_id,
+            "gcs_path": ref.gcs_path,
+            "generation": ref.generation,
+            "kind": ref.kind,
+        }
+        for ref in snapshot.media
+    ]
+    canonical = compile_execution_plan(guided, track=None)
+    canonical["context_label_intent"] = {
+        "kind": "sport",
+        "source": "clip_metadata",
+        "placement": "bottom_right",
+        "size": "small",
+        "per_clip": True,
+    }
+    revision = guided_editor_revision_from_approval(
+        proposal_version=guided["proposal_version"],
+        media_digest=guided["media_digest"],
+        snapshot=guided["approved_proposal"],
+        execution_plan=canonical,
+    )
+    revision["state_hash"] = ""
+
+    runtime = compile_guided_runtime_plan(canonical, guided, revision)
+    context = runtime["context_label_text_elements"]
+    basketball_moment = next(
+        moment for moment in runtime["story_timeline"] if moment["media_id"] == "coast-video"
+    )
+
+    assert [element["text"] for element in context] == ["Basketball"]
+    assert context[0]["start_s"] == basketball_moment["output_start_s"]
+    assert context[0]["end_s"] == basketball_moment["output_end_s"]
+    assert context[0]["x_frac"] == 0.86
+    assert context[0]["y_frac"] == 0.86
+    assert context[0]["alignment"] == "right"
+    assert [element["text"] for element in runtime["text_elements"]] != ["Basketball"]
 
 
 def test_runtime_revision_accepts_user_added_text_and_preserves_approval_provenance() -> None:

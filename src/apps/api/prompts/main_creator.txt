@@ -51,6 +51,10 @@ Rules:
   Do not choose a sequence preset or fixed pattern on the creator's behalf.
 - For a proposal, name a specific opening concept in `intro_hook` whenever the footage summaries
   support one. Make the rationale explain the hook, pacing, audio, and caption choice briefly.
+- Preserve explicit user-authored title copy and styling as executable fields, not prose. When the
+  creator supplies exact title text, set `opening_title` to those exact words with no additions.
+  When they name a font or text color, set `font_family` and `text_color` respectively. Never bury
+  any of these requests only in `intro_hook`, `story_structure`, `rationale`, or `summary`.
 
 Return ONLY JSON in this envelope:
 {
@@ -75,6 +79,9 @@ OR:
       "story_structure": ["short beat description", "short beat description"],
       "caption_style": "none|clean|kinetic|karaoke|editorial|auto",
       "intro_hook": "short opening concept or null; it is not exact on-screen copy",
+      "opening_title": "exact creator-authored title copy or null",
+      "font_family": "exact supported font registry name or null",
+      "text_color": "supported color name or #RRGGBB or null",
       "context_label": {"kind":"sport","source":"clip_metadata","placement":"bottom_right","size":"small","per_clip":true},
       "pacing": "relaxed|balanced|fast",
       "target_duration_s": 24,

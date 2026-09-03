@@ -12,7 +12,7 @@ import hashlib
 import json
 import re
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -36,36 +36,35 @@ from app.models import (
     Job,
     Persona,
     PlanItem,
+    PlanItemAsset,
 )
 from app.routes import creator_agent
+from app.routes.music_jobs import _SLOT_UPLOAD_AUDIO_CT
+from app.routes.plan_items import (
+    _ALLOWED_CONTENT_TYPES,
+    _IMAGE_CONTENT_TYPES,
+    _MAX_BYTES_PER_FILE,
+    _MAX_CLIPS_PER_ITEM,
+    _MAX_POOL_ASSETS,
+    _MAX_POOL_IMAGE_BYTES,
+    _MAX_POOL_VIDEO_BYTES,
+    _MAX_VOICEOVER_BYTES,
+    _OVERLAY_ALLOWED_CONTENT_TYPES,
+    _pool_asset_counts_toward_capacity,
+)
 from app.services.creator_sessions import reconcile_render_state
 from app.services.job_phases import mark_reattempt, stamp_variant_attempt
 from app.services.job_status import PLAN_ITEM_JOB_TERMINAL
 
-router = APIRouter()
-_MAX_MEDIA = 20
+_MAX_MEDIA = _MAX_CLIPS_PER_ITEM
 _MAX_EVENTS = 200
-_MAX_FILE_BYTES = 200 * 1024 * 1024
-_MAX_TOTAL_BYTES = 1024 * 1024 * 1024
+_MAX_FILE_BYTES = _MAX_BYTES_PER_FILE
 _MEDIA_TYPES = frozenset(
     {
-        "video/mp4",
-        "video/quicktime",
-        "video/webm",
-        "video/ogg",
-        "video/x-m4v",
-        "video/x-msvideo",
-        "image/jpeg",
-        "image/png",
-        "image/webp",
-        "image/heic",
-        "image/heif",
-        "audio/mpeg",
-        "audio/mp4",
+        *_ALLOWED_CONTENT_TYPES,
+        *_IMAGE_CONTENT_TYPES,
         "audio/x-m4a",
-        "audio/wav",
-        "audio/webm",
-        "audio/ogg",
+        *_SLOT_UPLOAD_AUDIO_CT,
     }
 )
 _MEDIA_EXTENSIONS = {
@@ -81,9 +80,13 @@ _MEDIA_EXTENSIONS = {
     "image/heic": ".heic",
     "image/heif": ".heif",
     "audio/mpeg": ".mp3",
+    "audio/mp3": ".mp3",
     "audio/mp4": ".m4a",
     "audio/x-m4a": ".m4a",
     "audio/wav": ".wav",
+    "audio/x-wav": ".wav",
+    "audio/wave": ".wav",
+    "audio/aac": ".aac",
     "audio/webm": ".webm",
     "audio/ogg": ".ogg",
 }
@@ -237,6 +240,15 @@ class AttachBody(StrictBody):
     def validate_client_event_id(cls, value: str) -> str:
         return _client_id(value)
 
+    @model_validator(mode="after")
+    def validate_media_batch(self) -> AttachBody:
+        media_ids = [item.media_id for item in self.media]
+        if len(media_ids) != len(set(media_ids)):
+            raise ValueError("media IDs must be unique")
+        if sum(item.kind == "audio" for item in self.media) > 1:
+            raise ValueError("only one voiceover can be attached")
+        return self
+
 
 class ArchiveBody(StrictBody):
     client_event_id: str = Field(min_length=1, max_length=160)
@@ -280,14 +292,36 @@ class CreationThreadOut(BaseModel):
     active_job_id: str | None = None
     creator_agent: dict[str, Any] | None = None
     job: dict[str, Any] | None = None
+    media_capabilities: dict[str, Any] | None = None
     events: list[EventOut]
     created_at: datetime
     updated_at: datetime
 
 
-def _enabled() -> None:
+def _enabled(user: CurrentUser) -> None:
     if not settings.creation_threads_enabled:
         raise HTTPException(status_code=404, detail="Creation chat unavailable")
+    cohort = {
+        entry.strip().casefold()
+        for entry in settings.creation_threads_user_allowlist.split(",")
+        if entry.strip()
+    }
+    if not cohort or "*" in cohort:
+        return
+    identifiers = {str(user.id).casefold(), user.email.strip().casefold()}
+    if cohort.isdisjoint(identifiers):
+        # Match the global capability fallback contract: callers cannot infer
+        # whether the feature exists or which accounts are in the cohort.
+        raise HTTPException(status_code=404, detail="Creation chat unavailable")
+
+
+async def _require_creation_thread_access(user: CurrentUser) -> None:
+    """Apply the rollout gate to every current and future thread endpoint."""
+
+    _enabled(user)
+
+
+router = APIRouter(dependencies=[Depends(_require_creation_thread_access)])
 
 
 def _client_id(value: str) -> str:
@@ -305,6 +339,12 @@ def _available_formats() -> dict[str, str]:
     return available
 
 
+def _format_clip_limit(edit_format: str | None) -> int:
+    """Mirror the format-specific limit enforced by the PlanItem setup UI."""
+
+    return 1 if edit_format == "subtitled" else _MAX_CLIPS_PER_ITEM
+
+
 def _safe_filename(filename: str) -> str:
     value = re.sub(r"[^A-Za-z0-9._-]+", "-", Path(filename).name).strip("-")
     return value[:180] or "upload"
@@ -312,6 +352,36 @@ def _safe_filename(filename: str) -> str:
 
 def _media_path(user_id: uuid.UUID, thread_id: uuid.UUID, media_id: str) -> str:
     return f"users/{user_id}/creation-threads/{thread_id}/{_client_id(media_id)}"
+
+
+def _media_capabilities(*, item: PlanItem, clip_count: int, visual_count: int) -> dict[str, Any]:
+    """Project the existing PlanItem upload contract for chat clients."""
+
+    return {
+        "clips": {
+            "current": clip_count,
+            "max": _format_clip_limit(item.edit_format),
+            "server_max": _MAX_CLIPS_PER_ITEM,
+            "max_file_bytes": _MAX_BYTES_PER_FILE,
+            "content_types": sorted(_ALLOWED_CONTENT_TYPES),
+            "format": item.edit_format or "montage",
+        },
+        "visuals": {
+            "current": visual_count,
+            "max": _MAX_POOL_ASSETS,
+            "max_file_bytes": {
+                "image": _MAX_POOL_IMAGE_BYTES,
+                "video": _MAX_POOL_VIDEO_BYTES,
+            },
+            "content_types": sorted(_OVERLAY_ALLOWED_CONTENT_TYPES),
+        },
+        "voiceover": {
+            "current": 1 if item.voiceover_gcs_path else 0,
+            "max": 1,
+            "max_file_bytes": _MAX_VOICEOVER_BYTES,
+            "content_types": sorted(_SLOT_UPLOAD_AUDIO_CT),
+        },
+    }
 
 
 def _reserved_media_id(client_upload_id: str, content_type: str) -> str:
@@ -448,9 +518,23 @@ async def _record_partial_variant_retry_enqueue_failure(
     """Leave a scoped retry visibly retryable when the broker is unavailable."""
 
     # The action commit happened before enqueue by design.  Reacquire the
-    # session/job in route lock order and only roll back this exact generation;
-    # a newer retry must remain authoritative if one raced the broker failure.
+    # thread first, then session/job in route lock order.  A newer retry or
+    # projection update must remain authoritative if one raced the broker
+    # failure.
     await db.rollback()
+    thread_row = (
+        await db.execute(
+            select(CreationThread)
+            .where(
+                CreationThread.id == thread.id,
+                CreationThread.creator_id == thread.creator_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if thread_row is None:
+        return
     session = await db.get(CreatorAgentSession, session_id, with_for_update=True)
     job = await db.get(Job, job_id, with_for_update=True)
     if session is not None and job is not None:
@@ -480,16 +564,26 @@ async def _record_partial_variant_retry_enqueue_failure(
                     "code": "retry_enqueue_failed",
                     "message": str(error)[:300],
                 }
-    thread.state = {
-        **(thread.state or {}),
-        "generation": {
-            "status": "failed",
-            "job_id": str(job_id),
-            "variant_id": variant_id,
-            "render_generation_id": render_gen_id,
-            "error_code": "retry_enqueue_failed",
-        },
-    }
+    current_generation = (
+        (thread_row.state or {}).get("generation") if isinstance(thread_row.state, dict) else None
+    )
+    same_generation = (
+        isinstance(current_generation, dict)
+        and thread_row.active_job_id == job_id
+        and current_generation.get("job_id") == str(job_id)
+        and current_generation.get("variant_id") == variant_id
+        and current_generation.get("render_generation_id") == render_gen_id
+        and current_generation.get("status") in {"queued", "rendering"}
+    )
+    if same_generation:
+        thread_row.state = {
+            **(thread_row.state or {}),
+            "generation": {
+                **current_generation,
+                "status": "failed",
+                "error_code": "retry_enqueue_failed",
+            },
+        }
     await db.commit()
 
 
@@ -561,14 +655,20 @@ async def _project(db: AsyncSession, user: CurrentUser) -> tuple[ContentPlan, Pl
 
 
 async def _load(
-    thread_id: str, user: CurrentUser, db: AsyncSession, *, lock: bool = False
+    thread_id: str,
+    user: CurrentUser,
+    db: AsyncSession,
+    *,
+    lock: bool = False,
+    creator_id: uuid.UUID | None = None,
 ) -> CreationThread:
     try:
         identifier = uuid.UUID(thread_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="Creation thread not found") from exc
+    owner_id = creator_id if creator_id is not None else user.id
     stmt = select(CreationThread).where(
-        CreationThread.id == identifier, CreationThread.creator_id == user.id
+        CreationThread.id == identifier, CreationThread.creator_id == owner_id
     )
     if lock:
         stmt = stmt.with_for_update().execution_options(populate_existing=True)
@@ -593,15 +693,31 @@ async def _repair_missing_thread_job_projection(
         return False
     if not thread.active_creator_agent_session_id:
         return False
-    session = await db.get(
-        CreatorAgentSession, thread.active_creator_agent_session_id, with_for_update=True
-    )
+    # Read the session target without locking it first.  Creator Agent
+    # confirmation locks the authoritative PlanItem/Job graph before the
+    # CreatorAgentSession; taking the session lock here first reverses that
+    # order and can deadlock a confirmation racing this repair.  Re-lock and
+    # revalidate the session after the authoritative rows are locked below.
+    session_id = thread.active_creator_agent_session_id
+    session = await db.get(CreatorAgentSession, session_id)
     target_job_id = getattr(session, "target_job_id", None) if session is not None else None
     if target_job_id is None:
         return False
     item = await db.get(PlanItem, thread.active_plan_item_id, with_for_update=True)
     job = await db.get(Job, target_job_id, with_for_update=True)
     plan = await db.get(ContentPlan, item.content_plan_id) if item is not None else None
+    # The target may have changed while the unlocked read above was in flight.
+    # Lock the session last and use its current target for every ownership
+    # predicate; never link the previously observed Job after a concurrent
+    # confirmation advances the session.
+    session = await db.get(
+        CreatorAgentSession,
+        session_id,
+        populate_existing=True,
+        with_for_update=True,
+    )
+    if session is None or session.target_job_id != target_job_id:
+        return False
     exact = bool(
         session is not None
         and item is not None
@@ -749,6 +865,56 @@ def _creator_agent_projection(session: CreatorAgentSession | None) -> dict[str, 
     }
 
 
+async def _load_authorized_projection_rows(
+    db: AsyncSession, thread: CreationThread
+) -> tuple[PlanItem | None, CreatorAgentSession | None, Job | None]:
+    """Load linked rows only when every ownership edge is still coherent.
+
+    The foreign keys on CreationThread protect row existence, not tenant
+    identity.  Keep the response path fail-closed so a stale or accidentally
+    cross-linked projection can never re-sign another user's render URL.
+    """
+
+    item_id = thread.active_plan_item_id
+    session_id = thread.active_creator_agent_session_id
+    job_id = thread.active_job_id
+    if item_id is None and (session_id is not None or job_id is not None):
+        raise HTTPException(status_code=404, detail="Creation thread not found")
+
+    item = await db.get(PlanItem, item_id) if item_id is not None else None
+    if item_id is not None:
+        plan = await db.get(ContentPlan, item.content_plan_id) if item is not None else None
+        if (
+            item is None
+            or plan is None
+            or plan.user_id != thread.creator_id
+            or item.content_plan_id != thread.content_plan_id
+        ):
+            raise HTTPException(status_code=404, detail="Creation thread not found")
+
+    session = await db.get(CreatorAgentSession, session_id) if session_id is not None else None
+    if session_id is not None and (
+        session is None
+        or item is None
+        or session.creator_id != thread.creator_id
+        or session.plan_item_id != item.id
+        or (session.target_job_id is not None and session.target_job_id != job_id)
+    ):
+        raise HTTPException(status_code=404, detail="Creation thread not found")
+
+    job = await db.get(Job, job_id) if job_id is not None else None
+    if job_id is not None and (
+        job is None
+        or item is None
+        or job.user_id != thread.creator_id
+        or job.content_plan_item_id != item.id
+        or item.current_job_id != job.id
+    ):
+        raise HTTPException(status_code=404, detail="Creation thread not found")
+
+    return item, session, job
+
+
 async def _sync_agent(db: AsyncSession, thread: CreationThread) -> None:
     if not thread.active_creator_agent_session_id:
         return
@@ -802,12 +968,29 @@ async def _sync_agent(db: AsyncSession, thread: CreationThread) -> None:
 
 
 async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadOut:
-    session = (
-        await db.get(CreatorAgentSession, thread.active_creator_agent_session_id)
-        if thread.active_creator_agent_session_id
-        else None
-    )
-    job = await db.get(Job, thread.active_job_id) if thread.active_job_id else None
+    item, session, job = await _load_authorized_projection_rows(db, thread)
+    media_capabilities = None
+    # Unit route tests use lightweight mocks; the real response path uses the
+    # authoritative PlanItem/PlanItemAsset rows for these counts.
+    if isinstance(db, AsyncSession) and item is not None:
+        visual_count = int(
+            (
+                await db.execute(
+                    select(func.count())
+                    .select_from(PlanItemAsset)
+                    .where(
+                        PlanItemAsset.plan_item_id == item.id,
+                        PlanItemAsset.user_id == thread.creator_id,
+                        _pool_asset_counts_toward_capacity(datetime.now(UTC)),
+                    )
+                )
+            ).scalar_one()
+        )
+        media_capabilities = _media_capabilities(
+            item=item,
+            clip_count=len(item.clip_gcs_paths or []),
+            visual_count=visual_count,
+        )
     return CreationThreadOut(
         id=str(thread.id),
         status=thread.status,
@@ -821,6 +1004,7 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
         active_job_id=str(thread.active_job_id) if thread.active_job_id else None,
         creator_agent=_creator_agent_projection(session),
         job=_job_projection(job),
+        media_capabilities=media_capabilities,
         events=[
             EventOut(
                 id=str(event.id),
@@ -850,7 +1034,22 @@ async def _agent_message(
         if thread.active_creator_agent_session_id
         else None
     )
-    if existing is None:
+    # A planning or render failure is terminal for that auditable Creator
+    # session, not for the durable chat project. Start a fresh session on the
+    # next user message so recovery does not require deleting/re-uploading the
+    # project or mutating the failed session in place.
+    exhausted = bool(
+        existing
+        and existing.status in {"awaiting_feedback", "awaiting_confirmation"}
+        and int(existing.render_attempts or 0) >= int(existing.max_render_attempts or 0)
+    )
+    if exhausted and existing is not None:
+        # The attempt cap bounds automatic work inside one confirmed turn; it
+        # must not cap the lifetime of a durable chat project. A new explicit
+        # creator message grants a fresh two-confirmation budget while keeping
+        # the accumulated typed plan and conversation in the same audit trail.
+        existing.max_render_attempts = int(existing.render_attempts or 0) + 2
+    if existing is None or existing.status in {"completed", "failed", "cancelled"}:
         result = await creator_agent.start_creator_session_controller(
             request,
             item_id,
@@ -890,12 +1089,36 @@ async def _agent_message(
 
 @router.get("/capabilities")
 async def capabilities(user: CurrentUser) -> dict[str, Any]:
-    _enabled()
-    _ = user
+    _enabled(user)
     return {
         "formats": [
-            {"id": key, "edit_format": value} for key, value in _available_formats().items()
-        ]
+            {
+                "id": key,
+                "edit_format": value,
+                "max_clips": _format_clip_limit(value),
+            }
+            for key, value in _available_formats().items()
+        ],
+        "media": {
+            "clips": {
+                "max": _MAX_CLIPS_PER_ITEM,
+                "max_file_bytes": _MAX_BYTES_PER_FILE,
+                "content_types": sorted(_ALLOWED_CONTENT_TYPES),
+            },
+            "visuals": {
+                "max": _MAX_POOL_ASSETS,
+                "max_file_bytes": {
+                    "image": _MAX_POOL_IMAGE_BYTES,
+                    "video": _MAX_POOL_VIDEO_BYTES,
+                },
+                "content_types": sorted(_OVERLAY_ALLOWED_CONTENT_TYPES),
+            },
+            "voiceover": {
+                "max": 1,
+                "max_file_bytes": _MAX_VOICEOVER_BYTES,
+                "content_types": sorted(_SLOT_UPLOAD_AUDIO_CT),
+            },
+        },
     }
 
 
@@ -907,7 +1130,7 @@ async def create_thread(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CreationThreadOut:
-    _enabled()
+    _enabled(user)
     _ = request
     # Serialize creation receipts before their lookup. Otherwise concurrent
     # retries can both observe no receipt and mint two projects.
@@ -977,7 +1200,7 @@ async def list_threads(
     include_archived: bool = Query(False),
     limit: int = Query(20, ge=1, le=50),
 ) -> list[CreationThreadOut]:
-    _enabled()
+    _enabled(user)
     stmt = select(CreationThread).where(CreationThread.creator_id == user.id)
     if not include_archived:
         stmt = stmt.where(CreationThread.status == "active")
@@ -1018,18 +1241,22 @@ async def list_threads(
 async def get_thread(
     thread_id: str, user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)]
 ) -> CreationThreadOut:
-    _enabled()
+    _enabled(user)
     thread = await _load(thread_id, user, db, lock=True)
     if await _repair_missing_thread_job_projection(db, thread, user):
         await db.commit()
         await db.refresh(thread)
-    if thread.active_creator_agent_session_id and thread.active_job_id:
+    if thread.active_creator_agent_session_id:
         session = await db.get(
             CreatorAgentSession, thread.active_creator_agent_session_id, with_for_update=True
         )
-        job = await db.get(Job, thread.active_job_id)
-        if session is not None and job is not None and job.status in PLAN_ITEM_JOB_TERMINAL:
-            await reconcile_render_state(db, session)
+        if session is not None and await reconcile_render_state(db, session):
+            # Guided planning creates and binds the exact Job asynchronously.
+            # Reconciliation can discover that Job after the initial repair
+            # pass, so project it in the same GET instead of requiring a
+            # second page reload before polling or recovery can begin.
+            if not thread.active_job_id:
+                await _repair_missing_thread_job_projection(db, thread, user)
             await _sync_agent(db, thread)
             await db.commit()
             await db.refresh(thread)
@@ -1045,7 +1272,7 @@ async def message_thread(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CreationThreadOut:
-    _enabled()
+    _enabled(user)
     thread = await _load(thread_id, user, db, lock=True)
     if thread.status != "active":
         raise HTTPException(status_code=409, detail="Creation thread is archived")
@@ -1155,8 +1382,9 @@ async def action_thread(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CreationThreadOut:
-    _enabled()
-    thread = await _load(thread_id, user, db, lock=True)
+    _enabled(user)
+    owner_id = user.id
+    thread = await _load(thread_id, user, db, lock=True, creator_id=owner_id)
     if body.action == "retry" and await _repair_missing_thread_job_projection(db, thread, user):
         # Commit the repaired projection before idempotency/retry handling so a
         # later 409 cannot roll the self-healing link back out.
@@ -1238,7 +1466,10 @@ async def action_thread(
         if item is None:
             raise HTTPException(status_code=409, detail="Creation project is missing its draft")
         paths = list(item.clip_gcs_paths or [])
-        legacy_path = _legacy_media_path(media_id, paths)
+        legacy_candidates = [*paths]
+        if item.voiceover_gcs_path:
+            legacy_candidates.append(item.voiceover_gcs_path)
+        legacy_path = _legacy_media_path(media_id, legacy_candidates)
         media_path = legacy_path or _media_path(user.id, thread.id, media_id)
         item.clip_gcs_paths = [path for path in paths if path != media_path]
         item.clip_assignments = [
@@ -1382,7 +1613,7 @@ async def action_thread(
         # The Creator Agent controller owns and commits its transaction. Lock
         # the thread again before projecting the new Job/session so this
         # request cannot overwrite state committed by a concurrent action.
-        thread = await _load(thread_id, user, db, lock=True)
+        thread = await _load(thread_id, user, db, lock=True, creator_id=owner_id)
         state = dict(thread.state or {})
         thread.active_creator_agent_session_id = uuid.UUID(result.id)
         state["generation"] = {"status": "queued", "job_id": result.current_job_id}
@@ -1436,18 +1667,52 @@ async def upload_urls(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> list[UploadTarget]:
-    _enabled()
+    _enabled(user)
     _ = request
     thread = await _load(thread_id, user, db)
     if thread.status != "active":
         raise HTTPException(status_code=409, detail="Creation thread is archived")
-    if sum(item.file_size_bytes for item in body.files) > _MAX_TOTAL_BYTES:
-        raise HTTPException(status_code=413, detail="Uploads are too large together")
+    item = (
+        await db.get(PlanItem, thread.active_plan_item_id)
+        if getattr(thread, "active_plan_item_id", None)
+        else None
+    )
+    # Keep the reservation helper usable by migration/recovery callers that
+    # only have a thread shell. Normal chat threads always have a PlanItem and
+    # therefore use the canonical PlanItem namespace below.
+    current_clips = len(item.clip_gcs_paths or []) if item is not None else 0
+    clip_limit = (
+        _format_clip_limit(getattr(item, "edit_format", None))
+        if item is not None
+        else _MAX_CLIPS_PER_ITEM
+    )
+    requested_clips = sum(1 for file in body.files if file.content_type.startswith("video/"))
+    if current_clips + requested_clips > clip_limit:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"This item is capped at {clip_limit} clips. "
+                f"You currently have {current_clips}; you can add "
+                f"{max(0, clip_limit - current_clips)} more."
+            ),
+        )
     targets = []
     for file in body.files:
         content_type = file.content_type.split(";", 1)[0].lower().strip()
         if content_type not in _MEDIA_TYPES:
             raise HTTPException(status_code=422, detail="Unsupported media type")
+        if content_type in _IMAGE_CONTENT_TYPES:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Images belong in this item's Visuals pool. Upload them from the Visuals tab."
+                ),
+            )
+        elif content_type.startswith("audio/"):
+            if file.file_size_bytes > _MAX_VOICEOVER_BYTES:
+                raise HTTPException(status_code=422, detail="Audio files must be 200 MB or smaller")
+        elif file.file_size_bytes > _MAX_BYTES_PER_FILE:
+            raise HTTPException(status_code=422, detail="Video files must be 4 GB or smaller")
         media_id = _reserved_media_id(file.client_upload_id, content_type)
         path = _media_path(user.id, thread.id, media_id)
         try:
@@ -1480,7 +1745,7 @@ async def attach_media(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CreationThreadOut:
-    _enabled()
+    _enabled(user)
     _ = request
     thread = await _load(thread_id, user, db, lock=True)
     if thread.status != "active":
@@ -1499,7 +1764,17 @@ async def attach_media(
         return await _response(db, await _load(thread_id, user, db))
     if thread.revision != body.expected_revision:
         raise HTTPException(status_code=409, detail="Creation thread changed")
+    if any(media.kind == "image" for media in body.media):
+        raise HTTPException(
+            status_code=422,
+            detail=("Images belong in this item's Visuals pool. Upload them from the Visuals tab."),
+        )
     await _reject_input_mutation_while_rendering(db, thread)
+    existing_state = dict(getattr(thread, "state", None) or {})
+    existing_media = [entry for entry in existing_state.get("media", []) if isinstance(entry, dict)]
+    existing_media_ids = {str(entry.get("media_id")) for entry in existing_media}
+    if any(media.media_id in existing_media_ids for media in body.media):
+        raise HTTPException(status_code=409, detail="That media is already attached")
     verified: list[dict[str, Any]] = []
     for media in body.media:
         try:
@@ -1517,15 +1792,11 @@ async def attach_media(
         content_type = (
             str(metadata.content_type or media.content_type or "").split(";", 1)[0].lower()
         )
-        if (
-            metadata.size <= 0
-            or metadata.size > _MAX_FILE_BYTES
-            or not (
-                (media.kind == "video" and content_type.startswith("video/"))
-                or (media.kind == "image" and content_type.startswith("image/"))
-                or (media.kind == "audio" and content_type.startswith("audio/"))
-            )
-        ):
+        kind_allowed = (media.kind == "video" and content_type in _ALLOWED_CONTENT_TYPES) or (
+            media.kind == "audio" and content_type in _SLOT_UPLOAD_AUDIO_CT
+        )
+        kind_limit = _MAX_BYTES_PER_FILE if media.kind == "video" else _MAX_VOICEOVER_BYTES
+        if metadata.size <= 0 or metadata.size > kind_limit or not kind_allowed:
             raise HTTPException(status_code=422, detail="Media kind does not match upload")
         verified.append(
             {
@@ -1542,19 +1813,22 @@ async def attach_media(
         raise HTTPException(status_code=409, detail="Creation project is missing its draft")
     # Paths live only on the authoritative PlanItem.  The thread projection
     # stores opaque IDs/kinds and a count, never external storage locations.
-    existing_state = dict(thread.state or {})
-    existing_media = [entry for entry in existing_state.get("media", []) if isinstance(entry, dict)]
     existing_paths = list(item.clip_gcs_paths or [])
-    if len(existing_media) + len(verified) > _MAX_MEDIA:
-        raise HTTPException(status_code=409, detail="This project already has 20 media files")
-    existing_total = sum(int(entry.get("size_bytes", 0) or 0) for entry in existing_media)
-    if existing_total + sum(int(source["size_bytes"]) for source in verified) > _MAX_TOTAL_BYTES:
-        raise HTTPException(status_code=413, detail="Project media is too large together")
+    requested_clips = sum(1 for source in verified if source["kind"] == "video")
+    clip_limit = _format_clip_limit(getattr(item, "edit_format", None))
+    if len(existing_paths) + requested_clips > clip_limit:
+        raise HTTPException(
+            status_code=409,
+            detail=f"This item is capped at {clip_limit} clips",
+        )
+    requested_voiceovers = sum(1 for source in verified if source["kind"] == "audio")
+    if item.voiceover_gcs_path and requested_voiceovers:
+        raise HTTPException(status_code=409, detail="This item already has a voiceover")
     assignments = [
         assignment for assignment in (item.clip_assignments or []) if isinstance(assignment, dict)
     ]
     for media, source in zip(body.media, verified, strict=True):
-        if source["kind"] in {"video", "image"}:
+        if source["kind"] == "video":
             existing_paths.append(source["_path"])
             assignments.append(
                 {
@@ -1603,7 +1877,7 @@ async def archive_thread(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CreationThreadOut:
-    _enabled()
+    _enabled(user)
     _ = request
     thread = await _load(thread_id, user, db, lock=True)
     duplicate = await _duplicate(db, thread.id, _client_id(body.client_event_id))

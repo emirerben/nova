@@ -1,10 +1,12 @@
 import {
   creationFormat,
+  creationClipLimit,
   creationJobFailed,
   creationJobPartial,
   creationJobReady,
   creationJobSettled,
   creationThreadMediaCount,
+  getCreationCapabilities,
   threadMessages,
   type CreationThread,
 } from "@/lib/creation-thread-api";
@@ -33,6 +35,47 @@ describe("creation thread projection", () => {
     expect(creationFormat("narrated_planned")).toBe("narrated_planned");
     expect(creationFormat("subtitled")).toBe("subtitled");
     expect(creationFormat("day_vlog")).toBeNull();
+  });
+
+  it("uses the server capability when it exposes the PlanItem clip limit", () => {
+    const capabilities = [
+      { id: "montage", edit_format: "montage" as const, max_clips: 37 },
+      { id: "talking-to-camera", edit_format: "subtitled" as const, limits: { max_clips: 1 } },
+    ];
+    expect(creationClipLimit(capabilities, "montage")).toBe(37);
+    expect(creationClipLimit(capabilities, "subtitled")).toBe(1);
+    expect(creationClipLimit([], "narrated_planned")).toBe(50);
+  });
+
+  it("preserves the server media policy in the capability response", async () => {
+    const previousFetch = global.fetch;
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        formats: [{ id: "montage", edit_format: "montage", max_clips: 50 }],
+        media: {
+          clips: {
+            max: 50,
+            max_file_bytes: 4096,
+            content_types: ["video/mp4"],
+          },
+        },
+      }),
+    } as Response);
+    try {
+      await expect(getCreationCapabilities()).resolves.toEqual({
+        formats: [{ id: "montage", edit_format: "montage", max_clips: 50 }],
+        media: {
+          clips: {
+            max: 50,
+            max_file_bytes: 4096,
+            content_types: ["video/mp4"],
+          },
+        },
+      });
+    } finally {
+      global.fetch = previousFetch;
+    }
   });
 
   it("hydrates media count from durable state", () => {
@@ -94,6 +137,33 @@ describe("creation thread projection", () => {
     } }))[0]?.artifact).toBe("revision");
   });
 
+  it("keeps only the latest retry strategy actionable", () => {
+    const events = [
+      { id: "initial", sequence: 0, revision: 1, role: "assistant" as const,
+        event_type: "agent_assistant_strategy", content: "First direction", payload: null,
+        created_at: "2026-01-01T00:00:00Z" },
+      { id: "generate", sequence: 1, revision: 2, role: "system" as const,
+        event_type: "action_generate", content: null, payload: { action: "generate" },
+        created_at: "2026-01-01T00:00:01Z" },
+      { id: "retry-one-strategy", sequence: 2, revision: 3, role: "assistant" as const,
+        event_type: "agent_assistant_strategy", content: "Try the first retry direction", payload: null,
+        created_at: "2026-01-01T00:00:02Z" },
+      { id: "failed", sequence: 3, revision: 4, role: "system" as const,
+        event_type: "generation_failed", content: "That render failed", payload: null,
+        created_at: "2026-01-01T00:00:03Z" },
+      { id: "retry", sequence: 4, revision: 5, role: "system" as const,
+        event_type: "action_retry", content: null, payload: { action: "retry" },
+        created_at: "2026-01-01T00:00:04Z" },
+      { id: "retry-two-strategy", sequence: 5, revision: 6, role: "assistant" as const,
+        event_type: "agent_assistant_strategy", content: "Try the latest retry direction", payload: null,
+        created_at: "2026-01-01T00:00:05Z" },
+    ];
+    const projected = threadMessages(thread({ events }));
+    expect(projected.find((item) => item.id === "initial")?.artifact).toBeUndefined();
+    expect(projected.find((item) => item.id === "retry-one-strategy")?.artifact).toBeUndefined();
+    expect(projected.find((item) => item.id === "retry-two-strategy")?.artifact).toBe("revision");
+  });
+
   it("recognizes a revision in a recovered Creator Agent event sequence", () => {
     const events = [
       { id: "initial-strategy", sequence: 0, revision: 1, role: "assistant" as const,
@@ -116,7 +186,7 @@ describe("creation thread projection", () => {
         created_at: "2026-01-01T00:00:05Z" },
     ];
     const projected = threadMessages(thread({ events }));
-    expect(projected.find((item) => item.id === "initial-strategy")?.artifact).toBe("confirmation");
+    expect(projected.find((item) => item.id === "initial-strategy")?.artifact).toBeUndefined();
     expect(projected.find((item) => item.id === "revision-strategy")?.artifact).toBe("revision");
   });
 });

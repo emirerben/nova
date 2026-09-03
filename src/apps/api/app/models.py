@@ -850,6 +850,13 @@ class CreationThreadEvent(Base):
             "thread_id", "client_event_id", name="uq_creation_thread_events_client_id"
         ),
         Index("idx_creation_thread_events_thread_created", "thread_id", "created_at"),
+        Index(
+            "idx_creation_thread_events_client_created",
+            "client_event_id",
+            "event_type",
+            "created_at",
+            postgresql_where=text("client_event_id IS NOT NULL"),
+        ),
     )
 
 

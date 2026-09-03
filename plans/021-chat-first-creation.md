@@ -76,7 +76,8 @@ prepare action. In-flight output is never silently mutated.
   confirmation, exact-generation revision preparation, retry, archive, and
   variant selection.
 - Two-phase upload endpoints reserve signed owned targets and attach validated
-  video, image, or voiceover media to the PlanItem.
+  primary video or voiceover media to the PlanItem; supporting images/videos use
+  the existing PlanItem Visuals pool.
 - Server capabilities expose exactly Montage (`montage`, Classic default),
   Narrated (`narrated_planned`), and Talking to camera (`subtitled`).
 - `CREATION_THREADS_ENABLED` defaults on. A disabled route returns 404.
@@ -91,8 +92,9 @@ prepare action. In-flight output is never silently mutated.
   and editor panes scroll.
 - Mobile at 390x844 uses a compact project header, Projects sheet, Gallery,
   bottom-safe composer, horizontal format cards, and Chat/Editor tabs once ready.
-- Both attachment affordances accept video, image, and audio. Narrated reuses the
-  voice recorder. Counts and status hydrate from server state after refresh.
+- Primary attachment affordances accept video, the separate Visuals pool accepts
+  supporting images/videos, and Narrated reuses the voice recorder. Counts and
+  status hydrate from server state after refresh.
 - The global Header is hidden only for canonical chat-first `/plan`.
 - Embedded editor messages validate same-origin and the iframe window. Embedded
   mode forces the full overlay editor; direct editor breakpoints do not change.

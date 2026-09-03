@@ -131,6 +131,12 @@ def upgrade() -> None:
         "creation_thread_events",
         ["thread_id", "created_at"],
     )
+    op.create_index(
+        "idx_creation_thread_events_client_created",
+        "creation_thread_events",
+        ["client_event_id", "event_type", "created_at"],
+        postgresql_where=sa.text("client_event_id IS NOT NULL"),
+    )
 
     # Make the transcript append-only at the database boundary.  Application
     # code cannot accidentally rewrite history during reconciliation or retry.
@@ -156,10 +162,20 @@ def upgrade() -> None:
         "DROP TRIGGER IF EXISTS creation_thread_events_append_only ON creation_thread_events"
     )
     op.execute(
+        "DROP TRIGGER IF EXISTS creation_thread_events_no_truncate ON creation_thread_events"
+    )
+    op.execute(
         """
         CREATE TRIGGER creation_thread_events_append_only
         BEFORE UPDATE OR DELETE ON creation_thread_events
         FOR EACH ROW EXECUTE FUNCTION creation_thread_events_append_only_guard_0092()
+        """
+    )
+    op.execute(
+        """
+        CREATE TRIGGER creation_thread_events_no_truncate
+        BEFORE TRUNCATE ON creation_thread_events
+        FOR EACH STATEMENT EXECUTE FUNCTION creation_thread_events_append_only_guard_0092()
         """
     )
 
@@ -187,8 +203,19 @@ def upgrade() -> None:
                         COALESCE(pi.clip_gcs_paths, '[]'::jsonb)
                     ) AS paths(path)),
                     '[]'::jsonb
-                ),
-                'media_count', jsonb_array_length(COALESCE(pi.clip_gcs_paths, '[]'::jsonb))
+                ) || CASE
+                    WHEN pi.voiceover_gcs_path IS NOT NULL THEN jsonb_build_array(
+                        jsonb_build_object(
+                            'media_id', 'legacy-' || md5(pi.voiceover_gcs_path),
+                            'kind', 'audio',
+                            'filename', 'Voiceover'
+                        )
+                    )
+                    ELSE '[]'::jsonb
+                END,
+                'media_count',
+                    jsonb_array_length(COALESCE(pi.clip_gcs_paths, '[]'::jsonb))
+                    + CASE WHEN pi.voiceover_gcs_path IS NOT NULL THEN 1 ELSE 0 END
             ),
             cp.id,
             pi.id,
@@ -206,11 +233,27 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Serialize the emptiness check with every possible writer. PostgreSQL
+    # holds these locks until Alembic's migration transaction commits, so no
+    # creation request can land between the check and the destructive DDL.
+    op.execute("LOCK TABLE creation_threads, creation_thread_events IN ACCESS EXCLUSIVE MODE")
+    event_count = op.get_bind().scalar(sa.text("SELECT count(*) FROM creation_thread_events"))
+    thread_count = op.get_bind().scalar(sa.text("SELECT count(*) FROM creation_threads"))
+    if event_count or thread_count:
+        raise RuntimeError(
+            "Refusing to downgrade 0092 while creation thread data exists; "
+            "archive/export the data and empty both tables explicitly first."
+        )
+
+    op.execute(
+        "DROP TRIGGER IF EXISTS creation_thread_events_no_truncate ON creation_thread_events"
+    )
     op.execute(
         "DROP TRIGGER IF EXISTS creation_thread_events_append_only ON creation_thread_events"
     )
     op.execute("DROP FUNCTION IF EXISTS creation_thread_events_append_only_guard_0092()")
     op.drop_index("idx_creation_thread_events_thread_created", table_name="creation_thread_events")
+    op.drop_index("idx_creation_thread_events_client_created", table_name="creation_thread_events")
     op.drop_table("creation_thread_events")
     op.drop_index("idx_creation_threads_active_session", table_name="creation_threads")
     op.drop_index("idx_creation_threads_active_job", table_name="creation_threads")

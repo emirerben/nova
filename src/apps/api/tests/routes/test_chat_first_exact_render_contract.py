@@ -130,6 +130,105 @@ def test_production_repro_exact_copy_overrides_model_authored_style() -> None:
     assert parsed.text_color == "#FFD24A"
 
 
+def test_quote_before_title_noun_is_promoted_to_exact_copy() -> None:
+    """The later photo-heavy repro says ``'copy' title``, not ``title 'copy'``."""
+
+    from app.routes.creator_agent import _apply_explicit_render_intent
+
+    parsed = _apply_explicit_render_intent(
+        CreativeStrategy(opening_title="Invented words"),
+        (
+            "Amongst the videos, add groups of photos that transition quickly. "
+            "In the intro, add 'Emir Olympics' title. Group content by sport."
+        ),
+    )
+
+    assert parsed.opening_title == "Emir Olympics"
+
+
+def test_subsecond_photo_groups_promote_existing_mixed_media_contract() -> None:
+    """A numeric fast-photo request must include pool images in the guided edit."""
+
+    from app.routes.creator_agent import _apply_explicit_render_intent
+
+    parsed = _apply_explicit_render_intent(
+        CreativeStrategy(),
+        (
+            "Amongst the videos, add groups of photos that transition in 0.1 seconds. "
+            "The photo sections should feel like a video due to this fast change."
+        ),
+    )
+
+    assert parsed.direction == "fast_montage"
+    assert parsed.mixed_media_timing is not None
+    assert parsed.mixed_media_timing.model_dump(mode="json") == {
+        "image_hold": "very_fast",
+        "image_hold_s": 0.1,
+        "video_hold": "longer",
+        "boundary_style": "cut",
+        "image_grouping": "runs",
+    }
+
+
+def test_latest_chat_corrections_become_executable_timing_and_photo_layout() -> None:
+    """The production follow-up must not survive only in assistant prose."""
+
+    from app.routes.creator_agent import _apply_explicit_render_intent
+
+    parsed = _apply_explicit_render_intent(
+        CreativeStrategy(),
+        (
+            "Use photos at 0.1 seconds and let the videos hold longer. "
+            "Make the images stay 0.2 seconds instead of 0.1. "
+            "Add text to indicate the sport. Don't make the images fill the screen as well."
+        ),
+    )
+
+    assert parsed.mixed_media_timing is not None
+    assert parsed.mixed_media_timing.image_hold_s == pytest.approx(0.2)
+    assert parsed.image_layout == "supporting_card"
+    assert parsed.context_label is not None
+
+
+def test_subsecond_photo_groups_compile_every_pool_image_into_guided_edit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The exact repro must not leave images in an advisory-only visual pool."""
+
+    from app.routes.creator_agent import _apply_explicit_render_intent
+    from app.services import creator_capabilities as capabilities
+
+    monkeypatch.setattr(capabilities.settings, "guided_edit_capability_enabled", True)
+    for setting_name in capabilities._FEATURE_SETTINGS.values():
+        monkeypatch.setattr(capabilities.settings, setting_name, True, raising=False)
+    manifest = resolve_creator_manifest(
+        item_id="item-photo-repro",
+        edit_format="montage",
+        media=[
+            {"media_id": "clip-1", "kind": "video"},
+            {"media_id": "asset-photo-1", "kind": "image"},
+            {"media_id": "asset-photo-2", "kind": "image"},
+        ],
+    )
+    strategy = _apply_explicit_render_intent(
+        CreativeStrategy(
+            edit_format="montage",
+            render_program="native",
+            selected_media_ids=["clip-1"],
+        ),
+        (
+            "Amongst the videos, add groups of photos that transition in 0.1 seconds. "
+            "In the intro, add 'Emir Olympics' title."
+        ),
+    )
+
+    plan = compile_strategy_to_plan(manifest, strategy)
+
+    assert plan.strategy.render_program == "guided"
+    assert plan.strategy.selected_media_ids == ["clip-1", "asset-photo-1", "asset-photo-2"]
+    assert "draft_guided_proposal" in [command.command for command in plan.commands]
+
+
 def test_model_cannot_invent_exact_render_fields_without_creator_wording() -> None:
     from app.routes.creator_agent import _apply_explicit_render_intent
 

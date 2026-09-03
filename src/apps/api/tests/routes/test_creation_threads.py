@@ -7,10 +7,14 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from app.agents._schemas.persona import Persona as PersonaSchema
+from app.auth import get_current_user
 from app.config import settings
+from app.database import get_db
+from app.main import app
 from app.models import Persona as PersonaRow
 from app.routes.creation_threads import (
     ArchiveBody,
@@ -22,13 +26,17 @@ from app.routes.creation_threads import (
     _available_formats,
     _client_id,
     _creator_agent_projection,
+    _enabled,
+    _format_clip_limit,
     _load,
     _media_path,
     _project,
+    _record_partial_variant_retry_enqueue_failure,
     _response,
     action_thread,
     archive_thread,
     attach_media,
+    capabilities,
     get_thread,
     list_threads,
     message_thread,
@@ -117,6 +125,12 @@ def test_unavailable_format_is_removed_from_capability_manifest(
     assert _available_formats() == {"montage": "montage"}
 
 
+def test_chat_format_clip_limits_match_plan_item_setup() -> None:
+    assert _format_clip_limit("montage") == 50
+    assert _format_clip_limit("narrated_planned") == 50
+    assert _format_clip_limit("subtitled") == 1
+
+
 @pytest.mark.parametrize("value", ["", "../escape", "foo/bar", "foo\\bar"])
 def test_media_and_event_ids_are_opaque(value: str) -> None:
     with pytest.raises(ValueError):
@@ -147,8 +161,120 @@ def test_client_event_ids_are_canonicalized_and_action_payloads_are_bounded() ->
         )
 
 
+def test_attach_batch_rejects_duplicate_media_and_multiple_voiceovers() -> None:
+    with pytest.raises(ValueError, match="media IDs must be unique"):
+        AttachBody(
+            media=[
+                MediaInput(media_id="clip-1.mp4", kind="video"),
+                MediaInput(media_id="clip-1.mp4", kind="video"),
+            ],
+            client_event_id="attach-duplicates",
+            expected_revision=0,
+        )
+    with pytest.raises(ValueError, match="only one voiceover"):
+        AttachBody(
+            media=[
+                MediaInput(media_id="voice-1.m4a", kind="audio"),
+                MediaInput(media_id="voice-2.m4a", kind="audio"),
+            ],
+            client_event_id="attach-voices",
+            expected_revision=0,
+        )
+
+
 def test_chat_first_backend_and_creator_defaults_are_on() -> None:
     assert settings.creation_threads_enabled is True
+
+
+def test_chat_first_account_allowlist_matches_exact_email_or_user_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), email="Creator@Example.com")
+    monkeypatch.setattr(settings, "creation_threads_enabled", True)
+
+    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "creator@example.com")
+    _enabled(user)
+
+    monkeypatch.setattr(settings, "creation_threads_user_allowlist", str(user.id))
+    _enabled(user)
+
+    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "other@example.com")
+    with pytest.raises(HTTPException) as exc:
+        _enabled(user)
+    assert exc.value.status_code == 404
+
+
+def test_chat_first_account_allowlist_never_uses_partial_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), email="creator@example.com")
+    monkeypatch.setattr(settings, "creation_threads_enabled", True)
+    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "creator@example.com.evil")
+
+    with pytest.raises(HTTPException) as exc:
+        _enabled(user)
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.parametrize("cohort", ["", "  ", "*"])
+def test_chat_first_empty_or_wildcard_allowlist_preserves_global_rollout(
+    monkeypatch: pytest.MonkeyPatch, cohort: str
+) -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), email="creator@example.com")
+    monkeypatch.setattr(settings, "creation_threads_enabled", True)
+    monkeypatch.setattr(settings, "creation_threads_user_allowlist", cohort)
+    _enabled(user)
+
+
+def test_chat_first_global_kill_switch_wins_over_account_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), email="creator@example.com")
+    monkeypatch.setattr(settings, "creation_threads_enabled", False)
+    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "*")
+
+    with pytest.raises(HTTPException) as exc:
+        _enabled(user)
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_capabilities_returns_fallback_404_outside_account_cohort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), email="not-launched@example.com")
+    monkeypatch.setattr(settings, "creation_threads_enabled", True)
+    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "launched@example.com")
+
+    with pytest.raises(HTTPException) as exc:
+        await capabilities(user)
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "Creation chat unavailable"
+
+
+def test_account_rollout_gate_runs_before_creation_route_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), email="not-launched@example.com")
+
+    async def current_user_override() -> object:
+        return user
+
+    async def forbidden_db_override():
+        raise AssertionError("a denied account must not open a route database dependency")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(settings, "creation_threads_enabled", True)
+    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "launched@example.com")
+    app.dependency_overrides[get_current_user] = current_user_override
+    app.dependency_overrides[get_db] = forbidden_db_override
+    try:
+        client = TestClient(app, raise_server_exceptions=False)
+        assert client.get("/creation-threads/capabilities").status_code == 404
+        assert client.post("/creation-threads", json={}).status_code == 404
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(get_db, None)
 
 
 def test_creator_agent_projection_omits_executable_commands() -> None:
@@ -194,6 +320,28 @@ async def test_load_is_tenant_scoped_and_hides_other_owner() -> None:
     with pytest.raises(Exception) as exc:
         await _load(str(thread.id), user, db)
     assert getattr(exc.value, "status_code", None) == 404
+
+
+@pytest.mark.asyncio
+async def test_load_can_use_preserved_owner_id_after_user_orm_expiry() -> None:
+    owner_id = uuid.uuid4()
+    thread = SimpleNamespace(id=uuid.uuid4(), creator_id=owner_id)
+    db = _db_for_scalar(thread)
+
+    class _ExpiredUser:
+        @property
+        def id(self):
+            raise AssertionError("expired ORM user must not be lazy-loaded")
+
+    loaded = await _load(
+        str(thread.id),
+        _ExpiredUser(),
+        db,
+        lock=True,
+        creator_id=owner_id,
+    )
+
+    assert loaded is thread
 
 
 @pytest.mark.asyncio
@@ -322,6 +470,98 @@ async def test_creator_turn_409_rolls_back_thread_message_for_idempotent_retry(
 
 
 @pytest.mark.asyncio
+async def test_message_after_terminal_creator_failure_starts_fresh_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.routes.creation_threads as routes
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    failed_session_id = uuid.uuid4()
+    new_session_id = uuid.uuid4()
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        active_plan_item_id=uuid.uuid4(),
+        active_creator_agent_session_id=failed_session_id,
+    )
+    failed_session = SimpleNamespace(id=failed_session_id, status="failed", revision=6)
+    refreshed_result = Mock()
+    refreshed_result.scalar_one.return_value = thread
+    db = Mock()
+    db.get = AsyncMock(return_value=failed_session)
+    db.execute = AsyncMock(return_value=refreshed_result)
+    start = AsyncMock(return_value=SimpleNamespace(id=str(new_session_id)))
+    turn = AsyncMock()
+    sync_agent = AsyncMock()
+    monkeypatch.setattr(routes.creator_agent, "start_creator_session_controller", start)
+    monkeypatch.setattr(routes.creator_agent, "creator_session_turn_controller", turn)
+    monkeypatch.setattr(routes, "_sync_agent", sync_agent)
+    body = MessageBody(
+        message="Try the corrected photo sequence",
+        client_event_id="recovery-message",
+        expected_revision=10,
+    )
+
+    result = await routes._agent_message(_request(), thread, body, user, db)
+
+    assert result is thread
+    assert thread.active_creator_agent_session_id == new_session_id
+    start.assert_awaited_once()
+    turn.assert_not_awaited()
+    sync_agent.assert_awaited_once_with(db, thread)
+
+
+@pytest.mark.asyncio
+async def test_message_after_render_budget_exhaustion_replenishes_current_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.routes.creation_threads as routes
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    exhausted_session_id = uuid.uuid4()
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        active_plan_item_id=uuid.uuid4(),
+        active_creator_agent_session_id=exhausted_session_id,
+    )
+    exhausted_session = SimpleNamespace(
+        id=exhausted_session_id,
+        status="awaiting_feedback",
+        revision=14,
+        render_attempts=2,
+        max_render_attempts=2,
+    )
+    refreshed_result = Mock()
+    refreshed_result.scalar_one.return_value = thread
+    db = Mock()
+    db.get = AsyncMock(return_value=exhausted_session)
+    db.execute = AsyncMock(return_value=refreshed_result)
+    start = AsyncMock()
+    turn = AsyncMock(return_value=SimpleNamespace(id=str(exhausted_session_id)))
+    sync_agent = AsyncMock()
+    monkeypatch.setattr(routes.creator_agent, "start_creator_session_controller", start)
+    monkeypatch.setattr(routes.creator_agent, "creator_session_turn_controller", turn)
+    monkeypatch.setattr(routes, "_sync_agent", sync_agent)
+    body = MessageBody(
+        message="Use every source once and crop photos like videos",
+        client_event_id="fresh-budget-message",
+        expected_revision=10,
+    )
+
+    result = await routes._agent_message(_request(), thread, body, user, db)
+
+    assert result is thread
+    assert thread.active_creator_agent_session_id == exhausted_session_id
+    assert exhausted_session.status == "awaiting_feedback"
+    assert exhausted_session.revision == 14
+    assert exhausted_session.max_render_attempts == 4
+    start.assert_not_awaited()
+    turn.assert_awaited_once()
+    sync_agent.assert_awaited_once_with(db, thread)
+
+
+@pytest.mark.asyncio
 async def test_source_mutation_uses_authoritative_plan_item_job(monkeypatch) -> None:
     user = SimpleNamespace(id=uuid.uuid4())
     item_id, job_id = uuid.uuid4(), uuid.uuid4()
@@ -436,7 +676,6 @@ async def test_upload_reservation_is_signed_for_opaque_media_id(
 @pytest.mark.parametrize(
     ("filename", "content_type", "expected_suffix"),
     [
-        ("photo.HEIC", "image/heic", ".heic"),
         ("voice.m4a", "audio/x-m4a", ".m4a"),
         ("clip.MOV", "video/quicktime", ".mov"),
     ],
@@ -473,6 +712,44 @@ async def test_upload_reservation_preserves_canonical_render_suffix(
     )
     assert result[0].media_id.endswith(expected_suffix)
     assert result[0].gcs_path.endswith(expected_suffix)
+
+
+@pytest.mark.asyncio
+async def test_subtitled_upload_reservation_enforces_one_clip_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        status="active",
+        active_plan_item_id=uuid.uuid4(),
+    )
+    item = SimpleNamespace(edit_format="subtitled", clip_gcs_paths=["users/u/existing.mp4"])
+    import app.routes.creation_threads as routes
+
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    db = Mock()
+    db.get = AsyncMock(return_value=item)
+
+    with pytest.raises(HTTPException, match="capped at 1 clips") as exc:
+        await upload_urls(
+            _request(),
+            str(thread.id),
+            UploadBody(
+                files=[
+                    UploadFile(
+                        filename="clip-2.mp4",
+                        content_type="video/mp4",
+                        file_size_bytes=10,
+                        client_upload_id="clip-2",
+                    )
+                ]
+            ),
+            user,
+            db,
+        )
+    assert exc.value.status_code == 400
 
 
 @pytest.mark.asyncio
@@ -536,10 +813,7 @@ async def test_attach_persists_stable_mixed_media_manifest(
     db.get = AsyncMock(return_value=item)
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
-    media = [
-        MediaInput(media_id="clip-1.mp4", kind="video", filename="clip.mp4"),
-        MediaInput(media_id="still-1.jpg", kind="image", filename="still.jpg"),
-    ]
+    media = [MediaInput(media_id="clip-1.mp4", kind="video", filename="clip.mp4")]
     await attach_media(
         _request(),
         str(thread.id),
@@ -549,8 +823,182 @@ async def test_attach_persists_stable_mixed_media_manifest(
     )
     assert [(entry["media_id"], entry["kind"]) for entry in item.clip_assignments] == [
         ("clip-1.mp4", "video"),
-        ("still-1.jpg", "image"),
     ]
+    assert item.clip_gcs_paths == [_media_path(user.id, thread.id, "clip-1.mp4")]
+
+
+@pytest.mark.asyncio
+async def test_attach_persists_one_valid_voiceover(monkeypatch: pytest.MonkeyPatch) -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        status="active",
+        revision=0,
+        active_plan_item_id=uuid.uuid4(),
+        state={"media": [], "media_count": 0},
+    )
+    item = SimpleNamespace(
+        edit_format="narrated_planned",
+        current_job_id=None,
+        clip_gcs_paths=[],
+        clip_assignments=[],
+        voiceover_gcs_path=None,
+        audio_mode="kria",
+    )
+    import app.routes.creation_threads as routes
+
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
+    monkeypatch.setattr(routes, "_append", AsyncMock())
+    monkeypatch.setattr(routes, "_response", AsyncMock(return_value=thread))
+    monkeypatch.setattr(
+        routes.storage,
+        "object_metadata",
+        lambda path: SimpleNamespace(size=100, content_type="audio/webm"),
+    )
+    db = Mock()
+    db.get = AsyncMock(return_value=item)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+
+    await attach_media(
+        _request(),
+        str(thread.id),
+        AttachBody(
+            media=[MediaInput(media_id="voice-1.webm", kind="audio", filename="voice.webm")],
+            client_event_id="attach-voice",
+            expected_revision=0,
+        ),
+        user,
+        db,
+    )
+
+    assert item.voiceover_gcs_path == _media_path(user.id, thread.id, "voice-1.webm")
+    assert item.audio_mode == "voiceover"
+
+
+@pytest.mark.asyncio
+async def test_attach_rejects_media_already_present_in_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        status="active",
+        revision=0,
+        active_plan_item_id=uuid.uuid4(),
+        state={"media": [{"media_id": "clip-1.mp4", "kind": "video"}], "media_count": 1},
+    )
+    item = SimpleNamespace(current_job_id=None)
+    import app.routes.creation_threads as routes
+
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
+    metadata = Mock()
+    monkeypatch.setattr(routes.storage, "object_metadata", metadata)
+    db = Mock()
+    db.get = AsyncMock(return_value=item)
+
+    with pytest.raises(HTTPException, match="already attached") as exc:
+        await attach_media(
+            _request(),
+            str(thread.id),
+            AttachBody(
+                media=[MediaInput(media_id="clip-1.mp4", kind="video")],
+                client_event_id="attach-again",
+                expected_revision=0,
+            ),
+            user,
+            db,
+        )
+    assert exc.value.status_code == 409
+    metadata.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_subtitled_attachment_enforces_one_clip_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        status="active",
+        revision=0,
+        active_plan_item_id=uuid.uuid4(),
+        state={"media": [{"media_id": "clip-1.mp4", "kind": "video"}], "media_count": 1},
+    )
+    item = SimpleNamespace(
+        edit_format="subtitled",
+        current_job_id=None,
+        clip_gcs_paths=["users/u/clip-1.mp4"],
+        clip_assignments=[],
+        voiceover_gcs_path=None,
+    )
+    import app.routes.creation_threads as routes
+
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        routes.storage,
+        "object_metadata",
+        lambda path: SimpleNamespace(size=100, content_type="video/mp4"),
+    )
+    db = Mock()
+    db.get = AsyncMock(return_value=item)
+
+    with pytest.raises(HTTPException, match="capped at 1 clips") as exc:
+        await attach_media(
+            _request(),
+            str(thread.id),
+            AttachBody(
+                media=[MediaInput(media_id="clip-2.mp4", kind="video")],
+                client_event_id="attach-second-subtitled",
+                expected_revision=0,
+            ),
+            user,
+            db,
+        )
+    assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_attach_rejects_images_from_primary_creation_media() -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        status="active",
+        revision=0,
+        active_job_id=None,
+        active_plan_item_id=uuid.uuid4(),
+        state={"media": [], "media_count": 0},
+    )
+    import app.routes.creation_threads as routes
+
+    original_load = routes._load
+    original_duplicate = routes._duplicate
+    routes._load = AsyncMock(return_value=thread)
+    routes._duplicate = AsyncMock(return_value=None)
+    try:
+        with pytest.raises(HTTPException, match="Visuals pool"):
+            await routes.attach_media(
+                _request(),
+                str(thread.id),
+                AttachBody(
+                    media=[MediaInput(media_id="still-1.jpg", kind="image", filename="still.jpg")],
+                    client_event_id="attach-image",
+                    expected_revision=0,
+                ),
+                user,
+                Mock(),
+            )
+    finally:
+        # Keep this isolated test from mutating the imported route globally.
+        routes._load = original_load
+        routes._duplicate = original_duplicate
 
 
 @pytest.mark.asyncio
@@ -578,6 +1026,119 @@ async def test_detail_poll_is_read_only_and_revision_stable() -> None:
     assert first.revision == second.revision == 4
     assert first.events == second.events == []
     db.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_retry_enqueue_failure_preserves_newer_thread_projection() -> None:
+    user_id = uuid.uuid4()
+    thread_id, job_id, session_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    render_generation_id = "generation-old"
+    stale_thread = SimpleNamespace(
+        id=thread_id,
+        creator_id=user_id,
+        active_job_id=job_id,
+        state={
+            "generation": {
+                "status": "rendering",
+                "job_id": str(job_id),
+                "variant_id": "song_text",
+                "render_generation_id": render_generation_id,
+            }
+        },
+    )
+    newer_state = {
+        "selected_variant_id": "original_text",
+        "generation": {
+            "status": "rendering",
+            "job_id": str(job_id),
+            "variant_id": "song_text",
+            "render_generation_id": "generation-new",
+        },
+    }
+    live_thread = SimpleNamespace(
+        id=thread_id,
+        creator_id=user_id,
+        active_job_id=job_id,
+        state=newer_state,
+    )
+    query_result = Mock()
+    query_result.scalar_one_or_none.return_value = live_thread
+    session = SimpleNamespace(
+        target_job_id=job_id,
+        target_variant_id="song_text",
+        target_generation_id="generation-new",
+        status="rendering",
+    )
+    job = SimpleNamespace(
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "song_text",
+                    "render_generation_id": "generation-new",
+                    "render_status": "rendering",
+                }
+            ]
+        }
+    )
+    db = Mock()
+    db.execute = AsyncMock(return_value=query_result)
+    db.get = AsyncMock(side_effect=[session, job])
+    db.rollback = AsyncMock()
+    db.commit = AsyncMock()
+
+    await _record_partial_variant_retry_enqueue_failure(
+        db,
+        stale_thread,
+        session_id,
+        job_id,
+        "song_text",
+        render_generation_id,
+        RuntimeError("broker unavailable"),
+    )
+
+    assert live_thread.state == newer_state
+    assert job.assembly_plan["variants"][0]["render_status"] == "rendering"
+    assert session.status == "rendering"
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_response_fails_closed_for_cross_user_linked_job() -> None:
+    user_id, other_user_id = uuid.uuid4(), uuid.uuid4()
+    item_id, plan_id, session_id, job_id = (
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+    )
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user_id,
+        content_plan_id=plan_id,
+        active_plan_item_id=item_id,
+        active_creator_agent_session_id=session_id,
+        active_job_id=job_id,
+    )
+    item = SimpleNamespace(id=item_id, content_plan_id=plan_id, current_job_id=job_id)
+    plan = SimpleNamespace(id=plan_id, user_id=user_id)
+    session = SimpleNamespace(
+        id=session_id,
+        creator_id=user_id,
+        plan_item_id=item_id,
+        target_job_id=job_id,
+    )
+    job = SimpleNamespace(
+        id=job_id,
+        user_id=other_user_id,
+        content_plan_item_id=item_id,
+    )
+    db = Mock()
+    db.get = AsyncMock(side_effect=[item, plan, session, job])
+
+    with pytest.raises(HTTPException) as exc_info:
+        await _response(db, thread)
+
+    assert exc_info.value.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -618,7 +1179,7 @@ async def test_detail_repairs_missing_job_projection_from_exact_creator_target(
     )
     plan = SimpleNamespace(id=plan_id, user_id=user.id, ownership_epoch=0)
     db = Mock()
-    db.get = AsyncMock(side_effect=[session, item, job, plan, session, job])
+    db.get = AsyncMock(side_effect=[session, item, job, plan, session, session, job])
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
     import app.routes.creation_threads as routes
@@ -634,6 +1195,150 @@ async def test_detail_repairs_missing_job_projection_from_exact_creator_target(
     assert thread.active_job_id == job_id
     assert thread.state["generation"] == {"status": "ready", "job_id": str(job_id)}
     assert db.commit.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_projection_repair_locks_authoritative_graph_before_session() -> None:
+    """Projection repair must match Creator Agent's PlanItem -> Job -> session order."""
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    item_id, session_id, job_id, plan_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    thread = SimpleNamespace(
+        active_job_id=None,
+        active_plan_item_id=item_id,
+        active_creator_agent_session_id=session_id,
+        state={},
+    )
+    session = SimpleNamespace(
+        creator_id=user.id,
+        plan_item_id=item_id,
+        target_job_id=job_id,
+        target_variant_id=None,
+        target_generation_id=None,
+        ownership_epoch=0,
+    )
+    item = SimpleNamespace(id=item_id, content_plan_id=plan_id, current_job_id=job_id)
+    job = SimpleNamespace(
+        id=job_id,
+        user_id=user.id,
+        content_plan_item_id=item_id,
+        content_plan_ownership_epoch=0,
+        mode="content_plan",
+        status="processing",
+        assembly_plan={"variants": []},
+    )
+    plan = SimpleNamespace(id=plan_id, user_id=user.id, ownership_epoch=0)
+    db = Mock()
+    db.get = AsyncMock(side_effect=[session, item, job, plan, session])
+
+    import app.routes.creation_threads as routes
+
+    assert await routes._repair_missing_thread_job_projection(db, thread, user) is True
+
+    calls = db.get.await_args_list
+    assert [call.args[0] for call in calls] == [
+        routes.CreatorAgentSession,
+        routes.PlanItem,
+        routes.Job,
+        routes.ContentPlan,
+        routes.CreatorAgentSession,
+    ]
+    assert calls[0].kwargs == {}
+    assert calls[1].kwargs["with_for_update"] is True
+    assert calls[2].kwargs["with_for_update"] is True
+    assert calls[4].kwargs["with_for_update"] is True
+    assert thread.active_job_id == job_id
+
+
+@pytest.mark.asyncio
+async def test_detail_reconciles_failed_guided_planning_before_a_job_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed guided proposal cannot leave chat stuck before a Job exists."""
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    session_id = uuid.uuid4()
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        active_plan_item_id=uuid.uuid4(),
+        active_creator_agent_session_id=session_id,
+        active_job_id=None,
+    )
+    session = SimpleNamespace(id=session_id, status="executing", target_job_id=None)
+    db = Mock()
+    db.get = AsyncMock(return_value=session)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    import app.routes.creation_threads as routes
+
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(
+        routes,
+        "_repair_missing_thread_job_projection",
+        AsyncMock(return_value=False),
+    )
+    reconcile = AsyncMock(return_value=True)
+    monkeypatch.setattr(routes, "reconcile_render_state", reconcile)
+    sync_agent = AsyncMock()
+    monkeypatch.setattr(routes, "_sync_agent", sync_agent)
+    monkeypatch.setattr(routes, "_response", AsyncMock(return_value=thread))
+
+    output = await get_thread(str(thread.id), user, db)
+
+    assert output is thread
+    reconcile.assert_awaited_once_with(db, session)
+    sync_agent.assert_awaited_once_with(db, thread)
+    db.commit.assert_awaited_once()
+    db.refresh.assert_awaited_once_with(thread)
+
+
+@pytest.mark.asyncio
+async def test_detail_projects_job_discovered_during_creator_reconciliation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One detail read both discovers and projects an async guided Job."""
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    session_id, job_id = uuid.uuid4(), uuid.uuid4()
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        active_plan_item_id=uuid.uuid4(),
+        active_creator_agent_session_id=session_id,
+        active_job_id=None,
+    )
+    session = SimpleNamespace(id=session_id, status="executing", target_job_id=None)
+    db = Mock()
+    db.get = AsyncMock(return_value=session)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    import app.routes.creation_threads as routes
+
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+
+    async def repair(_db, target_thread, _user):
+        if session.target_job_id is None:
+            return False
+        target_thread.active_job_id = session.target_job_id
+        return True
+
+    repair_projection = AsyncMock(side_effect=repair)
+    monkeypatch.setattr(routes, "_repair_missing_thread_job_projection", repair_projection)
+
+    async def reconcile(_db, _session):
+        session.target_job_id = job_id
+        return True
+
+    monkeypatch.setattr(routes, "reconcile_render_state", AsyncMock(side_effect=reconcile))
+    monkeypatch.setattr(routes, "_sync_agent", AsyncMock())
+    monkeypatch.setattr(routes, "_response", AsyncMock(return_value=thread))
+
+    output = await get_thread(str(thread.id), user, db)
+
+    assert output.active_job_id == job_id
+    assert repair_projection.await_count == 2
+    db.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -682,7 +1387,7 @@ async def test_retry_repairs_missing_job_projection_before_reopening_render(
     result = SimpleNamespace(id=str(session_id), current_job_id=str(job_id))
     db = Mock()
     # Repair reads session/item/job/plan, then retry reads the repaired session/job.
-    db.get = AsyncMock(side_effect=[session, item, job, plan, session, job])
+    db.get = AsyncMock(side_effect=[session, item, job, plan, session, session, job])
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
     import app.routes.creation_threads as routes
@@ -744,7 +1449,7 @@ async def test_projection_repair_rejects_target_from_wrong_plan_owner() -> None:
     )
     plan = SimpleNamespace(id=plan_id, user_id=uuid.uuid4(), ownership_epoch=0)
     db = Mock()
-    db.get = AsyncMock(side_effect=[session, item, job, plan])
+    db.get = AsyncMock(side_effect=[session, item, job, plan, session])
     import app.routes.creation_threads as routes
 
     repaired = await routes._repair_missing_thread_job_projection(db, thread, user)
@@ -1302,6 +2007,9 @@ async def test_retry_partial_render_broker_failure_is_retryable(monkeypatch) -> 
     item = SimpleNamespace(id=item_id, current_job_id=job_id)
     db = Mock()
     db.get = AsyncMock(side_effect=[session, job, item, session, job])
+    thread_result = Mock()
+    thread_result.scalar_one_or_none.return_value = thread
+    db.execute = AsyncMock(return_value=thread_result)
     db.commit = AsyncMock()
     db.rollback = AsyncMock()
     db.refresh = AsyncMock()

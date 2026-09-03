@@ -33,9 +33,10 @@ export default function Header() {
     () => false,
   );
   const isChatFirstWorkspace =
-    pathname === "/plan" && CHAT_FIRST_CREATION_ENABLED &&
-    !chatFallback &&
-    status !== "unauthenticated";
+    pathname === "/dev-qa/chat-first-creation" ||
+    (pathname === "/plan" && CHAT_FIRST_CREATION_ENABLED &&
+      !chatFallback &&
+      status !== "unauthenticated");
   const isLanding = pathname === "/" || pathname === "/auto-story";
   const [progress, setProgress] = useState(0);
 

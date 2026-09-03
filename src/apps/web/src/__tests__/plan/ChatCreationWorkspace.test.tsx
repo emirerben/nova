@@ -31,6 +31,10 @@ jest.mock("@/lib/me-api", () => {
   const actual = jest.requireActual("@/lib/me-api");
   return { ...actual, listMyJobs: jest.fn() };
 });
+jest.mock("@/app/plan/_components/AssetPool", () => ({
+  __esModule: true,
+  default: ({ itemId, concise }: { itemId: string; concise?: boolean }) => <div data-testid="mock-asset-pool" data-concise={concise || undefined}>Visuals pool for {itemId}</div>,
+}));
 
 const baseThread = {
   id: "thread-1", status: "active" as const, revision: 0,
@@ -55,11 +59,20 @@ describe("ChatCreationWorkspace", () => {
     jest.mocked(refreshCreationThread).mockResolvedValue(baseThread);
     jest.mocked(sendCreationMessage).mockResolvedValue(baseThread);
     jest.mocked(listMyJobs).mockResolvedValue({ jobs: [], next_cursor: null });
-    jest.mocked(getCreationCapabilities).mockResolvedValue([
-      { id: "montage", edit_format: "montage" },
-      { id: "narrated", edit_format: "narrated_planned" },
-      { id: "talking_to_camera", edit_format: "subtitled" },
-    ]);
+    jest.mocked(getCreationCapabilities).mockResolvedValue({
+      formats: [
+        { id: "montage", edit_format: "montage" },
+        { id: "narrated", edit_format: "narrated_planned" },
+        { id: "talking_to_camera", edit_format: "subtitled" },
+      ],
+      media: {
+        clips: {
+          max: 50,
+          max_file_bytes: 4 * 1024 * 1024 * 1024,
+          content_types: ["video/mp4", "video/quicktime"],
+        },
+      },
+    });
     jest.mocked(applyCreationAction).mockResolvedValue({ ...baseThread, revision: 1, state: { format: "subtitled", edit_format: "subtitled", media: [] } });
   });
 
@@ -74,6 +87,112 @@ describe("ChatCreationWorkspace", () => {
     expect(await screen.findByRole("button", { name: /Narrated Let/ })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /Talking to camera A clean/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New video" })).toBeInTheDocument();
+  });
+
+  it("uses PlanItem clip guidance and keeps supporting visuals separate", async () => {
+    const previousVisualFlag = process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED;
+    process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED = "true";
+    const setup = {
+      ...baseThread,
+      state: { edit_format: "montage", media: [], media_count: 0 },
+      active_plan_item_id: "item-1",
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([setup]);
+    jest.mocked(refreshCreationThread).mockResolvedValueOnce(setup);
+    try {
+      render(<ChatCreationWorkspace />);
+      expect(await screen.findByText(/Three or more clips work best/)).toBeInTheDocument();
+      expect(screen.getByText("Add visuals (optional)")).toBeInTheDocument();
+      expect(screen.getByTestId("mock-asset-pool")).toHaveTextContent("item-1");
+      expect(screen.getByTestId("mock-asset-pool")).toHaveAttribute("data-concise", "true");
+      expect(screen.queryByText("Primary Clips")).not.toBeInTheDocument();
+      expect(screen.queryByText(/PlanItem’s Visuals pool/)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Attach primary video clips" })).toHaveAttribute("aria-label", "Attach primary video clips");
+    } finally {
+      if (previousVisualFlag === undefined) delete process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED;
+      else process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED = previousVisualFlag;
+    }
+  });
+
+  it("does not render an empty visuals artifact when the PlanItem pool is disabled", async () => {
+    const previousVisualFlag = process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED;
+    const previousGuidedFlag = process.env.NEXT_PUBLIC_GUIDED_EDIT_ENABLED;
+    delete process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED;
+    delete process.env.NEXT_PUBLIC_GUIDED_EDIT_ENABLED;
+    const setup = {
+      ...baseThread,
+      state: { edit_format: "montage", media: [], media_count: 0 },
+      active_plan_item_id: "item-1",
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([setup]);
+    jest.mocked(refreshCreationThread).mockResolvedValueOnce(setup);
+    try {
+      render(<ChatCreationWorkspace />);
+      await screen.findByText(/Three or more clips work best/);
+      expect(screen.queryByTestId("creation-visuals-artifact")).not.toBeInTheDocument();
+    } finally {
+      if (previousVisualFlag === undefined) delete process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED;
+      else process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED = previousVisualFlag;
+      if (previousGuidedFlag === undefined) delete process.env.NEXT_PUBLIC_GUIDED_EDIT_ENABLED;
+      else process.env.NEXT_PUBLIC_GUIDED_EDIT_ENABLED = previousGuidedFlag;
+    }
+  });
+
+  it("uses the server PlanItem media policy before starting an upload", async () => {
+    const constrainedThread = {
+      ...baseThread,
+      state: { ...baseThread.state, edit_format: "montage" },
+      media_capabilities: {
+        clips: {
+          max: 50,
+          max_file_bytes: 4,
+          content_types: ["video/mp4"],
+        },
+      },
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([constrainedThread]);
+    jest.mocked(refreshCreationThread).mockResolvedValueOnce(constrainedThread);
+    render(<ChatCreationWorkspace />);
+    await screen.findByText("Montage · 0 clips");
+
+    const picker = document.getElementById("creation-file-picker") as HTMLInputElement;
+    fireEvent.change(picker, {
+      target: { files: [new File(["12345"], "too-large.mp4", { type: "video/mp4" })] },
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/larger than the PlanItem upload limit/i);
+  });
+
+  it("constrains the chat pane so the transcript scrolls above a pinned composer", async () => {
+    render(<ChatCreationWorkspace />);
+    const chat = await screen.findByRole("region", { name: "Kria creation chat" });
+    const transcript = screen.getByRole("log", { name: "Conversation history" });
+
+    expect(chat.parentElement).toHaveClass("min-h-0", "flex", "flex-col", "overflow-hidden");
+    expect(chat.parentElement?.parentElement).toHaveClass("min-h-0", "flex-1", "overflow-hidden");
+    expect(transcript).toHaveClass(
+      "min-h-0",
+      "flex-1",
+      "overflow-y-auto",
+      "overscroll-y-contain",
+      "touch-pan-y",
+      "[scrollbar-gutter:stable]",
+    );
+    expect(transcript).toHaveAttribute("tabindex", "0");
+    expect(screen.getByRole("textbox", { name: "Message Kria" })).toBeVisible();
+  });
+
+  it("opens a long conversation at its latest message", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", { configurable: true, get: () => 720 });
+    try {
+      render(<ChatCreationWorkspace />);
+      const transcript = await screen.findByRole("log", { name: "Conversation history" });
+      await waitFor(() => expect(transcript.scrollTop).toBe(720));
+    } finally {
+      if (descriptor) Object.defineProperty(HTMLElement.prototype, "scrollHeight", descriptor);
+      else Reflect.deleteProperty(HTMLElement.prototype, "scrollHeight");
+    }
   });
 
   it("creates only one empty project when Strict Mode replays the boot effect", async () => {
@@ -94,10 +213,13 @@ describe("ChatCreationWorkspace", () => {
   });
 
   it("falls back only when the capability endpoint is a deliberate 404", async () => {
-    jest.mocked(listCreationThreads).mockRejectedValueOnce(new CreationThreadError("off", 404));
+    jest.mocked(getCreationCapabilities).mockRejectedValueOnce(new CreationThreadError("off", 404));
     const fallback = jest.fn();
     render(<ChatCreationWorkspace onLegacyFallback={fallback} />);
     await waitFor(() => expect(fallback).toHaveBeenCalledTimes(1));
+    expect(getCreationCapabilities).toHaveBeenCalledTimes(1);
+    expect(listCreationThreads).toHaveBeenCalledTimes(1);
+    expect(createCreationThread).not.toHaveBeenCalled();
   });
 
   it("keeps a server error visible instead of silently switching experiences", async () => {
@@ -131,7 +253,7 @@ describe("ChatCreationWorkspace", () => {
     jest.mocked(listCreationThreads).mockResolvedValueOnce([hydrated]);
     jest.mocked(refreshCreationThread).mockResolvedValueOnce(hydrated);
     render(<ChatCreationWorkspace />);
-    expect(await screen.findByText("Montage · 3 files")).toBeInTheDocument();
+    expect(await screen.findByText("Montage · 3 clips")).toBeInTheDocument();
   });
 
   it("preserves typed direction when sending fails", async () => {
@@ -251,6 +373,31 @@ describe("ChatCreationWorkspace", () => {
     await waitFor(() => expect(applyCreationAction).toHaveBeenCalledWith(ready, "select_variant", { variant_id: "song_text" }));
   });
 
+  it("removes the pre-render visuals pool from the narrow ready chat rail", async () => {
+    const previousVisualFlag = process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED;
+    process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED = "true";
+    const ready = {
+      ...baseThread,
+      state: { edit_format: "montage", media_count: 1 },
+      active_plan_item_id: "item-1",
+      active_job_id: "job-1",
+      job: { id: "job-1", status: "ready", variants: [
+        { variant_id: "original_text", render_status: "ready", output_url: "/cut.mp4" },
+      ] },
+      events: [],
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([ready]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(ready);
+    try {
+      render(<ChatCreationWorkspace />);
+      expect(await screen.findByRole("button", { name: "Play" })).toBeInTheDocument();
+      expect(screen.queryByTestId("creation-visuals-artifact")).not.toBeInTheDocument();
+    } finally {
+      if (previousVisualFlag === undefined) delete process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED;
+      else process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED = previousVisualFlag;
+    }
+  });
+
   it("uses generate for a ready Creator Agent revision proposal", async () => {
     const ready = {
       ...baseThread,
@@ -293,6 +440,51 @@ describe("ChatCreationWorkspace", () => {
     render(<ChatCreationWorkspace />);
     await screen.findByText("Your first direction is ready.");
     expect(screen.queryByRole("button", { name: "Create revision" })).not.toBeInTheDocument();
+  });
+
+  it("shows only one current confirmation after repeated failed Creator attempts", async () => {
+    const retried = {
+      ...baseThread,
+      revision: 8,
+      state: { format: "montage", edit_format: "montage", media: [{ media_id: "m1", kind: "video" }], media_count: 1 },
+      active_plan_item_id: "item-1",
+      active_job_id: null,
+      job: null,
+      events: [
+        { id: "strategy-one", sequence: 0, revision: 1, role: "assistant" as const, event_type: "agent_assistant_strategy", content: "First attempt", payload: null, created_at: "2026-01-01T00:00:00Z" },
+        { id: "strategy-two", sequence: 1, revision: 2, role: "assistant" as const, event_type: "agent_assistant_strategy", content: "Second attempt", payload: null, created_at: "2026-01-01T00:00:01Z" },
+        { id: "strategy-three", sequence: 2, revision: 3, role: "assistant" as const, event_type: "agent_assistant_strategy", content: "Latest attempt", payload: null, created_at: "2026-01-01T00:00:02Z" },
+      ],
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([retried]);
+    jest.mocked(refreshCreationThread).mockResolvedValueOnce(retried);
+    render(<ChatCreationWorkspace />);
+    await screen.findByText("Latest attempt");
+    expect(screen.getAllByRole("button", { name: "Create this video" })).toHaveLength(1);
+  });
+
+  it("shows the new direction instead of stale retry after a failed render", async () => {
+    const adjusted = {
+      ...baseThread,
+      revision: 9,
+      state: { format: "montage", edit_format: "montage", media: [{ media_id: "m1", kind: "video" }], media_count: 1 },
+      active_plan_item_id: "item-1",
+      active_job_id: "failed-job",
+      job: { id: "failed-job", status: "processing_failed", failure_reason: "Old render failed", variants: [] },
+      events: [
+        { id: "old-strategy", sequence: 0, revision: 1, role: "assistant" as const, event_type: "agent_assistant_strategy", content: "Old direction", payload: null, created_at: "2026-01-01T00:00:00Z" },
+        { id: "old-render", sequence: 1, revision: 2, role: "system" as const, event_type: "action_generate", content: null, payload: { action: "generate" }, created_at: "2026-01-01T00:00:01Z" },
+        { id: "old-failure", sequence: 2, revision: 3, role: "assistant" as const, event_type: "agent_assistant_execution", content: "That render failed", payload: { status: "failed" }, created_at: "2026-01-01T00:00:02Z" },
+        { id: "new-request", sequence: 3, revision: 4, role: "user" as const, event_type: "user_message", content: "Use the photos at 0.1 seconds", payload: null, created_at: "2026-01-01T00:00:03Z" },
+        { id: "new-strategy", sequence: 4, revision: 5, role: "assistant" as const, event_type: "agent_assistant_strategy", content: "New exact direction", payload: null, created_at: "2026-01-01T00:00:04Z" },
+      ],
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([adjusted]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(adjusted);
+    render(<ChatCreationWorkspace />);
+    await screen.findByText("New exact direction");
+    expect(screen.getByRole("button", { name: "Create this video" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry render" })).not.toBeInTheDocument();
   });
 
   it("prepares a queued revision once when its exact job becomes ready", async () => {

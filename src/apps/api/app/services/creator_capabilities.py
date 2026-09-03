@@ -148,6 +148,7 @@ def resolve_creator_manifest(
     catalog: Sequence[CreatorCatalogRef | Mapping[str, Any]] = (),
     has_ready_variant: bool = False,
     limits: CreatorLimits | None = None,
+    guided_capability_enabled: bool | None = None,
 ) -> ResolvedCreatorManifest:
     """Resolve a descriptive v1 manifest from server state and policy.
 
@@ -176,12 +177,17 @@ def resolve_creator_manifest(
     guided_applicable_now = guided_edit_applicable(edit_format, has_voiceover=has_voiceover)
     has_media = bool(resolved_media)
     has_native_media = any(not media.media_id.startswith("asset-") for media in resolved_media)
-    guided_executable = settings.guided_edit_capability_enabled and guided_applicable_now
+    guided_enabled = (
+        settings.guided_edit_capability_enabled
+        if guided_capability_enabled is None
+        else guided_capability_enabled
+    )
+    guided_executable = guided_enabled and guided_applicable_now
     has_dispatchable_media = has_native_media or (
         render_program == "guided" and guided_executable and has_media
     )
 
-    if not settings.guided_edit_capability_enabled:
+    if not guided_enabled:
         guided = _unavailable("disabled_by_setting", "guided editing is disabled by the server")
     elif not guided_applicable_now:
         guided = _unavailable(

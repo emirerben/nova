@@ -1702,11 +1702,7 @@ def _run_generative_job_impl(
         # Main Creator's confirmed render contract is validated again at the
         # worker boundary.  The strategy is inert JSON until this point; only
         # these bounded fields are projected into the existing render inputs.
-        creator_strategy = None
-        if all_candidates.get("creator_strategy"):
-            from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
-
-            creator_strategy = CreativeStrategy.model_validate(all_candidates["creator_strategy"])
+        creator_strategy = _creator_strategy_from_candidates(all_candidates)
         creator_opening_title = (
             creator_strategy.opening_title if creator_strategy is not None else None
         )
@@ -2770,6 +2766,68 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id))
         existing = copy.deepcopy((job.assembly_plan or {}).get("guided_story_execution_plan"))
+        raw_strategy = copy.deepcopy(
+            (getattr(job, "all_candidates", None) or {}).get("creator_strategy")
+        )
+
+    def context_label_intent() -> dict[str, Any] | None:
+        persisted_intent = guided_snapshot.get("context_label_intent")
+        if isinstance(persisted_intent, dict):
+            raw_intent = persisted_intent
+        elif isinstance(raw_strategy, dict):
+            raw_intent = raw_strategy.get("context_label")
+        else:
+            raw_intent = None
+        if not isinstance(raw_intent, dict):
+            return None
+        from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+
+        try:
+            strategy = CreativeStrategy.model_validate({"context_label": raw_intent})
+        except Exception:  # noqa: BLE001 - the worker must fail closed on bad JSONB
+            return None
+        intent = strategy.context_label
+        return intent.model_dump(mode="json") if intent is not None else None
+
+    def materialize_context_labels(plan: dict[str, Any]) -> dict[str, Any]:
+        intent = context_label_intent()
+        if intent is None:
+            return plan
+        from app.pipeline.guided_story import matcher_clip_metas  # noqa: PLC0415
+
+        moments = list(plan.get("story_timeline") or [])
+        steps: list[Any] = []
+        resolved_plans: list[dict[str, float]] = []
+        previous: dict[str, Any] | None = None
+        for moment in moments:
+            transition = previous.get("transition_after") if previous else "cut"
+            steps.append(
+                SimpleNamespace(
+                    clip_id=str(moment.get("media_id") or ""),
+                    slot={
+                        "transition_in": transition or "cut",
+                        "transition_duration_s": (
+                            previous.get("transition_duration_s") if previous else 0.0
+                        ),
+                    },
+                )
+            )
+            resolved_plans.append({"duration_s": float(moment.get("duration_s") or 0.0)})
+            previous = moment
+        elements = _context_sport_text_elements(
+            intent,
+            steps=steps,
+            resolved_plans=resolved_plans,
+            clip_id_to_gcs={ref.media_id: ref.gcs_path for ref in snapshot.media},
+            clip_metas=matcher_clip_metas(snapshot),
+            video_duration_s=float(plan.get("resolved_duration_s") or 0.0),
+        )
+        return {
+            **plan,
+            "context_label_intent": intent,
+            "context_label_text_elements": elements,
+        }
+
     if existing is not None:
         plan = validate_execution_plan(existing, guided_snapshot)
     else:
@@ -2798,7 +2856,9 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
                     round(float(beat), 3) for beat in (matched.beat_timestamps_s or [])
                 ],
             }
-        candidate = compile_execution_plan(guided_snapshot, track=track_payload)
+        candidate = materialize_context_labels(
+            compile_execution_plan(guided_snapshot, track=track_payload)
+        )
         with _sync_session() as db:
             job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
             if job is None or _cancelled_job_write_rejected(
@@ -2817,6 +2877,20 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
                 plan = candidate
             else:
                 plan = validate_execution_plan(copy.deepcopy(existing), guided_snapshot)
+
+    # Existing pinned plans created before the contextual lane was propagated
+    # are repaired on read. This keeps deploy-skewed localhost jobs renderable
+    # without changing their approved media or timing.
+    if context_label_intent() is not None:
+        plan = materialize_context_labels(plan)
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+            if job is not None:
+                job.assembly_plan = {
+                    **(job.assembly_plan or {}),
+                    "guided_story_execution_plan": plan,
+                }
+                db.commit()
 
     music = plan.get("music")
     if music is None:
@@ -3561,6 +3635,42 @@ def _creator_preserved_narrative_order(
         if clip_id in clip_id_to_gcs and clip_id not in ordered:
             ordered.append(clip_id)
     return ordered
+
+
+def _creator_strategy_from_candidates(all_candidates: dict[str, Any]):
+    """Validate the deploy-fenced Creator contract at the worker boundary."""
+
+    raw = all_candidates.get("creator_strategy")
+    if not raw:
+        return None
+    from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+    from app.services.generative_jobs import CREATOR_RENDER_CONTRACT_VERSION  # noqa: PLC0415
+
+    if all_candidates.get("creator_render_contract_version") != CREATOR_RENDER_CONTRACT_VERSION:
+        raise ValueError("Creator render contract version mismatch")
+    return CreativeStrategy.model_validate(raw)
+
+
+def _resolve_regen_narrative_order(
+    narrative_shot_count: int,
+    creator_clip_order: list[int],
+    clip_id_to_gcs: dict[str, str],
+    *,
+    job_id: str,
+    resolved_archetype: str | None,
+) -> list[str] | None:
+    """Keep explicit Creator order authoritative on later full renders."""
+
+    order = _resolve_narrative_order(
+        narrative_shot_count,
+        clip_id_to_gcs,
+        job_id=job_id,
+        strict=resolved_archetype == "day_vlog",
+    )
+    if resolved_archetype != "montage" or not creator_clip_order:
+        return order
+    preserved = _creator_preserved_narrative_order(creator_clip_order, clip_id_to_gcs)
+    return preserved or order
 
 
 def _durable_sources_prefix(job_id: str) -> str:
@@ -8491,7 +8601,9 @@ def _context_sport_text_elements(
                 role="generative_sequence",
                 position="custom",
                 x_frac=0.86,
-                y_frac=0.91,
+                # Keep the label bottom-right without pushing glyph bounds
+                # outside the safe canvas margin on landscape renders.
+                y_frac=0.86,
                 font_family="Inter-Bold",
                 size_class="small",
                 color="#FFFFFF",
@@ -9298,11 +9410,7 @@ def _run_regenerate_variant(
             log.info("generative_regenerate_cancelled_job_skipped", job_id=job_id)
             return
         all_candidates = job.all_candidates or {}
-        creator_strategy = None
-        if all_candidates.get("creator_strategy"):
-            from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
-
-            creator_strategy = CreativeStrategy.model_validate(all_candidates["creator_strategy"])
+        creator_strategy = _creator_strategy_from_candidates(all_candidates)
         creator_opening_title = (
             creator_strategy.opening_title if creator_strategy is not None else None
         )
@@ -9344,6 +9452,11 @@ def _run_regenerate_variant(
         narrative_shot_count_regen: int = int(
             (job.all_candidates or {}).get("narrative_shot_count") or 0
         )
+        creator_clip_order_regen: list[int] = []
+        for value in (job.all_candidates or {}).get("creator_clip_order") or []:
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                if value not in creator_clip_order_regen:
+                    creator_clip_order_regen.append(value)
         # Voiceover jobs re-render the same voice bed; the mix slider is the only knob
         # that changes here. Both come from the Job row (single source of truth).
         voiceover_gcs_path: str | None = (job.all_candidates or {}).get(
@@ -10055,11 +10168,12 @@ def _run_regenerate_variant(
 
             # Narrative order survives re-renders (same dispatch contract as the
             # first render). Hook text grounds in the clip that opens the edit.
-            narrative_order_regen = _resolve_narrative_order(
+            narrative_order_regen = _resolve_regen_narrative_order(
                 narrative_shot_count_regen,
+                creator_clip_order_regen,
                 ingest["clip_id_to_gcs"],
                 job_id=job_id,
-                strict=existing.get("resolved_archetype") == "day_vlog",
+                resolved_archetype=existing.get("resolved_archetype"),
             )
             regen_hero = ingest["hero"]
             if active_timeline_slots:

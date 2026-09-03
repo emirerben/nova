@@ -51,6 +51,7 @@ export interface CreationThread {
   active_plan_item_id: string | null;
   active_creator_agent_session_id: string | null;
   active_job_id: string | null;
+  media_capabilities?: CreationMediaCapabilities | null;
   events: CreationThreadEvent[];
   job: CreationJob | null;
   created_at: string;
@@ -69,6 +70,44 @@ export interface CreationUploadTarget {
 export interface CreationCapability {
   id: string;
   edit_format: CreationFormat;
+  /** The PlanItem clip contract. Older APIs omit this and the canonical
+   *  50-clip PlanItem ceiling is used until capabilities are refreshed. */
+  max_clips?: number;
+  clip_limit?: number;
+  limits?: {
+    max_clips?: number;
+    clips?: number;
+    max_visuals?: number;
+    visuals?: number;
+  };
+}
+
+export interface CreationMediaCapabilities {
+  clips?: {
+    current?: number;
+    max?: number;
+    server_max?: number;
+    max_file_bytes?: number;
+    content_types?: string[];
+    format?: CreationFormat;
+  };
+  visuals?: {
+    current?: number;
+    max?: number;
+    max_file_bytes?: { image?: number; video?: number };
+    content_types?: string[];
+  };
+  voiceover?: {
+    current?: number;
+    max?: number;
+    max_file_bytes?: number;
+    content_types?: string[];
+  };
+}
+
+export interface CreationCapabilitiesResponse {
+  formats: CreationCapability[];
+  media?: CreationMediaCapabilities;
 }
 
 export class CreationThreadError extends Error {
@@ -122,6 +161,25 @@ export function creationFormatLabel(value: CreationFormat | null): string {
   return "Montage";
 }
 
+/** PlanItem's shared upload ceiling. Kept here as a compatibility default for
+ * deploy skew; the server capability response wins whenever it provides one. */
+export const PLAN_ITEM_CLIP_LIMIT = 50;
+
+export function creationClipLimit(
+  capabilities: CreationCapability[],
+  format: CreationFormat | null,
+): number {
+  if (!format) return PLAN_ITEM_CLIP_LIMIT;
+  const capability = capabilities.find((item) => item.edit_format === format);
+  const candidate = capability?.max_clips
+    ?? capability?.clip_limit
+    ?? capability?.limits?.max_clips
+    ?? capability?.limits?.clips;
+  return typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0
+    ? Math.floor(candidate)
+    : PLAN_ITEM_CLIP_LIMIT;
+}
+
 export function creationThreadMediaCount(thread: CreationThread | null): number {
   const persistedCount = thread?.state.media_count;
   if (typeof persistedCount === "number" && Number.isFinite(persistedCount)) return Math.max(0, persistedCount);
@@ -162,9 +220,23 @@ export async function listCreationThreads(): Promise<CreationThread[]> {
   return Array.isArray(result) ? result : result.threads;
 }
 
-export async function getCreationCapabilities(): Promise<CreationCapability[]> {
-  const result = await request<{ formats: CreationCapability[] }>("/capabilities");
-  return result.formats.filter((item) => creationFormat(item.edit_format));
+export async function getCreationCapabilities(): Promise<CreationCapabilitiesResponse> {
+  const result = await request<{
+    formats: CreationCapability[];
+    media?: CreationMediaCapabilities;
+  }>("/capabilities");
+  const serverClipLimit = result.media?.clips?.max;
+  return {
+    media: result.media,
+    formats: result.formats
+      .filter((item) => creationFormat(item.edit_format))
+      .map((item) => ({
+        ...item,
+        // Current API exposes the shared PlanItem contract under media.clips;
+        // preserve per-format fields too for future capability responses.
+        max_clips: item.max_clips ?? item.clip_limit ?? serverClipLimit,
+      })),
+  };
 }
 
 export function createCreationThread(message?: string): Promise<CreationThread> {
@@ -310,6 +382,12 @@ export function threadMessages(thread: CreationThread): Array<{
       : latest,
     -1,
   );
+  const latestStrategySequence = thread.events.reduce(
+    (latest, event) => event.event_type === "agent_assistant_strategy"
+      ? Math.max(latest, event.sequence)
+      : latest,
+    -1,
+  );
   return thread.events.flatMap((event) => {
     const payload = event.payload ?? {};
     const kind = String(payload.kind ?? event.event_type);
@@ -322,9 +400,14 @@ export function threadMessages(thread: CreationThread): Array<{
     else if (["confirm_generation", "confirmation"].includes(kind)) artifact = "confirmation";
     else if (["confirm_revision", "revision"].includes(kind)) artifact = "revision";
     else if (event.event_type === "agent_assistant_strategy") {
-      artifact = latestGenerationSequence >= 0 && event.sequence > latestGenerationSequence
-        ? "revision"
-        : "confirmation";
+      // Strategies are durable agent history, not a queue of confirmation
+      // buttons. Keep only the newest strategy actionable; older attempts
+      // remain transcript content after a failed/retried render.
+      if (event.sequence === latestStrategySequence) {
+        artifact = latestGenerationSequence >= 0 && event.sequence > latestGenerationSequence
+          ? "revision"
+          : "confirmation";
+      }
     }
     else if (["generation_started", "rendering"].includes(event.event_type)) artifact = "progress";
     else if (["generation_failed", "render_failed"].includes(event.event_type)) artifact = "failure";

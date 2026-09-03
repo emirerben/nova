@@ -2411,6 +2411,13 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
                 or context_label.per_clip is not True
             ):
                 failures.append("sport label request was not preserved exactly")
+        if "emir olympics" in normalized_request:
+            if action.strategy.opening_title != "Emir Olympics":
+                failures.append("explicit opening title was not preserved exactly")
+            if "rascal" in normalized_request and action.strategy.font_family != "Rascal":
+                failures.append("explicit title font was not preserved exactly")
+            if "yellow" in normalized_request and action.strategy.text_color != "#FFD24A":
+                failures.append("explicit title color was not preserved exactly")
         return failures
     if agent_name == "nova.plan.conformance_feedback":
         return check_conformance_feedback(output)

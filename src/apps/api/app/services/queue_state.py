@@ -86,7 +86,8 @@ def _inspector(celery_app: Celery):
 _QUEUE_SCAN_CAP = 100
 
 # The queues the `worker` Fly process consumes (fly.toml:
-# `celery ... -Q celery,plan-jobs,overlay-jobs,creator-guided-jobs`). "celery" is Celery's
+# `celery ... -Q celery,plan-jobs,overlay-jobs,creator-guided-jobs,creator-render-v2`).
+# "celery" is Celery's
 # built-in default queue name — anything dispatched without an explicit
 # `queue=` kwarg lands here. Shared by:
 #   - render_worker_idle() below (queue-depth + active/reserved check)
@@ -101,7 +102,7 @@ _QUEUE_SCAN_CAP = 100
 # tests/test_worker_prewarm_gate.py pins both this set against the worker
 # line AND the light line's disjointness from it.
 RENDER_WORKER_QUEUES: frozenset[str] = frozenset(
-    {"celery", "plan-jobs", "overlay-jobs", "creator-guided-jobs"}
+    {"celery", "plan-jobs", "overlay-jobs", "creator-guided-jobs", "creator-render-v2"}
 )
 
 RuntimeStateLiteral = Literal["active", "reserved", "not_found", "unknown"]

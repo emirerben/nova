@@ -31,7 +31,7 @@ log = structlog.get_logger()
 
 SLOT_NAMES = ("top", "center", "full")
 SFX_INTENTS = ("pop_in", "whoosh", "click", "none")
-_MAX_ASSETS = 20
+MAX_PLACEMENT_ASSETS = 20
 _MAX_WORDS = 1200
 
 
@@ -54,7 +54,7 @@ class PlacementAsset(BaseModel):
 class OverlayPlacementInput(BaseModel):
     # {"word","start_s","end_s"} records, transcript order.
     words: list[dict] = Field(min_length=1, max_length=_MAX_WORDS)
-    assets: list[PlacementAsset] = Field(min_length=1, max_length=_MAX_ASSETS)
+    assets: list[PlacementAsset] = Field(min_length=1, max_length=MAX_PLACEMENT_ASSETS)
     # [start_s, end_s] intervals already occupied by existing placements.
     occupied: list[list[float]] = Field(default_factory=list)
     duration_s: float = Field(gt=0)
