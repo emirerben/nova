@@ -1,3 +1,4 @@
+import os
 import threading
 
 from celery import VERSION as CELERY_VERSION
@@ -6,6 +7,18 @@ from celery.schedules import crontab
 from celery.signals import before_task_publish, task_prerun, task_success, worker_ready
 
 from app.config import settings
+from app.services.celery_isolation import (
+    NAMESPACE_ENV_VAR,
+    broker_transport_options,
+    normalize_namespace,
+    result_backend_transport_options,
+)
+
+# Local launchers set this once per worktree.  It is intentionally an env var,
+# rather than a settings field: the shared .env is symlinked by
+# worktree-setup.sh and must not be edited per checkout.  Unset is the exact
+# production configuration and keeps all canonical queue names unchanged.
+CELERY_QUEUE_NAMESPACE = normalize_namespace(os.getenv(NAMESPACE_ENV_VAR))
 
 if CELERY_VERSION < (5, 5):
     raise RuntimeError(
@@ -116,7 +129,24 @@ celery_app.conf.update(
     # a month of pure idle polling. Latency-neutral: BRPOP wakes the instant a
     # task is pushed; this only bounds the re-arm cadence while nothing is
     # queued. Pinned by tests/test_deploy_shutdown_policy.py.
-    broker_transport_options={"visibility_timeout": 1900, "polling_interval": 10},
+    broker_transport_options={
+        **broker_transport_options(CELERY_QUEUE_NAMESPACE),
+        # Keep the authoritative ceiling literal at this call site. The
+        # render time-limit guard source-scans worker.py so a reviewer cannot
+        # move the broker timeout below a task's hard limit unnoticed.
+        "visibility_timeout": 1900,
+    },
+    # Redis result keys must live in the same namespace as broker keys.  Keep
+    # this option absent in production for byte/config compatibility.
+    **(
+        {
+            "result_backend_transport_options": result_backend_transport_options(
+                CELERY_QUEUE_NAMESPACE
+            )
+        }
+        if CELERY_QUEUE_NAMESPACE
+        else {}
+    ),
     # Prefork child recycling (2026-07-21 OOM, job e8173a25): a burst of
     # analyze_pool_asset tasks leaves CLIP/torch/Whisper residency in the single
     # long-lived child (concurrency=1), and the NEXT render's ffmpeg peak then
@@ -415,7 +445,11 @@ def _prewarm_clip_font_matcher(sender, **kwargs):  # pragma: no cover (signal wi
 # exchange topology declared) routing_key always equals the target queue
 # name, for both `queue=` kwarg dispatches and the Celery-default queue.
 
-_RENDER_WAKE_DEBOUNCE_KEY = "render_worker:wake_debounce"
+_RENDER_WAKE_DEBOUNCE_KEY = (
+    f"nova-dev:{CELERY_QUEUE_NAMESPACE}:render_worker:wake_debounce"
+    if CELERY_QUEUE_NAMESPACE
+    else "render_worker:wake_debounce"
+)
 
 _wake_redis_lock = threading.Lock()
 _wake_redis_client = None

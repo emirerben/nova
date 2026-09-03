@@ -40,6 +40,10 @@ def test_mixed_media_guided_render_uses_deploy_fenced_queue() -> None:
     assert _guided_render_queue(None) == "plan-jobs"
 
 
+def test_chat_creator_render_uses_version_fenced_queue() -> None:
+    assert _guided_render_queue(None, {"edit_format": "montage"}) == "creator-render-v2"
+
+
 def test_cadence_guided_render_uses_deploy_fenced_queue() -> None:
     approved = {
         "snapshot": {
@@ -360,6 +364,8 @@ def test_dispatch_snapshots_only_explicit_speech_cleanup_contracts(
     assert job.assembly_plan["speech_cleanup_contract"] == expected_contract
     assert job.assembly_plan["silence_cut_disabled"] is (not requested)
     assert job.assembly_plan["speech_cleanup_contract"] != "legacy_auto"
+    assert isinstance(job.assembly_plan["creator_generation_id"], str)
+    assert job.assembly_plan["creator_generation_id"]
 
 
 def test_missing_persona_rejects_before_job_or_queue() -> None:

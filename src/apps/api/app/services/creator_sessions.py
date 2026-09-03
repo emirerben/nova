@@ -161,6 +161,18 @@ def _session_variant_target(
     return (ready, "ready") if ready is not None else (None, "stale")
 
 
+def _partial_variant_render_in_flight(job: Job) -> bool:
+    """Whether a partial-ready Job still has a variant retry in progress."""
+
+    if job.status != "variants_ready_partial":
+        return False
+    variants = (job.assembly_plan or {}).get("variants") or []
+    return any(
+        isinstance(variant, dict) and variant.get("render_status") == "rendering"
+        for variant in variants
+    )
+
+
 def creator_context(persona: Persona, item: PlanItem) -> tuple[str, str]:
     data = persona.persona or {}
     creator = {
@@ -213,7 +225,11 @@ async def resolve_item_creator_context(
         media_refs.append(
             CreatorMediaRef(
                 media_id=media_id,
-                kind="video",
+                kind=(
+                    assignment.get("kind")
+                    if assignment.get("kind") in {"video", "image"}
+                    else "video"
+                ),
                 duration_s=duration_s,
                 label=user_note or None,
             )
@@ -221,7 +237,11 @@ async def resolve_item_creator_context(
         media_context.append(
             {
                 "media_id": media_id,
-                "kind": "video",
+                "kind": (
+                    assignment.get("kind")
+                    if assignment.get("kind") in {"video", "image"}
+                    else "video"
+                ),
                 "duration_s": duration_s,
                 "creator_note": user_note or None,
             }
@@ -372,6 +392,13 @@ async def resolve_item_creator_context(
         catalog=catalog,
         current_edit=current_edit,
         has_ready_variant=has_ready_variant,
+        # Chat-first creation owns a trusted internal guided-proposal path.
+        # Keep the public Plan proposal API independently dark behind its
+        # rollout flag, but do not advertise a false-negative capability to
+        # the canonical Creator when its controller and execution path are on.
+        guided_capability_enabled=(
+            settings.guided_edit_capability_enabled or settings.creation_threads_enabled
+        ),
     )
     return manifest, media_context
 
@@ -443,6 +470,9 @@ def compile_active_plan(
         "story_structure": list(getattr(strategy, "story_structure", []) or []),
         "caption_style": getattr(strategy, "caption_style", None),
         "intro_hook": getattr(strategy, "intro_hook", None),
+        "opening_title": getattr(strategy, "opening_title", None),
+        "font_family": getattr(strategy, "font_family", None),
+        "text_color": getattr(strategy, "text_color", None),
         "target_duration_s": strategy.target_duration_s,
         "edit_plan": edit_plan.model_dump(mode="json", exclude_none=True),
     }
@@ -451,6 +481,10 @@ def compile_active_plan(
         receipt["creator_request"] = clean_request
     if strategy.mixed_media_timing is not None:
         receipt["mixed_media_timing"] = strategy.mixed_media_timing.model_dump(mode="json")
+    if strategy.context_label is not None:
+        receipt["context_label"] = strategy.context_label.model_dump(mode="json")
+    if strategy.image_layout is not None:
+        receipt["image_layout"] = strategy.image_layout
     if strategy.montage_cadence is not None:
         receipt["montage_cadence"] = strategy.montage_cadence.model_dump(mode="json")
     receipt["plan_hash"] = canonical_context_hash(receipt)
@@ -671,6 +705,15 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
             payload={"message": "The render identity changed. Start a new creator session."},
         )
         return True
+    # ``variants_ready_partial`` is terminal for the initial orchestrator, but
+    # not while a failed variant is being retried in place.  Keep the Creator
+    # session in rendering until that exact variant's generation-fenced worker
+    # publishes ready/failed; otherwise a GET poll can incorrectly settle the
+    # session and permit a second mutation while work is still running.
+    if _partial_variant_render_in_flight(job):
+        changed = session.phase != "rendering"
+        session.phase = "rendering"
+        return changed
     if job.status in PLAN_ITEM_JOB_FAILED:
         session.phase = "failed"
         session.last_error = {"code": job.failure_reason or "render_failed"}

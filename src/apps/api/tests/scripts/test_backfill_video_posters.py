@@ -2196,6 +2196,7 @@ def test_strict_treats_unresolvable_legacy_url_as_classification_not_failure(
     monkeypatch.setattr(backfill, "_load_ready_clips", lambda *_args: {})
     monkeypatch.setattr(backfill, "_candidates_for_job", lambda *_args, **_kwargs: iter([blocked]))
     monkeypatch.setattr(backfill, "_candidate_is_still_current", lambda _candidate: True)
+    monkeypatch.setattr(backfill, "_reconcile_cleanup_receipts", lambda _job_id: True)
 
     assert backfill.main(["--strict"]) == 0
     assert "unresolvable_legacy_url=1" in capsys.readouterr().out

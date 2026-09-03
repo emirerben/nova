@@ -554,6 +554,22 @@ export function spaceShortcutAllowed(target: HTMLElement | null): boolean {
   return (target?.tagName ?? "").toUpperCase() !== "BUTTON";
 }
 
+/** Embedded editors close through the parent workspace. Keep this predicate
+ * pure so direct editor navigation remains independently testable. */
+export function shouldNotifyEmbeddedEditor(search: string, parentIsSelf: boolean): boolean {
+  return new URLSearchParams(search).get("embedded") === "1" && !parentIsSelf;
+}
+
+export function notifyEmbeddedEditorLeave(refresh = false): boolean {
+  if (typeof window === "undefined") return false;
+  if (!shouldNotifyEmbeddedEditor(window.location.search, window.parent === window)) return false;
+  window.parent.postMessage(
+    { type: "nova:embedded-editor-leave", refresh },
+    window.location.origin,
+  );
+  return true;
+}
+
 const CAROUSEL_SELECTION_ID = "carousel-block";
 
 export function shouldCloseToolOnSelection({
@@ -6405,16 +6421,15 @@ export default function EditorShell({
       setSaveState("idle");
       const renderStarted = editorCommitStartedRender(res.sections);
       setSaveMessage(renderStarted ? "Saved — rendering your latest version" : "Saved");
-      router.push(
-        buildPlanItemEditorReturnHref(itemId, {
-          variantId: variant.variant_id,
-          generation: res.generation,
-          priorFinishedAt: variant.render_finished_at ?? null,
-          renderStarted,
-          expectedDurationS: renderStarted ? res.expected_duration_s ?? null : null,
-          revisionHash: renderStarted ? res.revision_hash ?? null : null,
-        }),
-      );
+      const returnHref = buildPlanItemEditorReturnHref(itemId, {
+        variantId: variant.variant_id,
+        generation: res.generation,
+        priorFinishedAt: variant.render_finished_at ?? null,
+        renderStarted,
+        expectedDurationS: renderStarted ? res.expected_duration_s ?? null : null,
+        revisionHash: renderStarted ? res.revision_hash ?? null : null,
+      });
+      if (!notifyEmbeddedEditorLeave(renderStarted)) router.push(returnHref);
     } catch (err) {
       if (err instanceof EditorCommitConflictError) {
         setSaveState("conflict");
@@ -6685,7 +6700,7 @@ export default function EditorShell({
 
   const requestLeave = useCallback(() => {
     if (dirty) setConfirmLeave(true);
-    else router.push(`/plan/items/${itemId}`);
+    else if (!notifyEmbeddedEditorLeave()) router.push(`/plan/items/${itemId}`);
   }, [dirty, router, itemId]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -8881,7 +8896,7 @@ export default function EditorShell({
         cancelLabel="Keep editing"
         onConfirm={() => {
           setConfirmLeave(false);
-          router.push(`/plan/items/${itemId}`);
+          if (!notifyEmbeddedEditorLeave()) router.push(`/plan/items/${itemId}`);
         }}
         onCancel={() => setConfirmLeave(false)}
       />

@@ -25,6 +25,7 @@ from app.routes import (
     auth,
     clips,
     content_plans,
+    creation_threads,
     creator_agent,
     creator_workspace,
     dev_qa_storage,
@@ -199,6 +200,7 @@ app.include_router(music_jobs.router, prefix="/music-jobs", tags=["music-jobs"])
 app.include_router(generative_jobs.router, prefix="/generative-jobs", tags=["generative-jobs"])
 app.include_router(personas.router, prefix="/personas", tags=["personas"])
 app.include_router(content_plans.router, prefix="/content-plans", tags=["content-plans"])
+app.include_router(creation_threads.router, prefix="/creation-threads", tags=["creation-threads"])
 app.include_router(plan_items.router, prefix="/plan-items", tags=["plan-items"])
 app.include_router(creator_agent.router, prefix="/plan-items", tags=["creator-agent"])
 app.include_router(creator_workspace.router, prefix="/content-plans", tags=["creator-workspace"])

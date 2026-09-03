@@ -14,6 +14,10 @@ CREATOR_EXECUTION_RECEIPT_LEASE_S = 1650
 # holds above the legacy 1.2s ceiling. Old workers do not consume this queue;
 # once the new worker is live it owns both planning and the resulting render.
 MIXED_MEDIA_CREATOR_QUEUE = "creator-guided-jobs"
+# Dedicated launch fence for the chat Creator render contract. Workers from the
+# previous release do not consume this queue, so a rolling API deploy cannot
+# hand exact title/order/context intent to code that silently ignores it.
+CREATOR_RENDER_CONTRACT_QUEUE = "creator-render-v2"
 
 
 def edit_proposal_task_id(generation_attempt_id: str) -> str:

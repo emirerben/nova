@@ -1275,9 +1275,7 @@ def analyze_pool_asset(
                         asset_id,
                         attempt_token=attempt_token,
                         media_status=(
-                            "ready"
-                            if not preview_required or bool(preview_path)
-                            else "failed"
+                            "ready" if not preview_required or bool(preview_path) else "failed"
                         ),
                         preview_path=preview_path,
                         preview_generation=preview_generation,
@@ -1300,9 +1298,7 @@ def analyze_pool_asset(
                         asset_id,
                         attempt_token=attempt_token,
                         media_status=(
-                            "ready"
-                            if not preview_required or bool(preview_path)
-                            else "failed"
+                            "ready" if not preview_required or bool(preview_path) else "failed"
                         ),
                         preview_path=preview_path,
                         preview_generation=preview_generation,
@@ -1641,6 +1637,30 @@ def _persist_variant_fields(
     return fresh
 
 
+def _shortlist_placement_assets(assets: list[dict], *, limit: int | None = None) -> list[dict]:
+    """Bound one placement-agent call without discarding one end of the pool.
+
+    PlanItem visual pools intentionally allow more assets than the placement
+    model can inspect in one call. Sample the stable upload order across the
+    full pool so a 21st+ upload cannot invalidate the whole run or make the
+    newest context categorically invisible. The deterministic fallback still
+    receives every asset if the agent itself fails.
+    """
+
+    if limit is None:
+        from app.agents.overlay_placement import MAX_PLACEMENT_ASSETS  # noqa: PLC0415
+
+        limit = MAX_PLACEMENT_ASSETS
+    if limit < 1:
+        return []
+    if len(assets) <= limit:
+        return list(assets)
+    if limit == 1:
+        return [assets[0]]
+    last = len(assets) - 1
+    return [assets[index * last // (limit - 1)] for index in range(limit)]
+
+
 @celery_app.task(name="app.tasks.autoplace.match_overlay_suggestions", **_AUTOPLACE_TASK_LIMITS)
 def match_overlay_suggestions(
     job_id: str,
@@ -1716,10 +1736,12 @@ def match_overlay_suggestions(
                         "analysis": a.analysis or {},
                     }
                     for a in db.execute(
-                        select(PlanItemAsset).where(
+                        select(PlanItemAsset)
+                        .where(
                             PlanItemAsset.plan_item_id == item_id,
                             PlanItemAsset.status == "ready",
                         )
+                        .order_by(PlanItemAsset.created_at, PlanItemAsset.id)
                     )
                     .scalars()
                     .all()
@@ -1794,10 +1816,19 @@ def match_overlay_suggestions(
                     from app.agents._model_client import default_client  # noqa: PLC0415
                     from app.agents._runtime import RunContext  # noqa: PLC0415
                     from app.agents.overlay_placement import (  # noqa: PLC0415
+                        MAX_PLACEMENT_ASSETS,
                         OverlayPlacementAgent,
                         OverlayPlacementInput,
                         PlacementAsset,
                     )
+
+                    agent_assets = _shortlist_placement_assets(assets, limit=MAX_PLACEMENT_ASSETS)
+                    if len(agent_assets) < len(assets):
+                        _record(
+                            "autoplace_agent_assets_shortlisted",
+                            total=len(assets),
+                            selected=len(agent_assets),
+                        )
 
                     agent_out = OverlayPlacementAgent(default_client()).run(
                         OverlayPlacementInput(
@@ -1818,7 +1849,7 @@ def match_overlay_suggestions(
                                     width=(a["analysis"] or {}).get("width"),
                                     height=(a["analysis"] or {}).get("height"),
                                 )
-                                for a in assets
+                                for a in agent_assets
                             ],
                             occupied=[list(t) for t in _occupied_intervals(variant)],
                             duration_s=duration_s,

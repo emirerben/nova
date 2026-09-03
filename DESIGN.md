@@ -12,11 +12,11 @@ Product language is governed by [`docs/UX_COPY.md`](docs/UX_COPY.md); this file 
 | Surface | Canvas | Accent | Type | Mood |
 |---|---|---|---|---|
 | Landing (`/`, `/auto-story`) | white `#ffffff` | Paper lime `#d7ff90` | Inter edit-story statements | light editorial |
-| Light product (`/plan`, `/plan/new`, `/plan/items/`) | white `#ffffff` / ink / lime | lime-700 | Fraunces headings | light editorial |
+| Light product (`/plan` chat workspace, `/plan/items/`) | white `#ffffff` / ink / lime | lime-700 | Fraunces headings | chat-first editorial |
 | Dark render system (`/template-jobs`) | `bg-black` | amber-400/300 | Fraunces headings | dark theater |
 | Admin (`/admin/*`) | `bg-black` | none (white CTAs) | default sans | plain utility |
 
-**Standing rule:** Light editorial = entire user-facing product (landing, /plan, /plan/new, /plan/items; /library and /generative are redirects to /plan since v0.44). Dark render system = render-status flow (`/template-jobs/*`) + `/admin/*` only (the `/template/[id]` config flow was deleted in v0.7.8.2). ProgressTheater is tone-aware (`tone="light"` on all light surfaces, default dark for /template-jobs + admin). Intentional, not drift.
+**Standing rule:** Light editorial = the entire user-facing product (landing, the `/plan` chat workspace, and `/plan/items`; `/plan/new`, `/create`, `/create/manual`, `/library`, and `/generative` are compatibility redirects). Dark render system = render-status flow (`/template-jobs/*`) + `/admin/*` only (the `/template/[id]` config flow was deleted in v0.7.8.2). ProgressTheater is tone-aware (`tone="light"` on all light surfaces, default dark for /template-jobs + admin). Intentional, not drift.
 
 ---
 
@@ -50,6 +50,10 @@ Token source: `src/apps/web/src/app/globals.css` plus `src/apps/web/src/componen
 - **Landing story rhythm:** `/` starts the timed composition automatically in one viewport, with no mode selector or playback control; `/auto-story` remains a compatibility route. `/?mode=scroll` retains the pinned `760svh` choreography for direct comparison without exposing it in the interface. Source footage and feature chips surround the centered screen, then travel directly into it before the three statements replace one another. The soundtrack starts muted for autoplay compatibility and makes one synchronized audible attempt at the sound-effects beat; browsers may keep it muted when policy forbids unprompted audio.
 - **Shared primitives:** `LightShell`, `LightCard`, `Eyebrow`, `InkButton`, `InfoDot`, `ConfirmDialog` in `src/apps/web/src/components/ui/` (canonical location since v0.4.87.0; `plan/_components/ui/` files are re-export stubs for backward compat). Since v0.47.0.0, `LightCard`/`InkButton`/`ConfirmDialog` are thin wrappers over the shadcn/ui primitives (`Card`/`Button`/`AlertDialog`) — see §15 for the full component-library contract; every NEW control should use the shadcn primitives directly rather than the legacy wrapper names.
 - **Editorial interview layout:** Fraunces question, LEFT-aligned answers, one prior-answer pull-quote with accent left-border (lime), NO message bubbles, NO bot avatar.
+- **Chat-first creation workspace exception:** `/plan` is the canonical creation surface. Its Paper workspace owns a 260px project rail on desktop, a full-width conversation before the first render, and a 420px conversation rail beside the embedded `EditorShell` after a render is ready. This is a real creative conversation surface, so concise user/assistant turns, artifact cards, upload receipts, confirmations, and recovery actions are allowed here; the editorial interview rule above remains in force for onboarding and other interview surfaces.
+- **Chat-first layout contract:** the page owns `h-dvh`; only the transcript and editor panes scroll. Desktop pane chrome is 56px. On mobile, use a compact project header, horizontally scrollable format cards, a safe-area-aware composer, a Projects sheet, Gallery view, and Chat/Editor tabs after a cut is ready. The embedded editor uses `?embedded=1` and keeps `EditorShell` as the source of truth; narrow iframes force its feature-complete overlay mode.
+- **Chat-first state contract:** the transcript is a projection of durable `creation_thread_events`; `PlanItem` and `Job` remain authoritative for media, renders, and editor state. Every render and revision has an explicit confirmation artifact. Upload failure, unavailable formats, voiceover-needed, stale revision, offline/reconnecting, partial-success, and terminal render failure states must have a visible recovery action. Attached-media counts are hydrated from the thread after refresh.
+- **Chat-first motion and a11y:** format cards are keyboard-selectable, the composer submits with Enter (Shift+Enter inserts a newline), focus remains visible at 200% zoom, and reduced motion removes entrance travel while preserving state changes. Match the existing PlanItem media contract: the primary Clips picker accepts video, supporting photos/videos live in the separate Visuals pool, and Narrated reuses the existing voice recorder.
 - **Editor Nova copilot drawer exception:** the full-screen editor's Nova tool may use texting bubbles because it is a command/receipt surface, not an onboarding interview. Tokens: user bubble `bg-[#0c0c0e] text-white` with 18px radius / 6px bottom-right corner; assistant bubble `bg-zinc-100 text-[#0c0c0e]` with 18px radius / 6px bottom-left corner; change chips `border-lime-200 bg-lime-50 text-lime-800`; rejected chips `border-dashed border-zinc-300 bg-white text-[#71717a]`; suggestion chips `border-zinc-200 bg-white` with lime hover/focus.
 - **D16 lime contrast rule:** lime TEXT under ~18px and text-bearing lime fills → `lime-700`. Display ems, bars, dots, non-text fills → `lime-600`.
 - **InfoDot (ⓘ popover, `components/ui/InfoDot.tsx`):** the ONLY sanctioned home for optional helper copy. 16px zinc-400 glyph inline after a label (sibling, never inside a `<label>`); hover/focus ink on zinc-100 disc; open lime-700 on lime-50. Popover: Radix portal `z-[130]` (above the editor Sheet/CopilotDrawer `z-[95]` and the `z-[120]` overlay tier — the popover is always the topmost transient), white `border-zinc-200 rounded-[12px]` shadow, max-w 280px, 13/19 Inter `#3f3f46`, plain sentences only (no heading, no CTA, ≤3 lines). Motion: 180ms scale 0.96→1 + 4px rise from the trigger origin, 120ms fade-out, reduced-motion = fade only (`.info-dot-pop` in `globals.css`). Desktop: hover opens after 150ms, closes 200ms after the pointer leaves; click pins it open. Touch: tap toggles. Outside tap/Esc dismisses; hover-open never steals focus. Hit area 44px (`size="compact"` = 32px in dense inspector rows). NEVER for warnings, errors, disabled reasons, or destructive confirms — those stay visible. Max ~2 dots per screen section.
@@ -262,12 +266,13 @@ Documented here, **not fixed** (D2 decision). Canonicals are user-ratified. Norm
 
 ---
 
-## §12 Plan home + New-video flow (v0.44 redesign; supersedes the ideas ledger)
+## §12 Legacy plan home + New-video flow (rollback-only compatibility)
 
-Rules here supplement §2 (light editorial system). Design source: Paper file
+Rules here document the former flow retained only behind the emergency chat-first
+kill switch. The canonical surface is §2's chat-first workspace. Design source: Paper file
 "Kria Plan Redesign", page "FINAL — Basic home". The ideas ledger was removed
 2026-08-21 (tester feedback: /plan read as a content-ideas list, not an edit
-tool); /plan is now openly the create-a-new-video page.
+tool). New code must not add entry points to this rollback-only flow.
 
 **Note (v0.47 Kria Design System migration):** the ideas ledger and the
 "Plan this for me" panels referenced below as already-removed were removed in

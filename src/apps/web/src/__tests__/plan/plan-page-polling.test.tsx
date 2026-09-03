@@ -27,6 +27,7 @@ jest.mock("@/lib/plan-api", () => ({
 }));
 
 jest.mock("@/lib/generative-api", () => ({ createGenerativeJob: jest.fn() }));
+jest.mock("@/lib/chat-first", () => ({ CHAT_FIRST_CREATION_ENABLED: false }));
 jest.mock("@/app/plan/_lib/route", () => ({ resolvePlanMode: () => "workspace" }));
 jest.mock("@/app/plan/_components/workspace/WorkspaceHome", () => ({
   WorkspaceHome: ({ plan, onRefresh, onPlanChange }) => (

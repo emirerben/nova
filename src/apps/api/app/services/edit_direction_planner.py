@@ -14,6 +14,7 @@ from app.agents.edit_proposal import (
     EditProposalAgent,
     EditProposalAgentInput,
     EditProposalMedia,
+    maximum_distinct_sources,
     minimum_required_sources,
 )
 from app.schemas.edit_proposal import (
@@ -25,6 +26,7 @@ from app.schemas.edit_proposal import (
     MontageAudioPlan,
     MontageCadenceConstraint,
     StoryBeat,
+    media_context_group,
     mixed_media_hold_bounds,
     uses_quick_photo_long_video_timing,
 )
@@ -206,12 +208,17 @@ def clamp_fast_montage_target_duration_s(
     if not uses_quick_photo_long_video_timing(mixed_media_timing):
         return requested
 
-    eligible = [ref for ref in media if ref.kind == "image" or float(ref.duration_s or 0.0) >= 0.4]
+    minimum_video_s = 0.1 if uses_quick_photo_long_video_timing(mixed_media_timing) else 0.4
+    eligible = [
+        ref
+        for ref in media
+        if ref.kind == "image" or float(ref.duration_s or 0.0) >= minimum_video_s
+    ]
     capacities: list[float] = []
     minimum_cuts: list[int] = []
     for ref in eligible:
         if ref.kind == "image":
-            capacities.append(mixed_media_hold_bounds("image").maximum_s)
+            capacities.append(mixed_media_hold_bounds("image", mixed_media_timing).maximum_s)
             minimum_cuts.append(1)
             continue
         source_s = max(0.0, float(ref.duration_s or 0.0))
@@ -244,6 +251,116 @@ def clamp_fast_montage_target_duration_s(
     return min(requested, max(3, math.floor(capacity_s)))
 
 
+def _context_group(ref: MediaRef) -> str:
+    analysis = ref.analysis or {}
+    return media_context_group(
+        ref.user_context,
+        analysis.get("subject"),
+        analysis.get("description"),
+        analysis.get("on_screen_text"),
+    )
+
+
+def _photo_run_chunks(
+    rows: list[tuple[MediaRef, int, int]], *, separator_count: int
+) -> list[list[tuple[MediaRef, int, int]]]:
+    """Split photos into visible runs without creating singleton leftovers."""
+
+    if len(rows) <= 2:
+        return [rows] if rows else []
+    chunk_count = min(math.ceil(len(rows) / 5), max(1, separator_count + 1))
+    base, extra = divmod(len(rows), chunk_count)
+    sizes = [base + (1 if index < extra else 0) for index in range(chunk_count)]
+    chunks: list[list[tuple[MediaRef, int, int]]] = []
+    cursor = 0
+    for size in sizes:
+        chunks.append(rows[cursor : cursor + size])
+        cursor += size
+    return chunks
+
+
+def _weave_photo_runs(
+    rows: list[tuple[MediaRef, int, int]],
+    *,
+    photo_edge: str | None = None,
+) -> list[tuple[MediaRef, int, int]]:
+    """Keep photos in 3–5 shot runs while letting video moments breathe."""
+
+    photos = [row for row in rows if row[0].kind == "image"]
+    videos = [row for row in rows if row[0].kind == "video"]
+    if not photos or not videos:
+        return rows
+    chunks = _photo_run_chunks(photos, separator_count=len(videos))
+    section_count = len(chunks) + 1
+    video_sections: list[list[tuple[MediaRef, int, int]]] = [[] for _ in range(section_count)]
+    separator_count = max(0, len(chunks) - 1)
+    for index, row in enumerate(videos[:separator_count]):
+        video_sections[index + 1].append(row)
+    if photo_edge == "start":
+        # Leave the leading section empty so this chapter's photo block can
+        # join the previous chapter's trailing photos without crossing the
+        # requested semantic chapter boundary.
+        section_order = [len(chunks), *range(1, len(chunks))]
+    elif photo_edge == "end":
+        # Symmetric pairing for a following photo-first chapter.
+        section_order = [0, *range(1, len(chunks))]
+    else:
+        section_order = [0, len(chunks), *range(1, len(chunks))]
+    for index, row in enumerate(videos[separator_count:]):
+        video_sections[section_order[index % len(section_order)]].append(row)
+    ordered: list[tuple[MediaRef, int, int]] = []
+    for index, chunk in enumerate(chunks):
+        ordered.extend(video_sections[index])
+        ordered.extend(chunk)
+    ordered.extend(video_sections[-1])
+    return ordered
+
+
+def _group_reservations_by_context(
+    rows: list[tuple[MediaRef, int, int]],
+    profile: MixedMediaTimingProfile,
+) -> list[tuple[MediaRef, int, int]]:
+    """Build contiguous semantic chapters in creator-requested order."""
+
+    grouped: dict[str, list[tuple[MediaRef, int, int]]] = {}
+    encountered: list[str] = []
+    for row in rows:
+        group = _context_group(row[0])
+        # A context-only beach still belongs with the explicitly requested
+        # beach-volleyball chapter.  The media analyzer often describes
+        # scoreboards, sand, or spectators without repeating the sport name.
+        if group == "beach_context" and "beach_volleyball" in profile.sequence_group_order:
+            group = "beach_volleyball"
+        if group not in grouped:
+            grouped[group] = []
+            encountered.append(group)
+        grouped[group].append(row)
+    requested = [group for group in profile.sequence_group_order if group in grouped]
+    order = requested + [group for group in encountered if group not in requested]
+    chapters = [(group, grouped[group]) for group in order]
+    photo_edges: dict[int, str] = {}
+    pending_photo_chapter: int | None = None
+    for index, (_group, chapter) in enumerate(chapters):
+        if not any(row[0].kind == "image" for row in chapter):
+            pending_photo_chapter = None
+            continue
+        if pending_photo_chapter is None:
+            pending_photo_chapter = index
+            continue
+        photo_edges[pending_photo_chapter] = "end"
+        photo_edges[index] = "start"
+        pending_photo_chapter = None
+
+    result: list[tuple[MediaRef, int, int]] = []
+    for index, (_group, chapter) in enumerate(chapters):
+        result.extend(
+            _weave_photo_runs(chapter, photo_edge=photo_edges.get(index))
+            if profile.image_grouping == "runs"
+            else chapter
+        )
+    return result
+
+
 def deterministic_fast_cuts(
     media: list[MediaRef],
     duration_s: int,
@@ -261,47 +378,85 @@ def deterministic_fast_cuts(
     if montage_cadence is not None:
         return deterministic_round_robin_cuts(media, duration_s, montage_cadence)
 
-    eligible = [ref for ref in media if ref.kind == "image" or float(ref.duration_s or 0.0) >= 0.4]
+    quick_mixed_timing = uses_quick_photo_long_video_timing(mixed_media_timing)
+    minimum_video_s = 0.1 if quick_mixed_timing else 0.4
+    eligible = [
+        ref
+        for ref in media
+        if ref.kind == "image" or float(ref.duration_s or 0.0) >= minimum_video_s
+    ]
     if not eligible:
         raise ValueError("fast montage fallback found no usable media")
     eligible_ids = {ref.media_id for ref in eligible}
     ranked = [ref for _, ref in _ranked_fast_media(media) if ref.media_id in eligible_ids]
     target_duration_s = clamp_fast_montage_target_duration_s(media, duration_s, mixed_media_timing)
-    target_ms = target_duration_s * 1000
-    quick_mixed_timing = uses_quick_photo_long_video_timing(mixed_media_timing)
-    source_capacity_ms = {
+    # Render timelines are CFR at 30fps. Allocate in frames rather than
+    # milliseconds so fallback source windows are always frame aligned.
+    fps = 30
+    target_frames = int(round(target_duration_s * fps))
+    source_capacity_frames = {
         ref.media_id: (
             (
-                round(mixed_media_hold_bounds(ref.kind).maximum_s * 1000)
+                int(
+                    math.floor(
+                        mixed_media_hold_bounds(ref.kind, mixed_media_timing).maximum_s * fps + 1e-6
+                    )
+                )
                 if quick_mixed_timing
-                else 1200
+                else int(round(1.2 * fps))
             )
             if ref.kind == "image"
-            else math.floor(float(ref.duration_s or 0.0) * 1000)
+            else int(math.floor((float(ref.duration_s or 0.0) + 0.001) * fps + 1e-6))
         )
         for ref in ranked
     }
-    if max(source_capacity_ms.values()) < 800:
+    minimum_supported_frames = min(
+        round(
+            max(
+                minimum_video_s if ref.kind == "video" else 0.0,
+                mixed_media_hold_bounds(ref.kind, mixed_media_timing).minimum_s,
+            )
+            * fps
+        )
+        for ref in ranked
+    )
+    if max(source_capacity_frames.values()) < (
+        minimum_supported_frames if quick_mixed_timing else int(round(0.8 * fps))
+    ):
         raise ValueError("fast montage fallback found no source supporting a primary cut")
-    required_sources = minimum_required_sources(
-        len(eligible),
-        target_duration_s=target_duration_s,
-        media=eligible,
-        mixed_media_timing=mixed_media_timing,
+    required_sources = (
+        maximum_distinct_sources(
+            eligible,
+            target_duration_s=target_duration_s,
+            mixed_media_timing=mixed_media_timing,
+        )
+        if quick_mixed_timing
+        else minimum_required_sources(len(eligible))
     )
     available_kinds = {ref.kind for ref in eligible}
+    image_ids = {ref.media_id for ref in eligible if ref.kind == "image"}
+    available_image_count = len(image_ids)
+    available_video_count = len(eligible) - available_image_count
+    required_image_sources = (
+        min(
+            available_image_count,
+            required_sources - (1 if available_video_count else 0),
+        )
+        if quick_mixed_timing
+        else 0
+    )
     rank = {ref.media_id: index for index, ref in enumerate(ranked)}
-    remaining_ms = dict(source_capacity_ms)
+    remaining_frames = dict(source_capacity_frames)
     reservations: list[tuple[MediaRef, int, int]] = []
     used_ids: set[str] = set()
     used_kinds: set[str] = set()
     previous_id: str | None = None
     last_pick_was_new = False
-    minimum_total_ms = 0
-    maximum_total_ms = 0
+    minimum_total_frames = 0
+    maximum_total_frames = 0
     while len(reservations) < 80:
         if (
-            maximum_total_ms >= target_ms
+            maximum_total_frames >= target_frames
             and len(used_ids) >= required_sources
             and used_kinds == available_kinds
         ):
@@ -309,9 +464,29 @@ def deterministic_fast_cuts(
         candidates = [
             ref
             for ref in ranked
-            if ref.media_id != previous_id and remaining_ms[ref.media_id] >= 400
+            if ref.media_id != previous_id
+            and remaining_frames[ref.media_id]
+            >= (
+                round(
+                    (
+                        mixed_media_hold_bounds(ref.kind, mixed_media_timing).minimum_s
+                        if ref.kind == "image"
+                        else (
+                            mixed_media_hold_bounds(ref.kind, mixed_media_timing).minimum_s
+                            if float(ref.duration_s or 0.0)
+                            >= mixed_media_hold_bounds(ref.kind, mixed_media_timing).minimum_s
+                            else minimum_video_s
+                        )
+                    )
+                    * fps
+                )
+                if quick_mixed_timing
+                else int(round(0.4 * fps))
+            )
         ]
-        if len(used_ids) < required_sources and (not reservations or not last_pick_was_new):
+        if len(used_ids) < required_sources and (
+            quick_mixed_timing or not reservations or not last_pick_was_new
+        ):
             unseen = [ref for ref in candidates if ref.media_id not in used_ids]
             if unseen:
                 candidates = unseen
@@ -320,70 +495,113 @@ def deterministic_fast_cuts(
             missing_kind_candidates = [ref for ref in candidates if ref.kind in missing_kinds]
             if missing_kind_candidates:
                 candidates = missing_kind_candidates
+        # With a single available photo, retain the legacy ranking so a long
+        # video can be split around that photo. Once multiple photos exist,
+        # reserve the requested group before video capacity can starve it.
+        if (
+            quick_mixed_timing
+            and required_image_sources > 1
+            and len(used_ids & image_ids) < required_image_sources
+        ):
+            unseen_images = [
+                ref for ref in candidates if ref.kind == "image" and ref.media_id not in used_ids
+            ]
+            if unseen_images:
+                candidates = unseen_images
         candidates = [
             ref
             for ref in candidates
-            if minimum_total_ms
+            if minimum_total_frames
             + min(
-                remaining_ms[ref.media_id],
-                round(mixed_media_hold_bounds(ref.kind).minimum_s * 1000)
+                remaining_frames[ref.media_id],
+                round(mixed_media_hold_bounds(ref.kind, mixed_media_timing).minimum_s * fps)
                 if quick_mixed_timing
-                else 800,
+                else int(round(0.8 * fps)),
             )
-            <= target_ms
+            <= target_frames
         ]
         if not candidates:
             break
         ref = min(
             candidates,
             key=lambda candidate: (
-                -remaining_ms[candidate.media_id],
+                -remaining_frames[candidate.media_id],
                 rank[candidate.media_id],
             ),
         )
         if quick_mixed_timing:
-            bounds = mixed_media_hold_bounds(ref.kind)
-            preferred_minimum_ms = round(bounds.minimum_s * 1000)
-            preferred_maximum_ms = round(bounds.maximum_s * 1000)
+            bounds = mixed_media_hold_bounds(ref.kind, mixed_media_timing)
+            preferred_minimum_frames = round(bounds.minimum_s * fps)
+            preferred_maximum_frames = round(bounds.maximum_s * fps)
         else:
-            preferred_minimum_ms = 800
-            preferred_maximum_ms = 1200
-        maximum_ms = min(preferred_maximum_ms, remaining_ms[ref.media_id])
-        minimum_ms = min(maximum_ms, preferred_minimum_ms)
+            preferred_minimum_frames = int(round(0.8 * fps))
+            preferred_maximum_frames = int(round(1.2 * fps))
+        maximum_frames = min(preferred_maximum_frames, remaining_frames[ref.media_id])
+        minimum_frames = min(maximum_frames, preferred_minimum_frames)
         was_new = ref.media_id not in used_ids
-        reservations.append((ref, minimum_ms, maximum_ms))
-        remaining_ms[ref.media_id] -= maximum_ms
-        minimum_total_ms += minimum_ms
-        maximum_total_ms += maximum_ms
+        reservations.append((ref, minimum_frames, maximum_frames))
+        remaining_frames[ref.media_id] -= maximum_frames
+        minimum_total_frames += minimum_frames
+        maximum_total_frames += maximum_frames
         used_ids.add(ref.media_id)
         used_kinds.add(ref.kind)
         previous_id = ref.media_id
         last_pick_was_new = was_new
     if (
-        maximum_total_ms < target_ms
-        or minimum_total_ms > target_ms
+        maximum_total_frames < target_frames
+        or minimum_total_frames > target_frames
         or len(used_ids) < required_sources
         or used_kinds != available_kinds
+        or len(used_ids & image_ids) < required_image_sources
     ):
         raise ValueError("fast montage fallback cannot allocate distinct source windows safely")
 
-    remaining_target_ms = target_ms - minimum_total_ms
+    if quick_mixed_timing and mixed_media_timing is not None:
+        image_reservations = [row for row in reservations if row[0].kind == "image"]
+        video_reservations = [row for row in reservations if row[0].kind == "video"]
+        if image_reservations and video_reservations:
+            if mixed_media_timing.sequence_grouping == "sport_context":
+                candidate = _group_reservations_by_context(reservations, mixed_media_timing)
+            elif mixed_media_timing.image_grouping == "runs":
+                candidate = _weave_photo_runs(reservations)
+            else:
+                candidate = []
+                images_per_group = max(
+                    1, math.ceil(len(image_reservations) / len(video_reservations))
+                )
+                image_index = 0
+                for video_row in video_reservations:
+                    candidate.append(video_row)
+                    group_end = min(image_index + images_per_group, len(image_reservations))
+                    candidate.extend(image_reservations[image_index:group_end])
+                    image_index = group_end
+                candidate.extend(image_reservations[image_index:])
+            # Reordering a repeated source can accidentally make two windows
+            # adjacent. Preserve the compiler's original safe order if the
+            # requested grouping cannot satisfy that hard render invariant.
+            if all(
+                left[0].media_id != right[0].media_id
+                for left, right in zip(candidate, candidate[1:], strict=False)
+            ):
+                reservations = candidate
+
+    remaining_target_frames = target_frames - minimum_total_frames
     scheduled: list[tuple[MediaRef, int, int]] = []
-    consumed_ms = {ref.media_id: 0 for ref in ranked}
-    for ref, minimum_ms, maximum_ms in reservations:
-        extra_ms = min(remaining_target_ms, maximum_ms - minimum_ms)
-        duration_ms = minimum_ms + extra_ms
-        remaining_target_ms -= extra_ms
-        start_ms = consumed_ms[ref.media_id]
-        consumed_ms[ref.media_id] += duration_ms
-        scheduled.append((ref, duration_ms, start_ms))
-    if remaining_target_ms:
+    consumed_frames = {ref.media_id: 0 for ref in ranked}
+    for ref, minimum_frames, maximum_frames in reservations:
+        extra_frames = min(remaining_target_frames, maximum_frames - minimum_frames)
+        duration_frames = minimum_frames + extra_frames
+        remaining_target_frames -= extra_frames
+        start_frames = consumed_frames[ref.media_id]
+        consumed_frames[ref.media_id] += duration_frames
+        scheduled.append((ref, duration_frames, start_frames))
+    if remaining_target_frames:
         raise ValueError("fast montage fallback could not preserve the target duration")
 
     cuts: list[FastMontageCut] = []
-    for index, (ref, duration_ms, start_ms) in enumerate(scheduled):
-        exact_cut_duration_s = duration_ms / 1000
-        start_s = round(start_ms / 1000, 3) if ref.kind == "video" else 0.0
+    for index, (ref, duration_frames, start_frames) in enumerate(scheduled):
+        exact_cut_duration_s = duration_frames / fps
+        start_s = round(start_frames / fps, 3) if ref.kind == "video" else 0.0
         end_s = round(start_s + exact_cut_duration_s, 3)
         cuts.append(
             FastMontageCut(

@@ -12,6 +12,7 @@ from billiard.exceptions import SoftTimeLimitExceeded
 from celery.exceptions import Retry
 
 import app.tasks.edit_proposal_build as proposal_build
+from app.agents._schemas.creator_agent import CreativeStrategy, CreatorEditPlan
 from app.schemas.edit_proposal import (
     EditProposal,
     FastMontageCut,
@@ -1431,6 +1432,7 @@ def test_fast_cut_program_persists_with_legacy_compatibility_beats(monkeypatch) 
             goal="Lead with the strongest Athens moment",
             pace="fast",
             duration_s=3,
+            image_layout="supporting_card",
             output_orientation="portrait",
         )
     )
@@ -1464,6 +1466,7 @@ def test_fast_cut_program_persists_with_legacy_compatibility_beats(monkeypatch) 
     assert persisted is not None and persisted.status == "draft"
     assert persisted.draft is not None
     assert persisted.draft.output_orientation == "portrait"
+    assert persisted.draft.image_layout == "supporting_card"
     assert persisted.draft.output_orientation_reason == "The creator selected this output format."
     assert [cut.cut_id for cut in persisted.draft.fast_cuts or []] == [
         "cut-0",
@@ -1736,6 +1739,121 @@ def test_main_creator_fail_closed_sentinel_blocks_generic_fallback(monkeypatch) 
     assert persisted is not None
     assert persisted.status == "failed"
     assert persisted.design_fallback == "main_creator_fail_closed"
+
+
+def test_creator_strategy_recovered_only_for_exact_owned_guided_attempt() -> None:
+    item_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    strategy = CreativeStrategy(
+        opening_title="Emir Olympics",
+        font_family="Rascal",
+        text_color="yellow",
+        image_layout="supporting_card",
+        context_label={"kind": "sport", "placement": "bottom_right", "size": "small"},
+    )
+    edit_plan = CreatorEditPlan(
+        manifest_hash="a" * 64,
+        context_hash="b" * 64,
+        strategy=strategy,
+    )
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        active_plan={
+            "guided_generation_attempt_id": "attempt-1",
+            "edit_plan": edit_plan.model_dump(mode="json", exclude_none=True),
+        },
+    )
+    db = _Db(_Result(rows=[session]))
+
+    recovered = proposal_build._creator_strategy_for_guided_attempt(
+        db,
+        item_id=item_id,
+        owner_id=owner_id,
+        attempt_id="attempt-1",
+    )
+
+    assert recovered is not None
+    assert recovered["opening_title"] == "Emir Olympics"
+    assert recovered["font_family"] == "Rascal"
+    assert recovered["text_color"] == "#FFD24A"
+    assert recovered["image_layout"] == "supporting_card"
+    assert recovered["context_label"] == {
+        "kind": "sport",
+        "source": "clip_metadata",
+        "placement": "bottom_right",
+        "size": "small",
+        "per_clip": True,
+    }
+    assert (
+        proposal_build._creator_strategy_for_guided_attempt(
+            db,
+            item_id=item_id,
+            owner_id=owner_id,
+            attempt_id="newer-attempt",
+        )
+        is None
+    )
+
+
+def test_main_creator_guided_dispatch_preserves_exact_render_contract(monkeypatch) -> None:
+    item_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    item = _prod_item(item_id, approval_mode="auto")
+    proposal = parse_edit_proposal(item.edit_proposal)
+    assert proposal is not None
+    item.edit_proposal = proposal.model_copy(
+        update={
+            "status": "approved",
+            "design_fallback": "main_creator_fail_closed",
+        }
+    ).model_dump(mode="json")
+    db = _Db(_Result(rows=[]))
+
+    @contextmanager
+    def _session():
+        yield db
+
+    creator_strategy = {
+        "opening_title": "Emir Olympics",
+        "font_family": "Rascal",
+        "text_color": "#FFD24A",
+        "context_label": {
+            "kind": "sport",
+            "source": "clip_metadata",
+            "placement": "bottom_right",
+            "size": "small",
+            "per_clip": True,
+        },
+    }
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    monkeypatch.setattr(proposal_build, "_locked_item", lambda *_a, **_kw: (item, owner_id))
+    monkeypatch.setattr(
+        proposal_build,
+        "_creator_strategy_for_guided_attempt",
+        lambda *_a, **_kw: creator_strategy,
+    )
+    dispatch_calls = []
+
+    def _fake_dispatch(item_id_arg, epoch, **kwargs):
+        dispatch_calls.append((item_id_arg, epoch, kwargs))
+        return SimpleNamespace(outcome="dispatched")
+
+    monkeypatch.setattr("app.tasks.content_plan_build.dispatch_item_render_for", _fake_dispatch)
+
+    proposal_build._dispatch_after_auto_design(item_id, str(item_id), "attempt-1", 0)
+
+    assert dispatch_calls == [
+        (
+            str(item_id),
+            0,
+            {
+                "bypass_guided_edit_gate": False,
+                "creator_guided_attempt_id": "attempt-1",
+                "creator_strategy": creator_strategy,
+                "reject_active_creator_session": False,
+            },
+        )
+    ]
 
 
 def test_auto_finalize_infeasible_footage_with_pool_assets_never_falls_back(

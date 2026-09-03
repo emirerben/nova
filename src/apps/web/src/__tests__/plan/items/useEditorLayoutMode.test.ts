@@ -4,6 +4,7 @@ import {
   DESKTOP_QUERY,
   FULL_QUERY,
   resolveLayoutMode,
+  isEmbeddedEditor,
   useEditorLayoutMode,
 } from "../../../app/plan/items/[id]/_editor/useEditorLayoutMode";
 
@@ -72,5 +73,12 @@ describe("useEditorLayoutMode", () => {
       queries.get(DESKTOP_QUERY)?.setMatches(false);
     });
     expect(result.current).toBe("light");
+  });
+
+  it("forces the overlay editor only for embedded panes", () => {
+    window.history.replaceState({}, "", "/plan/items/item-1/edit?embedded=1");
+    expect(isEmbeddedEditor()).toBe(true);
+    window.history.replaceState({}, "", "/plan/items/item-1/edit");
+    expect(isEmbeddedEditor()).toBe(false);
   });
 });

@@ -50,6 +50,50 @@ def test_linear_intro_projects_one_grouped_bar_with_burn_style() -> None:
     assert intro.source_params["burn_dicts"]
 
 
+def test_exact_chat_intro_projects_authoritative_font_and_color_into_editor() -> None:
+    """The embedded editor must preview the same typography as the burned cut."""
+    variant = {
+        "variant_id": "original_text",
+        "variant": "original_text",
+        "text_mode": "agent_text",
+        "intro_text": "Emir Olympics",
+        "intro_layout": "linear",
+        "intro_effect": "karaoke-line",
+        "intro_font_family": "Rascal",
+        "intro_text_color": "#FFD24A",
+        "intro_text_size_px": 72,
+        "intro_start_s": 0.0,
+        "intro_end_s": 8.0,
+    }
+
+    [intro] = text_elements_for_variant(variant)
+
+    assert intro.font_family == "Rascal"
+    assert intro.color == "#FFD24A"
+    assert intro.source_params["burn_dicts"]
+    assert all(burn["font_family"] == "Rascal" for burn in intro.source_params["burn_dicts"])
+    assert all(burn["text_color"] == "#FFD24A" for burn in intro.source_params["burn_dicts"])
+
+
+def test_legacy_intro_without_exact_font_keeps_default_projection() -> None:
+    """Unset chat-only typography must not alter legacy materialization."""
+    variant = {
+        "variant_id": "original_text",
+        "text_mode": "agent_text",
+        "intro_text": "Legacy title",
+        "intro_layout": "linear",
+        "intro_effect": "karaoke-line",
+        "intro_text_color": "#FFFFFF",
+        "intro_start_s": 0.0,
+        "intro_end_s": 8.0,
+    }
+
+    [intro] = text_elements_for_variant(variant)
+
+    assert intro.font_family is None
+    assert all("font_family" not in burn for burn in intro.source_params["burn_dicts"])
+
+
 def test_sequence_projects_each_rendered_block_with_exact_timing_and_style(monkeypatch) -> None:
     import app.pipeline.intro_cluster as ic
 

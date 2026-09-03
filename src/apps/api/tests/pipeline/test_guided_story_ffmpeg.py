@@ -377,18 +377,20 @@ def _snapshot(
         direction="guided_story",
         goal="A small Corfu travel story",
         pace="balanced",
-        duration_s=9 if creator_pinned_portrait else 15,
+        duration_s=7 if creator_pinned_portrait else 15,
         title="Corfu in small moments",
         media=media,
         mixed_media_timing=(
             MixedMediaTimingProfile(
                 image_hold="very_fast",
+                image_hold_s=0.2,
                 video_hold="longer",
                 boundary_style="cut",
             )
             if creator_pinned_portrait
             else None
         ),
+        image_layout="supporting_card" if creator_pinned_portrait else None,
         output_orientation="portrait" if creator_pinned_portrait else None,
         story_beats=[
             StoryBeat(
@@ -570,11 +572,17 @@ def test_real_ffmpeg_mixed_story_has_text_audio_and_exact_receipt(
     if creator_pinned_portrait:
         assert plan["mixed_media_timing"] == {
             "image_hold": "very_fast",
+            "image_hold_s": 0.2,
             "video_hold": "longer",
             "boundary_style": "cut",
         }
         assert all(
-            0.5 <= moment["duration_s"] <= 0.8
+            moment["duration_s"] == pytest.approx(0.2)
+            for moment in plan["story_timeline"]
+            if moment["kind"] == "image"
+        )
+        assert all(
+            moment["layout"] == "supporting_card"
             for moment in plan["story_timeline"]
             if moment["kind"] == "image"
         )
@@ -605,6 +613,26 @@ def test_real_ffmpeg_mixed_story_has_text_audio_and_exact_receipt(
         }
     for element in plan["text_elements"]:
         element["size_px"] = 28 if element["id"] == "guided-title" else 20
+    # Exercise the authoritative compile → stage → Skia receipt path for a
+    # short server-derived label. Context labels are stored in the sequence
+    # lane, but must retain their own identity through staging.
+    plan["context_label_text_elements"] = [
+        {
+            **plan["text_elements"][0],
+            "id": "context-sport-segment-0",
+            "text": "Football",
+            "start_s": 0.0,
+            "end_s": 0.1,
+            "role": "generative_sequence",
+            "position": "custom",
+            "x_frac": 0.86,
+            "y_frac": 0.86,
+            "alignment": "right",
+            "effect": "static",
+            "size_px": 20,
+            "source_params": {"identity": "context_sport:football"},
+        }
+    ]
     result = render_execution_plan(
         plan,
         job_id="real-guided-test",
@@ -635,6 +663,7 @@ def test_real_ffmpeg_mixed_story_has_text_audio_and_exact_receipt(
         "guided-thought-town",
         "guided-thought-coast",
     }
+    assert receipt["actual_context_label_ids"] == ["context-sport-segment-0"]
     final = next(uploads.glob("variant_1_guided_story_*.mp4"))
     probe = probe_video(str(final))
     assert (probe.width, probe.height, probe.codec, probe.has_audio) == (

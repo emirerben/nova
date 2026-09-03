@@ -235,6 +235,48 @@ async def test_reconcile_missing_exact_job_fails_stably(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_reconcile_keeps_partial_job_rendering_while_variant_is_in_flight() -> None:
+    creator_id = uuid.uuid4()
+    item_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    session = _session(
+        creator_id=creator_id,
+        plan_item_id=item_id,
+        phase="awaiting_feedback",
+        target_job_id=job_id,
+        target_variant_id="failed-variant",
+        target_generation_id="retry-generation",
+        last_review={"status": "pending"},
+    )
+    job = SimpleNamespace(
+        id=job_id,
+        status="variants_ready_partial",
+        user_id=creator_id,
+        content_plan_item_id=item_id,
+        content_plan_ownership_epoch=0,
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "failed-variant",
+                    "render_status": "rendering",
+                    "render_generation_id": "retry-generation",
+                },
+                {"variant_id": "ready-variant", "render_status": "ready"},
+            ]
+        },
+    )
+    item = SimpleNamespace(id=item_id, content_plan_id=uuid.uuid4())
+    plan = SimpleNamespace(user_id=creator_id, ownership_epoch=0)
+    db = AsyncMock()
+    db.get.side_effect = [job, item, plan]
+
+    changed = await creator_sessions.reconcile_render_state(db, session)
+
+    assert changed is True
+    assert session.phase == "rendering"
+
+
+@pytest.mark.asyncio
 async def test_reconcile_retries_only_transient_review_enqueue_failure(monkeypatch) -> None:
     job_id = uuid.uuid4()
     session = _session(

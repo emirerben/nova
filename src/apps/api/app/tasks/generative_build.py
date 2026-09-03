@@ -32,6 +32,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -1638,6 +1639,7 @@ def _run_generative_job_impl(
     )
 
     render_trace_id = uuid.uuid4().hex
+    render_generation_id: str | None = None
 
     with _sync_session() as db:
         entry = _lock_owned_entry_job(db, job_id)
@@ -1645,6 +1647,14 @@ def _run_generative_job_impl(
             log.error("generative_job_entry_rejected", job_id=job_id)
             return
         job, ownership_epoch = entry
+        assembly = dict(job.assembly_plan or {})
+        render_generation_id = str(assembly.get("creator_generation_id") or "") or uuid.uuid4().hex
+        if assembly.get("creator_generation_id") != render_generation_id:
+            # Legacy jobs may not have a Creator dispatch token.  Backfill one
+            # under the Job lock so every first render has an exact identity
+            # that can be matched by CreatorAgentSession reconciliation.
+            job.assembly_plan = {**assembly, "creator_generation_id": render_generation_id}
+            db.commit()
         # Cancellation is immutable even for a matching speech-cut finalizer.
         # That claim may have been minted before cancellation and must never be
         # treated as authority to resurrect the Job.
@@ -1689,6 +1699,38 @@ def _run_generative_job_impl(
             job.mode = "generative"
         db.commit()
         all_candidates = job.all_candidates or {}
+        # Main Creator's confirmed render contract is validated again at the
+        # worker boundary.  The strategy is inert JSON until this point; only
+        # these bounded fields are projected into the existing render inputs.
+        creator_strategy = _creator_strategy_from_candidates(all_candidates)
+        creator_opening_title = (
+            creator_strategy.opening_title if creator_strategy is not None else None
+        )
+        creator_font_family = creator_strategy.font_family if creator_strategy is not None else None
+        creator_text_color = creator_strategy.text_color if creator_strategy is not None else None
+        raw_creator_strategy = all_candidates.get("creator_strategy") or {}
+        # Context labels are a server-derived, confirmation-gated lane alongside
+        # the exact opening title.  Keep this as opaque JSON at the worker edge;
+        # `_context_sport_text_elements` applies the closed sport allowlist before
+        # anything can reach pixels.
+        creator_context_label = raw_creator_strategy.get(
+            "context_label",
+            raw_creator_strategy.get("context_labels")
+            or raw_creator_strategy.get("contextual_labels")
+            or [],
+        )
+        # CreativeStrategy supplies balanced/24s defaults for planning.  Those
+        # defaults are not confirmed render constraints: applying them here
+        # would change ordinary Creator renders. Only non-default values that
+        # survived the typed API boundary become worker inputs.
+        raw_target_duration_s = raw_creator_strategy.get("target_duration_s")
+        creator_target_duration_s = (
+            float(raw_target_duration_s)
+            if raw_target_duration_s is not None and float(raw_target_duration_s) != 24
+            else None
+        )
+        raw_pacing = raw_creator_strategy.get("pacing")
+        creator_pacing = raw_pacing if raw_pacing in {"fast", "relaxed"} else None
         speech_cleanup_contract = str(
             (job.assembly_plan or {}).get("speech_cleanup_contract") or "legacy_auto"
         )
@@ -1813,6 +1855,13 @@ def _run_generative_job_impl(
         # clip_paths are the guide's shot clips, in guide order (derived at
         # dispatch by _dispatch_item_render). 0/absent on public/legacy jobs.
         narrative_shot_count: int = int(all_candidates.get("narrative_shot_count") or 0)
+        # An explicit Creator revision may carry the prior rendered clip order.
+        # It is server-derived from the previous Job timeline, never model-authored.
+        creator_clip_order: list[int] = []
+        for value in all_candidates.get("creator_clip_order") or []:
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                if value not in creator_clip_order:
+                    creator_clip_order.append(value)
         # Landscape-clip fit preference (plan-item editor, 0057+). "fit" = letterbox
         # landscape clips (black bars, never enlarged). "fill" = crop to fill (legacy
         # default). Absent on public/legacy jobs → defaults to "fill" → byte-identical
@@ -2008,15 +2057,28 @@ def _run_generative_job_impl(
         def _text_then_style():
             if _narrated_voiceover:
                 return None, {}, "default"
-            text, form = _run_text_agents(
-                clip_metas,
-                hero,
-                job_id=job_id,
-                language=language,
-                persona=persona,
-                filming_guide=filming_guide_candidates,
-                clip_notes=clip_notes_candidates,
-            )
+            if creator_opening_title is not None:
+                # Confirmed copy is not advisory prompt context.  Keep the
+                # existing style selector for the surrounding look, but never
+                # let intro_writer replace the exact title.
+                import types as _types  # noqa: PLC0415
+
+                text = _types.SimpleNamespace(
+                    text=creator_opening_title,
+                    highlight_word=None,
+                    word_roles=None,
+                )
+                form = {}
+            else:
+                text, form = _run_text_agents(
+                    clip_metas,
+                    hero,
+                    job_id=job_id,
+                    language=language,
+                    persona=persona,
+                    filming_guide=filming_guide_candidates,
+                    clip_notes=clip_notes_candidates,
+                )
             # Creator Agent M1: if the user has a pinned style_set_id, bypass the
             # per-render AgenticStyleSelectorAgent and use it directly. This ensures
             # a consistent visual identity across all of a creator's edits. When
@@ -2180,6 +2242,19 @@ def _run_generative_job_impl(
             prefer_narrated_voiceover=(job.mode == "content_plan"),
             narrative_shot_count=narrative_shot_count,
         )
+        if creator_opening_title and archetype in {
+            "subtitled",
+            "narrated",
+        }:
+            raise ValueError(f"opening_title is not supported by the {archetype} renderer")
+        if archetype == "montage" and creator_clip_order:
+            preserved_order = _creator_preserved_narrative_order(creator_clip_order, clip_id_to_gcs)
+            if preserved_order:
+                # Reuse the narrative matcher’s strict first-appearance pass for
+                # this server-pinned order. It keeps the normal renderer and
+                # duration logic while preventing a revision from reshuffling
+                # clips the creator explicitly asked to preserve.
+                narrative_order = preserved_order
         if (
             speech_cleanup_contract == "required_v1"
             and archetype == "montage"
@@ -2293,6 +2368,10 @@ def _run_generative_job_impl(
                         variant_dir=variant_dir,
                         style_set_id=style_set_id,
                         user_style_knobs=user_style_knobs,
+                        font_family_override=creator_font_family,
+                        text_color_override=creator_text_color,
+                        creator_target_duration_s=creator_target_duration_s,
+                        creator_pacing=creator_pacing,
                         language=language,
                         landscape_fit=landscape_fit,
                         silence_cut_disabled=silence_cut_disabled,
@@ -2340,12 +2419,17 @@ def _run_generative_job_impl(
                         variant_dir=variant_dir,
                         style_set_id=style_set_id,
                         user_style_knobs=user_style_knobs,
+                        font_family_override=creator_font_family,
+                        text_color_override=creator_text_color,
+                        creator_target_duration_s=creator_target_duration_s,
+                        creator_pacing=creator_pacing,
                         narrative_order=narrative_order,
                         filming_guide=filming_guide_candidates,
                         allow_sequence=False,
                         language=language,
                         landscape_fit=landscape_fit,
                         montage_preset=montage_preset,
+                        creator_context_label=creator_context_label,
                         strict_day_vlog=True,
                     )
                 elif spec.get("archetype") == "single_hero":
@@ -2363,12 +2447,17 @@ def _run_generative_job_impl(
                         variant_dir=variant_dir,
                         style_set_id=style_set_id,
                         user_style_knobs=user_style_knobs,
+                        font_family_override=creator_font_family,
+                        text_color_override=creator_text_color,
+                        creator_target_duration_s=creator_target_duration_s,
+                        creator_pacing=creator_pacing,
                         narrative_order=None,
                         filming_guide=None,
                         allow_sequence=False,
                         language=language,
                         landscape_fit=landscape_fit,
                         montage_preset=montage_preset,
+                        creator_context_label=creator_context_label,
                         strict_single_hero=True,
                     )
                 else:
@@ -2386,6 +2475,10 @@ def _run_generative_job_impl(
                         variant_dir=variant_dir,
                         style_set_id=style_set_id,
                         user_style_knobs=user_style_knobs,
+                        font_family_override=creator_font_family,
+                        text_color_override=creator_text_color,
+                        creator_target_duration_s=creator_target_duration_s,
+                        creator_pacing=creator_pacing,
                         narrative_order=narrative_order,
                         filming_guide=(
                             filming_guide_candidates if narrative_shot_count > 0 else None
@@ -2396,6 +2489,7 @@ def _run_generative_job_impl(
                         montage_preset=montage_preset,
                         speech_cleanup_contract=speech_cleanup_contract,
                         speech_cleanup_fallback_reason=archetype_fallback_reason,
+                        creator_context_label=creator_context_label,
                     )
                 record_render_stage(
                     "variant_render",
@@ -2412,6 +2506,10 @@ def _run_generative_job_impl(
                     expected_operation_id=speech_cut_operation_id,
                     expected_attempt_id=speech_cut_attempt_id,
                 )
+                # Native first renders did not historically carry a generation
+                # token; stamp the dispatch identity before finalization writes
+                # the authoritative variant snapshot.
+                result["render_generation_id"] = render_generation_id
 
                 # Per-variant render_finished_at on success (D6 tile clock).
                 if result.get("ok"):
@@ -2668,6 +2766,68 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id))
         existing = copy.deepcopy((job.assembly_plan or {}).get("guided_story_execution_plan"))
+        raw_strategy = copy.deepcopy(
+            (getattr(job, "all_candidates", None) or {}).get("creator_strategy")
+        )
+
+    def context_label_intent() -> dict[str, Any] | None:
+        persisted_intent = guided_snapshot.get("context_label_intent")
+        if isinstance(persisted_intent, dict):
+            raw_intent = persisted_intent
+        elif isinstance(raw_strategy, dict):
+            raw_intent = raw_strategy.get("context_label")
+        else:
+            raw_intent = None
+        if not isinstance(raw_intent, dict):
+            return None
+        from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+
+        try:
+            strategy = CreativeStrategy.model_validate({"context_label": raw_intent})
+        except Exception:  # noqa: BLE001 - the worker must fail closed on bad JSONB
+            return None
+        intent = strategy.context_label
+        return intent.model_dump(mode="json") if intent is not None else None
+
+    def materialize_context_labels(plan: dict[str, Any]) -> dict[str, Any]:
+        intent = context_label_intent()
+        if intent is None:
+            return plan
+        from app.pipeline.guided_story import matcher_clip_metas  # noqa: PLC0415
+
+        moments = list(plan.get("story_timeline") or [])
+        steps: list[Any] = []
+        resolved_plans: list[dict[str, float]] = []
+        previous: dict[str, Any] | None = None
+        for moment in moments:
+            transition = previous.get("transition_after") if previous else "cut"
+            steps.append(
+                SimpleNamespace(
+                    clip_id=str(moment.get("media_id") or ""),
+                    slot={
+                        "transition_in": transition or "cut",
+                        "transition_duration_s": (
+                            previous.get("transition_duration_s") if previous else 0.0
+                        ),
+                    },
+                )
+            )
+            resolved_plans.append({"duration_s": float(moment.get("duration_s") or 0.0)})
+            previous = moment
+        elements = _context_sport_text_elements(
+            intent,
+            steps=steps,
+            resolved_plans=resolved_plans,
+            clip_id_to_gcs={ref.media_id: ref.gcs_path for ref in snapshot.media},
+            clip_metas=matcher_clip_metas(snapshot),
+            video_duration_s=float(plan.get("resolved_duration_s") or 0.0),
+        )
+        return {
+            **plan,
+            "context_label_intent": intent,
+            "context_label_text_elements": elements,
+        }
+
     if existing is not None:
         plan = validate_execution_plan(existing, guided_snapshot)
     else:
@@ -2696,7 +2856,9 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
                     round(float(beat), 3) for beat in (matched.beat_timestamps_s or [])
                 ],
             }
-        candidate = compile_execution_plan(guided_snapshot, track=track_payload)
+        candidate = materialize_context_labels(
+            compile_execution_plan(guided_snapshot, track=track_payload)
+        )
         with _sync_session() as db:
             job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
             if job is None or _cancelled_job_write_rejected(
@@ -2715,6 +2877,20 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
                 plan = candidate
             else:
                 plan = validate_execution_plan(copy.deepcopy(existing), guided_snapshot)
+
+    # Existing pinned plans created before the contextual lane was propagated
+    # are repaired on read. This keeps deploy-skewed localhost jobs renderable
+    # without changing their approved media or timing.
+    if context_label_intent() is not None:
+        plan = materialize_context_labels(plan)
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+            if job is not None:
+                job.assembly_plan = {
+                    **(job.assembly_plan or {}),
+                    "guided_story_execution_plan": plan,
+                }
+                db.commit()
 
     music = plan.get("music")
     if music is None:
@@ -3440,6 +3616,63 @@ def _resolve_narrative_order(
     return ordered_ids
 
 
+def _creator_preserved_narrative_order(
+    creator_clip_order: list[int], clip_id_to_gcs: dict[str, str]
+) -> list[str]:
+    """Translate a server-pinned source order into matcher clip IDs.
+
+    Creator revisions persist source indices from the previous authoritative
+    timeline, while the matcher addresses the current ingest by ``clip_N``.
+    Keep this conversion strict and deterministic so malformed metadata cannot
+    introduce a source outside the current Job manifest.
+    """
+
+    ordered: list[str] = []
+    for index in creator_clip_order:
+        if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+            continue
+        clip_id = f"clip_{index}"
+        if clip_id in clip_id_to_gcs and clip_id not in ordered:
+            ordered.append(clip_id)
+    return ordered
+
+
+def _creator_strategy_from_candidates(all_candidates: dict[str, Any]):
+    """Validate the deploy-fenced Creator contract at the worker boundary."""
+
+    raw = all_candidates.get("creator_strategy")
+    if not raw:
+        return None
+    from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+    from app.services.generative_jobs import CREATOR_RENDER_CONTRACT_VERSION  # noqa: PLC0415
+
+    if all_candidates.get("creator_render_contract_version") != CREATOR_RENDER_CONTRACT_VERSION:
+        raise ValueError("Creator render contract version mismatch")
+    return CreativeStrategy.model_validate(raw)
+
+
+def _resolve_regen_narrative_order(
+    narrative_shot_count: int,
+    creator_clip_order: list[int],
+    clip_id_to_gcs: dict[str, str],
+    *,
+    job_id: str,
+    resolved_archetype: str | None,
+) -> list[str] | None:
+    """Keep explicit Creator order authoritative on later full renders."""
+
+    order = _resolve_narrative_order(
+        narrative_shot_count,
+        clip_id_to_gcs,
+        job_id=job_id,
+        strict=resolved_archetype == "day_vlog",
+    )
+    if resolved_archetype != "montage" or not creator_clip_order:
+        return order
+    preserved = _creator_preserved_narrative_order(creator_clip_order, clip_id_to_gcs)
+    return preserved or order
+
+
 def _durable_sources_prefix(job_id: str) -> str:
     """GCS prefix for a job's durable source-clip snapshots (clip timeline editor)."""
     return f"generative-jobs/{job_id}/sources/"
@@ -3869,6 +4102,7 @@ def _resolve_regen_text(
     persisted_word_roles: list[str] | None = None,
     persisted_behind_subject: bool | None = None,
     persisted_position: str | None = None,
+    confirmed_text: str | None = None,
 ) -> tuple:
     """Return (agent_text, agent_form, text_mode) without running the LLM when possible.
 
@@ -3943,6 +4177,24 @@ def _resolve_regen_text(
         # makes the variant fast-reburn eligible, so later lyric-override
         # dispatches silently skip lyric re-injection (2026-07-18 E2E bug).
         return None, None, "lyrics"
+
+    if confirmed_text and not persisted_text:
+        # A confirmed Creator title is an execution input, not a prompt hint.
+        # This branch is primarily for retrying a failed first render before a
+        # variant had a persisted intro_text receipt.
+        agent_text = _types.SimpleNamespace(
+            text=confirmed_text,
+            highlight_word=None,
+            word_roles=None,
+        )
+        agent_form = {
+            "effect": "karaoke-line",
+            "layout": persisted_layout or "linear",
+            "behind_subject": bool(persisted_behind_subject),
+        }
+        if persisted_position:
+            agent_form["position"] = persisted_position
+        return agent_text, agent_form, "agent_text"
 
     if persisted_text and existing_text_mode == "agent_text":
         # Reuse persisted text — NO LLM call.
@@ -6944,6 +7196,12 @@ def _reburn_text_on_base(
                         "sequence_mode": None,
                         "sequence_quote": None,
                     }
+            overlays.extend(
+                _context_sport_burn_dicts(
+                    existing.get("context_label_text_elements") or [],
+                    video_duration_s=base_dur,
+                )
+            )
             _matte_provider, reburn_matte_path, overlays = _resolve_subject_matte_for_burn(
                 video_path=local_base,
                 overlays=overlays,
@@ -6959,6 +7217,35 @@ def _reburn_text_on_base(
             _burn_text_for_variant(local_base, overlays, final_path, matte=_matte_provider)
 
             # Detect silent copy-through (burn failed with non-empty overlays)
+            if (
+                overlays
+                and os.path.exists(final_path)
+                and os.path.getsize(final_path) == os.path.getsize(local_base)
+            ):
+                raise RuntimeError(
+                    f"burn_text_overlays_skia copy-through detected on {base_gcs_path}; "
+                    "marking reburn as failed"
+                )
+        elif text_mode == "agent_text" and existing.get("context_label_text_elements"):
+            # Label-only variants have no intro object to rebuild, but the
+            # confirmed contextual lane must survive style/timeline reburns.
+            overlays = _context_sport_burn_dicts(
+                existing.get("context_label_text_elements") or [],
+                video_duration_s=base_dur,
+            )
+            _matte_provider, reburn_matte_path, overlays = _resolve_subject_matte_for_burn(
+                video_path=local_base,
+                overlays=overlays,
+                tmpdir=tmpdir,
+                cached_matte_path=existing.get("subject_matte_path"),
+                upload_key_base=reburn_output_key,
+                duration_s=base_dur,
+                job_id=job_id,
+                variant_id=variant_id,
+                cut_boundaries_s=_variant_slot_boundaries(existing),
+                created_storage_paths=created_storage_paths,
+            )
+            _burn_text_for_variant(local_base, overlays, final_path, matte=_matte_provider)
             if (
                 overlays
                 and os.path.exists(final_path)
@@ -7008,6 +7295,7 @@ def _reburn_text_on_base(
             "style_set_id": resolved_style_set_id,
             "orientation": orientation,
             "text_mode": text_mode,
+            "context_label_text_elements": existing.get("context_label_text_elements") or [],
             "render_status": "ready",
             "ok": True,
             "render_finished_at": datetime.utcnow().isoformat() + "Z",
@@ -8115,6 +8403,299 @@ def _build_ai_timeline(
         return None
 
 
+# Context labels deliberately use a closed vocabulary.  Clip understanding is
+# model output, and arbitrary model prose must never become on-screen copy.  The
+# Creator route may add more evidence fields over time; this worker boundary only
+# trusts a canonical sport token plus the server's confidence receipt.
+_CONTEXT_SPORT_ALIASES: dict[str, str] = {
+    "basketball": "Basketball",
+    "hoops": "Basketball",
+    "tennis": "Tennis",
+    "football": "Football",
+    "soccer": "Football",
+    "futbol": "Football",
+    "volleyball": "Volleyball",
+    "baseball": "Baseball",
+    "softball": "Softball",
+    "hockey": "Hockey",
+    "ice_hockey": "Hockey",
+    "golf": "Golf",
+    "rugby": "Rugby",
+    "cricket": "Cricket",
+    "boxing": "Boxing",
+    "wrestling": "Wrestling",
+    "swimming": "Swimming",
+    "cycling": "Cycling",
+    "skateboarding": "Skateboarding",
+    "skating": "Skating",
+    "surfing": "Surfing",
+    "skiing": "Skiing",
+    "snowboarding": "Snowboarding",
+    "gymnastics": "Gymnastics",
+    "athletics": "Athletics",
+    "track_and_field": "Athletics",
+}
+_CONTEXT_LABEL_MIN_CONFIDENCE = 0.8
+
+
+def _canonical_context_sport_labels(
+    raw_labels: object,
+    clip_id_to_gcs: dict[str, str],
+    clip_metas: list | None = None,
+) -> list[dict[str, Any]]:
+    """Validate the server-derived context-label receipt at the worker edge.
+
+    The schema/route owns the confirmation and provenance fence. This second
+    boundary is intentionally defensive because ``all_candidates`` is JSONB and
+    old or mixed-version workers can receive values outside the typed schema.
+    Only ``source=detected_sport``, ``position=bottom_right``, ``size=small`` and
+    a canonical allowlisted sport survive. Unknown/low-confidence labels are
+    omitted rather than copied into pixels.
+    """
+    # The typed Creator contract is a singular intent. Resolve its label text
+    # from the structured clip-metadata receipt, never from model-authored text.
+    if isinstance(raw_labels, dict):
+        if (
+            str(raw_labels.get("kind") or "").casefold() != "sport"
+            or str(raw_labels.get("source") or "").casefold() != "clip_metadata"
+            or str(raw_labels.get("placement") or "").casefold() != "bottom_right"
+            or str(raw_labels.get("size") or "").casefold() != "small"
+            or raw_labels.get("per_clip") is not True
+        ):
+            return []
+        resolved: list[dict[str, Any]] = []
+        for meta in clip_metas or []:
+            clip_id = str(getattr(meta, "clip_id", "") or "")
+            if clip_id not in clip_id_to_gcs:
+                continue
+            value = getattr(meta, "detected_sport", None) or getattr(meta, "sport", None)
+            # Older ClipMetadata rows carry only the structured subject label.
+            # It is still constrained by the canonical allowlist below; no
+            # free-form moment description is inspected for on-screen copy.
+            if not value:
+                value = getattr(meta, "detected_subject", None)
+            confidence = getattr(meta, "sport_confidence", None)
+            resolved.append(
+                {
+                    "source": "detected_sport",
+                    "clip_id": clip_id,
+                    "sport": value,
+                    "position": "bottom_right",
+                    "size": "small",
+                    **({"confidence": confidence} if confidence is not None else {}),
+                }
+            )
+        raw_labels = resolved
+    if not isinstance(raw_labels, list):
+        return []
+    clip_ids = list(clip_id_to_gcs)
+    accepted: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for raw in raw_labels:
+        if not isinstance(raw, dict):
+            continue
+        if str(raw.get("source") or "").strip().casefold() != "detected_sport":
+            continue
+        if str(raw.get("position") or "").strip().casefold() != "bottom_right":
+            continue
+        if str(raw.get("size") or "").strip().casefold() != "small":
+            continue
+        if raw.get("trusted") is False:
+            continue
+        confidence = raw.get("confidence", raw.get("score"))
+        if confidence is not None:
+            try:
+                if (
+                    not math.isfinite(float(confidence))
+                    or float(confidence) < _CONTEXT_LABEL_MIN_CONFIDENCE
+                ):
+                    continue
+            except (TypeError, ValueError):
+                continue
+        value = raw.get("sport", raw.get("value", raw.get("label")))
+        if not isinstance(value, str):
+            continue
+        token = value.strip().casefold().replace("-", "_").replace(" ", "_")
+        canonical = _CONTEXT_SPORT_ALIASES.get(token)
+        if canonical is None:
+            # Structured detected_subject values are descriptive (e.g.
+            # "basketball player") rather than a single enum. Accept only one
+            # unambiguous allowlisted sport token, and reject mixed sports.
+            words = [part for part in re.split(r"[^a-z0-9]+", token) if part]
+            matches = {
+                _CONTEXT_SPORT_ALIASES[word] for word in words if word in _CONTEXT_SPORT_ALIASES
+            }
+            canonical = next(iter(matches)) if len(matches) == 1 else None
+        if canonical is None:
+            continue
+
+        clip_id: str | None = None
+        raw_clip_id = raw.get("clip_id") or raw.get("clip_ref") or raw.get("media_id")
+        if isinstance(raw_clip_id, str) and raw_clip_id in clip_id_to_gcs:
+            clip_id = raw_clip_id
+        else:
+            raw_index = raw.get("clip_index", raw.get("source_clip_index"))
+            if (
+                isinstance(raw_index, int)
+                and not isinstance(raw_index, bool)
+                and 0 <= raw_index < len(clip_ids)
+            ):
+                clip_id = clip_ids[raw_index]
+        if clip_id is None:
+            continue
+        key = (clip_id, canonical)
+        if key in seen:
+            continue
+        seen.add(key)
+        accepted.append(
+            {
+                "clip_id": clip_id,
+                "sport": canonical,
+                "source": "detected_sport",
+                "position": "bottom_right",
+                "size": "small",
+                **({"confidence": float(confidence)} if confidence is not None else {}),
+            }
+        )
+    return accepted
+
+
+def _context_sport_text_elements(
+    raw_labels: object,
+    *,
+    steps: list,
+    resolved_plans: list[dict],
+    clip_id_to_gcs: dict[str, str],
+    clip_metas: list | None = None,
+    video_duration_s: float,
+) -> list[dict]:
+    """Build timed TextElement snapshots for constrained per-slot sport labels.
+
+    Times are derived from the post-resolution plans in the same order as the
+    assembled steps. Labels repeat when a source clip is used in multiple slots;
+    no slot duration or downstream timeline is modified.
+    """
+    labels = _canonical_context_sport_labels(raw_labels, clip_id_to_gcs, clip_metas)
+    if not labels or len(steps) != len(resolved_plans):
+        return []
+    by_clip = {row["clip_id"]: row["sport"] for row in labels}
+    from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
+
+    elements: list[dict] = []
+    for slot_index, (step, plan, start_s, end_s) in enumerate(
+        _context_output_slot_windows(steps, resolved_plans)
+    ):
+        try:
+            duration_s = float(plan.get("duration_s") or 0.0)
+        except (TypeError, ValueError):
+            duration_s = 0.0
+        if duration_s <= 0:
+            continue
+        clip_id = str(getattr(step, "clip_id", "") or "")
+        sport = by_clip.get(clip_id)
+        if sport:
+            element = TextElement(
+                text=sport,
+                start_s=max(0.0, start_s),
+                end_s=min(float(video_duration_s), end_s),
+                role="generative_sequence",
+                position="custom",
+                x_frac=0.86,
+                # Keep the label bottom-right without pushing glyph bounds
+                # outside the safe canvas margin on landscape renders.
+                y_frac=0.86,
+                font_family="Inter-Bold",
+                size_class="small",
+                color="#FFFFFF",
+                highlight_color="#FFFFFF",
+                alignment="right",
+                effect="static",
+                z=8,
+                source_params={
+                    "source": "context_sport",
+                    "key": f"{clip_id}:{slot_index}:{start_s:.3f}:{end_s:.3f}",
+                    "identity": (f"context_sport:{clip_id}:{slot_index}:{start_s:.3f}:{end_s:.3f}"),
+                    "context_label_source": "detected_sport",
+                    "context_label_position": "bottom_right",
+                    "context_label_size": "small",
+                    "source_clip_id": clip_id,
+                },
+            )
+            if element.end_s > element.start_s:
+                elements.append(element.model_dump(exclude_none=True))
+    return elements
+
+
+def _context_output_slot_windows(
+    steps: list,
+    resolved_plans: list[dict],
+) -> list[tuple[Any, dict, float, float]]:
+    """Return each slot's actual output-clock window, including xfade overlap.
+
+    ``_join_or_concat`` groups hard cuts and sends visual boundaries to
+    ``join_with_transitions``. Its xfade filter starts the next slot before the
+    prior slot ends by ``min(requested, previous * 0.3, next * 0.3)``. Mirror that
+    bounded arithmetic here so labels stay attached to the visible source
+    through crossfades while the persisted AI timeline remains unchanged.
+    """
+    if len(steps) != len(resolved_plans):
+        return []
+    from app.pipeline.transitions import (  # noqa: PLC0415
+        DEFAULT_TRANSITION_DURATION_S,
+        translate_transition,
+    )
+
+    windows: list[tuple[Any, dict, float, float]] = []
+    cursor_s = 0.0
+    previous_duration_s = 0.0
+    for index, (step, plan) in enumerate(zip(steps, resolved_plans)):
+        try:
+            duration_s = max(0.0, float(plan.get("duration_s") or 0.0))
+        except (TypeError, ValueError):
+            duration_s = 0.0
+        overlap_s = 0.0
+        if index > 0:
+            raw_transition = str((getattr(step, "slot", None) or {}).get("transition_in", "none"))
+            transition = translate_transition(raw_transition)
+            if transition != "none":
+                requested = (getattr(step, "slot", None) or {}).get("transition_duration_s")
+                try:
+                    requested_s = (
+                        DEFAULT_TRANSITION_DURATION_S if requested is None else float(requested)
+                    )
+                    overlap_s = max(
+                        0.0,
+                        min(
+                            requested_s,
+                            previous_duration_s * 0.3,
+                            duration_s * 0.3,
+                        ),
+                    )
+                except (TypeError, ValueError):
+                    overlap_s = 0.0
+        start_s = max(0.0, cursor_s - overlap_s)
+        end_s = start_s + duration_s
+        windows.append((step, plan, start_s, end_s))
+        cursor_s = end_s
+        previous_duration_s = duration_s
+    return windows
+
+
+def _context_sport_burn_dicts(elements: list[dict], video_duration_s: float) -> list[dict]:
+    """Compile contextual TextElements through the shared renderer contract."""
+    if not elements:
+        return []
+    from app.agents._schemas.text_element import coerce_text_elements  # noqa: PLC0415
+    from app.pipeline.generative_overlays import build_overlays_from_text_elements  # noqa: PLC0415
+
+    parsed = coerce_text_elements(elements) or []
+    return build_overlays_from_text_elements(
+        parsed,
+        video_duration_s=float(video_duration_s),
+        independent_box_alignment=True,
+    )
+
+
 def _prepare_timeline_assembly(
     timeline_slots: list[dict],
     clip_paths_gcs: list[str],
@@ -8828,6 +9409,28 @@ def _run_regenerate_variant(
         if job.status == _CANCELLED_JOB_STATUS:
             log.info("generative_regenerate_cancelled_job_skipped", job_id=job_id)
             return
+        all_candidates = job.all_candidates or {}
+        creator_strategy = _creator_strategy_from_candidates(all_candidates)
+        creator_opening_title = (
+            creator_strategy.opening_title if creator_strategy is not None else None
+        )
+        creator_font_family = creator_strategy.font_family if creator_strategy is not None else None
+        creator_text_color = creator_strategy.text_color if creator_strategy is not None else None
+        raw_creator_strategy = all_candidates.get("creator_strategy") or {}
+        creator_context_label = raw_creator_strategy.get(
+            "context_label",
+            raw_creator_strategy.get("context_labels")
+            or raw_creator_strategy.get("contextual_labels")
+            or [],
+        )
+        raw_target_duration_s = raw_creator_strategy.get("target_duration_s")
+        creator_target_duration_s = (
+            float(raw_target_duration_s)
+            if raw_target_duration_s is not None and float(raw_target_duration_s) != 24
+            else None
+        )
+        raw_pacing = raw_creator_strategy.get("pacing")
+        creator_pacing = raw_pacing if raw_pacing in {"fast", "relaxed"} else None
         clip_paths_gcs = (job.all_candidates or {}).get("clip_paths", []) or []
         # Re-renders inherit the language the user chose at job creation. Legacy
         # jobs (pre-language-field) default to "en". Frontend NEVER passes language
@@ -8849,6 +9452,11 @@ def _run_regenerate_variant(
         narrative_shot_count_regen: int = int(
             (job.all_candidates or {}).get("narrative_shot_count") or 0
         )
+        creator_clip_order_regen: list[int] = []
+        for value in (job.all_candidates or {}).get("creator_clip_order") or []:
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                if value not in creator_clip_order_regen:
+                    creator_clip_order_regen.append(value)
         # Voiceover jobs re-render the same voice bed; the mix slider is the only knob
         # that changes here. Both come from the Job row (single source of truth).
         voiceover_gcs_path: str | None = (job.all_candidates or {}).get(
@@ -8968,6 +9576,13 @@ def _run_regenerate_variant(
                 else "resync_beats"
             )
         existing_text_mode = existing.get("text_mode", "agent_text")
+        # Creator target fields are also persisted on the variant. This keeps a
+        # re-assembly hermetic even if a job's all_candidates predates the
+        # strategy read or a mixed-version worker sees partial state.
+        creator_target_duration_s = existing.get(
+            "creator_target_duration_s", creator_target_duration_s
+        )
+        creator_pacing = existing.get("creator_pacing", creator_pacing)
         inherited_lyrics_enabled = existing.get("lyrics_enabled")
         inherited_lyric_line_overrides = (
             None if new_track_id is not None else existing.get("lyric_line_overrides")
@@ -9243,6 +9858,7 @@ def _run_regenerate_variant(
             persisted_layout=persisted_layout,
             persisted_word_roles=persisted_word_roles,
             persisted_position=_persisted_intro_position(existing),
+            confirmed_text=creator_opening_title,
         )
         _used_fast_path = False
         fast_created_storage: list[str] = []
@@ -9527,6 +10143,7 @@ def _run_regenerate_variant(
                 persisted_word_roles=persisted_word_roles,
                 persisted_behind_subject=existing.get("intro_behind_subject"),
                 persisted_position=_persisted_intro_position(existing),
+                confirmed_text=creator_opening_title,
             )
         else:
             # PERF/TODO: this re-runs the full clip ingest (re-download + re-Gemini
@@ -9551,11 +10168,12 @@ def _run_regenerate_variant(
 
             # Narrative order survives re-renders (same dispatch contract as the
             # first render). Hook text grounds in the clip that opens the edit.
-            narrative_order_regen = _resolve_narrative_order(
+            narrative_order_regen = _resolve_regen_narrative_order(
                 narrative_shot_count_regen,
+                creator_clip_order_regen,
                 ingest["clip_id_to_gcs"],
                 job_id=job_id,
-                strict=existing.get("resolved_archetype") == "day_vlog",
+                resolved_archetype=existing.get("resolved_archetype"),
             )
             regen_hero = ingest["hero"]
             if active_timeline_slots:
@@ -9606,6 +10224,7 @@ def _run_regenerate_variant(
                 persisted_word_roles=persisted_word_roles,
                 persisted_behind_subject=existing.get("intro_behind_subject"),
                 persisted_position=_persisted_intro_position(existing),
+                confirmed_text=creator_opening_title,
             )
 
             # Rhythm-mode quote authoring on a full re-render (same grounding
@@ -9697,6 +10316,8 @@ def _run_regenerate_variant(
                 style_set_id=resolved_style_set_id,
                 intro_size_override_px=resolved_size_override_px,
                 user_style_knobs=existing_user_style_knobs,
+                creator_target_duration_s=creator_target_duration_s,
+                creator_pacing=creator_pacing,
                 narrative_order=narrative_order_regen,
                 filming_guide=(filming_guide_regen if narrative_shot_count_regen > 0 else None),
                 assembly_steps_override=assembly_steps_override,
@@ -9719,6 +10340,7 @@ def _run_regenerate_variant(
                 speech_cleanup_contract=speech_cleanup_contract_regen,
                 speech_cleanup_fallback_reason=speech_cleanup_fallback_reason_regen,
                 behind_subject_override=text_behind_subject,
+                creator_context_label=creator_context_label,
                 lyrics_enabled=inherited_lyrics_enabled,
                 lyric_line_overrides=inherited_lyric_line_overrides,
                 orientation=effective_orientation,
@@ -11806,6 +12428,8 @@ def _render_generative_variant(
     style_set_id: str | None = None,
     intro_size_override_px: int | None = None,
     user_style_knobs: dict | None = None,
+    creator_target_duration_s: float | None = None,
+    creator_pacing: str | None = None,
     narrative_order: list[str] | None = None,
     filming_guide: list[dict] | None = None,
     assembly_steps_override: list | None = None,
@@ -11827,6 +12451,7 @@ def _render_generative_variant(
     montage_preset: str = "classic",
     speech_cleanup_contract: str = "legacy_auto",
     speech_cleanup_fallback_reason: str | None = None,
+    creator_context_label: dict | list[dict] | None = None,
     behind_subject_override: bool | None = None,
     lyrics_enabled: bool | None = None,
     lyric_line_overrides: dict | None = None,
@@ -12036,6 +12661,10 @@ def _render_generative_variant(
         "intro_font_family": font_family_override,
         "intro_effect": effect_override,
         "intro_text_color": text_color_override,
+        # Server-derived contextual labels are persisted as TextElement snapshots
+        # after assembly. They remain separate from user-authored text_elements so
+        # editor mutations cannot accidentally erase or authorize model prose.
+        "context_label_text_elements": None,
         "intro_cluster_hero_font": cluster_hero_font_override,
         "intro_cluster_body_font": cluster_body_font_override,
         "intro_cluster_accent_font": cluster_accent_font_override,
@@ -12054,6 +12683,13 @@ def _render_generative_variant(
         "lyric_line_overrides": lyric_line_overrides or None,
         "lyric_overlay_snapshot": None,
     }
+    # Confirmed Main Creator constraints are receipts only when a Creator
+    # strategy supplied them. Omitting these keys for ordinary jobs preserves
+    # the legacy variant shape byte-for-byte.
+    if creator_target_duration_s is not None:
+        base["creator_target_duration_s"] = creator_target_duration_s
+    if creator_pacing is not None:
+        base["creator_pacing"] = creator_pacing
     if strict_day_vlog:
         base["day_vlog_renderer_version"] = spec.get("day_vlog_renderer_version")
     # Self-narration can intentionally fall back to the montage renderer when
@@ -12131,7 +12767,12 @@ def _render_generative_variant(
                 single_hero_order,
                 available_footage_s=available_footage_s,
                 clip_durations_s=durations,
-                max_duration_s=float(settings.output_max_duration_s),
+                max_duration_s=min(
+                    float(settings.output_max_duration_s),
+                    creator_target_duration_s
+                    if creator_target_duration_s is not None
+                    else float(settings.output_max_duration_s),
+                ),
             )
             min_slots = len(single_hero_recipe["slots"])
             base["hero_clip_id"] = single_hero_order[0]
@@ -12187,7 +12828,7 @@ def _render_generative_variant(
                 _cands.append(voice_dur)
             voiceover_target_s = min(_cands)
             recipe_dict = _build_no_music_recipe(
-                clip_metas, voiceover_target_s, min_slots=min_slots
+                clip_metas, voiceover_target_s, min_slots=min_slots, pacing=creator_pacing
             )
         elif track is not None:
             if not track.audio_gcs_path:
@@ -12199,10 +12840,23 @@ def _render_generative_variant(
             effective_music_window = _effective_music_window(
                 track,
                 requested_start_s=spec.get("music_start_s"),
-                requested_duration_s=spec.get("music_window_video_duration_s"),
+                requested_duration_s=(
+                    spec.get("music_window_video_duration_s")
+                    if spec.get("music_window_video_duration_s") is not None
+                    else creator_target_duration_s
+                ),
                 fallback_footage_s=effective_available_footage_s,
             )
             track_config = effective_music_window["track_config"]
+            if creator_pacing is not None:
+                # The beat recipe owns cut cadence. Adjust its bounded grouping
+                # before generation so pace changes the actual assembly slots,
+                # while min_slots below still protects every assigned shot.
+                track_config = dict(track_config)
+                current_n = max(1, int(track_config.get("slot_every_n_beats", 8)))
+                track_config["slot_every_n_beats"] = (
+                    max(1, current_n // 2) if creator_pacing == "fast" else min(32, current_n * 2)
+                )
             base["music_start_s"] = effective_music_window["start_s"]
             if effective_music_window["validated"]:
                 base["music_window_video_duration_s"] = effective_music_window["duration_s"]
@@ -12224,12 +12878,29 @@ def _render_generative_variant(
                 effective_available_footage_s,
                 filming_guide=filming_guide,
                 min_slots=min_slots,
+                target_duration_s=creator_target_duration_s,
+                pacing=creator_pacing,
             )
 
         if strict_single_hero:
             # A matched track may still provide the audio bed, but it must never
             # decide the visual slot count or ownership of this guided format.
             recipe_dict = single_hero_recipe
+
+        # The Creator pace is now represented by actual slot cadence/transition
+        # fields above, not just a write-only receipt. For music, the beat
+        # grouping is adjusted before recipe generation below.
+        if creator_pacing is not None:
+            recipe_dict["pacing_style"] = {"relaxed": "slow", "fast": "fast"}[creator_pacing]
+            if creator_pacing == "relaxed":
+                for index, slot in enumerate(recipe_dict.get("slots") or []):
+                    if index:
+                        slot["transition_in"] = "crossfade"
+                        slot["transition_duration_s"] = 0.3
+            elif creator_pacing == "fast":
+                for slot in recipe_dict.get("slots") or []:
+                    slot["transition_in"] = "cut"
+                    slot["transition_duration_s"] = 0.0
 
         if strict_day_vlog:
             # The generic matcher may choose a transition style from a recipe;
@@ -12247,9 +12918,12 @@ def _render_generative_variant(
                     "day_vlog could not allocate one timeline slot per filming-guide shot.",
                 )
             for index, slot in enumerate(recipe_dict["slots"]):
-                slot["transition_in"] = "cut" if index == 0 else "crossfade"
-                slot["transition_duration_s"] = 0.0 if index == 0 else _DAY_VLOG_MAX_TRANSITION_S
-            recipe_dict["transition_style"] = "crossfade"
+                relaxed = creator_pacing != "fast"
+                slot["transition_in"] = "cut" if index == 0 or not relaxed else "crossfade"
+                slot["transition_duration_s"] = (
+                    0.0 if index == 0 or not relaxed else _DAY_VLOG_MAX_TRANSITION_S
+                )
+            recipe_dict["transition_style"] = "cut" if creator_pacing == "fast" else "crossfade"
             recipe_total = sum(
                 float(slot.get("target_duration_s", slot.get("target_duration", 0.0)) or 0.0)
                 for slot in recipe_dict["slots"]
@@ -12357,6 +13031,20 @@ def _render_generative_variant(
             base["intro_placement"] = _intro_placement_from_params(
                 _at_params, has_candidates=bool(text_placement_candidates)
             )
+        elif text_mode == "agent_text" and creator_context_label:
+            # A context-label request must still have a real text-free base even
+            # when the optional intro writer returns no title. The burn stage
+            # uses this inert linear params object to skip title generation and
+            # append only the validated per-slot labels below.
+            _at_params = {
+                "text": "",
+                "effect": "static",
+                "layout": "linear",
+                "position": "center",
+                "text_color": "#FFFFFF",
+                "highlight_color": "#FFD24A",
+                "text_anchor": "center",
+            }
 
         # Propagate the shot-count floor into the recipe so consolidate_slots
         # (template_matcher.py:231-242) doesn't collapse below it. The builders
@@ -12729,6 +13417,20 @@ def _render_generative_variant(
 
         if not os.path.exists(audio_mixed_path) or os.path.getsize(audio_mixed_path) == 0:
             raise RuntimeError(f"variant {variant_id} produced empty audio-mixed output")
+
+        # Materialize confirmed contextual labels only after the final matcher
+        # steps and post-resolution durations are known. This keeps each label
+        # attached to the exact output slot without changing the AI timeline.
+        context_label_elements = _context_sport_text_elements(
+            creator_context_label,
+            clip_metas=clip_metas,
+            steps=steps,
+            resolved_plans=resolved_plans,
+            clip_id_to_gcs=clip_id_to_gcs,
+            video_duration_s=sum(float(p.get("duration_s") or 0.0) for p in resolved_plans),
+        )
+        if context_label_elements:
+            base["context_label_text_elements"] = context_label_elements
         if strict_day_vlog or strict_single_hero:
             try:
                 actual_duration_s = float(_probe_duration(audio_mixed_path))
@@ -12750,7 +13452,7 @@ def _render_generative_variant(
         # For agent_text variants: upload the text-free base for fast-reburn, then
         # burn text on top to produce the final output. Lyrics variants cache the
         # lyric-burned, user-text-free base so user TextElements can layer above it.
-        if text_mode == "agent_text" and agent_text is not None:
+        if text_mode == "agent_text" and (agent_text is not None or creator_context_label):
             from app.pipeline.generative_overlays import (  # noqa: PLC0415
                 build_persistent_intro_overlays,
             )
@@ -12962,6 +13664,15 @@ def _render_generative_variant(
             else:
                 overlays = _static_intro_overlays()
                 _apply_static_layout(overlays)
+            overlays.extend(
+                _context_sport_burn_dicts(
+                    context_label_elements,
+                    video_duration_s=base_dur,
+                )
+            )
+            if agent_text is None:
+                base["intro_layout"] = None
+                base["intro_mode"] = None
             _burn_agent_text_overlays_with_matte(overlays, final_path)
 
             # D20: copy-through detection ported from the fast-reburn path. A
@@ -13115,6 +13826,10 @@ def _render_talking_head_variant(
     style_set_id: str | None = None,
     intro_size_override_px: int | None = None,
     user_style_knobs: dict | None = None,
+    font_family_override: str | None = None,
+    text_color_override: str | None = None,
+    creator_target_duration_s: float | None = None,
+    creator_pacing: str | None = None,
     language: str = "en",
     landscape_fit: str = "fill",
     silence_cut_disabled: bool = False,
@@ -13202,6 +13917,10 @@ def _render_talking_head_variant(
         "silence_cut_outcome": None,
         "speech_cleanup_failure_reason": None,
     }
+    if creator_target_duration_s is not None:
+        base["creator_target_duration_s"] = creator_target_duration_s
+    if creator_pacing is not None:
+        base["creator_pacing"] = creator_pacing
 
     try:
         # SpineExtractionError (corrupt spine) is re-raised below for the job-level
@@ -13259,7 +13978,11 @@ def _render_talking_head_variant(
             clip_paths=clip_id_to_local,
             clip_metas=clip_metas,
             probe_map=probe_map,
-            target_duration_s=available_footage_s or None,
+            target_duration_s=(
+                min(available_footage_s, creator_target_duration_s)
+                if creator_target_duration_s is not None and available_footage_s > 0
+                else (creator_target_duration_s or available_footage_s or None)
+            ),
             output_path=base_path,
             tmpdir=variant_dir,
             job_id=job_id,
@@ -13328,6 +14051,8 @@ def _render_talking_head_variant(
                 size_override_px=intro_size_override_px,
                 user_style_knobs=user_style_knobs,
                 language=language,
+                font_family_override=font_family_override,
+                text_color_override=text_color_override,
             )
             # Sticky (pre-gate) decision — no override kwarg here: talking_head has
             # no fast-reburn / re-render path (v1), so there is no task kwarg to
@@ -18295,6 +19020,8 @@ def _build_no_music_recipe(
     *,
     filming_guide: list[dict] | None = None,
     min_slots: int = 0,
+    target_duration_s: float | None = None,
+    pacing: str | None = None,
 ) -> dict:
     """A song-free recipe: one slot per clip (capped), even-split of the footage.
 
@@ -18321,13 +19048,20 @@ def _build_no_music_recipe(
 
     # Narrative payoff weighting: proportional slot durations from the guide.
     guide_durs = _extract_guide_durations(filming_guide or [], n)
+    # A confirmed Creator target is bounded by the source footage. The
+    # downstream assembler still owns final short-clip clamping, but the
+    # recipe/matcher must see the requested duration so it can allocate the
+    # same windows that are ultimately rendered.
+    effective_duration_s = float(available_footage_s)
+    if target_duration_s is not None:
+        effective_duration_s = min(effective_duration_s, max(0.0, float(target_duration_s)))
     if guide_durs is not None:
         total_guide = sum(guide_durs)
         slot_durs = [
-            max(0.5, round(float(available_footage_s) * (d / total_guide), 3)) for d in guide_durs
+            max(0.5, round(effective_duration_s * (d / total_guide), 3)) for d in guide_durs
         ]
     else:
-        per = max(0.5, round(float(available_footage_s) / n, 3))
+        per = max(0.5, round(effective_duration_s / n, 3))
         slot_durs = [per] * n
 
     slots = [
@@ -18344,6 +19078,28 @@ def _build_no_music_recipe(
         for i in range(n)
     ]
     total_duration = round(sum(slot_durs), 3)
+    pacing_style = {"relaxed": "slow", "fast": "fast"}.get(pacing, "medium")
+    if pacing == "relaxed" and min_slots <= 0 and n > 1:
+        # A relaxed Creator cut is allowed to reuse the matcher pool with
+        # fewer, longer shots. Do this only for an explicit constraint; the
+        # legacy/no-strategy recipe retains its historical slot count.
+        n = max(1, math.ceil(n / 2))
+        slot_durs = [max(0.5, round(effective_duration_s / n, 3))] * n
+        total_duration = round(sum(slot_durs), 3)
+        slots = [
+            {
+                "position": i + 1,
+                "target_duration_s": slot_durs[i],
+                "slot_type": "broll",
+                "energy": 5.0,
+                "priority": 5,
+                "text_overlays": [],
+                "transition_in": "crossfade" if i else "cut",
+                "transition_duration_s": 0.3 if i else 0.0,
+                "speed_factor": 1.0,
+            }
+            for i in range(n)
+        ]
     return {
         "shot_count": n,
         "total_duration_s": total_duration,
@@ -18351,7 +19107,7 @@ def _build_no_music_recipe(
         "slots": slots,
         "beat_timestamps_s": [],
         "sync_style": "freeform",
-        "pacing_style": "medium",
+        "pacing_style": pacing_style,
         "color_grade": "none",
         "transition_style": "cut",
         "copy_tone": "energetic",
@@ -19028,6 +19784,7 @@ def _finalize_job(
                     # whose authored text is edited through PUT /text-elements.
                     "text_elements": r.get("text_elements"),
                     "text_elements_user_edited": r.get("text_elements_user_edited"),
+                    "context_label_text_elements": r.get("context_label_text_elements"),
                     # Lyrics editor state — MUST survive finalization or the editor
                     # sees no lyric projections and capabilities report
                     # no_renderable_lyrics until the first re-render. Pinned by

@@ -36,6 +36,21 @@ OutputOrientation = Literal["portrait", "landscape"]
 MediaLane = Literal["clip", "asset"]
 MediaKind = Literal["image", "video"]
 BeatLayout = Literal["fullscreen", "supporting_card"]
+ImageGrouping = Literal["scattered", "runs"]
+SequenceGrouping = Literal["none", "sport_context"]
+MediaContextGroup = Literal[
+    "football",
+    "basketball",
+    "beach_volleyball",
+    "tennis",
+    "track_and_field",
+    "field_context",
+    "beach_context",
+    "sidelines",
+    "court_context",
+    "people_context",
+    "other",
+]
 ThoughtSource = Literal["ai_draft", "user"]
 ConversationRole = Literal["user", "agent"]
 ConversationPhase = Literal["briefing", "review"]
@@ -205,8 +220,28 @@ class MixedMediaTimingProfile(BaseModel):
     """
 
     image_hold: Literal["very_fast", "standard"] = "standard"
+    # Optional exact still duration requested by the creator.  Omitted keeps
+    # the legacy very_fast 0.5–0.8s bounds; numeric values are intentionally
+    # narrow and never affect video minimums.
+    image_hold_s: float | None = Field(
+        default=None,
+        ge=0.1,
+        le=0.8,
+        exclude_if=lambda value: value is None,
+    )
     video_hold: Literal["longer", "standard"] = "standard"
     boundary_style: Literal["cut", "crossfade"] = "crossfade"
+    image_grouping: ImageGrouping = Field(
+        default="scattered",
+        exclude_if=lambda value: value == "scattered",
+    )
+    sequence_grouping: SequenceGrouping = Field(
+        default="none",
+        exclude_if=lambda value: value == "none",
+    )
+    sequence_group_order: list[
+        Literal["football", "basketball", "beach_volleyball", "tennis", "track_and_field"]
+    ] = Field(default_factory=list, max_length=5, exclude_if=lambda value: not value)
 
 
 @dataclass(frozen=True)
@@ -222,9 +257,16 @@ MIXED_MEDIA_IMAGE_HOLD = MixedMediaHoldBounds(0.5, 0.65, 0.8)
 MIXED_MEDIA_VIDEO_HOLD = MixedMediaHoldBounds(1.5, 2.0, 3.0)
 
 
-def mixed_media_hold_bounds(kind: MediaKind) -> MixedMediaHoldBounds:
+def mixed_media_hold_bounds(
+    kind: MediaKind,
+    profile: MixedMediaTimingProfile | None = None,
+) -> MixedMediaHoldBounds:
     """Return the approved bounds for one media kind."""
 
+    if kind == "image" and profile is not None and profile.image_hold_s is not None:
+        return MixedMediaHoldBounds(
+            profile.image_hold_s, profile.image_hold_s, profile.image_hold_s
+        )
     return MIXED_MEDIA_IMAGE_HOLD if kind == "image" else MIXED_MEDIA_VIDEO_HOLD
 
 
@@ -251,6 +293,49 @@ def recognize_mixed_media_timing(text: str) -> MixedMediaTimingProfile | None:
     video_long = r"(?:longer|more time|breathe|linger|hold|slower)"
     negation = r"(?:do not|don't|dont|never|should not|shouldn't|not)"
 
+    image_grouping: ImageGrouping = "scattered"
+    if re.search(
+        rf"\bgroups?\s+of\s+{photo}\b"
+        rf"|\b(?:group|grouped|grouping)\b.{{0,28}}\b{photo}\b"
+        rf"|\b{photo}\b.{{0,28}}\b(?:group|grouped|grouping|sections?)\b",
+        normalized,
+    ):
+        image_grouping = "runs"
+
+    ordered_group_patterns: tuple[tuple[str, str], ...] = (
+        ("football", r"\b(?:football|soccer)\b"),
+        ("basketball", r"\bbasketball\b"),
+        ("beach_volleyball", r"\b(?:beach\s+volleyball|volleyball)\b"),
+        ("tennis", r"\btennis\b"),
+        ("track_and_field", r"\b(?:track(?:\s+and\s+field)?|hurdles?)\b"),
+    )
+    ordered_matches = [
+        (match.start(), group)
+        for group, pattern in ordered_group_patterns
+        if (match := re.search(pattern, normalized)) is not None
+    ]
+    ordered_matches.sort()
+    sequence_group_order = list(dict.fromkeys(group for _, group in ordered_matches))
+    grouping_language = bool(re.search(r"\b(?:group|grouped|grouping|sequentially)\b", normalized))
+    sequence_grouping: SequenceGrouping = (
+        "sport_context"
+        if (
+            re.search(
+                r"\b(?:group|grouped|grouping)\b.{0,100}\b(?:sports?|context|background)\b"
+                r"|\b(?:sports?|context|background)\b.{0,100}\b(?:group|grouped|grouping)\b",
+                normalized,
+            )
+            or (grouping_language and len(sequence_group_order) >= 2)
+        )
+        else "none"
+    )
+
+    sequence_fields = {
+        "image_grouping": image_grouping,
+        "sequence_grouping": sequence_grouping,
+        "sequence_group_order": sequence_group_order if sequence_grouping != "none" else [],
+    }
+
     def paired(left: str, right: str, *, gap: int = 48) -> bool:
         return bool(
             re.search(rf"\b{left}\b.{{0,{gap}}}\b{right}\b", normalized)
@@ -269,6 +354,50 @@ def recognize_mixed_media_timing(text: str) -> MixedMediaTimingProfile | None:
             )
         )
 
+    # Preserve an explicit numeric still cadence while keeping generic
+    # "very fast" requests on the established 0.5–0.8s contract. Parse this
+    # before the generic paired form so a request containing both "very fast"
+    # and an exact value does not lose the value.
+    numeric_matches = list(
+        re.finditer(
+            rf"\b{photo}\b.{{0,80}}?\b(0?\.[0-9]+|[1-9][0-9]{{0,2}})\s*(?:s|sec(?:ond)?s?|ms|milliseconds?)\b",
+            normalized,
+        )
+    )
+    valid_numeric_matches: list[tuple[re.Match[str], float]] = []
+    for match in numeric_matches:
+        value = float(match.group(1))
+        if "ms" in match.group(0) or "millisecond" in match.group(0):
+            value /= 1000
+        if 0.1 <= value <= 0.8:
+            valid_numeric_matches.append((match, value))
+    # Conversation history is passed oldest-to-newest. A correction such as
+    # "make the images 0.2 seconds instead of 0.1" must override the earlier
+    # 0.1-second request rather than silently reusing the first regex match.
+    numeric_match, numeric_value = (
+        valid_numeric_matches[-1] if valid_numeric_matches else (None, None)
+    )
+    has_video_context = bool(re.search(rf"\b{video}\b", normalized))
+    selected_numeric_context = (
+        normalized[max(0, numeric_match.start() - 40) : numeric_match.end()]
+        if numeric_match is not None
+        else ""
+    )
+    numeric_negated = bool(
+        re.search(
+            rf"\b{negation}\b.{{0,40}}\b{photo}\b",
+            selected_numeric_context,
+        )
+    )
+    if numeric_match and has_video_context and not numeric_negated:
+        return MixedMediaTimingProfile(
+            image_hold="very_fast",
+            image_hold_s=numeric_value,
+            video_hold="longer",
+            boundary_style="cut",
+            **sequence_fields,
+        )
+
     if (
         paired(photo, photo_fast)
         and paired(video, video_long)
@@ -276,9 +405,99 @@ def recognize_mixed_media_timing(text: str) -> MixedMediaTimingProfile | None:
         and not negated(video, video_long)
     ):
         return MixedMediaTimingProfile(
-            image_hold="very_fast", video_hold="longer", boundary_style="cut"
+            image_hold="very_fast",
+            video_hold="longer",
+            boundary_style="cut",
+            **sequence_fields,
         )
     return None
+
+
+def media_context_group(*values: object) -> MediaContextGroup:
+    """Classify approved metadata into a bounded sequencing chapter.
+
+    This never creates on-screen copy. It only groups source IDs using trusted
+    analysis already attached to the proposal, so deterministic fallback can
+    preserve an explicit sport/context ordering request.
+    """
+
+    normalized_values = [" ".join(str(value or "").casefold().split()) for value in values]
+    # Fields are passed in trust/specificity order (creator context, concise
+    # subject, then broader description). Honor the first explicit sport so a
+    # verbose description mentioning a nearby court cannot override a subject
+    # already identified as soccer, for example.
+    sport_patterns: tuple[tuple[MediaContextGroup, str], ...] = (
+        ("beach_volleyball", r"\b(?:beach\s+volleyball|volleyball|sand\s+court)\b"),
+        ("basketball", r"\bbasketball\b"),
+        ("football", r"\b(?:football|soccer)\b"),
+        ("tennis", r"\btennis\b"),
+        ("track_and_field", r"\b(?:track(?:\s+and\s+field)?|hurdles?)\b"),
+    )
+    for value in normalized_values:
+        for group, pattern in sport_patterns:
+            if re.search(pattern, value):
+                return group
+    normalized = " ".join(normalized_values)
+    if re.search(r"\b(?:sand|beach)\b", normalized):
+        return "beach_context"
+    if re.search(r"\b(?:grass|field|lawn|mud|muddy)\b", normalized):
+        return "field_context"
+    if re.search(r"\b(?:bench|bleachers?|sidelines?)\b", normalized):
+        return "sidelines"
+    if re.search(r"\bcourt\b", normalized):
+        return "court_context"
+    if re.search(r"\b(?:group|friends?|people|person|man|woman|girl|boy)\b", normalized):
+        return "people_context"
+    return "other"
+
+
+def recognize_image_layout(text: str) -> BeatLayout | None:
+    """Recognize the creator's latest explicit photo fill/fit instruction.
+
+    ``supporting_card`` is the existing guided-render contract that keeps the
+    entire image visible against a blurred canvas. ``fullscreen`` keeps the
+    established cover-crop behavior. Returning ``None`` preserves legacy
+    proposals byte-for-byte when the creator did not state a preference.
+    """
+
+    normalized = " ".join(str(text or "").casefold().split())
+    candidates: list[tuple[int, BeatLayout]] = []
+    contain_patterns = (
+        r"\b(?:do not|don't|dont|never|should not|shouldn't)\b.{0,24}"
+        r"\b(?:photos?|images?|stills?|pictures?)\b.{0,24}\b(?:fill|cover)\b"
+        r".{0,12}\b(?:the\s+)?screen\b",
+        r"\b(?:fit|show)\b.{0,24}\b(?:whole|entire|full)?\s*"
+        r"(?:photos?|images?|stills?|pictures?)\b.{0,32}"
+        r"\b(?:completely|uncropped|without\s+cropping)\b",
+        r"\b(?:photos?|images?|stills?|pictures?)\b.{0,32}"
+        r"\b(?:fit\s+completely|without\s+cropping|uncropped|not\s+cropped)\b",
+        r"\b(?:do not|don't|dont|never)\s+crop\b.{0,16}"
+        r"\b(?:photos?|images?|stills?|pictures?)\b",
+    )
+    cover_patterns = (
+        r"(?<!do not )(?<!don't )(?<!dont )(?<!never )(?<!shouldn't )"
+        r"\b(?:make|let|have)\b.{0,16}\b(?:photos?|images?|stills?|pictures?)\b"
+        r".{0,16}\b(?:fill|cover)\b.{0,12}\b(?:the\s+)?screen\b",
+        r"\b(?:fullscreen|full-screen)\s+(?:photos?|images?|stills?|pictures?)\b",
+        r"\b(?:photos?|images?|stills?|pictures?)\s+(?:fullscreen|full-screen)\b",
+        r"\bcrop\b.{0,16}\b(?:photos?|images?|stills?|pictures?)\b"
+        r".{0,16}\b(?:to\s+)?fill\b",
+        r"\b(?:photos?|images?|stills?|pictures?)\b.{0,80}"
+        r"\b(?:the\s+same\s+way\s+as|exactly\s+like|just\s+(?:like|how))\b.{0,32}"
+        r"\b(?:landscape\s+)?videos?\b",
+        r"\b(?:photos?|images?|stills?|pictures?)\b.{0,64}"
+        r"\b(?:without|no)\b.{0,24}"
+        r"\b(?:card|black\s+bars?|blur(?:red|ry)?\s+background)\b",
+    )
+    for pattern in contain_patterns:
+        candidates.extend(
+            (match.start(), "supporting_card") for match in re.finditer(pattern, normalized)
+        )
+    for pattern in cover_patterns:
+        candidates.extend(
+            (match.start(), "fullscreen") for match in re.finditer(pattern, normalized)
+        )
+    return max(candidates, key=lambda candidate: candidate[0])[1] if candidates else None
 
 
 # A plan item may contain up to 50 source clips and 100 visual-pool assets.
@@ -329,7 +548,7 @@ class FastMontageCut(BaseModel):
     media_id: str = Field(min_length=1, max_length=100)
     source_start_s: float = Field(ge=0)
     source_end_s: float = Field(gt=0)
-    output_duration_s: float = Field(ge=0.4, le=3.0)
+    output_duration_s: float = Field(ge=0.1, le=3.0)
     role: Literal["hook", "build", "payoff"]
     transition: Literal["none"] = "none"
     beat_align: bool = False
@@ -368,6 +587,63 @@ class EditProposalSnapshot(BaseModel):
     # No artificial floor — see ProposalBrief.duration_s.
     duration_s: int = Field(ge=3, le=60)
     title: str = Field(min_length=1, max_length=100)
+    # Confirmed Main Creator typography is part of the immutable proposal
+    # snapshot, so the async worker cannot replace it with generated copy.
+    opening_title: str | None = Field(
+        default=None,
+        max_length=280,
+        exclude_if=lambda value: value is None,
+    )
+    font_family: str | None = Field(
+        default=None,
+        max_length=160,
+        exclude_if=lambda value: value is None,
+    )
+    text_color: str | None = Field(
+        default=None,
+        max_length=16,
+        exclude_if=lambda value: value is None,
+    )
+    image_layout: BeatLayout | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description=(
+            "Confirmed image-only layout. supporting_card preserves the full image; "
+            "fullscreen uses the established cover crop."
+        ),
+    )
+
+    @field_validator("font_family")
+    @classmethod
+    def _validate_font_family(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        # Reuse the renderer's registry at validation time; this avoids a
+        # second font allowlist drifting from TextElement.
+        from app.agents._schemas.text_element import _ALLOWED_FONTS  # noqa: PLC0415
+
+        candidate = value.strip()
+        canonical = next(
+            (font for font in _ALLOWED_FONTS if font.casefold() == candidate.casefold()),
+            None,
+        )
+        if canonical is None:
+            raise ValueError("font_family must be a known font registry key")
+        return canonical
+
+    @field_validator("text_color")
+    @classmethod
+    def _validate_text_color(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        candidate = value.strip().lower()
+        aliases = {"yellow": "#FFD24A", "gold": "#F4D03F", "white": "#FFFFFF", "black": "#000000"}
+        if candidate in aliases:
+            return aliases[candidate]
+        if not re.fullmatch(r"#[0-9a-f]{6}", candidate):
+            raise ValueError("text_color must be a #RRGGBB hex string or supported color alias")
+        return candidate.upper()
+
     media: list[MediaRef] = Field(min_length=1, max_length=MAX_EDIT_PROPOSAL_MEDIA)
     story_beats: list[StoryBeat] = Field(min_length=1, max_length=20)
     fast_cuts: list[FastMontageCut] | None = Field(default=None, min_length=1, max_length=80)
@@ -413,14 +689,17 @@ class EditProposalSnapshot(BaseModel):
                 )
             cut_kinds = {by_id[cut.media_id].kind for cut in self.fast_cuts}
             # Only require both lanes when each has at least one source that
-            # could legally appear in a fast cut. A sub-0.4s or unprobed video
-            # cannot satisfy FastMontageCut's minimum/source-bound contract and
-            # must not make an otherwise valid photo montage impossible.
+            # can honor the approved timing profile. A video shorter than the
+            # 1.5s "longer" minimum cannot satisfy the user's cadence and must
+            # not make an otherwise valid photo montage impossible.
+            mixed_video_minimum_s = mixed_media_hold_bounds(
+                "video", self.mixed_media_timing
+            ).minimum_s
             available_kinds = {
                 ref.kind
                 for ref in self.media
                 if ref.kind == "image"
-                or (ref.duration_s is not None and ref.duration_s >= 0.4 - 0.001)
+                or (ref.duration_s is not None and ref.duration_s >= mixed_video_minimum_s - 0.001)
             }
             if quick_mixed_timing and len(available_kinds) > 1 and cut_kinds != available_kinds:
                 raise ValueError("mixed-media timing must use both photos and videos")
@@ -429,17 +708,24 @@ class EditProposalSnapshot(BaseModel):
             for cut in self.fast_cuts:
                 ref = by_id[cut.media_id]
                 if ref.kind == "image":
-                    bounds = mixed_media_hold_bounds(ref.kind)
+                    bounds = mixed_media_hold_bounds(ref.kind, self.mixed_media_timing)
                     if quick_mixed_timing and not (
                         bounds.minimum_s - 0.001
                         <= cut.output_duration_s
                         <= bounds.maximum_s + 0.001
                     ):
-                        raise ValueError("mixed-media photos must hold for 0.5-0.8s")
+                        raise ValueError(
+                            "mixed-media photos must stay within the approved still hold"
+                        )
                     if quick_mixed_timing and ref.media_id in image_ids:
                         raise ValueError("mixed-media photos may only be used once")
                     image_ids.add(ref.media_id)
                     continue
+                minimum_video_s = 0.1 if quick_mixed_timing else 0.4
+                if cut.output_duration_s < minimum_video_s - 0.001:
+                    raise ValueError(
+                        f"fast montage video cuts must be at least {minimum_video_s:g}s"
+                    )
                 if ref.duration_s is None or cut.source_end_s > ref.duration_s + 0.001:
                     raise ValueError("fast montage cut exceeds its server-owned video duration")
                 video_windows.setdefault(ref.media_id, []).append(
@@ -457,7 +743,7 @@ class EditProposalSnapshot(BaseModel):
                     raise ValueError("fast montage video windows must not overlap")
                 if quick_mixed_timing:
                     source_duration_s = float(by_id[media_id].duration_s or 0.0)
-                    bounds = mixed_media_hold_bounds("video")
+                    bounds = mixed_media_hold_bounds("video", self.mixed_media_timing)
                     total_used_s = sum(window[2] for window in windows)
                     for _start_s, _end_s, output_duration_s in windows:
                         remaining_for_cut_s = source_duration_s - (total_used_s - output_duration_s)
@@ -468,6 +754,12 @@ class EditProposalSnapshot(BaseModel):
                             raise ValueError(
                                 "mixed-media videos must hold for 1.5-3.0s when source permits"
                             )
+            available_image_count = sum(ref.kind == "image" for ref in self.media)
+            required_image_count = min(3, available_image_count)
+            if quick_mixed_timing and len(image_ids) < required_image_count:
+                raise ValueError(
+                    "mixed-media timing must use up to three distinct photos when available"
+                )
             if self.fast_cuts[0].role != "hook":
                 raise ValueError("fast montage must open with a hook cut")
             if any(cut.transition != "none" for cut in self.fast_cuts):
@@ -634,6 +926,45 @@ class ProposalBrief(BaseModel):
     # analyzed media before it reaches the agent). See agents/DECISIONS.md.
     duration_s: int = Field(default=24, ge=3, le=60)
     creator_request: str = Field(default="", max_length=1000)
+    # Confirmed Main Creator fields copied into the immutable snapshot by the
+    # async proposal worker.
+    opening_title: str | None = Field(default=None, max_length=280)
+    font_family: str | None = Field(default=None, max_length=160)
+    text_color: str | None = Field(default=None, max_length=16)
+    image_layout: BeatLayout | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+
+    @field_validator("font_family")
+    @classmethod
+    def _validate_font_family(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        from app.agents._schemas.text_element import _ALLOWED_FONTS  # noqa: PLC0415
+
+        candidate = value.strip()
+        canonical = next(
+            (font for font in _ALLOWED_FONTS if font.casefold() == candidate.casefold()),
+            None,
+        )
+        if canonical is None:
+            raise ValueError("font_family must be a known font registry key")
+        return canonical
+
+    @field_validator("text_color")
+    @classmethod
+    def _validate_text_color(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        candidate = value.strip().lower()
+        aliases = {"yellow": "#FFD24A", "gold": "#F4D03F", "white": "#FFFFFF", "black": "#000000"}
+        if candidate in aliases:
+            return aliases[candidate]
+        if not re.fullmatch(r"#[0-9a-f]{6}", candidate):
+            raise ValueError("text_color must be a #RRGGBB hex string or supported color alias")
+        return candidate.upper()
+
     mixed_media_timing: MixedMediaTimingProfile | None = None
     montage_audio: MontageAudioPlan | None = Field(
         default=None,

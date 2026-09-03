@@ -41,6 +41,8 @@ from app.routes.creator_agent import (
     _creator_speech_cut_source_enabled,
     _fallback_strategy,
     _next_balanced_integer_duration_s,
+    _previous_creator_clip_order,
+    _requests_preserved_clip_order,
     _reset_render_target,
     _resolved_cadence_for_turn,
     _seed_guided_specialist_brief,
@@ -109,6 +111,71 @@ def test_creator_clip_metadata_dispatch_uses_analysis_queue() -> None:
     analyze_creator_clip_metadata.apply_async.assert_called_once_with(
         args=[str(item.id), 5], queue=CREATOR_CLIP_METADATA_QUEUE
     )
+
+
+def test_preserve_clip_order_requires_explicit_order_language() -> None:
+    assert _requests_preserved_clip_order("Keep this exact generation and clip order")
+    assert _requests_preserved_clip_order("preserve the same sequence")
+    assert not _requests_preserved_clip_order("Make the opening more energetic")
+
+
+@pytest.mark.asyncio
+async def test_previous_creator_clip_order_maps_durable_timeline_to_item_paths() -> None:
+    user_id = uuid.uuid4()
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        current_job_id=uuid.uuid4(),
+        clip_gcs_paths=[
+            "users/u/thread/first.mp4",
+            "users/u/thread/second.mp4",
+            "users/u/thread/third.mp4",
+        ],
+    )
+    session = SimpleNamespace(creator_id=user_id, target_variant_id="original_text")
+    previous_job = SimpleNamespace(
+        user_id=user_id,
+        content_plan_item_id=item.id,
+        status="variants_ready",
+        all_candidates={
+            "clip_paths": [
+                "generative-jobs/old/sources/000_first.mp4",
+                "generative-jobs/old/sources/001_second.mp4",
+                "generative-jobs/old/sources/002_third.mp4",
+            ]
+        },
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "original_text",
+                    "render_status": "ready",
+                    "ai_timeline": {
+                        "slots": [
+                            {"order": 0, "clip_index": 1},
+                            {"order": 1, "clip_index": 0},
+                            {"order": 2, "clip_index": 2},
+                        ]
+                    },
+                    "user_timeline": {
+                        "slots": [
+                            {"order": 0, "clip_index": 2},
+                            {"order": 1, "clip_index": 0},
+                        ]
+                    },
+                }
+            ]
+        },
+    )
+    db = AsyncMock()
+    db.get.return_value = previous_job
+
+    order = await _previous_creator_clip_order(
+        db,
+        item,
+        session,
+        "Keep this exact generation and clip order.",
+    )
+
+    assert order == [2, 0]
 
 
 @pytest.fixture()
@@ -710,6 +777,7 @@ def test_confirmed_guided_strategy_becomes_specialist_brief(monkeypatch) -> None
             pacing="fast",
             render_program="guided",
             selected_media_ids=["clip-1"],
+            image_layout="supporting_card",
             mixed_media_timing=MixedMediaTimingProfile(
                 image_hold="very_fast", video_hold="longer", boundary_style="cut"
             ),
@@ -731,6 +799,7 @@ def test_confirmed_guided_strategy_becomes_specialist_brief(monkeypatch) -> None
         "pace": "fast",
         "duration_s": 24,
         "creator_request": creator_request,
+        "image_layout": "supporting_card",
         "mixed_media_timing": {
             "image_hold": "very_fast",
             "video_hold": "longer",
@@ -859,6 +928,25 @@ def test_truncated_main_creator_fallback_preserves_exact_mixed_media_request(
     }
 
 
+def test_main_creator_preserves_photo_runs_and_ordered_sport_context(monkeypatch) -> None:
+    strategy = _fallback_strategy(
+        _manifest(monkeypatch),
+        user_message=(
+            "Amongst the videos, add groups of photos that transition in 0.1 seconds. "
+            "Group football, basketball, and beach volleyball sequentially by sport and context."
+        ),
+    )
+
+    assert strategy.mixed_media_timing is not None
+    assert strategy.mixed_media_timing.image_grouping == "runs"
+    assert strategy.mixed_media_timing.sequence_grouping == "sport_context"
+    assert strategy.mixed_media_timing.sequence_group_order == [
+        "football",
+        "basketball",
+        "beach_volleyball",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_planning_fails_closed_when_mixed_media_specialist_is_unavailable(
     monkeypatch,
@@ -947,6 +1035,75 @@ async def test_planning_fails_closed_when_mixed_media_specialist_is_unavailable(
         ),
         "code": "mixed_media_timing_unavailable",
     }
+
+
+@pytest.mark.asyncio
+async def test_planning_repairs_missing_model_media_ids_from_authoritative_manifest(
+    monkeypatch,
+) -> None:
+    manifest = resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[{"media_id": "attached-clip-1", "kind": "video"}],
+    )
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4())
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        revision=1,
+        status="planning",
+        events=[],
+        agent_call_count=0,
+        agent_call_budget=2,
+        question_count=0,
+        question_budget=1,
+        active_plan=None,
+        last_error=None,
+        manifest_hash=None,
+    )
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=CreativeStrategy(
+            edit_format="montage",
+            render_program="native",
+            selected_media_ids=[],
+        ),
+        summary="A focused cut from the attached footage.",
+    )
+    response = SimpleNamespace(status="awaiting_confirmation")
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, SimpleNamespace(), SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(creator_routes, "creator_context", lambda *_args: ("creator", "item"))
+    monkeypatch.setattr(creator_routes, "default_client", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        creator_routes.asyncio,
+        "to_thread",
+        AsyncMock(return_value=SimpleNamespace(action=action)),
+    )
+    monkeypatch.setattr(creator_routes, "append_event", AsyncMock())
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+
+    result = await creator_routes._run_planning_turn(
+        AsyncMock(),
+        item_id=str(item.id),
+        user=user,
+        session_id=session.id,
+        expected_revision=1,
+        user_message="Make this energetic.",
+    )
+
+    assert result is response
+    assert session.status == "awaiting_confirmation"
+    assert session.active_plan["edit_plan"]["strategy"]["selected_media_ids"] == ["attached-clip-1"]
 
 
 @pytest.mark.asyncio
@@ -2429,6 +2586,54 @@ async def test_start_locks_an_existing_session_before_appending(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
+async def test_confirm_completion_locks_plan_job_before_session(monkeypatch) -> None:
+    """Finalization must use the worker's Plan -> Item -> Job -> Session order."""
+
+    user_id = uuid.uuid4()
+    item = SimpleNamespace(id=uuid.uuid4())
+    plan = SimpleNamespace(id=uuid.uuid4())
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        content_plan_item_id=item.id,
+    )
+    session = SimpleNamespace(id=uuid.uuid4())
+    calls: list[str] = []
+
+    async def owned_context(*_args, **kwargs):
+        assert kwargs == {"for_update": True}
+        calls.append("plan_item")
+        return item, plan, SimpleNamespace()
+
+    async def get(model, object_id, **kwargs):
+        assert model is Job
+        assert object_id == job.id
+        assert kwargs == {"populate_existing": True, "with_for_update": True}
+        calls.append("job")
+        return job
+
+    async def load_session(*_args, **kwargs):
+        assert kwargs == {"for_update": True}
+        calls.append("session")
+        return session
+
+    db = SimpleNamespace(get=get)
+    monkeypatch.setattr(creator_routes, "_owned_context", owned_context)
+    monkeypatch.setattr(creator_routes, "_load_session", load_session)
+
+    completed = await creator_routes._lock_confirmed_render_graph(
+        db,
+        item_id=item.id,
+        user_id=user_id,
+        session_id=session.id,
+        job_id=job.id,
+    )
+
+    assert completed is session
+    assert calls == ["plan_item", "job", "session"]
+
+
+@pytest.mark.asyncio
 async def test_confirm_without_an_active_plan_returns_conflict(monkeypatch) -> None:
     user = SimpleNamespace(id=uuid.uuid4())
     item = SimpleNamespace(id=uuid.uuid4())
@@ -2601,6 +2806,7 @@ async def test_guided_confirm_returns_rendering_after_rollback_expires_loaded_ro
         side_effect=[
             (initial_item, plan, SimpleNamespace()),
             (live_item, plan, SimpleNamespace()),
+            (refreshed_item, plan, SimpleNamespace()),
             (refreshed_item, plan, SimpleNamespace()),
         ]
     )

@@ -1219,7 +1219,12 @@ def text_elements_for_variant(
             lyric_elems = [
                 elem for entry in snapshot if (elem := _element_from_lyric_snapshot(entry))
             ]
-    return _base_text_elements_for_variant(v) + lyric_elems
+    context_elems = coerce_text_elements(v.get("context_label_text_elements") or []) or []
+    return (
+        _base_text_elements_for_variant(v)
+        + [elem for elem in context_elems if not elem.removed]
+        + lyric_elems
+    )
 
 
 def _base_text_elements_for_variant(v: dict) -> list[TextElement]:
@@ -1266,6 +1271,14 @@ def _base_text_elements_for_variant(v: dict) -> list[TextElement]:
     intro_text_size_px: int | None = v.get("intro_text_size_px")
     intro_effect: str = v.get("intro_effect") or "karaoke-line"
     intro_text_color: str = v.get("intro_text_color") or "#FFFFFF"
+    # Exact chat intent is persisted on the variant separately from the legacy
+    # intro fields.  Thread it into the read adapter so the editable timeline
+    # receives the same face/color that the renderer burned.  Only pass a
+    # validated registry key; unset/unknown values preserve the legacy
+    # style-set/default resolution.
+    intro_font_family = v.get("intro_font_family")
+    if intro_font_family not in _ALLOWED_FONTS:
+        intro_font_family = None
     intro_start_s, intro_end_s = _text_window(v)
     # Canvas parity: every render path resolves the output canvas from the
     # variant's orientation and threads it into the overlay builders, which
@@ -1399,6 +1412,8 @@ def _base_text_elements_for_variant(v: dict) -> list[TextElement]:
     layout = intro_layout or "linear"
 
     style_kwargs: dict = {}
+    if intro_font_family is not None:
+        style_kwargs["font_family"] = intro_font_family
     if intro_text_size_px is not None:
         style_kwargs["text_size_px"] = int(intro_text_size_px)
     placement = v.get("intro_placement")

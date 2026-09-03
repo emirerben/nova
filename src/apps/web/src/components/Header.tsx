@@ -3,10 +3,16 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signIn, signOut, useSession } from "next-auth/react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 
 import { BRAND_NAME } from "@/lib/brand";
 import KriaMark from "@/components/KriaMark";
+import {
+  CHAT_FIRST_CREATION_ENABLED,
+  getChatFirstFallback,
+  setChatFirstFallback,
+  subscribeChatFirstFallback,
+} from "@/lib/chat-first";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -19,9 +25,35 @@ import {
 
 export default function Header() {
   const pathname = usePathname() ?? "";
+  const { status } = useSession();
   const isAdmin = pathname.startsWith("/admin");
+  const chatFallback = useSyncExternalStore(
+    subscribeChatFirstFallback,
+    getChatFirstFallback,
+    () => false,
+  );
+  const isChatFirstWorkspace =
+    pathname === "/dev-qa/chat-first-creation" ||
+    (pathname === "/plan" && CHAT_FIRST_CREATION_ENABLED &&
+      !chatFallback &&
+      status !== "unauthenticated");
   const isLanding = pathname === "/" || pathname === "/auto-story";
   const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
+    const handleFallback = () => setChatFirstFallback(true);
+    const handleReady = () => setChatFirstFallback(false);
+    window.addEventListener("nova:chat-first-fallback", handleFallback);
+    window.addEventListener("nova:chat-first-ready", handleReady);
+    return () => {
+      window.removeEventListener("nova:chat-first-fallback", handleFallback);
+      window.removeEventListener("nova:chat-first-ready", handleReady);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (pathname !== "/plan") setChatFirstFallback(false);
+  }, [pathname]);
 
   useEffect(() => {
     if (isAdmin) return;
@@ -42,6 +74,7 @@ export default function Header() {
   }, [isAdmin]);
 
   if (isAdmin) return null;
+  if (isChatFirstWorkspace) return null;
 
   // Light surfaces: landing variants + all plan pages (incl. /plan/items) + library + TikTok + generative
   // + the static legal pages (cream canvas, would clash with the dark sticky header).
