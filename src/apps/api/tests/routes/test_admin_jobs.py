@@ -428,7 +428,14 @@ class TestJobDebug:
         body = res.json()["job"]
         assert body["assembly_plan"] == {
             "title": "visible",
-            "variants": [{"variant_id": "v", "candidate": {"clip_paths": ["source.mp4"]}}],
+            "variants": [
+                {
+                    "variant_id": "v",
+                    "candidate": {},
+                    "render_status": "rendering",
+                    "ok": False,
+                }
+            ],
         }
         assert body["all_candidates"] == {
             "clip_paths": ["source.mp4"],

@@ -920,9 +920,9 @@ def test_admin_job_status_projects_private_generation_state_without_mutating_row
         app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 200, response.text
-    assert response.json()["assembly_plan"] == {
-        "output_url": "https://signed-url.example/output.mp4"
-    }
+    # An active/malformed private generation fails closed even on the admin
+    # status surface; provisional media must never be re-exposed.
+    assert response.json()["assembly_plan"] == {}
     assert job.assembly_plan == stored
 
 

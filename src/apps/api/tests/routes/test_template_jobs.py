@@ -341,7 +341,7 @@ class TestGetTemplateJobStatus:
 
         payload = await template_jobs.get_template_job_debug(str(job.id), db=db)
 
-        assert payload["assembly_plan"]["steps"] == [{"clip_id": "clip-1", "slot": {"position": 1}}]
+        assert payload["assembly_plan"]["steps"] == [{"slot": {"position": 1}}]
         assert payload["assembly_plan"]["clips_used_unique"] == 1
         assert job.assembly_plan == stored
 

@@ -193,8 +193,14 @@ async def test_template_status_projects_private_generation_and_identity_state() 
 
     payload = response.model_dump()
     assert payload["assembly_plan"] == {
-        "output_url": "https://safe.example/output.mp4",
-        "variants": [{"variant_id": "subtitled", "nested": {}}],
+        "variants": [
+            {
+                "variant_id": "subtitled",
+                "nested": {},
+                "render_status": "rendering",
+                "ok": False,
+            }
+        ],
     }
     assert "all_candidates" not in payload
     assert job.assembly_plan == stored
@@ -223,7 +229,7 @@ async def test_music_status_projects_private_generation_and_identity_state() -> 
     )
 
     payload = response.model_dump()
-    assert payload["assembly_plan"] == {"output_url": "https://safe.example/music.mp4"}
+    assert payload["assembly_plan"] == {}
     assert "all_candidates" not in payload
     assert job.assembly_plan == stored
 
