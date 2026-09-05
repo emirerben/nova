@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
 from app.agents._schemas.persona import Persona as PersonaSchema
@@ -15,8 +16,10 @@ from app.auth import get_current_user
 from app.config import settings
 from app.database import get_db
 from app.main import app
+from app.models import ContentPlan, CreatorAgentSession, Job, PlanItem
 from app.models import Persona as PersonaRow
 from app.routes.creation_threads import (
+    ActionBody,
     ArchiveBody,
     AttachBody,
     MediaInput,
@@ -30,13 +33,16 @@ from app.routes.creation_threads import (
     _enabled,
     _exclude_referenced_project_storage,
     _format_clip_limit,
+    _is_status_only_message,
     _load,
     _media_path,
     _other_project_input_references,
     _project,
     _project_job_storage_paths,
     _record_partial_variant_retry_enqueue_failure,
+    _render_projection,
     _response,
+    _status_message,
     action_thread,
     archive_thread,
     attach_media,
@@ -441,6 +447,59 @@ async def test_rendering_message_is_queued_without_calling_creator_agent() -> No
             original_response,
             original_agent,
         )
+
+
+@pytest.mark.asyncio
+async def test_status_only_message_reconciles_without_becoming_revision_intent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    session_id, job_id = uuid.uuid4(), uuid.uuid4()
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        status="active",
+        revision=2,
+        active_plan_item_id=uuid.uuid4(),
+        active_creator_agent_session_id=session_id,
+        active_job_id=job_id,
+        state={"media": [{"media_id": "m1"}], "intent": "Make a sports montage"},
+    )
+    session = SimpleNamespace(id=session_id, status="rendering", target_job_id=job_id)
+    job = SimpleNamespace(id=job_id, status="processing", current_phase="text_burn")
+    db = Mock()
+    db.get = AsyncMock(side_effect=[session, job])
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    import app.routes.creation_threads as routes
+
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
+    append = AsyncMock()
+    monkeypatch.setattr(routes, "_append", append)
+    reconcile = AsyncMock()
+    monkeypatch.setattr(routes, "reconcile_render_state", reconcile)
+    monkeypatch.setattr(routes, "_sync_agent", AsyncMock())
+    response = SimpleNamespace(events=[])
+    monkeypatch.setattr(routes, "_response", AsyncMock(return_value=response))
+
+    output = await message_thread(
+        _request(),
+        str(thread.id),
+        MessageBody(message="status?", client_event_id="status-1", expected_revision=2),
+        user,
+        db,
+    )
+
+    assert output is response
+    assert thread.state["intent"] == "Make a sports montage"
+    assert "pending_revision_intent" not in thread.state
+    assert [call.kwargs["event_type"] for call in append.await_args_list] == [
+        "user_message",
+        "status_update",
+    ]
+    assert "rendering" in append.await_args_list[-1].kwargs["content"].lower()
+    reconcile.assert_awaited_once_with(db, session)
 
 
 @pytest.mark.asyncio
@@ -1991,7 +2050,17 @@ async def test_detail_repairs_missing_job_projection_from_exact_creator_target(
 
     assert output is thread
     assert thread.active_job_id == job_id
-    assert thread.state["generation"] == {"status": "ready", "job_id": str(job_id)}
+    assert thread.state["generation"] == {
+        "status": "ready",
+        "job_id": str(job_id),
+        "current_job_id": str(job_id),
+        "user_id": str(user.id),
+        "plan_item_id": str(item_id),
+        "ownership_epoch": 0,
+        "session_id": str(session_id),
+        "session_revision": 0,
+        "attempt": 0,
+    }
     assert db.commit.await_count == 2
 
 
@@ -2049,6 +2118,50 @@ async def test_projection_repair_locks_authoritative_graph_before_session() -> N
 
 
 @pytest.mark.asyncio
+async def test_projection_repair_replaces_stale_job_with_exact_creator_target() -> None:
+    """A prior ready Job must not hide the newer confirmed render forever."""
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    item_id, session_id, job_id, plan_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    old_job_id = uuid.uuid4()
+    thread = SimpleNamespace(
+        active_job_id=old_job_id,
+        active_plan_item_id=item_id,
+        active_creator_agent_session_id=session_id,
+        state={"generation": {"job_id": str(old_job_id), "status": "ready"}},
+    )
+    session = SimpleNamespace(
+        id=session_id,
+        creator_id=user.id,
+        plan_item_id=item_id,
+        target_job_id=job_id,
+        target_variant_id=None,
+        target_generation_id=None,
+        ownership_epoch=0,
+    )
+    item = SimpleNamespace(id=item_id, content_plan_id=plan_id, current_job_id=job_id)
+    job = SimpleNamespace(
+        id=job_id,
+        user_id=user.id,
+        content_plan_item_id=item_id,
+        content_plan_ownership_epoch=0,
+        mode="content_plan",
+        status="processing",
+        assembly_plan={"variants": []},
+    )
+    plan = SimpleNamespace(id=plan_id, user_id=user.id, ownership_epoch=0)
+    db = Mock()
+    db.get = AsyncMock(side_effect=[session, item, job, plan, session])
+
+    import app.routes.creation_threads as routes
+
+    assert await routes._repair_missing_thread_job_projection(db, thread, user) is True
+    assert thread.active_job_id == job_id
+    assert thread.state["generation"]["job_id"] == str(job_id)
+    assert thread.state["generation"]["status"] == "rendering"
+
+
+@pytest.mark.asyncio
 async def test_detail_reconciles_failed_guided_planning_before_a_job_exists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2089,6 +2202,44 @@ async def test_detail_reconciles_failed_guided_planning_before_a_job_exists(
     sync_agent.assert_awaited_once_with(db, thread)
     db.commit.assert_awaited_once()
     db.refresh.assert_awaited_once_with(thread)
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_locks_item_and_job_before_creator_session() -> None:
+    """The GET repair path must match confirmation's item -> job -> session order."""
+
+    item_id, job_id, session_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    item = SimpleNamespace(id=item_id, current_job_id=job_id)
+    job = SimpleNamespace(id=job_id)
+    session = SimpleNamespace(id=session_id)
+    thread = SimpleNamespace(
+        active_plan_item_id=item_id,
+        active_creator_agent_session_id=session_id,
+    )
+    calls: list[tuple[object, dict]] = []
+
+    async def get(model, identifier, **kwargs):
+        calls.append((model, kwargs))
+        if model is PlanItem:
+            return item
+        if model is Job:
+            return job
+        if model is CreatorAgentSession:
+            return session
+        return None
+
+    db = SimpleNamespace(get=get)
+    import app.routes.creation_threads as routes
+
+    result = await routes._lock_reconciliation_graph(db, thread)
+
+    assert result is session
+    assert [model for model, _kwargs in calls] == [
+        routes.PlanItem,
+        routes.Job,
+        routes.CreatorAgentSession,
+    ]
+    assert all(kwargs["with_for_update"] is True for _model, kwargs in calls)
 
 
 @pytest.mark.asyncio
@@ -2254,6 +2405,238 @@ async def test_projection_repair_rejects_target_from_wrong_plan_owner() -> None:
 
     assert repaired is False
     assert thread.active_job_id is None
+
+
+@pytest.mark.asyncio
+async def test_projection_repair_does_not_partially_mutate_on_attempt_mismatch() -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    item_id, session_id, job_id, plan_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    old_job_id = uuid.uuid4()
+    thread = SimpleNamespace(
+        creator_id=user.id,
+        content_plan_id=plan_id,
+        active_job_id=old_job_id,
+        active_plan_item_id=item_id,
+        active_creator_agent_session_id=session_id,
+        state={"generation": {"job_id": str(old_job_id), "status": "ready"}},
+    )
+    session = SimpleNamespace(
+        id=session_id,
+        creator_id=user.id,
+        plan_item_id=item_id,
+        target_job_id=job_id,
+        target_variant_id=None,
+        target_generation_id=None,
+        ownership_epoch=0,
+        active_plan={"guided_generation_attempt_id": "attempt-new"},
+    )
+    item = SimpleNamespace(id=item_id, content_plan_id=plan_id, current_job_id=job_id)
+    job = SimpleNamespace(
+        id=job_id,
+        user_id=user.id,
+        content_plan_item_id=item_id,
+        content_plan_ownership_epoch=0,
+        mode="content_plan",
+        status="queued",
+        assembly_plan={"guided_edit": {"generation_attempt_id": "attempt-old"}},
+    )
+    plan = SimpleNamespace(id=plan_id, user_id=user.id, ownership_epoch=0)
+    db = Mock()
+    db.get = AsyncMock(side_effect=[session, item, job, plan, session])
+
+    import app.routes.creation_threads as routes
+
+    assert await routes._repair_missing_thread_job_projection(db, thread, user) is False
+    assert thread.active_job_id == old_job_id
+    assert thread.state["generation"]["job_id"] == str(old_job_id)
+
+
+def test_render_projection_rejects_a_job_from_a_different_guided_attempt() -> None:
+    owner_id, item_id, plan_id, session_id, job_id = (
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+    )
+    thread = SimpleNamespace(creator_id=owner_id, active_creator_agent_session_id=session_id)
+    plan = SimpleNamespace(id=plan_id, user_id=owner_id, ownership_epoch=3)
+    item = SimpleNamespace(id=item_id, content_plan_id=plan_id, current_job_id=job_id)
+    session = SimpleNamespace(
+        id=session_id,
+        creator_id=owner_id,
+        plan_item_id=item_id,
+        target_job_id=None,
+        ownership_epoch=3,
+        active_plan={"guided_generation_attempt_id": "attempt-new"},
+    )
+    job = SimpleNamespace(
+        id=job_id,
+        user_id=owner_id,
+        content_plan_item_id=item_id,
+        content_plan_ownership_epoch=3,
+        status="queued",
+        assembly_plan={"guided_edit": {"generation_attempt_id": "attempt-old"}},
+    )
+
+    assert _render_projection(thread, item=item, plan=plan, session=session, job=job) is None
+
+
+@pytest.mark.parametrize(
+    ("job_status", "expected"),
+    [("queued", "queued"), ("processing", "rendering"), ("processing_failed", "failed")],
+)
+def test_render_projection_maps_authoritative_job_statuses(job_status: str, expected: str) -> None:
+    owner_id, item_id, plan_id, job_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    thread = SimpleNamespace(creator_id=owner_id, content_plan_id=plan_id, state={})
+    plan = SimpleNamespace(id=plan_id, user_id=owner_id, ownership_epoch=2)
+    item = SimpleNamespace(id=item_id, content_plan_id=plan_id, current_job_id=job_id)
+    job = SimpleNamespace(
+        id=job_id,
+        user_id=owner_id,
+        content_plan_item_id=item_id,
+        content_plan_ownership_epoch=2,
+        status=job_status,
+        assembly_plan={},
+    )
+
+    projection = _render_projection(thread, item=item, plan=plan, session=None, job=job)
+
+    assert projection is not None
+    assert projection["status"] == expected
+
+
+def test_render_projection_maps_preparing_and_rejects_epoch_or_target_mismatch() -> None:
+    owner_id, item_id, plan_id, session_id, job_id = (
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+    )
+    thread = SimpleNamespace(
+        creator_id=owner_id,
+        content_plan_id=plan_id,
+        active_creator_agent_session_id=session_id,
+    )
+    plan = SimpleNamespace(id=plan_id, user_id=owner_id, ownership_epoch=3)
+    item = SimpleNamespace(id=item_id, content_plan_id=plan_id, current_job_id=job_id)
+    preparing = SimpleNamespace(
+        id=session_id,
+        creator_id=owner_id,
+        plan_item_id=item_id,
+        ownership_epoch=3,
+        status="executing",
+        target_job_id=None,
+        revision=1,
+        render_attempts=0,
+        active_plan={},
+    )
+    assert (
+        _render_projection(thread, item=item, plan=plan, session=preparing, job=None)["status"]
+        == "preparing"
+    )
+
+    wrong_epoch = SimpleNamespace(**{**vars(preparing), "ownership_epoch": 2})
+    assert _render_projection(thread, item=item, plan=plan, session=wrong_epoch, job=None) is None
+
+    wrong_target = SimpleNamespace(**{**vars(preparing), "target_job_id": uuid.uuid4()})
+    job = SimpleNamespace(
+        id=job_id,
+        user_id=owner_id,
+        content_plan_item_id=item_id,
+        content_plan_ownership_epoch=3,
+        status="queued",
+        assembly_plan={},
+    )
+    assert _render_projection(thread, item=item, plan=plan, session=wrong_target, job=job) is None
+
+
+@pytest.mark.asyncio
+async def test_get_thread_repairs_projection_from_current_item_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = uuid.uuid4()
+    item_id, plan_id, session_id, job_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user_id,
+        content_plan_id=plan_id,
+        active_plan_item_id=item_id,
+        active_creator_agent_session_id=session_id,
+        active_job_id=None,
+        state={},
+        status="active",
+        revision=1,
+    )
+    session = SimpleNamespace(
+        id=session_id,
+        creator_id=user_id,
+        plan_item_id=item_id,
+        ownership_epoch=0,
+        status="rendering",
+        target_job_id=job_id,
+        revision=2,
+        render_attempts=1,
+        active_plan={},
+    )
+    item = SimpleNamespace(id=item_id, content_plan_id=plan_id, current_job_id=job_id)
+    plan = SimpleNamespace(id=plan_id, user_id=user_id, ownership_epoch=0)
+    job = SimpleNamespace(
+        id=job_id,
+        user_id=user_id,
+        content_plan_item_id=item_id,
+        content_plan_ownership_epoch=0,
+        mode="content_plan",
+        status="queued",
+        assembly_plan={},
+    )
+    db = Mock(spec=AsyncSession)
+
+    async def get(model, identifier, **_kwargs):
+        if model is CreatorAgentSession:
+            return session
+        if model is PlanItem:
+            return item
+        if model is ContentPlan:
+            return plan
+        if model is Job:
+            return job
+        return None
+
+    db.get = AsyncMock(side_effect=get)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    monkeypatch.setattr("app.routes.creation_threads._load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(
+        "app.routes.creation_threads.reconcile_render_state", AsyncMock(return_value=False)
+    )
+    monkeypatch.setattr("app.routes.creation_threads._response", AsyncMock(return_value=thread))
+
+    await get_thread(str(thread.id), SimpleNamespace(id=user_id), db)
+
+    assert thread.active_job_id == job_id
+    assert thread.state["generation"]["status"] == "queued"
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("session", "job", "expected"),
+    [
+        (SimpleNamespace(status="executing"), None, "preparing"),
+        (SimpleNamespace(status="reviewing"), None, "working"),
+        (SimpleNamespace(status="failed"), None, "refreshed"),
+        (None, SimpleNamespace(status="queued"), "queued"),
+    ],
+)
+def test_status_only_message_has_bounded_status_copy(session, job, expected: str) -> None:
+    message = _status_message(thread=SimpleNamespace(), session=session, job=job)
+    assert expected in message.lower()
+
+
+def test_status_question_classifier_is_closed_vocabulary() -> None:
+    assert _is_status_only_message("  how's the render? ") is True
+    assert _is_status_only_message("status, make the opening faster") is False
 
 
 @pytest.mark.asyncio
@@ -2596,6 +2979,60 @@ async def test_confirm_dispatch_links_authoritative_job(monkeypatch: pytest.Monk
 
 
 @pytest.mark.asyncio
+async def test_confirm_generation_syncs_the_projection_after_controller_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    session_id, job_id = uuid.uuid4(), uuid.uuid4()
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        status="active",
+        revision=0,
+        active_plan_item_id=uuid.uuid4(),
+        active_creator_agent_session_id=session_id,
+        active_job_id=None,
+        state={"edit_format": "montage"},
+    )
+    session = SimpleNamespace(
+        id=session_id,
+        revision=1,
+        active_plan={"edit_format": "montage", "version": 1, "plan_hash": "0" * 64},
+    )
+    result = SimpleNamespace(id=str(session_id), current_job_id=str(job_id))
+    db = Mock(spec=AsyncSession)
+    db.get = AsyncMock(return_value=session)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    projection = AsyncMock()
+    monkeypatch.setattr("app.routes.creation_threads._load", AsyncMock(return_value=thread))
+    monkeypatch.setattr("app.routes.creation_threads._duplicate", AsyncMock(return_value=None))
+    monkeypatch.setattr("app.routes.creation_threads._sync_agent", AsyncMock())
+    monkeypatch.setattr("app.routes.creation_threads._append", AsyncMock())
+    monkeypatch.setattr("app.routes.creation_threads._response", AsyncMock(return_value=thread))
+    monkeypatch.setattr("app.routes.creation_threads._sync_render_projection", projection)
+    monkeypatch.setattr(
+        "app.routes.creation_threads.creator_agent.confirm_creator_plan_controller",
+        AsyncMock(return_value=result),
+    )
+
+    await action_thread(
+        _request(),
+        str(thread.id),
+        ActionBody(
+            action="confirm_generation",
+            payload={},
+            client_action_id="confirm-sync",
+            expected_revision=0,
+        ),
+        user,
+        db,
+    )
+
+    projection.assert_awaited_once_with(db, thread)
+
+
+@pytest.mark.asyncio
 async def test_retry_reopens_terminal_render_with_existing_plan(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2624,7 +3061,7 @@ async def test_retry_reopens_terminal_render_with_existing_plan(
     old_job = SimpleNamespace(id=old_job_id, status="processing_failed")
     result = SimpleNamespace(id=str(session_id), current_job_id=str(new_job_id))
     db = Mock()
-    db.get = AsyncMock(side_effect=[session, old_job])
+    db.get = AsyncMock(side_effect=[session, session, old_job])
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
     import app.routes.creation_threads as routes
@@ -2656,7 +3093,13 @@ async def test_retry_reopens_terminal_render_with_existing_plan(
 
 
 @pytest.mark.asyncio
-async def test_retry_partial_render_dispatches_only_failed_variant(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("job_status", "retains_last_good_output"),
+    [("variants_ready_partial", False), ("variants_ready", True)],
+)
+async def test_retry_partial_render_dispatches_only_failed_variant(
+    monkeypatch, job_status: str, retains_last_good_output: bool
+) -> None:
     user = SimpleNamespace(id=uuid.uuid4())
     thread_id = uuid.uuid4()
     item_id = uuid.uuid4()
@@ -2686,6 +3129,7 @@ async def test_retry_partial_render_dispatches_only_failed_variant(monkeypatch) 
         "variant_id": "song_text",
         "render_status": "failed",
         "render_generation_id": "old-generation",
+        **({"video_path": "generative-jobs/job/last-good.mp4"} if retains_last_good_output else {}),
     }
     ready = {
         "variant_id": "original_text",
@@ -2698,14 +3142,14 @@ async def test_retry_partial_render_dispatches_only_failed_variant(monkeypatch) 
         content_plan_item_id=item_id,
         content_plan_ownership_epoch=0,
         mode="content_plan",
-        status="variants_ready_partial",
+        status=job_status,
         current_phase=None,
         started_at=None,
         assembly_plan={"variants": [failed, ready]},
     )
     item = SimpleNamespace(id=item_id, current_job_id=job_id)
     db = Mock()
-    db.get = AsyncMock(side_effect=[session, job, item])
+    db.get = AsyncMock(side_effect=[session, session, job, item])
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
     import app.routes.creation_threads as routes
@@ -2742,6 +3186,87 @@ async def test_retry_partial_render_dispatches_only_failed_variant(monkeypatch) 
         str(job_id), "song_text", render_gen_id=failed["render_generation_id"]
     )
     assert db.commit.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_retry_partial_render_repairs_stale_thread_job_before_dispatch(monkeypatch) -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    item_id, plan_id, session_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    old_job_id, job_id = uuid.uuid4(), uuid.uuid4()
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        content_plan_id=plan_id,
+        status="active",
+        revision=3,
+        active_plan_item_id=item_id,
+        active_creator_agent_session_id=session_id,
+        active_job_id=old_job_id,
+        state={"edit_format": "montage", "generation": {"job_id": str(old_job_id)}},
+    )
+    session = SimpleNamespace(
+        id=session_id,
+        creator_id=user.id,
+        plan_item_id=item_id,
+        target_job_id=job_id,
+        target_variant_id="song_text",
+        target_generation_id="old-generation",
+        ownership_epoch=0,
+        status="awaiting_feedback",
+        active_plan={},
+    )
+    failed = {
+        "variant_id": "song_text",
+        "render_status": "failed",
+        "render_generation_id": "old-generation",
+        "video_path": "generative-jobs/job/last-good.mp4",
+    }
+    job = SimpleNamespace(
+        id=job_id,
+        user_id=user.id,
+        content_plan_item_id=item_id,
+        content_plan_ownership_epoch=0,
+        mode="content_plan",
+        status="variants_ready",
+        current_phase=None,
+        started_at=None,
+        assembly_plan={"variants": [failed]},
+    )
+    item = SimpleNamespace(id=item_id, content_plan_id=plan_id, current_job_id=job_id)
+    plan = SimpleNamespace(id=plan_id, user_id=user.id, ownership_epoch=0)
+    db = Mock()
+    db.get = AsyncMock(side_effect=[session, item, job, plan, session, session, job, item])
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    import app.routes.creation_threads as routes
+    from app.tasks.generative_build import regenerate_generative_variant
+
+    delay = Mock()
+    monkeypatch.setattr(regenerate_generative_variant, "delay", delay)
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
+    monkeypatch.setattr(routes, "_append", AsyncMock())
+    monkeypatch.setattr(routes, "_response", AsyncMock(return_value=thread))
+
+    await action_thread(
+        _request(),
+        str(thread.id),
+        routes.ActionBody(
+            action="retry",
+            payload={"variant_id": "song_text"},
+            client_action_id="retry-stale-projection",
+            expected_revision=3,
+        ),
+        user,
+        db,
+    )
+
+    assert thread.active_job_id == job_id
+    assert thread.state["generation"]["job_id"] == str(job_id)
+    assert failed["render_status"] == "rendering"
+    delay.assert_called_once_with(
+        str(job_id), "song_text", render_gen_id=failed["render_generation_id"]
+    )
 
 
 @pytest.mark.asyncio
@@ -2785,7 +3310,7 @@ async def test_retry_partial_render_rejects_sibling_in_flight(monkeypatch) -> No
     )
     item = SimpleNamespace(id=item_id, current_job_id=job_id)
     db = Mock()
-    db.get = AsyncMock(side_effect=[session, job, item])
+    db.get = AsyncMock(side_effect=[session, session, job, item])
     import app.routes.creation_threads as routes
 
     monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
@@ -2850,7 +3375,7 @@ async def test_retry_partial_render_broker_failure_is_retryable(monkeypatch) -> 
     )
     item = SimpleNamespace(id=item_id, current_job_id=job_id)
     db = Mock()
-    db.get = AsyncMock(side_effect=[session, job, item, session, job])
+    db.get = AsyncMock(side_effect=[session, session, job, item, session, job])
     thread_result = Mock()
     thread_result.scalar_one_or_none.return_value = thread
     db.execute = AsyncMock(return_value=thread_result)

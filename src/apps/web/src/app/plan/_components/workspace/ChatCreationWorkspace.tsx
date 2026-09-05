@@ -36,7 +36,11 @@ import {
   applyCreationAction, creationFormat, creationFormatLabel, creationJobFailed,
   creationJobPartial, creationJobReady, creationJobSettled, creationThreadMediaCount, createCreationThread,
   CreationThreadError, deleteCreationThread, getCreationCapabilities, listCreationThreads, refreshCreationThread,
-  creationClipLimit, renameCreationThread, sendCreationMessage, threadMessages, uploadCreationMedia,
+  creationClipLimit, sendCreationMessage, threadMessages, uploadCreationMedia,
+  creationThreadInProgress, creationThreadPreparing, creationThreadProgressKey,
+  isCreationThreadRevisionConflict,
+  creationVariantPlayable,
+  renameCreationThread,
   type CreationFormat, type CreationThread,
 } from "@/lib/creation-thread-api";
 import { setChatFirstFallback } from "@/lib/chat-first";
@@ -85,7 +89,8 @@ function projectStatusLabel(thread: CreationThread): string {
   if (thread.job?.status === "variants_ready_partial") return "Partially ready";
   if (thread.job && ["done", "variants_ready"].includes(thread.job.status)) return "Ready";
   if (creationJobReady(thread)) return creationJobPartial(thread) ? "Partially ready" : "Ready";
-  if (thread.active_job_id) return "Rendering";
+  if (creationThreadPreparing(thread)) return "Preparing";
+  if (creationThreadInProgress(thread)) return "Rendering";
   if (creationThreadMediaCount(thread) > 0) return "Shaping direction";
   return "New project";
 }
@@ -126,7 +131,7 @@ function attachedMedia(thread: CreationThread | null): AttachedMedia[] {
 }
 
 function readyVariants(thread: CreationThread | null) {
-  return thread?.job?.variants.filter((variant) => variant.render_status === "ready" && variant.output_url) ?? [];
+  return thread?.job?.variants.filter(creationVariantPlayable) ?? [];
 }
 
 function readyVariant(thread: CreationThread | null) {
@@ -394,6 +399,13 @@ export default function ChatCreationWorkspace({
   const queuedMessageRef = useRef<{ threadId: string; message: string } | null>(null);
   const preparedRevisionRef = useRef<string | null>(null);
   const activeThreadIdRef = useRef<string | null>(null);
+  const expectedEditorRenderRef = useRef<{
+    threadId: string;
+    variantId: string;
+    generation: string;
+  } | null>(null);
+  const threadRequestSequenceRef = useRef(0);
+  const latestAcceptedThreadSequenceRef = useRef(0);
   const loadStartedRef = useRef(false);
   const productionGalleryLoadedRef = useRef(false);
 
@@ -405,14 +417,63 @@ export default function ChatCreationWorkspace({
   }, [sidebarHidden]);
 
   const activateThread = useCallback((next: CreationThread) => {
+    if (expectedEditorRenderRef.current?.threadId !== next.id) {
+      expectedEditorRenderRef.current = null;
+    }
     activeThreadIdRef.current = next.id;
     setThreadUnavailable(false);
     setThread(next);
   }, []);
 
-  const acceptThreadResponse = useCallback((expectedId: string, next: CreationThread) => {
-    if (activeThreadIdRef.current === expectedId) setThread(next);
+  const acceptThreadResponse = useCallback((
+    expectedId: string,
+    next: CreationThread,
+    requestSequence?: number,
+  ) => {
+    if (activeThreadIdRef.current !== expectedId) return false;
+    if (
+      requestSequence !== undefined
+      && requestSequence < latestAcceptedThreadSequenceRef.current
+    ) return false;
+    const expectedRender = expectedEditorRenderRef.current;
+    if (expectedRender?.threadId === expectedId) {
+      const target = next.job?.variants.find(
+        (variant) => variant.variant_id === expectedRender.variantId,
+      );
+      // The editor Save response is authoritative for this attempt. Ignore a
+      // cached or out-of-order pre-Save projection until the exact generation
+      // is observable; otherwise an old ready response stops polling.
+      if (target?.render_generation_id !== expectedRender.generation) return false;
+      if (!["queued", "rendering"].includes(String(target.render_status))) {
+        expectedEditorRenderRef.current = null;
+      }
+    }
+    if (requestSequence !== undefined) {
+      latestAcceptedThreadSequenceRef.current = requestSequence;
+    }
+    setThread(next);
+    return true;
   }, []);
+
+  const refreshThreadProjection = useCallback(async (threadId: string) => {
+    const requestSequence = ++threadRequestSequenceRef.current;
+    const next = await refreshCreationThread(threadId);
+    return { next, requestSequence };
+  }, []);
+
+  // Every async mutation gets a sequence at request start. A poll or refresh
+  // that began later must be allowed to win even if an older send/action is
+  // delayed by the network. This keeps a late mutation response from
+  // resurrecting a stale rendering projection.
+  const requestThreadResponse = useCallback(async (
+    expectedId: string,
+    request: (requestSequence: number) => Promise<CreationThread>,
+  ) => {
+    const requestSequence = ++threadRequestSequenceRef.current;
+    const next = await request(requestSequence);
+    acceptThreadResponse(expectedId, next, requestSequence);
+    return next;
+  }, [acceptThreadResponse]);
 
   const load = useCallback(async () => {
     try {
@@ -480,9 +541,11 @@ export default function ChatCreationWorkspace({
       const summary = requestedId
         ? listed.find((item) => item.id === requestedId)
         : current ?? listed.find((item) => item.status === "active");
+      const requestSequence = ++threadRequestSequenceRef.current;
       const next = requestedId
         ? await refreshCreationThread(requestedId)
         : summary ? await refreshCreationThread(summary.id) : await createCreationThread();
+      latestAcceptedThreadSequenceRef.current = requestSequence;
       activateThread(next);
       if (!requestedId) router.replace(`/plan/${next.id}`, { scroll: false });
       setChatFirstFallback(false);
@@ -529,28 +592,65 @@ export default function ChatCreationWorkspace({
       setMobileTab("chat");
       const currentId = activeThreadIdRef.current;
       if (event.data?.refresh === true && currentId) {
-        void refreshCreationThread(currentId)
-          .then((next) => acceptThreadResponse(currentId, next))
+        const variantId = typeof event.data?.variant_id === "string"
+          ? event.data.variant_id
+          : null;
+        const generation = typeof event.data?.render_generation_id === "string"
+          ? event.data.render_generation_id
+          : null;
+        if (variantId && generation) {
+          expectedEditorRenderRef.current = { threadId: currentId, variantId, generation };
+          setThread((current) => {
+            if (current?.id !== currentId || !current.job) return current;
+            return {
+              ...current,
+              job: {
+                ...current.job,
+                variants: current.job.variants.map((variant) =>
+                  variant.variant_id === variantId
+                    ? {
+                      ...variant,
+                      render_generation_id: generation,
+                      render_status: "rendering",
+                    }
+                    : variant,
+                ),
+              },
+            };
+          });
+        }
+        void refreshThreadProjection(currentId)
+          .then(({ next, requestSequence }) => {
+            acceptThreadResponse(currentId, next, requestSequence);
+          })
           .catch(() => setError("Your editor save started, but I couldn’t refresh the render yet. Reconnecting…"));
       }
     };
     window.addEventListener("message", onEditorMessage);
     return () => window.removeEventListener("message", onEditorMessage);
-  }, [acceptThreadResponse]);
+  }, [acceptThreadResponse, refreshThreadProjection]);
+
+  const threadProgressKey = thread ? creationThreadProgressKey(thread) : null;
+  const progressThreadId = thread?.id ?? null;
+  const threadInProgress = Boolean(thread && creationThreadInProgress(thread));
 
   useEffect(() => {
-    if (!thread?.active_job_id) return;
+    if (!progressThreadId || !threadInProgress) return;
     let cancelled = false;
     let timer: number | undefined;
     const poll = async () => {
       try {
-        const next = await refreshCreationThread(thread.id);
-        if (cancelled || activeThreadIdRef.current !== thread.id) return;
+        const { next, requestSequence } = await refreshThreadProjection(progressThreadId);
+        if (cancelled || activeThreadIdRef.current !== progressThreadId) return;
         setPollReconnecting(false);
-        setThread(next);
-        if (!creationJobSettled(next)) timer = window.setTimeout(() => void poll(), 2500);
+        const accepted = acceptThreadResponse(progressThreadId, next, requestSequence);
+        const awaitingEditorGeneration = expectedEditorRenderRef.current?.threadId
+          === progressThreadId;
+        if ((accepted && creationThreadInProgress(next)) || awaitingEditorGeneration) {
+          timer = window.setTimeout(() => void poll(), 2500);
+        }
       } catch {
-        if (!cancelled && activeThreadIdRef.current === thread.id) {
+        if (!cancelled && activeThreadIdRef.current === progressThreadId) {
           setPollReconnecting(true);
           timer = window.setTimeout(() => void poll(), 5000);
         }
@@ -558,7 +658,7 @@ export default function ChatCreationWorkspace({
     };
     void poll();
     return () => { cancelled = true; if (timer) window.clearTimeout(timer); };
-  }, [thread?.active_job_id, thread?.id]);
+  }, [acceptThreadResponse, progressThreadId, refreshThreadProjection, threadInProgress, threadProgressKey]);
 
   useEffect(() => {
     if (!galleryOpen) return;
@@ -589,13 +689,13 @@ export default function ChatCreationWorkspace({
     const key = `${thread.id}:${jobId}`;
     if (preparedRevisionRef.current === key) return;
     preparedRevisionRef.current = key;
-    void applyCreationAction(thread, "revise", { intent }, `revision-${thread.id}-${jobId}`)
-      .then((next) => acceptThreadResponse(thread.id, next))
+    void requestThreadResponse(thread.id, () =>
+      applyCreationAction(thread, "revise", { intent }, `revision-${thread.id}-${jobId}`))
       .catch(() => {
         preparedRevisionRef.current = null;
         setError("Your revision is ready to review, but I couldn’t prepare it yet. Try again.");
       });
-  }, [acceptThreadResponse, productionPreview, thread]);
+  }, [productionPreview, requestThreadResponse, thread]);
 
   const format = formatFromThread(thread);
   const clipLimit = creationClipLimit(capabilities.formats, format);
@@ -619,7 +719,9 @@ export default function ChatCreationWorkspace({
     (message.artifact === "confirmation" || (message.artifact === "revision" && !hasReady))
     && (eventSequenceById.get(message.id) ?? -1) > latestGenerationSequence,
   );
-  const canConfirmDirection = !thread?.active_job_id || Boolean(thread && creationJobFailed(thread));
+  const canConfirmDirection = thread !== null
+    && (!creationThreadInProgress(thread) || creationJobFailed(thread))
+    && (!thread.active_job_id || creationJobFailed(thread));
   const media = useMemo(() => attachedMedia(thread), [thread]);
   const variantStillRendering = Boolean(thread?.job?.variants.some((variant) => variant.render_status === "rendering"));
   const messages = useMemo(() => {
@@ -693,8 +795,8 @@ export default function ChatCreationWorkspace({
     setBusy(true); setError(null);
     const paperFormat = value === "narrated_planned" ? "narrated" : value === "subtitled" ? "talking_to_camera" : "montage";
     try {
-      const next = await applyCreationAction(thread, "select_format", { format: paperFormat });
-      acceptThreadResponse(threadId, next);
+      const next = await requestThreadResponse(threadId, () =>
+        applyCreationAction(thread, "select_format", { format: paperFormat }));
       if (activeThreadIdRef.current === threadId) setFormatPickerOpen(false);
     }
     catch { setError("I couldn’t set that format. Try again in a moment."); }
@@ -705,7 +807,7 @@ export default function ChatCreationWorkspace({
     if (productionPreview || !thread || busy) return;
     const threadId = thread.id;
     setBusy(true); setError(null);
-    try { acceptThreadResponse(threadId, await applyCreationAction(thread, "select_variant", { variant_id: variantId })); }
+    try { await requestThreadResponse(threadId, () => applyCreationAction(thread, "select_variant", { variant_id: variantId })); }
     catch { setError("I couldn’t switch to that cut. Try again in a moment."); }
     finally { setBusy(false); }
   }
@@ -746,16 +848,16 @@ export default function ChatCreationWorkspace({
     setPendingFiles((items) => [...items, ...chosen].slice(0, clipLimit));
     setUploading(true);
     try {
-      const next = await uploadCreationMedia(sourceThread, chosen, (progress, file) => {
-        acceptThreadResponse(sourceThread.id, progress);
+      const next = await requestThreadResponse(sourceThread.id, (requestSequence) => uploadCreationMedia(sourceThread, chosen, (progress, file) => {
+        acceptThreadResponse(sourceThread.id, progress, requestSequence);
         if (activeThreadIdRef.current === sourceThread.id) {
           setPendingFiles((items) => items.filter((item) => item !== file));
         }
-      });
-      acceptThreadResponse(sourceThread.id, next);
+      }));
     } catch (cause) {
       if (cause instanceof CreationThreadError && cause.status === 409 && activeThreadIdRef.current === sourceThread.id) {
-        void refreshCreationThread(sourceThread.id).then((next) => acceptThreadResponse(sourceThread.id, next));
+        void refreshThreadProjection(sourceThread.id).then(({ next: latest, requestSequence }) =>
+          acceptThreadResponse(sourceThread.id, latest, requestSequence));
       }
       setError("That upload didn’t finish. Retry the file or remove it and choose another.");
     }
@@ -767,8 +869,7 @@ export default function ChatCreationWorkspace({
     const sourceThread = thread;
     setUploading(true); setError(null);
     try {
-      const next = await uploadCreationMedia(sourceThread, [file]);
-      acceptThreadResponse(sourceThread.id, next);
+      await requestThreadResponse(sourceThread.id, () => uploadCreationMedia(sourceThread, [file]));
       if (activeThreadIdRef.current === sourceThread.id) {
         setPendingFiles((items) => items.filter((item) => item !== file));
       }
@@ -782,8 +883,7 @@ export default function ChatCreationWorkspace({
     if (!thread) throw new Error("Start a creation project before recording.");
     const sourceThread = thread;
     const recording = file instanceof File ? file : new File([file], filename, { type: file.type || "audio/webm" });
-    const next = await uploadCreationMedia(sourceThread, [recording]);
-    acceptThreadResponse(sourceThread.id, next);
+    await requestThreadResponse(sourceThread.id, () => uploadCreationMedia(sourceThread, [recording]));
     return { gcs_path: "creation-thread-media", kind: "audio" };
   }
 
@@ -792,7 +892,7 @@ export default function ChatCreationWorkspace({
     const sourceThread = thread;
     setBusy(true); setError(null);
     try {
-      acceptThreadResponse(sourceThread.id, await applyCreationAction(sourceThread, "remove_media", { media_id: mediaId }));
+      await requestThreadResponse(sourceThread.id, () => applyCreationAction(sourceThread, "remove_media", { media_id: mediaId }));
     } catch {
       setError("I couldn’t remove that file. Refresh the project and try again.");
     } finally { setBusy(false); }
@@ -800,23 +900,25 @@ export default function ChatCreationWorkspace({
 
   const submitMessage = useCallback(async (sourceThread: CreationThread, message: string) => {
     setInput(""); setThinking(true); setError(null);
-    try { acceptThreadResponse(sourceThread.id, await sendCreationMessage(sourceThread, message)); }
+    try { await requestThreadResponse(sourceThread.id, () => sendCreationMessage(sourceThread, message)); }
     catch (cause) {
       setInput(message);
-      if (cause instanceof CreationThreadError && cause.status === 409) {
+      if (isCreationThreadRevisionConflict(cause)) {
         try {
-          const latest = await refreshCreationThread(sourceThread.id);
-          acceptThreadResponse(sourceThread.id, latest);
+          const { next: latest, requestSequence } = await refreshThreadProjection(sourceThread.id);
+          acceptThreadResponse(sourceThread.id, latest, requestSequence);
           setError("This chat changed in another window. Your draft is still here; review the latest direction and send again.");
         } catch {
           setError("This chat changed in another window. Refresh the project, then send again.");
         }
       } else {
-        setError("I couldn’t send that message. Your draft is still here; try again.");
+        setError(cause instanceof CreationThreadError && cause.status === 409
+          ? `${cause.message}. Your draft is still here.`
+          : "I couldn’t send that message. Your draft is still here; try again.");
       }
     }
     finally { setThinking(false); }
-  }, [acceptThreadResponse]);
+  }, [acceptThreadResponse, refreshThreadProjection, requestThreadResponse]);
 
   async function send() {
     const message = input.trim();
@@ -851,7 +953,7 @@ export default function ChatCreationWorkspace({
     if (productionPreview || !thread || busy) return;
     const sourceThread = thread;
     setBusy(true); setError(null);
-    try { acceptThreadResponse(sourceThread.id, await applyCreationAction(sourceThread, action, payload)); }
+    try { await requestThreadResponse(sourceThread.id, () => applyCreationAction(sourceThread, action, payload)); }
     catch { setError("I couldn’t start that render. Your project is safe—adjust the direction or try again."); }
     finally { setBusy(false); }
   }
@@ -964,6 +1066,9 @@ export default function ChatCreationWorkspace({
 
   async function openProject(project: CreationThread) {
     if (busy || thinking || uploading) return;
+    if (expectedEditorRenderRef.current?.threadId !== project.id) {
+      expectedEditorRenderRef.current = null;
+    }
     activeThreadIdRef.current = project.id;
     setThread(project);
     setPendingFiles([]);
@@ -978,10 +1083,10 @@ export default function ChatCreationWorkspace({
     );
     if (productionPreview && isProductionLibraryThread(project)) return;
     try {
-      const hydrated = await refreshCreationThread(project.id);
+      const { next, requestSequence } = await refreshThreadProjection(project.id);
       acceptThreadResponse(project.id, productionPreview
-        ? { ...hydrated, title: inferredProductionTitle(hydrated) }
-        : hydrated);
+        ? { ...next, title: inferredProductionTitle(next) }
+        : next, requestSequence);
     }
     catch { if (activeThreadIdRef.current === project.id) setError("I couldn’t open that project."); }
   }

@@ -570,7 +570,7 @@ _CREATOR_CRAFT_TASK_PREFIX = "creator-craft-"
 # The craft render tasks have a hard limit of 1800s and the broker visibility
 # timeout is 1900s.  Keep the durable claim alive for the whole task, but let a
 # broker redelivery reclaim it after a worker is hard-killed.
-_CREATOR_CRAFT_CLAIM_LEASE_S = 1810.0
+_CREATOR_CRAFT_CLAIM_LEASE_S = 180.0
 _CREATOR_CRAFT_CLAIM_HEARTBEAT_S = 30.0
 
 
@@ -3263,6 +3263,118 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
         intent = strategy.context_label
         return intent.model_dump(mode="json") if intent is not None else None
 
+    def licensed_sfx_intent():  # noqa: ANN202
+        persisted_intent = getattr(snapshot, "licensed_sfx", None)
+        if persisted_intent is not None:
+            return persisted_intent
+        if not isinstance(raw_strategy, dict):
+            return None
+        raw_intent = raw_strategy.get("licensed_sfx") or raw_strategy.get("sfx_intent")
+        if raw_intent is None:
+            return None
+        from app.agents._schemas.sfx_intent import LicensedSfxIntent  # noqa: PLC0415
+        from app.pipeline.guided_story import GuidedStoryError  # noqa: PLC0415
+
+        try:
+            if not isinstance(raw_intent, dict):
+                raise ValueError("licensed SFX intent must be an object")
+            return LicensedSfxIntent.model_validate(raw_intent)
+        except Exception as exc:  # noqa: BLE001 - untrusted JSONB fails visibly
+            raise GuidedStoryError(
+                "guided_story_sfx_invalid",
+                "The confirmed licensed sound-effect request is invalid.",
+            ) from exc
+
+    def load_licensed_sfx_effect(intent):  # noqa: ANN202
+        """Resolve and recheck the catalog row on every guided render."""
+
+        from sqlalchemy import func, select  # noqa: PLC0415
+
+        from app.agents._schemas.sound_effect import validate_sfx_gcs_path  # noqa: PLC0415
+        from app.models import SoundEffect  # noqa: PLC0415
+        from app.pipeline.guided_story import GuidedStoryError  # noqa: PLC0415
+
+        if not settings.sound_effects_enabled:
+            raise GuidedStoryError(
+                "guided_story_sfx_unavailable",
+                "The requested licensed sound effect is not available for rendering.",
+            )
+        with _sync_session() as db:
+            effect = (
+                db.execute(
+                    select(SoundEffect).where(
+                        func.lower(SoundEffect.id) == intent.effect_id.casefold()
+                    )
+                )
+                .scalars()
+                .one_or_none()
+            )
+            usable = bool(
+                effect is not None
+                and effect.status == "ready"
+                and effect.published_at is not None
+                and effect.archived_at is None
+                and effect.audio_gcs_path
+            )
+            if not usable:
+                raise GuidedStoryError(
+                    "guided_story_sfx_unavailable",
+                    "The requested licensed sound effect is no longer available.",
+                )
+            try:
+                validate_sfx_gcs_path(str(effect.audio_gcs_path))
+            except ValueError as exc:
+                raise GuidedStoryError(
+                    "guided_story_sfx_unavailable",
+                    "The requested licensed sound effect is not usable.",
+                ) from exc
+            return {
+                "id": str(effect.id),
+                "name": str(effect.name),
+                "audio_gcs_path": str(effect.audio_gcs_path),
+                "duration_s": effect.duration_s,
+                "role_tags": list(effect.role_tags or []),
+            }
+
+    def validate_licensed_sfx_runtime(plan: dict[str, Any], intent, effect: dict[str, Any]) -> None:
+        """Fence persisted placements to the currently usable named effect."""
+
+        runtime = list(plan.get("editor_sound_effects") or [])
+        if not runtime:
+            return
+        from app.agents._schemas.sound_effect import (  # noqa: PLC0415
+            SoundEffectPlacement,
+            validate_sfx_gcs_path,
+        )
+        from app.pipeline.guided_story import GuidedStoryError  # noqa: PLC0415
+
+        try:
+            if len(runtime) > intent.max_placements:
+                raise ValueError("licensed effect placement cap exceeded")
+            placements = [SoundEffectPlacement.model_validate(row) for row in runtime]
+            placements.sort(key=lambda row: row.at_s)
+            effect_id = str(effect["id"])
+            effect_path = str(effect["audio_gcs_path"])
+            duration_s = float(plan.get("resolved_duration_s") or 0.0)
+            for placement in placements:
+                if str(placement.sound_effect_id or "").casefold() != effect_id.casefold():
+                    raise ValueError("licensed effect identity changed")
+                if placement.src_gcs_path != effect_path:
+                    raise ValueError("licensed effect path changed")
+                validate_sfx_gcs_path(placement.src_gcs_path)
+                if placement.at_s >= max(0.0, duration_s - 0.5):
+                    raise ValueError("licensed effect violates end keepout")
+            if any(
+                current.at_s - previous.at_s < 1.5
+                for previous, current in zip(placements, placements[1:], strict=False)
+            ):
+                raise ValueError("licensed effects are too closely spaced")
+        except Exception as exc:  # noqa: BLE001 - persisted JSONB is untrusted
+            raise GuidedStoryError(
+                "guided_story_sfx_invalid",
+                "The licensed sound-effect plan no longer matches the confirmed request.",
+            ) from exc
+
     def materialize_context_labels(plan: dict[str, Any]) -> dict[str, Any]:
         intent = context_label_intent()
         if intent is None:
@@ -3302,8 +3414,83 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
             "context_label_text_elements": elements,
         }
 
+    def materialize_licensed_sfx(plan: dict[str, Any]) -> dict[str, Any]:
+        intent = licensed_sfx_intent()
+        if intent is None:
+            return plan
+        if plan.get("editor_sound_effects"):
+            return plan
+
+        from app.agents._model_client import default_client  # noqa: PLC0415
+        from app.agents._runtime import RunContext  # noqa: PLC0415
+        from app.agents.sfx_placement import (  # noqa: PLC0415
+            SfxCatalogEffect,
+            SfxPlacementAgent,
+            SfxPlacementInput,
+        )
+        from app.pipeline.guided_story import GuidedStoryError  # noqa: PLC0415
+        from app.services.explicit_sfx import (  # noqa: PLC0415
+            materialize_explicit_sfx_placements,
+            trusted_visual_moments,
+        )
+
+        effect_payload = load_licensed_sfx_effect(intent)
+
+        visual_moments = trusted_visual_moments(snapshot, list(plan.get("story_timeline") or []))
+        if not visual_moments:
+            raise GuidedStoryError(
+                "guided_story_sfx_ungrounded",
+                "Kria couldn't find a grounded funny moment for the requested sound effect.",
+            )
+        if not settings.gemini_api_key:
+            raise GuidedStoryError(
+                "guided_story_sfx_unavailable",
+                "The requested sound-effect placement could not be planned.",
+            )
+        output = SfxPlacementAgent(default_client()).run(
+            SfxPlacementInput(
+                words=[],
+                pauses=[],
+                moments=visual_moments,
+                effects=[
+                    SfxCatalogEffect(
+                        effect_id=effect_payload["id"],
+                        name=effect_payload["name"],
+                        role_tags=effect_payload["role_tags"],
+                        duration_s=effect_payload["duration_s"],
+                    )
+                ],
+                duration_s=float(plan.get("resolved_duration_s") or 0.0),
+            ),
+            ctx=RunContext(job_id=job_id),
+        )
+        placements = materialize_explicit_sfx_placements(
+            output.placements,
+            intent=intent,
+            effect=effect_payload,
+            visual_moments=visual_moments,
+            duration_s=float(plan.get("resolved_duration_s") or 0.0),
+        )
+        if not placements:
+            raise GuidedStoryError(
+                "guided_story_sfx_ungrounded",
+                "Kria couldn't find a grounded funny moment for the requested sound effect.",
+            )
+        return {
+            **plan,
+            "licensed_sfx_intent": intent.model_dump(mode="json"),
+            "editor_sound_effects": placements,
+        }
+
     if existing is not None:
         plan = validate_execution_plan(existing, guided_snapshot)
+        intent = licensed_sfx_intent()
+        if intent is not None:
+            # Editor revisions retain the approved intent but may carry a
+            # persisted placement list. Recheck the live catalog and that list
+            # before allowing any existing plan to reach the renderer.
+            effect_payload = load_licensed_sfx_effect(intent)
+            validate_licensed_sfx_runtime(plan, intent, effect_payload)
     else:
         matched = _match_best_track(matcher_clip_metas(snapshot), job_id=job_id)
         track_payload = None
@@ -3330,8 +3517,8 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
                     round(float(beat), 3) for beat in (matched.beat_timestamps_s or [])
                 ],
             }
-        candidate = materialize_context_labels(
-            compile_execution_plan(guided_snapshot, track=track_payload)
+        candidate = materialize_licensed_sfx(
+            materialize_context_labels(compile_execution_plan(guided_snapshot, track=track_payload))
         )
         with _sync_session() as db:
             job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
@@ -3357,6 +3544,17 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
     # without changing their approved media or timing.
     if context_label_intent() is not None:
         plan = materialize_context_labels(plan)
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+            if job is not None:
+                job.assembly_plan = {
+                    **(job.assembly_plan or {}),
+                    "guided_story_execution_plan": plan,
+                }
+                db.commit()
+
+    if licensed_sfx_intent() is not None and not plan.get("editor_sound_effects"):
+        plan = materialize_licensed_sfx(plan)
         with _sync_session() as db:
             job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
             if job is not None:
@@ -7793,7 +7991,17 @@ def _reburn_text_on_base(
                 cut_boundaries_s=_variant_slot_boundaries(existing),
                 created_storage_paths=created_storage_paths,
             )
-            _burn_text_for_variant(local_base, _te_burn_dicts, _te_final_path, matte=_te_provider)
+            if _te_burn_dicts:
+                _burn_text_for_variant(
+                    local_base, _te_burn_dicts, _te_final_path, matte=_te_provider
+                )
+            else:
+                # Deleting every text element is a valid guided editor action.
+                # With no expected pixels, the clean base is the intended
+                # artifact and must not enter the strict non-empty burn path.
+                shutil.copy2(local_base, _te_final_path)
+                if existing.get("resolved_archetype") == "guided_story":
+                    guided_text_evidence = []
             _te_gcs_key = reburn_output_key
             guided_receipt_patch: dict[str, Any] = {}
             if guided_text_evidence is not None:
@@ -9254,6 +9462,7 @@ _CONTEXT_SPORT_ALIASES: dict[str, str] = {
     "track_and_field": "Athletics",
 }
 _CONTEXT_LABEL_MIN_CONFIDENCE = 0.8
+_CONTEXT_LABEL_CONTIGUITY_EPSILON_S = 0.001
 
 
 def _canonical_context_sport_labels(
@@ -9441,7 +9650,45 @@ def _context_sport_text_elements(
             )
             if element.end_s > element.start_s:
                 elements.append(element.model_dump(exclude_none=True))
-    return elements
+    return _compact_context_sport_text_elements(elements)
+
+
+def _compact_context_sport_text_elements(elements: list[dict]) -> list[dict]:
+    """Coalesce contiguous intervals carrying the same contextual sport.
+
+    A label is a property of the visible output interval, not of each source
+    slot.  Long mixed-media timelines can therefore contain dozens of adjacent
+    slots with the same sport.  Keep the first element's identity/visual
+    metadata, extend only its end time, and stop at every unlabeled gap (or a
+    different sport).  The small epsilon absorbs the frame-rounded timestamps
+    used by the guided compiler without bridging a real gap.
+    """
+    compact: list[dict] = []
+    for raw in elements:
+        if not isinstance(raw, dict):
+            continue
+        current = dict(raw)
+        if isinstance(raw.get("source_params"), dict):
+            current["source_params"] = dict(raw["source_params"])
+        if not compact:
+            compact.append(current)
+            continue
+        previous = compact[-1]
+        if previous.get("text") != current.get("text"):
+            compact.append(current)
+            continue
+        try:
+            previous_end = float(previous.get("end_s"))
+            current_start = float(current.get("start_s"))
+            current_end = float(current.get("end_s"))
+        except (TypeError, ValueError):
+            compact.append(current)
+            continue
+        if current_start > previous_end + _CONTEXT_LABEL_CONTIGUITY_EPSILON_S:
+            compact.append(current)
+            continue
+        previous["end_s"] = max(previous_end, current_end)
+    return compact
 
 
 def _context_output_slot_windows(
@@ -10039,10 +10286,15 @@ def _rerender_guided_story_revision(
             ) from exc
         with _sync_session() as db:
             live_track = db.get(MusicTrack, track_id)
+            # Guided auto-selection deliberately uses the full analyzed music
+            # library (`_match_best_track(... require_published=False)`). An
+            # editor Save must validate against that same eligibility contract;
+            # requiring publication here made a valid pinned first render fail
+            # immediately on every revision. Exact path + object generation are
+            # still pinned and checked by the strict music mixer below.
             if (
                 live_track is None
                 or live_track.analysis_status != "ready"
-                or live_track.published_at is None
                 or live_track.archived_at is not None
                 or live_track.audio_gcs_path != music["audio_gcs_path"]
             ):
@@ -12023,6 +12275,20 @@ def _update_variant_entry(
                 }
                 variants[i] = updated_variant
                 accepted_variant = updated_variant
+                # Editor saves replace one already-published variant in place.
+                # If the worker fails after the save was enqueued, preserve the
+                # previous playable artifact but expose the Job as a retryable
+                # partial render. Leaving a ready parent status here made the
+                # failed variant look finished to the reload/retry route and
+                # allowed the editor to remain stuck behind a stale rendering
+                # projection. Initial renders have no last-good output and keep
+                # their existing processing/failed lifecycle.
+                if (
+                    updated_variant.get("render_status") == "failed"
+                    and (updated_variant.get("video_path") or updated_variant.get("output_url"))
+                    and getattr(job, "status", None) in {"done", "variants_ready"}
+                ):
+                    job.status = "variants_ready_partial"
                 if (
                     variants[i].get("render_status") == "ready"
                     and variants[i].get("video_path")
@@ -13384,6 +13650,12 @@ def _classify_error(exc: BaseException) -> str:
         return f"day_vlog_{exc.reason}"
     if isinstance(exc, SpeechCleanupFailure):
         return "speech_cleanup_failed"
+    # Strict guided errors already carry stable, user-safe codes. Preserve the
+    # code in the public taxonomy instead of collapsing every guided failure to
+    # "unknown"; the raw exception message remains admin-only.
+    guided_code = getattr(exc, "code", None)
+    if isinstance(guided_code, str) and guided_code.startswith("guided_story_"):
+        return guided_code
     name = type(exc).__name__.lower()
     msg = str(exc).lower()
     if "ffmpeg" in name or "encoder" in name or "ffmpeg" in msg or "codec" in msg:
@@ -15120,6 +15392,7 @@ def _render_talking_head_variant(
             return False
         base["_speech_cleanup_outcome_context"] = context
         return True
+
     if creator_target_duration_s is not None:
         base["creator_target_duration_s"] = creator_target_duration_s
     if creator_pacing is not None:

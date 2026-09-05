@@ -45,6 +45,8 @@ pytest tests/evals/test_audio_template_evals.py -v --with-judge
 | `nova.audio.song_classifier` | ✓ | `rubrics/song_classifier.md` | exported + hand-authored golden | `MusicTrack.ai_labels` |
 | `nova.audio.music_matcher` | ✓ | `rubrics/music_matcher.md` | hand-authored golden only (not persisted) | — |
 | `nova.audio.retake_detector` | ✓ | `rubrics/retake_detector.md` | hand-authored golden only (spans not persisted); incl. TR/EN restarts + negative fixtures gated by `meta.expect_empty` | — |
+| `nova.creator.main` | ✓ | `rubrics/main_creator.md` | hand-authored golden + exported | — |
+| `nova.compose.sfx_placement` | ✓ | `rubrics/sfx_placement.md` | hand-authored golden (visual moments) | — |
 
 ## Layer-2 text-overlay pipeline eval
 

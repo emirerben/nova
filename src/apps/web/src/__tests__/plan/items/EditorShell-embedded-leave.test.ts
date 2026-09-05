@@ -13,9 +13,17 @@ describe("embedded editor leave contract", () => {
     Object.defineProperty(window, "parent", { configurable: true, value: { postMessage } });
     window.history.replaceState({}, "", "/plan/items/item-1/edit?embedded=1");
 
-    expect(notifyEmbeddedEditorLeave(true)).toBe(true);
+    expect(notifyEmbeddedEditorLeave(true, {
+      variantId: "guided_story",
+      generation: "generation-2",
+    })).toBe(true);
     expect(postMessage).toHaveBeenCalledWith(
-      { type: "nova:embedded-editor-leave", refresh: true },
+      {
+        type: "nova:embedded-editor-leave",
+        refresh: true,
+        variant_id: "guided_story",
+        render_generation_id: "generation-2",
+      },
       window.location.origin,
     );
 

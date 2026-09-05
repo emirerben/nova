@@ -6,6 +6,7 @@ so the suite runs without Postgres/Redis.
 
 from __future__ import annotations
 
+import time
 import uuid
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
@@ -669,7 +670,14 @@ def test_reaper_no_variant_reconciliation_when_assembly_plan_is_none():
 
 def _patch_sync_session_for_reconcile(candidate_rows):
     """Model ID discovery, one locked re-read, and an update per candidate."""
-    normalized_rows = [(*row, []) if len(row) == 2 else row for row in candidate_rows]
+    normalized_rows = []
+    for row in candidate_rows:
+        if len(row) == 2:
+            normalized_rows.append((*row, datetime.now(UTC) - timedelta(minutes=61), []))
+        elif len(row) == 3:
+            normalized_rows.append((*row, []))
+        else:
+            normalized_rows.append(row)
     locked_rows = iter(normalized_rows)
     session = MagicMock()
 
@@ -714,6 +722,24 @@ class TestFinalizeStuckVariant:
 
         v = {"variant_id": "x", "render_status": "ready"}
         assert _finalize_stuck_variant(v) is v
+
+    def test_expired_editor_replacement_keeps_video_but_reports_failure(self):
+        from app.tasks.reaper import _finalize_stuck_variant
+
+        out = _finalize_stuck_variant(
+            {
+                "variant_id": "song_text",
+                "render_status": "rendering",
+                "render_generation_id": "saved-generation",
+                "video_path": "g/last-good.mp4",
+            },
+            failed_replacement=True,
+        )
+
+        assert out["render_status"] == "failed"
+        assert out["video_path"] == "g/last-good.mp4"
+        assert out["error_class"] == "render_worker_lost"
+        assert "previous video" in out["error"].lower()
 
 
 class TestReconcileStuckVariants:
@@ -977,6 +1003,115 @@ class TestReconcileCancelledRequiredSpeech:
         assert outcomes[0]["failure_phase"] is None
         assert outcomes[0]["failure_class"] is None
         session.commit.assert_called_once()
+
+    def test_expired_editor_save_is_failed_before_generic_hour_threshold(self):
+        import uuid as _uuid
+
+        from app.tasks.reaper import reconcile_stuck_variants
+
+        jid = _uuid.uuid4()
+        generation = "saved-generation"
+        plan = {
+            "variants": [
+                {
+                    "variant_id": "song_text",
+                    "render_status": "rendering",
+                    "render_generation_id": generation,
+                    "video_path": "g/last-good.mp4",
+                    "editor_render_attempt": {
+                        "generation_id": generation,
+                        "task_id": "creator-craft-editor-dead",
+                        "lease_expires_at_epoch_s": time.time() - 1,
+                    },
+                }
+            ]
+        }
+        # Recent enough that the conservative legacy 60-minute path must not
+        # fire; only the expired editor-attempt lease may terminalize it.
+        updated_at = datetime.now(UTC) - timedelta(minutes=5)
+        patch_ctx, session = _patch_sync_session_for_reconcile([(jid, plan, updated_at)])
+        with (
+            patch_ctx,
+            patch(
+                "app.tasks.reaper.get_task_runtime_state",
+                return_value=MagicMock(state="not_found"),
+            ) as runtime,
+        ):
+            assert reconcile_stuck_variants(_make_celery_with_inspect(), live=set()) == 1
+
+        stmt = session.execute.call_args_list[2].args[0]
+        params = stmt.compile().params
+        assembly = next(value for value in params.values() if isinstance(value, dict))
+        assert "variants_ready_partial" in {str(value) for value in params.values()}
+        variant = assembly["variants"][0]
+        assert variant["render_status"] == "failed"
+        assert variant["video_path"] == "g/last-good.mp4"
+        assert variant["error_class"] == "render_worker_lost"
+        assert [call.kwargs["queue_name"] for call in runtime.call_args_list] == [
+            "celery",
+            "overlay-jobs",
+        ]
+
+    @pytest.mark.parametrize("runtime_state", ["queued", "reserved", "active", "unknown"])
+    def test_expired_editor_save_waits_when_task_may_still_run(self, runtime_state):
+        import uuid as _uuid
+
+        from app.tasks.reaper import reconcile_stuck_variants
+
+        jid = _uuid.uuid4()
+        generation = "saved-generation"
+        plan = {
+            "variants": [
+                {
+                    "variant_id": "song_text",
+                    "render_status": "rendering",
+                    "render_generation_id": generation,
+                    "video_path": "g/last-good.mp4",
+                    "editor_render_attempt": {
+                        "generation_id": generation,
+                        "task_id": "creator-craft-editor-queued",
+                        "lease_expires_at_epoch_s": time.time() - 1,
+                    },
+                }
+            ]
+        }
+        updated_at = datetime.now(UTC) - timedelta(minutes=5)
+        patch_ctx, session = _patch_sync_session_for_reconcile([(jid, plan, updated_at)])
+        with (
+            patch_ctx,
+            patch(
+                "app.tasks.reaper.get_task_runtime_state",
+                return_value=MagicMock(state=runtime_state),
+            ),
+        ):
+            assert reconcile_stuck_variants(_make_celery_with_inspect(), live=set()) == 0
+        assert session.execute.call_count == 2  # discovery + locked revalidation
+
+    def test_live_editor_save_is_not_reaped_after_lease(self):
+        import uuid as _uuid
+
+        from app.tasks.reaper import reconcile_stuck_variants
+
+        jid = _uuid.uuid4()
+        generation = "saved-generation"
+        plan = {
+            "variants": [
+                {
+                    "variant_id": "song_text",
+                    "render_status": "rendering",
+                    "render_generation_id": generation,
+                    "editor_render_attempt": {
+                        "generation_id": generation,
+                        "lease_expires_at_epoch_s": time.time() - 1,
+                    },
+                }
+            ]
+        }
+        updated_at = datetime.now(UTC) - timedelta(minutes=5)
+        patch_ctx, session = _patch_sync_session_for_reconcile([(jid, plan, updated_at)])
+        with patch_ctx:
+            assert reconcile_stuck_variants(_make_celery_with_inspect(), live={str(jid)}) == 0
+        assert session.execute.call_count == 2  # discovery + locked revalidation
 
 
 # ---------------------------------------------------------------------------

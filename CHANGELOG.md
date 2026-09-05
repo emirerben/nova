@@ -16,6 +16,14 @@ All notable changes to this project will be documented in this file.
 - **Collapsed navigation stays anchored beside the project heading.** The sidebar and its reserved left-side control animate together, preserve proper title spacing, and respect reduced-motion preferences; the heading uses the actual project name instead of “Create with Kria.”
 - **Permanent cleanup is complete and retry-safe.** Deletion removes project-owned database records and media through a durable outbox while preserving shared plans, seeds, unrelated projects, and media still referenced by another project.
 
+## [0.60.0.1] — 2026-09-05
+
+### Fixed
+- **Confirmed chat-first edits stay attached to the exact render they started.** Kria keeps polling through the pre-job handoff, blocks duplicate confirmation, reconciles interrupted projections, and reserves the stale-window warning for genuine revision conflicts.
+- **Exact titles and named licensed sound effects survive planning and reach the first render.** Requests such as “title saying …” preserve their full copy, while an explicitly requested published effect is placed only on grounded visual moments or fails visibly instead of disappearing.
+- **Guided text renders can no longer certify a textless fallback as successful.** Adjacent sport labels collapse into bounded runs to reduce memory pressure, strict text burns fail closed on FFmpeg errors, and receipts verify the rendered artifact differs from its clean base whenever text is expected.
+- **Saving a finished guided edit can no longer strand it on “Rendering.”** Re-renders reuse the same eligible pinned music as the first cut, every editor generation carries a deterministic recovery lease, fast failures and lost workers become retryable terminal states, and embedded editor saves track the exact replacement generation through stale responses while keeping the previous video playable on failure.
+
 ## [0.60.0.0] — 2026-09-02
 
 ### Added

@@ -1,0 +1,51 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-09-05-v13",
+  "input": {
+    "user_message": "Create an edit of the best moments. Use all uploaded assets once, keeping sports grouped. Amongst the videos, add groups of photos that transition in 0.2 seconds. Add a large title saying Emir Olympics. Ann Arbor 2022. Use Rascal font and yellow text. Add the Fah sound effect at funny moments.",
+    "creator_context": "Personal sports-day footage from Ann Arbor.",
+    "item_context": "A short highlight montage from several games.",
+    "media_context": [
+      {"media_id": "clip-football", "kind": "video", "creator_note": "football action"},
+      {"media_id": "photo-volleyball", "kind": "image", "creator_note": "volleyball"},
+      {"media_id": "clip-tennis", "kind": "video", "creator_note": "tennis action"}
+    ],
+    "conversation": [],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-sports-day",
+      "edit_format": "montage",
+      "render_program": "guided",
+      "has_voiceover": false,
+      "media": [
+        {"media_id": "clip-football", "kind": "video", "duration_s": 12.0, "label": "Football"},
+        {"media_id": "photo-volleyball", "kind": "image", "label": "Volleyball"},
+        {"media_id": "clip-tennis", "kind": "video", "duration_s": 10.0, "label": "Tennis"}
+      ],
+      "catalog": [
+        {"catalog_id": "sfx-fah", "kind": "sound_effect", "label": "Fah"},
+        {"catalog_id": "music-track-1", "kind": "music", "label": "Licensed sports pulse"}
+      ],
+      "capabilities": {
+        "dispatch_render": {"available": true},
+        "draft_guided_proposal": {"available": true},
+        "edit_format:montage": {"available": true},
+        "sound_effects": {"available": true}
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 60.0
+      },
+      "context_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  },
+  "raw_text": "{\"action\":{\"kind\":\"propose_strategy\",\"strategy\":{\"direction\":\"fast_montage\",\"edit_format\":\"montage\",\"archetype\":\"montage\",\"audio_strategy\":\"licensed_music\",\"story_structure\":[\"Opening title\",\"Grouped sports highlights\",\"Funny reactions\"],\"caption_style\":\"none\",\"intro_hook\":\"Emir Olympics. Ann Arbor 2022.\",\"opening_title\":\"Emir Olympics. Ann Arbor 2022.\",\"font_family\":\"Rascal\",\"text_color\":\"yellow\",\"context_label\":{\"kind\":\"sport\",\"source\":\"clip_metadata\",\"placement\":\"bottom_right\",\"size\":\"small\",\"per_clip\":true},\"pacing\":\"fast\",\"target_duration_s\":45,\"render_program\":\"guided\",\"selected_media_ids\":[\"clip-football\",\"photo-volleyball\",\"clip-tennis\"],\"optional_treatments\":[],\"licensed_sfx\":{\"effect_id\":\"sfx-fah\",\"semantics\":\"funny_moments\",\"max_placements\":6},\"rationale\":\"Use every asset once, preserve grouped sports, and place the named Fah effect only on grounded funny moments.\"},\"summary\":\"A grouped sports montage with the exact title, labels, and grounded Fah moments.\"}}",
+  "output": {},
+  "meta": {
+    "source": "hand-authored-golden",
+    "contract": "full production wording preserves exact title and typed licensed SFX intent"
+  }
+}

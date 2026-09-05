@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 import app.routes.plan_items as plan_items
+from app.agents._schemas.sfx_intent import LicensedSfxIntent
 from app.agents.edit_guide import EditGuideOutput, EditGuideRevision, EditGuideRevisionBeat
 from app.schemas.edit_proposal import (
     EditProposal,
@@ -436,6 +437,43 @@ def test_snapshot_revision_preserves_mixed_media_timing_profile() -> None:
     revised = plan_items._snapshot_from_edit_guide_revision(current, revision)
 
     assert revised.mixed_media_timing == current.mixed_media_timing
+
+
+def test_snapshot_revision_preserves_exact_title_style_layout_and_licensed_sfx() -> None:
+    current = _snapshot().model_copy(
+        update={
+            "opening_title": "Emir Olympics. Ann Arbor 2022.",
+            "font_family": "Rascal",
+            "text_color": "#FFD24A",
+            "image_layout": "fullscreen",
+            "licensed_sfx": LicensedSfxIntent(effect_id="sfx-fah"),
+        }
+    )
+    revision = EditGuideRevision(
+        direction="guided_story",
+        goal="Keep the same treatment with a tighter story",
+        pace="fast",
+        duration_s=current.duration_s,
+        title=current.title,
+        story_beats=[
+            EditGuideRevisionBeat(
+                beat_id="coast",
+                topic="Coast",
+                thought="A tighter coast beat",
+                layout="fullscreen",
+                duration_s=4,
+                media_refs=["media_1"],
+            )
+        ],
+    )
+
+    revised = plan_items._snapshot_from_edit_guide_revision(current, revision)
+
+    assert revised.opening_title == "Emir Olympics. Ann Arbor 2022."
+    assert revised.font_family == "Rascal"
+    assert revised.text_color == "#FFD24A"
+    assert revised.image_layout == "fullscreen"
+    assert revised.licensed_sfx == LicensedSfxIntent(effect_id="sfx-fah")
 
 
 def test_review_timing_recognizes_affirmative_request_and_explicit_removal() -> None:

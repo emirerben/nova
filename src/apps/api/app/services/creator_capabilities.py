@@ -47,6 +47,11 @@ CAPABILITY_SELECT_READY_VARIANT = "select_ready_variant"
 CAPABILITY_CAPTION_STYLE = "caption_style"
 CAPABILITY_AUTOMATIC_CUT = "automatic_cut"
 
+
+class CreatorSfxUnavailableError(ValueError):
+    """An explicit licensed-SFX request cannot be fulfilled safely."""
+
+
 _FEATURE_SETTINGS = {
     "main_creator_agent": "main_creator_agent_enabled",
     "execution": "main_creator_agent_execution_enabled",
@@ -314,6 +319,26 @@ def compile_strategy_to_plan(
     """
 
     strategy = normalize_creator_strategy_media(manifest, strategy)
+    licensed_sfx = strategy.licensed_sfx
+    if licensed_sfx is not None:
+        if not manifest.capabilities.get(
+            "sound_effects", _unavailable("not_advertised", "sound effects are unavailable")
+        ).available:
+            raise CreatorSfxUnavailableError(
+                "The requested licensed sound effect is unavailable. Choose another effect."
+            )
+        resolved = resolve_creator_sfx_catalog_ref(manifest, licensed_sfx.effect_id)
+        if resolved is None:
+            raise CreatorSfxUnavailableError(
+                f"The requested licensed sound effect {licensed_sfx.effect_id!r} is unavailable."
+            )
+        # Persist the canonical server-owned id, including when the model or
+        # client supplied a different case or the catalog label was used.
+        strategy = strategy.model_copy(
+            update={
+                "licensed_sfx": licensed_sfx.model_copy(update={"effect_id": resolved.catalog_id})
+            }
+        )
     if strategy.opening_title and strategy.edit_format in {
         "subtitled",
         "narrated",
@@ -399,6 +424,31 @@ def compile_strategy_to_plan(
     )
 
 
+def resolve_creator_sfx_catalog_ref(
+    manifest: ResolvedCreatorManifest,
+    requested: str,
+) -> CreatorCatalogRef | None:
+    """Resolve an effect id or display name by exact case-insensitive match.
+
+    This helper only resolves the descriptive manifest. The authenticated DB
+    boundary still rechecks ready/published/non-archived state and the audio
+    path before any placement is materialized.
+    """
+
+    needle = " ".join(str(requested or "").split()).casefold()
+    if not needle:
+        return None
+    effects = [item for item in manifest.catalog if item.kind == "sound_effect"]
+    matches = [
+        item
+        for item in effects
+        if item.catalog_id.casefold() == needle or (item.label or "").strip().casefold() == needle
+    ]
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
 # Readable alias for callers that build rather than resolve a manifest.
 build_creator_manifest = resolve_creator_manifest
 
@@ -411,10 +461,12 @@ __all__ = [
     "CAPABILITY_NATIVE_RENDER",
     "CAPABILITY_SELECT_READY_VARIANT",
     "CAPABILITY_SET_ITEM_INTENT",
+    "CreatorSfxUnavailableError",
     "MAX_MAIN_CREATOR_SELECTED_MEDIA",
     "build_creator_manifest",
     "compile_strategy_to_plan",
     "effective_render_program",
     "normalize_creator_strategy_media",
     "resolve_creator_manifest",
+    "resolve_creator_sfx_catalog_ref",
 ]

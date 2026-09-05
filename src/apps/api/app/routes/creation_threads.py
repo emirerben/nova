@@ -59,6 +59,7 @@ from app.routes.plan_items import (
     _OVERLAY_ALLOWED_CONTENT_TYPES,
     _pool_asset_counts_toward_capacity,
 )
+from app.services.creator_render_projection import build_creator_render_projection
 from app.services.creator_sessions import reconcile_render_state
 from app.services.generative_upload_paths import DIRECT_VOICEOVER_PREFIX
 from app.services.job_phases import mark_reattempt, stamp_variant_attempt
@@ -168,6 +169,19 @@ _ACTION_PAYLOAD_KEYS = {
     "select_variant": {"variant_id"},
 }
 _MAX_ACTION_PAYLOAD_BYTES = 8192
+
+# A status question is deliberately a small, closed vocabulary.  It is not a
+# second way to ask the Creator Agent for a revision: while a render is live,
+# these messages only reconcile the durable render projection and report its
+# state back to the chat.
+_STATUS_ONLY_RE = re.compile(
+    r"^(?:status|progress|update|any\s+update|how(?:'s|\s+is)\s+(?:it|the\s+render|the\s+video)"
+    r"|how(?:'s|\s+is)\s+it\s+going|what(?:'s|\s+is)\s+the\s+status"
+    r"|is\s+(?:it|the\s+render|the\s+video)\s+(?:ready|done|finished)"
+    r"|ready\??|done\??)\s*[?!.]*$",
+    re.IGNORECASE,
+)
+_CREATOR_PROGRESS_STATES = frozenset({"executing", "rendering", "reviewing"})
 
 
 class StrictBody(BaseModel):
@@ -535,12 +549,6 @@ async def _prepare_partial_variant_retry(
         # caller owns both rows.  This also protects the generation fence from
         # being applied to a stale plan item.
         raise HTTPException(status_code=409, detail="That render is not part of this project")
-    if job.status != "variants_ready_partial":
-        raise HTTPException(
-            status_code=409,
-            detail="A variant can only be retried on a partial ready render",
-        )
-
     variants = list((job.assembly_plan or {}).get("variants") or [])
     target = next(
         (
@@ -554,6 +562,19 @@ async def _prepare_partial_variant_retry(
         raise HTTPException(status_code=404, detail="Render variant not found")
     if target.get("render_status") != "failed":
         raise HTTPException(status_code=409, detail="Only failed variants can be retried")
+    # Editor saves preserve the last-good output while rendering a replacement.
+    # A worker-side failure can therefore leave the parent on its previous
+    # ``variants_ready`` status even though this exact variant is now failed.
+    # Accept that recoverable shape as well as the orchestrator's canonical
+    # partial status, but never reopen an arbitrary failed/non-ready Job.
+    has_last_good_output = bool(target.get("video_path") or target.get("output_url"))
+    if job.status != "variants_ready_partial" and not (
+        job.status == "variants_ready" and has_last_good_output
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="A variant can only be retried on a partial ready render",
+        )
     if any(
         isinstance(variant, dict)
         and variant.get("variant_id") != variant_id
@@ -753,15 +774,16 @@ async def _load(
 async def _repair_missing_thread_job_projection(
     db: AsyncSession, thread: CreationThread, user: CurrentUser
 ) -> bool:
-    """Recover a thread link lost after the Creator controller committed.
+    """Recover a missing or stale thread link after the Creator commit.
 
     The controller owns the PlanItem/CreatorSession/Job transaction and can
-    commit successfully before the projection append is interrupted.  Only
-    repair a *missing* thread link from the exact, owner-scoped session target;
-    never infer a Job from the user's broader Job collection.
+    commit successfully before the projection append is interrupted.  Repair
+    from the exact, owner-scoped session target even when the thread still
+    points at the previous Job; never infer a Job from the user's broader Job
+    collection.
     """
 
-    if thread.active_job_id or not thread.active_plan_item_id:
+    if not thread.active_plan_item_id:
         return False
     if not thread.active_creator_agent_session_id:
         return False
@@ -774,6 +796,8 @@ async def _repair_missing_thread_job_projection(
     session = await db.get(CreatorAgentSession, session_id)
     target_job_id = getattr(session, "target_job_id", None) if session is not None else None
     if target_job_id is None:
+        return False
+    if thread.active_job_id == target_job_id:
         return False
     item = await db.get(PlanItem, thread.active_plan_item_id, with_for_update=True)
     job = await db.get(Job, target_job_id, with_for_update=True)
@@ -809,30 +833,16 @@ async def _repair_missing_thread_job_projection(
     )
     if not exact:
         return False
+    projection = _render_projection(thread, item=item, plan=plan, session=session, job=job)
+    if projection is None:
+        return False
+    # Commit the pointer and its read model as one validated projection. This
+    # keeps a failed attempt/ownership fence from leaving a partial pointer
+    # mutation for a later status path to accidentally persist.
     thread.active_job_id = job.id
-    variants = (job.assembly_plan or {}).get("variants") or []
-    variant_rendering = any(
-        isinstance(variant, dict) and variant.get("render_status") == "rendering"
-        for variant in variants
-    )
-    if variant_rendering or job.status not in PLAN_ITEM_JOB_TERMINAL:
-        generation_status = "rendering"
-    elif job.status in {"variants_ready", "variants_ready_partial", "done"}:
-        generation_status = "ready"
-    else:
-        generation_status = "failed"
     thread.state = {
         **(thread.state or {}),
-        "generation": {
-            "status": generation_status,
-            "job_id": str(job.id),
-            **({"variant_id": str(session.target_variant_id)} if session.target_variant_id else {}),
-            **(
-                {"render_generation_id": str(session.target_generation_id)}
-                if session.target_generation_id
-                else {}
-            ),
-        },
+        "generation": projection,
     }
     return True
 
@@ -1155,6 +1165,318 @@ def _creator_agent_projection(session: CreatorAgentSession | None) -> dict[str, 
     }
 
 
+def _is_status_only_message(message: str) -> bool:
+    """Return whether *message* is a bounded render-status question."""
+
+    return bool(_STATUS_ONLY_RE.fullmatch(" ".join(message.split())))
+
+
+def _creator_progress_status(session: CreatorAgentSession | None) -> str | None:
+    status = str(getattr(session, "status", "") or "")
+    return status if status in _CREATOR_PROGRESS_STATES else None
+
+
+def _generation_attempt_id(session: CreatorAgentSession | None) -> str | None:
+    if session is None:
+        return None
+    active_plan = getattr(session, "active_plan", None)
+    active = active_plan if isinstance(active_plan, dict) else {}
+    raw = active.get("guided_generation_attempt_id")
+    if isinstance(raw, str) and raw:
+        return raw[:160]
+    # Native Creator executions do not have a guided proposal id.  This stable,
+    # scoped fallback still distinguishes attempts without exposing an
+    # executable plan or making a mutable revision number authoritative.
+    attempts = int(getattr(session, "render_attempts", 0) or 0)
+    return f"{session.id}:{attempts}" if attempts > 0 else None
+
+
+def _guided_generation_attempt_id(session: CreatorAgentSession | None) -> str | None:
+    active_plan = getattr(session, "active_plan", None)
+    active = active_plan if isinstance(active_plan, dict) else {}
+    raw = active.get("guided_generation_attempt_id")
+    return raw[:160] if isinstance(raw, str) and raw else None
+
+
+def _job_guided_generation_attempt_id(job: Job | None) -> str | None:
+    assembly_plan = getattr(job, "assembly_plan", None)
+    guided = assembly_plan.get("guided_edit") if isinstance(assembly_plan, dict) else None
+    raw = guided.get("generation_attempt_id") if isinstance(guided, dict) else None
+    return raw[:160] if isinstance(raw, str) and raw else None
+
+
+def _render_projection(
+    thread: CreationThread,
+    *,
+    item: PlanItem | None,
+    plan: ContentPlan | None,
+    session: CreatorAgentSession | None,
+    job: Job | None,
+) -> dict[str, Any] | None:
+    """Build the bounded, exact-owner render projection for a thread.
+
+    ``state.generation`` is a durable read model, never an authority.  Every
+    identifier is stamped from the same owner-scoped PlanItem graph so a stale
+    thread row cannot make a user's chat poll or display another Job.
+    """
+
+    owner_id = getattr(thread, "creator_id", None) or getattr(session, "creator_id", None)
+    thread_plan_id = getattr(thread, "content_plan_id", None)
+    if (
+        item is None
+        or plan is None
+        or plan.user_id != owner_id
+        or (thread_plan_id is not None and thread_plan_id != plan.id)
+    ):
+        return None
+    epoch = int(getattr(plan, "ownership_epoch", 0) or 0)
+    if session is not None and (
+        session.creator_id != owner_id
+        or session.plan_item_id != item.id
+        or int(getattr(session, "ownership_epoch", 0) or 0) != epoch
+    ):
+        return None
+    if job is not None and (
+        job.user_id != owner_id
+        or job.content_plan_item_id != item.id
+        or item.current_job_id != job.id
+        or (
+            getattr(job, "content_plan_ownership_epoch", None) is not None
+            and int(getattr(job, "content_plan_ownership_epoch")) != epoch
+        )
+    ):
+        return None
+    if session is not None and job is not None:
+        if session.target_job_id is not None and session.target_job_id != job.id:
+            return None
+        session_attempt_id = _guided_generation_attempt_id(session)
+        job_attempt_id = _job_guided_generation_attempt_id(job)
+        if (session_attempt_id or job_attempt_id) and session_attempt_id != job_attempt_id:
+            return None
+
+    if job is not None:
+        session_id = getattr(session, "id", None) or getattr(
+            thread, "active_creator_agent_session_id", None
+        )
+        return build_creator_render_projection(
+            job_status=str(job.status),
+            job_id=job.id,
+            current_job_id=item.current_job_id,
+            owner_id=owner_id,
+            plan_item_id=item.id,
+            ownership_epoch=epoch,
+            session_id=session_id,
+            session_revision=int(getattr(session, "revision", 0) or 0),
+            attempt=int(getattr(session, "render_attempts", 0) or 0),
+            generation_attempt_id=_generation_attempt_id(session),
+            variant_id=getattr(session, "target_variant_id", None),
+            render_generation_id=getattr(session, "target_generation_id", None),
+        )
+    else:
+        status = _creator_progress_status(session)
+        if status is not None:
+            # The controller can commit its Creator execution before the
+            # guided worker publishes a Job. Keep this explicit so clients do
+            # not mistake an absent Job for an idle project.
+            status = "preparing"
+        elif str(getattr(session, "status", "") or "") == "failed":
+            status = "failed"
+        else:
+            return None
+
+    projection: dict[str, Any] = {
+        "status": status,
+        "job_id": str(job.id) if job is not None else None,
+        "current_job_id": str(item.current_job_id) if item.current_job_id else None,
+        "user_id": str(owner_id),
+        "plan_item_id": str(item.id),
+        "ownership_epoch": epoch,
+    }
+    if session is not None:
+        session_id = getattr(session, "id", None) or getattr(
+            thread, "active_creator_agent_session_id", ""
+        )
+        projection.update(
+            {
+                "session_id": str(session_id),
+                "session_revision": int(getattr(session, "revision", 0) or 0),
+                "attempt": int(getattr(session, "render_attempts", 0) or 0),
+            }
+        )
+        attempt_id = _generation_attempt_id(session)
+        if attempt_id:
+            projection["generation_attempt_id"] = attempt_id
+        target_variant_id = getattr(session, "target_variant_id", None)
+        target_generation_id = getattr(session, "target_generation_id", None)
+        if target_variant_id:
+            projection["variant_id"] = str(target_variant_id)
+        if target_generation_id:
+            projection["render_generation_id"] = str(target_generation_id)
+    return projection
+
+
+async def _sync_render_projection(
+    db: AsyncSession,
+    thread: CreationThread,
+    *,
+    item: PlanItem | None = None,
+    session: CreatorAgentSession | None = None,
+    job: Job | None = None,
+) -> bool:
+    """Persist the current exact render read model when it has changed."""
+
+    if item is None or session is None or (job is None and not item.current_job_id):
+        item, session, job = await _load_authorized_projection_rows(db, thread)
+    # A controller can commit the authoritative PlanItem→Job link before the
+    # thread projection update.  Adopt that exact current Job (and only that
+    # Job) so one GET repairs both the link and the status lane.
+    if job is None and item is not None and item.current_job_id:
+        candidate = await db.get(Job, item.current_job_id)
+        if candidate is not None:
+            candidate_projection = _render_projection(
+                thread,
+                item=item,
+                plan=await db.get(ContentPlan, item.content_plan_id),
+                session=session,
+                job=candidate,
+            )
+            if candidate_projection is not None:
+                job = candidate
+                thread.active_job_id = candidate.id
+    plan = await db.get(ContentPlan, item.content_plan_id) if item is not None else None
+    projection = _render_projection(thread, item=item, plan=plan, session=session, job=job)
+    if projection is None:
+        return False
+    if job is not None and thread.active_job_id is None:
+        # The current Job passed the complete owner/item/epoch fence above;
+        # repair the projection link along with its status read model.
+        thread.active_job_id = job.id
+    state = dict(thread.state or {})
+    if state.get("generation") == projection:
+        return False
+    thread.state = {**state, "generation": projection}
+    return True
+
+
+async def _lock_reconciliation_graph(
+    db: AsyncSession, thread: CreationThread
+) -> CreatorAgentSession | None:
+    """Lock the render graph in the same order as Creator confirmation.
+
+    Confirmation owns PlanItem -> Job -> CreatorAgentSession.  GET is also a
+    mutating reconciliation path, so it must not take the session lock first
+    and then discover that the pre-Job path needs PlanItem.
+    """
+
+    item = None
+    if thread.active_plan_item_id:
+        item = await db.get(
+            PlanItem,
+            thread.active_plan_item_id,
+            with_for_update=True,
+            populate_existing=True,
+        )
+        if item is not None and item.current_job_id:
+            await db.get(
+                Job,
+                item.current_job_id,
+                with_for_update=True,
+                populate_existing=True,
+            )
+    if not thread.active_creator_agent_session_id:
+        return None
+    return await db.get(
+        CreatorAgentSession,
+        thread.active_creator_agent_session_id,
+        with_for_update=True,
+        populate_existing=True,
+    )
+
+
+async def _load_status_reconciliation_rows(
+    db: AsyncSession, thread: CreationThread, user: CurrentUser
+) -> tuple[PlanItem | None, CreatorAgentSession | None, Job | None]:
+    """Load the current render graph for a status refresh in lock order.
+
+    Status messages must follow the same PlanItem -> Job -> CreatorSession
+    ownership boundary as reconciliation, even when the thread projection
+    still points at an older Job.
+    """
+
+    if not thread.active_plan_item_id:
+        return None, None, None
+    item = await db.get(
+        PlanItem,
+        thread.active_plan_item_id,
+        with_for_update=True,
+        populate_existing=True,
+    )
+    plan = await db.get(ContentPlan, item.content_plan_id) if item is not None else None
+    if (
+        item is None
+        or plan is None
+        or plan.user_id != user.id
+        or item.content_plan_id != thread.content_plan_id
+    ):
+        raise HTTPException(status_code=404, detail="Creation thread not found")
+    job = None
+    if item.current_job_id:
+        job = await db.get(Job, item.current_job_id, with_for_update=True, populate_existing=True)
+        if (
+            job is None
+            or job.user_id != user.id
+            or job.content_plan_item_id != item.id
+            or (
+                getattr(job, "content_plan_ownership_epoch", None) is not None
+                and int(getattr(job, "content_plan_ownership_epoch"))
+                != int(plan.ownership_epoch or 0)
+            )
+        ):
+            raise HTTPException(status_code=404, detail="Creation thread not found")
+    session = None
+    if thread.active_creator_agent_session_id:
+        session = await db.get(
+            CreatorAgentSession,
+            thread.active_creator_agent_session_id,
+            with_for_update=True,
+            populate_existing=True,
+        )
+        if (
+            session is None
+            or session.creator_id != user.id
+            or session.plan_item_id != item.id
+            or int(getattr(session, "ownership_epoch", 0) or 0) != int(plan.ownership_epoch or 0)
+            or (
+                session.target_job_id is not None
+                and (job is None or session.target_job_id != job.id)
+            )
+        ):
+            raise HTTPException(status_code=404, detail="Creation thread not found")
+    return item, session, job
+
+
+def _status_message(
+    *, thread: CreationThread, session: CreatorAgentSession | None, job: Job | None
+) -> str:
+    if job is not None and job.status == "queued":
+        return "Your render is queued. I’ll keep watching it and update this chat when it starts."
+    if job is not None and job.status not in PLAN_ITEM_JOB_TERMINAL:
+        phase = str(job.current_phase or "").replace("_", " ").strip()
+        return (
+            f"Kria is rendering your video ({phase}). I’ll update this chat when it’s ready."
+            if phase
+            else "Kria is rendering your video. I’ll update this chat when it’s ready."
+        )
+    creator_status = str(getattr(session, "status", "") or "")
+    if creator_status == "executing":
+        return "Kria is preparing the render from your confirmed direction."
+    if creator_status in {"rendering", "reviewing"}:
+        return "Kria is still working on the confirmed cut. I’ll update this chat when it’s ready."
+    if job is not None and job.status in PLAN_ITEM_JOB_TERMINAL:
+        return "That render has settled. I’ve refreshed the project status for you."
+    return "I’ve refreshed your project status."
+
+
 async def _load_authorized_projection_rows(
     db: AsyncSession, thread: CreationThread
 ) -> tuple[PlanItem | None, CreatorAgentSession | None, Job | None]:
@@ -1172,6 +1494,7 @@ async def _load_authorized_projection_rows(
         raise HTTPException(status_code=404, detail="Creation thread not found")
 
     item = await db.get(PlanItem, item_id) if item_id is not None else None
+    plan = None
     if item_id is not None:
         plan = await db.get(ContentPlan, item.content_plan_id) if item is not None else None
         if (
@@ -1186,8 +1509,11 @@ async def _load_authorized_projection_rows(
     if session_id is not None and (
         session is None
         or item is None
+        or plan is None
         or session.creator_id != thread.creator_id
         or session.plan_item_id != item.id
+        or int(getattr(session, "ownership_epoch", 0) or 0)
+        != int(getattr(plan, "ownership_epoch", 0) or 0)
         or (session.target_job_id is not None and session.target_job_id != job_id)
     ):
         raise HTTPException(status_code=404, detail="Creation thread not found")
@@ -1199,6 +1525,11 @@ async def _load_authorized_projection_rows(
         or job.user_id != thread.creator_id
         or job.content_plan_item_id != item.id
         or item.current_job_id != job.id
+        or (
+            getattr(job, "content_plan_ownership_epoch", None) is not None
+            and int(getattr(job, "content_plan_ownership_epoch"))
+            != int(getattr(plan, "ownership_epoch", 0) or 0)
+        )
     ):
         raise HTTPException(status_code=404, detail="Creation thread not found")
 
@@ -1591,17 +1922,26 @@ async def get_thread(
         await db.commit()
         await db.refresh(thread)
     if thread.active_creator_agent_session_id:
-        session = await db.get(
-            CreatorAgentSession, thread.active_creator_agent_session_id, with_for_update=True
-        )
+        if isinstance(db, AsyncSession):
+            session = await _lock_reconciliation_graph(db, thread)
+        else:
+            session = await db.get(
+                CreatorAgentSession, thread.active_creator_agent_session_id, with_for_update=True
+            )
         if session is not None and await reconcile_render_state(db, session):
             # Guided planning creates and binds the exact Job asynchronously.
             # Reconciliation can discover that Job after the initial repair
             # pass, so project it in the same GET instead of requiring a
             # second page reload before polling or recovery can begin.
-            if not thread.active_job_id:
-                await _repair_missing_thread_job_projection(db, thread, user)
+            await _repair_missing_thread_job_projection(db, thread, user)
             await _sync_agent(db, thread)
+            await db.commit()
+            await db.refresh(thread)
+    # Polls are also the repair loop for the projection.  The read model is
+    # updated after reconciliation, so a queued/rendering Job or a session in
+    # executing/reviewing with no Job is visible in one response.
+    if isinstance(db, AsyncSession):
+        if await _sync_render_projection(db, thread):
             await db.commit()
             await db.refresh(thread)
     return await _response(db, thread)
@@ -1637,6 +1977,57 @@ async def message_thread(
         client_event_id=body.client_event_id,
     )
     state = dict(thread.state or {})
+    if _is_status_only_message(body.message):
+        # Status questions are intentionally inert with respect to creative
+        # intent. Reconcile the exact Creator session/Job and append one
+        # bounded report, but never queue a revision from words like “status?”.
+        status_session = None
+        status_job = None
+        if isinstance(db, AsyncSession) and thread.active_plan_item_id:
+            _live_item, status_session, status_job = await _load_status_reconciliation_rows(
+                db, thread, user
+            )
+        elif thread.active_creator_agent_session_id:
+            status_session = await db.get(
+                CreatorAgentSession, thread.active_creator_agent_session_id, with_for_update=True
+            )
+            if thread.active_job_id:
+                status_job = await db.get(Job, thread.active_job_id, with_for_update=True)
+        if status_session is not None:
+            await reconcile_render_state(db, status_session)
+            if isinstance(db, AsyncSession):
+                await _repair_missing_thread_job_projection(db, thread, user)
+            await _sync_agent(db, thread)
+        if isinstance(db, AsyncSession):
+            item, session, job = await _load_authorized_projection_rows(db, thread)
+            if session is not None:
+                status_session = session
+            if job is not None:
+                status_job = job
+            await _sync_render_projection(
+                db,
+                thread,
+                item=item,
+                session=status_session,
+                job=status_job,
+            )
+        await _append(
+            db,
+            thread,
+            event_type="status_update",
+            content=_status_message(thread=thread, session=status_session, job=status_job),
+            payload={
+                "kind": "status",
+                "status": (
+                    (thread.state or {}).get("generation", {}).get("status")
+                    if isinstance((thread.state or {}).get("generation"), dict)
+                    else None
+                ),
+            },
+        )
+        await db.commit()
+        await db.refresh(thread)
+        return await _response(db, thread)
     if not state.get("intent"):
         state["intent"] = body.message[:2000]
         thread.state = state
@@ -1971,6 +2362,12 @@ async def action_thread(
         thread.state = state
         await _sync_agent(db, thread)
         state = dict(thread.state or {})
+        if isinstance(db, AsyncSession):
+            await _sync_render_projection(db, thread)
+            # The helper updates the durable read model in-place. Refresh the
+            # local action state before the common assignment below; otherwise
+            # a stale pre-projection dict would clobber the fenced projection.
+            state = dict(thread.state or {})
     thread.state = state
     await _append(
         db,

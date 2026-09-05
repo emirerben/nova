@@ -19,6 +19,19 @@ describe("jobFailureCopy", () => {
 });
 
 describe("variantFailureCopy", () => {
+  it.each([
+    [
+      "guided_story_music_missing",
+      "The music attached to this edit is no longer available. Choose another song and save again.",
+    ],
+    [
+      "render_enqueue_failed",
+      "Your edits were saved, but the render didn't start. Open the editor and retry Save.",
+    ],
+  ])("uses a specific recovery for %s", (errorClass, expected) => {
+    expect(variantFailureCopy(errorClass)).toBe(expected);
+  });
+
   it("uses shared safe recovery copy for unknown render failures", () => {
     const copy = variantFailureCopy("unknown_backend_failure");
 

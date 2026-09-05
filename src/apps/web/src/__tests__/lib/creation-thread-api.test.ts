@@ -5,10 +5,16 @@ import {
   creationJobPartial,
   creationJobReady,
   creationJobSettled,
+  creationThreadInProgress,
+  creationThreadPreparing,
+  creationThreadProgressKey,
   creationThreadMediaCount,
+  CreationThreadError,
   getCreationCapabilities,
   deleteCreationThread,
   renameCreationThread,
+  isCreationThreadRevisionConflict,
+  refreshCreationThread,
   threadMessages,
   type CreationThread,
 } from "@/lib/creation-thread-api";
@@ -99,6 +105,28 @@ describe("creation thread projection", () => {
     }
   });
 
+  it("bypasses caches when refreshing mutable render state", async () => {
+    const previousFetch = global.fetch;
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => thread(),
+    } as Response);
+    try {
+      await refreshCreationThread("thread-1");
+      expect(global.fetch).toHaveBeenCalledWith(
+        "/api/plan/creation-threads/thread-1",
+        expect.objectContaining({ cache: "no-store" }),
+      );
+    } finally {
+      global.fetch = previousFetch;
+    }
+  });
+
+  it("recognizes revision conflict responses", () => {
+    expect(isCreationThreadRevisionConflict(new CreationThreadError("Creation thread changed", 409))).toBe(true);
+    expect(isCreationThreadRevisionConflict(new CreationThreadError("server", 500))).toBe(false);
+  });
+
   it("hydrates media count from durable state", () => {
     expect(creationThreadMediaCount(thread())).toBe(1);
     expect(creationThreadMediaCount(thread({ state: { media_count: 8 } }))).toBe(8);
@@ -129,6 +157,22 @@ describe("creation thread projection", () => {
       { variant_id: "original_text", render_status: "ready", output_url: "/cut.mp4" },
       { variant_id: "song_text", render_status: "failed", output_url: null },
     ] } }))).toBe(true);
+    expect(creationJobReady(thread({ job: { id: "j", status: "variants_ready", variants: [
+      {
+        variant_id: "guided_story",
+        render_status: "failed",
+        render_generation_id: "generation-2",
+        output_url: "/last-good-cut.mp4",
+      },
+    ] } }))).toBe(true);
+    expect(creationJobPartial(thread({ job: { id: "j", status: "variants_ready", variants: [
+      {
+        variant_id: "guided_story",
+        render_status: "failed",
+        render_generation_id: "generation-2",
+        output_url: "/last-good-cut.mp4",
+      },
+    ] } }))).toBe(true);
   });
 
   it("keeps polling while one variant is ready and another is still rendering", () => {
@@ -140,6 +184,73 @@ describe("creation thread projection", () => {
       { variant_id: "original_text", render_status: "ready", output_url: "/cut.mp4" },
       { variant_id: "song_text", render_status: "failed", output_url: null },
     ] } }))).toBe(true);
+    expect(creationJobSettled(thread({ job: { id: "j", status: "processing", variants: [
+      { variant_id: "original_text", render_status: "ready", output_url: "/cut.mp4" },
+    ] } }))).toBe(false);
+    expect(creationThreadInProgress(thread({ active_job_id: "j", job: {
+      id: "j", status: "processing", variants: [
+        { variant_id: "original_text", render_status: "ready", output_url: "/cut.mp4" },
+      ],
+    } }))).toBe(true);
+  });
+
+  it("stops polling when a terminal parent failure has stale rendering metadata", () => {
+    const failed = thread({
+      active_job_id: "j",
+      job: {
+        id: "j",
+        status: "processing_failed",
+        variants: [{ variant_id: "original_text", render_status: "rendering", output_url: null }],
+      },
+      state: { generation: { status: "rendering" } },
+    });
+    expect(creationJobSettled(failed)).toBe(true);
+    expect(creationThreadInProgress(failed)).toBe(false);
+  });
+
+  it("falls back to projected progress and distinguishes exact revision conflicts", () => {
+    const preparing = thread({
+      creator_agent: null,
+      state: { creator_agent: { status: "reviewing" }, generation: { status: "queued" } },
+    });
+    expect(creationThreadPreparing(preparing)).toBe(true);
+    expect(creationThreadProgressKey(preparing)).toBe("::reviewing:queued:");
+    expect(isCreationThreadRevisionConflict(new CreationThreadError("Creation thread changed", 409))).toBe(true);
+    expect(isCreationThreadRevisionConflict(new CreationThreadError("Creator session is busy", 409))).toBe(false);
+    expect(isCreationThreadRevisionConflict(new Error("Creation thread changed"))).toBe(false);
+  });
+
+  it("keeps a settled parent Job polling for an editor replacement generation", () => {
+    const rendering = thread({
+      active_job_id: "j",
+      job: {
+        id: "j",
+        status: "variants_ready",
+        variants: [{
+          variant_id: "guided_story",
+          render_generation_id: "generation-2",
+          render_status: "rendering",
+          render_finished_at: "2026-01-01T00:00:00Z",
+          output_url: "/old-cut.mp4",
+        }],
+      },
+    });
+    const ready = {
+      ...rendering,
+      job: {
+        ...rendering.job!,
+        variants: [{
+          ...rendering.job!.variants[0],
+          render_status: "ready",
+          render_finished_at: "2026-01-01T00:02:00Z",
+          output_url: "/new-cut.mp4",
+        }],
+      },
+    };
+
+    expect(creationThreadInProgress(rendering)).toBe(true);
+    expect(creationThreadInProgress(ready)).toBe(false);
+    expect(creationThreadProgressKey(rendering)).not.toBe(creationThreadProgressKey(ready));
   });
 
   it("does not replay the initial strategy as a revision after the first cut is ready", () => {

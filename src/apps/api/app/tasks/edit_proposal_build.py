@@ -19,7 +19,14 @@ from sqlalchemy import func, select
 
 from app.agents._schemas.creator_agent import CreatorEditPlan
 from app.database import sync_session
-from app.models import ContentPlan, CreatorAgentSession, PlanItem, PlanItemAsset
+from app.models import (
+    ContentPlan,
+    CreationThread,
+    CreatorAgentSession,
+    Job,
+    PlanItem,
+    PlanItemAsset,
+)
 from app.schemas.edit_proposal import (
     GUIDED_STORY_MIN_MOMENT_S,
     MAIN_CREATOR_FAIL_CLOSED,
@@ -33,6 +40,7 @@ from app.schemas.edit_proposal import (
     parse_edit_proposal,
 )
 from app.services.content_plan_persona import load_owned_plan_persona_sync
+from app.services.creator_render_projection import build_creator_render_projection
 from app.services.edit_direction_planner import (
     clamp_fast_montage_target_duration_s,
     round_robin_capacity_s,
@@ -131,6 +139,167 @@ def _creator_strategy_for_guided_attempt(
             return None
         return edit_plan.strategy.model_dump(mode="json", exclude_none=True)
     return None
+
+
+def _bind_creator_job_after_auto_design(
+    *,
+    item_id: uuid.UUID,
+    owner_id: uuid.UUID,
+    attempt_id: str,
+    ownership_epoch: int,
+    job_id: str | None,
+) -> bool:
+    """Durably bind an async guided Job to its exact Creator/chat attempt.
+
+    The dispatcher intentionally knows only PlanItem state. First bind the
+    authoritative Plan -> Persona -> PlanItem -> Job -> CreatorSession graph.
+    Then, in a separate transaction, lock CreationThread first and recheck the
+    complete graph before updating its read model. The split avoids reversing
+    the thread-first lock order used by creation-thread routes while retaining
+    every ownership/epoch/attempt fence.
+    """
+
+    if not job_id:
+        return False
+    try:
+        parsed_job_id = uuid.UUID(str(job_id))
+    except (TypeError, ValueError):
+        return False
+    with sync_session() as db:
+        locked = _locked_item(db, item_id, ownership_epoch)
+        if locked is None:
+            return False
+        item, locked_owner_id = locked
+        current = parse_edit_proposal(item.edit_proposal)
+        if (
+            locked_owner_id != owner_id
+            or item.current_job_id != parsed_job_id
+            or current is None
+            or current.generation_attempt_id != attempt_id
+        ):
+            return False
+        job = db.get(Job, parsed_job_id, with_for_update=True, populate_existing=True)
+        guided = (job.assembly_plan or {}).get("guided_edit") if job is not None else None
+        job_epoch = getattr(job, "content_plan_ownership_epoch", None)
+        if (
+            job is None
+            or job.user_id != owner_id
+            or job.content_plan_item_id != item.id
+            or job_epoch is None
+            or int(job_epoch) != ownership_epoch
+            or not isinstance(guided, dict)
+            or guided.get("generation_attempt_id") != attempt_id
+        ):
+            return False
+        sessions = list(
+            db.execute(
+                select(CreatorAgentSession)
+                .where(
+                    CreatorAgentSession.creator_id == owner_id,
+                    CreatorAgentSession.plan_item_id == item.id,
+                    CreatorAgentSession.ownership_epoch == ownership_epoch,
+                )
+                .order_by(
+                    CreatorAgentSession.updated_at.desc(),
+                    CreatorAgentSession.created_at.desc(),
+                )
+                .with_for_update()
+            ).scalars()
+        )
+        matching = [
+            session
+            for session in sessions
+            if isinstance(session.active_plan, dict)
+            and session.active_plan.get("guided_generation_attempt_id") == attempt_id
+            and session.status in {"executing", "rendering", "reviewing"}
+            and session.target_job_id in {None, job.id}
+        ]
+        if len(matching) != 1:
+            return False
+        creator_session = matching[0]
+        creator_session.target_job_id = job.id
+        if creator_session.status == "executing":
+            creator_session.status = "rendering"
+
+        db.commit()
+        creator_session_id = creator_session.id
+
+    # Creation-thread routes acquire this row before entering the Creator
+    # graph. Never hold Plan/Item/Job locks while waiting for it.
+    with sync_session() as db:
+        threads = list(
+            db.execute(
+                select(CreationThread)
+                .where(
+                    CreationThread.creator_id == owner_id,
+                    CreationThread.active_plan_item_id == item_id,
+                    CreationThread.active_creator_agent_session_id == creator_session_id,
+                )
+                .with_for_update()
+            ).scalars()
+        )
+        if not threads:
+            # The authoritative Creator session is linked; a chat created or
+            # restored later can recover from it through GET reconciliation.
+            return True
+        if len(threads) != 1:
+            return False
+        thread = threads[0]
+        locked = _locked_item(db, item_id, ownership_epoch)
+        if locked is None:
+            return False
+        item, locked_owner_id = locked
+        current = parse_edit_proposal(item.edit_proposal)
+        if (
+            locked_owner_id != owner_id
+            or item.current_job_id != parsed_job_id
+            or current is None
+            or current.generation_attempt_id != attempt_id
+        ):
+            return False
+        job = db.get(Job, parsed_job_id, with_for_update=True, populate_existing=True)
+        creator_session = db.get(
+            CreatorAgentSession,
+            creator_session_id,
+            with_for_update=True,
+            populate_existing=True,
+        )
+        guided = (job.assembly_plan or {}).get("guided_edit") if job is not None else None
+        if (
+            job is None
+            or creator_session is None
+            or job.user_id != owner_id
+            or job.content_plan_item_id != item.id
+            or getattr(job, "content_plan_ownership_epoch", None) != ownership_epoch
+            or not isinstance(guided, dict)
+            or guided.get("generation_attempt_id") != attempt_id
+            or creator_session.creator_id != owner_id
+            or creator_session.plan_item_id != item.id
+            or creator_session.ownership_epoch != ownership_epoch
+            or creator_session.target_job_id != job.id
+            or not isinstance(creator_session.active_plan, dict)
+            or creator_session.active_plan.get("guided_generation_attempt_id") != attempt_id
+        ):
+            return False
+        thread.active_job_id = job.id
+        state = dict(thread.state or {})
+        state["generation"] = build_creator_render_projection(
+            job_status=str(job.status),
+            job_id=job.id,
+            current_job_id=item.current_job_id,
+            owner_id=owner_id,
+            plan_item_id=item.id,
+            ownership_epoch=ownership_epoch,
+            session_id=creator_session.id,
+            session_revision=int(creator_session.revision or 0),
+            attempt=int(creator_session.render_attempts or 0),
+            generation_attempt_id=attempt_id,
+            variant_id=getattr(creator_session, "target_variant_id", None),
+            render_generation_id=getattr(creator_session, "target_generation_id", None),
+        )
+        thread.state = state
+        db.commit()
+        return True
 
 
 def _kind(content_type: str, path: str) -> str:
@@ -858,6 +1027,21 @@ def _dispatch_after_auto_design(
         current.design_fallback != MAIN_CREATOR_FAIL_CLOSED
     )
     result = dispatch_item_render_for(item_id, ownership_epoch, **dispatch_kwargs)
+    if owner_id is not None and result.outcome in {"dispatched", "already_active"}:
+        bound = _bind_creator_job_after_auto_design(
+            item_id=iid,
+            owner_id=owner_id,
+            attempt_id=attempt_id,
+            ownership_epoch=ownership_epoch,
+            job_id=getattr(result, "job_id", None),
+        )
+        if creator_strategy is not None and not bound:
+            log.warning(
+                "edit_proposal.creator_job_binding_deferred",
+                item_id=item_id,
+                attempt_id=attempt_id,
+                job_id=getattr(result, "job_id", None),
+            )
     if result.outcome not in {"dispatched", "already_active"}:
         # The proposal is already committed (approved, or failed+design_fallback)
         # — leave it there. The next manual Generate click dispatches directly
@@ -1391,6 +1575,7 @@ def _run_draft_attempt(
             font_family=brief.font_family,
             text_color=brief.text_color,
             image_layout=brief.image_layout,
+            licensed_sfx=brief.licensed_sfx,
             media=media,
             story_beats=(
                 [

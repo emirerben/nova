@@ -238,6 +238,39 @@ def test_compile_drops_treatments_not_advertised_by_manifest(monkeypatch) -> Non
     assert plan.strategy.optional_treatments == ["transitions"]
 
 
+def test_compile_rejects_named_sfx_when_capability_is_unavailable(monkeypatch) -> None:
+    _enable_guided(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "sound_effects_enabled", False)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        media=[{"media_id": "clip-1", "kind": "video"}],
+        catalog=[{"catalog_id": "sfx-fah", "kind": "sound_effect", "label": "Fah"}],
+    )
+
+    with pytest.raises(capabilities.CreatorSfxUnavailableError, match="unavailable"):
+        capabilities.compile_strategy_to_plan(
+            manifest,
+            CreativeStrategy(licensed_sfx={"effect_id": "sfx-fah"}),
+        )
+
+
+def test_resolver_requires_one_exact_effect_id_or_label(monkeypatch) -> None:
+    _enable_guided(monkeypatch)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="montage",
+        catalog=[
+            {"catalog_id": "sfx-a", "kind": "sound_effect", "label": "Fah"},
+            {"catalog_id": "sfx-b", "kind": "sound_effect", "label": "Fah"},
+        ],
+    )
+
+    assert capabilities.resolve_creator_sfx_catalog_ref(manifest, "") is None
+    assert capabilities.resolve_creator_sfx_catalog_ref(manifest, "missing") is None
+    assert capabilities.resolve_creator_sfx_catalog_ref(manifest, "Fah") is None
+
+
 def test_compile_rejects_media_ids_outside_manifest(monkeypatch) -> None:
     _enable_guided(monkeypatch)
     manifest = capabilities.resolve_creator_manifest(

@@ -1,15 +1,15 @@
-"""nova.compose.sfx_placement — propose SFX placements at spoken-word moments.
+"""nova.compose.sfx_placement — propose grounded SFX placements.
 
-ONE LLM call per run: reads the variant's speech map (words + pauses), the
-clip-moment windows, and the published SFX catalog, and proposes a small set of
-sound-effect placements. The agent owns SELECTION + TIMING INTENT only:
+ONE LLM call per run: reads the variant's optional speech map (words + pauses),
+trusted clip-moment windows, and the published SFX catalog, then proposes a
+small set of sound-effect placements. The agent owns SELECTION + TIMING INTENT
+only:
 
   - `at_s` must be copied from a supplied mark (word start/end, pause start,
     moment edge) — the server drops out-of-range and invents nothing;
-  - its output is ADVISORY: the server validates (known effect_id, spacing,
-    keep-out, voice ban) and persists `pending_sfx_suggestions`; nothing
-    renders until a user or the copilot realizes a suggestion as an ordinary
-    SoundEffectPlacement.
+  - its output is ADVISORY: the caller validates known effect_id, grounding,
+    spacing, keep-out, and any lane-specific voice policy before either
+    persisting a suggestion or materializing an ordinary SoundEffectPlacement.
 
 Mirrors overlay_placement's posture (agent proposes, server disposes).
 """
@@ -20,7 +20,7 @@ import json
 from typing import ClassVar
 
 import structlog
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents.music_matcher import _sanitize_text
@@ -31,8 +31,9 @@ log = structlog.get_logger()
 SFX_ANCHORS = ("word_start", "word_end", "pause", "moment")
 _MAX_WORDS = 1200
 _MAX_PAUSES = 60
-_MAX_MOMENTS = 24
+_MAX_MOMENTS = 80
 _MAX_EFFECTS = 30
+MAX_SFX_PLACEMENTS = 6
 
 
 class SfxCatalogEffect(BaseModel):
@@ -44,13 +45,19 @@ class SfxCatalogEffect(BaseModel):
 
 class SfxPlacementInput(BaseModel):
     # {"word","start_s","end_s"} records, transcript order.
-    words: list[dict] = Field(min_length=1, max_length=_MAX_WORDS)
+    words: list[dict] = Field(default_factory=list, max_length=_MAX_WORDS)
     # {"s","e","after"} pause records (speech_map shape).
     pauses: list[dict] = Field(default_factory=list, max_length=_MAX_PAUSES)
     # {"start_s","end_s","description"} clip-moment windows (may be empty).
     moments: list[dict] = Field(default_factory=list, max_length=_MAX_MOMENTS)
     effects: list[SfxCatalogEffect] = Field(min_length=1, max_length=_MAX_EFFECTS)
     duration_s: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def _require_grounding(self) -> SfxPlacementInput:
+        if not self.words and not self.moments:
+            raise ValueError("SFX placement requires timed words or visual moments")
+        return self
 
 
 class RawSfxSuggestion(BaseModel):
@@ -67,14 +74,14 @@ class RawSfxSuggestion(BaseModel):
 
 
 class SfxPlacementOutput(BaseModel):
-    placements: list[RawSfxSuggestion] = Field(default_factory=list)
+    placements: list[RawSfxSuggestion] = Field(default_factory=list, max_length=MAX_SFX_PLACEMENTS)
 
 
 class SfxPlacementAgent(Agent[SfxPlacementInput, SfxPlacementOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.sfx_placement",
         prompt_id="sfx_placement",
-        prompt_version="1.0.0",
+        prompt_version="2026-09-05-v2",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -144,6 +151,8 @@ class SfxPlacementAgent(Agent[SfxPlacementInput, SfxPlacementOutput]):
         placements_raw = data.get("placements")
         if not isinstance(placements_raw, list):
             raise SchemaError("sfx_placement: 'placements' must be a list")
+        if len(placements_raw) > MAX_SFX_PLACEMENTS:
+            raise SchemaError(f"sfx_placement: at most {MAX_SFX_PLACEMENTS} placements are allowed")
         placements: list[RawSfxSuggestion] = []
         for item in placements_raw:
             if not isinstance(item, dict):

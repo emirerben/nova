@@ -246,6 +246,19 @@ def test_model_cannot_invent_exact_render_fields_without_creator_wording() -> No
     assert parsed.text_color is None
 
 
+def test_model_authored_sfx_is_stripped_without_explicit_creator_request() -> None:
+    """Licensed effects must only enter the render contract from user wording."""
+
+    from app.routes.creator_agent import _apply_explicit_render_intent
+
+    parsed = _apply_explicit_render_intent(
+        CreativeStrategy(licensed_sfx={"effect_id": "sfx-fah"}),
+        "Use the strongest moments and keep the energy up.",
+    )
+
+    assert parsed.licensed_sfx is None
+
+
 @pytest.mark.asyncio
 async def test_chat_first_can_attach_four_owned_clips_before_exact_request(
     monkeypatch: pytest.MonkeyPatch,

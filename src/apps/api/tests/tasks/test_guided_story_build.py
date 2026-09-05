@@ -6,6 +6,7 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -16,6 +17,106 @@ import app.tasks.generative_build as gb
 @contextmanager
 def _session():
     yield SimpleNamespace(commit=lambda: None)
+
+
+def _guided_sfx_case() -> tuple[dict, dict, SimpleNamespace, SimpleNamespace]:
+    """Build a pinned guided plan and catalog row for SFX lifecycle tests."""
+    from app.pipeline.guided_story import compile_execution_plan
+    from app.schemas.edit_proposal import (
+        EditProposalSnapshot,
+        MediaRef,
+        StoryBeat,
+        canonical_media_digest,
+    )
+
+    media = [
+        MediaRef(
+            lane="clip",
+            media_id="football-1",
+            gcs_path="users/u/football.mp4",
+            generation="1",
+            kind="video",
+            duration_s=8,
+            analysis={
+                "description": "football practice",
+                "best_moments": [{"start_s": 2, "end_s": 4, "description": "funny missed kick"}],
+            },
+        )
+    ]
+    snapshot = EditProposalSnapshot(
+        direction="guided_story",
+        goal="Show the funny sports moment",
+        duration_s=4,
+        title="Emir Olympics. Ann Arbor 2022.",
+        licensed_sfx={"effect_id": "sfx-fah", "semantics": "funny_moments"},
+        media=media,
+        story_beats=[
+            StoryBeat(
+                beat_id="football",
+                topic="Football",
+                thought="The missed kick",
+                media_ids=["football-1"],
+                duration_s=4,
+            )
+        ],
+    )
+    raw = {
+        "proposal_version": 7,
+        "media_digest": canonical_media_digest(media),
+        "approved_proposal": snapshot.model_dump(mode="json"),
+        "media_identities": [
+            {
+                "lane": ref.lane,
+                "media_id": ref.media_id,
+                "gcs_path": ref.gcs_path,
+                "generation": ref.generation,
+                "kind": ref.kind,
+            }
+            for ref in media
+        ],
+    }
+    plan = compile_execution_plan(raw, track=None)
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        status="queued",
+        assembly_plan={"guided_edit": raw, "guided_story_execution_plan": plan},
+        all_candidates={},
+    )
+    effect = SimpleNamespace(
+        id="sfx-fah",
+        name="Fah",
+        audio_gcs_path="sound-effects/sfx-fah/fah.mp3",
+        duration_s=0.7,
+        role_tags=["comedic_sting"],
+        status="ready",
+        published_at=datetime.now(UTC),
+        archived_at=None,
+    )
+    return raw, plan, job, effect
+
+
+def _patch_guided_sfx_lookup(monkeypatch, job, effect) -> None:
+    class _Result:
+        def scalars(self):
+            return self
+
+        def one_or_none(self):
+            return effect
+
+    class _Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, _model, _pk, **_kwargs):
+            return job
+
+        def execute(self, _stmt):
+            return _Result()
+
+    monkeypatch.setattr(gb, "_sync_session", lambda: _Session())
 
 
 def test_guided_snapshot_routes_before_legacy_ingest_and_agents(monkeypatch) -> None:
@@ -234,6 +335,201 @@ def test_redelivery_reuses_pinned_execution_plan_without_rematching(monkeypatch)
 
     assert plan == pinned
     assert track is None
+
+
+def test_first_guided_plan_materializes_explicit_licensed_sfx_before_persist(
+    monkeypatch,
+) -> None:
+    from app.agents.sfx_placement import SfxPlacementAgent
+    from app.schemas.edit_proposal import (
+        EditProposalSnapshot,
+        MediaRef,
+        StoryBeat,
+        canonical_media_digest,
+    )
+
+    media = [
+        MediaRef(
+            lane="clip",
+            media_id="football-1",
+            gcs_path="users/u/football.mp4",
+            generation="1",
+            kind="video",
+            duration_s=8,
+            analysis={
+                "description": "football practice",
+                "best_moments": [{"start_s": 2, "end_s": 4, "description": "funny missed kick"}],
+            },
+        )
+    ]
+    snapshot = EditProposalSnapshot(
+        direction="guided_story",
+        goal="Show the funny sports moment",
+        duration_s=4,
+        title="Emir Olympics. Ann Arbor 2022.",
+        licensed_sfx={"effect_id": "sfx-fah", "semantics": "funny_moments"},
+        media=media,
+        story_beats=[
+            StoryBeat(
+                beat_id="football",
+                topic="Football",
+                thought="The missed kick",
+                media_ids=["football-1"],
+                duration_s=4,
+            )
+        ],
+    )
+    raw = {
+        "proposal_version": 7,
+        "media_digest": canonical_media_digest(media),
+        "approved_proposal": snapshot.model_dump(mode="json"),
+        "media_identities": [
+            {
+                "lane": "clip",
+                "media_id": "football-1",
+                "gcs_path": "users/u/football.mp4",
+                "generation": "1",
+                "kind": "video",
+            }
+        ],
+    }
+    job = SimpleNamespace(
+        id=uuid.uuid4(), status="queued", assembly_plan={"guided_edit": raw}, all_candidates={}
+    )
+    effect = SimpleNamespace(
+        id="sfx-fah",
+        name="Fah",
+        audio_gcs_path="sound-effects/sfx-fah/fah.mp3",
+        duration_s=0.7,
+        role_tags=["comedic_sting"],
+        status="ready",
+        published_at=datetime.now(UTC),
+        archived_at=None,
+    )
+
+    class _Result:
+        def scalars(self):
+            return self
+
+        def one_or_none(self):
+            return effect
+
+    class _Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, _model, _pk, **_kwargs):
+            return job
+
+        def execute(self, _stmt):
+            return _Result()
+
+        def commit(self):
+            return None
+
+    monkeypatch.setattr(gb, "_sync_session", lambda: _Session())
+    monkeypatch.setattr(gb, "_match_best_track", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(gb.settings, "sound_effects_enabled", True)
+    monkeypatch.setattr(gb.settings, "gemini_api_key", "test-key")
+    monkeypatch.setattr(
+        SfxPlacementAgent,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            placements=[SimpleNamespace(effect_id="sfx-fah", at_s=0.0, gain=0.8)]
+        ),
+    )
+
+    plan, track = gb._guided_execution_plan(str(job.id), raw)
+
+    assert track is None
+    assert plan["licensed_sfx_intent"] == {
+        "effect_id": "sfx-fah",
+        "semantics": "funny_moments",
+        "max_placements": 6,
+    }
+    assert len(plan["editor_sound_effects"]) == 1
+    assert plan["editor_sound_effects"][0]["sound_effect_id"] == "sfx-fah"
+    assert plan["editor_sound_effects"][0]["source"] == "creator_explicit"
+    assert job.assembly_plan["guided_story_execution_plan"] == plan
+
+    # A later editor revision reuses the pinned plan, but must still recheck
+    # that the explicitly named catalog effect remains publishable.
+    from app.pipeline.guided_story import GuidedStoryError
+
+    effect.archived_at = datetime.now(UTC)
+    with pytest.raises(GuidedStoryError, match="no longer available"):
+        gb._guided_execution_plan(str(job.id), raw)
+
+    effect.archived_at = None
+    job.assembly_plan["guided_story_execution_plan"]["editor_sound_effects"][0]["src_gcs_path"] = (
+        "users/u/replaced.mp3"
+    )
+    with pytest.raises(GuidedStoryError, match="no longer matches"):
+        gb._guided_execution_plan(str(job.id), raw)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("status", "pending", "no longer available"),
+        ("published_at", None, "no longer available"),
+        ("audio_gcs_path", "", "no longer available"),
+        ("audio_gcs_path", "private/fah.mp3", "not usable"),
+    ],
+)
+def test_guided_sfx_rechecks_catalog_lifecycle_before_render(
+    monkeypatch, field, value, message
+) -> None:
+    raw, _plan, job, effect = _guided_sfx_case()
+    setattr(effect, field, value)
+    _patch_guided_sfx_lookup(monkeypatch, job, effect)
+    monkeypatch.setattr(gb.settings, "sound_effects_enabled", True)
+
+    from app.pipeline.guided_story import GuidedStoryError
+
+    with pytest.raises(GuidedStoryError, match=message):
+        gb._guided_execution_plan(str(job.id), raw)
+
+
+def test_guided_sfx_rejects_missing_catalog_row(monkeypatch) -> None:
+    raw, _plan, job, _effect = _guided_sfx_case()
+    _patch_guided_sfx_lookup(monkeypatch, job, None)
+    monkeypatch.setattr(gb.settings, "sound_effects_enabled", True)
+
+    from app.pipeline.guided_story import GuidedStoryError
+
+    with pytest.raises(GuidedStoryError, match="no longer available"):
+        gb._guided_execution_plan(str(job.id), raw)
+
+
+def test_guided_sfx_fails_visibly_when_feature_is_disabled(monkeypatch) -> None:
+    raw, _plan, job, effect = _guided_sfx_case()
+    _patch_guided_sfx_lookup(monkeypatch, job, effect)
+    monkeypatch.setattr(gb.settings, "sound_effects_enabled", False)
+
+    from app.pipeline.guided_story import GuidedStoryError
+
+    with pytest.raises(GuidedStoryError, match="not available for rendering"):
+        gb._guided_execution_plan(str(job.id), raw)
+
+
+def test_guided_sfx_fails_visibly_when_placement_provider_is_unavailable(monkeypatch) -> None:
+    raw, _plan, job, effect = _guided_sfx_case()
+    job.assembly_plan["guided_story_execution_plan"] = {
+        **job.assembly_plan["guided_story_execution_plan"],
+        "editor_sound_effects": [],
+    }
+    _patch_guided_sfx_lookup(monkeypatch, job, effect)
+    monkeypatch.setattr(gb.settings, "sound_effects_enabled", True)
+    monkeypatch.setattr(gb.settings, "gemini_api_key", None)
+
+    from app.pipeline.guided_story import GuidedStoryError
+
+    with pytest.raises(GuidedStoryError, match="could not be planned"):
+        gb._guided_execution_plan(str(job.id), raw)
 
 
 def test_guided_orientation_regen_is_the_only_supported_base_change() -> None:
@@ -684,6 +980,83 @@ def test_guided_story_error_persists_a_user_facing_render_failure(monkeypatch) -
     assert failed["failure_reason"] == "guided_story_duration_impossible"
 
 
+def test_editor_save_worker_failure_keeps_last_good_output_retryable(monkeypatch) -> None:
+    """A post-enqueue guided failure must not leave the parent looking ready.
+
+    This models the editor Save path after the database commit: the worker owns
+    the new generation, fails with a strict guided error, and writes its
+    generation-fenced terminal patch. The prior video remains playable while
+    the parent becomes a partial render that the reload/retry route can reopen.
+    """
+    from contextlib import nullcontext
+
+    from app.pipeline.guided_story import GuidedStoryError
+
+    job_id = "12345678-1234-5678-1234-567812345678"
+    old_video = f"generative-jobs/{job_id}/variant-guided-old.mp4"
+    old_url = "https://signed/variant-guided-old.mp4"
+    job = SimpleNamespace(
+        id=uuid.UUID(job_id),
+        status="variants_ready",
+        mode="content_plan",
+        content_plan_item_id=None,
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "guided_story",
+                    "render_status": "rendering",
+                    "render_generation_id": "editor-save-generation",
+                    "video_path": old_video,
+                    "output_url": old_url,
+                    "ok": True,
+                }
+            ]
+        },
+    )
+
+    class _Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, model, *_args, **_kwargs):
+            return job if model is gb.Job else None
+
+        def commit(self):
+            return None
+
+    monkeypatch.setattr(gb, "_owned_job_task_fence", lambda _job_id: nullcontext(True))
+    monkeypatch.setattr(gb, "_sync_session", _Session)
+    monkeypatch.setattr(gb, "_claim_creator_craft_generation", lambda *a, **k: "legacy")
+    monkeypatch.setattr(gb, "_cancelled_job_write_rejected", lambda *a, **k: False)
+    monkeypatch.setattr(gb, "_reconcile_retired_variant_posters", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        gb,
+        "_run_regenerate_variant",
+        lambda *a, **k: (_ for _ in ()).throw(
+            GuidedStoryError(
+                "guided_story_receipt_mismatch",
+                "The verified story base is no longer available for text editing.",
+            )
+        ),
+    )
+
+    gb.regenerate_generative_variant.run(
+        job_id,
+        "guided_story",
+        render_gen_id="editor-save-generation",
+    )
+
+    variant = job.assembly_plan["variants"][0]
+    assert job.status == "variants_ready_partial"
+    assert variant["render_status"] == "failed"
+    assert variant["error_class"] == "guided_story_receipt_mismatch"
+    assert variant["video_path"] == old_video
+    assert variant["output_url"] == old_url
+
+
 def test_busy_duplicate_delivery_does_not_mark_live_job_finished(monkeypatch) -> None:
     calls: list[str] = []
     monkeypatch.setattr(gb, "_owned_job_task_fence", lambda _job_id: _session())
@@ -1079,6 +1452,7 @@ def _patch_guided_revision_harness(
     runtime_plan,
     render,
     track_id=None,
+    track_published_at=object(),
 ) -> tuple[str, list[tuple[object, object]]]:
     from app.pipeline import guided_story
 
@@ -1098,7 +1472,7 @@ def _patch_guided_revision_harness(
         SimpleNamespace(
             id=track_id,
             analysis_status="ready",
-            published_at=object(),
+            published_at=track_published_at,
             archived_at=None,
             audio_gcs_path="music/track.m4a",
         )
@@ -1173,6 +1547,53 @@ def test_guided_revision_music_lookup_binds_text_id_not_uuid(monkeypatch) -> Non
     music_lookup = next(model_pk for model_pk in lookups if model_pk[0] is gb.MusicTrack)
     assert music_lookup[1] == track_id
     assert isinstance(music_lookup[1], str)
+
+
+def test_guided_revision_accepts_unpublished_auto_matched_track(monkeypatch) -> None:
+    """Editor Save must reuse the same ready track accepted by first render."""
+    track_id = "87654321-4321-8765-4321-876543218765"
+    runtime_plan = {
+        "music": {
+            "track_id": track_id,
+            "title": "Waka Waka",
+            "audio_gcs_path": "music/track.m4a",
+            "generation": "42",
+        }
+    }
+    rendered: list[object] = []
+
+    def _render(*_args, **kwargs):
+        rendered.append(kwargs["track"])
+        return {"video_path": "output.mp4"}
+
+    job_id, _lookups = _patch_guided_revision_harness(
+        monkeypatch,
+        runtime_plan=runtime_plan,
+        track_id=track_id,
+        track_published_at=None,
+        render=_render,
+    )
+
+    gb._rerender_guided_story_revision(
+        job_id,
+        {"variant_id": "guided_story"},
+        revision={"revision_number": 2},
+        render_gen_id="render-1",
+    )
+
+    assert len(rendered) == 1
+    assert rendered[0].id == track_id
+
+
+def test_guided_story_errors_keep_stable_public_failure_code() -> None:
+    from app.pipeline.guided_story import GuidedStoryError
+
+    error = GuidedStoryError(
+        "guided_story_music_missing",
+        "The exact selected music track is no longer available.",
+    )
+
+    assert gb._classify_error(error) == "guided_story_music_missing"
 
 
 def test_guided_revision_invalid_music_id_fails_before_lookup_or_render(monkeypatch) -> None:

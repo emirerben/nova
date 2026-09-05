@@ -6,6 +6,7 @@ from contextlib import contextmanager, nullcontext
 from threading import Event, Lock
 from time import sleep
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from billiard.exceptions import SoftTimeLimitExceeded
@@ -1833,10 +1834,13 @@ def test_main_creator_guided_dispatch_preserves_exact_render_contract(monkeypatc
         lambda *_a, **_kw: creator_strategy,
     )
     dispatch_calls = []
+    bind_job = Mock(return_value=True)
+    monkeypatch.setattr(proposal_build, "_bind_creator_job_after_auto_design", bind_job)
+    job_id = uuid.uuid4()
 
     def _fake_dispatch(item_id_arg, epoch, **kwargs):
         dispatch_calls.append((item_id_arg, epoch, kwargs))
-        return SimpleNamespace(outcome="dispatched")
+        return SimpleNamespace(outcome="dispatched", job_id=str(job_id))
 
     monkeypatch.setattr("app.tasks.content_plan_build.dispatch_item_render_for", _fake_dispatch)
 
@@ -1854,6 +1858,179 @@ def test_main_creator_guided_dispatch_preserves_exact_render_contract(monkeypatc
             },
         )
     ]
+    bind_job.assert_called_once_with(
+        item_id=item_id,
+        owner_id=owner_id,
+        attempt_id="attempt-1",
+        ownership_epoch=0,
+        job_id=str(job_id),
+    )
+
+
+def test_creator_job_binding_rejects_stale_attempt_without_touching_current_links(
+    monkeypatch,
+) -> None:
+    """A late proposal worker cannot replace a newer Creator render."""
+
+    item_id, current_job_id = uuid.uuid4(), uuid.uuid4()
+    owner_id = uuid.uuid4()
+    item = SimpleNamespace(
+        id=item_id,
+        current_job_id=current_job_id,
+        edit_proposal=_proposal(attempt_id="new-attempt", status="approved"),
+    )
+    session = SimpleNamespace(target_job_id=current_job_id)
+    thread = SimpleNamespace(active_job_id=current_job_id)
+    db = _Db()
+
+    @contextmanager
+    def _session():
+        yield db
+
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    monkeypatch.setattr(proposal_build, "_locked_item", lambda *_a, **_kw: (item, owner_id))
+
+    assert (
+        proposal_build._bind_creator_job_after_auto_design(
+            item_id=item_id,
+            owner_id=owner_id,
+            attempt_id="stale-attempt",
+            ownership_epoch=0,
+            job_id=str(current_job_id),
+        )
+        is False
+    )
+    assert session.target_job_id == current_job_id
+    assert thread.active_job_id == current_job_id
+    assert db.commits == 0
+
+
+def test_creator_job_binding_rejects_wrong_epoch_without_touching_current_links(
+    monkeypatch,
+) -> None:
+    """A Job from another ownership epoch cannot be projected into chat."""
+
+    item_id, candidate_job_id = uuid.uuid4(), uuid.uuid4()
+    owner_id = uuid.uuid4()
+    item = SimpleNamespace(
+        id=item_id,
+        current_job_id=candidate_job_id,
+        edit_proposal=_proposal(attempt_id="attempt-1", status="approved"),
+    )
+    session = SimpleNamespace(target_job_id=uuid.uuid4())
+    thread = SimpleNamespace(active_job_id=session.target_job_id)
+    candidate = SimpleNamespace(
+        id=candidate_job_id,
+        user_id=owner_id,
+        content_plan_item_id=item_id,
+        content_plan_ownership_epoch=9,
+        assembly_plan={"guided_edit": {"generation_attempt_id": "attempt-1"}},
+    )
+    db = _Db()
+    db.get = lambda model, *_a, **_kw: candidate if model is proposal_build.Job else None
+
+    @contextmanager
+    def _session():
+        yield db
+
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    monkeypatch.setattr(proposal_build, "_locked_item", lambda *_a, **_kw: (item, owner_id))
+
+    assert (
+        proposal_build._bind_creator_job_after_auto_design(
+            item_id=item_id,
+            owner_id=owner_id,
+            attempt_id="attempt-1",
+            ownership_epoch=8,
+            job_id=str(candidate_job_id),
+        )
+        is False
+    )
+    assert session.target_job_id != candidate_job_id
+    assert thread.active_job_id == session.target_job_id
+    assert db.commits == 0
+
+
+@pytest.mark.parametrize(
+    ("job_status", "projection_status"),
+    [("queued", "queued"), ("variants_ready", "ready"), ("processing_failed", "failed")],
+)
+def test_creator_job_binding_replaces_previous_thread_job_for_exact_new_attempt(
+    monkeypatch, job_status: str, projection_status: str
+) -> None:
+    """A confirmed revision must replace, not be hidden by, its prior ready Job."""
+
+    item_id, plan_id = uuid.uuid4(), uuid.uuid4()
+    owner_id, session_id = uuid.uuid4(), uuid.uuid4()
+    old_job_id, new_job_id = uuid.uuid4(), uuid.uuid4()
+    attempt_id = "revision-attempt-2"
+    item = SimpleNamespace(
+        id=item_id,
+        content_plan_id=plan_id,
+        current_job_id=new_job_id,
+        edit_proposal=_proposal(attempt_id=attempt_id, status="approved"),
+    )
+    job = SimpleNamespace(
+        id=new_job_id,
+        user_id=owner_id,
+        content_plan_item_id=item_id,
+        content_plan_ownership_epoch=4,
+        status=job_status,
+        assembly_plan={"guided_edit": {"generation_attempt_id": attempt_id}},
+    )
+    session = SimpleNamespace(
+        id=session_id,
+        creator_id=owner_id,
+        plan_item_id=item_id,
+        ownership_epoch=4,
+        active_plan={"guided_generation_attempt_id": attempt_id},
+        status="executing",
+        target_job_id=None,
+        revision=3,
+        render_attempts=2,
+    )
+    thread = SimpleNamespace(
+        creator_id=owner_id,
+        active_plan_item_id=item_id,
+        active_creator_agent_session_id=session_id,
+        active_job_id=old_job_id,
+        state={"generation": {"job_id": str(old_job_id), "status": "ready"}},
+    )
+    authority_db = _Db(_Result(rows=[session]))
+    projection_db = _Db(_Result(rows=[thread]))
+    authority_db.get = lambda model, *_a, **_kw: job if model is proposal_build.Job else None
+
+    def projection_get(model, *_args, **_kwargs):
+        if model is proposal_build.Job:
+            return job
+        if model is proposal_build.CreatorAgentSession:
+            return session
+        return None
+
+    projection_db.get = projection_get
+    databases = iter([authority_db, projection_db])
+
+    @contextmanager
+    def _session():
+        yield next(databases)
+
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    monkeypatch.setattr(proposal_build, "_locked_item", lambda *_a, **_kw: (item, owner_id))
+
+    assert proposal_build._bind_creator_job_after_auto_design(
+        item_id=item_id,
+        owner_id=owner_id,
+        attempt_id=attempt_id,
+        ownership_epoch=4,
+        job_id=str(new_job_id),
+    )
+    assert session.target_job_id == new_job_id
+    assert session.status == "rendering"
+    assert thread.active_job_id == new_job_id
+    assert thread.state["generation"]["job_id"] == str(new_job_id)
+    assert thread.state["generation"]["status"] == projection_status
+    assert authority_db.commits == 1
+    assert projection_db.commits == 1
 
 
 def test_auto_finalize_infeasible_footage_with_pool_assets_never_falls_back(
