@@ -325,6 +325,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.main_creator import MainCreatorAgent
 
         return MainCreatorAgent
+    if agent_name == "nova.compose.sfx_placement":
+        from app.agents.sfx_placement import SfxPlacementAgent
+
+        return SfxPlacementAgent
     if agent_name == "nova.plan.conformance_feedback":
         from app.agents.conformance_feedback import ConformanceFeedbackAgent
 

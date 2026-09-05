@@ -161,6 +161,7 @@ class GuidedStoryExecutionPlan(BaseModel):
     # approved text identity set, but they are still receipt-verified pixels.
     context_label_intent: dict[str, Any] | None = None
     context_label_text_elements: list[TextElement] = Field(default_factory=list)
+    licensed_sfx_intent: dict[str, Any] | None = None
     transition_policy: GuidedStoryTransitionPolicy
     mixed_media_timing: MixedMediaTimingProfile | None = None
     montage_cadence: MontageCadenceConstraint | None = Field(
@@ -1330,6 +1331,11 @@ def _compile_execution_plan_version(
                 beat_windows=beat_windows,
                 mixed_media_timing=mixed_timing,
                 montage_cadence=snapshot.montage_cadence,
+                licensed_sfx_intent=(
+                    snapshot.licensed_sfx.model_dump(mode="json")
+                    if snapshot.licensed_sfx is not None
+                    else None
+                ),
                 text_elements=_text_elements(
                     snapshot, beat_windows, policy, compiler_version=compiler_version
                 ),
@@ -1486,6 +1492,11 @@ def _compile_execution_plan_version(
                 if snapshot.montage_audio is not None
                 else None
             ),
+            licensed_sfx_intent=(
+                snapshot.licensed_sfx.model_dump(mode="json")
+                if snapshot.licensed_sfx is not None
+                else None
+            ),
             text_elements=_text_elements(
                 snapshot,
                 beat_windows,
@@ -1578,7 +1589,7 @@ def validate_proposal_timing(snapshot: EditProposalSnapshot) -> None:
 
 
 def validate_execution_plan(plan: object, guided_snapshot: object) -> dict[str, Any]:
-    proposal_version, media_digest, _snapshot = validate_guided_snapshot(guided_snapshot)
+    proposal_version, media_digest, snapshot = validate_guided_snapshot(guided_snapshot)
     try:
         validated = GuidedStoryExecutionPlan.model_validate(plan)
     except Exception as exc:  # noqa: BLE001
@@ -1622,6 +1633,8 @@ def validate_execution_plan(plan: object, guided_snapshot: object) -> dict[str, 
     # closed allowlist before any label can reach pixels.
     normalized.pop("context_label_intent", None)
     canonical.pop("context_label_intent", None)
+    runtime_sfx = list(normalized.pop("editor_sound_effects", []) or [])
+    canonical.pop("editor_sound_effects", None)
     if normalized != canonical:
         raise GuidedStoryError(
             "guided_story_snapshot_invalid", "The saved render plan was changed after approval."
@@ -1630,6 +1643,41 @@ def validate_execution_plan(plan: object, guided_snapshot: object) -> dict[str, 
     normalized["context_label_text_elements"] = [
         element.model_dump(mode="json") for element in validated.context_label_text_elements
     ]
+    if runtime_sfx and validated.editor_revision_number is None:
+        from app.agents._schemas.sound_effect import (  # noqa: PLC0415
+            SoundEffectPlacement,
+            validate_sfx_gcs_path,
+        )
+
+        intent = snapshot.licensed_sfx
+        if intent is None or len(runtime_sfx) > intent.max_placements:
+            raise GuidedStoryError(
+                "guided_story_sfx_invalid",
+                "The licensed sound-effect plan no longer matches the confirmed request.",
+            )
+        try:
+            placements = [SoundEffectPlacement.model_validate(row) for row in runtime_sfx]
+            placements.sort(key=lambda row: row.at_s)
+            for placement in placements:
+                validate_sfx_gcs_path(placement.src_gcs_path)
+                if (
+                    str(placement.sound_effect_id or "").strip().casefold()
+                    != str(intent.effect_id).strip().casefold()
+                ):
+                    raise ValueError("licensed effect identity changed")
+                if placement.at_s >= max(0.0, validated.resolved_duration_s - 0.5):
+                    raise ValueError("licensed effect violates end keepout")
+            if any(
+                current.at_s - previous.at_s < 1.5
+                for previous, current in zip(placements, placements[1:], strict=False)
+            ):
+                raise ValueError("licensed effects are too closely spaced")
+        except Exception as exc:  # noqa: BLE001
+            raise GuidedStoryError(
+                "guided_story_sfx_invalid",
+                "The licensed sound-effect plan no longer matches the confirmed request.",
+            ) from exc
+    normalized["editor_sound_effects"] = runtime_sfx
     return normalized
 
 
@@ -1867,7 +1915,10 @@ def compile_guided_runtime_plan(
         # copy; sport text is resolved from the approved clip metadata only.
         context_intent = runtime_payload.get("context_label_intent")
         if context_intent:
-            from app.tasks.generative_build import _canonical_context_sport_labels  # noqa: PLC0415
+            from app.tasks.generative_build import (  # noqa: PLC0415
+                _canonical_context_sport_labels,
+                _compact_context_sport_text_elements,
+            )
 
             labels = _canonical_context_sport_labels(
                 context_intent,
@@ -1910,7 +1961,9 @@ def compile_guided_runtime_plan(
                         },
                     ).model_dump(mode="json", exclude_none=True)
                 )
-            runtime_payload["context_label_text_elements"] = context_elements
+            runtime_payload["context_label_text_elements"] = _compact_context_sport_text_elements(
+                context_elements
+            )
         runtime = GuidedStoryExecutionPlan.model_validate(runtime_payload)
         return runtime.model_dump(mode="json", exclude_none=False)
     except GuidedStoryError:
@@ -2416,6 +2469,8 @@ def _verify_receipt(
     final_path: str,
     *,
     music_applied: bool,
+    text_stage_input_path: str | None = None,
+    text_stage_output_path: str | None = None,
 ) -> dict[str, Any]:
     expected_beats = [row["beat_id"] for row in plan["beat_windows"]]
     expected_moments = [row["moment_id"] for row in plan["story_timeline"]]
@@ -2452,6 +2507,17 @@ def _verify_receipt(
     duration_ok = (
         abs(actual_video_duration_s - float(plan["resolved_duration_s"])) <= duration_tolerance_s
     )
+    # A strict text burn is expected whenever either text lane has an element.
+    # Keep this check at the receipt boundary as a second fence: even if a
+    # renderer is mocked or an older worker silently copies the clean base,
+    # that artifact can never become a verified guided result.
+    text_artifact_ok = True
+    if text_stage_input_path and (expected_text or expected_context):
+        try:
+            text_artifact = text_stage_output_path or final_path
+            text_artifact_ok = _sha256(text_artifact) != _sha256(text_stage_input_path)
+        except OSError:
+            text_artifact_ok = False
     verified = bool(
         expected_beats == actual_beats
         and expected_moments == actual_moments
@@ -2464,6 +2530,7 @@ def _verify_receipt(
         and probe.height == canvas.height
         and probe.codec == "h264"
         and audio_codec == "aac"
+        and text_artifact_ok
         and os.path.getsize(final_path) > 0
     )
     receipt_data = {
@@ -2594,7 +2661,7 @@ def verify_guided_text_reburn(
         and probe.height == canvas.height
         and probe.codec == "h264"
         and audio_codec == "aac"
-        and output_hash != _sha256(clean_base_path)
+        and (not expected_ids or output_hash != _sha256(clean_base_path))
         and os.path.getsize(final_path) > 0
     )
     if not verified:
@@ -3381,6 +3448,10 @@ def render_execution_plan(
         text_receipts,
         final_path,
         music_applied=music_applied,
+        text_stage_input_path=clean_base,
+        text_stage_output_path=(
+            os.path.join(tmpdir, "guided_story_final.mp4") if render_elements else None
+        ),
     )
 
     attempt_suffix = hashlib.sha256(str(attempt_id or "preview").encode()).hexdigest()[:16]

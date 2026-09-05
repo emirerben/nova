@@ -28,6 +28,8 @@ export interface CreationThreadEvent {
 export interface CreationVariant {
   variant_id?: string;
   render_status?: string;
+  render_generation_id?: string | null;
+  render_finished_at?: string | null;
   output_url?: string | null;
   poster_url?: string | null;
   failure_reason?: string | null;
@@ -42,6 +44,17 @@ export interface CreationJob {
   variants: CreationVariant[];
 }
 
+const PLAYABLE_VARIANT_STATUSES = new Set(["ready", "failed", "error", "render_failed"]);
+const FAILED_VARIANT_STATUSES = new Set(["failed", "error", "render_failed"]);
+
+export function creationVariantPlayable(variant: CreationVariant): boolean {
+  return Boolean(variant.output_url) && PLAYABLE_VARIANT_STATUSES.has(String(variant.render_status));
+}
+
+export function creationVariantFailed(variant: CreationVariant): boolean {
+  return FAILED_VARIANT_STATUSES.has(String(variant.render_status));
+}
+
 export interface CreationThread {
   id: string;
   status: "active" | "archived" | "failed";
@@ -51,6 +64,11 @@ export interface CreationThread {
   active_plan_item_id: string | null;
   active_creator_agent_session_id: string | null;
   active_job_id: string | null;
+  creator_agent?: {
+    status?: string | null;
+    revision?: number;
+    [key: string]: unknown;
+  } | null;
   media_capabilities?: CreationMediaCapabilities | null;
   events: CreationThreadEvent[];
   job: CreationJob | null;
@@ -188,7 +206,7 @@ export function creationThreadMediaCount(thread: CreationThread | null): number 
 }
 
 export function creationJobReady(thread: CreationThread): boolean {
-  return Boolean(thread.job && thread.job.variants.some((v) => v.render_status === "ready" && v.output_url));
+  return Boolean(thread.job && thread.job.variants.some(creationVariantPlayable));
 }
 
 export function creationJobFailed(thread: CreationThread): boolean {
@@ -200,19 +218,91 @@ export function creationJobFailed(thread: CreationThread): boolean {
 
 export function creationJobPartial(thread: CreationThread): boolean {
   const variants = thread.job?.variants ?? [];
-  return variants.some((variant) => variant.render_status === "ready" && variant.output_url) &&
-    variants.some((variant) => ["failed", "error", "render_failed"].includes(String(variant.render_status)));
+  return variants.some(creationVariantPlayable) && variants.some(creationVariantFailed);
 }
 
 export function creationJobSettled(thread: CreationThread): boolean {
   if (!thread.job) return false;
-  if (thread.job.variants.some((variant) => variant.render_status === "rendering")) return false;
+  // A terminal parent failure wins over stale per-variant rendering metadata.
+  // Workers can fail between the variant and parent status writes; polling
+  // must stop and expose the failure instead of spinning forever.
   if (creationJobFailed(thread)) return true;
-  if (["done", "variants_ready", "variants_ready_partial"].includes(thread.job.status)) return true;
-  const variants = thread.job.variants;
-  return variants.length > 0 && variants.every((variant) =>
-    ["ready", "failed", "error", "render_failed"].includes(String(variant.render_status)),
+  if (thread.job.variants.some((variant) => variant.render_status === "rendering")) return false;
+  return [
+    "ready", "done", "variants_ready", "variants_ready_partial", "clips_ready",
+    "template_ready", "music_ready",
+  ].includes(thread.job.status);
+}
+
+const CREATOR_PROGRESS_STATES = new Set(["executing", "rendering", "reviewing"]);
+const GENERATION_PROGRESS_STATES = new Set(["queued", "rendering"]);
+
+function creatorStatus(thread: CreationThread): string | null {
+  const direct = thread.creator_agent?.status;
+  if (typeof direct === "string") return direct;
+  const projected = thread.state.creator_agent;
+  if (projected && typeof projected === "object" && "status" in projected) {
+    const status = (projected as { status?: unknown }).status;
+    return typeof status === "string" ? status : null;
+  }
+  return null;
+}
+
+function generationStatus(thread: CreationThread): string | null {
+  const generation = thread.state.generation;
+  if (generation && typeof generation === "object" && "status" in generation) {
+    const status = (generation as { status?: unknown }).status;
+    return typeof status === "string" ? status : null;
+  }
+  return null;
+}
+
+/** Whether the Creator/renderer still owns an in-flight turn. */
+export function creationThreadInProgress(thread: CreationThread): boolean {
+  if (creationJobFailed(thread)) return false;
+  const jobActive = Boolean(thread.active_job_id && (!thread.job || !creationJobSettled(thread)));
+  const variantActive = Boolean(thread.job?.variants.some((variant) =>
+    ["queued", "rendering"].includes(String(variant.render_status)),
+  ));
+  return jobActive
+    || variantActive
+    || GENERATION_PROGRESS_STATES.has(generationStatus(thread) ?? "")
+    || CREATOR_PROGRESS_STATES.has(creatorStatus(thread) ?? "");
+}
+
+/** A Creator execution has committed, but its Job may not exist yet. */
+export function creationThreadPreparing(thread: CreationThread): boolean {
+  return !thread.job && (
+    CREATOR_PROGRESS_STATES.has(creatorStatus(thread) ?? "")
+    || GENERATION_PROGRESS_STATES.has(generationStatus(thread) ?? "")
   );
+}
+
+/** Stable polling dependency; avoids restarting the effect for fresh JSON objects. */
+export function creationThreadProgressKey(thread: CreationThread): string {
+  const variants = (thread.job?.variants ?? [])
+    .map((variant) => [
+      variant.variant_id ?? "",
+      variant.render_generation_id ?? "",
+      variant.render_status ?? "",
+      variant.render_finished_at ?? "",
+    ].join("/"))
+    .sort()
+    .join(",");
+  return [
+    thread.active_job_id ?? "",
+    thread.job?.status ?? "",
+    creatorStatus(thread) ?? "",
+    generationStatus(thread) ?? "",
+    variants,
+  ].join(":");
+}
+
+/** Only the API's exact optimistic-concurrency conflict gets stale-window copy. */
+export function isCreationThreadRevisionConflict(cause: unknown): boolean {
+  return cause instanceof CreationThreadError
+    && cause.status === 409
+    && cause.message === "Creation thread changed";
 }
 
 export async function listCreationThreads(): Promise<CreationThread[]> {
@@ -250,7 +340,7 @@ export function createCreationThread(message?: string): Promise<CreationThread> 
 }
 
 export function refreshCreationThread(threadId: string): Promise<CreationThread> {
-  return request<CreationThread>(`/${threadId}`);
+  return request<CreationThread>(`/${threadId}`, { cache: "no-store" });
 }
 
 export function sendCreationMessage(thread: CreationThread, message: string): Promise<CreationThread> {

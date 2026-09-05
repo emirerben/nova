@@ -512,6 +512,58 @@ def test_guided_v2_timeline_only_save_mints_and_enqueues_a_full_render(monkeypat
     assert updated["base_video_stale"] is True
 
 
+def test_guided_v2_enqueue_retry_rearms_same_revision_and_generation(monkeypatch) -> None:
+    """A broker retry must not mint a second revision or stay terminal-failed."""
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "guided_story_editor_v2_enabled", True, raising=False)
+    job = _job(
+        resolved_archetype="guided_story",
+        render_generation_id="guided-generation-2",
+        render_status="failed",
+        render_started_at="2026-07-01T00:01:00Z",
+        error="The saved render could not be queued.",
+        error_class="render_enqueue_failed",
+        ok=False,
+    )
+    current = {
+        "approval_proposal_version": 1,
+        "approval_media_digest": "a" * 64,
+        "revision_number": 2,
+        "state_hash": "b" * 64,
+        "sources": [],
+        "segments": [],
+        "audio": {"mode": "none"},
+        "sound_effects": [],
+        "media_overlays": [],
+        "visual_blocks": [],
+        "motion_scenes": [],
+    }
+    monkeypatch.setattr(gj, "_guided_v2_revision", lambda *_args: current)
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            base_generation="guided-generation-2",
+            guided_revision_number=2,
+            retry_guided_revision=True,
+        ),
+    )
+
+    updated = job.assembly_plan["variants"][0]
+    assert prep["generation"] == "guided-generation-2"
+    assert prep["revision_number"] == 2
+    assert prep["guided_revision"] == current
+    assert updated["render_generation_id"] == "guided-generation-2"
+    assert updated["render_status"] == "rendering"
+    assert updated["render_started_at"] != "2026-07-01T00:01:00Z"
+    assert updated["ok"] is None
+    assert "error" not in updated
+    assert "error_class" not in updated
+
+
 def test_guided_timeline_response_preserves_source_pool_and_tombstones() -> None:
     response = gj.TimelineResponse(
         editable=True,
@@ -1149,6 +1201,18 @@ def test_visual_block_commit_uses_full_render_queue(monkeypatch):
 
     assert len(calls) == 1
     assert "queue" not in calls[0]
+    assert calls[0]["task_id"] == prep["render_task_id"]
+    assert calls[0]["task_id"].startswith("creator-craft-editor-")
+
+
+def test_editor_render_task_id_is_stable_for_generation_and_changes_when_superseded():
+    first = gj.editor_commit_render_task_id("job-1", "song_text", "generation-1")
+    duplicate = gj.editor_commit_render_task_id("job-1", "song_text", "generation-1")
+    superseded = gj.editor_commit_render_task_id("job-1", "song_text", "generation-2")
+
+    assert first == duplicate
+    assert first != superseded
+    assert len(first) < 80
 
 
 def test_visual_block_commit_rejects_unowned_asset(monkeypatch):
@@ -2037,6 +2101,7 @@ def test_narrated_caption_commit_persists_cues_and_reburns_caption_task(monkeypa
             "args": [str(job.id), "narrated"],
             "kwargs": {"render_gen_id": prep["generation"]},
             "queue": "overlay-jobs",
+            "task_id": prep["render_task_id"],
         }
     ]
 
@@ -2091,6 +2156,7 @@ def test_subtitled_caption_commit_persists_metadata_and_reburns_caption_task(mon
             "args": [str(job.id), "subtitled"],
             "kwargs": {"render_gen_id": prep["generation"]},
             "queue": "overlay-jobs",
+            "task_id": prep["render_task_id"],
         }
     ]
 
@@ -2173,6 +2239,7 @@ def test_narrated_caption_meta_commit_persists_and_reburns_caption_task(monkeypa
             "args": [str(job.id), "narrated"],
             "kwargs": {"render_gen_id": prep["generation"]},
             "queue": "overlay-jobs",
+            "task_id": prep["render_task_id"],
         }
     ]
 
@@ -2256,6 +2323,7 @@ def test_subtitled_caption_meta_commit_persists_and_reburns_caption_task(monkeyp
             "args": [str(job.id), "subtitled"],
             "kwargs": {"render_gen_id": prep["generation"]},
             "queue": "overlay-jobs",
+            "task_id": prep["render_task_id"],
         }
     ]
 
@@ -3612,6 +3680,7 @@ def test_inflight_caption_variant_lane_only_commit_enqueues_reburn(monkeypatch):
             "args": [str(job.id), "subtitled"],
             "kwargs": {"render_gen_id": prep["generation"]},
             "queue": "overlay-jobs",
+            "task_id": prep["render_task_id"],
         }
     ]
 
@@ -4005,8 +4074,14 @@ def test_endpoint_enqueue_failure_returns_committed_generation_for_retry(
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["ok"] is False
-    assert resp.json()["generation"] == job.assembly_plan["variants"][0]["render_generation_id"]
-    db.commit.assert_awaited_once()
+    variant = job.assembly_plan["variants"][0]
+    assert resp.json()["generation"] == variant["render_generation_id"]
+    assert variant["render_status"] == "failed"
+    assert variant["ok"] is False
+    assert variant["error_class"] == "render_enqueue_failed"
+    assert variant["error"] == "The saved render could not be queued."
+    assert job.status == "variants_ready_partial"
+    assert db.commit.await_count == 2
 
 
 def test_endpoint_media_motion_loads_asset_pool_without_visual_block_edit(

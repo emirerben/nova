@@ -5,10 +5,72 @@ from types import SimpleNamespace
 from app.agents._schemas.text_element import merge_projected_text_elements_for_variant
 from app.tasks.generative_build import (
     _canonical_context_sport_labels,
+    _compact_context_sport_text_elements,
     _context_output_slot_windows,
     _context_sport_burn_dicts,
     _context_sport_text_elements,
 )
+
+
+def test_context_sport_elements_compact_long_contiguous_runs_without_bridging_gaps() -> None:
+    elements: list[dict] = []
+    cursor = 0.0
+    sports = [("Basketball", 7), ("Tennis", 6), (None, 2), ("Football", 8), ("Baseball", 5)]
+    for sport, count in sports:
+        for _ in range(count):
+            if sport:
+                elements.append(
+                    {
+                        "id": f"context-{len(elements)}",
+                        "text": sport,
+                        "start_s": cursor,
+                        "end_s": cursor + 1.0,
+                        "source_params": {"source_clip_id": f"clip-{len(elements)}"},
+                    }
+                )
+            cursor += 1.0
+
+    compact = _compact_context_sport_text_elements(elements)
+
+    assert cursor == 28.0
+    assert len(elements) == 26
+    assert [(row["text"], row["start_s"], row["end_s"]) for row in compact] == [
+        ("Basketball", 0.0, 7.0),
+        ("Tennis", 7.0, 13.0),
+        ("Football", 15.0, 23.0),
+        ("Baseball", 23.0, 28.0),
+    ]
+    assert [row["id"] for row in compact] == [
+        "context-0",
+        "context-7",
+        "context-13",
+        "context-21",
+    ]
+
+
+def test_context_sport_compaction_keeps_malformed_rows_and_real_gaps_separate() -> None:
+    source_params = {"source_clip_id": "clip-a"}
+    elements = [
+        {
+            "id": "first",
+            "text": "Football",
+            "start_s": 0,
+            "end_s": 1,
+            "source_params": source_params,
+        },
+        {"id": "bad", "text": "Football", "start_s": "bad", "end_s": 2},
+        {"id": "gap", "text": "Football", "start_s": 3.1, "end_s": 4},
+        {"id": "next", "text": "Football", "start_s": 4, "end_s": 5},
+        None,
+    ]
+
+    compact = _compact_context_sport_text_elements(elements)
+
+    assert [row["id"] for row in compact] == ["first", "bad", "gap"]
+    assert compact[0]["end_s"] == 1
+    assert compact[2]["end_s"] == 5
+    assert compact[0]["source_params"] == source_params
+    assert compact[0]["source_params"] is not source_params
 
 
 def test_context_sport_labels_are_allowlisted_and_confidence_gated():

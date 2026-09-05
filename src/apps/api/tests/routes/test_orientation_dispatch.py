@@ -255,6 +255,7 @@ def test_enqueue_editor_commit_render_sends_orientation_override(monkeypatch) ->
                 "orientation_override": "landscape",
                 "force_full_render": True,
             },
+            "task_id": gj.editor_commit_render_task_id("job-1", "song_text", "gen-2"),
         }
     ]
 

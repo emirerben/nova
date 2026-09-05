@@ -1,0 +1,23 @@
+{
+  "agent": "nova.compose.sfx_placement",
+  "prompt_version": "2026-09-05-v2",
+  "input": {
+    "words": [],
+    "pauses": [],
+    "moments": [
+      {"start_s": 7.0, "end_s": 9.5, "description": "A goalkeeper dramatically misses the ball and looks back in surprise."},
+      {"start_s": 18.0, "end_s": 20.0, "description": "A volleyball player celebrates an unexpectedly funny stumble after the point."},
+      {"start_s": 30.0, "end_s": 32.5, "description": "A tennis player makes an exaggerated reaction to a harmless bounce."}
+    ],
+    "effects": [
+      {"effect_id": "sfx-fah", "name": "Fah", "role_tags": ["funny", "reaction"], "duration_s": 0.8}
+    ],
+    "duration_s": 45.0
+  },
+  "raw_text": "{\"placements\":[{\"effect_id\":\"sfx-fah\",\"at_s\":7.0,\"gain\":0.8,\"anchor\":\"moment\",\"reason\":\"Goalkeeper miss and surprised reaction are a clear visual comedic beat.\"},{\"effect_id\":\"sfx-fah\",\"at_s\":18.0,\"gain\":0.8,\"anchor\":\"moment\",\"reason\":\"The unexpected stumble is an explicit funny visual moment.\"},{\"effect_id\":\"sfx-fah\",\"at_s\":30.0,\"gain\":0.8,\"anchor\":\"moment\",\"reason\":\"The exaggerated reaction is a grounded comedic beat.\"}]} ",
+  "output": {},
+  "meta": {
+    "source": "hand-authored-golden",
+    "contract": "named Fah effect uses supplied visual moment marks, with spacing and end keepout"
+  }
+}

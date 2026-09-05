@@ -89,6 +89,10 @@ import {
   type OverlayEffectState,
 } from "@/lib/overlay-effect-groups";
 import { variantFailureCopy, unplacedShotCopy } from "@/lib/variant-failure-copy";
+import {
+  isFreshPendingFailure,
+  shouldSurfacePendingRenderFailure,
+} from "@/lib/pending-render";
 import { jobFailureCopy } from "@/lib/job-failure-copy";
 import { stripRationalePrefix } from "@/lib/plan-text";
 import { GENERATIVE_PHASE_ORDER, GENERATIVE_PHASE_LABEL } from "@/lib/job-phases";
@@ -215,6 +219,10 @@ const TIKTOK_POLL_INTERVAL_MS = 5_000;
 type PendingEdit = {
   priorFinishedAt: string | null;
   sawRendering: boolean;
+  /** True only after the mutation POST has succeeded. */
+  dispatchSucceeded: boolean;
+  /** This exact edit owns user-visible failure copy even if another edit settles first. */
+  surfaceFailure: boolean;
   targetGeneration?: string | null;
   expectedDurationS?: number | null;
   revisionHash?: string | null;
@@ -823,6 +831,8 @@ export default function PlanItemPage() {
       pendingEdits.current.set(editorReturnSignal.variantId, {
         priorFinishedAt: editorReturnSignal.priorFinishedAt,
         sawRendering: existing?.sawRendering ?? false,
+        dispatchSucceeded: true,
+        surfaceFailure: true,
         targetGeneration: editorReturnSignal.generation,
         expectedDurationS: editorReturnSignal.expectedDurationS ?? null,
         revisionHash: editorReturnSignal.revisionHash ?? null,
@@ -1003,7 +1013,22 @@ export default function PlanItemPage() {
           matchesTargetGeneration ||
           pending.sawRendering ||
           (v.render_finished_at ?? null) !== pending.priorFinishedAt;
-        if ((v.render_status === "ready" || v.render_status === "failed") && isFreshRender) {
+        // A legacy edit endpoint can return before the worker has persisted a
+        // new finished_at, and a fast worker failure can be visible on the very
+        // first status read. Once this pending edit owns the failure surface,
+        // an explicit failed status is authoritative even when the generation
+        // reconciliation raced the status request. Never apply this relaxation
+        // to ready: a pre-edit ready response must remain fenced.
+        const isFreshFailure = isFreshPendingFailure(
+          v.render_status,
+          pending.surfaceFailure,
+          isFreshRender,
+          pending.dispatchSucceeded,
+        );
+        if (
+          (v.render_status === "ready" || v.render_status === "failed") &&
+          (isFreshRender || isFreshFailure)
+        ) {
           const verification = pending.expectedDurationS != null && v.render_status === "ready"
             ? verifyCommittedRenderDuration({
                 expectedDurationS: pending.expectedDurationS,
@@ -1013,6 +1038,19 @@ export default function PlanItemPage() {
               })
             : null;
           pendingEdits.current.delete(v.variant_id);
+          if (v.render_status === "failed") {
+            return {
+              ...v,
+              pending_render_failed: true,
+              pending_render_failure_visible: shouldSurfacePendingRenderFailure(
+                pending.targetGeneration,
+                pending.surfaceFailure,
+              ),
+            } as typeof v & {
+              pending_render_failed: true;
+              pending_render_failure_visible: boolean;
+            };
+          }
           return verification && !verification.ok
             ? ({ ...v, render_verification_error: `Saved, but the rendered video doesn’t match the committed timeline. ${verification.detail ?? "Render verification failed."}` } as typeof v & { render_verification_error: string })
             : v;
@@ -1032,7 +1070,28 @@ export default function PlanItemPage() {
   );
 
   useEffect(() => {
-    const mismatch = (variants as Array<PlanItemVariant & { render_verification_error?: string }>)
+    const projected = variants as Array<
+      PlanItemVariant & {
+        render_verification_error?: string;
+        pending_render_failed?: boolean;
+        pending_render_failure_visible?: boolean;
+      }
+    >;
+    const failed = projected.find((variant) => variant.pending_render_failed);
+    if (failed) {
+      renderingAction.current = null;
+      if (failed.pending_render_failure_visible) {
+        setError(
+          `Your saved changes couldn't be rendered. ${variantFailureCopy(failed.error_class)}`,
+        );
+      }
+      // pendingEdits is a ref. Its deletion above already made this render
+      // terminal; bump reactive state once so the next render cannot retain an
+      // optimistic "rendering" projection after the failed poll is consumed.
+      setEditGeneration((generation) => generation + 1);
+      return;
+    }
+    const mismatch = projected
       .find((variant) => variant.render_verification_error)?.render_verification_error;
     if (mismatch) setError(mismatch);
   }, [variants]);
@@ -1076,7 +1135,12 @@ export default function PlanItemPage() {
   }, [variants, focusedVariantId]);
 
   const markVariantRendering = useCallback(
-    (variantId: string, priorFinishedAt: string | null) => {
+    (
+      variantId: string,
+      priorFinishedAt: string | null,
+      targetGeneration?: string | null,
+      surfaceFailure = true,
+    ) => {
       // Preserve sawRendering from a prior in-flight edit: if the user opens
       // the clip editor a second time while the first render is still running,
       // resetting sawRendering to false could trap the pin if the first render
@@ -1087,7 +1151,9 @@ export default function PlanItemPage() {
       pendingEdits.current.set(variantId, {
         priorFinishedAt,
         sawRendering: existing?.sawRendering ?? false,
-        targetGeneration: existing?.targetGeneration ?? null,
+        dispatchSucceeded: true,
+        surfaceFailure,
+        targetGeneration: targetGeneration ?? existing?.targetGeneration ?? null,
         expectedDurationS: existing?.expectedDurationS ?? null,
         revisionHash: existing?.revisionHash ?? null,
       });
@@ -1108,14 +1174,37 @@ export default function PlanItemPage() {
       // pendingEdits.current) fires on the SAME React tick as the click — not after
       // the HTTP round-trip + next poll. setEditGeneration triggers the parent re-render
       // that re-runs the memo; pendingEdits.current is already mutated by then.
-      pendingEdits.current.set(variantId, { priorFinishedAt: prevFinishedAt, sawRendering: false, expectedDurationS: null, revisionHash: null });
+      pendingEdits.current.set(variantId, {
+        priorFinishedAt: prevFinishedAt,
+        sawRendering: false,
+        dispatchSucceeded: false,
+        surfaceFailure: actionMeta != null,
+        expectedDurationS: null,
+        revisionHash: null,
+      });
       if (actionMeta) renderingAction.current = actionMeta;
       setEditGeneration((g) => g + 1);
       try {
-        await action();
+        const actionResult = await action();
+        // The legacy per-variant mutation routes return only PlanItem, while
+        // the render generation lives in the current Job's variant payload.
+        // Reconcile that payload immediately after the POST so a very fast
+        // terminal failure cannot look like the pre-edit ready snapshot (the
+        // render_finished_at timestamp may legitimately remain unchanged).
+        let targetGeneration = renderGenerationForVariant(actionResult, variantId);
+        if (targetGeneration == null && item?.current_job_id) {
+          try {
+            const status = await getPlanItemJobStatusFresh(item.current_job_id);
+            targetGeneration = renderGenerationForVariant(status, variantId);
+          } catch {
+            // The normal poll below remains the recovery path. In particular,
+            // a failed status with an error class is still terminal for this
+            // pending edit even when this reconciliation request races it.
+          }
+        }
         // Re-anchor the pin now that the dispatch succeeded; keeps it alive until the
         // poll catches the variant mid-rendering or render_finished_at advances.
-        markVariantRendering(variantId, prevFinishedAt);
+        markVariantRendering(variantId, prevFinishedAt, targetGeneration);
       } catch (err) {
         // Clear the optimistic pin on any error so controls re-enable.
         pendingEdits.current.delete(variantId);
@@ -1131,7 +1220,7 @@ export default function PlanItemPage() {
         refetch();
       }
     },
-    [markVariantRendering, refetch],
+    [item?.current_job_id, markVariantRendering, refetch],
   );
 
   // Instructed items (WS2): create-new/mixed items with a filmed shot guide use
@@ -2724,6 +2813,37 @@ export default function PlanItemPage() {
   );
 }
 
+/**
+ * Read the render token from either a mutation response or a job-status
+ * response. Older mutation endpoints return only PlanItem, so the latter is
+ * the usual source; accepting both shapes keeps the fence deploy-skew-safe.
+ */
+function renderGenerationForVariant(
+  payload: unknown,
+  variantId: string,
+): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const record = payload as {
+    render_generation_id?: unknown;
+    variant_id?: unknown;
+    variants?: unknown;
+  };
+  if (
+    typeof record.render_generation_id === "string" &&
+    (record.variant_id == null || record.variant_id === variantId)
+  ) {
+    return record.render_generation_id;
+  }
+  if (!Array.isArray(record.variants)) return null;
+  const match = record.variants.find((candidate) => {
+    if (!candidate || typeof candidate !== "object") return false;
+    return (candidate as { variant_id?: unknown }).variant_id === variantId;
+  });
+  if (!match || typeof match !== "object") return null;
+  const generation = (match as { render_generation_id?: unknown }).render_generation_id;
+  return typeof generation === "string" ? generation : null;
+}
+
 // ── Variant rationale (client-only, no LLM) ─────────────────────────────────
 // Maps text_mode + track_title to a 1-2 sentence blurb shown below the hero.
 /** Items minted by /plan/new carry the bare type label as their idea and no
@@ -2826,7 +2946,12 @@ function FocusedResults({
   isGenerating: boolean;
   renderProgress?: ReactNode;
   refetch: () => void;
-  markVariantRendering: (variantId: string, priorFinishedAt: string | null) => void;
+  markVariantRendering: (
+    variantId: string,
+    priorFinishedAt: string | null,
+    targetGeneration?: string | null,
+    surfaceFailure?: boolean,
+  ) => void;
   /** Surface a user-facing error in the page-level banner (e.g. SFX save/render failures). */
   onError: (msg: string) => void;
   onSwap: (trackId: string) => Promise<void>;
@@ -3379,7 +3504,12 @@ function FocusedResults({
       try {
         await flushSfx();
         await setVariantMediaOverlays(itemId, variant.variant_id, overlayCards, { render: true });
-        markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
+        markVariantRendering(
+          variant.variant_id,
+          variant.render_finished_at ?? null,
+          null,
+          false,
+        );
       } catch (err) {
         pendingExportRef.current = null;
         setExportPending(false);
@@ -3396,7 +3526,12 @@ function FocusedResults({
       try {
         await flushSfx();
         await renderVariantSfx(itemId, variant.variant_id);
-        markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
+        markVariantRendering(
+          variant.variant_id,
+          variant.render_finished_at ?? null,
+          null,
+          false,
+        );
       } catch (err) {
         pendingExportRef.current = null;
         setExportPending(false);
@@ -3760,7 +3895,12 @@ function FocusedVariantControls({
   baking: boolean;
   activeTab: EditorTab;
   refetch: () => void;
-  markVariantRendering: (variantId: string, priorFinishedAt: string | null) => void;
+  markVariantRendering: (
+    variantId: string,
+    priorFinishedAt: string | null,
+    targetGeneration?: string | null,
+    surfaceFailure?: boolean,
+  ) => void;
   onSwap: (trackId: string) => Promise<void>;
   onRetext: (text: string) => Promise<void>;
   onRemoveText: () => Promise<void>;

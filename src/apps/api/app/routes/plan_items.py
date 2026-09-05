@@ -2448,6 +2448,11 @@ def _snapshot_from_edit_guide_revision(  # noqa: ANN001
         pace=revision.pace,
         duration_s=revision.duration_s,
         title=revision.title,
+        opening_title=current.opening_title,
+        font_family=current.font_family,
+        text_color=current.text_color,
+        image_layout=current.image_layout,
+        licensed_sfx=current.licensed_sfx,
         media=current.media,
         story_beats=beats,
         fast_cuts=current.fast_cuts if revision.direction == "fast_montage" else None,
@@ -3281,6 +3286,11 @@ async def edit_proposal_conversation_turn(
             pace=revised_snapshot.pace,
             duration_s=revised_snapshot.duration_s,
             creator_request=brief.creator_request,
+            opening_title=revised_snapshot.opening_title,
+            font_family=revised_snapshot.font_family,
+            text_color=revised_snapshot.text_color,
+            image_layout=revised_snapshot.image_layout,
+            licensed_sfx=revised_snapshot.licensed_sfx,
             mixed_media_timing=revised_snapshot.mixed_media_timing,
             montage_text_bindings=revised_snapshot.montage_text_bindings,
             montage_audio=revised_snapshot.montage_audio,
@@ -5830,6 +5840,58 @@ async def editor_commit_item(
             variant_id=variant_id,
             generation=prep["generation"],
         )
+        # The desired editor state and its generation are already durable, but
+        # no worker owns this attempt. Compensate the optimistic "rendering"
+        # stamp under the same generation fence so a reload/status poll reaches
+        # an honest terminal state instead of spinning for 30 minutes. The
+        # editor keeps the committed generation and can retry it idempotently.
+        try:
+            failed_job = await db.get(
+                Job,
+                locked_job.id,
+                populate_existing=True,
+                with_for_update=True,
+            )
+            if failed_job is not None:
+                failed_plan = dict(failed_job.assembly_plan or {})
+                failed_variants = list(failed_plan.get("variants") or [])
+                for index, value in enumerate(failed_variants):
+                    if value.get("variant_id") != variant_id:
+                        continue
+                    if (
+                        str(value.get("render_generation_id") or "") != str(prep["generation"])
+                        or value.get("render_status") != "rendering"
+                    ):
+                        break
+                    terminal = dict(value)
+                    terminal.update(
+                        {
+                            "render_status": "failed",
+                            "ok": False,
+                            "error": "The saved render could not be queued.",
+                            "error_class": "render_enqueue_failed",
+                        }
+                    )
+                    failed_variants[index] = terminal
+                    failed_job.assembly_plan = {
+                        **failed_plan,
+                        "variants": failed_variants,
+                    }
+                    # Editor commits start from a ready variant and retain its
+                    # last-good artifact until the replacement is verified.
+                    # Canonicalize that recoverable state so the ordinary
+                    # partial-variant retry path is immediately available.
+                    if terminal.get("video_path") or terminal.get("output_url"):
+                        failed_job.status = "variants_ready_partial"
+                    await db.commit()
+                    break
+        except Exception:  # noqa: BLE001 — preserve the original partial-success response
+            log.exception(
+                "plan_item_editor_commit_enqueue_failure_reconcile_failed",
+                item_id=item_id,
+                variant_id=variant_id,
+                generation=prep["generation"],
+            )
 
     log.info(
         "plan_item_editor_commit",

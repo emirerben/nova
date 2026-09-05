@@ -128,12 +128,18 @@ jest.mock("@/app/plan/_components/PlanVariantEditor", () => ({
 }));
 
 import type { PlanItemJobStatus } from "@/lib/plan-api";
-import { renderVariantSfx, setVariantSoundEffects } from "@/lib/plan-api";
+import { renderVariantSfx, setVariantSoundEffects, retextPlanItem } from "@/lib/plan-api";
 import { downloadVideo } from "@/lib/download-video";
-const PlanItemPage = require("@/app/plan/items/[id]/page").default;
+const planItemPage = require("@/app/plan/items/[id]/page");
+const PlanItemPage = planItemPage.default;
+const {
+  isFreshPendingFailure,
+  shouldSurfacePendingRenderFailure,
+} = require("@/lib/pending-render");
 const mockRenderSfx = renderVariantSfx as jest.MockedFunction<typeof renderVariantSfx>;
 const mockSetSfx = setVariantSoundEffects as jest.MockedFunction<typeof setVariantSoundEffects>;
 const mockDownloadVideo = downloadVideo as jest.MockedFunction<typeof downloadVideo>;
+const mockRetext = retextPlanItem as jest.MockedFunction<typeof retextPlanItem>;
 
 function setEditorReturn({
   variantId = "v1",
@@ -266,6 +272,78 @@ describe("pendingEdits fingerprint (editor return)", () => {
     expect(screen.queryByLabelText("Rendering new version")).toBeNull();
   });
 
+  it("ends the pending state and explains an exact-generation render failure", async () => {
+    const TS = "2026-06-01T10:00:00Z";
+    const initialVariant = makeServerVariant("v1", "ready", OUTPUT_URL, TS);
+    setEditorReturn({ generation: "gen-1", priorFinishedAt: TS, renderStarted: true });
+
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item: ITEM, job: makeJob({ variants: [initialVariant] }) },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    const { rerender, container } = await act(async () => render(<PlanItemPage />));
+    expect(await screen.findByLabelText("Rendering new version")).toBeInTheDocument();
+
+    mockUsePolledJobStatus.mockReturnValue({
+      data: {
+        item: ITEM,
+        job: makeJob({
+          variants: [
+            {
+              ...initialVariant,
+              render_status: "failed",
+              render_generation_id: "gen-1",
+              error_class: "render_enqueue_failed",
+            },
+          ],
+        }),
+      },
+      error: null,
+      refetch: mockRefetch,
+    });
+    await act(async () => {
+      rerender(<PlanItemPage />);
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByLabelText("Rendering new version")).toBeNull();
+    });
+    expect(
+      screen.getByText(
+        /Your saved changes couldn't be rendered\. Your edits were saved, but the render didn't start\./,
+      ),
+    ).toBeInTheDocument();
+    expect(container.querySelector("video")).toHaveAttribute("src", OUTPUT_URL);
+  });
+
+  it("surfaces a fast failed edit even when render_finished_at is unchanged", async () => {
+    // Model the normal PlanVariantEditor POST succeeding, followed by the
+    // first status read reporting a terminal worker failure. The old artifact
+    // timestamp and generation token are both unchanged/unknown in this race.
+    mockRetext.mockResolvedValue(ITEM);
+    await mockRetext(ITEM.id, "v1", { text: "updated" });
+    expect(mockRetext).toHaveBeenCalledTimes(1);
+    expect(
+      isFreshPendingFailure("failed", true, false, true),
+    ).toBe(true);
+    expect(
+      isFreshPendingFailure("ready", true, false, true),
+    ).toBe(false);
+    expect(isFreshPendingFailure("failed", true, false, false)).toBe(false);
+    // The timestamp anchor is deliberately unchanged; only the explicit
+    // terminal failure owned by this edit may clear the rendering pin.
+  });
+
+  it("surfaces a page-owned edit failure after another variant clears the global action", () => {
+    expect(shouldSurfacePendingRenderFailure("gen-1", false)).toBe(true);
+    // The per-edit marker remains true even when another variant finishing has
+    // already cleared the page-global renderingAction ref.
+    expect(shouldSurfacePendingRenderFailure(null, true)).toBe(true);
+    expect(shouldSurfacePendingRenderFailure(null, false)).toBe(false);
+  });
+
   it("does not pin an editor return when no render was started", async () => {
     const TS = "2026-06-01T10:00:00Z";
     setEditorReturn({ priorFinishedAt: TS, renderStarted: false });
@@ -354,6 +432,8 @@ describe("download-triggered SFX bake failure (C1 regression)", () => {
   }
 
   beforeEach(() => {
+    mockSearchParams = new URLSearchParams();
+    window.sessionStorage.clear();
     mockRenderSfx.mockReset().mockResolvedValue(undefined);
     mockSetSfx.mockReset().mockResolvedValue(undefined);
     mockDownloadVideo.mockReset();
@@ -393,6 +473,7 @@ describe("download-triggered SFX bake failure (C1 regression)", () => {
 
     // C1: the failure is surfaced to the user, not swallowed.
     expect(screen.getByText(/Couldn't prepare your video\. Please try again/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Rendering new version")).toBeNull();
     // And the stale video was NOT silently downloaded.
     expect(mockDownloadVideo).not.toHaveBeenCalled();
   });
