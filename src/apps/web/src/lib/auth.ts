@@ -52,6 +52,9 @@ const providers: NextAuthOptions["providers"] = [
         // youtube.upload was here previously but requires Google app
         // verification and is not needed for the content-plan feature.
         scope: "openid email profile",
+        // Do not silently reuse whichever Google account happens to be active.
+        // Kria creators may have several accounts and must be able to choose.
+        prompt: "select_account",
       },
     },
   }),

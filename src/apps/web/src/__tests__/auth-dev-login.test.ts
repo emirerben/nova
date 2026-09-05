@@ -11,12 +11,20 @@ export {};
 
 const originalEnv = process.env;
 
-function loadProviders(): { id: string; type: string; clientId?: string }[] {
+function loadProviders(): {
+  id: string;
+  type: string;
+  clientId?: string;
+  prompt?: string;
+}[] {
   const { authOptions } = require("@/lib/auth") as typeof import("@/lib/auth");
   return authOptions.providers.map((p) => ({
     id: (p as { id: string }).id,
     type: (p as { type: string }).type,
     clientId: (p as { options?: { clientId?: string } }).options?.clientId,
+    prompt: (
+      p as { options?: { authorization?: { params?: { prompt?: string } } } }
+    ).options?.authorization?.params?.prompt,
   }));
 }
 
@@ -66,5 +74,9 @@ describe("dev-login provider gating", () => {
     process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID = "preview-client-id";
 
     expect(loadProviders()[0].clientId).toBe("canonical-client-id");
+  });
+
+  test("Google sign-in always lets the creator choose an account", () => {
+    expect(loadProviders()[0].prompt).toBe("select_account");
   });
 });
