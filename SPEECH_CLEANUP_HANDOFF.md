@@ -66,7 +66,7 @@ small cohort to `apply`. Legacy and `off_v1` behavior remains unchanged.
   audit and media-forensics helper.
 - `src/apps/web/src/app/admin/jobs/[id]/SpeechCleanupDiagnostics.tsx` — admin
   diagnostics UI.
-- `src/apps/api/app/migrations/versions/0092_storage_attempt_cleanup_index.py`
+- `src/apps/api/app/migrations/versions/0093_storage_attempt_cleanup_index.py`
   — cleanup discovery index.
 
 ## Verification completed

@@ -955,7 +955,7 @@ reservation guard is consumed by the exact terminal/live proof described above. 
 GCS/local fakes for empty success, list
 failure, fail-after-N delete, relist failure, and eventual retry success.
 
-Fleet discovery must not full-scan JSONB every five minutes. Add migration `0092`
+Fleet discovery must not full-scan JSONB every five minutes. Add migration `0093`
 with a concurrent partial index on `jobs(updated_at, id)` whose literal predicate is
 `jsonb_typeof(assembly_plan -> '_speech_cleanup_internal') = 'object'` and the private
 container has either cleanup-list key. The bounded query must repeat that exact
@@ -2058,7 +2058,7 @@ ruff format --check app/routes/me.py app/services/public_assembly_plan.py app/se
 
 ### PR C — durable source CAS and crash-safe cleanup substrate
 
-- `src/apps/api/app/migrations/versions/0092_storage_attempt_cleanup_index.py` (new)
+- `src/apps/api/app/migrations/versions/0093_storage_attempt_cleanup_index.py` (new)
 - `src/apps/api/app/models.py`
 - `src/apps/api/app/routes/me.py`
 - `src/apps/api/app/services/durable_attempt_cleanup.py` (new)
@@ -2099,8 +2099,8 @@ python3 -m pytest \
   tests/tasks/test_account_lifecycle.py \
   tests/tasks/test_generative_build.py \
   tests/tasks/test_reaper.py -q
-ruff check app/migrations/versions/0092_storage_attempt_cleanup_index.py app/models.py app/routes/me.py app/services/durable_attempt_cleanup.py app/services/job_storage_deletion.py app/storage.py app/tasks/account_lifecycle.py app/tasks/generative_build.py app/tasks/reaper.py tests/services/test_durable_attempt_cleanup.py tests/services/test_job_storage_deletion.py tests/routes/test_me_account.py tests/routes/test_me_jobs.py tests/test_content_plan_schema.py tests/test_storage.py tests/tasks/test_account_lifecycle.py tests/tasks/test_generative_build.py tests/tasks/test_reaper.py
-ruff format --check app/migrations/versions/0092_storage_attempt_cleanup_index.py app/models.py app/routes/me.py app/services/durable_attempt_cleanup.py app/services/job_storage_deletion.py app/storage.py app/tasks/account_lifecycle.py app/tasks/generative_build.py app/tasks/reaper.py tests/services/test_durable_attempt_cleanup.py tests/services/test_job_storage_deletion.py tests/routes/test_me_account.py tests/routes/test_me_jobs.py tests/test_content_plan_schema.py tests/test_storage.py tests/tasks/test_account_lifecycle.py tests/tasks/test_generative_build.py tests/tasks/test_reaper.py
+ruff check app/migrations/versions/0093_storage_attempt_cleanup_index.py app/models.py app/routes/me.py app/services/durable_attempt_cleanup.py app/services/job_storage_deletion.py app/storage.py app/tasks/account_lifecycle.py app/tasks/generative_build.py app/tasks/reaper.py tests/services/test_durable_attempt_cleanup.py tests/services/test_job_storage_deletion.py tests/routes/test_me_account.py tests/routes/test_me_jobs.py tests/test_content_plan_schema.py tests/test_storage.py tests/tasks/test_account_lifecycle.py tests/tasks/test_generative_build.py tests/tasks/test_reaper.py
+ruff format --check app/migrations/versions/0093_storage_attempt_cleanup_index.py app/models.py app/routes/me.py app/services/durable_attempt_cleanup.py app/services/job_storage_deletion.py app/storage.py app/tasks/account_lifecycle.py app/tasks/generative_build.py app/tasks/reaper.py tests/services/test_durable_attempt_cleanup.py tests/services/test_job_storage_deletion.py tests/routes/test_me_account.py tests/routes/test_me_jobs.py tests/test_content_plan_schema.py tests/test_storage.py tests/tasks/test_account_lifecycle.py tests/tasks/test_generative_build.py tests/tasks/test_reaper.py
 ```
 
 ### PR D — required-speech generation ownership and strict failure
@@ -2449,7 +2449,7 @@ shadow review. No shadow or canary work runs against a partial train.
   persisted; the media-forensics artifact is the honest evidence.
 - **New database table, endpoint, or public diagnostic payload** — the existing
   admin-only pipeline trace and `JobStorageDeletion` outbox are sufficient. The one
-  concurrent sparse-index migration `0092` is explicitly in scope.
+  concurrent sparse-index migration `0093` is explicitly in scope.
 - **Forced-carrier optional flank recovery (existing TODO P3)** — useful cleanup
   optimization, but distinct from the filler atomicity required by this incident.
 - **Committing either attached video or derived user speech** — tests use timing-only

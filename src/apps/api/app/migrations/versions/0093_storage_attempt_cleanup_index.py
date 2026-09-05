@@ -1,14 +1,14 @@
 """Index the bounded storage-attempt cleanup sweep.
 
-Revision ID: 0092
-Revises: 0091
+Revision ID: 0093
+Revises: 0092
 Create Date: 2026-09-01
 """
 
 from alembic import op
 
-revision = "0092"
-down_revision = "0091"
+revision = "0093"
+down_revision = "0092"
 branch_labels = None
 depends_on = None
 

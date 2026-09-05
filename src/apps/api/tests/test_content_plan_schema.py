@@ -82,7 +82,7 @@ _EXPECTED_CHAIN = {
     "0089": "0088",
     "0090": "0089",
     "0091": "0090",
-    "0092": "0091",
+    "0093": "0092",
 }
 
 
@@ -94,7 +94,7 @@ def script_dir() -> ScriptDirectory:
 
 def test_single_alembic_head(script_dir: ScriptDirectory) -> None:
     heads = script_dir.get_heads()
-    assert heads == ["0092"], f"expected a single head 0092, got {heads}"
+    assert heads == ["0093"], f"expected a single head 0093, got {heads}"
 
 
 def test_video_poster_cleanup_sweep_index_matches_query_order() -> None:
@@ -173,7 +173,7 @@ def test_storage_attempt_cleanup_sweep_index_matches_query_order() -> None:
 
 def test_storage_attempt_cleanup_index_migration_is_concurrent(monkeypatch) -> None:
     migration = importlib.import_module(
-        "app.migrations.versions.0092_storage_attempt_cleanup_index"
+        "app.migrations.versions.0093_storage_attempt_cleanup_index"
     )
     events: list[object] = []
 
