@@ -12,13 +12,13 @@ import hashlib
 import json
 import re
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import storage
@@ -30,13 +30,20 @@ from app.limiter import limiter
 from app.models import (
     ContentPlan,
     CreationThread,
+    CreationThreadDeletion,
     CreationThreadEvent,
+    CreationThreadUploadReservation,
     CreatorAgentEvent,
     CreatorAgentSession,
+    EditArtifact,
     Job,
+    JobClip,
+    JobStorageDeletion,
     Persona,
     PlanItem,
     PlanItemAsset,
+    TikTokPublication,
+    TrainingArtifactRetentionEvent,
 )
 from app.routes import creator_agent
 from app.routes.music_jobs import _SLOT_UPLOAD_AUDIO_CT
@@ -54,11 +61,49 @@ from app.routes.plan_items import (
 )
 from app.services.creator_render_projection import build_creator_render_projection
 from app.services.creator_sessions import reconcile_render_state
+from app.services.generative_upload_paths import DIRECT_VOICEOVER_PREFIX
 from app.services.job_phases import mark_reattempt, stamp_variant_attempt
 from app.services.job_status import PLAN_ITEM_JOB_TERMINAL
+from app.services.job_storage_paths import (
+    JOB_OUTPUT_PREFIXES,
+    job_output_path,
+    normalize_job_storage_path,
+    owned_job_output_path,
+)
 
 _MAX_MEDIA = _MAX_CLIPS_PER_ITEM
 _MAX_EVENTS = 200
+_MAX_TITLE_LENGTH = 120
+_DEFAULT_TITLE = "Untitled video"
+_UPLOAD_URL_TTL = timedelta(minutes=15)
+_ACTIVE_AGENT_STATUSES = frozenset(
+    {
+        "briefing",
+        "planning",
+        "awaiting_confirmation",
+        "executing",
+        "rendering",
+        "reviewing",
+        "awaiting_feedback",
+        "revising",
+    }
+)
+_ACTIVE_PUBLICATION_STATUSES = frozenset(
+    {"queued", "snapshotting", "submitting", "processing", "submission_unknown"}
+)
+_DELETE_VARIANT_PATH_FIELDS = (
+    "output_url",
+    "video_path",
+    "poster_path",
+    "base_video_path",
+    "base_poster_path",
+    "subject_matte_path",
+    "pre_media_overlay_video_path",
+    "pre_overlay_poster_path",
+    "pre_sfx_video_path",
+    "visual_blocks_base_path",
+    "motion_base_path",
+)
 _MAX_FILE_BYTES = _MAX_BYTES_PER_FILE
 _MEDIA_TYPES = frozenset(
     {
@@ -229,6 +274,13 @@ class UploadFile(StrictBody):
 class UploadBody(StrictBody):
     files: list[UploadFile] = Field(min_length=1, max_length=_MAX_MEDIA)
 
+    @model_validator(mode="after")
+    def validate_client_upload_ids(self) -> UploadBody:
+        upload_ids = [file.client_upload_id for file in self.files]
+        if len(upload_ids) != len(set(upload_ids)):
+            raise ValueError("client upload IDs must be unique")
+        return self
+
 
 class MediaInput(StrictBody):
     media_id: str = Field(min_length=1, max_length=160)
@@ -274,6 +326,25 @@ class ArchiveBody(StrictBody):
         return _client_id(value)
 
 
+class RenameBody(StrictBody):
+    title: str = Field(min_length=1, max_length=_MAX_TITLE_LENGTH)
+    expected_revision: int = Field(ge=0)
+    client_event_id: str = Field(min_length=1, max_length=160)
+
+    @field_validator("title")
+    @classmethod
+    def clean_title(cls, value: str) -> str:
+        value = " ".join(value.split())
+        if not value:
+            raise ValueError("title must not be blank")
+        return value
+
+    @field_validator("client_event_id")
+    @classmethod
+    def validate_client_event_id(cls, value: str) -> str:
+        return _client_id(value)
+
+
 class EventOut(BaseModel):
     id: str
     sequence: int
@@ -297,6 +368,7 @@ class UploadTarget(BaseModel):
 
 class CreationThreadOut(BaseModel):
     id: str
+    title: str
     status: str
     revision: int
     state: dict[str, Any]
@@ -860,6 +932,224 @@ def _job_projection(job: Job | None) -> dict[str, Any] | None:
     }
 
 
+def _project_storage_path(
+    value: object,
+    *,
+    user_id: uuid.UUID,
+    thread_id: uuid.UUID,
+    item_id: uuid.UUID | None,
+    job: Job | None = None,
+) -> str | None:
+    candidate = normalize_job_storage_path(value)
+    if candidate is None:
+        return None
+    # Job-owned output keys are checked first. A linked job's candidate list
+    # may also contain the PlanItem's shared source key; never classify that
+    # plan prefix as a deletable job output.
+    if job is not None:
+        return owned_job_output_path(candidate, job)
+    prefixes = [f"users/{user_id}/creation-threads/{thread_id}/"]
+    if item_id is not None:
+        prefixes.extend(
+            [
+                f"users/{user_id}/plan/{item_id}/",
+                f"users/{user_id}/plan/{item_id}/pool/",
+                f"users/{user_id}/plan/{item_id}/overlays/",
+            ]
+        )
+    if any(candidate.startswith(prefix) for prefix in prefixes):
+        return candidate
+    return None
+
+
+def _project_job_input_path(value: object, *, user_id: uuid.UUID, job_id: uuid.UUID) -> str | None:
+    """Allow only exact legacy/source prefixes for an unplanned project job."""
+    candidate = normalize_job_storage_path(value)
+    if candidate is None:
+        return None
+    allowed_prefixes = (
+        f"{user_id}/{job_id}/",
+        f"dev-user/{job_id}/",
+        f"dev-user/{user_id}/generative/",
+        f"voiceover-uploads/direct/{user_id}/",
+    )
+    return candidate if candidate.startswith(allowed_prefixes) else None
+
+
+def _project_job_storage_paths(
+    job: Job,
+    clips: list[Any],
+    publications: list[TikTokPublication],
+    *,
+    user_id: uuid.UUID,
+    thread_id: uuid.UUID,
+    item_id: uuid.UUID | None,
+) -> list[str]:
+    paths: list[str] = []
+
+    def add(value: object, *, output: bool = False) -> None:
+        path = _project_storage_path(
+            value,
+            user_id=user_id,
+            thread_id=thread_id,
+            item_id=item_id,
+            job=job if output else None,
+        )
+        if path:
+            paths.append(path)
+
+    for clip in clips:
+        add(clip.video_path, output=True)
+        add(clip.thumbnail_path, output=True)
+    plan = job.assembly_plan if isinstance(job.assembly_plan, dict) else {}
+    for field in (
+        "output_path",
+        "video_path",
+        "output_url",
+        "base_output_url",
+        "poster_path",
+        "base_poster_path",
+    ):
+        add(plan.get(field), output=True)
+    raw_cleanup_receipts = plan.get("_poster_backfill_cleanup_receipts")
+    cleanup_receipts = (
+        raw_cleanup_receipts
+        if isinstance(raw_cleanup_receipts, list)
+        else [raw_cleanup_receipts]
+        if isinstance(raw_cleanup_receipts, dict)
+        else []
+    )
+    for receipt in cleanup_receipts:
+        if not isinstance(receipt, dict):
+            continue
+        add(receipt.get("old_path"), output=True)
+        add(receipt.get("replacement_path"), output=True)
+    variants = plan.get("variants")
+    if isinstance(variants, list):
+        for variant in variants:
+            if not isinstance(variant, dict):
+                continue
+            for field in _DELETE_VARIANT_PATH_FIELDS:
+                add(variant.get(field), output=True)
+                if field == "subject_matte_path":
+                    matte = _project_storage_path(
+                        variant.get(field),
+                        user_id=user_id,
+                        thread_id=thread_id,
+                        item_id=item_id,
+                        job=job,
+                    )
+                    if matte and matte.endswith(".mp4"):
+                        paths.append(f"{matte}.json")
+    candidates = job.all_candidates if isinstance(job.all_candidates, dict) else {}
+    clip_paths = candidates.get("clip_paths")
+    if isinstance(clip_paths, list):
+        for path in clip_paths:
+            if output := job_output_path(path, job.id):
+                paths.append(output)
+            if item_id is None:
+                if source := _project_job_input_path(path, user_id=user_id, job_id=job.id):
+                    paths.append(source)
+    preprocessed_cache = candidates.get("preprocessed_source_cache")
+    if isinstance(preprocessed_cache, dict):
+        processed_clip_paths = preprocessed_cache.get("processed_clip_paths")
+        if isinstance(processed_clip_paths, list):
+            for path in processed_clip_paths:
+                add(path, output=True)
+    hdr_cache = candidates.get("hdr_pretonemap_cache")
+    if isinstance(hdr_cache, dict):
+        processed_by_clip_id = hdr_cache.get("processed_by_clip_id")
+        if isinstance(processed_by_clip_id, dict):
+            for path in processed_by_clip_id.values():
+                add(path, output=True)
+    if item_id is None:
+        add(job.raw_storage_path)
+        if source := _project_job_input_path(job.raw_storage_path, user_id=user_id, job_id=job.id):
+            paths.append(source)
+        if source := _project_job_input_path(
+            candidates.get("voiceover_gcs_path"), user_id=user_id, job_id=job.id
+        ):
+            paths.append(source)
+    for publication in publications:
+        add(publication.source_object_path, output=True)
+        if publication.snapshot_object_path == f"tiktok-publish/{publication.id}.mp4":
+            paths.append(publication.snapshot_object_path)
+    return list(dict.fromkeys(paths))
+
+
+async def _other_project_input_references(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    excluded_job_ids: set[uuid.UUID],
+    excluded_item_id: uuid.UUID | None,
+) -> set[str]:
+    """Return owned media still referenced outside the project being deleted.
+
+    Authenticated generative jobs may reuse any object in ``users/{user_id}/``.
+    We therefore inspect the complete owner-scoped input projection instead of
+    assuming a project prefix is exclusive.  This is a deletion-time scan, not
+    a hot path, and failing to find a reference would be destructive.
+    """
+
+    job_query = select(Job.raw_storage_path, Job.all_candidates).where(Job.user_id == user_id)
+    if excluded_job_ids:
+        job_query = job_query.where(Job.id.notin_(excluded_job_ids))
+    job_rows = (await db.execute(job_query)).all()
+
+    references: set[str] = set()
+    for raw_path, candidates in job_rows:
+        values: list[object] = [raw_path]
+        if isinstance(candidates, dict):
+            values.append(candidates.get("voiceover_gcs_path"))
+            clip_paths = candidates.get("clip_paths")
+            if isinstance(clip_paths, list):
+                values.extend(clip_paths)
+        for value in values:
+            if candidate := normalize_job_storage_path(value):
+                references.add(candidate)
+
+    item_query = (
+        select(PlanItem.clip_gcs_paths, PlanItem.clip_assignments, PlanItem.voiceover_gcs_path)
+        .join(ContentPlan, ContentPlan.id == PlanItem.content_plan_id)
+        .where(ContentPlan.user_id == user_id)
+    )
+    if excluded_item_id is not None:
+        item_query = item_query.where(PlanItem.id != excluded_item_id)
+    item_rows = (await db.execute(item_query)).all()
+    for clip_paths, assignments, voiceover_path in item_rows:
+        values = [voiceover_path]
+        if isinstance(clip_paths, list):
+            values.extend(clip_paths)
+        if isinstance(assignments, list):
+            values.extend(
+                assignment.get("gcs_path")
+                for assignment in assignments
+                if isinstance(assignment, dict)
+            )
+        for value in values:
+            if candidate := normalize_job_storage_path(value):
+                references.add(candidate)
+    return references
+
+
+def _exclude_referenced_project_storage(
+    object_paths: list[str],
+    object_prefixes: list[str],
+    external_references: set[str],
+) -> tuple[list[str], list[str]]:
+    """Keep shared inputs out of both exact-key and prefix deletion work."""
+
+    return (
+        [path for path in object_paths if path not in external_references],
+        [
+            prefix
+            for prefix in object_prefixes
+            if not any(path.startswith(prefix) for path in external_references)
+        ],
+    )
+
+
 def _creator_agent_projection(session: CreatorAgentSession | None) -> dict[str, Any] | None:
     """Expose reviewable strategy metadata, never executable plan commands."""
 
@@ -1324,6 +1614,7 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
         )
     return CreationThreadOut(
         id=str(thread.id),
+        title=getattr(thread, "title", None) or _DEFAULT_TITLE,
         status=thread.status,
         revision=thread.revision,
         state=dict(thread.state or {}),
@@ -1492,7 +1783,12 @@ async def create_thread(
         creator_id=user.id,
         content_plan_id=plan.id,
         active_plan_item_id=item.id,
-        state={"media": [], "media_count": 0},
+        title=(body.message[:_MAX_TITLE_LENGTH] if body.message else _DEFAULT_TITLE),
+        state={
+            "media": [],
+            "media_count": 0,
+            **({"title_source": "first_prompt"} if body.message else {}),
+        },
     )
     db.add(thread)
     await db.flush()
@@ -1540,14 +1836,40 @@ async def list_threads(
         .scalars()
         .all()
     )
+    job_ids = {row.active_job_id for row in rows if row.active_job_id is not None}
+    jobs_by_id: dict[uuid.UUID, Job] = {}
+    if job_ids:
+        jobs_by_id = {
+            job.id: job
+            for job in ((await db.execute(select(Job).where(Job.id.in_(job_ids)))).scalars().all())
+        }
+    session_ids = {
+        row.active_creator_agent_session_id
+        for row in rows
+        if row.active_creator_agent_session_id is not None
+    }
+    session_statuses: dict[uuid.UUID, str] = {}
+    if session_ids:
+        session_statuses = dict(
+            (
+                await db.execute(
+                    select(CreatorAgentSession.id, CreatorAgentSession.status).where(
+                        CreatorAgentSession.id.in_(session_ids)
+                    )
+                )
+            ).all()
+        )
     # Project-rail summaries deliberately omit transcript events and variant
-    # URLs. Detail polling is the only endpoint that hydrates those fields.
-    # The rail does not need render status; avoid a per-row Job lookup (N+1).
+    # URLs. One pair of batched lookups carries lifecycle status so destructive
+    # actions can be disabled accurately without an N+1 or stale assumptions.
     summaries: list[CreationThreadOut] = []
     for row in rows:
+        job = jobs_by_id.get(row.active_job_id)
+        variants = list((job.assembly_plan or {}).get("variants") or []) if job else []
         summaries.append(
             CreationThreadOut(
                 id=str(row.id),
+                title=getattr(row, "title", None) or _DEFAULT_TITLE,
                 status=row.status,
                 revision=row.revision,
                 state=dict(row.state or {}),
@@ -1559,7 +1881,29 @@ async def list_threads(
                 if row.active_creator_agent_session_id
                 else None,
                 active_job_id=str(row.active_job_id) if row.active_job_id else None,
-                job=None,
+                creator_agent=(
+                    {"status": session_statuses[row.active_creator_agent_session_id]}
+                    if row.active_creator_agent_session_id in session_statuses
+                    else None
+                ),
+                job=(
+                    {
+                        "id": str(job.id),
+                        "status": job.status,
+                        "current_phase": job.current_phase,
+                        "failure_reason": job.failure_reason,
+                        "variants": [
+                            {
+                                "variant_id": variant.get("variant_id"),
+                                "render_status": variant.get("render_status"),
+                            }
+                            for variant in variants
+                            if isinstance(variant, dict)
+                        ],
+                    }
+                    if job is not None
+                    else None
+                ),
                 events=[],
                 created_at=row.created_at,
                 updated_at=row.updated_at,
@@ -1687,6 +2031,12 @@ async def message_thread(
     if not state.get("intent"):
         state["intent"] = body.message[:2000]
         thread.state = state
+        if (getattr(thread, "title", None) or _DEFAULT_TITLE) == _DEFAULT_TITLE and state.get(
+            "title_source"
+        ) != "user":
+            thread.title = body.message[:_MAX_TITLE_LENGTH]
+            state["title_source"] = "first_prompt"
+            thread.state = state
     # Never mutate an in-flight render. Preserve the creator's message as a
     # pending revision intent even if this is an older thread whose format
     # projection has not been hydrated yet.
@@ -2071,7 +2421,7 @@ async def upload_urls(
 ) -> list[UploadTarget]:
     _enabled(user)
     _ = request
-    thread = await _load(thread_id, user, db)
+    thread = await _load(thread_id, user, db, lock=True)
     if thread.status != "active":
         raise HTTPException(status_code=409, detail="Creation thread is archived")
     item = (
@@ -2098,7 +2448,7 @@ async def upload_urls(
                 f"{max(0, clip_limit - current_clips)} more."
             ),
         )
-    targets = []
+    target_specs: list[tuple[str, str, int, str]] = []
     for file in body.files:
         content_type = file.content_type.split(";", 1)[0].lower().strip()
         if content_type not in _MEDIA_TYPES:
@@ -2117,12 +2467,55 @@ async def upload_urls(
             raise HTTPException(status_code=422, detail="Video files must be 4 GB or smaller")
         media_id = _reserved_media_id(file.client_upload_id, content_type)
         path = _media_path(user.id, thread.id, media_id)
+        target_specs.append((media_id, content_type, file.file_size_bytes, path))
+
+    media_ids = [media_id for media_id, _content_type, _size, _path in target_specs]
+    reservations = {
+        reservation.media_id: reservation
+        for reservation in (
+            (
+                await db.execute(
+                    select(CreationThreadUploadReservation)
+                    .where(
+                        CreationThreadUploadReservation.thread_id == thread.id,
+                        CreationThreadUploadReservation.media_id.in_(media_ids),
+                    )
+                    .with_for_update()
+                )
+            )
+            .scalars()
+            .all()
+        )
+    }
+    expires_at = datetime.now(UTC) + _UPLOAD_URL_TTL
+    for media_id, _content_type, _size, path in target_specs:
+        reservation = reservations.get(media_id)
+        if reservation is None:
+            db.add(
+                CreationThreadUploadReservation(
+                    thread_id=thread.id,
+                    creator_id=user.id,
+                    media_id=media_id,
+                    object_path=path,
+                    expires_at=expires_at,
+                )
+            )
+        elif reservation.creator_id != user.id or reservation.object_path != path:
+            raise HTTPException(status_code=404, detail="Creation thread not found")
+        else:
+            reservation.expires_at = expires_at
+    # Commit the reservation before minting any URL. A later DELETE can now
+    # reject the live PUT window or manifest the exact key after it expires.
+    await db.commit()
+
+    targets = []
+    for media_id, content_type, file_size_bytes, path in target_specs:
         try:
             url = await asyncio.to_thread(
                 storage.signed_put_url,
                 path,
                 content_type,
-                file.file_size_bytes,
+                file_size_bytes,
             )
         except Exception as exc:  # signer failures are retryable
             raise HTTPException(status_code=503, detail="Upload service unavailable") from exc
@@ -2265,9 +2658,473 @@ async def attach_media(
         payload={"media": public_media, "media_count": state["media_count"]},
         client_event_id=body.client_event_id,
     )
+    await db.execute(
+        delete(CreationThreadUploadReservation).where(
+            CreationThreadUploadReservation.thread_id == thread.id,
+            CreationThreadUploadReservation.media_id.in_(
+                [source["media_id"] for source in verified]
+            ),
+        )
+    )
     await db.commit()
     await db.refresh(thread)
     return await _response(db, thread)
+
+
+@router.patch("/{thread_id}", response_model=CreationThreadOut)
+@limiter.limit("30/minute")
+async def rename_thread(
+    request: Request,
+    thread_id: str,
+    body: RenameBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> CreationThreadOut:
+    _enabled(user)
+    _ = request
+    thread = await _load(thread_id, user, db, lock=True)
+    duplicate = await _duplicate(db, thread.id, _client_id(body.client_event_id))
+    if duplicate:
+        if duplicate.event_type != "thread_renamed" or duplicate.payload != {"title": body.title}:
+            raise HTTPException(status_code=409, detail="Idempotency key reused")
+        await db.rollback()
+        return await _response(db, await _load(thread_id, user, db))
+    if thread.revision != body.expected_revision:
+        raise HTTPException(status_code=409, detail="Creation thread changed")
+    thread.title = body.title
+    thread.state = {**dict(getattr(thread, "state", None) or {}), "title_source": "user"}
+    await _append(
+        db,
+        thread,
+        event_type="thread_renamed",
+        payload={"title": body.title},
+        client_event_id=body.client_event_id,
+    )
+    await db.commit()
+    await db.refresh(thread)
+    return await _response(db, thread)
+
+
+@router.delete("/{thread_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("10/minute")
+async def delete_thread(
+    request: Request,
+    thread_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    expected_revision: int = Query(..., ge=0),
+) -> Response:
+    """Permanently erase one project and every project-owned render/media row."""
+    _enabled(user)
+    _ = request
+    try:
+        identifier = uuid.UUID(thread_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Creation thread not found") from exc
+
+    tombstone = (
+        await db.execute(
+            select(CreationThreadDeletion).where(CreationThreadDeletion.thread_id == identifier)
+        )
+    ).scalar_one_or_none()
+    if tombstone is not None:
+        if tombstone.creator_id != user.id:
+            raise HTTPException(status_code=404, detail="Creation thread not found")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    thread = (
+        await db.execute(
+            select(CreationThread)
+            .where(CreationThread.id == identifier, CreationThread.creator_id == user.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if thread is None:
+        tombstone = (
+            await db.execute(
+                select(CreationThreadDeletion).where(
+                    CreationThreadDeletion.thread_id == identifier,
+                    CreationThreadDeletion.creator_id == user.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if tombstone is not None:
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        raise HTTPException(status_code=404, detail="Creation thread not found")
+
+    upload_reservations = list(
+        (
+            await db.execute(
+                select(CreationThreadUploadReservation)
+                .where(CreationThreadUploadReservation.thread_id == identifier)
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if any(reservation.creator_id != user.id for reservation in upload_reservations):
+        raise HTTPException(status_code=404, detail="Creation thread not found")
+    if any(reservation.expires_at > datetime.now(UTC) for reservation in upload_reservations):
+        raise HTTPException(status_code=409, detail="Project has an active upload")
+
+    item = None
+    plan = None
+    assets: list[PlanItemAsset] = []
+    artifacts: list[EditArtifact] = []
+    retention_events: list[TrainingArtifactRetentionEvent] = []
+    if thread.content_plan_id is not None:
+        plan = await db.get(
+            ContentPlan,
+            thread.content_plan_id,
+            populate_existing=True,
+            with_for_update=True,
+        )
+        if plan is None or plan.user_id != user.id:
+            raise HTTPException(status_code=404, detail="Creation thread not found")
+        persona = await db.get(Persona, plan.persona_id, with_for_update=True)
+        if persona is None or persona.user_id != user.id:
+            raise HTTPException(status_code=404, detail="Creation thread not found")
+        if thread.active_plan_item_id is not None:
+            item = await db.get(
+                PlanItem,
+                thread.active_plan_item_id,
+                populate_existing=True,
+                with_for_update=True,
+            )
+            if item is None or item.content_plan_id != plan.id:
+                raise HTTPException(status_code=404, detail="Creation thread not found")
+            assets = list(
+                (
+                    await db.execute(
+                        select(PlanItemAsset)
+                        .where(PlanItemAsset.plan_item_id == item.id)
+                        .with_for_update()
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if any(asset.user_id != user.id for asset in assets):
+                raise HTTPException(status_code=404, detail="Creation thread not found")
+            now = datetime.now(UTC)
+            if any(
+                asset.status == "promoting"
+                or (
+                    asset.status == "preparing"
+                    and asset.upload_expires_at is not None
+                    and asset.upload_expires_at > now
+                )
+                for asset in assets
+            ):
+                raise HTTPException(status_code=409, detail="Project has an active upload")
+            artifacts = list(
+                (
+                    await db.execute(
+                        select(EditArtifact)
+                        .where(EditArtifact.plan_item_id == item.id)
+                        .with_for_update()
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if any(artifact.creator_id != user.id for artifact in artifacts):
+                raise HTTPException(status_code=404, detail="Creation thread not found")
+            artifact_ids = [artifact.id for artifact in artifacts]
+            if artifact_ids:
+                retention_events = list(
+                    (
+                        await db.execute(
+                            select(TrainingArtifactRetentionEvent)
+                            .where(TrainingArtifactRetentionEvent.artifact_id.in_(artifact_ids))
+                            .with_for_update()
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                if any(event.creator_id != user.id for event in retention_events):
+                    raise HTTPException(status_code=404, detail="Creation thread not found")
+                if any(event.status in {"pending", "started"} for event in retention_events):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Project has active artifact processing",
+                    )
+
+    job_ids = {thread.active_job_id} if thread.active_job_id is not None else set()
+    if item is not None:
+        if item.current_job_id is not None:
+            job_ids.add(item.current_job_id)
+        jobs = list(
+            (
+                await db.execute(
+                    select(Job)
+                    .where(
+                        or_(
+                            Job.content_plan_item_id == item.id,
+                            Job.id.in_(job_ids) if job_ids else False,
+                        )
+                    )
+                    .with_for_update()
+                )
+            )
+            .scalars()
+            .all()
+        )
+    elif job_ids:
+        jobs = list(
+            (await db.execute(select(Job).where(Job.id.in_(job_ids)).with_for_update()))
+            .scalars()
+            .all()
+        )
+    else:
+        jobs = []
+    if any(job.user_id != user.id for job in jobs):
+        raise HTTPException(status_code=404, detail="Creation thread not found")
+    if item is not None and item.current_job_id is not None:
+        current_job = next((job for job in jobs if job.id == item.current_job_id), None)
+        if current_job is None or current_job.content_plan_item_id != item.id:
+            raise HTTPException(status_code=404, detail="Creation thread not found")
+    job_ids.update(job.id for job in jobs)
+    if thread.active_job_id:
+        active_job = next((job for job in jobs if job.id == thread.active_job_id), None)
+        if active_job is None:
+            raise HTTPException(status_code=404, detail="Creation thread not found")
+        if item is not None and getattr(active_job, "content_plan_item_id", None) not in (
+            None,
+            item.id,
+        ):
+            raise HTTPException(status_code=404, detail="Creation thread not found")
+
+    session_ids = (
+        {getattr(thread, "active_creator_agent_session_id")}
+        if getattr(thread, "active_creator_agent_session_id", None) is not None
+        else set()
+    )
+    if item is not None:
+        session_ids.update(
+            session_id
+            for session_id in (
+                await db.execute(
+                    select(CreatorAgentSession.id).where(
+                        CreatorAgentSession.plan_item_id == item.id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    sessions = []
+    if session_ids:
+        sessions = list(
+            (
+                await db.execute(
+                    select(CreatorAgentSession)
+                    .where(CreatorAgentSession.id.in_(session_ids))
+                    .with_for_update()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if any(session.creator_id != user.id for session in sessions):
+            raise HTTPException(status_code=404, detail="Creation thread not found")
+        if thread.active_creator_agent_session_id:
+            active_session = next(
+                (
+                    session
+                    for session in sessions
+                    if session.id == thread.active_creator_agent_session_id
+                ),
+                None,
+            )
+            if active_session is None or item is None or active_session.plan_item_id != item.id:
+                raise HTTPException(status_code=404, detail="Creation thread not found")
+
+    publications = []
+    if job_ids:
+        publications = list(
+            (
+                await db.execute(
+                    select(TikTokPublication)
+                    .where(TikTokPublication.job_id.in_(job_ids))
+                    .with_for_update()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if any(publication.user_id != user.id for publication in publications):
+            raise HTTPException(status_code=404, detail="Creation thread not found")
+
+    if any(job.status not in PLAN_ITEM_JOB_TERMINAL for job in jobs):
+        raise HTTPException(status_code=409, detail="Project has an active render")
+    if any(session.status in _ACTIVE_AGENT_STATUSES for session in sessions):
+        raise HTTPException(status_code=409, detail="Project has an active creator session")
+    if any(
+        publication.processing_status in _ACTIVE_PUBLICATION_STATUSES
+        or (publication.processing_status == "failed" and publication.retryable)
+        for publication in publications
+    ):
+        raise HTTPException(status_code=409, detail="Project has an active publication")
+
+    locked_thread = thread
+    if locked_thread.revision != expected_revision:
+        raise HTTPException(status_code=409, detail="Creation thread changed")
+    if (
+        locked_thread.active_plan_item_id
+        and item is not None
+        and locked_thread.active_plan_item_id != item.id
+    ):
+        raise HTTPException(status_code=409, detail="Creation thread changed")
+
+    object_paths: list[str] = [reservation.object_path for reservation in upload_reservations]
+    object_prefixes = [f"users/{user.id}/creation-threads/{identifier}/"]
+    if item is not None:
+        object_prefixes.extend(
+            [
+                f"users/{user.id}/plan/{item.id}/",
+                f"dev-user/{user.id}/plan-pool-reservations/{item.id}/",
+            ]
+        )
+        media = (locked_thread.state or {}).get("media", [])
+        if isinstance(media, list):
+            for entry in media:
+                if isinstance(entry, dict) and entry.get("media_id"):
+                    object_paths.append(
+                        f"users/{user.id}/creation-threads/{identifier}/{_client_id(str(entry['media_id']))}"
+                    )
+        for path in item.clip_gcs_paths or []:
+            if owned := _project_storage_path(
+                path,
+                user_id=user.id,
+                thread_id=identifier,
+                item_id=item.id,
+            ):
+                object_paths.append(owned)
+        voiceover_path = normalize_job_storage_path(item.voiceover_gcs_path)
+        if voiceover_path:
+            if owned := _project_storage_path(
+                voiceover_path,
+                user_id=user.id,
+                thread_id=identifier,
+                item_id=item.id,
+            ):
+                object_paths.append(owned)
+            elif voiceover_path.startswith(f"{DIRECT_VOICEOVER_PREFIX}{user.id}/"):
+                shared_voiceover = (
+                    await db.execute(
+                        select(PlanItem.id)
+                        .where(
+                            PlanItem.voiceover_gcs_path == voiceover_path,
+                            PlanItem.id != item.id,
+                        )
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                if shared_voiceover is None:
+                    object_paths.append(voiceover_path)
+        for asset in assets:
+            for path in (asset.gcs_path, asset.preview_gcs_path):
+                candidate = normalize_job_storage_path(path)
+                staging_prefix = f"dev-user/{user.id}/plan-pool-reservations/{item.id}/"
+                if candidate and candidate.startswith(staging_prefix):
+                    object_paths.append(candidate)
+                    continue
+                if owned := _project_storage_path(
+                    path,
+                    user_id=user.id,
+                    thread_id=identifier,
+                    item_id=item.id,
+                ):
+                    object_paths.append(owned)
+        retention_by_artifact: dict[uuid.UUID, list[TrainingArtifactRetentionEvent]] = {}
+        for event in retention_events:
+            retention_by_artifact.setdefault(event.artifact_id, []).append(event)
+        for artifact in artifacts:
+            artifact_prefix = f"users/{user.id}/edit-feedback/{artifact.id}/"
+            object_prefixes.append(artifact_prefix)
+            for path in [
+                artifact.storage_path,
+                *(event.storage_path for event in retention_by_artifact.get(artifact.id, [])),
+            ]:
+                candidate = normalize_job_storage_path(path)
+                if candidate and candidate.startswith(artifact_prefix):
+                    object_paths.append(candidate)
+
+    for job in jobs:
+        object_prefixes.extend(prefix.format(job_id=job.id) for prefix in JOB_OUTPUT_PREFIXES)
+        clips = list(
+            (await db.execute(select(JobClip).where(JobClip.job_id == job.id))).scalars().all()
+        )
+        project_pubs = [publication for publication in publications if publication.job_id == job.id]
+        object_paths.extend(
+            _project_job_storage_paths(
+                job,
+                clips,
+                project_pubs,
+                user_id=user.id,
+                thread_id=identifier,
+                item_id=item.id if item is not None else None,
+            )
+        )
+
+    external_references = await _other_project_input_references(
+        db,
+        user_id=user.id,
+        excluded_job_ids=job_ids,
+        excluded_item_id=item.id if item is not None else None,
+    )
+    object_paths, object_prefixes = _exclude_referenced_project_storage(
+        object_paths,
+        object_prefixes,
+        external_references,
+    )
+    object_paths = list(dict.fromkeys(object_paths))
+    db.add(CreationThreadDeletion(thread_id=identifier, creator_id=user.id))
+    deletion_outbox_id: uuid.UUID | None = None
+    object_prefixes = list(dict.fromkeys(object_prefixes))
+    if object_paths or object_prefixes:
+        deletion_outbox_id = uuid.uuid4()
+        db.add(
+            JobStorageDeletion(
+                # JobStorageDeletion has no FK by design; reusing its durable
+                # exact-key sweeper keeps project cleanup retryable after commit.
+                id=deletion_outbox_id,
+                job_id=identifier,
+                object_paths=object_paths,
+                object_prefixes=object_prefixes,
+            )
+        )
+
+    if item is not None:
+        item.current_job_id = None
+    if jobs:
+        for job in jobs:
+            job.content_plan_item_id = None
+        await db.execute(delete(TikTokPublication).where(TikTokPublication.job_id.in_(job_ids)))
+        await db.execute(delete(JobClip).where(JobClip.job_id.in_(job_ids)))
+        for job in jobs:
+            await db.delete(job)
+    if item is not None:
+        await db.execute(delete(PlanItem).where(PlanItem.id == item.id))
+    elif session_ids:
+        await db.execute(delete(CreatorAgentSession).where(CreatorAgentSession.id.in_(session_ids)))
+    # Use a direct parent delete so the 0092 append-only trigger permits the
+    # database FK cascade to remove transcript events after the parent vanishes.
+    await db.execute(delete(CreationThread).where(CreationThread.id == identifier))
+    await db.commit()
+
+    if deletion_outbox_id is not None:
+        from app.tasks.account_lifecycle import purge_job_storage  # noqa: PLC0415
+
+        try:
+            purge_job_storage.apply_async(args=[str(deletion_outbox_id)])
+        except Exception:  # noqa: BLE001 — Beat sweeper retains the manifest
+            pass
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/{thread_id}/archive", response_model=CreationThreadOut)

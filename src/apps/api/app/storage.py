@@ -744,6 +744,38 @@ def delete_prefix_best_effort(prefix: str) -> int:
     return deleted
 
 
+def delete_prefix_once(prefix: str, *, timeout_s: float) -> int:
+    """Delete a bounded prefix, raising so durable callers can retry failures."""
+    if timeout_s <= 0:
+        raise ValueError("timeout_s must be positive")
+    if len(prefix.strip("/")) < 3:
+        raise ValueError(f"Refusing to delete an unsafe prefix: {prefix!r}")
+    if _uses_local_storage():
+        directory = local_object_path(prefix.rstrip("/"))
+        if not directory.exists():
+            return 0
+        files = [path for path in directory.rglob("*") if path.is_file()]
+        for path in files:
+            path.unlink(missing_ok=True)
+        for path in sorted(
+            (path for path in directory.rglob("*") if path.is_dir()),
+            key=lambda value: len(value.parts),
+            reverse=True,
+        ):
+            path.rmdir()
+        directory.rmdir()
+        return len(files)
+    bucket = _get_client().bucket(settings.storage_bucket)
+    deleted = 0
+    for blob in bucket.list_blobs(prefix=prefix, timeout=timeout_s, retry=None):
+        try:
+            blob.delete(timeout=timeout_s, retry=None)
+        except NotFound:
+            pass
+        deleted += 1
+    return deleted
+
+
 def signed_get_url(object_path: str, expiration_minutes: int = 5) -> str:
     """Generate a short-lived signed GET URL for the API to stream-probe a GCS
     object without downloading it. ffmpeg/ffprobe accept https:// URLs and

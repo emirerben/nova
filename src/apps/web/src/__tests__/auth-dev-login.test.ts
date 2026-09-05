@@ -11,11 +11,20 @@ export {};
 
 const originalEnv = process.env;
 
-function loadProviders(): { id: string; type: string }[] {
+function loadProviders(): {
+  id: string;
+  type: string;
+  clientId?: string;
+  prompt?: string;
+}[] {
   const { authOptions } = require("@/lib/auth") as typeof import("@/lib/auth");
   return authOptions.providers.map((p) => ({
     id: (p as { id: string }).id,
     type: (p as { type: string }).type,
+    clientId: (p as { options?: { clientId?: string } }).options?.clientId,
+    prompt: (
+      p as { options?: { authorization?: { params?: { prompt?: string } } } }
+    ).options?.authorization?.params?.prompt,
   }));
 }
 
@@ -49,5 +58,25 @@ describe("dev-login provider gating", () => {
     const providers = loadProviders();
     expect(providers).toHaveLength(2);
     expect(providers.some((p) => p.type === "credentials")).toBe(true);
+  });
+
+  test("legacy preview client ID remains a fallback for Google sign-in", () => {
+    delete process.env.GOOGLE_CLIENT_ID;
+    delete process.env.YOUTUBE_CLIENT_ID;
+    process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID = "preview-client-id\n";
+
+    expect(loadProviders()[0].clientId).toBe("preview-client-id");
+  });
+
+  test("canonical server-side client ID wins over legacy fallbacks", () => {
+    process.env.GOOGLE_CLIENT_ID = "canonical-client-id";
+    process.env.YOUTUBE_CLIENT_ID = "youtube-client-id";
+    process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID = "preview-client-id";
+
+    expect(loadProviders()[0].clientId).toBe("canonical-client-id");
+  });
+
+  test("Google sign-in always lets the creator choose an account", () => {
+    expect(loadProviders()[0].prompt).toBe("select_account");
   });
 });

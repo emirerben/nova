@@ -28,6 +28,26 @@ The supported Paper formats are:
 Availability is supplied by the server. The client must present an unavailable
 format's alternatives instead of inventing a local capability.
 
+## Project routes and lifecycle API
+
+`/plan/{thread_id}` is the canonical browser URL. `/plan` resumes the most
+recent project or creates one and redirects to that URL. A missing, deleted, or
+foreign project renders **Project unavailable** and must never silently select a
+different project.
+
+The same-origin web proxy exposes the lifecycle API under
+`/api/plan/creation-threads`:
+
+| Action | Request | Success | Expected failures |
+| --- | --- | --- | --- |
+| Rename | `PATCH /{thread_id}` with `title`, `expected_revision`, and `client_event_id` | Updated thread and revision | `404` for missing/foreign IDs; `409` for a stale revision |
+| Delete | `DELETE /{thread_id}?expected_revision=N` | `204 No Content` | `404` for missing/foreign IDs; `409` for a stale revision or active agent, render, upload mutation, artifact processing, or TikTok publication |
+
+Titles are trimmed, non-empty, and at most 120 characters. A first prompt may
+replace only the default **Untitled video** title; an explicit rename must never
+change the creative prompt. Retrying a deletion by the same owner succeeds when
+the deletion tombstone exists, while foreign and unknown IDs remain `404`.
+
 ## Layout contract
 
 On desktop, `/plan` owns `h-dvh` and `min-h-0`: the 260px project rail is fixed,
@@ -116,11 +136,44 @@ cd ../web && npm run lint && npx tsc --noEmit && npm test
 cd ../../.. && bash scripts/preship-check.sh
 ```
 
-The deterministic fixture at `/dev-qa/chat-first-creation` is enabled only when
-`E2E_FIXTURES=true`. It covers choose, upload, confirmation, rendering, ready,
-revision, upload retry/removal, voiceover-needed, stale revision, offline,
-unavailable format, partial success, terminal failure, Projects, Gallery,
-embedded editor, mobile tabs, 200% zoom, and reduced motion.
+The deterministic fixture at `/dev-qa/chat-first-creation` is enabled only for
+local E2E runs (`E2E_FIXTURES=true`) or Vercel Preview (`VERCEL_ENV=preview`);
+the route returns `404` in production. It covers choose, upload, confirmation,
+rendering with BeamLoader progress, ready, chronological post-clip revision
+chat, timed thinking copy at the `0`, `1500`, `8000`, and `20000` ms boundaries, upload
+retry/removal, voiceover-needed, stale revision, offline, unavailable format,
+partial success, terminal failure, Projects, Gallery, embedded editor, mobile
+tabs, 200% zoom, reduced motion, collapsed-sidebar spacing, project rename,
+delete confirmation, and canonical project deep-links (`project=<id>`).
+
+For a reviewable proof pass, open the fixture on a Preview deployment at the
+following URLs (the query string makes every state deterministic):
+
+```text
+/dev-qa/chat-first-creation?project=project-corfu&state=ready
+/dev-qa/chat-first-creation?project=project-corfu&state=revision
+/dev-qa/chat-first-creation?project=project-corfu&state=thinking&elapsed=0
+/dev-qa/chat-first-creation?project=project-corfu&state=thinking&elapsed=1500
+/dev-qa/chat-first-creation?project=project-corfu&state=thinking&elapsed=8000
+/dev-qa/chat-first-creation?project=project-corfu&state=thinking&elapsed=20000
+/dev-qa/chat-first-creation?project=project-corfu&state=rendering
+/dev-qa/chat-first-creation?project=project-corfu&state=partial
+```
+
+The focused Playwright proof command is:
+
+```bash
+cd src/apps/web && npm run e2e -- --project=chat-first-creation --workers=1
+```
+
+Before production approval, share the Preview URL and verify the ready
+deep-link, post-clip order, each thinking tier, render and partial progress,
+collapsed sidebar, rename dialog, delete confirmation, and deleted state from
+that URL. The delete confirmation must say that the chat, uploads, edit data,
+and completed Kria videos are permanently removed and cannot be recovered, and
+that already-published TikTok posts remain on TikTok. Confirm the API/web build
+versions in the review note; only then proceed with the normal pre-merge and
+deploy gates.
 
 The real local smoke flow is: create a thread, attach mixed footage, send a
 creative-direction message, confirm the proposal, wait for the ready Job, play

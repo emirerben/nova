@@ -284,6 +284,7 @@ async def test_chat_first_can_attach_four_owned_clips_before_exact_request(
     )
     db = Mock()
     db.get = AsyncMock(return_value=item)
+    db.execute = AsyncMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
 

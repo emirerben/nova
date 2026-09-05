@@ -21,20 +21,26 @@ deleted synchronously (cheap), the GCS bytes are swept here (potentially slow).
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 import structlog
 from billiard.exceptions import SoftTimeLimitExceeded
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 
 from app.config import settings
 from app.database import sync_session
-from app.models import JobStorageDeletion
+from app.models import ContentPlan, Job, JobStorageDeletion, PlanItem
 from app.services.job_storage_deletion import (
     cleanup_job_storage_manifest,
     parse_job_storage_manifest,
 )
-from app.services.job_storage_paths import JOB_OUTPUT_PREFIXES
+from app.services.job_storage_paths import (
+    JOB_OUTPUT_PREFIXES,
+    normalize_job_storage_path,
+    project_media_reference_lock_key,
+)
 from app.services.video_poster_cleanup import (
     jobs_with_video_poster_cleanup_receipts,
     reconcile_video_poster_cleanup_receipts,
@@ -71,6 +77,112 @@ def cleanup_job_storage_paths(object_paths: list[str]) -> tuple[int, list[str]]:
         else:
             failed.append(path)
     return deleted, failed
+
+
+def cleanup_job_storage_prefixes(object_prefixes: list[str]) -> tuple[int, list[str]]:
+    """Delete project/job prefixes and preserve any failed prefix for retry."""
+    from app.storage import delete_prefix_once  # noqa: PLC0415
+
+    deleted = 0
+    failed: list[str] = []
+    for prefix in dict.fromkeys(object_prefixes):
+        if not isinstance(prefix, str) or not prefix.strip():
+            continue
+        try:
+            deleted += delete_prefix_once(prefix, timeout_s=5.0)
+        except Exception:  # noqa: BLE001 — caller persists the failed prefix
+            failed.append(prefix)
+    return deleted, failed
+
+
+def _project_manifest_owner(object_prefixes: list[str]) -> uuid.UUID | None:
+    """Identify a project-deletion manifest from its owner-scoped thread prefix."""
+
+    for prefix in object_prefixes:
+        parts = prefix.split("/")
+        if len(parts) >= 4 and parts[0] == "users" and parts[2] == "creation-threads":
+            try:
+                return uuid.UUID(parts[1])
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _filter_referenced_project_storage(
+    object_paths: list[str],
+    object_prefixes: list[str],
+    references: set[str],
+) -> tuple[list[str], list[str]]:
+    return (
+        [path for path in object_paths if path not in references],
+        [
+            prefix
+            for prefix in object_prefixes
+            if not any(path.startswith(prefix) for path in references)
+        ],
+    )
+
+
+def _project_storage_references(db, owner_id: uuid.UUID) -> set[str]:
+    references: set[str] = set()
+    for raw_path, candidates in db.execute(
+        select(Job.raw_storage_path, Job.all_candidates).where(Job.user_id == owner_id)
+    ).all():
+        values: list[object] = [raw_path]
+        if isinstance(candidates, dict):
+            values.append(candidates.get("voiceover_gcs_path"))
+            clip_paths = candidates.get("clip_paths")
+            if isinstance(clip_paths, list):
+                values.extend(clip_paths)
+        references.update(
+            candidate
+            for value in values
+            if (candidate := normalize_job_storage_path(value)) is not None
+        )
+
+    for clip_paths, assignments, voiceover_path in db.execute(
+        select(PlanItem.clip_gcs_paths, PlanItem.clip_assignments, PlanItem.voiceover_gcs_path)
+        .join(ContentPlan, ContentPlan.id == PlanItem.content_plan_id)
+        .where(ContentPlan.user_id == owner_id)
+    ).all():
+        values = [voiceover_path]
+        if isinstance(clip_paths, list):
+            values.extend(clip_paths)
+        if isinstance(assignments, list):
+            values.extend(
+                assignment.get("gcs_path")
+                for assignment in assignments
+                if isinstance(assignment, dict)
+            )
+        references.update(
+            candidate
+            for value in values
+            if (candidate := normalize_job_storage_path(value)) is not None
+        )
+    return references
+
+
+@contextmanager
+def _guard_project_storage_targets(
+    object_paths: list[str], object_prefixes: list[str]
+) -> Iterator[tuple[list[str], list[str]]]:
+    """Lock reference creation and re-check it while deleting project media.
+
+    Project uploads can be reused by other edits after the DELETE transaction
+    commits. The durable worker therefore holds the same owner-scoped advisory
+    transaction lock used by generative-job creation while scanning and deleting.
+    Either a new reference commits first and is preserved, or deletion completes
+    first and the creator's subsequent metadata validation fails safely.
+    """
+
+    owner_id = _project_manifest_owner(object_prefixes)
+    if owner_id is None:
+        yield object_paths, object_prefixes
+        return
+    with sync_session() as db:
+        db.execute(select(func.pg_advisory_xact_lock(project_media_reference_lock_key(owner_id))))
+        references = _project_storage_references(db, owner_id)
+        yield _filter_referenced_project_storage(object_paths, object_prefixes, references)
 
 
 @celery_app.task(name="tasks.send_account_deletion_email", max_retries=0)
@@ -238,6 +350,17 @@ def _claim_job_storage_deletion(
             payload = list(payload)
         elif isinstance(payload, dict):
             payload = dict(payload)
+        # Creation-thread deletion predates the versioned Job manifest and
+        # stores project prefixes in the companion column. Keep those prefixes
+        # in a private envelope so the claim/lease protocol remains identical
+        # for both formats; they are handled by the project reference guard,
+        # not by the Job-only allowlist parser.
+        prefixes = getattr(deletion, "object_prefixes", None)
+        if isinstance(prefixes, list) and prefixes:
+            payload = {
+                "_creation_project_exact_paths": payload if isinstance(payload, list) else [],
+                "_creation_project_prefixes": list(prefixes),
+            }
         return deletion.job_id, payload, deletion.attempts
 
 
@@ -272,7 +395,16 @@ def _finish_job_storage_deletion(
         deletion.lease_until = None
         if not completed:
             deletion.status = "pending"
-            deletion.object_paths = remaining_payload
+            if (
+                isinstance(remaining_payload, dict)
+                and isinstance(remaining_payload.get("_creation_project_exact_paths"), list)
+                and isinstance(remaining_payload.get("_creation_project_prefixes"), list)
+            ):
+                deletion.object_paths = list(remaining_payload["_creation_project_exact_paths"])
+                if hasattr(deletion, "object_prefixes"):
+                    deletion.object_prefixes = list(remaining_payload["_creation_project_prefixes"])
+            else:
+                deletion.object_paths = remaining_payload
             retry_delay = min(
                 _JOB_STORAGE_DELETION_RETRY_BASE_S * (2 ** min(max(deletion.attempts - 1, 0), 6)),
                 _JOB_STORAGE_DELETION_RETRY_MAX_S,
@@ -286,6 +418,8 @@ def _finish_job_storage_deletion(
         else:
             deletion.status = "completed"
             deletion.object_paths = remaining_payload
+            if hasattr(deletion, "object_prefixes"):
+                deletion.object_prefixes = []
             deletion.next_attempt_at = None
             deletion.last_error = None
             deletion.completed_at = now
@@ -311,7 +445,39 @@ def purge_job_storage(outbox_id: str) -> dict:
     prefixes_verified = 0
     prefixes_pending = 0
     retry_not_before: datetime | None = None
-    if isinstance(payload, list):
+    project_payload = (
+        isinstance(payload, dict)
+        and isinstance(payload.get("_creation_project_exact_paths"), list)
+        and isinstance(payload.get("_creation_project_prefixes"), list)
+    )
+    if project_payload:
+        object_paths = list(payload["_creation_project_exact_paths"])
+        object_prefixes = list(payload["_creation_project_prefixes"])
+        try:
+            with _guard_project_storage_targets(object_paths, object_prefixes) as (
+                guarded_paths,
+                guarded_prefixes,
+            ):
+                deleted, failed = cleanup_job_storage_paths(guarded_paths)
+                prefix_deleted, failed_prefixes = cleanup_job_storage_prefixes(guarded_prefixes)
+                deleted += prefix_deleted
+        except SoftTimeLimitExceeded:
+            raise
+        except Exception as exc:  # noqa: BLE001 — lease recovery handles outages
+            deleted = 0
+            failed = object_paths
+            failed_prefixes = object_prefixes
+            error = f"{type(exc).__name__}: {exc}"
+        remaining_payload = {
+            "_creation_project_exact_paths": failed,
+            "_creation_project_prefixes": failed_prefixes,
+        }
+        failed_count = len(failed) + len(failed_prefixes)
+        completed = not failed_count
+        if failed_count and error is None:
+            target_label = "storage targets" if failed_prefixes else "storage objects"
+            error = f"{failed_count} {target_label} could not be deleted"
+    elif isinstance(payload, list):
         try:
             deleted, failed = cleanup_job_storage_paths(payload)
         except SoftTimeLimitExceeded:
@@ -380,7 +546,7 @@ def purge_job_storage(outbox_id: str) -> dict:
             "deleted": deleted,
             "failed": failed_count,
         }
-        if isinstance(payload, dict):
+        if isinstance(payload, dict) and payload.get("version") == 2:
             result.update(
                 prefixes_verified=prefixes_verified,
                 prefixes_pending=prefixes_pending,
@@ -396,7 +562,7 @@ def purge_job_storage(outbox_id: str) -> dict:
             attempt=attempt,
         )
         result = {"status": "pending", "deleted": deleted, "failed": failed_count}
-        if isinstance(payload, dict):
+        if isinstance(payload, dict) and payload.get("version") == 2:
             result.update(
                 prefixes_verified=prefixes_verified,
                 prefixes_pending=prefixes_pending,
@@ -410,7 +576,7 @@ def purge_job_storage(outbox_id: str) -> dict:
         prefixes_verified=prefixes_verified,
     )
     result = {"status": "completed", "deleted": deleted, "failed": 0}
-    if isinstance(payload, dict):
+    if isinstance(payload, dict) and payload.get("version") == 2:
         result.update(prefixes_verified=prefixes_verified, prefixes_pending=0)
     return result
 

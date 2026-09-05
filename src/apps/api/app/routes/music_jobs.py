@@ -13,13 +13,17 @@ from pathlib import Path
 import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, field_validator
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import CurrentUserOrSynthetic, ensure_job_owner
 from app.config import settings
 from app.database import get_db
 from app.models import Job, MusicTrack
+from app.services.job_storage_paths import (
+    job_input_path_matches_owner,
+    project_media_reference_lock_key,
+)
 from app.services.public_assembly_plan import project_public_assembly_plan
 
 log = structlog.get_logger()
@@ -147,6 +151,11 @@ async def create_music_job(
     db: AsyncSession = Depends(get_db),
 ) -> MusicJobResponse:
     """Create a music beat-sync job."""
+    if any(not job_input_path_matches_owner(path, current_user.id) for path in req.clip_gcs_paths):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Upload owner mismatch")
+    await db.execute(
+        select(func.pg_advisory_xact_lock(project_media_reference_lock_key(current_user.id)))
+    )
     track = await _get_published_ready_track(req.music_track_id, db)
     validate_clip_count(track, len(req.clip_gcs_paths))
 

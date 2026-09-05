@@ -1,7 +1,7 @@
 """Fast contract tests for creation-thread route guardrails."""
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -24,17 +24,21 @@ from app.routes.creation_threads import (
     AttachBody,
     MediaInput,
     MessageBody,
+    RenameBody,
     UploadBody,
     UploadFile,
     _available_formats,
     _client_id,
     _creator_agent_projection,
     _enabled,
+    _exclude_referenced_project_storage,
     _format_clip_limit,
     _is_status_only_message,
     _load,
     _media_path,
+    _other_project_input_references,
     _project,
+    _project_job_storage_paths,
     _record_partial_variant_retry_enqueue_failure,
     _render_projection,
     _response,
@@ -46,6 +50,7 @@ from app.routes.creation_threads import (
     get_thread,
     list_threads,
     message_thread,
+    rename_thread,
     upload_urls,
 )
 
@@ -312,7 +317,17 @@ def _db_for_scalar(value: object) -> Mock:
 
 
 def _request() -> Request:
-    return Request({"type": "http", "method": "POST", "path": "/", "headers": []})
+    # Each unit call gets its own limiter key; otherwise the decorated route
+    # tests exhaust the production 10/minute DELETE budget as a suite.
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/",
+            "headers": [],
+            "client": (f"test-{uuid.uuid4()}", 0),
+        }
+    )
 
 
 @pytest.mark.asyncio
@@ -700,6 +715,720 @@ async def test_archive_is_revision_fenced_and_idempotent() -> None:
 
 
 @pytest.mark.asyncio
+async def test_rename_is_revision_fenced_and_idempotent() -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(), creator_id=user.id, status="active", revision=2, title="Old"
+    )
+    db = Mock()
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    import app.routes.creation_threads as routes
+
+    original_load = routes._load
+    original_dup = routes._duplicate
+    original_response = routes._response
+    routes._load = AsyncMock(return_value=thread)
+    routes._duplicate = AsyncMock(return_value=None)
+    routes._response = AsyncMock(return_value=thread)
+    original_append = routes._append
+    routes._append = AsyncMock()
+    try:
+        result = await rename_thread(
+            _request(),
+            str(thread.id),
+            RenameBody(title="  Summer   trip ", expected_revision=2, client_event_id="rename-1"),
+            user,
+            db,
+        )
+        assert result is thread
+        assert thread.title == "Summer trip"
+        routes._append.assert_awaited_once()
+        assert routes._append.await_args.kwargs == {
+            "event_type": "thread_renamed",
+            "payload": {"title": "Summer trip"},
+            "client_event_id": "rename-1",
+        }
+        db.commit.assert_awaited_once()
+    finally:
+        routes._load = original_load
+        routes._duplicate = original_dup
+        routes._response = original_response
+        routes._append = original_append
+
+
+@pytest.mark.asyncio
+async def test_rename_rejects_stale_revision() -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(), creator_id=user.id, status="active", revision=3, title="Old"
+    )
+    import app.routes.creation_threads as routes
+
+    original_load, original_dup = routes._load, routes._duplicate
+    routes._load = AsyncMock(return_value=thread)
+    routes._duplicate = AsyncMock(return_value=None)
+    try:
+        with pytest.raises(routes.HTTPException) as exc_info:
+            await rename_thread(
+                _request(),
+                str(thread.id),
+                RenameBody(title="New", expected_revision=2, client_event_id="rename-stale"),
+                user,
+                Mock(),
+            )
+        assert exc_info.value.status_code == 409
+    finally:
+        routes._load, routes._duplicate = original_load, original_dup
+
+
+@pytest.mark.asyncio
+async def test_delete_rejects_active_job_before_mutation() -> None:
+    import app.routes.creation_threads as routes
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        revision=4,
+        content_plan_id=None,
+        active_plan_item_id=None,
+        active_job_id=uuid.uuid4(),
+        state={"media": []},
+    )
+    job = SimpleNamespace(id=thread.active_job_id, user_id=user.id, status="processing")
+
+    def result(*, one=None, rows=None):
+        value = Mock()
+        value.scalar_one_or_none.return_value = one
+        value.scalars.return_value.all.return_value = rows or []
+        return value
+
+    db = Mock()
+    db.execute = AsyncMock(
+        side_effect=[
+            result(one=None),
+            result(one=thread),
+            result(rows=[]),
+            result(rows=[job]),
+            result(rows=[]),
+        ]
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        await routes.delete_thread(
+            _request(),
+            str(thread.id),
+            user,
+            db,
+            expected_revision=4,
+        )
+    assert exc_info.value.status_code == 409
+    db.commit = AsyncMock()
+    db.commit.assert_not_awaited()
+
+
+def _delete_result(*, one=None, rows=None) -> Mock:
+    result = Mock()
+    result.scalar_one_or_none.return_value = one
+    result.scalars.return_value.all.return_value = rows or []
+    return result
+
+
+def _reference_result(rows=()) -> Mock:
+    result = Mock()
+    result.all.return_value = list(rows)
+    return result
+
+
+@pytest.mark.asyncio
+async def test_project_input_reference_scan_includes_other_jobs_and_plan_items() -> None:
+    user_id = uuid.uuid4()
+    job_clip = f"users/{user_id}/plan/item-a/shared.mp4"
+    direct_voiceover = f"voiceover-uploads/direct/{user_id}/voice.m4a"
+    assigned_clip = f"users/{user_id}/plan/item-b/assigned.mp4"
+    db = Mock()
+    db.execute = AsyncMock(
+        side_effect=[
+            _reference_result(
+                [
+                    (
+                        "jobs/source.mp4",
+                        {
+                            "clip_paths": [job_clip],
+                            "voiceover_gcs_path": direct_voiceover,
+                        },
+                    )
+                ]
+            ),
+            _reference_result(
+                [
+                    (
+                        [],
+                        [{"gcs_path": assigned_clip}],
+                        None,
+                    )
+                ]
+            ),
+        ]
+    )
+
+    references = await _other_project_input_references(
+        db,
+        user_id=user_id,
+        excluded_job_ids={uuid.uuid4()},
+        excluded_item_id=uuid.uuid4(),
+    )
+
+    assert {job_clip, direct_voiceover, assigned_clip} <= references
+
+
+def test_shared_input_suppresses_exact_key_and_enclosing_project_prefix() -> None:
+    shared = "users/owner/plan/project/shared.mp4"
+    private = "users/owner/plan/project/private.mp4"
+    unrelated_prefix = "jobs/job-1/"
+
+    paths, prefixes = _exclude_referenced_project_storage(
+        [shared, private],
+        ["users/owner/plan/project/", unrelated_prefix],
+        {shared},
+    )
+
+    assert paths == [private]
+    assert prefixes == [unrelated_prefix]
+
+
+def _delete_thread(*, user_id: uuid.UUID, thread_id: uuid.UUID, **overrides) -> SimpleNamespace:
+    values = {
+        "id": thread_id,
+        "creator_id": user_id,
+        "revision": 4,
+        "status": "active",
+        "content_plan_id": None,
+        "active_plan_item_id": None,
+        "active_job_id": None,
+        "active_creator_agent_session_id": None,
+        "state": {"media": []},
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+@pytest.mark.asyncio
+async def test_delete_rejects_a_live_signed_upload_reservation() -> None:
+    import app.routes.creation_threads as routes
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread_id = uuid.uuid4()
+    thread = _delete_thread(user_id=user.id, thread_id=thread_id)
+    reservation = SimpleNamespace(
+        creator_id=user.id,
+        object_path=_media_path(user.id, thread_id, "clip-1.mp4"),
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
+    )
+    db = Mock()
+    db.execute = AsyncMock(
+        side_effect=[
+            _delete_result(),
+            _delete_result(one=thread),
+            _delete_result(rows=[reservation]),
+        ]
+    )
+    db.commit = AsyncMock()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await routes.delete_thread(
+            _request(), str(thread_id), user, db, expected_revision=thread.revision
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == "Project has an active upload"
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_delete_manifest_keeps_expired_upload_reservation_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.routes.creation_threads as routes
+    from app.tasks.account_lifecycle import purge_job_storage
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread_id = uuid.uuid4()
+    thread = _delete_thread(user_id=user.id, thread_id=thread_id)
+    reservation_path = _media_path(user.id, thread_id, "expired-clip.mp4")
+    reservation = SimpleNamespace(
+        creator_id=user.id,
+        object_path=reservation_path,
+        expires_at=datetime.now(UTC) - timedelta(minutes=1),
+    )
+    monkeypatch.setattr(purge_job_storage, "apply_async", Mock())
+    db = Mock()
+    db.execute = AsyncMock(
+        side_effect=[
+            _delete_result(),
+            _delete_result(one=thread),
+            _delete_result(rows=[reservation]),
+            _reference_result(),
+            _reference_result(),
+            _delete_result(),
+        ]
+    )
+    db.add = Mock()
+    db.commit = AsyncMock()
+
+    response = await routes.delete_thread(
+        _request(), str(thread_id), user, db, expected_revision=thread.revision
+    )
+
+    assert response.status_code == 204
+    manifests = [call.args[0] for call in db.add.call_args_list]
+    deletion = next(manifest for manifest in manifests if hasattr(manifest, "object_paths"))
+    assert reservation_path in deletion.object_paths
+    assert f"users/{user.id}/creation-threads/{thread_id}/" in deletion.object_prefixes
+
+
+@pytest.mark.asyncio
+async def test_delete_rejects_active_training_retention() -> None:
+    import app.routes.creation_threads as routes
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread_id, plan_id, item_id, artifact_id = (uuid.uuid4() for _ in range(4))
+    thread = _delete_thread(
+        user_id=user.id,
+        thread_id=thread_id,
+        content_plan_id=plan_id,
+        active_plan_item_id=item_id,
+    )
+    plan = SimpleNamespace(id=plan_id, user_id=user.id, persona_id=uuid.uuid4())
+    persona = SimpleNamespace(user_id=user.id)
+    item = SimpleNamespace(id=item_id, content_plan_id=plan_id, current_job_id=None)
+    artifact = SimpleNamespace(id=artifact_id, creator_id=user.id, storage_path=None)
+    retention = SimpleNamespace(
+        artifact_id=artifact_id,
+        creator_id=user.id,
+        status="pending",
+        storage_path=f"users/{user.id}/edit-feedback/{artifact_id}/training.mp4",
+    )
+    db = Mock()
+    db.get = AsyncMock(side_effect=[plan, persona, item])
+    db.execute = AsyncMock(
+        side_effect=[
+            _delete_result(),
+            _delete_result(one=thread),
+            _delete_result(),
+            _delete_result(rows=[]),
+            _delete_result(rows=[artifact]),
+            _delete_result(rows=[retention]),
+        ]
+    )
+    db.commit = AsyncMock()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await routes.delete_thread(
+            _request(), str(thread_id), user, db, expected_revision=thread.revision
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == "Project has active artifact processing"
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_delete_manifest_includes_exact_visual_staging_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.routes.creation_threads as routes
+    from app.tasks.account_lifecycle import purge_job_storage
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread_id, plan_id, item_id = (uuid.uuid4() for _ in range(3))
+    thread = _delete_thread(
+        user_id=user.id,
+        thread_id=thread_id,
+        content_plan_id=plan_id,
+        active_plan_item_id=item_id,
+    )
+    plan = SimpleNamespace(id=plan_id, user_id=user.id, persona_id=uuid.uuid4())
+    persona = SimpleNamespace(user_id=user.id)
+    item = SimpleNamespace(
+        id=item_id,
+        content_plan_id=plan_id,
+        current_job_id=None,
+        clip_gcs_paths=[],
+        voiceover_gcs_path=None,
+    )
+    staging_path = f"dev-user/{user.id}/plan-pool-reservations/{item_id}/visual.png"
+    asset = SimpleNamespace(
+        user_id=user.id,
+        status="ready",
+        upload_expires_at=None,
+        gcs_path=staging_path,
+        preview_gcs_path=None,
+    )
+    monkeypatch.setattr(purge_job_storage, "apply_async", Mock())
+    db = Mock()
+    db.get = AsyncMock(side_effect=[plan, persona, item])
+    db.execute = AsyncMock(
+        side_effect=[
+            _delete_result(),
+            _delete_result(one=thread),
+            _delete_result(rows=[]),
+            _delete_result(rows=[asset]),
+            _delete_result(rows=[]),
+            _delete_result(rows=[]),
+            _delete_result(rows=[]),
+            _reference_result(),
+            _reference_result(),
+            _delete_result(),
+            _delete_result(),
+        ]
+    )
+    db.add = Mock()
+    db.commit = AsyncMock()
+
+    response = await routes.delete_thread(
+        _request(), str(thread_id), user, db, expected_revision=thread.revision
+    )
+
+    assert response.status_code == 204
+    manifests = [call.args[0] for call in db.add.call_args_list]
+    deletion = next(manifest for manifest in manifests if hasattr(manifest, "object_paths"))
+    assert staging_path in deletion.object_paths
+    assert f"dev-user/{user.id}/plan-pool-reservations/{item_id}/" in deletion.object_prefixes
+
+
+@pytest.mark.asyncio
+async def test_delete_rejects_active_visual_staging_reservation() -> None:
+    import app.routes.creation_threads as routes
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread_id, plan_id, item_id = (uuid.uuid4() for _ in range(3))
+    thread = _delete_thread(
+        user_id=user.id,
+        thread_id=thread_id,
+        content_plan_id=plan_id,
+        active_plan_item_id=item_id,
+    )
+    plan = SimpleNamespace(id=plan_id, user_id=user.id, persona_id=uuid.uuid4())
+    persona = SimpleNamespace(user_id=user.id)
+    item = SimpleNamespace(id=item_id, content_plan_id=plan_id, current_job_id=None)
+    asset = SimpleNamespace(
+        user_id=user.id,
+        status="preparing",
+        upload_expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        gcs_path=f"dev-user/{user.id}/plan-pool-reservations/{item_id}/visual.png",
+        preview_gcs_path=None,
+    )
+    db = Mock()
+    db.get = AsyncMock(side_effect=[plan, persona, item])
+    db.execute = AsyncMock(
+        side_effect=[
+            _delete_result(),
+            _delete_result(one=thread),
+            _delete_result(),
+            _delete_result(rows=[asset]),
+        ]
+    )
+    db.commit = AsyncMock()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await routes.delete_thread(
+            _request(), str(thread_id), user, db, expected_revision=thread.revision
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == "Project has an active upload"
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_delete_manifest_includes_edit_artifact_retention_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.routes.creation_threads as routes
+    from app.tasks.account_lifecycle import purge_job_storage
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread_id, plan_id, item_id, artifact_id = (uuid.uuid4() for _ in range(4))
+    thread = _delete_thread(
+        user_id=user.id,
+        thread_id=thread_id,
+        content_plan_id=plan_id,
+        active_plan_item_id=item_id,
+    )
+    plan = SimpleNamespace(id=plan_id, user_id=user.id, persona_id=uuid.uuid4())
+    persona = SimpleNamespace(user_id=user.id)
+    item = SimpleNamespace(
+        id=item_id,
+        content_plan_id=plan_id,
+        current_job_id=None,
+        clip_gcs_paths=[],
+        voiceover_gcs_path=None,
+    )
+    retention_path = f"users/{user.id}/edit-feedback/{artifact_id}/retained.mp4"
+    artifact = SimpleNamespace(id=artifact_id, creator_id=user.id, storage_path=None)
+    retention = SimpleNamespace(
+        artifact_id=artifact_id,
+        creator_id=user.id,
+        status="succeeded",
+        storage_path=retention_path,
+    )
+    monkeypatch.setattr(purge_job_storage, "apply_async", Mock())
+    db = Mock()
+    db.get = AsyncMock(side_effect=[plan, persona, item])
+    db.execute = AsyncMock(
+        side_effect=[
+            _delete_result(),
+            _delete_result(one=thread),
+            _delete_result(),
+            _delete_result(rows=[]),
+            _delete_result(rows=[artifact]),
+            _delete_result(rows=[retention]),
+            _delete_result(rows=[]),
+            _delete_result(rows=[]),
+            _reference_result(),
+            _reference_result(),
+            _delete_result(),
+            _delete_result(),
+        ]
+    )
+    db.add = Mock()
+    db.commit = AsyncMock()
+
+    response = await routes.delete_thread(
+        _request(), str(thread_id), user, db, expected_revision=thread.revision
+    )
+
+    assert response.status_code == 204
+    manifests = [call.args[0] for call in db.add.call_args_list]
+    deletion = next(manifest for manifest in manifests if hasattr(manifest, "object_paths"))
+    assert retention_path in deletion.object_paths
+    assert f"users/{user.id}/edit-feedback/{artifact_id}/" in deletion.object_prefixes
+
+
+@pytest.mark.asyncio
+async def test_delete_filters_exact_keys_and_project_prefixes_shared_by_external_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.routes.creation_threads as routes
+    from app.tasks.account_lifecycle import purge_job_storage
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread_id, plan_id, item_id = (uuid.uuid4() for _ in range(3))
+    thread = _delete_thread(
+        user_id=user.id,
+        thread_id=thread_id,
+        content_plan_id=plan_id,
+        active_plan_item_id=item_id,
+    )
+    plan = SimpleNamespace(id=plan_id, user_id=user.id, persona_id=uuid.uuid4())
+    persona = SimpleNamespace(user_id=user.id)
+    shared_path = f"users/{user.id}/plan/{item_id}/shared.mp4"
+    unrelated_path = f"users/{user.id}/plan/{item_id}/unrelated.mp4"
+    item = SimpleNamespace(
+        id=item_id,
+        content_plan_id=plan_id,
+        current_job_id=None,
+        clip_gcs_paths=[shared_path, unrelated_path],
+        clip_assignments=[],
+        voiceover_gcs_path=None,
+    )
+    external_job = (
+        shared_path,
+        {"clip_paths": [], "voiceover_gcs_path": None},
+    )
+    monkeypatch.setattr(purge_job_storage, "apply_async", Mock())
+    db = Mock()
+    db.get = AsyncMock(side_effect=[plan, persona, item])
+    db.execute = AsyncMock(
+        side_effect=[
+            _delete_result(),
+            _delete_result(one=thread),
+            _delete_result(),
+            _delete_result(rows=[]),
+            _delete_result(rows=[]),
+            _delete_result(rows=[]),
+            _delete_result(rows=[]),
+            _reference_result([external_job]),
+            _reference_result(),
+            _delete_result(),
+            _delete_result(),
+        ]
+    )
+    db.add = Mock()
+    db.commit = AsyncMock()
+
+    response = await routes.delete_thread(
+        _request(), str(thread_id), user, db, expected_revision=thread.revision
+    )
+
+    assert response.status_code == 204
+    manifests = [call.args[0] for call in db.add.call_args_list]
+    deletion = next(manifest for manifest in manifests if hasattr(manifest, "object_paths"))
+    assert shared_path not in deletion.object_paths
+    assert unrelated_path in deletion.object_paths
+    assert f"users/{user.id}/plan/{item_id}/" not in deletion.object_prefixes
+    assert f"users/{user.id}/creation-threads/{thread_id}/" in deletion.object_prefixes
+
+
+@pytest.mark.asyncio
+async def test_delete_filters_exact_keys_and_project_prefixes_shared_by_external_item(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.routes.creation_threads as routes
+    from app.tasks.account_lifecycle import purge_job_storage
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread_id, plan_id, item_id = (uuid.uuid4() for _ in range(3))
+    thread = _delete_thread(
+        user_id=user.id,
+        thread_id=thread_id,
+        content_plan_id=plan_id,
+        active_plan_item_id=item_id,
+    )
+    plan = SimpleNamespace(id=plan_id, user_id=user.id, persona_id=uuid.uuid4())
+    persona = SimpleNamespace(user_id=user.id)
+    shared_path = f"users/{user.id}/plan/{item_id}/shared.mp4"
+    unrelated_path = f"users/{user.id}/plan/{item_id}/unrelated.mp4"
+    item = SimpleNamespace(
+        id=item_id,
+        content_plan_id=plan_id,
+        current_job_id=None,
+        clip_gcs_paths=[shared_path, unrelated_path],
+        clip_assignments=[],
+        voiceover_gcs_path=None,
+    )
+    external_item = ([shared_path], [], None)
+    monkeypatch.setattr(purge_job_storage, "apply_async", Mock())
+    db = Mock()
+    db.get = AsyncMock(side_effect=[plan, persona, item])
+    db.execute = AsyncMock(
+        side_effect=[
+            _delete_result(),
+            _delete_result(one=thread),
+            _delete_result(),
+            _delete_result(rows=[]),
+            _delete_result(rows=[]),
+            _delete_result(rows=[]),
+            _delete_result(rows=[]),
+            _reference_result(),
+            _reference_result([external_item]),
+            _delete_result(),
+            _delete_result(),
+        ]
+    )
+    db.add = Mock()
+    db.commit = AsyncMock()
+
+    response = await routes.delete_thread(
+        _request(), str(thread_id), user, db, expected_revision=thread.revision
+    )
+
+    assert response.status_code == 204
+    manifests = [call.args[0] for call in db.add.call_args_list]
+    deletion = next(manifest for manifest in manifests if hasattr(manifest, "object_paths"))
+    assert shared_path not in deletion.object_paths
+    assert unrelated_path in deletion.object_paths
+    assert f"users/{user.id}/plan/{item_id}/" not in deletion.object_prefixes
+    assert f"dev-user/{user.id}/plan-pool-reservations/{item_id}/" in deletion.object_prefixes
+
+
+@pytest.mark.asyncio
+async def test_delete_fails_closed_for_corrupted_current_job_linkage() -> None:
+    import app.routes.creation_threads as routes
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread_id, plan_id, item_id, job_id, other_item_id = (uuid.uuid4() for _ in range(5))
+    thread = _delete_thread(
+        user_id=user.id,
+        thread_id=thread_id,
+        content_plan_id=plan_id,
+        active_plan_item_id=item_id,
+    )
+    plan = SimpleNamespace(id=plan_id, user_id=user.id, persona_id=uuid.uuid4())
+    persona = SimpleNamespace(user_id=user.id)
+    item = SimpleNamespace(id=item_id, content_plan_id=plan_id, current_job_id=job_id)
+    corrupted_job = SimpleNamespace(
+        id=job_id,
+        user_id=user.id,
+        content_plan_item_id=other_item_id,
+        status="succeeded",
+    )
+    db = Mock()
+    db.get = AsyncMock(side_effect=[plan, persona, item])
+    db.execute = AsyncMock(
+        side_effect=[
+            _delete_result(),
+            _delete_result(one=thread),
+            _delete_result(),
+            _delete_result(rows=[]),
+            _delete_result(rows=[]),
+            _delete_result(rows=[corrupted_job]),
+        ]
+    )
+    db.commit = AsyncMock()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await routes.delete_thread(
+            _request(), str(thread_id), user, db, expected_revision=thread.revision
+        )
+
+    assert exc_info.value.status_code == 404
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_delete_tombstone_is_idempotent_for_same_owner() -> None:
+    import app.routes.creation_threads as routes
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread_id = uuid.uuid4()
+    tombstone = SimpleNamespace(thread_id=thread_id, creator_id=user.id)
+    result = Mock()
+    result.scalar_one_or_none.return_value = tombstone
+    db = Mock()
+    db.execute = AsyncMock(return_value=result)
+
+    response = await routes.delete_thread(
+        _request(),
+        str(thread_id),
+        user,
+        db,
+        expected_revision=999,
+    )
+
+    assert response.status_code == 204
+    db.execute.assert_awaited_once()
+
+
+def test_project_delete_manifest_preserves_plan_shared_input_keys() -> None:
+    user_id = uuid.uuid4()
+    item_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    shared = f"users/{user_id}/plan/{item_id}/clip.mp4"
+    output = f"jobs/{job_id}/render.mp4"
+    job = SimpleNamespace(
+        id=job_id,
+        user_id=user_id,
+        raw_storage_path=shared,
+        assembly_plan={"output_path": output},
+        all_candidates={"clip_paths": [shared, output]},
+    )
+
+    paths = _project_job_storage_paths(
+        job,
+        [],
+        [],
+        user_id=user_id,
+        thread_id=uuid.uuid4(),
+        item_id=item_id,
+    )
+
+    assert shared not in paths
+    assert output in paths
+
+
+@pytest.mark.asyncio
 async def test_upload_reservation_is_signed_for_opaque_media_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -711,6 +1440,11 @@ async def test_upload_reservation_is_signed_for_opaque_media_id(
     monkeypatch.setattr(
         routes.storage, "signed_put_url", lambda path, content_type, size: "signed:" + path
     )
+    reservations = Mock()
+    reservations.scalars.return_value.all.return_value = []
+    db = Mock()
+    db.execute = AsyncMock(return_value=reservations)
+    db.commit = AsyncMock()
     result = await upload_urls(
         _request(),
         str(thread.id),
@@ -725,7 +1459,7 @@ async def test_upload_reservation_is_signed_for_opaque_media_id(
             ]
         ),
         user,
-        Mock(),
+        db,
     )
     assert result[0].media_id == "clip-1.mp4"
     assert result[0].gcs_path.endswith("/clip-1.mp4")
@@ -753,6 +1487,11 @@ async def test_upload_reservation_preserves_canonical_render_suffix(
     monkeypatch.setattr(
         routes.storage, "signed_put_url", lambda path, media_type, size: "signed:" + path
     )
+    reservations = Mock()
+    reservations.scalars.return_value.all.return_value = []
+    db = Mock()
+    db.execute = AsyncMock(return_value=reservations)
+    db.commit = AsyncMock()
     result = await upload_urls(
         _request(),
         str(thread.id),
@@ -767,7 +1506,7 @@ async def test_upload_reservation_preserves_canonical_render_suffix(
             ]
         ),
         user,
-        Mock(),
+        db,
     )
     assert result[0].media_id.endswith(expected_suffix)
     assert result[0].gcs_path.endswith(expected_suffix)
@@ -870,6 +1609,7 @@ async def test_attach_persists_stable_mixed_media_manifest(
     )
     db = Mock()
     db.get = AsyncMock(return_value=item)
+    db.execute = AsyncMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
     media = [MediaInput(media_id="clip-1.mp4", kind="video", filename="clip.mp4")]
@@ -884,6 +1624,63 @@ async def test_attach_persists_stable_mixed_media_manifest(
         ("clip-1.mp4", "video"),
     ]
     assert item.clip_gcs_paths == [_media_path(user.id, thread.id, "clip-1.mp4")]
+
+
+@pytest.mark.asyncio
+async def test_attach_consumes_the_matching_upload_reservation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Attaching a verified object must remove its durable PUT reservation."""
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        status="active",
+        revision=0,
+        active_job_id=None,
+        active_plan_item_id=uuid.uuid4(),
+        state={"media": [], "media_count": 0},
+    )
+    item = SimpleNamespace(
+        clip_gcs_paths=[],
+        clip_assignments=[],
+        voiceover_gcs_path=None,
+        audio_mode="kria",
+    )
+    import app.routes.creation_threads as routes
+
+    monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
+    monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
+    monkeypatch.setattr(routes, "_append", AsyncMock())
+    monkeypatch.setattr(routes, "_response", AsyncMock(return_value=thread))
+    monkeypatch.setattr(
+        routes.storage,
+        "object_metadata",
+        lambda _path: SimpleNamespace(size=100, content_type="video/mp4"),
+    )
+    db = Mock()
+    db.get = AsyncMock(return_value=item)
+    db.execute = AsyncMock()
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+
+    await routes.attach_media(
+        _request(),
+        str(thread.id),
+        AttachBody(
+            media=[MediaInput(media_id="clip-1.mp4", kind="video")],
+            client_event_id="attach-reservation",
+            expected_revision=0,
+        ),
+        user,
+        db,
+    )
+
+    delete_statement = db.execute.await_args_list[-1].args[0]
+    assert "creation_thread_upload_reservations" in str(delete_statement)
+    assert "thread_id" in str(delete_statement)
+    assert "media_id" in str(delete_statement)
 
 
 @pytest.mark.asyncio
@@ -918,6 +1715,7 @@ async def test_attach_persists_one_valid_voiceover(monkeypatch: pytest.MonkeyPat
     )
     db = Mock()
     db.get = AsyncMock(return_value=item)
+    db.execute = AsyncMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
 
@@ -1866,6 +2664,52 @@ async def test_list_returns_lightweight_project_summaries() -> None:
     assert len(output) == 1
     assert output[0].events == []
     assert output[0].job is None
+
+
+@pytest.mark.asyncio
+async def test_list_summaries_batch_active_job_and_agent_status_for_safe_actions() -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    job_id, session_id = uuid.uuid4(), uuid.uuid4()
+    thread = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        title="Rendering harbor",
+        status="active",
+        revision=3,
+        state={},
+        content_plan_id=None,
+        active_plan_item_id=None,
+        active_creator_agent_session_id=session_id,
+        active_job_id=job_id,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    job = SimpleNamespace(
+        id=job_id,
+        status="processing",
+        current_phase="assemble",
+        failure_reason=None,
+        assembly_plan={"variants": [{"variant_id": "one", "render_status": "rendering"}]},
+    )
+    thread_result = Mock()
+    thread_result.scalars.return_value.all.return_value = [thread]
+    job_result = Mock()
+    job_result.scalars.return_value.all.return_value = [job]
+    session_result = Mock()
+    session_result.all.return_value = [(session_id, "rendering")]
+    db = Mock()
+    db.execute = AsyncMock(side_effect=[thread_result, job_result, session_result])
+
+    output = await list_threads(user, db, include_archived=False, limit=20)
+
+    assert output[0].job == {
+        "id": str(job_id),
+        "status": "processing",
+        "current_phase": "assemble",
+        "failure_reason": None,
+        "variants": [{"variant_id": "one", "render_status": "rendering"}],
+    }
+    assert output[0].creator_agent == {"status": "rendering"}
 
 
 @pytest.mark.asyncio

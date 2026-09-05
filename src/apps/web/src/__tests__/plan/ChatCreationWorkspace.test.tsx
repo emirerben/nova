@@ -1,17 +1,21 @@
 import { StrictMode } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
-import ChatCreationWorkspace from "@/app/plan/_components/workspace/ChatCreationWorkspace";
+import ChatCreationWorkspace, { renderPhaseLabel } from "@/app/plan/_components/workspace/ChatCreationWorkspace";
 import {
   applyCreationAction,
   CreationThreadError,
   createCreationThread,
+  deleteCreationThread,
   getCreationCapabilities,
   listCreationThreads,
   refreshCreationThread,
+  renameCreationThread,
   sendCreationMessage,
 } from "@/lib/creation-thread-api";
 import { listMyJobs } from "@/lib/me-api";
+import { getPlanItemFresh } from "@/lib/plan-api";
 
 const mockReplace = jest.fn();
 jest.mock("next/navigation", () => ({
@@ -25,11 +29,15 @@ jest.mock("next-auth/react", () => ({
 }));
 jest.mock("@/lib/creation-thread-api", () => {
   const actual = jest.requireActual("@/lib/creation-thread-api");
-  return { ...actual, applyCreationAction: jest.fn(), createCreationThread: jest.fn(), getCreationCapabilities: jest.fn(), listCreationThreads: jest.fn(), refreshCreationThread: jest.fn(), sendCreationMessage: jest.fn() };
+  return { ...actual, applyCreationAction: jest.fn(), createCreationThread: jest.fn(), deleteCreationThread: jest.fn(), getCreationCapabilities: jest.fn(), listCreationThreads: jest.fn(), refreshCreationThread: jest.fn(), renameCreationThread: jest.fn(), sendCreationMessage: jest.fn() };
 });
 jest.mock("@/lib/me-api", () => {
   const actual = jest.requireActual("@/lib/me-api");
   return { ...actual, listMyJobs: jest.fn() };
+});
+jest.mock("@/lib/plan-api", () => {
+  const actual = jest.requireActual("@/lib/plan-api");
+  return { ...actual, getPlanItemFresh: jest.fn() };
 });
 jest.mock("@/app/plan/_components/AssetPool", () => ({
   __esModule: true,
@@ -45,20 +53,37 @@ const baseThread = {
 };
 
 describe("ChatCreationWorkspace", () => {
+  it.each([
+    ["queued", "Your edit is queued…"],
+    ["analyze_clips", "Finding the story in your footage…"],
+    ["match_song", "Choosing the right sound…"],
+    ["render_variants", "Rendering the edit variations…"],
+    ["finalize", "Polishing the final cut…"],
+  ])("maps %s to friendly render copy", (phase, label) => {
+    expect(renderPhaseLabel(phase)).toBe(label);
+    expect(renderPhaseLabel("unknown_phase")).toBe("Building your cut…");
+  });
+
   beforeEach(() => {
     jest.mocked(listCreationThreads).mockReset();
     jest.mocked(createCreationThread).mockReset();
     jest.mocked(refreshCreationThread).mockReset();
     jest.mocked(sendCreationMessage).mockReset();
+    jest.mocked(deleteCreationThread).mockReset();
+    jest.mocked(renameCreationThread).mockReset();
     jest.mocked(applyCreationAction).mockReset();
     jest.mocked(getCreationCapabilities).mockReset();
     jest.mocked(listMyJobs).mockReset();
+    jest.mocked(getPlanItemFresh).mockReset();
     mockReplace.mockReset();
     jest.mocked(listCreationThreads).mockResolvedValue([baseThread]);
     jest.mocked(createCreationThread).mockResolvedValue(baseThread);
     jest.mocked(refreshCreationThread).mockResolvedValue(baseThread);
     jest.mocked(sendCreationMessage).mockResolvedValue(baseThread);
+    jest.mocked(deleteCreationThread).mockResolvedValue();
+    jest.mocked(renameCreationThread).mockImplementation(async (thread, title) => ({ ...thread, title }));
     jest.mocked(listMyJobs).mockResolvedValue({ jobs: [], next_cursor: null });
+    jest.mocked(getPlanItemFresh).mockRejectedValue(new Error("No linked plan item"));
     jest.mocked(getCreationCapabilities).mockResolvedValue({
       formats: [
         { id: "montage", edit_format: "montage" },
@@ -82,11 +107,98 @@ describe("ChatCreationWorkspace", () => {
 
   it("renders the three Paper formats and keeps the project rail", async () => {
     render(<ChatCreationWorkspace />);
-    expect(await screen.findByRole("heading", { name: "Create with Kria" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Untitled video" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /Montage Music-led/ })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /Narrated Let/ })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /Talking to camera A clean/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New video" })).toBeInTheDocument();
+  });
+
+  it("keeps the sidebar toggle left of the title and animates the collapsed spacing", async () => {
+    const user = userEvent.setup();
+    render(<ChatCreationWorkspace />);
+
+    const title = await screen.findByTestId("project-title");
+    const sidebarShell = screen.getByTestId("project-sidebar-shell");
+    const sidebarPanel = screen.getByTestId("project-sidebar-panel");
+    const toggleSlot = screen.getByTestId("sidebar-toggle-slot");
+
+    expect(sidebarShell).toHaveAttribute("data-state", "open");
+    expect(sidebarShell).toHaveClass("md:w-[260px]", "motion-safe:transition-[width]");
+    await user.click(screen.getByRole("button", { name: "Hide project sidebar" }));
+
+    const showSidebar = await screen.findByRole("button", { name: "Show project sidebar" });
+    expect(screen.getByTestId("workspace-header-start").firstElementChild).toBe(toggleSlot);
+    expect(toggleSlot.nextElementSibling).toContainElement(title);
+    expect(showSidebar.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(toggleSlot).toHaveAttribute("data-state", "open");
+    expect(toggleSlot).toHaveClass("md:mr-3", "md:grid-cols-[2.75rem]");
+    expect(sidebarShell).toHaveAttribute("data-state", "closed");
+    expect(sidebarShell).toHaveAttribute("inert", "");
+    expect(sidebarShell).toHaveClass("md:w-0", "motion-safe:duration-[var(--t-accordion-dur)]");
+    expect(sidebarPanel).toHaveClass("md:-translate-x-full", "md:opacity-0");
+
+    await user.click(showSidebar);
+    expect(toggleSlot).toHaveAttribute("data-state", "closed");
+    expect(toggleSlot).toHaveClass("md:mr-0", "md:grid-cols-[0rem]");
+    expect(sidebarShell).toHaveAttribute("data-state", "open");
+    expect(sidebarShell).not.toHaveAttribute("inert");
+    expect(sidebarShell).toHaveClass("md:w-[260px]");
+    expect(sidebarPanel).toHaveClass("md:translate-x-0", "md:opacity-100");
+  });
+
+  it("hydrates real production videos in a read-only preview without creating or mutating projects", async () => {
+    const user = userEvent.setup();
+    jest.mocked(listCreationThreads).mockRejectedValueOnce(new CreationThreadError("Unavailable", 404));
+    jest.mocked(getCreationCapabilities).mockRejectedValueOnce(new CreationThreadError("Unavailable", 404));
+    jest.mocked(listMyJobs).mockResolvedValueOnce({
+      next_cursor: null,
+      jobs: [{
+        id: "prod-job-1",
+        mode: "generative",
+        status: "ready",
+        raw_status: "done",
+        output_url: "https://storage.example/real-video.mp4",
+        poster_url: "https://storage.example/real-poster.jpg",
+        poster_identity: "generative-jobs/prod-job-1/video.mp4",
+        poster_status: "ready",
+        download_url: "https://storage.example/real-video-download.mp4",
+        output_variant_id: "original_text",
+        tiktok_publishable: true,
+        tiktok_publication: null,
+        created_at: "2026-08-30T10:00:00Z",
+        content_plan_item_id: "prod-item-1",
+        feedback_signal: null,
+      }],
+    });
+    jest.mocked(getPlanItemFresh).mockResolvedValueOnce({
+      id: "prod-item-1",
+      idea: "A real weekend in Corfu",
+      edit_format: "montage",
+    } as Awaited<ReturnType<typeof getPlanItemFresh>>);
+
+    render(<ChatCreationWorkspace productionPreview />);
+
+    expect(await screen.findByTestId("production-preview-banner")).toHaveTextContent("Live production data");
+    expect(await screen.findByRole("heading", { name: "A real weekend in Corfu" })).toBeInTheDocument();
+    expect(screen.getByTestId("production-video-player")).toHaveAttribute(
+      "src",
+      "https://storage.example/real-video.mp4",
+    );
+    expect(screen.getByRole("textbox", { name: "Message Kria" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "New video" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Project actions for A real weekend in Corfu" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename project (preview)" }));
+    const nameInput = screen.getByRole("textbox", { name: "Project name" });
+    await user.clear(nameInput);
+    await user.type(nameInput, "Corfu preview name");
+    await user.click(screen.getByRole("button", { name: "Save name" }));
+    expect(await screen.findByRole("heading", { name: "Corfu preview name" })).toBeInTheDocument();
+
+    expect(createCreationThread).not.toHaveBeenCalled();
+    expect(renameCreationThread).not.toHaveBeenCalled();
+    expect(deleteCreationThread).not.toHaveBeenCalled();
   });
 
   it("uses PlanItem clip guidance and keeps supporting visuals separate", async () => {
@@ -198,7 +310,7 @@ describe("ChatCreationWorkspace", () => {
   it("creates only one empty project when Strict Mode replays the boot effect", async () => {
     jest.mocked(listCreationThreads).mockResolvedValue([]);
     render(<StrictMode><ChatCreationWorkspace /></StrictMode>);
-    await screen.findByRole("heading", { name: "Create with Kria" });
+    await screen.findByRole("heading", { name: "Untitled video" });
     await waitFor(() => expect(createCreationThread).toHaveBeenCalledTimes(1));
   });
 
@@ -295,7 +407,7 @@ describe("ChatCreationWorkspace", () => {
   });
 
   it("does not carry an offline message into a different project", async () => {
-    const second = { ...baseThread, id: "thread-2" };
+    const second = { ...baseThread, id: "thread-2", title: "Second project" };
     jest.mocked(listCreationThreads).mockResolvedValueOnce([baseThread, second]);
     jest.mocked(refreshCreationThread).mockImplementation((id) => Promise.resolve(id === "thread-2" ? second : baseThread));
     Object.defineProperty(navigator, "onLine", { configurable: true, value: false });
@@ -304,7 +416,7 @@ describe("ChatCreationWorkspace", () => {
     fireEvent.change(composer, { target: { value: "Only for the first project" } });
     fireEvent.keyDown(composer, { key: "Enter" });
     await screen.findByRole("alert");
-    fireEvent.click(screen.getAllByRole("button", { name: /Untitled video/ })[1]);
+    fireEvent.click((await screen.findAllByRole("button", { name: /Second project/ }))[0]);
     await waitFor(() => expect(composer).toHaveValue(""));
     Object.defineProperty(navigator, "onLine", { configurable: true, value: true });
     fireEvent(window, new Event("online"));
@@ -349,6 +461,198 @@ describe("ChatCreationWorkspace", () => {
       "retry",
       { variant_id: "song_text" },
     ));
+  });
+
+  it("keeps one lifecycle card and leaves later chat below the finished result", async () => {
+    const ready = {
+      ...baseThread,
+      title: "Harbor arrival",
+      state: { edit_format: "montage", media_count: 1 },
+      active_plan_item_id: "item-1",
+      active_job_id: "job-1",
+      job: { id: "job-1", status: "variants_ready", variants: [
+        { variant_id: "original_text", render_status: "ready", output_url: "/cut.mp4" },
+      ] },
+      events: [
+        { id: "started", sequence: 0, revision: 1, role: "system" as const, event_type: "generation_started", content: null, payload: null, created_at: "2026-01-01T00:00:00Z" },
+        { id: "ready", sequence: 1, revision: 2, role: "system" as const, event_type: "generation_ready", content: null, payload: null, created_at: "2026-01-01T00:00:01Z" },
+        { id: "later", sequence: 2, revision: 3, role: "user" as const, event_type: "user_message", content: "Make the ending quieter", payload: null, created_at: "2026-01-01T00:00:02Z" },
+      ],
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([ready]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(ready);
+    render(<ChatCreationWorkspace />);
+
+    const result = await screen.findByText("Your cut is ready");
+    const later = screen.getByText("Make the ending quieter");
+    expect(screen.queryByText("Kria is building your cut…")).not.toBeInTheDocument();
+    expect(result.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("shows partial render counts while keeping ready variants playable", async () => {
+    const rendering = {
+      ...baseThread,
+      title: "Harbor arrival",
+      state: { edit_format: "montage", media_count: 1 },
+      active_plan_item_id: "item-1",
+      active_job_id: "job-1",
+      job: { id: "job-1", status: "variants_rendering", current_phase: "render_variants", variants: [
+        { variant_id: "original_text", render_status: "ready", output_url: "/cut.mp4" },
+        { variant_id: "song_text", render_status: "rendering", output_url: null },
+      ] },
+      events: [],
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([rendering]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(rendering);
+    render(<ChatCreationWorkspace />);
+
+    expect(await screen.findByText("1 of 2 ready")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Play Original Text" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/Rendering the edit variations.*1 of 2 ready/)).toBeInTheDocument();
+  });
+
+  it("shows retry recovery for a failed render with no newer confirmation", async () => {
+    const failed = {
+      ...baseThread,
+      state: { format: "montage", edit_format: "montage", media: [{ media_id: "m1" }], media_count: 1 },
+      active_plan_item_id: "item-1",
+      active_job_id: "job-failed",
+      job: { id: "job-failed", status: "processing_failed", failure_reason: "Render failed", variants: [] },
+      events: [],
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([failed]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(failed);
+    render(<ChatCreationWorkspace />);
+
+    expect(await screen.findByRole("button", { name: "Retry render" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Adjust direction" })).toBeInTheDocument();
+  });
+
+  it("keeps state-only lifecycle cards before later user turns", async () => {
+    const stateOnly = {
+      ...baseThread,
+      state: { format: "montage", edit_format: "montage", media_count: 1 },
+      active_plan_item_id: "item-1",
+      active_job_id: "job-ready",
+      job: { id: "job-ready", status: "variants_ready", variants: [
+        { variant_id: "original_text", render_status: "ready", output_url: "/cut.mp4" },
+      ] },
+      events: [{ id: "later", sequence: 7, revision: 7, role: "user" as const, event_type: "user_message", content: "Make the ending quieter", payload: null, created_at: "2026-01-01T00:00:07Z" }],
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([stateOnly]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(stateOnly);
+    render(<ChatCreationWorkspace />);
+
+    const result = await screen.findByText("Your cut is ready");
+    const later = screen.getByText("Make the ending quieter");
+    expect(result.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("allows a completed project to be deleted and opens the next project", async () => {
+    const user = userEvent.setup();
+    const completed = {
+      ...baseThread,
+      title: "Finished harbor",
+      active_job_id: "job-1",
+      job: { id: "job-1", status: "variants_ready", variants: [
+        { variant_id: "original_text", render_status: "ready", output_url: "/cut.mp4" },
+      ] },
+    };
+    const next = { ...baseThread, id: "thread-2", title: "Next project" };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([completed, next]);
+    jest.mocked(refreshCreationThread).mockImplementation((id) => Promise.resolve(id === next.id ? next : completed));
+    render(<ChatCreationWorkspace />);
+
+    await user.click(await screen.findByRole("button", { name: "Project actions for Finished harbor" }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete project" }));
+    expect(screen.getByText(/chat, its uploads, edit data, and completed Kria videos/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Delete project" }));
+    await waitFor(() => expect(deleteCreationThread).toHaveBeenCalledWith(completed));
+    expect(mockReplace).toHaveBeenCalledWith("/plan/thread-2", { scroll: false });
+  });
+
+  it("keeps delete disabled for a project whose summary still has an active job", async () => {
+    const active = {
+      ...baseThread,
+      id: "active-thread",
+      title: "Rendering harbor",
+      active_job_id: "job-active",
+      job: { id: "job-active", status: "processing", variants: [] },
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([active]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(active);
+    render(<ChatCreationWorkspace />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Project actions for Rendering harbor" }));
+    const deleteItem = screen.getByRole("menuitem", { name: "Delete after rendering" });
+    expect(deleteItem).toHaveAttribute("aria-disabled", "true");
+    expect(deleteItem).toHaveAttribute("title", "Finish the active render before deleting this project.");
+  });
+
+  it("shows a local error when rename loses a revision race", async () => {
+    const user = userEvent.setup();
+    const titled = { ...baseThread, title: "Old name" };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([titled]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(titled);
+    jest.mocked(renameCreationThread).mockRejectedValueOnce(new CreationThreadError("stale", 409));
+    render(<ChatCreationWorkspace />);
+
+    await user.click(await screen.findByRole("button", { name: "Project actions for Old name" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename project" }));
+    const input = screen.getByRole("textbox", { name: "Project name" });
+    await user.clear(input);
+    await user.type(input, "New name");
+    await user.click(screen.getByRole("button", { name: "Save name" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("couldn’t rename that project");
+  });
+
+  it("shows a local error when delete loses a revision race", async () => {
+    const user = userEvent.setup();
+    const titled = { ...baseThread, title: "Old name" };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([titled]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(titled);
+    jest.mocked(deleteCreationThread).mockRejectedValueOnce(new CreationThreadError("stale", 409));
+    render(<ChatCreationWorkspace />);
+
+    await user.click(await screen.findByRole("button", { name: "Project actions for Old name" }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete project" }));
+    await user.click(screen.getByRole("button", { name: "Delete project" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("couldn’t delete that project");
+  });
+
+  it("renames a project without sending the name as creative direction", async () => {
+    const user = userEvent.setup();
+    const titled = { ...baseThread, title: "Old name" };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([titled]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(titled);
+    render(<ChatCreationWorkspace />);
+
+    await user.click(await screen.findByRole("button", { name: "Project actions for Old name" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename project" }));
+    const input = screen.getByRole("textbox", { name: "Project name" });
+    await user.clear(input);
+    await user.type(input, "Harbor arrival");
+    await user.click(screen.getByRole("button", { name: "Save name" }));
+    await waitFor(() => expect(renameCreationThread).toHaveBeenCalledWith(titled, "Harbor arrival"));
+    expect(sendCreationMessage).not.toHaveBeenCalled();
+  });
+
+  it("prevents empty names and caps project names at 120 characters", async () => {
+    const user = userEvent.setup();
+    const titled = { ...baseThread, title: "Old name" };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([titled]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(titled);
+    render(<ChatCreationWorkspace />);
+
+    await user.click(await screen.findByRole("button", { name: "Project actions for Old name" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename project" }));
+    const input = screen.getByRole("textbox", { name: "Project name" });
+    const save = screen.getByRole("button", { name: "Save name" });
+    await user.clear(input);
+    expect(save).toBeDisabled();
+    await user.type(input, "x".repeat(121));
+    expect(input).toHaveValue("x".repeat(120));
+    expect(save).toBeEnabled();
   });
 
   it("keeps the last good cut playable when an editor replacement fails", async () => {
@@ -834,7 +1138,7 @@ describe("ChatCreationWorkspace", () => {
         }));
       });
 
-      expect(await screen.findByText("Kria is building your first cut…")).toBeInTheDocument();
+      expect(await screen.findByText("Kria is building your cut…")).toBeInTheDocument();
       await waitFor(() => expect(refreshCreationThread).toHaveBeenCalledTimes(2));
 
       await act(async () => { resolveFresh(rendering); });
@@ -950,7 +1254,23 @@ describe("ChatCreationWorkspace", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Gallery" }));
     expect(mockReplace).toHaveBeenCalledWith("/plan?view=gallery", { scroll: false });
     fireEvent.click(await screen.findByRole("button", { name: "Back to chat" }));
-    expect(mockReplace).toHaveBeenLastCalledWith("/plan", { scroll: false });
+    expect(mockReplace).toHaveBeenLastCalledWith("/plan/thread-1", { scroll: false });
+  });
+
+  it("hydrates the exact project from a canonical project URL", async () => {
+    const titled = { ...baseThread, id: "thread-2", title: "Harbor arrival" };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([baseThread, titled]);
+    jest.mocked(refreshCreationThread).mockImplementation((id) => Promise.resolve(id === titled.id ? titled : baseThread));
+    render(<ChatCreationWorkspace initialThreadId="thread-2" />);
+    expect(await screen.findByRole("button", { name: "Project actions for Harbor arrival" })).toBeInTheDocument();
+    expect(refreshCreationThread).toHaveBeenCalledWith("thread-2");
+  });
+
+  it("shows a deterministic unavailable state when a canonical project is missing", async () => {
+    jest.mocked(refreshCreationThread).mockRejectedValueOnce(new CreationThreadError("missing", 404));
+    render(<ChatCreationWorkspace initialThreadId="deleted-project" />);
+    expect(await screen.findByRole("heading", { name: "Project unavailable" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Back to projects" })).toHaveAttribute("href", "/plan");
   });
 
   it("prevents project switches while a chat mutation is in flight", async () => {
