@@ -15,6 +15,7 @@ import {
   sendCreationMessage,
 } from "@/lib/creation-thread-api";
 import { listMyJobs } from "@/lib/me-api";
+import { getPlanItemFresh } from "@/lib/plan-api";
 
 const mockReplace = jest.fn();
 jest.mock("next/navigation", () => ({
@@ -33,6 +34,10 @@ jest.mock("@/lib/creation-thread-api", () => {
 jest.mock("@/lib/me-api", () => {
   const actual = jest.requireActual("@/lib/me-api");
   return { ...actual, listMyJobs: jest.fn() };
+});
+jest.mock("@/lib/plan-api", () => {
+  const actual = jest.requireActual("@/lib/plan-api");
+  return { ...actual, getPlanItemFresh: jest.fn() };
 });
 jest.mock("@/app/plan/_components/AssetPool", () => ({
   __esModule: true,
@@ -69,6 +74,7 @@ describe("ChatCreationWorkspace", () => {
     jest.mocked(applyCreationAction).mockReset();
     jest.mocked(getCreationCapabilities).mockReset();
     jest.mocked(listMyJobs).mockReset();
+    jest.mocked(getPlanItemFresh).mockReset();
     mockReplace.mockReset();
     jest.mocked(listCreationThreads).mockResolvedValue([baseThread]);
     jest.mocked(createCreationThread).mockResolvedValue(baseThread);
@@ -77,6 +83,7 @@ describe("ChatCreationWorkspace", () => {
     jest.mocked(deleteCreationThread).mockResolvedValue();
     jest.mocked(renameCreationThread).mockImplementation(async (thread, title) => ({ ...thread, title }));
     jest.mocked(listMyJobs).mockResolvedValue({ jobs: [], next_cursor: null });
+    jest.mocked(getPlanItemFresh).mockRejectedValue(new Error("No linked plan item"));
     jest.mocked(getCreationCapabilities).mockResolvedValue({
       formats: [
         { id: "montage", edit_format: "montage" },
@@ -105,6 +112,60 @@ describe("ChatCreationWorkspace", () => {
     expect(await screen.findByRole("button", { name: /Narrated Let/ })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /Talking to camera A clean/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New video" })).toBeInTheDocument();
+  });
+
+  it("hydrates real production videos in a read-only preview without creating or mutating projects", async () => {
+    const user = userEvent.setup();
+    jest.mocked(listCreationThreads).mockRejectedValueOnce(new CreationThreadError("Unavailable", 404));
+    jest.mocked(getCreationCapabilities).mockRejectedValueOnce(new CreationThreadError("Unavailable", 404));
+    jest.mocked(listMyJobs).mockResolvedValueOnce({
+      next_cursor: null,
+      jobs: [{
+        id: "prod-job-1",
+        mode: "generative",
+        status: "ready",
+        raw_status: "done",
+        output_url: "https://storage.example/real-video.mp4",
+        poster_url: "https://storage.example/real-poster.jpg",
+        poster_identity: "generative-jobs/prod-job-1/video.mp4",
+        poster_status: "ready",
+        download_url: "https://storage.example/real-video-download.mp4",
+        output_variant_id: "original_text",
+        tiktok_publishable: true,
+        tiktok_publication: null,
+        created_at: "2026-08-30T10:00:00Z",
+        content_plan_item_id: "prod-item-1",
+        feedback_signal: null,
+      }],
+    });
+    jest.mocked(getPlanItemFresh).mockResolvedValueOnce({
+      id: "prod-item-1",
+      idea: "A real weekend in Corfu",
+      edit_format: "montage",
+    } as Awaited<ReturnType<typeof getPlanItemFresh>>);
+
+    render(<ChatCreationWorkspace productionPreview />);
+
+    expect(await screen.findByTestId("production-preview-banner")).toHaveTextContent("Live production data");
+    expect(await screen.findByRole("heading", { name: "A real weekend in Corfu" })).toBeInTheDocument();
+    expect(screen.getByTestId("production-video-player")).toHaveAttribute(
+      "src",
+      "https://storage.example/real-video.mp4",
+    );
+    expect(screen.getByRole("textbox", { name: "Message Kria" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "New video" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Project actions for A real weekend in Corfu" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename project (preview)" }));
+    const nameInput = screen.getByRole("textbox", { name: "Project name" });
+    await user.clear(nameInput);
+    await user.type(nameInput, "Corfu preview name");
+    await user.click(screen.getByRole("button", { name: "Save name" }));
+    expect(await screen.findByRole("heading", { name: "Corfu preview name" })).toBeInTheDocument();
+
+    expect(createCreationThread).not.toHaveBeenCalled();
+    expect(renameCreationThread).not.toHaveBeenCalled();
+    expect(deleteCreationThread).not.toHaveBeenCalled();
   });
 
   it("uses PlanItem clip guidance and keeps supporting visuals separate", async () => {
