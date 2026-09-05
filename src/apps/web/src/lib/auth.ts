@@ -30,10 +30,14 @@ if (DEV_LOGIN_ENABLED && process.env.NODE_ENV === "production") {
 const providers: NextAuthOptions["providers"] = [
   GoogleProvider({
     // GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are the canonical names.
-    // The old YOUTUBE_CLIENT_ID/SECRET still work as a fallback so
-    // existing deployments don't break until secrets are renamed.
+    // The old YOUTUBE_* pair and public client ID still work as fallbacks so
+    // existing preview deployments don't break until env vars are renamed.
+    // OAuth client IDs are public identifiers; secrets never use a public var.
     clientId:
-      process.env.GOOGLE_CLIENT_ID ?? process.env.YOUTUBE_CLIENT_ID ?? "",
+      process.env.GOOGLE_CLIENT_ID ??
+      process.env.YOUTUBE_CLIENT_ID ??
+      process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ??
+      "",
     clientSecret:
       process.env.GOOGLE_CLIENT_SECRET ?? process.env.YOUTUBE_CLIENT_SECRET ?? "",
     authorization: {
