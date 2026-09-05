@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.60.0.2] — 2026-09-05
+
+### Fixed
+- **Preparing a revision no longer returns an error after saving it.** The creation thread is reloaded after the nested Creator flow commits, so server-managed timestamps serialize safely instead of triggering a post-commit `MissingGreenlet` response.
+
 ## [0.60.0.1] — 2026-09-05
 
 ### Fixed
