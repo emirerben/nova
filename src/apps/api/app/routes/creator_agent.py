@@ -1120,10 +1120,16 @@ async def _run_planning_turn(
     session_id: uuid.UUID,
     expected_revision: int,
     user_message: str,
+    allow_chat: bool = False,
 ) -> CreatorSessionResponse:
     item, plan, persona = await _owned_context(db, item_id, user.id)
     session = await _load_session(db, session_id, user.id, item.id)
-    manifest, media_context = await resolve_item_creator_context(db, item, persona=persona)
+    manifest, media_context = await resolve_item_creator_context(
+        db,
+        item,
+        persona=persona,
+        guided_capability_enabled=(True if allow_chat else None),
+    )
     if not manifest.capabilities["dispatch_render"].available:
         locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
         if locked.revision != expected_revision:
@@ -1734,6 +1740,7 @@ async def start_creator_session_controller(
         session_id=session.id,
         expected_revision=expected_revision,
         user_message=body.message.strip(),
+        allow_chat=allow_chat,
     )
 
 
@@ -1797,6 +1804,7 @@ async def creator_session_turn_controller(
         session_id=session.id,
         expected_revision=expected_revision,
         user_message=body.message.strip(),
+        allow_chat=allow_chat,
     )
 
 
@@ -2050,7 +2058,12 @@ async def confirm_creator_plan_controller(
                 raise HTTPException(
                     status_code=409, detail="Wait for the current render before confirming"
                 )
-        manifest, _media_context = await resolve_item_creator_context(db, item, persona=persona)
+        manifest, _media_context = await resolve_item_creator_context(
+            db,
+            item,
+            persona=persona,
+            guided_capability_enabled=(True if allow_chat else None),
+        )
         if manifest.manifest_hash != session.manifest_hash:
             raise HTTPException(
                 status_code=409, detail="Footage or capabilities changed; review the plan again"

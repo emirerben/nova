@@ -207,6 +207,7 @@ async def resolve_item_creator_context(
     item: PlanItem,
     *,
     persona: Persona,
+    guided_capability_enabled: bool | None = None,
 ) -> tuple[Any, list[dict[str, Any]]]:
     """Build an opaque manifest plus bounded footage evidence for the model."""
 
@@ -393,10 +394,13 @@ async def resolve_item_creator_context(
         catalog=catalog,
         current_edit=current_edit,
         has_ready_variant=has_ready_variant,
-        # Chat creation owns a trusted internal guided-proposal path. Keep the
-        # public Plan proposal API independently dark behind its rollout flag,
-        # but always advertise the canonical Creator's controller path here.
-        guided_capability_enabled=True,
+        # Chat creation owns a trusted internal guided-proposal path, while
+        # direct PlanItem routes retain their independent rollout gate.
+        guided_capability_enabled=(
+            settings.guided_edit_capability_enabled
+            if guided_capability_enabled is None
+            else guided_capability_enabled
+        ),
     )
     return manifest, media_context
 
