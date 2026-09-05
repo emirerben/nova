@@ -28,6 +28,26 @@ The supported Paper formats are:
 Availability is supplied by the server. The client must present an unavailable
 format's alternatives instead of inventing a local capability.
 
+## Project routes and lifecycle API
+
+`/plan/{thread_id}` is the canonical browser URL. `/plan` resumes the most
+recent project or creates one and redirects to that URL. A missing, deleted, or
+foreign project renders **Project unavailable** and must never silently select a
+different project.
+
+The same-origin web proxy exposes the lifecycle API under
+`/api/plan/creation-threads`:
+
+| Action | Request | Success | Expected failures |
+| --- | --- | --- | --- |
+| Rename | `PATCH /{thread_id}` with `title`, `expected_revision`, and `client_event_id` | Updated thread and revision | `404` for missing/foreign IDs; `409` for a stale revision |
+| Delete | `DELETE /{thread_id}?expected_revision=N` | `204 No Content` | `404` for missing/foreign IDs; `409` for a stale revision or active agent, render, upload mutation, or TikTok publication |
+
+Titles are trimmed, non-empty, and at most 120 characters. A first prompt may
+replace only the default **Untitled video** title; an explicit rename must never
+change the creative prompt. Retrying a deletion by the same owner succeeds when
+the deletion tombstone exists, while foreign and unknown IDs remain `404`.
+
 ## Layout contract
 
 On desktop, `/plan` owns `h-dvh` and `min-h-0`: the 260px project rail is fixed,
@@ -149,8 +169,11 @@ cd src/apps/web && npm run e2e -- --project=chat-first-creation --workers=1
 Before production approval, share the Preview URL and verify the ready
 deep-link, post-clip order, each thinking tier, render and partial progress,
 collapsed sidebar, rename dialog, delete confirmation, and deleted state from
-that URL. Confirm the API/web build versions in the review note; only then
-proceed with the normal pre-merge and deploy gates.
+that URL. The delete confirmation must say that the chat, uploads, edit data,
+and completed Kria videos are permanently removed and cannot be recovered, and
+that already-published TikTok posts remain on TikTok. Confirm the API/web build
+versions in the review note; only then proceed with the normal pre-merge and
+deploy gates.
 
 The real local smoke flow is: create a thread, attach mixed footage, send a
 creative-direction message, confirm the proposal, wait for the ready Job, play
