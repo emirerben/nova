@@ -2,6 +2,7 @@
 
 import { Suspense } from "react";
 import { useSession } from "next-auth/react";
+import { useSearchParams } from "next/navigation";
 
 import SignInPrompt from "./_components/SignInPrompt";
 import { LightShell } from "./_components/ui/LightShell";
@@ -17,13 +18,16 @@ export default function PlanPage() {
 
 function PlanPageInner() {
   const { status } = useSession();
+  const searchParams = useSearchParams();
+  const query = searchParams.toString();
+  const callbackUrl = query ? `/plan?${query}` : "/plan";
 
   if (status === "loading") return <PlanLoadingState />;
 
   if (status === "unauthenticated") {
     return (
       <LightShell>
-        <SignInPrompt callbackUrl="/plan" />
+        <SignInPrompt callbackUrl={callbackUrl} />
       </LightShell>
     );
   }

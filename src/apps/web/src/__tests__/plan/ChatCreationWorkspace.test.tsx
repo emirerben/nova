@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 import ChatCreationWorkspace, { renderPhaseLabel } from "@/app/plan/_components/workspace/ChatCreationWorkspace";
+import { POSTER_RECOVERY_DELAYS_MS } from "@/hooks/useLibraryPosterRecovery";
 import {
   applyCreationAction,
   CreationThreadError,
@@ -14,13 +15,14 @@ import {
   renameCreationThread,
   sendCreationMessage,
 } from "@/lib/creation-thread-api";
-import { listMyJobs } from "@/lib/me-api";
+import { listMyJobs, refreshMyJobPosters, type LibraryJob } from "@/lib/me-api";
 import { getPlanItemFresh } from "@/lib/plan-api";
 
 const mockReplace = jest.fn();
+let mockSearchParams = new URLSearchParams();
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ replace: mockReplace }),
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => mockSearchParams,
 }));
 
 jest.mock("next-auth/react", () => ({
@@ -33,7 +35,7 @@ jest.mock("@/lib/creation-thread-api", () => {
 });
 jest.mock("@/lib/me-api", () => {
   const actual = jest.requireActual("@/lib/me-api");
-  return { ...actual, listMyJobs: jest.fn() };
+  return { ...actual, listMyJobs: jest.fn(), refreshMyJobPosters: jest.fn() };
 });
 jest.mock("@/lib/plan-api", () => {
   const actual = jest.requireActual("@/lib/plan-api");
@@ -74,8 +76,10 @@ describe("ChatCreationWorkspace", () => {
     jest.mocked(applyCreationAction).mockReset();
     jest.mocked(getCreationCapabilities).mockReset();
     jest.mocked(listMyJobs).mockReset();
+    jest.mocked(refreshMyJobPosters).mockReset();
     jest.mocked(getPlanItemFresh).mockReset();
     mockReplace.mockReset();
+    mockSearchParams = new URLSearchParams();
     jest.mocked(listCreationThreads).mockResolvedValue([baseThread]);
     jest.mocked(createCreationThread).mockResolvedValue(baseThread);
     jest.mocked(refreshCreationThread).mockResolvedValue(baseThread);
@@ -83,6 +87,7 @@ describe("ChatCreationWorkspace", () => {
     jest.mocked(deleteCreationThread).mockResolvedValue();
     jest.mocked(renameCreationThread).mockImplementation(async (thread, title) => ({ ...thread, title }));
     jest.mocked(listMyJobs).mockResolvedValue({ jobs: [], next_cursor: null });
+    jest.mocked(refreshMyJobPosters).mockResolvedValue({ jobs: [] });
     jest.mocked(getPlanItemFresh).mockRejectedValue(new Error("No linked plan item"));
     jest.mocked(getCreationCapabilities).mockResolvedValue({
       formats: [
@@ -199,6 +204,53 @@ describe("ChatCreationWorkspace", () => {
     expect(createCreationThread).not.toHaveBeenCalled();
     expect(renameCreationThread).not.toHaveBeenCalled();
     expect(deleteCreationThread).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh posters while the production preview Gallery is open", async () => {
+    jest.useFakeTimers();
+    const posterlessProductionJob: LibraryJob = {
+      id: "prod-job-posterless",
+      mode: "generative",
+      status: "ready",
+      raw_status: "done",
+      output_url: "https://storage.example/real-video.mp4",
+      poster_url: null,
+      poster_identity: "generative-jobs/prod-job-posterless/video.mp4",
+      poster_status: "repairing",
+      output_variant_id: "original_text",
+      tiktok_publishable: false,
+      tiktok_publication: null,
+      created_at: "2026-08-30T10:00:00Z",
+      content_plan_item_id: null,
+      feedback_signal: null,
+    };
+    jest.mocked(listCreationThreads).mockRejectedValueOnce(new CreationThreadError("Unavailable", 404));
+    jest.mocked(getCreationCapabilities).mockRejectedValueOnce(new CreationThreadError("Unavailable", 404));
+    jest.mocked(listMyJobs).mockResolvedValueOnce({
+      next_cursor: null,
+      jobs: [posterlessProductionJob],
+    });
+
+    mockSearchParams = new URLSearchParams("view=gallery");
+    try {
+      render(<ChatCreationWorkspace productionPreview />);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(screen.getByRole("heading", { name: "Gallery" })).toBeInTheDocument();
+
+      await act(async () => {
+        jest.advanceTimersByTime(POSTER_RECOVERY_DELAYS_MS[0] + 1);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(refreshMyJobPosters).not.toHaveBeenCalled();
+    } finally {
+      mockSearchParams = new URLSearchParams();
+      jest.useRealTimers();
+    }
   });
 
   it("uses PlanItem clip guidance and keeps supporting visuals separate", async () => {
@@ -1258,6 +1310,17 @@ describe("ChatCreationWorkspace", () => {
     expect(mockReplace).toHaveBeenCalledWith("/plan?view=gallery", { scroll: false });
     fireEvent.click(await screen.findByRole("button", { name: "Back to chat" }));
     expect(mockReplace).toHaveBeenLastCalledWith("/plan/thread-1", { scroll: false });
+  });
+
+  it("preserves an initial Gallery deep link when hydrating the project URL", async () => {
+    mockSearchParams = new URLSearchParams("view=gallery");
+    render(<ChatCreationWorkspace />);
+
+    expect(await screen.findByRole("heading", { name: "Gallery" })).toBeInTheDocument();
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith(
+      "/plan/thread-1?view=gallery",
+      { scroll: false },
+    ));
   });
 
   it("hydrates the exact project from a canonical project URL", async () => {

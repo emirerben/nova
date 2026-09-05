@@ -5,6 +5,11 @@ import PlanPage from "@/app/plan/page";
 
 let authStatus: "loading" | "authenticated" | "unauthenticated" =
   "authenticated";
+let mockSearchParams = new URLSearchParams();
+
+jest.mock("next/navigation", () => ({
+  useSearchParams: () => mockSearchParams,
+}));
 
 jest.mock("next-auth/react", () => ({
   useSession: () => ({ status: authStatus }),
@@ -17,10 +22,19 @@ jest.mock("@/app/plan/_components/workspace/ChatCreationWorkspace", () => ({
 
 jest.mock("@/app/plan/_components/SignInPrompt", () => ({
   __esModule: true,
-  default: () => <div>Sign in to Kria</div>,
+  default: ({ callbackUrl }: { callbackUrl: string }) => (
+    <div>
+      <span>Sign in to Kria</span>
+      <output data-testid="sign-in-callback">{callbackUrl}</output>
+    </div>
+  ),
 }));
 
 describe("PlanPage canonical experience", () => {
+  beforeEach(() => {
+    mockSearchParams = new URLSearchParams();
+  });
+
   it("always renders chat-first creation for an authenticated account", () => {
     authStatus = "authenticated";
     render(<PlanPage />);
@@ -34,6 +48,16 @@ describe("PlanPage canonical experience", () => {
     expect(
       screen.queryByText("Canonical creation chat"),
     ).not.toBeInTheDocument();
+  });
+
+  it("preserves the Gallery deep link through sign-in", () => {
+    authStatus = "unauthenticated";
+    mockSearchParams = new URLSearchParams("view=gallery");
+    render(<PlanPage />);
+
+    expect(screen.getByTestId("sign-in-callback")).toHaveTextContent(
+      "/plan?view=gallery",
+    );
   });
 
   it("shows indeterminate progress and does not mount the API workspace before session resolution", () => {

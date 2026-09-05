@@ -115,4 +115,49 @@ describe("useLibraryPosterRecovery", () => {
       ["job-1"],
     );
   });
+
+  it("does not immediately refresh repeatedly for one stable poster identity", async () => {
+    const existing = job({
+      poster_url: "https://example.test/expired.jpg",
+      poster_status: "ready",
+    });
+    jest.mocked(refreshMyJobPosters).mockResolvedValue({
+      jobs: [
+        {
+          id: existing.id,
+          poster_url: existing.poster_url ?? null,
+          poster_identity: existing.poster_identity ?? null,
+          poster_status: "ready",
+        },
+      ],
+    });
+    const { result } = renderHook(() => useHarness([existing]));
+
+    act(() =>
+      result.current.recovery.onPosterLoadError(
+        existing.id,
+        existing.poster_identity ?? null,
+      ),
+    );
+    await act(async () => {
+      jest.advanceTimersByTime(POSTER_ERROR_REFRESH_DEBOUNCE_MS);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(refreshMyJobPosters).toHaveBeenCalledTimes(1);
+
+    act(() =>
+      result.current.recovery.onPosterLoadError(
+        existing.id,
+        existing.poster_identity ?? null,
+      ),
+    );
+    await act(async () => {
+      jest.advanceTimersByTime(POSTER_ERROR_REFRESH_DEBOUNCE_MS);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(refreshMyJobPosters).toHaveBeenCalledTimes(1);
+  });
 });

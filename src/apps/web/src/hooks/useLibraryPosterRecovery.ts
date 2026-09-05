@@ -95,6 +95,7 @@ export function useLibraryPosterRecovery({
   const jobsRef = useRef(jobs);
   const statesRef = useRef(new Map<string, RecoveryState>());
   const failedKeysRef = useRef(new Set<string>());
+  const errorRefreshKeysRef = useRef(new Set<string>());
   const pendingBrokenRef = useRef(new Map<string, string>());
   const brokenRefreshDueAtRef = useRef<number | null>(null);
   const requestIdRef = useRef(0);
@@ -164,9 +165,16 @@ export function useLibraryPosterRecovery({
         !jobsRef.current.some((job) => libraryPosterRecoveryKey(job) === key)
       ) {
         failedKeysRef.current.delete(key);
+        errorRefreshKeysRef.current.delete(key);
         pendingBrokenRef.current.delete(key);
       }
     }
+    for (const key of errorRefreshKeysRef.current) {
+      if (!jobsRef.current.some((job) => libraryPosterRecoveryKey(job) === key))
+        errorRefreshKeysRef.current.delete(key);
+    }
+    if (pendingBrokenRef.current.size === 0)
+      brokenRefreshDueAtRef.current = null;
     for (const job of activeJobs) {
       const key = libraryPosterRecoveryKey(job);
       if (!statesRef.current.has(key)) {
@@ -332,6 +340,8 @@ export function useLibraryPosterRecovery({
     (jobId: string, identity: string | null) => {
       const key = posterKey(jobId, identity);
       failedKeysRef.current.add(key);
+      if (errorRefreshKeysRef.current.has(key)) return;
+      errorRefreshKeysRef.current.add(key);
       pendingBrokenRef.current.set(key, jobId);
       brokenRefreshDueAtRef.current ??=
         Date.now() + POSTER_ERROR_REFRESH_DEBOUNCE_MS;
@@ -344,9 +354,11 @@ export function useLibraryPosterRecovery({
     (jobId: string, identity: string | null) => {
       const key = posterKey(jobId, identity);
       const removedFailure = failedKeysRef.current.delete(key);
+      const removedErrorRefresh = errorRefreshKeysRef.current.delete(key);
       const removedPending = pendingBrokenRef.current.delete(key);
       const removedState = statesRef.current.delete(key);
-      const changed = removedFailure || removedPending || removedState;
+      const changed =
+        removedFailure || removedErrorRefresh || removedPending || removedState;
       if (!changed) return;
       if (pendingBrokenRef.current.size === 0)
         brokenRefreshDueAtRef.current = null;

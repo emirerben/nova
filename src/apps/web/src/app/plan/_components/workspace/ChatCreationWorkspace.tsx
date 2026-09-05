@@ -389,7 +389,7 @@ export default function ChatCreationWorkspace({
   const [availableFormats, setAvailableFormats] = useState<CreationFormat[]>(["montage", "narrated_planned", "subtitled"]);
   const [capabilities, setCapabilities] = useState<Awaited<ReturnType<typeof getCreationCapabilities>>>(() => ({ formats: [] }));
   const posterRecovery = useLibraryPosterRecovery({
-    enabled: galleryOpen,
+    enabled: galleryOpen && !productionPreview,
     jobs: galleryJobs,
     setJobs: setGalleryJobs,
   });
@@ -549,7 +549,12 @@ export default function ChatCreationWorkspace({
         : summary ? await refreshCreationThread(summary.id) : await createCreationThread();
       latestAcceptedThreadSequenceRef.current = requestSequence;
       activateThread(next);
-      if (!requestedId) router.replace(`/plan/${next.id}`, { scroll: false });
+      if (!requestedId) {
+        const destination = galleryOpen
+          ? `/plan/${next.id}?view=gallery`
+          : `/plan/${next.id}`;
+        router.replace(destination, { scroll: false });
+      }
       if (!current && !listed.some((item) => item.id === next.id)) setProjects((items) => [next, ...items]);
     } catch (cause) {
       if (initialThreadId && cause instanceof CreationThreadError && cause.status === 404) {
@@ -560,7 +565,7 @@ export default function ChatCreationWorkspace({
       }
       setError("I couldn’t open this creation chat. Check your connection and try again.");
     }
-  }, [activateThread, initialThreadId, productionPreview, router, thread]);
+  }, [activateThread, galleryOpen, initialThreadId, productionPreview, router, thread]);
 
   useEffect(() => {
     // React Strict Mode replays effects in local development. Keep the initial
