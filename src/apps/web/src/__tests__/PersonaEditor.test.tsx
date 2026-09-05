@@ -89,10 +89,8 @@ describe("PersonaEditor — reveal moves the CTA, and changes nothing else", () 
 });
 
 /**
- * A failed generation leaves a truthy-but-empty persona (only footage_type_bias),
- * which OnboardingShell still routes into the reveal. Observed live: status
- * "failed", persona {footage_type_bias: [...]}, summary null. The recovery path
- * is the existing morphing retune button ("Generate persona").
+ * A failed generation can leave a truthy-but-empty persona (only
+ * footage_type_bias). The profile route must still offer its recovery action.
  */
 describe("PersonaEditor — reveal with an empty persona", () => {
   const empty = { footage_type_bias: ["talking_head"] } as unknown as PersonaContent;

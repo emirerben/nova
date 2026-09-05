@@ -7,15 +7,11 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi import HTTPException
-from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
 from app.agents._schemas.persona import Persona as PersonaSchema
-from app.auth import get_current_user
 from app.config import settings
-from app.database import get_db
-from app.main import app
 from app.models import ContentPlan, CreatorAgentSession, Job, PlanItem
 from app.models import Persona as PersonaRow
 from app.routes.creation_threads import (
@@ -29,7 +25,6 @@ from app.routes.creation_threads import (
     _available_formats,
     _client_id,
     _creator_agent_projection,
-    _enabled,
     _format_clip_limit,
     _is_status_only_message,
     _load,
@@ -188,99 +183,13 @@ def test_attach_batch_rejects_duplicate_media_and_multiple_voiceovers() -> None:
         )
 
 
-def test_chat_first_backend_and_creator_defaults_are_on() -> None:
-    assert settings.creation_threads_enabled is True
-
-
-def test_chat_first_account_allowlist_matches_exact_email_or_user_id(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    user = SimpleNamespace(id=uuid.uuid4(), email="Creator@Example.com")
-    monkeypatch.setattr(settings, "creation_threads_enabled", True)
-
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "creator@example.com")
-    _enabled(user)
-
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", str(user.id))
-    _enabled(user)
-
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "other@example.com")
-    with pytest.raises(HTTPException) as exc:
-        _enabled(user)
-    assert exc.value.status_code == 404
-
-
-def test_chat_first_account_allowlist_never_uses_partial_matches(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    user = SimpleNamespace(id=uuid.uuid4(), email="creator@example.com")
-    monkeypatch.setattr(settings, "creation_threads_enabled", True)
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "creator@example.com.evil")
-
-    with pytest.raises(HTTPException) as exc:
-        _enabled(user)
-    assert exc.value.status_code == 404
-
-
-@pytest.mark.parametrize("cohort", ["", "  ", "*"])
-def test_chat_first_empty_or_wildcard_allowlist_preserves_global_rollout(
-    monkeypatch: pytest.MonkeyPatch, cohort: str
-) -> None:
-    user = SimpleNamespace(id=uuid.uuid4(), email="creator@example.com")
-    monkeypatch.setattr(settings, "creation_threads_enabled", True)
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", cohort)
-    _enabled(user)
-
-
-def test_chat_first_global_kill_switch_wins_over_account_allowlist(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    user = SimpleNamespace(id=uuid.uuid4(), email="creator@example.com")
-    monkeypatch.setattr(settings, "creation_threads_enabled", False)
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "*")
-
-    with pytest.raises(HTTPException) as exc:
-        _enabled(user)
-    assert exc.value.status_code == 404
-
-
 @pytest.mark.asyncio
-async def test_capabilities_returns_fallback_404_outside_account_cohort(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("email", ["creator@example.com", "new-account@example.com"])
+async def test_capabilities_are_available_to_every_authenticated_account(
+    email: str,
 ) -> None:
-    user = SimpleNamespace(id=uuid.uuid4(), email="not-launched@example.com")
-    monkeypatch.setattr(settings, "creation_threads_enabled", True)
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "launched@example.com")
-
-    with pytest.raises(HTTPException) as exc:
-        await capabilities(user)
-    assert exc.value.status_code == 404
-    assert exc.value.detail == "Creation chat unavailable"
-
-
-def test_account_rollout_gate_runs_before_creation_route_side_effects(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    user = SimpleNamespace(id=uuid.uuid4(), email="not-launched@example.com")
-
-    async def current_user_override() -> object:
-        return user
-
-    async def forbidden_db_override():
-        raise AssertionError("a denied account must not open a route database dependency")
-        yield  # pragma: no cover
-
-    monkeypatch.setattr(settings, "creation_threads_enabled", True)
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "launched@example.com")
-    app.dependency_overrides[get_current_user] = current_user_override
-    app.dependency_overrides[get_db] = forbidden_db_override
-    try:
-        client = TestClient(app, raise_server_exceptions=False)
-        assert client.get("/creation-threads/capabilities").status_code == 404
-        assert client.post("/creation-threads", json={}).status_code == 404
-    finally:
-        app.dependency_overrides.pop(get_current_user, None)
-        app.dependency_overrides.pop(get_db, None)
+    manifest = await capabilities(SimpleNamespace(id=uuid.uuid4(), email=email))
+    assert [item["id"] for item in manifest["formats"]]
 
 
 def test_creator_agent_projection_omits_executable_commands() -> None:

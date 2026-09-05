@@ -191,13 +191,10 @@ describe("VariantRenderCard tone contract", () => {
   });
 });
 
-// ── EditPayoff tone contract (T6) ───────────────────────────────────────────
-// Verify PayoffField and PhaseChipRow receive tone="light" in EditPayoff.
-// We test the sub-components directly to avoid mocking the generative fetch hook.
+// ── Light progress tone contract (T6) ───────────────────────────────────────
 
-describe("EditPayoff sub-component tone pins", () => {
-  it("test_payoff_field_light_in_edit_payoff: PayoffField light mode renders zinc-300 border (not zinc-800)", () => {
-    // EditPayoff passes tone="light" to PayoffField — pin via direct render.
+describe("Light progress sub-component tone pins", () => {
+  it("test_payoff_field_light_mode_renders_zinc_300_border_not_zinc_800", () => {
     const { container } = render(
       <PayoffField variants={[]} renderCard={() => null} tone="light" />
     );
@@ -210,8 +207,7 @@ describe("EditPayoff sub-component tone pins", () => {
     ).toBe(true);
   });
 
-  it("test_progress_theater_light_in_edit_payoff: PhaseChipRow light mode renders cream fade mask", () => {
-    // EditPayoff passes tone="light" to ProgressTheater → PhaseChipRow.
+  it("test_progress_theater_light_mode_renders_cream_fade_mask", () => {
     const { container } = render(
       <PhaseChipRow
         phases={["analyze", "render"]}

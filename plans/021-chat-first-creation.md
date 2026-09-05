@@ -1,6 +1,6 @@
 # Kria Chat-First Creation
 
-Status: approved for implementation
+Status: implemented; rollout gates and legacy fallback retired
 
 ## Outcome
 
@@ -9,8 +9,9 @@ conversation with Kria that accepts footage, proposes creative direction, asks
 for explicit confirmation, renders through Nova's existing pipeline, and keeps
 the existing editor available beside the conversation.
 
-The former plan home remains only as a kill-switch fallback. Legacy entry URLs
-redirect to the equivalent `/plan` chat or gallery state.
+The former plan home and onboarding funnel are removed. Legacy entry URLs
+redirect to the equivalent `/plan` chat or gallery state, and rollback is a
+deployment revert rather than a second product experience.
 
 ## Architecture
 
@@ -80,13 +81,12 @@ prepare action. In-flight output is never silently mutated.
   the existing PlanItem Visuals pool.
 - Server capabilities expose exactly Montage (`montage`, Classic default),
   Narrated (`narrated_planned`), and Talking to camera (`subtitled`).
-- `CREATION_THREADS_ENABLED` defaults on. A disabled route returns 404.
+- Creation-thread routes are authenticated and available to every account.
 
 ## Frontend Contract
 
-- `/plan` attempts chat-first capability before loading legacy persona/plan
-  state. Only an API 404 selects the legacy fallback. Network and 5xx failures
-  stay visible and recoverable.
+- `/plan` renders chat-first creation for every authenticated account. API
+  failures stay visible and recoverable inside the same workspace.
 - Desktop owns `h-dvh`: 260px project rail, full pre-render conversation, then
   a 420px chat rail with remaining width for the embedded editor. Only transcript
   and editor panes scroll.
@@ -100,7 +100,7 @@ prepare action. In-flight output is never silently mutated.
   mode forces the full overlay editor; direct editor breakpoints do not change.
 - `/plan/new`, `/create`, `/create/manual`, `/library`, and `/generative` redirect
   to `/plan` chat/gallery state. Persisted backend contracts remain supported.
-- `NEXT_PUBLIC_CHAT_FIRST_CREATION_ENABLED` defaults on.
+- There is no frontend rollout gate or alternate signed-in `/plan` experience.
 
 ## Failure Handling
 

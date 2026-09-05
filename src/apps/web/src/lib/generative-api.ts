@@ -295,7 +295,7 @@ const STUCK_RENDER_CEILING_MS = 30 * 60 * 1000;
  *     was just dispatched and the stamp has not been read back yet).
  *
  * Single source of truth for all three ProgressTheater pollers — the item page,
- * the public generative page, and the onboarding EditPayoff panel. They each used
+ * historical creation surfaces. They each used
  * to hand-roll this and drifted.
  */
 export function isGenerativeJobSettled(

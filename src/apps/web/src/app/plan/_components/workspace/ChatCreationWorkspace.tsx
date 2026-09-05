@@ -28,7 +28,6 @@ import {
   creationVariantPlayable,
   type CreationFormat, type CreationThread,
 } from "@/lib/creation-thread-api";
-import { setChatFirstFallback } from "@/lib/chat-first";
 import { cn } from "@/lib/cn";
 import { listMyJobs, type LibraryJob } from "@/lib/me-api";
 import LibraryTile from "@/components/library/LibraryTile";
@@ -119,11 +118,7 @@ function variantLabel(variantId: string | undefined): string {
   return (variantId ?? "Cut").replaceAll("_", " ").replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
-export interface ChatCreationWorkspaceProps {
-  onLegacyFallback?: () => void;
-}
-
-export default function ChatCreationWorkspace({ onLegacyFallback }: ChatCreationWorkspaceProps) {
+export default function ChatCreationWorkspace() {
   const { data: session } = useSession();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -221,6 +216,7 @@ export default function ChatCreationWorkspace({ onLegacyFallback }: ChatCreation
   }, [acceptThreadResponse]);
 
   const load = useCallback(async () => {
+    setError(null);
     try {
       const [listed, capabilities] = await Promise.all([listCreationThreads(), getCreationCapabilities()]);
       setAvailableFormats(capabilities.formats.map((item) => item.edit_format));
@@ -232,19 +228,11 @@ export default function ChatCreationWorkspace({ onLegacyFallback }: ChatCreation
       const next = summary ? await refreshCreationThread(summary.id) : await createCreationThread();
       latestAcceptedThreadSequenceRef.current = requestSequence;
       activateThread(next);
-      setChatFirstFallback(false);
-      window.dispatchEvent(new CustomEvent("nova:chat-first-ready"));
       if (!current && !listed.some((item) => item.id === next.id)) setProjects((items) => [next, ...items]);
-    } catch (cause) {
-      if (cause instanceof CreationThreadError && cause.status === 404) {
-        setChatFirstFallback(true);
-        window.dispatchEvent(new CustomEvent("nova:chat-first-fallback"));
-        onLegacyFallback?.();
-        return;
-      }
+    } catch {
       setError("I couldn’t open this creation chat. Check your connection and try again.");
     }
-  }, [activateThread, onLegacyFallback, thread]);
+  }, [activateThread, thread]);
 
   useEffect(() => {
     // React Strict Mode replays effects in local development. Keep the initial
@@ -678,7 +666,8 @@ export default function ChatCreationWorkspace({ onLegacyFallback }: ChatCreation
     <section className="flex min-h-0 flex-1 flex-col" aria-label="Kria creation chat">
       <header className="flex h-14 shrink-0 items-center justify-between border-b px-4 sm:px-6"><div className="min-w-0"><h1 className="truncate text-xl font-semibold">Create with Kria</h1><p className="truncate text-xs text-muted-foreground">{format ? `${creationFormatLabel(format)} · ${clipCount} ${clipCount === 1 ? "clip" : "clips"}` : "Start with a format, then tell me what you’re imagining"}</p></div><Button type="button" variant="ghost" size="icon" className="size-11 md:hidden" aria-label="Open projects" onClick={() => setProjectsOpen(true)}><Menu /></Button></header>
       <div ref={transcriptRef} role="log" aria-label="Conversation history" aria-live="polite" aria-relevant="additions text" tabIndex={0} className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]"><div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-6 sm:px-8">
-        {!thread ? <div className="space-y-3" role="status"><div className="h-5 w-40 motion-safe:animate-pulse rounded bg-muted" /><div className="h-20 w-full motion-safe:animate-pulse rounded bg-muted" /></div> : null}
+        {!thread && !error ? <div className="space-y-3" role="status"><div className="h-5 w-40 motion-safe:animate-pulse rounded bg-muted" /><div className="h-20 w-full motion-safe:animate-pulse rounded bg-muted" /></div> : null}
+        {!thread && error ? <ChatArtifactCard title="Creation chat couldn’t load" description="Your projects are safe. Check your connection, then try again."><Button type="button" variant="outline" onClick={() => void load()}><RefreshCw /> Retry</Button></ChatArtifactCard> : null}
         {messages.map((message) => <div key={message.id} className="space-y-3"><ChatBubble role={message.role}>{message.content}</ChatBubble>{message.artifact === "format" && (!format || formatPickerOpen) ? formatArtifact : null}{message.artifact === "upload" && !thread?.active_job_id ? uploadArtifact : null}{message.artifact === "voiceover" && !thread?.active_job_id ? uploadArtifact : null}{(message.artifact === "confirmation" || (message.artifact === "revision" && !hasReady)) && canConfirmDirection ? <ChatArtifactCard badge={<Badge variant="secondary">Creative direction</Badge>} title={`${creationFormatLabel(format)} is ready to make`} description={typeof thread?.state.intent === "string" && thread.state.intent ? thread.state.intent : "I’ll find the strongest opening and shape your footage into a concise first cut."}><Button type="button" className="min-h-11 w-full" disabled={busy || clipCount === 0} onClick={() => void confirm("generate")}><Sparkles />{busy ? "Starting…" : "Create this video"}</Button></ChatArtifactCard> : null}{message.artifact === "revision" && hasReady ? <ChatArtifactCard badge={<Badge variant="secondary">Revision ready</Badge>} title="Apply this direction?" description="This creates a new generation from the finished cut."><Button type="button" className="min-h-11 w-full" disabled={busy} onClick={() => void confirm("generate", { base_generation: thread?.job?.id })}><RefreshCw /> Create revision</Button></ChatArtifactCard> : null}</div>)}
         {thread && (!format || formatPickerOpen) && !messages.some((message) => message.artifact === "format") ? formatArtifact : null}
         {thread && format && !thread.active_job_id && !messages.some((message) => message.artifact === "upload" || message.artifact === "voiceover") ? uploadArtifact : null}

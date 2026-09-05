@@ -212,14 +212,17 @@ describe("ChatCreationWorkspace", () => {
     ));
   });
 
-  it("falls back only when the capability endpoint is a deliberate 404", async () => {
+  it("keeps an unavailable API visible instead of switching experiences", async () => {
     jest.mocked(getCreationCapabilities).mockRejectedValueOnce(new CreationThreadError("off", 404));
-    const fallback = jest.fn();
-    render(<ChatCreationWorkspace onLegacyFallback={fallback} />);
-    await waitFor(() => expect(fallback).toHaveBeenCalledTimes(1));
+    render(<ChatCreationWorkspace />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn’t open/i);
     expect(getCreationCapabilities).toHaveBeenCalledTimes(1);
     expect(listCreationThreads).toHaveBeenCalledTimes(1);
     expect(createCreationThread).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(getCreationCapabilities).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole("button", { name: /Montage Music-led/ })).toBeInTheDocument();
   });
 
   it("keeps a server error visible instead of silently switching experiences", async () => {

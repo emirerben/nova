@@ -26,7 +26,6 @@ jest.mock("next-auth/react", () => ({
 }));
 
 import Header from "@/components/Header";
-import { setChatFirstFallback } from "@/lib/chat-first";
 
 function renderWithPathname(pathname: string) {
   mockPathname = pathname;
@@ -109,7 +108,8 @@ describe("Header — isLight predicate", () => {
       data: { user: { name: "Test User", email: "test@example.com", image: null } },
       status: "authenticated",
     });
-    renderWithPathname("/plan");
+    const { container } = renderWithPathname("/plan");
+    expect(container.querySelector("header")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /^plan$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /^create$/i })).not.toBeInTheDocument();
   });
@@ -174,44 +174,5 @@ describe("Header — account menu (authenticated)", () => {
     expect(screen.queryByRole("menuitem", { name: /your persona/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: /start over/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/deletes your plan/i)).not.toBeInTheDocument();
-  });
-});
-
-describe("Header — chat-first fallback lifecycle", () => {
-  const { useSession } = require("next-auth/react");
-
-  beforeEach(() => {
-    useSession.mockReturnValue({
-      data: { user: { name: "Test User", email: "test@example.com" } },
-      status: "authenticated",
-    });
-  });
-
-  it("resets a fallback after recovery and after leaving the canonical route", async () => {
-    mockPathname = "/plan";
-    const view = render(<Header />);
-    expect(view.container.querySelector("header")).not.toBeInTheDocument();
-
-    fireEvent(window, new CustomEvent("nova:chat-first-fallback"));
-    expect(view.container.querySelector("header")).toBeInTheDocument();
-
-    fireEvent(window, new CustomEvent("nova:chat-first-ready"));
-    await waitFor(() => expect(view.container.querySelector("header")).not.toBeInTheDocument());
-
-    fireEvent(window, new CustomEvent("nova:chat-first-fallback"));
-    mockPathname = "/library";
-    view.rerender(<Header />);
-    mockPathname = "/plan";
-    view.rerender(<Header />);
-    await waitFor(() => expect(view.container.querySelector("header")).not.toBeInTheDocument());
-  });
-
-  it("honors fallback state set before Header subscribes", () => {
-    // Simulates a fast 404 from the workspace during the same mount commit.
-    setChatFirstFallback(true);
-    mockPathname = "/plan";
-    const view = render(<Header />);
-    expect(view.container.querySelector("header")).toBeInTheDocument();
-    setChatFirstFallback(false);
   });
 });

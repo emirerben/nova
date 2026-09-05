@@ -730,7 +730,7 @@ export default function PlanItemPage() {
       // `isGenerativeJobSettled` owns the three-way rule (not-terminal /
       // failed-terminal wins / success-terminal yields to a genuinely live
       // variant, bounded so a dead render can't spin forever). Shared with the
-      // public generative page and the onboarding EditPayoff panel — this used to
+      // historical creation surfaces — this used to
       // be hand-rolled per surface and drifted.
       //
       // The old all-terminal check made a live re-render look terminal; it only

@@ -312,30 +312,13 @@ class CreationThreadOut(BaseModel):
     updated_at: datetime
 
 
-def _enabled(user: CurrentUser) -> None:
-    if not settings.creation_threads_enabled:
-        raise HTTPException(status_code=404, detail="Creation chat unavailable")
-    cohort = {
-        entry.strip().casefold()
-        for entry in settings.creation_threads_user_allowlist.split(",")
-        if entry.strip()
-    }
-    if not cohort or "*" in cohort:
-        return
-    identifiers = {str(user.id).casefold(), user.email.strip().casefold()}
-    if cohort.isdisjoint(identifiers):
-        # Match the global capability fallback contract: callers cannot infer
-        # whether the feature exists or which accounts are in the cohort.
-        raise HTTPException(status_code=404, detail="Creation chat unavailable")
+async def _require_creation_thread_authentication(user: CurrentUser) -> None:
+    """Require authentication on every current and future thread endpoint."""
+
+    _ = user
 
 
-async def _require_creation_thread_access(user: CurrentUser) -> None:
-    """Apply the rollout gate to every current and future thread endpoint."""
-
-    _enabled(user)
-
-
-router = APIRouter(dependencies=[Depends(_require_creation_thread_access)])
+router = APIRouter(dependencies=[Depends(_require_creation_thread_authentication)])
 
 
 def _client_id(value: str) -> str:
@@ -1420,7 +1403,7 @@ async def _agent_message(
 
 @router.get("/capabilities")
 async def capabilities(user: CurrentUser) -> dict[str, Any]:
-    _enabled(user)
+    _ = user
     return {
         "formats": [
             {
@@ -1461,7 +1444,6 @@ async def create_thread(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CreationThreadOut:
-    _enabled(user)
     _ = request
     # Serialize creation receipts before their lookup. Otherwise concurrent
     # retries can both observe no receipt and mint two projects.
@@ -1531,7 +1513,6 @@ async def list_threads(
     include_archived: bool = Query(False),
     limit: int = Query(20, ge=1, le=50),
 ) -> list[CreationThreadOut]:
-    _enabled(user)
     stmt = select(CreationThread).where(CreationThread.creator_id == user.id)
     if not include_archived:
         stmt = stmt.where(CreationThread.status == "active")
@@ -1572,7 +1553,6 @@ async def list_threads(
 async def get_thread(
     thread_id: str, user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)]
 ) -> CreationThreadOut:
-    _enabled(user)
     thread = await _load(thread_id, user, db, lock=True)
     if await _repair_missing_thread_job_projection(db, thread, user):
         await db.commit()
@@ -1612,7 +1592,6 @@ async def message_thread(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CreationThreadOut:
-    _enabled(user)
     thread = await _load(thread_id, user, db, lock=True)
     if thread.status != "active":
         raise HTTPException(status_code=409, detail="Creation thread is archived")
@@ -1773,7 +1752,6 @@ async def action_thread(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CreationThreadOut:
-    _enabled(user)
     owner_id = user.id
     thread = await _load(thread_id, user, db, lock=True, creator_id=owner_id)
     if body.action == "retry" and await _repair_missing_thread_job_projection(db, thread, user):
@@ -2064,7 +2042,6 @@ async def upload_urls(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> list[UploadTarget]:
-    _enabled(user)
     _ = request
     thread = await _load(thread_id, user, db)
     if thread.status != "active":
@@ -2142,7 +2119,6 @@ async def attach_media(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CreationThreadOut:
-    _enabled(user)
     _ = request
     thread = await _load(thread_id, user, db, lock=True)
     if thread.status != "active":
@@ -2274,7 +2250,6 @@ async def archive_thread(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CreationThreadOut:
-    _enabled(user)
     _ = request
     thread = await _load(thread_id, user, db, lock=True)
     duplicate = await _duplicate(db, thread.id, _client_id(body.client_event_id))

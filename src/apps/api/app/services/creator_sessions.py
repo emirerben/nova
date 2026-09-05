@@ -393,13 +393,10 @@ async def resolve_item_creator_context(
         catalog=catalog,
         current_edit=current_edit,
         has_ready_variant=has_ready_variant,
-        # Chat-first creation owns a trusted internal guided-proposal path.
-        # Keep the public Plan proposal API independently dark behind its
-        # rollout flag, but do not advertise a false-negative capability to
-        # the canonical Creator when its controller and execution path are on.
-        guided_capability_enabled=(
-            settings.guided_edit_capability_enabled or settings.creation_threads_enabled
-        ),
+        # Chat creation owns a trusted internal guided-proposal path. Keep the
+        # public Plan proposal API independently dark behind its rollout flag,
+        # but always advertise the canonical Creator's controller path here.
+        guided_capability_enabled=True,
     )
     return manifest, media_context
 

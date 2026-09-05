@@ -32,7 +32,7 @@ Token source: `src/apps/web/src/app/globals.css` plus `src/apps/web/src/componen
   - `text-lime-600` — large display ems (h1/h2/h3 level), non-text fills, bars, dots
   - `bg-lime-600 text-white` — solid cells
   - `border-lime-200 bg-lime-50 text-lime-800` — pills / soft cells
-  - `border-lime-600` — answer left-border (plan ChatInterview pull-quote)
+  - `border-lime-600` — answer left-border on editorial interview surfaces
   - `outline-lime-500` — selection
 - **Cards:** `rounded-2xl border border-zinc-200 shadow-sm`, fill `bg-white` or `bg-[#ffffff]`.
 - **Notice line (light surfaces):** `border-zinc-200 bg-white text-[#3f3f46]` quiet informational line — transient warnings/conflicts (e.g. "another variant is rendering") stay zinc; NO amber on light surfaces (amber is the dark-render-system accent, §9).
@@ -45,7 +45,7 @@ Token source: `src/apps/web/src/app/globals.css` plus `src/apps/web/src/componen
   **Single-primary-CTA rule on landing:** one CTA to `/plan` in its original centered position near the bottom of the edit story — never duplicate it in the header or below the story.
 - **Primary-action viewport budget:** on any flow step whose purpose is a single next action, keep that action visible in the first viewport at 1280×720 and 375×667, using realistic maximum AI-generated content length.
 - **Light-surface pinned action bar:** when adaptive pinning is needed on `#ffffff`, use `sticky bottom-0 z-10 -mx-5 border-t border-zinc-200 bg-[#ffffff] px-5 pt-4 pb-[max(16px,env(safe-area-inset-bottom))] md:mx-0 md:px-0` (bleeds to the pane edge on mobile, aligns to the text column on desktop). The bar's `border-t` is its only divider — never pair it with a `border-t` on the section that follows.
-  Apply it only when the action would otherwise fall below the fold; the existing always-on variant lives in `ChatInterview.tsx`.
+  Apply it only when the action would otherwise fall below the fold.
 - **Touch pressed state:** on touch surfaces, pressed/drag state replaces hover affordance. Active handles solidify and scale slightly; active chips go `opacity-100`; drags show a floating value readout offset from the thumb.
 - **Landing story rhythm:** `/` starts the timed composition automatically in one viewport, with no mode selector or playback control; `/auto-story` remains a compatibility route. `/?mode=scroll` retains the pinned `760svh` choreography for direct comparison without exposing it in the interface. Source footage and feature chips surround the centered screen, then travel directly into it before the three statements replace one another. The soundtrack starts muted for autoplay compatibility and makes one synchronized audible attempt at the sound-effects beat; browsers may keep it muted when policy forbids unprompted audio.
 - **Shared primitives:** `LightShell`, `LightCard`, `Eyebrow`, `InkButton`, `InfoDot`, `ConfirmDialog` in `src/apps/web/src/components/ui/` (canonical location since v0.4.87.0; `plan/_components/ui/` files are re-export stubs for backward compat). Since v0.47.0.0, `LightCard`/`InkButton`/`ConfirmDialog` are thin wrappers over the shadcn/ui primitives (`Card`/`Button`/`AlertDialog`) — see §15 for the full component-library contract; every NEW control should use the shadcn primitives directly rather than the legacy wrapper names.
@@ -80,7 +80,7 @@ Token source: `src/apps/web/src/app/template-jobs/` on origin/main (the `/templa
 - **Type scale (grep-grounded, 7× dominant):**
   - Page / section titles: `font-display text-3xl text-white`
   - State / loading titles: `font-display text-2xl`
-  - Serif accent moments: `text-lg` / `text-xl` (incl. italic `text-amber-300` in `PersonaEditor`); ChatInterview prior-answer pull-quote is `text-sm text-zinc-400 line-clamp-3` (zinc, not amber)
+  - Serif accent moments: `text-lg` / `text-xl` (incl. italic `text-amber-300` in `PersonaEditor`); editorial-interview pull-quotes use `text-sm text-zinc-400 line-clamp-3` (zinc, not amber)
   - Body: default sans; secondary: `text-sm text-zinc-400`
 - **Radius roles:** `rounded-full` = buttons/pills; `rounded-lg` = inputs/surfaces.
 - **Header:** product routes get sticky scroll-fade header (`rgba(0,0,0,0.6·progress)` + blur); landing routes (`/`, `/auto-story`) get a static, borderless white header with no anonymous auth action. Their single “Create my first edit” CTA stays centered near the bottom of the story, with Terms and Privacy beneath it rather than in the header. The light product header (all `isLight` routes) has no border and no nav link — logo left, 32px lime avatar right; the account menu (shadcn `DropdownMenu`) is name · My videos · Sign out. `/admin` hides Header entirely.
@@ -126,7 +126,7 @@ closing the §6 D17 gap per-surface. Source skill: `npx skills add Jakubantalik/
 | Token group | CSS vars | Usage |
 |---|---|---|
 | `t-modal` (#6) | `--modal-open-dur: 250ms`, `--modal-close-dur: 150ms`, `--modal-scale: 0.96`, `--modal-ease` | Pattern template for all future modals. No current consumer (last user `TemplatePreviewModal` removed with the dead `/template` route, 2026-07-11). |
-| step-slide (derived #8) | `--page-slide-dur/fade-dur: 250ms`, `--page-slide-distance: 8px`, `--page-blur: 3px`, `--page-slide/fade-ease` | `OnboardingShell` `<StepSlide key={step}>` — slide+blur entrance on each wizard step. |
+| step-slide (derived #8) | `--page-slide-dur/fade-dur: 250ms`, `--page-slide-distance: 8px`, `--page-blur: 3px`, `--page-slide/fade-ease` | Transcript helper `<StepSlide key={step}>` — slide+blur entrance on each wizard step. |
 | `t-skel` (#14) | `--reveal-dur: 400ms`, `--reveal-blur: 2px`, `--reveal-ease: ease-in-out` | `VariantRenderCard` shimmer→video cross-blur reveal when status becomes `ready`. |
 | `t-stagger` (#18) | `--stagger-dur: 500ms`, `--stagger-distance: 12px`, `--stagger-stagger: 40ms`, `--stagger-blur: 3px`, `--stagger-ease` | Legacy token with no current consumer; the previous landing hero was removed in v0.37.0.0. |
 | `t-accordion` | `--t-accordion-dur: 300ms`, `--t-accordion-ease: cubic-bezier(0.23,1,0.32,1)` | `NovaStepRow` detail-line reveal (render-progress `NovaActivityFeed`, behind `NEXT_PUBLIC_NOVA_STEPS_FEED_ENABLED`). Grid-rows `0fr → 1fr` + opacity crossfade, same duration; `prefers-reduced-motion` zeroes it. Chat compact rows (a later PR) and the plan-item `SetupPicker` disclosure rows (v0.34.0.0) reuse the same token pair so all surfaces expand identically. |
@@ -259,49 +259,14 @@ Documented here, **not fixed** (D2 decision). Canonicals are user-ratified. Norm
 | 5 | Montserrat 800 imported in `globals.css`, mapped to nothing | Removed in PR1 (light workspace reskin) | Dead import eliminated — closed |
 | 6 | Product micro-label `letter-spacing` varies: `tracking-wide` (0.025em), 0.12, 0.14, 0.18, and 0.22em | `tracking-wide` product micro-labels are dominant; the v0.37 landing story has no eyebrow labels | Normalize opportunistically |
 | 7 | `/generative` submit CTA deviates from amber-CTA rule: `rounded bg-white text-black` | Resolved v0.4.87.0 — `/generative` now uses `InkButton` (`bg-[#0c0c0e] text-white rounded-full`), same as all other light surfaces. Amber CTA exception closed. | DONE |
-| 8 | Disabled CTA state varies: `disabled:bg-zinc-700` (most plan components), `disabled:opacity-25` (`ChatInterview`) | `disabled:bg-zinc-700` is the dominant pattern | Normalize opportunistically |
+| 8 | Disabled CTA state varies across older plan components | `disabled:bg-zinc-700` is the dominant pattern | Normalize opportunistically |
 | 9 | Light editorial system covers landing + /plan flow. `/plan/items/[id]`, `/library`, `/generative` remain dark theater. | Resolved v0.4.87.0 — D20 + D21 landed. All user-facing surfaces are now light editorial. §1 standing rule updated. | DONE |
-| 10 | Workspace route layout | `/plan` = mode router (setup flow for new users; workspace for returning users); `/plan/setup` = canonical onboarding URL (redirects to `/plan`); `/plan/persona` = real persona read+edit page | PR3 ships the canonical routes and back-compat redirects. |
+| 10 | Workspace route layout | `/plan` = canonical chat-first creation workspace for every signed-in user; `/plan/items/*` = persisted item/editor compatibility; `/plan/persona` = creator-profile editor | Former plan home/onboarding UI retired. |
 | 11 | Display font: Playfair Display → Fraunces | `"Fraunces", Georgia, serif` — optical-size variable, `opsz,wght@9..144`. Rationale: 3-way user comparison (Fraunces / Space Grotesk / Instrument Serif), Fraunces chosen (D6/D8 in based-on-our-talk-deep-hopper plan). Body unchanged → Inter. **Web UI only** — burned-in video fonts (`assets/fonts/`, Skia ASS) unaffected. | DONE v0.4.106.0 |
 
 ---
 
-## §12 Legacy plan home + New-video flow (rollback-only compatibility)
-
-Rules here document the former flow retained only behind the emergency chat-first
-kill switch. The canonical surface is §2's chat-first workspace. Design source: Paper file
-"Kria Plan Redesign", page "FINAL — Basic home". The ideas ledger was removed
-2026-08-21 (tester feedback: /plan read as a content-ideas list, not an edit
-tool). New code must not add entry points to this rollback-only flow.
-
-**Note (v0.47 Kria Design System migration):** the ideas ledger and the
-"Plan this for me" panels referenced below as already-removed were removed in
-PRs #869/#871 — this section documents the post-removal shape, not a
-pending change.
-
-### Basic home (`/plan`, `WorkspaceHome.tsx`)
-- **Canvas:** `bg-white`; centered column `max-w-[900px] px-6 pt-14`, sections gap-10.
-- **Create block (leads):** Fraunces `text-[32px] font-medium` "Make a new video." + `text-sm text-[#71717a]` sub-line "Pick what kind, add your footage — Kria edits it into a post." + ink pill `min-h-12 rounded-full bg-[#0c0c0e] text-white` "New video" → `/plan/new` (full-width on mobile, hugging on sm+). One primary CTA on the page.
-- **PAST EDITS section (v0.47 Kria Design System migration):** eyebrow `text-[11px] font-semibold uppercase tracking-[0.18em] text-[#3f3f46]`; grid `grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4` of `LibraryTile` (from `components/library/`, ex-/library); cursor-driven "Load more" `<Button variant="outline" size="sm">`. A tile is poster + status + one action — nothing more:
-  - **Poster/preview:** 9:16 media, `rounded-xl`. Ready tiles show a lazy still poster and never mount an MP4 during grid load. Missing or expired poster metadata is refreshed in owner-scoped batches through `POST /me/jobs/posters/refresh`; `poster_status` keeps pinned tiles in an honest state while bounded poster and transport retries run. The retries are bounded; the Preparing state is not terminal. Running out of client retries only stops the polling — it settles the tile into a still, non-verdict state that names the available action ("Your video is ready — open it any time") and never animates work that has stopped. `unavailable` is reserved for the server's own verdict or an image load that actually failed, so the client never declares failure from silence (D19). A posterless standalone tile exposes Play; an explicit click obtains a fresh owner-scoped URL from `GET /me/jobs/{job_id}/playback-url`, mounts only that video, and shows Stop. At most one preview is active. Poster recovery never replaces a playing preview, and a rejected or 15-second stalled load releases the decoder and becomes a retryable placeholder.
-  - **Status:** absolute bottom-left over the media — `<Badge variant="lime-soft">Ready to post</Badge>` when rendered; `<Badge variant="zinc">` with a 6px lime dot "Rendering…" while in flight; a failed render swaps the whole media box for a dashed zinc tile with the job's structured failure copy (never the raw worker status) and, when the job is pinned to a plan item, "Open to retry.".
-  - **Open:** when `job.content_plan_item_id` is set, the ENTIRE tile is a `<Link href="/plan/items/{id}">`; hover/focus reveals a scrim + one white "Open" pill (`buttonVariants({variant:"outline",size:"pill"})`, no separate focusable element inside the link). A job with no plan item (legacy standalone generative rows, pre-#869/#871) has no Link or Open pill; if its poster is missing, the Play/Stop/retry preview is its one action.
-  - **Removed for good:** Download, Publish to TikTok, Add to plan, and the three feedback reactions (Like / More like this / Not for me / Add note) — `FeedbackButtons.tsx` is deleted outright. Download/Publish live only on the item page now (`me-api.ts`'s `sendFeedback`/`clearFeedback` stay for a possible future surface; nothing calls them from the product UI).
-  - If a TikTok publication exists for the job, its status block (`TikTokStatus`, inbox/public/metrics copy) still renders below the tile — informational only, not part of the hover reveal.
-- **Empty:** one quiet line `text-[15px] text-[#71717a]` "Your edits will live here." — no card, no icon.
-- **Plan generating:** quiet `text-[13px] text-[#71717a]` line under the CTA ("…you can start a video anyway"); creation never blocks on plan state.
-- **SeedUploadCard** still mounts above everything while `activation_status` ∈ {seeding, activating}.
-- **Integrations section (v0.47 Kria Design System migration):** eyebrow `text-[11px] font-semibold uppercase tracking-[0.18em] text-[#a1a1aa]` "Integrations" over a `rounded-2xl border border-zinc-200 bg-white p-4` row (`id="tiktok"` kept — TikTokReleaseRail connect/reconnect links still target `/plan#tiktok`):
-  - 44px `rounded-[12px]` ink square holding the TikTok glyph (24px, `currentColor`, `aria-hidden`) · "TikTok" + a status `Badge` — `lime-soft` "Connected" (with a "Private beta" `Tooltip` while `!audited`), `zinc` "Reconnect required", or `zinc` "Partial access" — · one-line meta (`synced 2h ago`-style, or "Post straight from Kria" when not connected).
-  - Trailing slot: `<Button variant="ink" size="sm">` Connect/Reconnect while disconnected/reconnect-required/partial, otherwise a ghost `size="icon"` overflow (lucide `MoreHorizontal`, `aria-label="More TikTok actions"`) with "Sync performance" (when `can_analyze`) and "Disconnect".
-  - Disconnect is an `AlertDialog` ("Disconnect TikTok?" / "Erases the stored TikTok credentials. Your videos stay." / confirm "Disconnect") — never `window.confirm`.
-- **Initial load:** SHIMMER tier — 4 ghost 9:16 tiles (`<Skeleton>` with the shimmer gradient class, not the default `animate-pulse`).
-
-### New-video chooser (`/plan/new`)
-- Full-screen steps on white: `Button variant="ghost" size="icon"` (44px) `×`/`‹` back + "Step N of M" muted label (montage = 3 steps: kind → style → footage; other types = 2). Fraunces `text-[30px]` titles ("What kind of video?" / "Pick a style.") + one 14px ink-3 line ("Tap one — Kria edits each kind differently." / "How your clips are arranged.").
-- Poster radio-cards reuse SetupPicker's `MediaRadioCard` + `TYPE_MEDIA`/`TYPE_COPY`/`STYLE_TILES` (montage / voiceover / talking-to-camera; talking_head stays legacy-only). Selection = lime ring + "Selected" chip, same as the item page. Style step (montage only): Classic / Masonry collage / Polaroid wall, Classic preselected. Both card scrollers carry `scrollbar-none` — no visible scrollbar, swipe/scroll still works.
-- **Tap-to-advance, no Continue button, no footer:** picking a kind card either advances to the style step (montage) or mints the item immediately (every other kind); picking a style card mints the item immediately. `saving`/`aria-disabled` on the cards (`creating || planState !== "ready"`) blocks re-entry during the mint.
-- A tap that mints the item runs `addIdea` + `updatePlanItem` (incl. `montage_preset`) → `/plan/items/{id}?setup=done`. Abandon before that final tap creates nothing. Errors are quiet zinc `role="alert"` lines; never red — the same card stays tappable to retry.
+## §12 PlanItem setup and editor compatibility
 
 ### Per-type item setup (`/plan/items/[id]`, pre-generation — Lane D declutter)
 Design source: Paper "Kria Design System", pages "P3 Item setup" + "C4 Overlays" (Sheet).

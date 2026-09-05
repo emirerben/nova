@@ -212,7 +212,9 @@ def _creator_session_response(session: CreatorAgentSession) -> CreatorSessionRes
 def _require_feature(
     user_id: uuid.UUID, *, execution: bool = False, allow_chat: bool = False
 ) -> None:
-    chat_enabled = allow_chat and settings.creation_threads_enabled
+    # Chat creation is the canonical product and may always reuse these
+    # controllers. Direct PlanItem endpoints retain their own rollout gates.
+    chat_enabled = allow_chat
     if not chat_enabled and not rollout_eligible(user_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Creator agent unavailable"

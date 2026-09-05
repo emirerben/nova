@@ -42,52 +42,29 @@ Editor tabs after a cut is ready. Primary Clips accept video, supporting images
 and videos use the existing Visuals pool, and Narrated audio uses the existing
 voice recorder—the same input lanes and limits as PlanItem setup.
 
-## Flags and deploy order
+## Availability and deploy order
 
-The defaults are on:
-
-- API: `CREATION_THREADS_ENABLED=true`
-- Optional API cohort: `CREATION_THREADS_USER_ALLOWLIST=email@example.com,<user-uuid>`
-- Web: `NEXT_PUBLIC_CHAT_FIRST_CREATION_ENABLED=true`
-
-For an account-scoped launch, keep both global flags on and set
-`CREATION_THREADS_USER_ALLOWLIST` on the API to a comma-separated list of exact
-emails and/or user UUIDs. Email matching is case-insensitive. Non-matching
-accounts receive the same deliberate `404` capability response as the global
-kill switch and therefore stay on the former `/plan` experience. Changing the
-cohort requires only an API restart, not a Vercel rebuild. Blank preserves the
-global-flag behavior; `*` is the explicit all-accounts value.
-
-The cohort gate applies only to `/creation-threads`. Existing Creator Agent and
-PlanItem routes remain available because they also power the legacy `/plan`
-fallback for accounts outside the cohort.
-
-Set and verify the production allowlist before the Vercel chat-first build goes
-live. A blank hosted value means all signed-in accounts, so staged rollout must
-never rely on the variable merely existing: read the resolved Fly secret state
-and canary one included and one excluded account before expanding the cohort.
+Chat-first creation is the product, not a rollout variant. Every authenticated
+account can use `/creation-threads`, and every authenticated `/plan` request
+renders the chat workspace. There is no frontend flag, backend kill switch, or
+account allowlist. An unavailable API remains a visible error so the product
+cannot silently switch a user into a different creation workflow.
 
 Deploy the API migration and worker code first. Creator renders carry
 `creator_render_contract_version` and are routed to the dedicated
 `creator-render-v2` queue; old workers do not consume that queue, and current
 workers fail visibly if the contract version is missing or unsupported. Verify
-the new worker consumes `creator-render-v2` before deploying the cohort-enabled
-API route, then deploy the web client. This order lets a new web client receive
-a deliberate backend `404` capability response and render its legacy rollback
-experience during short deploy skew. Network and 5xx errors are user-visible
-errors; they must not silently fall back.
+the new worker consumes `creator-render-v2` before deploying the API route, then
+deploy the web client. During deploy skew, the web client keeps the project
+visible and reports API errors rather than substituting another experience.
 
 ## Rollback
 
-For an emergency rollback, set both flags to `false`, restart the API/worker, and
-rebuild the web client so its build-time flag changes. `/plan` then returns to the
-former plan experience. Existing `CreationThread` rows, events, PlanItems, and
-Jobs are retained; no render data is rewritten. Completed jobs remain available
-in Gallery. Re-enable API first, then web, after the incident is understood.
-
-To shrink a staged cohort, update `CREATION_THREADS_USER_ALLOWLIST` and restart
-the API. Existing projects remain stored and become visible again if the account
-is re-added; no thread or render data is deleted.
+For an emergency rollback, revert the responsible application release. Do not
+restore the former plan home or onboarding funnel. Existing `CreationThread`
+rows, events, PlanItems, and Jobs are retained; no render data is rewritten.
+Completed jobs remain available in Gallery. Deploy API/worker compatibility
+before the matching web revert if the incident spans both services.
 
 Old public creation URLs (`/plan/new`, `/create`, `/create/manual`, `/library`,
 and `/generative`) remain redirect-compatible. They are not independent creation
@@ -102,10 +79,9 @@ bash scripts/worktree-setup.sh
 ./scripts/dev-auto.sh
 ```
 
-Set `ALLOW_DEV_LOGIN=true`, `INTERNAL_API_KEY=<any-string>`, and the local
-`CREATION_THREADS_ENABLED` / `NEXT_PUBLIC_CHAT_FIRST_CREATION_ENABLED` flags in
-the repo `.env`. Sign in at `http://localhost:3000/api/auth/signin` with the
-Dev login provider. Stop services with `./scripts/dev-stop.sh`.
+Set `ALLOW_DEV_LOGIN=true` and `INTERNAL_API_KEY=<any-string>` in the repo
+`.env`. Sign in at `http://localhost:3000/api/auth/signin` with the Dev login
+provider. Stop services with `./scripts/dev-stop.sh`.
 
 Run the focused checks first, then the full gates:
 

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.61.0.0] — 2026-09-05
+
+### Changed
+- **Chat-first creation is now the permanent product for every signed-in account.** `/plan` always opens the durable Kria conversation workspace, and creation-thread APIs no longer depend on a frontend flag, backend kill switch, or account allowlist.
+- **Operational failures stay inside one coherent product.** An unavailable creation API is shown as a recoverable chat error with an explicit retry instead of silently switching the creator into another workflow.
+
+### Removed
+- **The former plan home and onboarding creation funnel are retired.** The old workspace, interview, footage fork/grouping, standalone payoff, cohort fallback store, and their UI-only helpers and tests are removed; there is no second `/plan` implementation to drift from the standard.
+- **Old public entry points remain links, not products.** `/plan/new`, `/create`, `/create/manual`, `/library`, and `/generative` continue redirecting into chat or Gallery, while persisted PlanItem, Job, Creator Agent, and editor contracts remain intact.
+
 ## [0.60.0.1] — 2026-09-05
 
 ### Fixed
