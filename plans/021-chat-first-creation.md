@@ -177,11 +177,11 @@ is sequential.
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | not run | Approved user plan is the product decision |
-| Codex Review | `/codex review` | Independent second opinion | 0 | pending diff | Runs before ship |
+| Codex Review | `/codex review` | Independent second opinion | 1 | fixes applied | Permanent access boundaries, Gallery poster recovery, and loading-state truthfulness covered |
 | Eng Review | `/plan-eng-review` | Architecture & tests | 1 | clear | Existing contracts reused; ownership, deploy skew, pending intent, and deploy-revert rollback specified |
 | Design Review | `/plan-design-review` | UI/UX gaps | 1 | clear | Paper desktop, mobile, and recovery states are acceptance criteria |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | not run | Local setup and complete gates specified |
 
-**VERDICT:** ENG + DESIGN CLEARED — ready to implement
+**VERDICT:** IMPLEMENTED — pre-landing review fixes applied; final ship gates pending
 
 NO UNRESOLVED DECISIONS

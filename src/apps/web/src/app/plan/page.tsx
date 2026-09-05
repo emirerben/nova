@@ -38,9 +38,7 @@ function PlanLoadingState() {
       role="status"
       aria-label="Opening Kria"
     >
-      <div className="h-2 w-28 overflow-hidden rounded-full bg-muted">
-        <div className="h-full w-1/2 motion-safe:animate-pulse rounded-full bg-primary" />
-      </div>
+      <div className="h-2 w-28 overflow-hidden rounded-full bg-[linear-gradient(110deg,hsl(var(--muted)),45%,hsl(var(--primary)/0.28),55%,hsl(var(--muted)))] bg-[length:200%_100%] motion-safe:animate-shimmer" />
     </div>
   );
 }

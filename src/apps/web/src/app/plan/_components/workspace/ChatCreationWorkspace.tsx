@@ -32,6 +32,7 @@ import { cn } from "@/lib/cn";
 import { listMyJobs, type LibraryJob } from "@/lib/me-api";
 import LibraryTile from "@/components/library/LibraryTile";
 import AssetPool from "@/app/plan/_components/AssetPool";
+import { useLibraryPosterRecovery } from "@/hooks/useLibraryPosterRecovery";
 
 const FORMATS: Array<{ value: CreationFormat; label: string; description: string }> = [
   { value: "montage", label: "Montage", description: "Music-led cuts from your strongest moments." },
@@ -141,6 +142,11 @@ export default function ChatCreationWorkspace() {
   const [formatPickerOpen, setFormatPickerOpen] = useState(false);
   const [availableFormats, setAvailableFormats] = useState<CreationFormat[]>(["montage", "narrated_planned", "subtitled"]);
   const [capabilities, setCapabilities] = useState<Awaited<ReturnType<typeof getCreationCapabilities>>>(() => ({ formats: [] }));
+  const posterRecovery = useLibraryPosterRecovery({
+    enabled: galleryOpen,
+    jobs: galleryJobs,
+    setJobs: setGalleryJobs,
+  });
   const visualsEnabled = process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED === "true"
     || process.env.NEXT_PUBLIC_GUIDED_EDIT_ENABLED === "true";
   const editorFrameRef = useRef<HTMLIFrameElement>(null);
@@ -683,7 +689,7 @@ export default function ChatCreationWorkspace() {
 
   const editor = <section className="flex min-w-0 flex-1 flex-col overflow-hidden border-l bg-muted/10" aria-label="Video editor"><header className="flex h-14 shrink-0 items-center justify-between border-b bg-background px-4"><div><p className="text-sm font-medium">Editor</p><p className="text-xs text-muted-foreground">Feature-complete overlay editor</p></div><Badge variant="secondary"><Check /> Ready</Badge></header>{editorUrl ? <iframe ref={editorFrameRef} src={editorUrl} title="Full video editor" className="min-h-0 flex-1 border-0 bg-background" /> : <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">The editor will appear when your first cut is ready.</div>}</section>;
 
-  if (galleryOpen) return <div className="flex h-dvh flex-col overflow-hidden bg-background"><header className="flex h-14 shrink-0 items-center justify-between border-b px-4"><h1 className="text-lg font-semibold">Gallery</h1><Button type="button" onClick={closeGallery}>Back to chat</Button></header><main className="min-h-0 flex-1 overflow-y-auto p-6"><ul className="mx-auto grid max-w-5xl grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">{galleryJobs.map((job) => <li key={job.id}><LibraryTile job={job} /></li>)}</ul>{galleryJobs.length === 0 ? <p className="mx-auto max-w-md py-16 text-center text-sm text-muted-foreground">Your finished cuts will appear here.</p> : null}</main></div>;
+  if (galleryOpen) return <div className="flex h-dvh flex-col overflow-hidden bg-background"><header className="flex h-14 shrink-0 items-center justify-between border-b px-4"><h1 className="text-lg font-semibold">Gallery</h1><Button type="button" onClick={closeGallery}>Back to chat</Button></header><main className="min-h-0 flex-1 overflow-y-auto p-6"><ul className="mx-auto grid max-w-5xl grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">{galleryJobs.map((job) => <li key={job.id}><LibraryTile job={job} onDeleted={(jobId) => setGalleryJobs((current) => current.filter((item) => item.id !== jobId))} onPosterLoadError={posterRecovery.onPosterLoadError} onPosterLoadSuccess={posterRecovery.onPosterLoadSuccess} posterRecoveryExhausted={posterRecovery.exhaustedJobIds.has(job.id)} posterRefreshUnavailable={posterRecovery.refreshUnavailableJobIds.has(job.id)} /></li>)}</ul>{galleryJobs.length === 0 ? <p className="mx-auto max-w-md py-16 text-center text-sm text-muted-foreground">Your finished cuts will appear here.</p> : null}</main></div>;
 
   return <div className="relative flex h-dvh min-h-0 overflow-hidden bg-background text-foreground"><div className={cn("hidden md:block", sidebarHidden && "md:hidden")}>{sidebar}</div><Sheet open={projectsOpen} onOpenChange={setProjectsOpen}><SheetContent side="left" className="w-[260px] p-0 sm:max-w-[260px]"><SheetHeader className="sr-only"><SheetTitle>Projects</SheetTitle><SheetDescription>Move between creation projects and your gallery.</SheetDescription></SheetHeader>{sidebar}</SheetContent></Sheet><div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{hasReady && editorOpen ? <div className="shrink-0 border-b p-2 lg:hidden"><Tabs value={mobileTab} onValueChange={(value) => setMobileTab(value as "chat" | "editor")}><TabsList className="grid h-11 w-full grid-cols-2"><TabsTrigger value="chat">Chat</TabsTrigger><TabsTrigger value="editor">Editor</TabsTrigger></TabsList></Tabs></div> : null}<div className="flex min-h-0 flex-1 overflow-hidden">{sidebarHidden ? <Button type="button" variant="ghost" size="icon" className="absolute left-2 top-2 z-10 hidden size-9 md:inline-flex" aria-label="Show project sidebar" onClick={() => setSidebarHidden(false)}><PanelLeftOpen /></Button> : null}<div className={cn("min-h-0 min-w-0 flex-1 flex-col overflow-hidden", hasReady && editorOpen && "lg:flex-none lg:w-[420px]", hasReady && mobileTab === "editor" ? "hidden lg:flex" : "flex")}>{chat}</div>{hasReady && editorOpen ? <div className={cn("min-h-0 min-w-0 flex-1 overflow-hidden", mobileTab === "chat" ? "hidden lg:flex" : "flex")}>{editor}</div> : null}</div></div></div>;
 }

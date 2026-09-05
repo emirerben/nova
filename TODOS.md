@@ -295,12 +295,11 @@ army (5 specialists + Claude adversarial + Codex) confirmed none block shipping.
   audio file still uploads with only a static "Uploading…" line — a multi-minute
   voiceover reproduces the original tester complaint on that sub-path. Port the
   pending-card pattern to `uploadVoiceover`.
-- **/generative progress-cancel parity + shared `<FileUploadTrigger>`.** Priority: P3.
-  The sr-only-input + trigger + value-reset pattern now exists 3× (PoolUploadCard,
-  SeedUploadCard, generative page) and the upload semaphore 2× (page.tsx,
-  generative-api). Extract shared primitives when porting the card pattern to
-  /generative; also fold ShotSlotUploader's private content-type helper copy into
-  the exported `uploadContentTypeForFile`.
+- **Canonical creation upload primitives.** Priority: P3. The sr-only-input,
+  trigger, and upload state patterns remain duplicated between retained editor
+  upload surfaces and the `/plan` chat composer. Extract shared primitives only
+  when those active paths need coordinated changes; the old `/generative` and
+  `SeedUploadCard` surfaces no longer exist.
 - **Attach-queue residual races (accepted, documented).** Priority: P3. A stale GET
   older than the 5s post-write grace window can still clobber `clipAssignmentsRef`
   (needs an epoch/sequence guard in `usePolledJobStatus`); unmount + fast remount
@@ -718,10 +717,6 @@ Re-renders still inherit from `all_candidates` (editable-post-render deferred by
 
 These were deliberately deferred from the initial slice to keep scope tight.
 
-### T-MOTION-1 — Extract `useNextFrameCallback` hook
-**What:** The `requestAnimationFrame(() => setState(...)) / return () => cancelAnimationFrame(raf)` pattern is copy-pasted in `OnboardingShell.tsx` (StepSlide) and `VariantRenderCard.tsx` (a third copy in `TemplatePreviewModal.tsx` was deleted with the dead `/template` route, v0.7.8.2). Extract into `src/apps/web/src/lib/hooks.ts` as `useNextFrameCallback(fn, deps)`.
-**Effort:** XS (CC: ~10 min)
-
 ### T-MOTION-2 — Wire `t-stagger` exit via IntersectionObserver
 **What:** `.t-stagger.is-hiding` CSS is defined but `is-hiding` is never applied. Add an IntersectionObserver on the hero `<section>` to apply/remove `is-shown`/`is-hiding` as it enters/leaves the viewport.
 **Effort:** S (CC: ~20 min)
@@ -784,8 +779,10 @@ _Reconciled 2026-07-09: T-STYLE-2 shipped in #564 (v0.5.9.0), T-STYLE-3 in #565 
 **Effort:** XS (CC: ~10 min)
 **2026-07-09 gate run:** pytest gate passed 2/2 twice with `--with-judge`, but `golden/qbuilder_bold_display_observed` is flaky at the threshold — a per-dimension rerun scored avg 3.25 (<3.5) with parity_safety 3.0 (bar is 5). Run 3-5x and confirm the fixture clears consistently before treating the gate as passed; `travel_lifestyle_creator` clears cleanly every run.
 
-### Frontend StyleCard (M1 UI, after kill switch flip)
-**What:** `StyleCard.tsx` in `WorkspaceHome.tsx` near `PersonaCard`. Shows font preview (css_family), set picker (StyleChip grid), position/size/color controls, footage-bias chips, status badge (polls while deriving), Re-derive button. Light editorial design system.
+### Frontend style controls (M1 UI, after kill switch flip)
+**What:** Add style controls to the canonical chat workspace or its linked
+profile surface. Show font preview (css_family), set picker, position/size/color
+controls, footage-bias chips, status badge (polls while deriving), and Re-derive.
 **Why:** Backend ships dark; UI follows once kill switch is on and agent quality is validated.
 **Effort:** M (CC: ~45 min)
 
@@ -1890,9 +1887,9 @@ long pole)
 **Priority:** P2
 **Depends on:** durable `job-posters/` prefix shipped (this train).
 
-### Library list never refetches after mount
-**What:** `WorkspaceHome` calls `listMyJobs()` exactly once, from a
-mount-effect `load()`. There is no focus/`visibilitychange` revalidation and
+### Gallery list never refetches while it stays open
+**What:** `ChatCreationWorkspace` calls `listMyJobs()` when Gallery opens. There
+is no focus/`visibilitychange` revalidation and
 no polling, so a tile that was "Rendering…" when the page loaded stays
 "Rendering…" until the user manually reloads — even after the render has
 long since finished. Only poster metadata self-updates (via the bounded
@@ -1905,9 +1902,9 @@ invisible in the grid.
 minimum interval so tab-flipping can't hammer `GET /me/jobs`; optionally
 poll while any loaded job is non-terminal, stopping when none are. Follow
 the plans/014 polling conventions rather than inventing a new cadence, and
-keep the poster-recovery refs intact across a refetch (they are keyed by
+keep the poster-recovery hook state intact across a refetch (it is keyed by
 poster identity, so a merge-in-place update is safe). Start:
-`WorkspaceHome.tsx` `load()`.
+`ChatCreationWorkspace.tsx` Gallery loading effect.
 **Effort:** S (CC: ~30min)
 **Priority:** P3
 **Depends on:** —

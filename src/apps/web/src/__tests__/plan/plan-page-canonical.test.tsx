@@ -3,7 +3,8 @@ import "@testing-library/jest-dom";
 
 import PlanPage from "@/app/plan/page";
 
-let authStatus: "loading" | "authenticated" | "unauthenticated" = "authenticated";
+let authStatus: "loading" | "authenticated" | "unauthenticated" =
+  "authenticated";
 
 jest.mock("next-auth/react", () => ({
   useSession: () => ({ status: authStatus }),
@@ -30,13 +31,23 @@ describe("PlanPage canonical experience", () => {
     authStatus = "unauthenticated";
     render(<PlanPage />);
     expect(screen.getByText("Sign in to Kria")).toBeInTheDocument();
-    expect(screen.queryByText("Canonical creation chat")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Canonical creation chat"),
+    ).not.toBeInTheDocument();
   });
 
-  it("does not mount the API workspace before session resolution", () => {
+  it("shows indeterminate progress and does not mount the API workspace before session resolution", () => {
     authStatus = "loading";
-    render(<PlanPage />);
-    expect(screen.getByRole("status", { name: "Opening Kria" })).toBeInTheDocument();
-    expect(screen.queryByText("Canonical creation chat")).not.toBeInTheDocument();
+    const { container } = render(<PlanPage />);
+    expect(
+      screen.getByRole("status", { name: "Opening Kria" }),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector(".motion-safe\\:animate-shimmer"),
+    ).toBeInTheDocument();
+    expect(container.querySelector(".w-1\\/2")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Canonical creation chat"),
+    ).not.toBeInTheDocument();
   });
 });
