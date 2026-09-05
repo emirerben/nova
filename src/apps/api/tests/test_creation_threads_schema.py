@@ -80,7 +80,7 @@ def test_creation_thread_events_are_ordered_idempotent_and_append_only() -> None
     assert "'gcs_path'" not in source
     title_migration = (
         Path(__file__).parents[1]
-        / "app/migrations/versions/0093_creation_thread_titles_deletions.py"
+        / "app/migrations/versions/0094_creation_thread_titles_deletions.py"
     )
     title_source = title_migration.read_text()
     assert "creation_thread_deletions" in title_source
@@ -100,7 +100,7 @@ def test_creation_thread_migration_downgrade_refuses_nonempty_lifecycle_data(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     migration = importlib.import_module(
-        "app.migrations.versions.0093_creation_thread_titles_deletions"
+        "app.migrations.versions.0094_creation_thread_titles_deletions"
     )
     lock_statements: list[str] = []
 
