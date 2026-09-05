@@ -115,6 +115,12 @@ configurable.
    — aggressiveness must never scale WITH background noise. Because these
    cuts cannot be silence-confirmed, they use the thicker `PAD_ACOUSTIC_S`
    (0.15s) on both flanks (eng review 2A).
+   **V2 addendum (2026-09-01):** for an explicit mixed-gap candidate, every
+   ASR-tokenless window is also decomposed into maximal non-silent complements.
+   A component strictly inside the window with at least 100ms of contiguous
+   detected silence on both sides and duration 0.15–1.2s is an exact, unpadded
+   `filler_acoustic` atom. This catches ASR-omitted vocalizations embedded in a
+   longer mixed silence/sound gap while leaving the V1 whole-gap rule unchanged.
 3. **Pause tightening — dual-signal intersection rule (eng review 2A).**
    Whisper END times drift (phrase_sequence.py D16: "only starts are
    trustworthy"), so word-gap arithmetic is never sufficient on its own. A
@@ -329,7 +335,7 @@ applies unchanged. `tests/test_encoder_policy.py` untouched.
 |---|---|
 | `app/pipeline/silence_cut.py` | NEW — detect, CutPlan (incl. retake merge), remap, segment-signal guards |
 | `app/agents/retake_detector.py` + `prompts/retake_detector*` | NEW — retake agent + prompt + eval fixtures |
-| `app/services/clip_speech.py` | parameterized `detect_silences(noise_db, min_silence_s)` (speech_coverage keeps 0.3 default; `-vn -sn -dn` kept) |
+| `app/services/clip_speech.py` | parameterized `detect_silences(noise_db, min_silence_s)` plus status-bearing companion (speech_coverage keeps 0.3 default; `-vn -sn -dn` kept) |
 | `app/pipeline/transcribe.py` | optional `verbatim_prompt`; segment `avg_logprob`/`no_speech_prob` mapped onto words |
 | `app/pipeline/reframe.py` | optional `keep_segments` → select/aselect after fps/CFR stage |
 | `app/tasks/generative_build.py` | subtitled integration, per-job cache, `silence_cut` persistence + finalize whitelist entry, per-item disable |
@@ -357,6 +363,10 @@ the `has_audio` pre-whisper gate (3A); remap_words exactness (dropped words,
 cumulative shifts, boundary words); CutPlan no-op == identity.
 Property-style: for random word/silence layouts, kept-word spans are always
 inside keep_segments and remapped times are monotonic.
+The V2 matrix additionally pins bilateral mixed-gap islands, the production
+`d2d20bd2` timing, connected protected/atomic groups, whole-or-none allocation
+under every clamp outcome, exhaustive terminal atom dispositions, and the
+unchanged July V1 golden.
 NOTE: no `uuid4()` (or any nondeterministic value) inside
 `@pytest.mark.parametrize` — xdist collection diverges in CI (prior
 learning, confidence 10/10). All ASR calls mocked — no API keys needed.

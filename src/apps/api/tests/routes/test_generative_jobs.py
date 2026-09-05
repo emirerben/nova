@@ -7,8 +7,9 @@ before any download.
 
 from __future__ import annotations
 
+import copy
 import uuid
-from datetime import UTC
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -39,6 +40,145 @@ def _request() -> Request:
             "client": ("127.0.0.1", 1234),
         }
     )
+
+
+def _required_speech_variant(job_id: uuid.UUID) -> dict:
+    from app.pipeline.speech_cut_state import cut_revision, make_candidate
+
+    candidate = make_candidate(
+        start_s=1.0,
+        end_s=1.5,
+        reason="filler_acoustic",
+        source="retake_review",
+        preview="um",
+        source_fingerprint="source-a",
+        transcript_hash="transcript-a",
+    )
+    variant = {
+        "variant_id": "subtitled",
+        "resolved_archetype": "subtitled",
+        "render_status": "ready",
+        "ok": True,
+        "video_path": f"generative-jobs/{job_id}/last-good.mp4",
+        "base_video_path": f"generative-jobs/{job_id}/base.mp4",
+        "speech_cut_candidates": [candidate],
+        "speech_cut_forced_removals": [],
+        "speech_cuts_disabled": False,
+        "silence_cut": {"removed": []},
+    }
+    variant["speech_cut_revision"] = cut_revision(variant)
+    return variant
+
+
+def test_required_speech_dispatch_keeps_last_good_public_until_publish(monkeypatch):
+    from app.routes.generative_jobs import dispatch_apply_speech_cut_candidate
+
+    job_id = uuid.uuid4()
+    variant = _required_speech_variant(job_id)
+    public_before = copy.deepcopy(variant)
+    job = SimpleNamespace(
+        id=job_id,
+        status="variants_ready",
+        assembly_plan={
+            "speech_cleanup_contract": "required_v1",
+            "variants": [variant],
+        },
+    )
+    monkeypatch.setattr("app.routes.generative_jobs.settings.retake_cut_enabled", True)
+    monkeypatch.setattr("sqlalchemy.orm.attributes.flag_modified", lambda *_a, **_k: None)
+
+    request, _enqueue = dispatch_apply_speech_cut_candidate(
+        job,
+        "subtitled",
+        candidate_id=variant["speech_cut_candidates"][0]["candidate_id"],
+        expected_revision=variant["speech_cut_revision"],
+    )
+
+    assert request["operation"] == "apply_speech_cut_candidate"
+    assert job.assembly_plan["variants"] == [public_before]
+    assert job.assembly_plan["speech_cut_previous_variants"] == [public_before]
+    control = job.assembly_plan["speech_cut_control"]
+    assert control["render_generation_id"]
+    assert control["in_flight"]
+
+
+def test_required_speech_restore_dispatch_keeps_last_good_public_until_publish(monkeypatch):
+    from app.routes.generative_jobs import dispatch_restore_original_timing
+
+    job_id = uuid.uuid4()
+    variant = _required_speech_variant(job_id)
+    public_before = copy.deepcopy(variant)
+    job = SimpleNamespace(
+        id=job_id,
+        status="variants_ready",
+        assembly_plan={
+            "speech_cleanup_contract": "required_v1",
+            "silence_cut_disabled": False,
+            "variants": [variant],
+        },
+    )
+    monkeypatch.setattr("sqlalchemy.orm.attributes.flag_modified", lambda *_a, **_k: None)
+
+    request, _enqueue = dispatch_restore_original_timing(
+        job,
+        "subtitled",
+        expected_revision=variant["speech_cut_revision"],
+    )
+
+    assert request["operation"] == "restore_original_timing"
+    assert job.assembly_plan["variants"] == [public_before]
+    assert job.assembly_plan["speech_cut_previous_variants"] == [public_before]
+    assert job.assembly_plan["silence_cut_disabled"] is False
+    control = job.assembly_plan["speech_cut_control"]
+    assert control["desired_disabled"] is True
+    assert control["render_generation_id"]
+    assert control["in_flight"]
+
+
+@pytest.mark.parametrize("operation", ["apply", "restore"])
+def test_required_speech_dispatch_rejects_inflight_sibling(monkeypatch, operation):
+    from app.routes.generative_jobs import (
+        dispatch_apply_speech_cut_candidate,
+        dispatch_restore_original_timing,
+    )
+
+    job_id = uuid.uuid4()
+    variant = _required_speech_variant(job_id)
+    sibling = {
+        "variant_id": "song_text",
+        "render_generation_id": uuid.uuid4().hex,
+        "render_status": "rendering",
+        "ok": False,
+    }
+    job = SimpleNamespace(
+        id=job_id,
+        status="variants_ready",
+        assembly_plan={
+            "speech_cleanup_contract": "required_v1",
+            "variants": [variant, sibling],
+        },
+    )
+    before = copy.deepcopy(job.assembly_plan)
+    monkeypatch.setattr("app.routes.generative_jobs.settings.retake_cut_enabled", True)
+
+    with pytest.raises(HTTPException) as caught:
+        if operation == "apply":
+            dispatch_apply_speech_cut_candidate(
+                job,
+                "subtitled",
+                candidate_id=variant["speech_cut_candidates"][0]["candidate_id"],
+                expected_revision=variant["speech_cut_revision"],
+            )
+        else:
+            dispatch_restore_original_timing(
+                job,
+                "subtitled",
+                expected_revision=variant["speech_cut_revision"],
+            )
+
+    assert caught.value.status_code == 409
+    assert caught.value.detail == "variant_initial_render_in_progress"
+    assert job.assembly_plan == before
 
 
 def test_valid_request():
@@ -858,6 +998,147 @@ def test_variants_for_response_resigns_ready_variant(monkeypatch):
     assert failed["output_url"] is None
 
 
+def test_variants_for_response_resigns_masked_last_good_not_provisional(monkeypatch):
+    import app.routes.generative_jobs as gj
+
+    calls: list[tuple[str, int]] = []
+    download_calls: list[str] = []
+
+    def fake_sign(path, ttl):
+        calls.append((path, ttl))
+        return f"https://fresh.example/{path}?sig=new"
+
+    monkeypatch.setattr(gj, "signed_get_url", fake_sign)
+
+    def fake_download(path, filename, expiration_minutes):
+        download_calls.append(path)
+        return f"https://download.example/{filename}"
+
+    monkeypatch.setattr(
+        gj.storage,
+        "signed_download_url",
+        fake_download,
+    )
+    job = _resign_job()
+    job.assembly_plan = {
+        "speech_cleanup_contract": "required_v1",
+        "speech_cut_control": {
+            "variant_id": "song_lyrics",
+            "operation_id": "operation-a",
+            "render_generation_id": "generation-new",
+        },
+        "speech_cut_previous_variant": {
+            "variant_id": "song_lyrics",
+            "render_status": "ready",
+            "render_generation_id": "generation-old",
+            "video_path": "generative-jobs/j/last-good.mp4",
+            "output_url": "https://stale.example/expired",
+            "ok": True,
+        },
+        "speech_cut_previous_variants": [],
+        "_speech_cleanup_internal": {
+            "required_speech_generation_locks": {"song_lyrics": "generation-new"},
+        },
+        "variants": [
+            {
+                "variant_id": "song_lyrics",
+                "render_status": "rendering",
+                "render_generation_id": "generation-new",
+                "video_path": "generative-jobs/j/render-generations/generation-new/provisional.mp4",
+                "output_url": "https://private.example/provisional",
+                "ok": True,
+            }
+        ],
+    }
+    stored = copy.deepcopy(job.assembly_plan)
+
+    [visible] = gj._variants_for_response(job)
+
+    assert visible["render_status"] == "rendering"
+    assert visible["video_path"] == "generative-jobs/j/last-good.mp4"
+    assert visible["output_url"] == (
+        "https://fresh.example/generative-jobs/j/last-good.mp4?sig=new"
+    )
+    assert calls == [("generative-jobs/j/last-good.mp4", gj.PLAYBACK_URL_TTL_MIN)]
+    assert download_calls == ["generative-jobs/j/last-good.mp4"]
+    assert all("provisional" not in path for path, _ttl in calls)
+    assert all("provisional" not in path for path in download_calls)
+    assert job.assembly_plan == stored
+
+
+def test_owner_status_never_signs_media_when_required_speech_rollback_is_unprovable(
+    monkeypatch,
+):
+    import app.routes.generative_jobs as gj
+
+    signed_paths: list[str] = []
+
+    def fake_sign(path, ttl):
+        signed_paths.append(path)
+        return f"https://fresh.example/{path}?sig=new"
+
+    monkeypatch.setattr(gj, "signed_get_url", fake_sign)
+    monkeypatch.setattr(
+        gj.storage,
+        "signed_download_url",
+        lambda path, filename, expiration_minutes: signed_paths.append(path) or "never",
+    )
+    job = _resign_job()
+    provisional = {
+        "variant_id": "song_lyrics",
+        "render_status": "rendering",
+        "render_generation_id": "generation-new",
+        "video_path": ("generative-jobs/j/render-generations/generation-new/PROVISIONAL.mp4"),
+        "output_url": "https://private.example/PROVISIONAL",
+        "poster_path": "generative-jobs/j/PROVISIONAL.jpg",
+        "base_video_path": "generative-jobs/j/PROVISIONAL-base.mp4",
+        "pre_media_overlay_video_path": "generative-jobs/j/PROVISIONAL-overlay-base.mp4",
+        "music_track_id": "private-track",
+        "smart_music_treatment": {"track_id": "private-background-track"},
+        "source_audio_options": [
+            {
+                "audio_path": "generative-jobs/j/PROVISIONAL.m4a",
+                "audio_url": "https://private.example/PROVISIONAL-audio",
+            }
+        ],
+        "media_overlays": [
+            {
+                "asset_id": "private-asset",
+                "src_gcs_path": "generative-jobs/j/PROVISIONAL-overlay.png",
+            }
+        ],
+        "ok": True,
+    }
+    job.assembly_plan = {
+        "speech_cleanup_contract": "required_v1",
+        "speech_cut_control": {
+            "variant_id": "song_lyrics",
+            "render_generation_id": "generation-new",
+        },
+        # Both rollback shapes are generation-owned and therefore unsafe.
+        "speech_cut_previous_variant": copy.deepcopy(provisional),
+        "speech_cut_previous_variants": [copy.deepcopy(provisional)],
+        "_speech_cleanup_internal": {
+            "required_speech_generation_locks": {"song_lyrics": "generation-mismatch"},
+        },
+        "variants": [copy.deepcopy(provisional)],
+    }
+    stored = copy.deepcopy(job.assembly_plan)
+
+    [visible] = gj._variants_for_response(job)
+
+    assert visible["variant_id"] == "song_lyrics"
+    assert visible["render_status"] == "rendering"
+    assert visible["ok"] is False
+    assert visible["render_generation_id"] is None
+    assert "provisional" not in str(visible).lower()
+    assert "private-asset" not in str(visible)
+    assert "private-track" not in str(visible)
+    assert "private-background-track" not in str(visible)
+    assert signed_paths == []
+    assert job.assembly_plan == stored
+
+
 def test_variants_for_response_resigns_intercut_audio_options(monkeypatch):
     import app.routes.generative_jobs as gj
 
@@ -903,6 +1184,247 @@ def test_variants_for_response_does_not_mutate_stored_dicts(monkeypatch):
     stored = job.assembly_plan["variants"][0]
     assert stored["output_url"] == "https://stale.example/expired?X-Goog-Expires=86400"
     assert "download_url" not in stored
+
+
+def test_variants_for_response_projects_private_generation_and_identity_state(monkeypatch):
+    import copy
+
+    import app.routes.generative_jobs as gj
+
+    monkeypatch.setattr(gj, "signed_get_url", lambda path, ttl: "https://fresh.example/x")
+    monkeypatch.setattr(
+        gj.storage,
+        "signed_download_url",
+        lambda path, filename, expiration_minutes: "https://download.example/x",
+    )
+    job = _resign_job()
+    job.assembly_plan["variants"][0].update(
+        {
+            "title": "creator-visible",
+            "_speech_cleanup_internal": {"staged_render_results": {"secret": True}},
+            "candidate_snapshot": {
+                "clip_source_instance_ids": ["private-source-id"],
+                "clip_metadata_identity_index_v7": {"records": []},
+                "clip_paths": ["source.mp4"],
+            },
+        }
+    )
+    stored = copy.deepcopy(job.assembly_plan)
+
+    [projected, _failed] = gj._variants_for_response(job)
+
+    assert projected["title"] == "creator-visible"
+    assert "_speech_cleanup_internal" not in projected
+    assert projected["candidate_snapshot"] == {"clip_paths": ["source.mp4"]}
+    assert job.assembly_plan == stored
+
+
+def test_creator_status_and_timeline_never_serialize_source_instance_uuid(monkeypatch):
+    """Stable source identities stay private even when source paths are public.
+
+    Durable objects use a copy-attempt-local slot in their key.  The timeline may
+    expose and sign that object key, but neither it nor the status projection may
+    reveal the independently persisted ``clip_source_instance_ids`` UUID.
+    """
+    import app.routes.generative_jobs as gj
+
+    source_instance_id = "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+    job_id = uuid.UUID("11111111-2222-4333-8444-555555555555")
+    copy_attempt_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    durable_source_path = (
+        f"generative-jobs/{job_id}/sources/copy-attempts/{copy_attempt_id}/slot-0000.mov"
+    )
+    assert source_instance_id not in durable_source_path
+
+    variant = {
+        "variant_id": "song_text",
+        "render_status": "ready",
+        "ok": True,
+        "text_mode": "agent_text",
+        "ai_timeline": {
+            "beat_grid": [],
+            "slots": [
+                {
+                    "slot_id": "slot-1",
+                    "clip_index": 0,
+                    "source_gcs_path": durable_source_path,
+                    "source_duration_s": 4.0,
+                    "in_s": 0.0,
+                    "duration_s": 1.0,
+                    "duration_beats": None,
+                    "order": 0,
+                }
+            ],
+        },
+        "candidate_snapshot": {
+            "clip_paths": [durable_source_path],
+            "clip_source_instance_ids": [source_instance_id],
+        },
+    }
+    job = SimpleNamespace(
+        id=job_id,
+        status="variants_ready",
+        assembly_plan={"variants": [variant]},
+        all_candidates={
+            "clip_paths": [durable_source_path],
+            "clip_source_instance_ids": [source_instance_id],
+        },
+    )
+    signed_source_paths: list[str] = []
+
+    def _sign_source(path: str, _ttl: int) -> str:
+        signed_source_paths.append(path)
+        return f"https://signed.example/{path}?token=opaque"
+
+    monkeypatch.setattr(gj.settings, "GENERATIVE_TIMELINE_EDITOR_ENABLED", True)
+    monkeypatch.setattr(gj, "signed_get_url", _sign_source)
+
+    timeline = gj.TimelineResponse(**gj.dispatch_get_timeline(job, "song_text"))
+    now = datetime(2026, 9, 1, tzinfo=UTC)
+    status_payload = gj.GenerativeJobStatusResponse(
+        job_id=str(job.id),
+        status=job.status,
+        variants=gj._variants_for_response(job),
+        error_detail=None,
+        created_at=now,
+        updated_at=now,
+    )
+
+    serialized_surfaces = [
+        timeline.model_dump_json(),
+        status_payload.model_dump_json(),
+        *(clip.signed_url or "" for clip in timeline.clips),
+    ]
+    assert signed_source_paths == [durable_source_path]
+    assert all(source_instance_id not in serialized for serialized in serialized_surfaces)
+    assert "clip_source_instance_ids" not in status_payload.model_dump_json()
+
+
+def test_timeline_does_not_resign_media_removed_by_required_speech_projection(monkeypatch):
+    import app.routes.generative_jobs as gj
+
+    job_id = uuid.UUID("11111111-2222-4333-8444-555555555555")
+    provisional_path = f"generative-jobs/{job_id}/render-generations/generation-new/provisional.mp4"
+    job = SimpleNamespace(
+        id=job_id,
+        status="variants_ready",
+        assembly_plan={
+            # A drifted row may lose its discriminator while the independently
+            # committed control survives.  That ambiguity must not expose the
+            # generation-owned timeline or rebuild URLs from all_candidates.
+            "speech_cut_control": {
+                "variant_id": "song_text",
+                "operation_id": "operation-a",
+                "render_generation_id": "generation-new",
+            },
+            "variants": [
+                {
+                    "variant_id": "song_text",
+                    "render_status": "ready",
+                    "render_generation_id": "generation-new",
+                    "video_path": provisional_path,
+                    "ai_timeline": {
+                        "beat_grid": [],
+                        "slots": [
+                            {
+                                "slot_id": "slot-1",
+                                "clip_index": 0,
+                                "source_gcs_path": provisional_path,
+                                "source_duration_s": 4.0,
+                                "in_s": 0.0,
+                                "duration_s": 1.0,
+                                "order": 0,
+                            }
+                        ],
+                    },
+                }
+            ],
+        },
+        all_candidates={"clip_paths": [provisional_path]},
+    )
+    stored = copy.deepcopy(job.assembly_plan)
+    sign = MagicMock(return_value="https://signed.example/provisional")
+    monkeypatch.setattr(gj, "signed_get_url", sign)
+
+    timeline = gj.TimelineResponse(**gj.dispatch_get_timeline(job, "song_text"))
+
+    assert timeline.editable is False
+    assert timeline.reason == "no_timeline"
+    assert timeline.slots == []
+    assert timeline.clips == []
+    assert provisional_path not in timeline.model_dump_json()
+    sign.assert_not_called()
+    assert job.assembly_plan == stored
+
+
+def test_timeline_uses_projected_last_good_context_instead_of_raw_guided_sources(monkeypatch):
+    import app.routes.generative_jobs as gj
+
+    job_id = uuid.UUID("11111111-2222-4333-8444-555555555555")
+    safe_source = f"generative-jobs/{job_id}/sources/last-good.mov"
+    provisional_source = (
+        f"generative-jobs/{job_id}/render-generations/generation-new/provisional.mov"
+    )
+    last_good = {
+        "variant_id": "guided_story",
+        "resolved_archetype": "guided_story",
+        "render_status": "ready",
+        "render_generation_id": "generation-old",
+        "video_path": f"generative-jobs/{job_id}/last-good.mp4",
+        "candidate_snapshot": {"clip_paths": [safe_source]},
+        "story_timeline": [
+            {
+                "moment_id": "moment-1",
+                "gcs_path": safe_source,
+                "source_start_s": 0.0,
+                "source_end_s": 2.0,
+                "output_start_s": 0.0,
+                "output_end_s": 2.0,
+                "duration_s": 2.0,
+            }
+        ],
+    }
+    job = SimpleNamespace(
+        id=job_id,
+        status="variants_ready",
+        assembly_plan={
+            "speech_cleanup_contract": "required_v1",
+            "speech_cut_control": {
+                "variant_id": "guided_story",
+                "operation_id": "operation-a",
+                "render_generation_id": "generation-new",
+            },
+            "speech_cut_previous_variants": [copy.deepcopy(last_good)],
+            "guided_edit": {"raw_source": provisional_source},
+            "guided_story_execution_plan": {"raw_source": provisional_source},
+            "variants": [
+                {
+                    **copy.deepcopy(last_good),
+                    "render_status": "rendering",
+                    "render_generation_id": "generation-new",
+                    "video_path": (
+                        f"generative-jobs/{job_id}/render-generations/"
+                        "generation-new/provisional.mp4"
+                    ),
+                }
+            ],
+        },
+        all_candidates={"clip_paths": [provisional_source]},
+    )
+    sign = MagicMock(side_effect=lambda path, _ttl: f"https://signed.example/{path}")
+    raw_guided_projection = MagicMock(
+        side_effect=AssertionError("raw guided projection must not run while speech is active")
+    )
+    monkeypatch.setattr(gj.settings, "guided_story_editor_v2_enabled", True)
+    monkeypatch.setattr(gj, "signed_get_url", sign)
+    monkeypatch.setattr(gj, "_guided_v2_timeline_projection", raw_guided_projection)
+
+    timeline = gj.TimelineResponse(**gj.dispatch_get_timeline(job, "guided_story"))
+
+    raw_guided_projection.assert_not_called()
+    sign.assert_called_once_with(safe_source, gj.PLAYBACK_URL_TTL_MIN)
+    assert timeline.clips[0].signed_url == f"https://signed.example/{safe_source}"
+    assert provisional_source not in timeline.model_dump_json()
 
 
 def test_variants_for_response_normalizes_legacy_smart_sfx_without_mutating():
@@ -1058,6 +1580,29 @@ def test_collect_media_overlay_preview_stamps_maps_src_to_preview():
     assert gj._collect_media_overlay_preview_stamps(job) == {"a.heic": "a.jpg"}
 
 
+def test_lazy_preview_backfill_skips_private_required_speech_generation(monkeypatch):
+    import app.routes.generative_jobs as gj
+
+    gj._HEIF_PREVIEW_BACKFILL_ATTEMPTED.discard("locked-a.heic")
+    job = _backfill_job(
+        [
+            {
+                "variant_id": "subtitled",
+                "media_overlays": [{"src_gcs_path": "locked-a.heic"}],
+            }
+        ]
+    )
+    job.assembly_plan["_speech_cleanup_internal"] = {
+        "required_speech_generation_locks": {"subtitled": "generation-a"}
+    }
+    convert = MagicMock(return_value=("a.jpg", "https://example.invalid/a.jpg"))
+    monkeypatch.setattr(gj, "convert_heif_overlay_preview", convert)
+
+    assert gj._lazy_backfill_media_overlay_previews(job) is False
+    convert.assert_not_called()
+    assert "locked-a.heic" not in gj._HEIF_PREVIEW_BACKFILL_ATTEMPTED
+
+
 async def test_persist_backfill_relocks_and_merges_stamp():
     from unittest.mock import AsyncMock
 
@@ -1107,6 +1652,73 @@ async def test_persist_backfill_does_not_clobber_concurrent_worker_write():
     assert variants[0]["render_status"] == "ready"
     assert variants[1]["render_status"] == "ready"  # concurrent append survives
     assert variants[0]["media_overlays"][0]["preview_gcs_path"] == "a.jpg"
+
+
+async def test_persist_backfill_skips_variant_locked_after_unlocked_read():
+    from unittest.mock import AsyncMock
+
+    import app.routes.generative_jobs as gj
+
+    fresh = _backfill_job(
+        [{"variant_id": "subtitled", "media_overlays": [{"src_gcs_path": "a.heic"}]}]
+    )
+    fresh.assembly_plan["_speech_cleanup_internal"] = {
+        "required_speech_generation_locks": {"subtitled": "generation-new"}
+    }
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=fresh)
+    db.commit = AsyncMock()
+
+    retry_after_unlock = await gj._persist_media_overlay_preview_backfill(
+        db, fresh.id, {"a.heic": "a.jpg"}
+    )
+
+    assert retry_after_unlock == {"a.heic"}
+    assert "preview_gcs_path" not in fresh.assembly_plan["variants"][0]["media_overlays"][0]
+    db.commit.assert_not_awaited()
+
+
+async def test_status_race_removes_unpersisted_preview_attempt_marker(monkeypatch):
+    """A lock reserved after conversion must leave the post-terminal retry live."""
+    import copy
+
+    import app.routes.generative_jobs as gj
+    import app.services.phase_baselines as pb
+
+    src = "race-after-status-snapshot.heic"
+    unlocked = _phase_job(current_phase=None, phase_log=[])
+    unlocked.status = "variants_ready"
+    unlocked.assembly_plan["variants"][0]["media_overlays"] = [{"src_gcs_path": src}]
+    fresh = copy.deepcopy(unlocked)
+    fresh.assembly_plan["_speech_cleanup_internal"] = {
+        "required_speech_generation_locks": {"song_text": "generation-new"}
+    }
+    db = AsyncMock()
+    db.get.return_value = fresh
+
+    async def _load(job_id, db, user, allowed_modes=None, **_kwargs):
+        return unlocked
+
+    gj._HEIF_PREVIEW_BACKFILL_ATTEMPTED.discard(src)
+    monkeypatch.setattr(gj, "_load_generative_job", _load)
+    monkeypatch.setattr(gj.settings, "nova_steps_feed_enabled", False)
+    monkeypatch.setattr(pb, "get_baselines", lambda _mode: None)
+    monkeypatch.setattr(
+        gj,
+        "convert_heif_overlay_preview",
+        MagicMock(return_value=("race-preview.jpg", "https://example.invalid/preview")),
+    )
+
+    response = await gj.get_generative_job_status(
+        str(unlocked.id),
+        current_user=object(),
+        db=db,
+    )
+
+    assert response.variants[0]["media_overlays"][0]["preview_gcs_path"] == "race-preview.jpg"
+    assert "preview_gcs_path" not in fresh.assembly_plan["variants"][0]["media_overlays"][0]
+    assert src not in gj._HEIF_PREVIEW_BACKFILL_ATTEMPTED
+    db.commit.assert_not_awaited()
 
 
 async def test_persist_backfill_noop_when_no_stamps():
@@ -1271,6 +1883,54 @@ def test_status_phase_fields_null_for_uninstrumented_job(monkeypatch):
     assert resp.phase_log is None
     assert resp.started_at is None
     assert resp.expected_phase_durations is None
+
+
+async def test_owner_status_omits_private_controls_and_admin_timing_receipt(monkeypatch):
+    """The normal status poll is not an alternate debug-data boundary."""
+    import copy
+
+    import app.routes.generative_jobs as gj
+    import app.services.phase_baselines as pb
+
+    job = _phase_job(current_phase=None, phase_log=[])
+    job.status = "variants_ready"
+    job.pipeline_trace = [
+        {
+            "stage": "speech_cleanup",
+            "event": "analysis_receipt",
+            "data": {"all_candidates": [{"candidate_id": "candidate-a"}]},
+        }
+    ]
+    job.assembly_plan["_speech_cleanup_internal"] = {
+        "required_speech_generation_locks": {"song_text": "generation-a"}
+    }
+    job.assembly_plan["variants"][0]["candidate_snapshot"] = {
+        "clip_paths": ["source.mp4"],
+        "clip_source_instance_ids": ["private-source-id"],
+        "clip_metadata_identity_index_v2": {"records": []},
+    }
+    stored = copy.deepcopy(job.assembly_plan)
+
+    async def _load(job_id, db, user, allowed_modes=None, **_kwargs):
+        return job
+
+    monkeypatch.setattr(gj, "_load_generative_job", _load)
+    monkeypatch.setattr(gj.settings, "nova_steps_feed_enabled", False)
+    monkeypatch.setattr(pb, "get_baselines", lambda _mode: None)
+
+    response = await gj.get_generative_job_status(
+        str(job.id),
+        current_user=object(),
+        db=AsyncMock(),
+    )
+    payload = response.model_dump(mode="python")
+
+    assert "pipeline_trace" not in payload
+    assert "_speech_cleanup_internal" not in payload
+    # A generation lock without a proved last-good snapshot makes even nested
+    # source locators unavailable; only non-media creator metadata may survive.
+    assert response.variants[0]["candidate_snapshot"] == {}
+    assert job.assembly_plan == stored
 
 
 def test_variant_includes_error_class():

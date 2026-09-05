@@ -9,6 +9,7 @@ from typing import Any
 
 from app import storage
 from app.models import Job
+from app.services.public_assembly_plan import project_public_assembly_plan_with_metadata
 
 
 class PublishableOutputError(ValueError):
@@ -62,7 +63,8 @@ class PublishableOutput:
 
 def resolve_publishable_output(job: Job, variant_id: str | None = None) -> PublishableOutput:
     require_terminal_ready_job(job)
-    plan = dict(job.assembly_plan or {})
+    projection = project_public_assembly_plan_with_metadata(job.assembly_plan)
+    plan = dict(projection.value) if isinstance(projection.value, dict) else {}
     selected_variant: dict[str, Any] | None = None
     path: str | None = None
 
@@ -81,6 +83,11 @@ def resolve_publishable_output(job: Job, variant_id: str | None = None) -> Publi
             raise PublishableOutputError("The selected video is not ready to publish")
         path = str(selected_variant["video_path"])
         variant_id = str(selected_variant.get("variant_id") or "") or None
+    elif projection.active_speech_projection:
+        # A malformed active plan can lose its variant vector.  Do not bypass
+        # the public projection by synthesizing a conventional template/music
+        # object key after it deliberately removed every media locator.
+        raise PublishableOutputError("The selected video is not ready to publish")
     else:
         explicit = plan.get("output_path")
         if isinstance(explicit, str) and explicit:

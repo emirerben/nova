@@ -127,6 +127,32 @@ def _db(execute_results: list, plan) -> AsyncMock:
     return db
 
 
+def test_plan_item_response_projects_nested_private_state_without_mutating_item() -> None:
+    import copy
+
+    from app.routes.plan_items import plan_item_response
+
+    item, _plan = _owned_item(uuid.uuid4())
+    item.conformance = {
+        "verdict": "pass",
+        "_speech_cleanup_internal": {"secret": True},
+        "candidate": {
+            "clip_source_instance_ids": ["private-source-id"],
+            "clip_metadata_identity_index_v2": {"records": []},
+            "clip_paths": ["source.mp4"],
+        },
+    }
+    stored = copy.deepcopy(item.conformance)
+
+    response = plan_item_response(item)
+
+    assert response.conformance == {
+        "verdict": "pass",
+        "candidate": {"clip_paths": ["source.mp4"]},
+    }
+    assert item.conformance == stored
+
+
 @pytest.fixture()
 def client() -> TestClient:
     return TestClient(app, raise_server_exceptions=False)
@@ -675,8 +701,49 @@ def test_speech_cut_202_is_a_queued_request_not_a_completed_receipt(
     assert response.json()["request"]["candidate_id"] == candidate_id
     assert "receipt" not in response.json()
     enqueue.assert_called_once()
-    assert job.assembly_plan["variants"][0]["speech_cut_candidates"][0]["status"] == "applying"
-    assert "speech_cut_last_receipt" not in job.assembly_plan["variants"][0]
+    variant = job.assembly_plan["variants"][0]
+    control = job.assembly_plan["speech_cut_control"]
+    assert variant["speech_cut_candidates"][0]["status"] == "applying"
+    assert "speech_cut_last_receipt" not in variant
+    assert variant["render_generation_id"] == control["render_generation_id"]
+    assert control["finalizer_claim"] is None
+    assert enqueue.call_args.kwargs["args"] == [str(job.id), control["operation_id"]]
+
+
+def test_plan_speech_cut_rejects_inflight_sibling_before_snapshot(
+    client: TestClient, monkeypatch
+) -> None:
+    import copy
+
+    from app.config import settings
+
+    user = _user()
+    variant = _speech_variant()
+    candidate_id = variant["speech_cut_candidates"][0]["candidate_id"]
+    sibling = {
+        **SONG_VARIANT,
+        "render_generation_id": uuid.uuid4().hex,
+        "render_status": "rendering",
+    }
+    job = _job([variant, sibling])
+    job.assembly_plan["speech_cleanup_contract"] = "required_v1"
+    before = copy.deepcopy(job.assembly_plan)
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job], plan)
+    _override(user, db)
+    monkeypatch.setattr(settings, "retake_cut_enabled", True, raising=False)
+
+    with patch("app.tasks.generative_build.rerender_speech_timing.apply_async") as enqueue:
+        response = client.post(
+            f"/plan-items/{item.id}/variants/subtitled/speech-cuts/{candidate_id}/apply",
+            json={"expected_revision": cut_revision(variant)},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "variant_initial_render_in_progress"
+    assert job.assembly_plan == before
+    db.commit.assert_not_awaited()
+    enqueue.assert_not_called()
 
 
 def test_speech_cut_enqueue_failure_restores_last_good_variant(
@@ -716,6 +783,131 @@ def test_speech_cut_enqueue_failure_restores_last_good_variant(
     assert job.assembly_plan["variants"] == [original]
     assert job.assembly_plan["speech_cut_control"] is None
     assert "speech_cut_last_receipt" not in job.assembly_plan["variants"][0]
+
+
+def test_speech_cut_enqueue_response_loss_preserves_worker_reservation(
+    client: TestClient, monkeypatch
+) -> None:
+    """A broker error after delivery must not undo an adopted generation."""
+    import copy
+
+    from app.config import settings
+
+    user = _user()
+    variant = _speech_variant()
+    revision = cut_revision(variant)
+    candidate_id = variant["speech_cut_candidates"][0]["candidate_id"]
+    job = _job([variant])
+    job.assembly_plan["speech_cleanup_contract"] = "required_v1"
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job], plan)
+    _override(user, db)
+    monkeypatch.setattr(settings, "retake_cut_enabled", True, raising=False)
+    adopted: dict = {}
+
+    def _publish_then_lose_response(*_args, **_kwargs) -> None:
+        control = job.assembly_plan["speech_cut_control"]
+        generation = control["render_generation_id"]
+        control["finalizer_claim"] = {
+            "operation_id": control["operation_id"],
+            "attempt_id": "delivered-task:0:attempt",
+            "render_generation_id": generation,
+            "claimed_at_epoch_s": 100.0,
+            "retry_number": 0,
+        }
+        job.assembly_plan["_speech_cleanup_internal"] = {
+            "required_speech_generation_locks": {"subtitled": generation},
+            "working_render_variants": {
+                f"subtitled:{generation}": {
+                    "variant_id": "subtitled",
+                    "render_generation_id": generation,
+                    "render_status": "rendering",
+                }
+            },
+            "render_generation_cleanup_pending": [{"generation": generation}],
+        }
+        adopted["plan"] = copy.deepcopy(job.assembly_plan)
+        raise RuntimeError("broker response lost")
+
+    with (
+        patch("sqlalchemy.orm.attributes.flag_modified"),
+        patch(
+            "app.tasks.generative_build.rerender_speech_timing.apply_async",
+            side_effect=_publish_then_lose_response,
+        ),
+    ):
+        response = client.post(
+            f"/plan-items/{item.id}/variants/subtitled/speech-cuts/{candidate_id}/apply",
+            json={"expected_revision": revision},
+        )
+
+    assert response.status_code == 503
+    assert "may still complete" in response.json()["detail"]
+    assert job.status == "processing"
+    assert job.assembly_plan == adopted["plan"]
+    db.rollback.assert_awaited_once()
+    job_gets = [call for call in db.get.await_args_list if call.args[0] is Job]
+    assert len(job_gets) == 2
+    assert job_gets[-1].kwargs == {"populate_existing": True, "with_for_update": True}
+
+
+def test_speech_cut_enqueue_response_loss_after_publication_stays_uncertain(
+    client: TestClient, monkeypatch
+) -> None:
+    """The worker may finish before the route recovers its lost broker response."""
+    import copy
+
+    from app.config import settings
+
+    user = _user()
+    variant = _speech_variant()
+    revision = cut_revision(variant)
+    candidate_id = variant["speech_cut_candidates"][0]["candidate_id"]
+    job = _job([variant])
+    job.assembly_plan["speech_cleanup_contract"] = "required_v1"
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job], plan)
+    _override(user, db)
+    monkeypatch.setattr(settings, "retake_cut_enabled", True, raising=False)
+    published: dict = {}
+
+    def _publish_then_lose_response(*_args, **_kwargs) -> None:
+        control = job.assembly_plan["speech_cut_control"]
+        generation = control["render_generation_id"]
+        working = copy.deepcopy(job.assembly_plan["speech_cut_previous_variant"])
+        working.update(
+            render_generation_id=generation,
+            render_status="ready",
+            ok=True,
+            video_path=(f"generative-jobs/{job.id}/render-generations/{generation}/final.mp4"),
+        )
+        job.assembly_plan = {
+            **job.assembly_plan,
+            "variants": [working],
+            "speech_cut_control": None,
+            "speech_cut_previous_variant": None,
+            "speech_cut_previous_variants": None,
+        }
+        job.status = "variants_ready"
+        published["plan"] = copy.deepcopy(job.assembly_plan)
+        raise RuntimeError("broker response lost")
+
+    with (
+        patch("sqlalchemy.orm.attributes.flag_modified"),
+        patch(
+            "app.tasks.generative_build.rerender_speech_timing.apply_async",
+            side_effect=_publish_then_lose_response,
+        ),
+    ):
+        response = client.post(
+            f"/plan-items/{item.id}/variants/subtitled/speech-cuts/{candidate_id}/apply",
+            json={"expected_revision": revision},
+        )
+
+    assert response.status_code == 503
+    assert "may still complete" in response.json()["detail"]
+    assert job.status == "variants_ready"
+    assert job.assembly_plan == published["plan"]
 
 
 def test_speech_cut_apply_rejects_stale_revision_without_commit_or_enqueue(
@@ -879,6 +1071,62 @@ def test_restore_original_timing_enqueue_failure_restores_every_variant(
     assert job.assembly_plan["speech_cut_control"] is None
 
 
+def test_restore_enqueue_response_loss_preserves_worker_reservation(
+    client: TestClient,
+) -> None:
+    import copy
+
+    user = _user()
+    variant = {
+        **_speech_variant(),
+        "silence_cut": {"removed": [{"start_s": 1.0, "end_s": 2.0}]},
+    }
+    job = _job([variant])
+    job.assembly_plan["speech_cleanup_contract"] = "required_v1"
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job], plan)
+    _override(user, db)
+    adopted: dict = {}
+
+    def _publish_then_lose_response(*_args, **_kwargs) -> None:
+        control = job.assembly_plan["speech_cut_control"]
+        generation = control["render_generation_id"]
+        control["finalizer_claim"] = {
+            "operation_id": control["operation_id"],
+            "attempt_id": "delivered-task:0:attempt",
+            "render_generation_id": generation,
+            "claimed_at_epoch_s": 100.0,
+            "retry_number": 0,
+        }
+        job.assembly_plan["_speech_cleanup_internal"] = {
+            "required_speech_generation_locks": {"subtitled": generation},
+            "render_generation_cleanup_pending": [{"generation": generation}],
+        }
+        adopted["plan"] = copy.deepcopy(job.assembly_plan)
+        raise RuntimeError("broker response lost")
+
+    with (
+        patch("sqlalchemy.orm.attributes.flag_modified"),
+        patch(
+            "app.tasks.generative_build.rerender_speech_timing.apply_async",
+            side_effect=_publish_then_lose_response,
+        ),
+    ):
+        response = client.post(
+            f"/plan-items/{item.id}/variants/subtitled/speech-cuts/restore",
+            json={"expected_revision": cut_revision(variant)},
+        )
+
+    assert response.status_code == 503
+    assert "may still complete" in response.json()["detail"]
+    assert job.status == "processing"
+    assert job.assembly_plan == adopted["plan"]
+    db.rollback.assert_awaited_once()
+    job_gets = [call for call in db.get.await_args_list if call.args[0] is Job]
+    assert len(job_gets) == 2
+    assert job_gets[-1].kwargs == {"populate_existing": True, "with_for_update": True}
+
+
 # ── shared-helper unit guards (single-sourced validation) ─────────────────────
 
 
@@ -894,6 +1142,388 @@ def test_require_editable_variant_raises_409_rendering() -> None:
     with pytest.raises(HTTPException) as exc:
         require_editable_variant(job, "song_text")
     assert exc.value.status_code == 409
+
+
+def test_require_editable_variant_rejects_private_initial_generation_lock() -> None:
+    job = _job([dict(SONG_VARIANT)])
+    job.assembly_plan["_speech_cleanup_internal"] = {
+        "required_speech_generation_locks": {"song_text": "generation-a"}
+    }
+    with pytest.raises(HTTPException) as exc:
+        require_editable_variant(job, "song_text")
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "variant_initial_render_in_progress"
+
+
+def _lock_initial_generation(job: MagicMock, variant_id: str) -> None:
+    job.assembly_plan["_speech_cleanup_internal"] = {
+        "required_speech_generation_locks": {variant_id: "generation-a"}
+    }
+
+
+def test_locked_render_false_overlay_autosave_rejects_before_validation() -> None:
+    import copy
+
+    from app.routes import plan_items
+
+    job = _job([dict(SONG_VARIANT)])
+    _lock_initial_generation(job, "song_text")
+    stored = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        plan_items._persist_overlay_metadata_only(
+            job,
+            "song_text",
+            overlays_raw=[{"invalid": "would otherwise fail validation"}],
+            user_id="user-a",
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "variant_initial_render_in_progress"
+    assert job.assembly_plan == stored
+
+
+def test_control_only_speech_request_blocks_overlay_autosave_before_worker_reservation() -> None:
+    import copy
+
+    from app.routes import plan_items
+
+    job = _job([dict(SONG_VARIANT)])
+    job.assembly_plan["speech_cut_control"] = {
+        "variant_id": "song_text",
+        "operation_id": "operation-a",
+        "render_generation_id": uuid.uuid4().hex,
+    }
+    stored = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        plan_items._persist_overlay_metadata_only(
+            job,
+            "song_text",
+            overlays_raw=[{"invalid": "would otherwise fail validation"}],
+            user_id="user-a",
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "variant_initial_render_in_progress"
+    assert job.assembly_plan == stored
+
+
+def test_locked_render_false_text_autosave_rejects_without_generation_bump(monkeypatch) -> None:
+    import copy
+
+    from app.routes import generative_jobs
+
+    monkeypatch.setattr(generative_jobs, "_TEXT_ELEMENTS_ENABLED", True)
+    job = _job([dict(SONG_VARIANT)])
+    _lock_initial_generation(job, "song_text")
+    stored = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        generative_jobs.dispatch_set_text_elements(
+            job,
+            "song_text",
+            elements=[{"invalid": "would otherwise fail validation"}],
+            render=False,
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "variant_initial_render_in_progress"
+    assert job.assembly_plan == stored
+
+
+def test_locked_title_only_editor_commit_rejects_before_no_render_save() -> None:
+    import copy
+
+    from app.routes import generative_jobs
+
+    job = _job([dict(SONG_VARIANT)])
+    _lock_initial_generation(job, "song_text")
+    stored = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        generative_jobs.prepare_editor_commit(
+            job,
+            "song_text",
+            generative_jobs.EditorCommitRequest(title="A new title", base_generation=""),
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "variant_initial_render_in_progress"
+    assert job.assembly_plan == stored
+
+
+@pytest.mark.asyncio
+async def test_locked_caption_autosave_rejects_before_variant_validation() -> None:
+    import copy
+
+    from app.routes import generative_jobs
+
+    job = _job([{"variant_id": "subtitled", "render_status": "pending"}])
+    _lock_initial_generation(job, "subtitled")
+    stored = copy.deepcopy(job.assembly_plan)
+    db = AsyncMock()
+    db.execute.return_value = _result(job)
+
+    with pytest.raises(HTTPException) as exc:
+        await generative_jobs._patch_narrated_variant(
+            job.id,
+            "subtitled",
+            {"caption_cues": [{"text": "must not persist"}]},
+            db,
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "variant_initial_render_in_progress"
+    assert job.assembly_plan == stored
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "operation",
+    ["font", "style", "position", "language", "custom_effect"],
+)
+@pytest.mark.asyncio
+async def test_locked_caption_dispatchers_reject_before_payload_validation(operation) -> None:
+    from app.routes import generative_jobs
+
+    job = _job([{"variant_id": "subtitled", "render_status": "pending"}])
+    _lock_initial_generation(job, "subtitled")
+    db = AsyncMock()
+    db.execute.return_value = _result(job)
+
+    if operation == "font":
+        call = generative_jobs.persist_variant_caption_font(
+            job.id, "subtitled", "definitely-not-a-font", db
+        )
+    elif operation == "style":
+        call = generative_jobs.persist_variant_caption_style(
+            job.id, "subtitled", "invalid-style", db
+        )
+    elif operation == "position":
+        call = generative_jobs.dispatch_set_caption_position(
+            job.id, "subtitled", y_frac=-99.0, db=db
+        )
+    elif operation == "language":
+        call = generative_jobs.dispatch_retranscribe_captions(
+            job.id, "subtitled", language="invalid-language", db=db
+        )
+    else:
+        call = generative_jobs.dispatch_apply_custom_effect(
+            job.id, "subtitled", effect_raw={"invalid": True}, db=db
+        )
+
+    with pytest.raises(HTTPException) as exc:
+        await call
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "variant_initial_render_in_progress"
+    db.commit.assert_not_awaited()
+
+
+def test_locked_inline_dispatchers_reject_before_feature_gates(monkeypatch) -> None:
+    from app.routes import generative_jobs
+
+    job = _job([{"variant_id": "subtitled", "render_status": "pending"}])
+    _lock_initial_generation(job, "subtitled")
+    monkeypatch.setattr(generative_jobs.settings, "media_overlays_enabled", False)
+    monkeypatch.setattr(generative_jobs.settings, "sound_effects_enabled", False)
+    monkeypatch.setattr(generative_jobs, "_TEXT_ELEMENTS_ENABLED", False)
+
+    operations = (
+        lambda: generative_jobs.dispatch_set_media_overlays(
+            job,
+            "subtitled",
+            overlays_raw=[{"invalid": True}],
+            user_id="user-a",
+        ),
+        lambda: generative_jobs.dispatch_set_sound_effects(
+            job,
+            "subtitled",
+            sfx_raw=[{"invalid": True}],
+            user_id="user-a",
+            db_for_glossary=AsyncMock(),
+        ),
+        lambda: generative_jobs.dispatch_set_text_elements(
+            job,
+            "subtitled",
+            elements=[{"invalid": True}],
+            render=False,
+        ),
+    )
+    for operation in operations:
+        with pytest.raises(HTTPException) as exc:
+            operation()
+        assert exc.value.status_code == 409
+        assert exc.value.detail == "variant_initial_render_in_progress"
+
+
+@pytest.mark.asyncio
+async def test_locked_fresh_dispatchers_reject_before_feature_or_variant_validation(
+    monkeypatch,
+) -> None:
+    from app.routes import generative_jobs
+
+    job = _job([{"variant_id": "subtitled", "render_status": "pending"}])
+    _lock_initial_generation(job, "subtitled")
+    db = AsyncMock()
+    db.execute.return_value = _result(job)
+    monkeypatch.setattr(generative_jobs, "_LANDSCAPE_OUTPUT_ENABLED", False)
+    monkeypatch.setattr(generative_jobs, "_LYRICS_EDITOR_ENABLED", False)
+
+    operations = (
+        generative_jobs.dispatch_set_orientation(
+            db,
+            job,
+            "subtitled",
+            orientation="invalid-orientation",
+        ),
+        generative_jobs.dispatch_set_lyrics(
+            db,
+            job,
+            "subtitled",
+            enabled="invalid-enabled-state",
+        ),
+        generative_jobs.dispatch_edit_timeline(
+            job,
+            "subtitled",
+            MagicMock(),
+            db=db,
+        ),
+    )
+    for operation in operations:
+        with pytest.raises(HTTPException) as exc:
+            await operation
+        assert exc.value.status_code == 409
+        assert exc.value.detail == "variant_initial_render_in_progress"
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_locked_fresh_row_timeline_write_rejects_without_mutation() -> None:
+    import copy
+
+    from app.routes import generative_jobs
+
+    job = _job([{"variant_id": "subtitled", "render_status": "pending"}])
+    _lock_initial_generation(job, "subtitled")
+    stored = copy.deepcopy(job.assembly_plan)
+    db = AsyncMock()
+    db.get.return_value = job
+
+    with pytest.raises(HTTPException) as exc:
+        await generative_jobs.persist_user_timeline(
+            db,
+            str(job.id),
+            "subtitled",
+            [],
+            render_gen_id="editor-generation",
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "variant_initial_render_in_progress"
+    assert job.assembly_plan == stored
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_locked_source_audio_autosave_rejects_before_option_validation(monkeypatch) -> None:
+    import copy
+    from types import SimpleNamespace
+
+    from app.routes import plan_items
+
+    job = _job([{"variant_id": "subtitled", "render_status": "pending"}])
+    _lock_initial_generation(job, "subtitled")
+    stored = copy.deepcopy(job.assembly_plan)
+    item = SimpleNamespace(current_job_id=job.id)
+    db = AsyncMock()
+    db.get.return_value = job
+    monkeypatch.setattr(plan_items, "_load_owned_item", AsyncMock(return_value=item))
+
+    with pytest.raises(HTTPException) as exc:
+        await plan_items.set_source_audio_mix(
+            str(uuid.uuid4()),
+            "subtitled",
+            plan_items.SourceAudioMixRequest(mix="not-an-option"),
+            SimpleNamespace(id=uuid.uuid4()),
+            db,
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "variant_initial_render_in_progress"
+    assert job.assembly_plan == stored
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_locked_overlay_suggestion_read_skips_stale_cleanup(monkeypatch) -> None:
+    import copy
+    from types import SimpleNamespace
+
+    from app.routes import plan_items
+    from app.services import transcript_source
+
+    variant = {
+        "variant_id": "subtitled",
+        "render_status": "pending",
+        "overlay_suggest_status": "ready",
+        "overlay_suggestions": [{"id": "suggestion-a"}],
+        "overlay_suggest_hash": "old-hash",
+    }
+    job = _job([variant])
+    _lock_initial_generation(job, "subtitled")
+    stored = copy.deepcopy(job.assembly_plan)
+    db = AsyncMock()
+    monkeypatch.setattr(plan_items, "_require_autoplace", lambda: None)
+    monkeypatch.setattr(plan_items, "_load_owned_item", AsyncMock(return_value=SimpleNamespace()))
+    monkeypatch.setattr(
+        plan_items,
+        "_locked_owned_item_render_job",
+        AsyncMock(return_value=job),
+    )
+    monkeypatch.setattr(transcript_source, "persisted_hash_is_stale", lambda _variant: True)
+
+    response = await plan_items.get_overlay_suggestions(
+        str(uuid.uuid4()),
+        "subtitled",
+        SimpleNamespace(id=uuid.uuid4()),
+        db,
+    )
+
+    assert response.stale_cleared is False
+    assert response.suggestions == [{"id": "suggestion-a"}]
+    assert job.assembly_plan == stored
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_locked_omni_asset_status_remains_readable(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from app.routes import plan_items
+
+    job = _job([{"variant_id": "subtitled", "render_status": "pending"}])
+    _lock_initial_generation(job, "subtitled")
+    expected = SimpleNamespace(status="generating")
+    get_asset = MagicMock(return_value=expected)
+    monkeypatch.setattr(
+        plan_items,
+        "_owned_item_render_job",
+        AsyncMock(return_value=job),
+    )
+    monkeypatch.setattr(plan_items, "get_omni_asset", get_asset)
+
+    response = await plan_items.plan_item_omni_asset_status(
+        str(uuid.uuid4()),
+        "subtitled",
+        "asset-a",
+        SimpleNamespace(id=uuid.uuid4()),
+        AsyncMock(),
+    )
+
+    assert response is expected
+    get_asset.assert_called_once_with(job, "asset-a")
 
 
 def test_dispatch_retext_requires_text_or_remove() -> None:

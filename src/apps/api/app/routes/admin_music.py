@@ -86,6 +86,7 @@ from app.services.lyrics_config_validation import (
     validate_lyrics_config_dict,
 )
 from app.services.music_sections import current_best_section_for_track
+from app.services.public_assembly_plan import project_public_assembly_plan
 
 log = structlog.get_logger()
 router = APIRouter()
@@ -1613,7 +1614,7 @@ async def get_admin_lyrics_preview_status(
     if job is None or job.job_type != "lyrics_preview" or job.music_track_id != track_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
-    plan = job.assembly_plan or {}
+    plan = project_public_assembly_plan(job.assembly_plan) or {}
     raw_url = plan.get("output_url")
     output_url = (
         raw_url
@@ -2321,7 +2322,7 @@ async def get_admin_music_job_status(
         job_id=str(job.id),
         status=job.status,
         music_track_id=job.music_track_id,
-        assembly_plan=job.assembly_plan,
+        assembly_plan=project_public_assembly_plan(job.assembly_plan),
         error_detail=job.error_detail,
         created_at=job.created_at,
         updated_at=job.updated_at,
@@ -2352,7 +2353,7 @@ async def list_admin_music_test_jobs(
 
     summaries: list[AdminMusicJobSummary] = []
     for j in jobs:
-        plan = j.assembly_plan or {}
+        plan = project_public_assembly_plan(j.assembly_plan) or {}
         clip_paths = (j.all_candidates or {}).get("clip_paths", [])
         # Pre-fix rows stored a relative GCS path here instead of a signed URL.
         # If we passed that through, the admin UI would render a broken

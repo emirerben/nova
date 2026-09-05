@@ -183,6 +183,86 @@ def test_list_generating_job_has_no_preview_url() -> None:
     assert j["output_url"] is None
 
 
+def test_list_never_signs_control_owned_media_when_contract_is_missing(monkeypatch) -> None:
+    user = _user()
+    job = _job(user_id=user.id, status="variants_ready", assembly_plan={})
+    provisional_path = f"generative-jobs/{job.id}/render-generations/generation-new/provisional.mp4"
+    job.assembly_plan = {
+        "speech_cut_control": {
+            "variant_id": "subtitled",
+            "operation_id": "operation-a",
+            "render_generation_id": "generation-new",
+        },
+        "output_path": provisional_path,
+        "variants": [
+            {
+                "variant_id": "subtitled",
+                "render_status": "ready",
+                "render_generation_id": "generation-new",
+                "video_path": provisional_path,
+                "output_url": "https://private.example/provisional",
+                "source_tag": "0123456789abcdef",
+            }
+        ],
+    }
+    db = _db([_scalars([job]), _rows([]), _scalars([]), _scalars([])])
+    _override(user, db)
+    sign_playback = MagicMock(return_value="https://signed.example/provisional")
+    sign_download = MagicMock(return_value="https://download.example/provisional")
+    monkeypatch.setattr("app.routes.me.signed_get_url", sign_playback)
+    monkeypatch.setattr("app.routes.me.signed_download_url", sign_download)
+
+    response = client.get("/me/jobs")
+
+    assert response.status_code == 200
+    [item] = response.json()["jobs"]
+    assert item["output_url"] is None
+    assert item["download_url"] is None
+    assert item["output_variant_id"] is None
+    assert item["tiktok_publishable"] is False
+    assert "provisional" not in response.content.decode("utf-8").lower()
+    sign_playback.assert_not_called()
+    sign_download.assert_not_called()
+
+
+def test_list_never_signs_nonterminal_required_media_when_owners_are_missing(
+    monkeypatch,
+) -> None:
+    user = _user()
+    job = _job(user_id=user.id, status="variants_ready", assembly_plan={})
+    provisional_path = f"generative-jobs/{job.id}/render-generations/generation-new/provisional.mp4"
+    job.assembly_plan = {
+        "speech_cleanup_contract": "required_v1",
+        "output_path": provisional_path,
+        "variants": [
+            {
+                "variant_id": "subtitled",
+                "render_status": "rendering",
+                "render_generation_id": "generation-new",
+                "video_path": provisional_path,
+                "output_url": "https://private.example/provisional",
+            }
+        ],
+    }
+    db = _db([_scalars([job]), _rows([]), _scalars([]), _scalars([])])
+    _override(user, db)
+    sign_playback = MagicMock(return_value="https://signed.example/provisional")
+    sign_download = MagicMock(return_value="https://download.example/provisional")
+    monkeypatch.setattr("app.routes.me.signed_get_url", sign_playback)
+    monkeypatch.setattr("app.routes.me.signed_download_url", sign_download)
+
+    response = client.get("/me/jobs")
+
+    assert response.status_code == 200
+    [item] = response.json()["jobs"]
+    assert item["output_url"] is None
+    assert item["download_url"] is None
+    assert item["output_variant_id"] is None
+    assert item["tiktok_publishable"] is False
+    sign_playback.assert_not_called()
+    sign_download.assert_not_called()
+
+
 def test_list_marks_legacy_signed_only_ready_poster_unavailable() -> None:
     user = _user()
     stale_url = "https://storage.example/output.mp4?X-Goog-Expires=1&expired=true"
@@ -560,6 +640,131 @@ def test_refresh_posters_clears_and_repairs_a_broken_poster_whose_source_survive
     assert item["poster_status"] == "repairing"
     assert job.assembly_plan["variants"][0]["poster_path"] is None
     repair_task.apply_async.assert_called_once_with(args=[str(job.id)], queue="celery")
+
+
+def test_refresh_posters_race_does_not_clear_generation_locked_variant(
+    monkeypatch, repair_task
+) -> None:
+    """A private generation claimed after the bulk read owns poster fields."""
+    user = _user()
+    video_path = "generative-jobs/PLACEHOLDER/output.mp4"
+    poster_path = "generative-jobs/PLACEHOLDER/output.jpg"
+    snapshot = _job(
+        user_id=user.id,
+        status="variants_ready",
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "talking_head",
+                    "render_status": "ready",
+                    "video_path": video_path,
+                    "poster_path": poster_path,
+                }
+            ]
+        },
+    )
+    video_path = f"generative-jobs/{snapshot.id}/output.mp4"
+    poster_path = f"generative-jobs/{snapshot.id}/output.jpg"
+    snapshot.assembly_plan["variants"][0].update(
+        video_path=video_path,
+        poster_path=poster_path,
+    )
+    locked = _job(
+        user_id=user.id,
+        status="variants_ready",
+        assembly_plan={
+            **snapshot.assembly_plan,
+            "_speech_cleanup_internal": {
+                "required_speech_generation_locks": {"talking_head": "generation-2"}
+            },
+        },
+    )
+    locked.id = snapshot.id
+    db = _db([_scalars([snapshot]), _scalar(locked)])
+    _override(user, db)
+    monkeypatch.setattr("app.routes.me.signed_get_url", lambda path, ttl: f"https://s/{path}")
+    monkeypatch.setattr(
+        "app.routes.me.object_exists_once",
+        lambda path, *, timeout_s: path.endswith(".mp4"),
+    )
+
+    response = client.post(
+        "/me/jobs/posters/refresh",
+        json={"job_ids": [str(snapshot.id)], "broken_job_ids": [str(snapshot.id)]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["jobs"][0]["poster_url"] == f"https://s/{poster_path}"
+    assert locked.assembly_plan["variants"][0]["poster_path"] == poster_path
+    assert "_poster_repair" not in locked.assembly_plan
+    repair_task.apply_async.assert_not_called()
+    # The no-op commit releases the row lock without changing the owner state.
+    db.commit.assert_awaited_once()
+
+
+def test_refresh_posters_retries_existing_marker_only_after_generation_unlock(
+    monkeypatch, repair_task
+) -> None:
+    """Locked reads preserve retry state; a later terminal read can enqueue it."""
+    user = _user()
+    snapshot = _job(
+        user_id=user.id,
+        status="variants_ready",
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "subtitled",
+                    "render_status": "ready",
+                    "video_path": "generative-jobs/PLACEHOLDER/output.mp4",
+                    "poster_path": None,
+                }
+            ],
+            "_poster_repair": {
+                "video_path": "generative-jobs/old/output.mp4",
+                "attempts": 2,
+                "terminal": None,
+                "enqueued_at": "2026-01-01T00:00:00+00:00",
+            },
+        },
+    )
+    video_path = f"generative-jobs/{snapshot.id}/output.mp4"
+    snapshot.assembly_plan["variants"][0]["video_path"] = video_path
+    locked = _job(
+        user_id=user.id,
+        status="variants_ready",
+        assembly_plan={
+            **snapshot.assembly_plan,
+            "_speech_cleanup_internal": {
+                "required_speech_generation_locks": {"subtitled": "generation-3"}
+            },
+        },
+    )
+    locked.id = snapshot.id
+    marker_before = dict(locked.assembly_plan["_poster_repair"])
+    first_db = _db([_scalars([snapshot]), _scalar(locked)])
+    _override(user, first_db)
+    monkeypatch.setattr("app.routes.me.signed_get_url", MagicMock())
+
+    first = client.post("/me/jobs/posters/refresh", json={"job_ids": [str(snapshot.id)]})
+
+    assert first.status_code == 200
+    assert first.json()["jobs"][0]["poster_status"] == "repairing"
+    assert locked.assembly_plan["_poster_repair"] == marker_before
+    repair_task.apply_async.assert_not_called()
+
+    # Terminal publication removes only the private fence.  The next refresh
+    # reuses the persisted attempts counter while rebinding to the new source.
+    locked.assembly_plan.pop("_speech_cleanup_internal")
+    second_db = _db([_scalars([locked]), _scalar(locked)])
+    _override(user, second_db)
+    second = client.post("/me/jobs/posters/refresh", json={"job_ids": [str(locked.id)]})
+
+    assert second.status_code == 200
+    marker_after = locked.assembly_plan["_poster_repair"]
+    assert marker_after["video_path"] == video_path
+    # A new source intentionally starts a fresh attempt budget.
+    assert marker_after["attempts"] == 0
+    repair_task.apply_async.assert_called_once_with(args=[str(locked.id)], queue="celery")
 
 
 def test_refresh_posters_settles_broken_poster_terminal_when_source_is_gone(
@@ -1030,6 +1235,42 @@ def test_playback_url_refresh_rejects_not_ready_job_without_signing(monkeypatch)
     assert db.execute.await_count == 1
 
 
+def test_playback_url_refresh_does_not_fall_back_after_private_media_is_removed(
+    monkeypatch,
+) -> None:
+    user = _user()
+    job = _job(user_id=user.id, status="variants_ready", assembly_plan={})
+    provisional_path = f"generative-jobs/{job.id}/render-generations/generation-new/provisional.mp4"
+    job.assembly_plan = {
+        "speech_cut_control": {
+            "variant_id": "subtitled",
+            "operation_id": "operation-a",
+            "render_generation_id": "generation-new",
+        },
+        "variants": [
+            {
+                "variant_id": "subtitled",
+                "render_status": "ready",
+                "render_generation_id": "generation-new",
+                "video_path": provisional_path,
+            }
+        ],
+    }
+    db = _db([_scalar(job)])
+    _override(user, db)
+    signer = MagicMock(return_value="https://signed.example/provisional")
+    monkeypatch.setattr("app.routes.me.signed_get_url", signer)
+
+    response = client.get(f"/me/jobs/{job.id}/playback-url")
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Video preview is not ready."}
+    assert provisional_path not in response.text
+    signer.assert_not_called()
+    # Suppressed plan media must not trigger an unprojected JobClip fallback.
+    assert db.execute.await_count == 1
+
+
 def test_playback_url_refresh_signs_current_owned_ready_preview(monkeypatch) -> None:
     user = _user()
     job = _job(
@@ -1304,13 +1545,22 @@ def test_delete_job_removes_terminal_job_and_dispatches_exact_owned_paths(monkey
     cleanup.assert_awaited_once()
     deletion = db.add.call_args.args[0]
     assert deletion.job_id == job_id
-    assert deletion.object_paths == [
+    assert deletion.object_paths["version"] == 2
+    assert deletion.object_paths["exact_paths"] == [
         f"jobs/{job_id}/clip.mp4",
         f"jobs/{job_id}/task-runs/run/output.mp4",
         f"jobs/{job_id}/task-runs/run/output.mp4.poster.jpg",
         f"{user.id}/{job_id}/first.mp4",
         f"{user.id}/{job_id}/second.mp4",
     ]
+    assert {entry["prefix"] for entry in deletion.object_paths["prefixes"]} == {
+        f"generative-jobs/{job_id}/",
+        f"jobs/{job_id}/",
+        f"music-jobs/{job_id}/",
+        f"auto-music-jobs/{job_id}/",
+        f"job-posters/{job_id}/",
+        f"{user.id}/{job_id}/",
+    }
     assert cleanup.call_args.args == (deletion.id,)
     assert _job_storage_paths(job, [clip], [publication], user_id=user.id) == [
         f"jobs/{job_id}/clip.mp4",
@@ -1319,6 +1569,38 @@ def test_delete_job_removes_terminal_job_and_dispatches_exact_owned_paths(monkey
         f"{user.id}/{job_id}/first.mp4",
         f"{user.id}/{job_id}/second.mp4",
     ]
+
+
+def test_delete_job_writes_v2_prefix_manifest_when_exact_set_is_empty(monkeypatch) -> None:
+    user = _user()
+    job = _job(user_id=user.id, status="done")
+    job.raw_storage_path = None
+    db = _db(
+        [
+            _scalar(job),
+            _scalars([]),
+            _scalar(job),
+            _scalars([]),
+            _scalars([]),
+            MagicMock(),
+            MagicMock(),
+        ]
+    )
+    db.delete = AsyncMock()
+    _override(user, db)
+    dispatch = AsyncMock()
+    monkeypatch.setattr("app.routes.me._delete_job_storage_after_commit", dispatch)
+
+    response = client.delete(f"/me/jobs/{job.id}")
+
+    assert response.status_code == 204
+    deletion = db.add.call_args.args[0]
+    assert deletion.object_paths["version"] == 2
+    assert deletion.object_paths["exact_paths"] == []
+    assert f"generative-jobs/{job.id}/" in {
+        entry["prefix"] for entry in deletion.object_paths["prefixes"]
+    }
+    dispatch.assert_awaited_once_with(deletion.id)
 
 
 def test_delete_job_collects_direct_uploads_and_subject_matte_sidecar() -> None:
@@ -1526,6 +1808,64 @@ def test_delete_job_rejects_active_render_without_mutation() -> None:
     resp = client.delete(f"/me/jobs/{job.id}")
 
     assert resp.status_code == 409
+    assert db.commit.await_count == 0
+
+
+def test_delete_nonterminal_job_with_active_variant_uses_stable_quiescence_conflict() -> None:
+    user = _user()
+    job = _job(
+        user_id=user.id,
+        status="processing",
+        assembly_plan={"variants": [{"variant_id": "v1", "render_status": "rendering"}]},
+    )
+    db = _db([_scalar(job), _scalars([]), _scalar(job)])
+    _override(user, db)
+
+    response = client.delete(f"/me/jobs/{job.id}")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "job_render_not_quiescent"
+    assert db.commit.await_count == 0
+
+
+@pytest.mark.parametrize(
+    "assembly_plan",
+    [
+        {"variants": [{"variant_id": "v1", "render_status": "pending"}]},
+        {"speech_cut_control": {"operation_id": "active"}},
+        {"_speech_cleanup_internal": {"required_speech_generation_locks": {"v1": "generation"}}},
+        {
+            "_speech_cleanup_internal": {
+                "staged_render_results": {"v1:generation": {"video_path": "pending"}}
+            }
+        },
+        {
+            "_speech_cleanup_internal": {
+                "working_render_variants": {"v1:generation": {"video_path": "pending"}}
+            }
+        },
+        {
+            "_speech_cleanup_internal": {
+                "terminal_pending": {"v1:generation": {"status": "pending"}}
+            }
+        },
+        {"_speech_cleanup_internal": {"render_generation_cleanup_pending": ["malformed"]}},
+        {"_speech_cleanup_internal": {"future_ownership_state": {}}},
+    ],
+)
+def test_delete_terminal_job_fails_closed_on_private_render_debt(
+    assembly_plan: dict,
+) -> None:
+    user = _user()
+    job = _job(user_id=user.id, status="done", assembly_plan=assembly_plan)
+    db = _db([_scalar(job), _scalars([]), _scalar(job)])
+    _override(user, db)
+
+    response = client.delete(f"/me/jobs/{job.id}")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "job_render_not_quiescent"
+    assert db.add.call_count == 0
     assert db.commit.await_count == 0
 
 
@@ -2135,6 +2475,39 @@ def test_open_in_editor_unfinished_job_has_stable_409() -> None:
 
     assert resp.status_code == 409
     assert resp.json()["detail"] == "Video is not ready to open in the editor."
+    db.add.assert_not_called()
+    db.commit.assert_not_awaited()
+
+
+def test_open_in_editor_rejects_control_owned_ready_row_when_contract_is_missing() -> None:
+    user = _user()
+    job = _job(user_id=user.id, status="variants_ready", assembly_plan={})
+    job.assembly_plan = {
+        "speech_cut_control": {
+            "variant_id": "subtitled",
+            "operation_id": "operation-a",
+            "render_generation_id": "generation-new",
+        },
+        "variants": [
+            {
+                "variant_id": "subtitled",
+                "rank": 0,
+                "render_status": "ready",
+                "render_generation_id": "generation-new",
+                "video_path": (
+                    f"generative-jobs/{job.id}/render-generations/generation-new/provisional.mp4"
+                ),
+            }
+        ],
+    }
+    db = _db([_scalar(job)])
+    _override(user, db)
+
+    response = client.post(f"/me/jobs/{job.id}/open-in-editor", json={})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Video is not ready to open in the editor."
+    assert db.execute.await_count == 1
     db.add.assert_not_called()
     db.commit.assert_not_awaited()
 

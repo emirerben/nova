@@ -26,15 +26,22 @@ trip the sweep.
 
 from __future__ import annotations
 
+import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from typing import Any, Literal
 
 import structlog
+from billiard.exceptions import SoftTimeLimitExceeded
 from celery import Celery
-from sqlalchemy import select, update
+from sqlalchemy import and_, func, literal_column, or_, select, update
 
 from app.database import sync_session
 from app.models import Job
+from app.services.durable_attempt_cleanup import reconcile_storage_attempt_cleanup
 from app.services.queue_state import get_live_job_index
+from app.services.speech_cleanup_terminal import terminalize_required_speech_generations
 
 log = structlog.get_logger()
 
@@ -78,10 +85,143 @@ _NON_TERMINAL_STATUSES = ("processing", "matching", "rendering", "posting")
 _STUCK_VARIANT_STATUSES = ("rendering", "pending")
 
 # `reconcile_stuck_variants` only looks back this far. A long-completed job will
-# never grow a stuck variant out of nowhere, and bounding the scan to a recent
-# window keeps it cheap WITHOUT a Postgres-only JSONB path query (so the sweep
-# stays dialect-agnostic and unit-testable with a mocked session).
+# never grow a stuck variant out of nowhere. The PostgreSQL JSONB predicate
+# below then limits the bounded ID-only discovery page to rows with repairable
+# state instead of loading every recent terminal assembly plan.
 _RECONCILE_LOOKBACK_DAYS = 7
+
+# Keep the terminal-job watchdog bounded even when the seven-day window contains
+# a large fleet of completed jobs. Discovery reads IDs only; each candidate is
+# then independently locked, revalidated, and committed.
+_STUCK_VARIANT_RECONCILE_BATCH = 50
+
+
+def _terminal_reconcile_state_predicate() -> Any:
+    """Return the JSONB predicate for state this watchdog can repair."""
+
+    private = Job.assembly_plan.op("->")(literal_column("'_speech_cleanup_internal'"))
+    required_speech_state = and_(
+        func.jsonb_typeof(private) == literal_column("'object'"),
+        or_(
+            private.op("?")(literal_column("'required_speech_generation_locks'")),
+            private.op("?")(literal_column("'staged_render_results'")),
+            private.op("?")(literal_column("'working_render_variants'")),
+            private.op("?")(literal_column("'terminal_pending'")),
+        ),
+    )
+    stuck_variant = Job.assembly_plan.op("@?")(
+        literal_column(
+            '\'$.variants[*] ? (@.render_status == "rendering" '
+            '|| @.render_status == "pending")\'::jsonpath'
+        )
+    )
+    return or_(stuck_variant, required_speech_state)
+
+
+@dataclass(frozen=True)
+class CancelledRequiredSpeechReconciliation:
+    status: Literal[
+        "absent",
+        "terminalized",
+        "deferred",
+        "unavailable",
+        "not_cancelled",
+    ]
+    reason: str | None = None
+
+    @property
+    def cleanup_safe(self) -> bool:
+        return self.status in {"absent", "terminalized"}
+
+
+def _append_required_speech_terminal_outcomes(
+    pipeline_trace: list[Any] | None,
+    terminal_contexts: tuple[dict[str, Any], ...],
+    *,
+    outcome: str,
+    failure_phase: str | None = None,
+    failure_class: str | None = None,
+) -> list[Any] | None:
+    """Append exact-capsule hard-kill outcomes without exposing media data.
+
+    ``terminal_contexts`` comes only from a successful ownership terminalization;
+    a blocked transition returns none.  Building or appending observability is
+    deliberately fail-open: lifecycle recovery remains authoritative even when a
+    legacy/malformed capsule cannot produce a bounded outcome.
+    """
+
+    from app.services.speech_cleanup_outcome import (  # noqa: PLC0415
+        append_speech_cleanup_render_outcome_locked,
+        build_speech_cleanup_render_outcome,
+    )
+
+    holder = SimpleNamespace(pipeline_trace=pipeline_trace)
+    for context in terminal_contexts:
+        try:
+            payload = build_speech_cleanup_render_outcome(
+                outcome=outcome,
+                analysis_attempt_id=str(context["analysis_attempt_id"]),
+                analysis_view=context["analysis_view"],
+                detector_version=str(context["detector_version"]),
+                source_tag=context.get("source_tag"),
+                variant_id=str(context["variant_id"]),
+                render_generation_id=str(context["render_generation_id"]),
+                selected_plan=context.get("selected_plan"),
+                candidate_status=context.get("candidate_status"),
+                output_removal_count=context.get("output_removal_count"),
+                output_removed_ms=context.get("output_removed_ms"),
+                failure_phase=failure_phase,
+                failure_class=failure_class,
+            )
+        except Exception as exc:  # noqa: BLE001 - state recovery must remain fail-open
+            log.warning(
+                "required_speech_reaper_outcome_build_failed",
+                error_class=type(exc).__name__,
+            )
+            continue
+        append_speech_cleanup_render_outcome_locked(holder, payload)
+    return holder.pipeline_trace
+
+
+def _append_reaper_failed_owned_outcomes(
+    pipeline_trace: list[Any] | None,
+    terminal_contexts: tuple[dict[str, Any], ...],
+) -> list[Any] | None:
+    return _append_required_speech_terminal_outcomes(
+        pipeline_trace,
+        terminal_contexts,
+        outcome="failed_owned",
+        failure_phase="render",
+        failure_class="WorkerDied",
+    )
+
+
+def reconcile_terminal_storage_attempts(job_ids: list[object]) -> int:
+    """Run one bounded cleanup step after a reaper terminal transition.
+
+    The state transition commits first. Storage latency therefore cannot hold
+    the reaper's bulk-update transaction, and a failure merely leaves the
+    durable receipt for the indexed Beat pass.
+    """
+    receipts_seen = 0
+    for job_id in dict.fromkeys(job_ids):
+        try:
+            result = reconcile_storage_attempt_cleanup(
+                job_id,
+                source_limit=1,
+                render_limit=1,
+            )
+        except SoftTimeLimitExceeded:
+            raise
+        except Exception as exc:  # noqa: BLE001 — durable receipt remains queued
+            log.warning(
+                "reaper_storage_attempt_cleanup_failed",
+                job_id=str(job_id),
+                error_class=type(exc).__name__,
+            )
+            continue
+        receipts_seen += result.receipts_seen
+    return receipts_seen
 
 
 def _live_job_ids(celery_app: Celery) -> set[str] | None:
@@ -118,10 +258,9 @@ def reap_orphans(
     compute it internally, unchanged from before — the on-boot reaper in
     app/worker.py and ad-hoc/test callers rely on this default.
 
-    Safe to call concurrently from multiple workers — the SQL UPDATE with
-    a WHERE clause on `status` is atomic in postgres, and the same row
-    won't be double-reaped because the second UPDATE filters on
-    `status IN _NON_TERMINAL_STATUSES`.
+    Safe to call concurrently from multiple workers: candidate rows are
+    claimed with ``FOR UPDATE SKIP LOCKED`` and each terminal write retains
+    the non-terminal status predicate as defense in depth.
     """
     if live is None:
         live = _live_job_ids(celery_app)
@@ -147,50 +286,88 @@ def reap_orphans(
     _ERROR_DETAIL = "Worker died with no recovery; reaped on worker startup. Resubmit your job."
 
     with sync_session() as db:
-        # Flip job-level status and collect reaped rows for variant reconciliation.
-        stmt = (
-            update(Job)
+        # Lock before changing job status. Required-speech terminalization can
+        # fail closed when its owner/receipt capsule is incomplete; in that case
+        # the job and its variants must remain byte-for-byte unchanged so a later
+        # retry can recover them. A bulk UPDATE-before-recovery would already have
+        # made that job terminal and violated the publication barrier.
+        candidate_rows = db.execute(
+            select(Job.id, Job.assembly_plan, Job.pipeline_trace)
             .where(*where_clauses)
-            .values(
-                status="processing_failed",
-                failure_reason="unknown",
-                error_detail=_ERROR_DETAIL,
-            )
-            .returning(Job.id, Job.assembly_plan)  # type: ignore[attr-defined]
-        )
-        reaped_rows = db.execute(stmt).fetchall()
-        count = len(reaped_rows)
+            .with_for_update(skip_locked=True)
+        ).fetchall()
 
-        # Reconcile per-variant render_status.  When the worker is SIGKILL'd
-        # mid-render the job-level status is now fixed, but any variant still at
-        # "rendering" or "pending" in assembly_plan["variants"] is permanently
-        # frozen — the frontend poll-stop predicate (anyRendering check) keeps
-        # polling forever on that frozen variant.  Flip those variants to
-        # "failed" here so the UI shows a terminal state immediately.
-        for job_id_val, assembly_plan in reaped_rows:
-            if not isinstance(assembly_plan, dict):
-                continue
-            variants = assembly_plan.get("variants")
-            if not variants:
-                continue
-            new_variants = [
-                {
-                    **v,
-                    "render_status": "failed",
-                    "error": v.get("error") or "render interrupted: worker died",
-                }
-                if v.get("render_status") in ("rendering", "pending")
-                else v
-                for v in variants
-            ]
-            if new_variants != variants:
-                db.execute(
-                    update(Job)
-                    .where(Job.id == job_id_val)
-                    .values(assembly_plan={**assembly_plan, "variants": new_variants})
+        count = 0
+        reaped_job_ids: list[object] = []
+        for job_id_val, assembly_plan, pipeline_trace in candidate_rows:
+            final_plan = assembly_plan
+            final_trace = pipeline_trace
+            if isinstance(assembly_plan, dict):
+                recovery = terminalize_required_speech_generations(
+                    assembly_plan,
+                    job_id=str(job_id_val),
+                    error="render interrupted: worker died",
                 )
+                if recovery.status == "blocked":
+                    log.warning(
+                        "required_speech_terminalization_blocked",
+                        job_id=str(job_id_val),
+                        reason=recovery.reason,
+                        reaper="orphan_job",
+                    )
+                    # Ownership/debt ambiguity must not fall through to the
+                    # generic path or alter the enclosing job status.
+                    continue
+
+                recovered_plan = recovery.plan
+                final_trace = _append_reaper_failed_owned_outcomes(
+                    pipeline_trace,
+                    recovery.terminal_contexts,
+                )
+                variants = recovered_plan.get("variants")
+                if variants:
+                    new_variants = [
+                        {
+                            **v,
+                            "render_status": "failed",
+                            "error": v.get("error") or "render interrupted: worker died",
+                        }
+                        if v.get("render_status") in ("rendering", "pending")
+                        else v
+                        for v in variants
+                    ]
+                    final_plan = (
+                        {**recovered_plan, "variants": new_variants}
+                        if new_variants != variants
+                        else recovered_plan
+                    )
+                else:
+                    final_plan = recovered_plan
+
+            terminal_values: dict[str, object] = {
+                "status": "processing_failed",
+                "failure_reason": "unknown",
+                "error_detail": _ERROR_DETAIL,
+            }
+            if final_plan != assembly_plan:
+                terminal_values["assembly_plan"] = final_plan
+            if final_trace != pipeline_trace:
+                terminal_values["pipeline_trace"] = final_trace
+            result = db.execute(
+                update(Job)
+                .where(
+                    Job.id == job_id_val,
+                    Job.status.in_(_NON_TERMINAL_STATUSES),
+                )
+                .values(**terminal_values)
+            )
+            if result.rowcount:
+                count += 1
+                reaped_job_ids.append(job_id_val)
 
         db.commit()
+
+    reconcile_terminal_storage_attempts(reaped_job_ids)
 
     if count:
         log.info(
@@ -226,6 +403,7 @@ def reconcile_stuck_variants(
     *,
     threshold_min: int = THRESHOLD_MIN,
     live: set[str] | None = None,
+    batch_limit: int = _STUCK_VARIANT_RECONCILE_BATCH,
 ) -> int:
     """Flip variants frozen at "rendering"/"pending" on TERMINAL-status jobs.
 
@@ -247,42 +425,135 @@ def reconcile_stuck_variants(
         live = _live_job_ids(celery_app)
     if live is None:
         return 0
+    if batch_limit < 1:
+        return 0
 
     now = datetime.now(UTC)
     cutoff = now - timedelta(minutes=threshold_min)
     lookback = now - timedelta(days=_RECONCILE_LOOKBACK_DAYS)
 
-    fixed = 0
-    with sync_session() as db:
-        rows = db.execute(
-            select(Job.id, Job.assembly_plan).where(
-                Job.status.notin_(_NON_TERMINAL_STATUSES),
-                Job.status != "cancelled",
-                Job.updated_at < cutoff,
-                Job.updated_at >= lookback,
-                Job.assembly_plan.isnot(None),
-            )
-        ).fetchall()
+    state_predicate = _terminal_reconcile_state_predicate()
+    discovery_clauses = [
+        Job.status.notin_(_NON_TERMINAL_STATUSES),
+        Job.status != "cancelled",
+        Job.updated_at < cutoff,
+        Job.updated_at >= lookback,
+        Job.assembly_plan.isnot(None),
+        state_predicate,
+    ]
+    live_job_uuids: list[uuid.UUID] = []
+    for raw_job_id in live:
+        try:
+            live_job_uuids.append(uuid.UUID(str(raw_job_id)))
+        except (TypeError, ValueError, AttributeError):
+            # Celery queues can contain tasks whose first positional argument
+            # is not a Job UUID. Keep those out of the UUID SQL bind while the
+            # exact string set remains authoritative for the locked re-check.
+            continue
+    if live_job_uuids:
+        discovery_clauses.append(Job.id.notin_(live_job_uuids))
 
-        for job_id_val, assembly_plan in rows:
+    fixed = 0
+    fixed_job_ids: list[object] = []
+    with sync_session() as db:
+        # Discovery is deliberately read-only and ID-only. Loading the JSONB
+        # documents (and taking a row lock) is deferred until a bounded set of
+        # rows has proved it contains repairable state.
+        candidate_ids = list(
+            db.execute(
+                select(Job.id)
+                .where(*discovery_clauses)
+                .order_by(Job.updated_at.asc(), Job.id.asc())
+                .limit(batch_limit)
+            )
+            .scalars()
+            .all()
+        )
+
+        for candidate_id in candidate_ids:
+            # One short transaction per candidate. The same predicates are
+            # repeated under the lock because status/state may have changed
+            # after discovery. SKIP LOCKED prevents concurrent sweepers from
+            # queueing behind a creator mutation or another watchdog.
+            locked_row = db.execute(
+                select(Job.id, Job.assembly_plan, Job.pipeline_trace)
+                .where(
+                    Job.id == candidate_id,
+                    Job.status.notin_(_NON_TERMINAL_STATUSES),
+                    Job.status != "cancelled",
+                    Job.updated_at < cutoff,
+                    Job.updated_at >= lookback,
+                    Job.assembly_plan.isnot(None),
+                    _terminal_reconcile_state_predicate(),
+                )
+                .with_for_update(skip_locked=True)
+                .limit(1)
+            ).fetchone()
+            if locked_row is None:
+                db.commit()
+                continue
+            job_id_val, assembly_plan, pipeline_trace = locked_row
             # A re-render actively running on a live worker is NEVER reaped.
             if live and str(job_id_val) in live:
+                db.commit()
                 continue
             if not isinstance(assembly_plan, dict):
+                db.commit()
                 continue
-            variants = assembly_plan.get("variants")
+            recovery = terminalize_required_speech_generations(
+                assembly_plan,
+                job_id=str(job_id_val),
+                error="render interrupted: worker died (reaped as stuck)",
+            )
+            if recovery.status == "blocked":
+                log.warning(
+                    "required_speech_terminalization_blocked",
+                    job_id=str(job_id_val),
+                    reason=recovery.reason,
+                    reaper="terminal_job",
+                )
+                db.commit()
+                continue
+            recovered_plan = recovery.plan
+            final_trace = _append_reaper_failed_owned_outcomes(
+                pipeline_trace,
+                recovery.terminal_contexts,
+            )
+            variants = recovered_plan.get("variants")
             if not variants:
+                if recovered_plan != assembly_plan:
+                    values: dict[str, Any] = {"assembly_plan": recovered_plan}
+                    if final_trace != pipeline_trace:
+                        values["pipeline_trace"] = final_trace
+                    db.execute(
+                        update(Job)
+                        .where(Job.id == job_id_val, Job.status != "cancelled")
+                        .values(**values)
+                    )
+                    fixed += 1
+                    fixed_job_ids.append(job_id_val)
+                db.commit()
                 continue
             new_variants = [_finalize_stuck_variant(v) for v in variants]
-            if new_variants != variants:
+            final_plan = (
+                {**recovered_plan, "variants": new_variants}
+                if new_variants != variants
+                else recovered_plan
+            )
+            if final_plan != assembly_plan:
+                values = {"assembly_plan": final_plan}
+                if final_trace != pipeline_trace:
+                    values["pipeline_trace"] = final_trace
                 db.execute(
                     update(Job)
                     .where(Job.id == job_id_val, Job.status != "cancelled")
-                    .values(assembly_plan={**assembly_plan, "variants": new_variants})
+                    .values(**values)
                 )
                 fixed += 1
+                fixed_job_ids.append(job_id_val)
+            db.commit()
 
-        db.commit()
+    reconcile_terminal_storage_attempts(fixed_job_ids)
 
     if fixed:
         log.info(
@@ -291,3 +562,56 @@ def reconcile_stuck_variants(
             threshold_min=threshold_min,
         )
     return fixed
+
+
+def reconcile_cancelled_required_speech_job(
+    job_id: str | uuid.UUID,
+) -> CancelledRequiredSpeechReconciliation:
+    """Release one cancelled private owner after upload/claim proof is safe.
+
+    The caller obtains IDs from the existing indexed cleanup-debt sweep.  This
+    helper then locks the exact row and mutates only its private plan and bounded
+    trace: cancellation status/timestamps remain authoritative and unchanged.
+    A fresh upload lease or finalizer claim returns ``deferred`` byte-for-byte, so
+    the following cleanup pass can only delete a prefix after terminalization.
+    """
+
+    try:
+        job_uuid = job_id if isinstance(job_id, uuid.UUID) else uuid.UUID(str(job_id))
+    except (TypeError, ValueError):
+        return CancelledRequiredSpeechReconciliation("unavailable", "invalid_job_id")
+
+    with sync_session() as db:
+        job = db.get(Job, job_uuid, with_for_update=True)
+        if job is None:
+            return CancelledRequiredSpeechReconciliation("unavailable", "job_missing")
+        if job.status != "cancelled":
+            return CancelledRequiredSpeechReconciliation("not_cancelled")
+        if not isinstance(job.assembly_plan, dict):
+            return CancelledRequiredSpeechReconciliation(
+                "deferred",
+                "assembly_plan_not_object",
+            )
+        recovery = terminalize_required_speech_generations(
+            job.assembly_plan,
+            job_id=str(job_uuid),
+            error="render cancelled before private generation publication",
+        )
+        if recovery.status == "blocked":
+            log.info(
+                "cancelled_required_speech_terminalization_deferred",
+                job_id=str(job_uuid),
+                reason=recovery.reason,
+            )
+            return CancelledRequiredSpeechReconciliation("deferred", recovery.reason)
+        if recovery.status == "unchanged":
+            return CancelledRequiredSpeechReconciliation("absent")
+
+        job.assembly_plan = recovery.plan
+        job.pipeline_trace = _append_required_speech_terminal_outcomes(
+            job.pipeline_trace,
+            recovery.terminal_contexts,
+            outcome="cancelled_owned",
+        )
+        db.commit()
+        return CancelledRequiredSpeechReconciliation("terminalized")

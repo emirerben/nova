@@ -119,6 +119,47 @@ def test_cancelled_late_finalization_preserves_row_and_deletes_only_fresh_output
     assert old_path not in deleted
 
 
+def test_cancelled_required_speech_finalization_retains_durable_generation_owner() -> None:
+    """Required outputs are reconciled from their receipt, never deleted eagerly."""
+
+    job_id = uuid.uuid4()
+    generation = uuid.uuid4().hex
+    job = _cancelled_job(
+        id=job_id,
+        assembly_plan={"variants": []},
+    )
+    before = copy.deepcopy(job.assembly_plan)
+    session_factory, session = _session_context(job)
+    result = {
+        "variant_id": "subtitled",
+        "rank": 1,
+        "text_mode": "none",
+        "render_generation_id": generation,
+        "render_status": "ready",
+        "ok": True,
+        "video_path": (f"generative-jobs/{job_id}/render-generations/{generation}/output.mp4"),
+    }
+    deleted: list[str] = []
+
+    with (
+        patch.object(generative_build, "_sync_session", session_factory),
+        patch(
+            "app.storage.delete_object_best_effort",
+            side_effect=lambda path: deleted.append(path) or True,
+        ),
+    ):
+        accepted = generative_build._finalize_job(  # noqa: SLF001
+            str(job_id),
+            [result],
+            required_speech_results={"subtitled": result},
+        )
+
+    assert accepted is False
+    assert job.assembly_plan == before
+    assert deleted == []
+    session.commit.assert_not_called()
+
+
 def test_manual_draft_first_export_passes_owner_fence_and_promotes_job() -> None:
     """A linked draft is plan-owned even before its first render changes mode.
 

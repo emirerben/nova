@@ -100,6 +100,7 @@ def _inflight_job(
         "prior_disabled": prior_disabled,
         "operation": request,
         "operation_id": operation_id,
+        "render_generation_id": "generation-new",
         "finalizer_claim": (
             {
                 "operation_id": operation_id,
@@ -122,12 +123,19 @@ def _inflight_job(
 
 
 def test_enqueue_rollback_restores_exact_last_good_state() -> None:
-    job = _inflight_job(prior_disabled=True)
+    job = _inflight_job(prior_disabled=True, attempt_id=None)
     prior = deepcopy(job.assembly_plan["speech_cut_previous_variant"])
 
     with patch("sqlalchemy.orm.attributes.flag_modified"):
-        rollback_speech_cut_dispatch(job, "broker unavailable")
+        disposition = rollback_speech_cut_dispatch(
+            job,
+            "broker unavailable",
+            expected_operation_id="operation-a",
+            expected_generation_id="generation-new",
+            expected_variant_id="subtitled",
+        )
 
+    assert disposition == "rolled_back"
     assert job.status == "variants_ready"
     assert job.assembly_plan["variants"] == [prior]
     assert job.assembly_plan["silence_cut_disabled"] is True

@@ -38,9 +38,10 @@ import tempfile
 import threading
 import time
 import uuid
+from collections.abc import Mapping
 from contextlib import contextmanager, nullcontext
-from dataclasses import asdict, is_dataclass, replace
-from datetime import datetime, timedelta
+from dataclasses import asdict, dataclass, is_dataclass, replace
+from datetime import UTC, datetime, timedelta
 from functools import wraps
 from itertools import cycle
 from types import SimpleNamespace
@@ -84,8 +85,9 @@ from app.services.job_phases import (
     record_phase,
     record_sub_phase,
 )
-from app.services.job_storage_paths import JOB_POSTER_PATH_PREFIX
+from app.services.job_storage_paths import JOB_POSTER_PATH_PREFIX, owned_job_output_path
 from app.services.speech_cleanup import SpeechCleanupFailure
+from app.services.speech_cleanup_terminal import REQUIRED_SPEECH_CLAIM_TTL_S
 from app.services.template_poster import generate_and_upload_from_gcs
 from app.services.video_poster_cleanup import (
     VIDEO_POSTER_BACKFILL_CLEANUP_FIELD,
@@ -120,6 +122,11 @@ _HDR_PRETONEMAP_CACHE_VERSION = 1
 MAX_INTRO_S = 3.0
 HERO_SLOT_INDEX = 0
 
+# Compatibility name retained for legacy rerender tests and operators that
+# reason about this task's hard-limit-sized claim lease.  The service constant
+# is the single source of truth shared with recovery/reaper classification.
+_SPEECH_CUT_FINALIZER_CLAIM_TTL_S = REQUIRED_SPEECH_CLAIM_TTL_S
+
 
 class _ResolvedTimelineSlot(NamedTuple):
     clip_index: int
@@ -131,6 +138,53 @@ class _ResolvedTimelineSlot(NamedTuple):
     transition_duration_s: float | None
     look_preset: LookPreset
     look_adjustments: dict | None
+
+
+@dataclass(frozen=True)
+class RequiredSpeechStageDecision:
+    """Typed result for the private required-speech stage write."""
+
+    status: Literal[
+        "accepted",
+        "job_missing",
+        "job_cancelled",
+        "owner_rejected",
+        "claim_superseded",
+        "generation_superseded",
+        "failed",
+    ]
+    outcome_status: Literal["persisted", "dropped_cap", "error"] | None = None
+
+    @property
+    def accepted(self) -> bool:
+        return self.status == "accepted"
+
+
+@dataclass(frozen=True)
+class VariantFinalizationDecision:
+    variant_id: str
+    render_generation_id: str | None
+    state: Literal["live", "superseded", "failed"]
+
+
+@dataclass(frozen=True)
+class JobFinalizationResult:
+    """Typed row-locked terminal decision; bool wrappers remain for legacy callers."""
+
+    status: Literal[
+        "accepted",
+        "job_missing",
+        "job_cancelled",
+        "owner_rejected",
+        "claim_superseded",
+        "failed",
+    ]
+    variants: tuple[VariantFinalizationDecision, ...] = ()
+    error: Exception | None = None
+
+    @property
+    def accepted(self) -> bool:
+        return self.status == "accepted"
 
 
 # Variant 3 (original audio) arrangement: one slot per clip, capped so a 20-clip
@@ -493,6 +547,23 @@ _CONTENT_PLAN_FENCE: contextvars.ContextVar[tuple[str, int] | None | object] = (
 _GUIDED_TASK_ATTEMPT_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "guided_story_task_attempt_id", default=None
 )
+# Required-speech/source-copy uploads are protected by a durable writing lease.
+# Cap the lease at the task's absolute soft deadline, not its hard deadline.  The
+# soft-timeout handler must be able to close the exact receipt and terminalize the
+# row during the 60-second grace before SIGKILL; a hard-deadline lease makes that
+# handler observe its own receipt as fresh and silently leave the row in-flight.
+_REQUIRED_SPEECH_UPLOAD_LEASE_S = 29 * 60
+_REQUIRED_SPEECH_UPLOAD_DEADLINE: contextvars.ContextVar[datetime | None] = contextvars.ContextVar(
+    "required_speech_upload_deadline", default=None
+)
+_REQUIRED_SPEECH_SOFT_TIMEOUT_WAIT_MAX_S = 5.0
+_REQUIRED_SPEECH_SOFT_TIMEOUT_WAIT_MARGIN_S = 0.05
+_REQUIRED_SPEECH_BUSY_RETRY_MARGIN_S = 5
+# Two bounded deferrals beyond the task's ordinary seven retries. The first
+# countdown is longer than the remaining absolute lease plus a margin, so a
+# second busy result would require clock corruption or a distinct new owner;
+# never turn either ownership edge into an ACK or terminal failure.
+_REQUIRED_SPEECH_BUSY_MAX_RETRIES = 9
 _GUIDED_RENDER_LEASE_S = 45
 _GUIDED_RENDER_HEARTBEAT_S = 10
 _CREATOR_CRAFT_TASK_PREFIX = "creator-craft-"
@@ -505,6 +576,15 @@ _CREATOR_CRAFT_CLAIM_HEARTBEAT_S = 30.0
 
 class _GuidedStoryAttemptBusy(RuntimeError):
     """A second worker observed a live strict-render lease and must no-op."""
+
+
+class _RequiredSpeechAttemptBusy(RuntimeError):
+    """A required-speech upload lease is live, so delivery must retry later."""
+
+    def __init__(self, reason: str, *, retry_after_s: float) -> None:
+        self.reason = reason
+        self.retry_after_s = max(0.0, float(retry_after_s))
+        super().__init__(reason)
 
 
 class AudioLedGuidedConflict(RuntimeError):
@@ -836,6 +916,58 @@ def _owned_job_task_fence(job_id: str):  # noqa: ANN202
         yield accepted
     finally:
         _CONTENT_PLAN_FENCE.reset(token)
+
+
+def _upload_lease_deadline(*, now: datetime | None = None) -> datetime:
+    """Return a lease deadline that never outlives this task's soft deadline."""
+
+    observed_at = now or datetime.now(UTC)
+    if observed_at.tzinfo is None:
+        raise ValueError("upload lease clock must be timezone-aware")
+    fallback = observed_at + timedelta(seconds=_REQUIRED_SPEECH_UPLOAD_LEASE_S)
+    task_deadline = _REQUIRED_SPEECH_UPLOAD_DEADLINE.get()
+    return min(task_deadline, fallback) if task_deadline is not None else fallback
+
+
+def _with_required_speech_upload_deadline(fn):  # noqa: ANN001, ANN202
+    """Capture one absolute upload-lease deadline at Celery task entry."""
+
+    @wraps(fn)
+    def wrapped(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        token = _REQUIRED_SPEECH_UPLOAD_DEADLINE.set(
+            datetime.now(UTC) + timedelta(seconds=_REQUIRED_SPEECH_UPLOAD_LEASE_S)
+        )
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            _REQUIRED_SPEECH_UPLOAD_DEADLINE.reset(token)
+
+    return wrapped
+
+
+def _wait_for_required_speech_soft_deadline(*, now: datetime | None = None) -> bool:
+    """Wait only a bounded parent/child clock skew before timeout recovery.
+
+    Billiard starts the soft-limit clock when the parent pool accepts a job;
+    this module can capture its absolute lease deadline only moments later in
+    the child wrapper.  Consequently the signal can arrive just before the
+    exact deadline persisted on this task's receipts.  Waiting for that small
+    positive delta is safe: the active writer keeps its lease for the full
+    promised interval, and the retry still has almost all of the 60-second
+    soft-to-hard grace.  Larger deltas are not inferred to be ours.
+    """
+
+    deadline = _REQUIRED_SPEECH_UPLOAD_DEADLINE.get()
+    if deadline is None or deadline.tzinfo is None:
+        return False
+    observed_at = now or datetime.now(UTC)
+    if observed_at.tzinfo is None:
+        raise ValueError("soft-timeout recovery clock must be timezone-aware")
+    remaining_s = (deadline - observed_at).total_seconds()
+    if remaining_s <= 0 or remaining_s > _REQUIRED_SPEECH_SOFT_TIMEOUT_WAIT_MAX_S:
+        return False
+    time.sleep(remaining_s + _REQUIRED_SPEECH_SOFT_TIMEOUT_WAIT_MARGIN_S)
+    return True
 
 
 def _with_owned_job_fence(fn):  # noqa: ANN001, ANN202
@@ -1222,19 +1354,156 @@ def _load_clip_metadata_cache(job_id: str, clip_paths_gcs: list[str]) -> list[An
         return None
 
 
-def _store_clip_metadata_cache(
-    job_id: str, clip_paths_gcs: list[str], clip_metas: list[Any]
-) -> None:
-    _merge_all_candidates(
-        job_id,
-        {
-            "clip_metadata_cache": {
-                "version": _CLIP_METADATA_CACHE_VERSION,
-                "fingerprint": _cache_fingerprint(clip_paths_gcs),
-                "clip_metas": [_clip_meta_to_cache(meta) for meta in clip_metas],
-            }
-        },
+def _load_indexed_clip_metadata_cache(
+    job_id: str,
+    clip_paths_gcs: list[str],
+    *,
+    source_identity,  # noqa: ANN001
+):  # noqa: ANN202
+    """Load V2 metadata by its persisted source slot, never list position.
+
+    The legacy cache list is completion-ordered because Gemini analyses finish
+    concurrently. It remains available for legacy rows, but a valid identity
+    envelope is the sole authority for binding metadata back to source paths.
+    Sparse successful records are supported; failed slots stay explicit.
+    """
+
+    if not source_identity.valid:
+        return None
+    from app.services.speech_cleanup_identity import (  # noqa: PLC0415
+        CLIP_METADATA_IDENTITY_INDEX_KEY,
+        validate_clip_metadata_identity_index,
     )
+
+    candidates = _read_all_candidates(job_id)
+    cache = candidates.get("clip_metadata_cache")
+    if not isinstance(cache, dict):
+        return None
+    if cache.get("version") != _CLIP_METADATA_CACHE_VERSION:
+        return None
+    if cache.get("fingerprint") != _cache_fingerprint(clip_paths_gcs):
+        return None
+    identity_index = validate_clip_metadata_identity_index(
+        candidates.get(CLIP_METADATA_IDENTITY_INDEX_KEY),
+        source_instance_ids=source_identity.source_instance_ids,
+        expected_source_slots=range(len(clip_paths_gcs)),
+    )
+    if not identity_index.available:
+        return None
+    try:
+        indexed_metas: list[tuple[int, Any]] = []
+        for source_slot, record in identity_index.records_by_source_slot.items():
+            meta = _clip_meta_from_cache(record["meta"])
+            if str(getattr(meta, "clip_id", "")) != record["clip_id"]:
+                return None
+            indexed_metas.append((source_slot, meta))
+    except Exception as exc:  # noqa: BLE001 - malformed cache always misses safely
+        log.warning(
+            "clip_metadata_identity_cache_decode_failed",
+            job_id=job_id,
+            error_class=type(exc).__name__,
+        )
+        return None
+    return indexed_metas, identity_index
+
+
+def _store_clip_metadata_cache(
+    job_id: str,
+    clip_paths_gcs: list[str],
+    clip_metas: list[Any],
+    *,
+    identity_index: dict[str, Any] | None = None,
+) -> None:
+    patch: dict[str, Any] = {
+        "clip_metadata_cache": {
+            "version": _CLIP_METADATA_CACHE_VERSION,
+            "fingerprint": _cache_fingerprint(clip_paths_gcs),
+            "clip_metas": [_clip_meta_to_cache(meta) for meta in clip_metas],
+        }
+    }
+    if identity_index is not None:
+        from app.services.speech_cleanup_identity import (  # noqa: PLC0415
+            CLIP_METADATA_IDENTITY_INDEX_KEY,
+        )
+
+        patch[CLIP_METADATA_IDENTITY_INDEX_KEY] = identity_index
+    _merge_all_candidates(job_id, patch)
+
+
+def _speech_cleanup_identity_for_paths(job_id: str, clip_paths_gcs: list[str]):  # noqa: ANN202
+    """Load the persisted source vector without repairing or inferring identity."""
+
+    from app.services.speech_cleanup_identity import (  # noqa: PLC0415
+        ClipSourceIdentity,
+        validate_clip_source_identity,
+    )
+
+    identity = validate_clip_source_identity(_read_all_candidates(job_id))
+    if tuple(clip_paths_gcs) != identity.clip_paths:
+        return ClipSourceIdentity(
+            "cardinality_mismatch",
+            tuple(clip_paths_gcs),
+            identity.source_instance_ids,
+        )
+    return identity
+
+
+def _speech_cleanup_assignment_map(
+    *,
+    job_id: str,
+    clip_ids: list[str],
+    source_identity,  # noqa: ANN001
+    identity_index=None,  # noqa: ANN001
+    unavailable_status: str = "identity_cache_unavailable",
+) -> dict[str, Any]:
+    """Build typed clip-id assignments, failing closed on every ambiguity."""
+
+    from collections import Counter  # noqa: PLC0415
+
+    from app.services.speech_cleanup_identity import (  # noqa: PLC0415
+        SpeechCleanupAssignment,
+        speech_cleanup_rollout_fingerprint,
+    )
+
+    normalized_ids = [str(clip_id) for clip_id in clip_ids if str(clip_id)]
+    duplicate_ids = {clip_id for clip_id, count in Counter(normalized_ids).items() if count > 1}
+    if not source_identity.valid:
+        status = source_identity.status
+        return {
+            clip_id: SpeechCleanupAssignment(None, None, status) for clip_id in set(normalized_ids)
+        }
+    if identity_index is None or not identity_index.available:
+        status = (
+            "ambiguous_clip_id"
+            if getattr(identity_index, "reason", None) == "duplicate_clip_id"
+            else unavailable_status
+        )
+        return {
+            clip_id: SpeechCleanupAssignment(None, None, status) for clip_id in set(normalized_ids)
+        }
+
+    assignments: dict[str, Any] = {}
+    for source_slot, record in identity_index.records_by_source_slot.items():
+        clip_id = str(record.get("clip_id") or "")
+        if not clip_id:
+            continue
+        if clip_id in duplicate_ids or clip_id in assignments:
+            assignments[clip_id] = SpeechCleanupAssignment(None, None, "ambiguous_clip_id")
+            continue
+        assignments[clip_id] = SpeechCleanupAssignment(
+            source_slot=source_slot,
+            rollout_fingerprint=speech_cleanup_rollout_fingerprint(
+                job_id,
+                source_identity.source_instance_ids[source_slot],
+            ),
+            status="assigned",
+        )
+    for clip_id in set(normalized_ids):
+        assignments.setdefault(
+            clip_id,
+            SpeechCleanupAssignment(None, None, "unmapped_clip_id"),
+        )
+    return assignments
 
 
 def _load_preprocessed_source_cache(job_id: str, clip_paths_gcs: list[str]) -> list[str] | None:
@@ -1407,9 +1676,10 @@ def _store_hdr_pretonemap_cache(
     soft_time_limit=1740,
     time_limit=1800,
 )
+@_with_required_speech_upload_deadline
 @_with_owned_job_fence
 def orchestrate_generative_job(self, job_id: str) -> None:
-    """Entry point. Never raises — any exception becomes processing_failed."""
+    """Run one job; terminal errors fail visibly and live ownership defers."""
     log.info("generative_job_start", job_id=job_id)
 
     from celery.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
@@ -1426,6 +1696,23 @@ def orchestrate_generative_job(self, job_id: str) -> None:
         try:
             _run_generative_job(job_id)
             mark_finished(job_id)
+        except _RequiredSpeechAttemptBusy as exc:
+            countdown = max(
+                1,
+                math.ceil(exc.retry_after_s) + _REQUIRED_SPEECH_BUSY_RETRY_MARGIN_S,
+            )
+            log.info(
+                "required_speech_delivery_deferred",
+                job_id=job_id,
+                reason=exc.reason,
+                retry_after_s=exc.retry_after_s,
+                countdown=countdown,
+            )
+            raise self.retry(
+                countdown=countdown,
+                exc=exc,
+                max_retries=_REQUIRED_SPEECH_BUSY_MAX_RETRIES,
+            )
         except OperationalError:
             raise  # transient DB → Celery autoretry
         except _GuidedStoryAttemptBusy:
@@ -1452,7 +1739,13 @@ def orchestrate_generative_job(self, job_id: str) -> None:
                 pass
             mark_failed_phase(job_id)
             _persist_archetype_fallback(job_id, rejected_format, exc.reason)
-            _fail_job(job_id, str(exc), failure_reason=f"{rejected_format}_{exc.reason}")
+            terminalized = _fail_job(
+                job_id,
+                str(exc),
+                failure_reason=f"{rejected_format}_{exc.reason}",
+            )
+            if not terminalized:
+                raise
             return
         except AudioLedGuidedConflict as exc:
             log.warning(
@@ -1461,7 +1754,9 @@ def orchestrate_generative_job(self, job_id: str) -> None:
                 failure_reason=exc.code,
             )
             mark_failed_phase(job_id)
-            _fail_job(job_id, str(exc), failure_reason=exc.code)
+            terminalized = _fail_job(job_id, str(exc), failure_reason=exc.code)
+            if not terminalized:
+                raise
             return
         except SpeechCleanupFailure as exc:
             log.warning(
@@ -1470,26 +1765,43 @@ def orchestrate_generative_job(self, job_id: str) -> None:
                 failure_reason=exc.reason,
             )
             mark_failed_phase(job_id)
-            _fail_job(
+            terminalized = _fail_job(
                 job_id,
                 str(exc),
                 failure_reason="speech_cleanup_failed",
                 speech_cleanup_failure_reason=exc.reason,
             )
+            if not terminalized:
+                raise
             return
         except SoftTimeLimitExceeded:
-            # The 30-min soft limit fired (heavy 4K/HDR footage). Fail VISIBLY with a
+            # The 29-min soft limit fired (heavy 4K/HDR footage). Fail VISIBLY with a
             # user-actionable message instead of letting the hard time_limit SIGKILL
             # freeze the row at status="processing" forever. Not in autoretry_for, so
             # this does not loop back into the same wall.
             log.warning("generative_job_timeout", job_id=job_id)
             mark_failed_phase(job_id)
-            _fail_job(
-                job_id,
+            timeout_detail = (
                 "Processing timed out — your clips are heavy (likely 4K/HDR). "
-                "Try fewer or shorter clips.",
+                "Try fewer or shorter clips."
+            )
+            terminalized = _fail_job(
+                job_id,
+                timeout_detail,
                 failure_reason="processing_timeout",
             )
+            if not terminalized and _wait_for_required_speech_soft_deadline():
+                terminalized = _fail_job(
+                    job_id,
+                    timeout_detail,
+                    failure_reason="processing_timeout",
+                )
+            if not terminalized:
+                # Never let Celery record a successful task while required-speech
+                # ownership is still live.  At the configured soft boundary the
+                # absolute upload lease is expired, so a False result now means a
+                # real ownership/DB ambiguity that recovery must see as a failure.
+                raise
         except Exception as exc:
             from app.pipeline.guided_story import GuidedStoryError  # noqa: PLC0415
 
@@ -1523,11 +1835,15 @@ def orchestrate_generative_job(self, job_id: str) -> None:
                     )
                 mark_failed_phase(job_id)
                 _persist_guided_render_failure(job_id, exc.code)
-                _fail_job(job_id, str(exc), failure_reason=exc.code)
+                terminalized = _fail_job(job_id, str(exc), failure_reason=exc.code)
+                if not terminalized:
+                    raise
                 return
             log.error("generative_job_failed", job_id=job_id, error=str(exc), exc_info=True)
             mark_failed_phase(job_id)
-            _fail_job(job_id, str(exc))
+            terminalized = _fail_job(job_id, str(exc))
+            if not terminalized:
+                raise
         finally:
             _GUIDED_TASK_ATTEMPT_ID.reset(guided_attempt_token)
 
@@ -1543,6 +1859,7 @@ def orchestrate_generative_job(self, job_id: str) -> None:
     soft_time_limit=1740,
     time_limit=1800,
 )
+@_with_required_speech_upload_deadline
 @_with_owned_job_fence
 def rerender_speech_timing(self, job_id: str, operation_id: str) -> None:
     """Dedicated full speech rebuild with last-good transactional semantics."""
@@ -1572,20 +1889,69 @@ def rerender_speech_timing(self, job_id: str, operation_id: str) -> None:
                 speech_cut_attempt_id=attempt_id,
             )
             mark_finished(job_id)
+        except _RequiredSpeechAttemptBusy as exc:
+            _release_speech_cut_finalize_claim(job_id, operation_id, attempt_id)
+            countdown = max(
+                1,
+                math.ceil(exc.retry_after_s) + _REQUIRED_SPEECH_BUSY_RETRY_MARGIN_S,
+            )
+            log.info(
+                "speech_timing_rerender_deferred",
+                job_id=job_id,
+                operation_id=operation_id,
+                reason=exc.reason,
+                retry_after_s=exc.retry_after_s,
+                countdown=countdown,
+            )
+            raise self.retry(
+                countdown=countdown,
+                exc=exc,
+                max_retries=_REQUIRED_SPEECH_BUSY_MAX_RETRIES,
+            )
         except OperationalError as exc:
             # Preserve the normal transient retry path, but do not leave the
             # accepted request stuck forever when the final retry is exhausted.
             if self.request.retries >= self.max_retries:
-                _restore_failed_speech_cut_rerender(
+                restored = _restore_failed_speech_cut_rerender(
                     job_id,
                     str(exc),
                     expected_operation_id=operation_id,
                     expected_attempt_id=attempt_id,
                 )
+                if not restored:
+                    # A fresh upload lease or ambiguous private owner cannot be
+                    # acknowledged as terminal. Preserve the delivery failure so
+                    # the broker/reaper can recover the still-owned generation.
+                    raise
                 mark_finished(job_id)
                 return
             _release_speech_cut_finalize_claim(job_id, operation_id, attempt_id)
             raise
+        except SoftTimeLimitExceeded:
+            log.warning(
+                "speech_timing_rerender_timeout",
+                job_id=job_id,
+                operation_id=operation_id,
+            )
+            timeout_detail = "Speech cleanup timed out before publication."
+            restored = _restore_failed_speech_cut_rerender(
+                job_id,
+                timeout_detail,
+                expected_operation_id=operation_id,
+                expected_attempt_id=attempt_id,
+            )
+            if not restored and _wait_for_required_speech_soft_deadline():
+                restored = _restore_failed_speech_cut_rerender(
+                    job_id,
+                    timeout_detail,
+                    expected_operation_id=operation_id,
+                    expected_attempt_id=attempt_id,
+                )
+            if not restored:
+                # A stale/superseded or malformed owner must not be reported as
+                # successful.  Preserve the timeout signal for Celery/recovery.
+                raise
+            mark_finished(job_id)
         except Exception as exc:  # noqa: BLE001 — restore the exact last-good variant
             log.error(
                 "speech_timing_rerender_failed",
@@ -1593,12 +1959,16 @@ def rerender_speech_timing(self, job_id: str, operation_id: str) -> None:
                 error=str(exc)[:MAX_ERROR_DETAIL_LEN],
                 exc_info=True,
             )
-            _restore_failed_speech_cut_rerender(
+            restored = _restore_failed_speech_cut_rerender(
                 job_id,
                 str(exc),
                 expected_operation_id=operation_id,
                 expected_attempt_id=attempt_id,
             )
+            if not restored:
+                # Never ACK an exception while rollback remains lease-blocked or
+                # ownership-ambiguous; doing so strands the committed control.
+                raise
             mark_finished(job_id)
 
 
@@ -1943,6 +2313,12 @@ def _run_generative_job_impl(
     if not clip_paths_gcs:
         raise ValueError("Generative job has no clip paths in all_candidates")
 
+    clip_source_identity = _provision_clip_source_identity(job_id)
+    if clip_source_identity is not None and clip_source_identity.valid:
+        # The locked row is authoritative if a concurrent editor changed the
+        # ordered vector between the task's entry snapshot and provisioning.
+        clip_paths_gcs = list(clip_source_identity.clip_paths)
+
     analyze_t0 = time.monotonic()
 
     # Durable per-job source copies (clip timeline editor). User uploads under
@@ -1956,7 +2332,11 @@ def _run_generative_job_impl(
         trace_id=render_trace_id,
         counts={"clip_count": len(clip_paths_gcs)},
     ):
-        clip_paths_gcs = _persist_durable_sources(job_id, clip_paths_gcs)
+        clip_paths_gcs = _persist_durable_sources(
+            job_id,
+            clip_paths_gcs,
+            source_identity=clip_source_identity,
+        )
 
     # ignore_cleanup_errors: on a soft-time-limit abort, an orphaned pre-tonemap
     # ffmpeg thread (outer pool shutdown wait=False) may still be writing sdr_*
@@ -1993,6 +2373,9 @@ def _run_generative_job_impl(
         clip_metas = ingest["clip_metas"]
         clip_id_to_gcs = ingest["clip_id_to_gcs"]
         clip_id_to_local = ingest["clip_id_to_local"]
+        speech_cleanup_assignment_by_clip_id = (
+            ingest.get("speech_cleanup_assignment_by_clip_id") or {}
+        )
         probe_map = ingest["probe_map"]
         clip_durations_s = {
             cid: float(getattr(probe_map.get(path), "duration_s", 0.0) or 0.0)
@@ -2318,6 +2701,15 @@ def _run_generative_job_impl(
             if speech_cleanup_contract == "off_v1"
             else _SilenceCutCache(os.path.join(tmpdir, "silence_cut"))
         )
+        required_speech_initial = speech_cleanup_contract == "required_v1" and archetype in {
+            "subtitled",
+            "talking_head",
+        }
+        speech_cut_claim_generation = str(
+            (speech_cut_execution.get("finalizer_claim") or {}).get("render_generation_id")
+            or speech_cut_execution.get("render_generation_id")
+            or ""
+        )
 
         def _render_one_spec(rank: int, spec: dict[str, Any], spine: str | None) -> dict[str, Any]:
             """Render a single (already non-resumable) spec: mark rendering →
@@ -2331,17 +2723,27 @@ def _run_generative_job_impl(
             # First render only. Re-renders stamp this at DISPATCH instead
             # (`stamp_variant_attempt` in services/job_phases.py) so the tile
             # clock restarts on the Save press rather than inheriting this value.
-            if (
-                _update_variant_entry(
+            render_started_at = datetime.utcnow().isoformat() + "Z"
+            storage_generation = spec.get("storage_generation")
+            if required_speech_initial:
+                marked_rendering = bool(storage_generation) and _mark_required_speech_rendering(
+                    job_id,
+                    variant_id,
+                    generation=str(storage_generation),
+                    render_started_at=render_started_at,
+                    expected_operation_id=speech_cut_operation_id,
+                    expected_attempt_id=speech_cut_attempt_id,
+                )
+            else:
+                marked_rendering = _update_variant_entry(
                     job_id,
                     variant_id,
                     {
                         "render_status": "rendering",
-                        "render_started_at": datetime.utcnow().isoformat() + "Z",
+                        "render_started_at": render_started_at,
                     },
                 )
-                is False
-            ):
+            if not marked_rendering:
                 return {
                     "variant_id": variant_id,
                     "rank": rank,
@@ -2377,6 +2779,9 @@ def _run_generative_job_impl(
                         silence_cut_disabled=silence_cut_disabled,
                         silence_cut_cache=silence_cut_cache,
                         speech_cleanup_contract=speech_cleanup_contract,
+                        render_trace_id=render_trace_id,
+                        storage_generation=spec.get("storage_generation"),
+                        speech_cleanup_assignment_by_clip_id=(speech_cleanup_assignment_by_clip_id),
                     )
                 elif spec.get("archetype") == "narrated":
                     result = _render_narrated_variant(
@@ -2403,6 +2808,7 @@ def _run_generative_job_impl(
                         speech_cleanup_contract=speech_cleanup_contract,
                         smart_captions=smart_captions,
                         render_trace_id=render_trace_id,
+                        speech_cleanup_assignment_by_clip_id=(speech_cleanup_assignment_by_clip_id),
                     )
                 elif spec.get("archetype") == "day_vlog":
                     result = _render_generative_variant(
@@ -2523,24 +2929,56 @@ def _run_generative_job_impl(
                 # Persist immediately so a deploy/OOM after this point can't lose it,
                 # and so the status endpoint reveals variants as they finish rather
                 # than all-at-once at _finalize_job.
-                if _upsert_variant_entry(job_id, result) is False:
-                    _discard_generation_storage(
-                        result,
-                        job_id=job_id,
-                        generation=spec.get("storage_generation"),
-                        fields=(
-                            "video_path",
-                            "base_video_path",
-                            "subject_matte_path",
-                            "visual_blocks_base_path",
-                            "motion_base_path",
-                            # Fresh initial-render media snapshots. Keep these
-                            # out of the helper default because later rerenders
-                            # may merely carry prior persisted snapshot refs.
-                            "pre_media_overlay_video_path",
-                            "pre_sfx_video_path",
-                        ),
+                if required_speech_initial:
+                    stage_decision = (
+                        _stage_required_speech_result_decision(
+                            job_id,
+                            result,
+                            generation=str(storage_generation),
+                            close_uploads=not bool(speech_cut_operation_id),
+                            expected_operation_id=speech_cut_operation_id,
+                            expected_attempt_id=speech_cut_attempt_id,
+                        )
+                        if storage_generation
+                        else RequiredSpeechStageDecision("failed")
                     )
+                    persisted = stage_decision.accepted
+                else:
+                    stage_decision = None
+                    persisted = _upsert_variant_entry(job_id, result)
+                if persisted is False:
+                    safe_to_discard = not required_speech_initial or (
+                        stage_decision is not None
+                        and stage_decision.status in {"generation_superseded", "job_missing"}
+                    )
+                    if safe_to_discard:
+                        _discard_generation_storage(
+                            result,
+                            job_id=job_id,
+                            generation=spec.get("storage_generation"),
+                            fields=(
+                                "video_path",
+                                "base_video_path",
+                                "subject_matte_path",
+                                "visual_blocks_base_path",
+                                "motion_base_path",
+                                # Fresh initial-render media snapshots. Keep these
+                                # out of the helper default because later rerenders
+                                # may merely carry prior persisted snapshot refs.
+                                "pre_media_overlay_video_path",
+                                "pre_sfx_video_path",
+                            ),
+                        )
+                    if required_speech_initial:
+                        assert stage_decision is not None
+                        if stage_decision.status == "failed":
+                            raise RuntimeError(
+                                "required speech-cleanup result failed private staging"
+                            )
+                        # Do not route a stale/cancelled worker through the
+                        # generic task failure writer: that could damage the
+                        # generation which superseded this result.
+                        result["_required_speech_stage_decision"] = stage_decision.status
                 return result
             except BaseException as exc:
                 record_render_stage(
@@ -2580,7 +3018,11 @@ def _run_generative_job_impl(
             for rank, spec in enumerate(specs, start=1):
                 variant_id = spec["variant_id"]
                 spec_track_id = spec["track"].id if spec["track"] else None
-                reusable = prior.get(variant_id)
+                reusable = (
+                    required_speech_resumed.get(variant_id)
+                    if required_speech_initial
+                    else prior.get(variant_id)
+                )
                 if reusable is not None and reusable.get("music_track_id") == spec_track_id:
                     record_pipeline_event(
                         "assembly", "variant_resumed", {"variant_id": variant_id, "rank": rank}
@@ -2648,30 +3090,47 @@ def _run_generative_job_impl(
         # _author_carousel_moments's docstring for the eligibility/selection
         # rules. No-op — mutates nothing — unless both carousel flags are on.
         _author_carousel_moments(initial_specs, job_id=job_id, n_clips=len(clip_metas))
-        for spec in initial_specs:
-            if (
-                _upsert_variant_entry(
+        required_speech_resumed: dict[str, dict[str, Any]] = {}
+        for rank, spec in enumerate(initial_specs, start=1):
+            pending_variant = {
+                "variant_id": spec["variant_id"],
+                "rank": rank,
+                "text_mode": spec.get("text_mode", "agent_text"),
+                "music_track_id": spec["track"].id if spec.get("track") else None,
+                "track_title": spec["track"].title if spec.get("track") else None,
+                "render_status": "pending",
+                "ok": False,
+                # Seed the authored moment before rendering. A crash between here
+                # and private staging must not lose the authored retry input.
+                "carousel_moment": spec.get("carousel_moment"),
+            }
+            if required_speech_initial:
+                if speech_cut_operation_id:
+                    if spec["variant_id"] != speech_cut_execution.get("variant_id"):
+                        raise RuntimeError("speech cut generation target changed before render")
+                    generation = speech_cut_claim_generation
+                    if not generation:
+                        raise RuntimeError("speech cut claim has no render generation")
+                else:
+                    generation = uuid.uuid4().hex
+                pending_variant["render_generation_id"] = generation
+                reservation = _reserve_required_speech_pending(
                     job_id,
-                    {
-                        "variant_id": spec["variant_id"],
-                        "rank": initial_specs.index(spec) + 1,
-                        "text_mode": spec.get("text_mode", "agent_text"),
-                        "music_track_id": spec["track"].id if spec.get("track") else None,
-                        "track_title": spec["track"].title if spec.get("track") else None,
-                        "render_status": "pending",
-                        "ok": False,
-                        # Seed the authored moment onto the row BEFORE the render even
-                        # starts (not just once `base` persists it below): a crash/OOM
-                        # between here and the first `_upsert_variant_entry(result)`
-                        # would otherwise leave this pending row as the only persisted
-                        # state, and _run_regenerate_variant's `existing.get(...)`
-                        # reads THIS row — so a carousel_moment authored but never
-                        # rendered must still be visible to a re-render.
-                        "carousel_moment": spec.get("carousel_moment"),
-                    },
+                    pending_variant,
+                    generation=generation,
+                    expected_operation_id=speech_cut_operation_id,
+                    expected_attempt_id=speech_cut_attempt_id,
                 )
-                is False
-            ):
+                reserved = reservation is not None
+                if reservation is not None:
+                    generation = str(reservation["generation"])
+                    spec["storage_generation"] = generation
+                    resumed_result = reservation.get("resumed_result")
+                    if isinstance(resumed_result, dict):
+                        required_speech_resumed[spec["variant_id"]] = resumed_result
+            else:
+                reserved = _upsert_variant_entry(job_id, pending_variant)
+            if not reserved:
                 return
 
         try:
@@ -2714,6 +3173,9 @@ def _run_generative_job_impl(
                     return
             results = _render_spec_set(fallback_specs, None)
 
+    if any(result.get("_required_speech_stage_decision") for result in results):
+        return
+
     record_phase(
         job_id,
         "render_variants",
@@ -2726,13 +3188,25 @@ def _run_generative_job_impl(
         trace_id=render_trace_id,
         counts={"variant_count": len(results)},
     ):
-        finalized = _finalize_job(
+        finalizer = _finalize_job_decision if required_speech_initial else _finalize_job
+        finalization = finalizer(
             job_id,
             results,
             expected_operation_id=speech_cut_operation_id,
             expected_attempt_id=speech_cut_attempt_id,
+            required_speech_results=(
+                {
+                    str(result["variant_id"]): result
+                    for result in results
+                    if result.get("render_generation_id")
+                }
+                if required_speech_initial
+                else None
+            ),
         )
-        if finalized is False:
+        if (
+            isinstance(finalization, JobFinalizationResult) and not finalization.accepted
+        ) or finalization is False:
             return
         if speech_cut_operation_id and speech_cut_attempt_id:
             _compose_speech_cut_rerender(
@@ -3429,8 +3903,13 @@ def _ingest_clips(
     renders working when Gemini is rate-limited/unavailable. clip_metas is empty,
     hero is None; clip ids use the `clip_{idx}` synthetic convention.
     """
+    from app.services.speech_cleanup_identity import (  # noqa: PLC0415
+        CLIP_METADATA_IDENTITY_INDEX_KEY,
+        build_clip_metadata_identity_index,
+        validate_clip_metadata_identity_index,
+    )
     from app.tasks.template_orchestrate import (  # noqa: PLC0415
-        _analyze_clips_parallel,
+        _analyze_clips_parallel_indexed,
         _download_clips_parallel,
         _probe_clips,
         _upload_clips_parallel,
@@ -3443,6 +3922,8 @@ def _ingest_clips(
         return ref.name if ref is not None else f"clip_{idx}"
 
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    source_identity = _speech_cleanup_identity_for_paths(job_id, clip_paths_gcs)
 
     download_t0 = time.monotonic()
     cached_sources = _load_preprocessed_source_cache(job_id, clip_paths_gcs)
@@ -3499,6 +3980,7 @@ def _ingest_clips(
                 {"clips": len(local_clip_paths)},
             )
     if skip_analysis:
+        synthetic_ids = [_clip_id_for(None, i) for i in range(len(clip_paths_gcs))]
         return {
             "clip_metas": [],
             "probe_map": probe_map,
@@ -3507,6 +3989,55 @@ def _ingest_clips(
                 _clip_id_for(None, i): path for i, path in enumerate(local_clip_paths)
             },
             "hero": None,
+            "speech_cleanup_assignment_by_clip_id": _speech_cleanup_assignment_map(
+                job_id=job_id,
+                clip_ids=synthetic_ids,
+                source_identity=source_identity,
+            ),
+        }
+    indexed_cache = _load_indexed_clip_metadata_cache(
+        job_id,
+        clip_paths_gcs,
+        source_identity=source_identity,
+    )
+    if indexed_cache is not None:
+        indexed_metas, identity_index = indexed_cache
+        clip_metas = [meta for _source_slot, meta in indexed_metas]
+        failed_count = len(identity_index.failed_source_slots)
+        total = len(clip_metas) + failed_count
+        if total == 0 or not clip_metas or failed_count > total * (1.0 - min_success_fraction):
+            raise ValueError(
+                f"{failed_count}/{total} cached clips failed clip_metadata — aborting "
+                f"(min_success_fraction={min_success_fraction})"
+            )
+        record_pipeline_event(
+            "ingest",
+            "clip_metadata_identity_cache_hit",
+            {"clips": len(clip_metas), "failed": failed_count},
+        )
+        local_by_id: dict[str, str] = {}
+        gcs_by_id: dict[str, str] = {}
+        for source_slot, meta in indexed_metas:
+            clip_id = str(meta.clip_id)
+            meta.clip_path = local_clip_paths[source_slot]
+            local_by_id[clip_id] = local_clip_paths[source_slot]
+            gcs_by_id[clip_id] = clip_paths_gcs[source_slot]
+        clip_ids = [str(meta.clip_id) for meta in clip_metas]
+        return {
+            "clip_metas": clip_metas,
+            "probe_map": probe_map,
+            "clip_id_to_gcs": gcs_by_id,
+            "clip_id_to_local": local_by_id,
+            "hero": max(
+                clip_metas,
+                key=lambda meta: float(getattr(meta, "hook_score", 0.0) or 0.0),
+            ),
+            "speech_cleanup_assignment_by_clip_id": _speech_cleanup_assignment_map(
+                job_id=job_id,
+                clip_ids=clip_ids,
+                source_identity=source_identity,
+                identity_index=identity_index,
+            ),
         }
     cached_metas = _load_clip_metadata_cache(job_id, clip_paths_gcs)
     if cached_metas:
@@ -3528,19 +4059,36 @@ def _ingest_clips(
             for i, meta in enumerate(cached_metas)
             if i < len(clip_paths_gcs)
         }
+        identity_index = None
+        if source_identity.valid:
+            identity_index = validate_clip_metadata_identity_index(
+                _read_all_candidates(job_id).get(CLIP_METADATA_IDENTITY_INDEX_KEY),
+                source_instance_ids=source_identity.source_instance_ids,
+            )
+        cached_clip_ids = [
+            str(getattr(meta, "clip_id", f"clip_{i}")) for i, meta in enumerate(cached_metas)
+        ]
         return {
             "clip_metas": cached_metas,
             "probe_map": probe_map,
             "clip_id_to_gcs": gcs_by_id,
             "clip_id_to_local": local_by_id,
             "hero": max(cached_metas, key=lambda m: float(getattr(m, "hook_score", 0.0) or 0.0)),
+            "speech_cleanup_assignment_by_clip_id": _speech_cleanup_assignment_map(
+                job_id=job_id,
+                clip_ids=cached_clip_ids,
+                source_identity=source_identity,
+                identity_index=identity_index,
+            ),
         }
     record_pipeline_event("ingest", "clip_metadata_cache_miss", {"clips": len(clip_paths_gcs)})
     analysis_t0 = time.monotonic()
     file_refs = _upload_clips_parallel(local_clip_paths)
-    clip_metas, failed_count = _analyze_clips_parallel(
+    indexed_metas, failed_slots = _analyze_clips_parallel_indexed(
         file_refs, local_clip_paths, probe_map, job_id=job_id
     )
+    clip_metas = [meta for _source_slot, meta in indexed_metas]
+    failed_count = len(failed_slots)
     _record_render_subphase(
         job_id,
         "analyze_clips",
@@ -3554,7 +4102,36 @@ def _ingest_clips(
             f"{failed_count}/{total} clips failed clip_metadata — aborting "
             f"(min_success_fraction={min_success_fraction})"
         )
-    _store_clip_metadata_cache(job_id, clip_paths_gcs, clip_metas)
+    identity_envelope = None
+    identity_index = None
+    if source_identity.valid:
+        try:
+            identity_envelope = build_clip_metadata_identity_index(
+                records=[
+                    (source_slot, str(getattr(meta, "clip_id", "")), _clip_meta_to_cache(meta))
+                    for source_slot, meta in indexed_metas
+                ],
+                failed_source_slots=failed_slots,
+                source_instance_ids=source_identity.source_instance_ids,
+                analyzed_source_slots=range(len(clip_paths_gcs)),
+            )
+            identity_index = validate_clip_metadata_identity_index(
+                identity_envelope,
+                source_instance_ids=source_identity.source_instance_ids,
+            )
+        except (TypeError, ValueError) as exc:
+            log.warning(
+                "clip_metadata_identity_index_build_failed",
+                job_id=job_id,
+                error_class=type(exc).__name__,
+            )
+    _store_clip_metadata_cache(
+        job_id,
+        clip_paths_gcs,
+        clip_metas,
+        identity_index=identity_envelope,
+    )
+    clip_ids = [str(getattr(meta, "clip_id", "")) for meta in clip_metas]
     return {
         "clip_metas": clip_metas,
         "probe_map": probe_map,
@@ -3566,6 +4143,12 @@ def _ingest_clips(
             for i, (ref, path) in enumerate(zip(file_refs, local_clip_paths))
         },
         "hero": max(clip_metas, key=lambda m: float(getattr(m, "hook_score", 0.0) or 0.0)),
+        "speech_cleanup_assignment_by_clip_id": _speech_cleanup_assignment_map(
+            job_id=job_id,
+            clip_ids=clip_ids,
+            source_identity=source_identity,
+            identity_index=identity_index,
+        ),
     }
 
 
@@ -3678,7 +4261,32 @@ def _durable_sources_prefix(job_id: str) -> str:
     return f"generative-jobs/{job_id}/sources/"
 
 
-def _persist_durable_sources(job_id: str, clip_paths: list[str]) -> list[str]:
+def _provision_clip_source_identity(job_id: str):  # noqa: ANN202
+    """Provision a legacy Job's source UUID vector under the Job row lock."""
+
+    from app.services.speech_cleanup_identity import (  # noqa: PLC0415
+        provision_clip_source_instance_ids,
+    )
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        if job is None:
+            return None
+        if _cancelled_job_write_rejected(job, operation="provision_clip_source_identity", db=db):
+            return None
+        candidates, identity = provision_clip_source_instance_ids(job.all_candidates or {})
+        if identity.provisioned:
+            job.all_candidates = candidates
+            db.commit()
+        return identity
+
+
+def _persist_durable_sources(
+    job_id: str,
+    clip_paths: list[str],
+    *,
+    source_identity=None,  # noqa: ANN001
+) -> list[str]:
     """Snapshot each uploaded clip to a durable per-job key and rewrite clip_paths.
 
     `generative-jobs/*` is exempt from the 24h GCS lifecycle rule, so timeline
@@ -3686,9 +4294,8 @@ def _persist_durable_sources(job_id: str, clip_paths: list[str]) -> list[str]:
     Copies are server-side (`storage.copy_object`) — no egress.
 
     Contract:
-      - STRICTLY order-preserving 1:1 rewrite (`{i:03d}_{basename}` keys) —
-        downstream `clip_index` identity and narrative ordering both key off
-        clip_paths positions.
+      - STRICTLY order-preserving 1:1 rewrite. Stable source UUIDs remain private
+        row metadata; object keys use only an attempt-local opaque slot.
       - All-or-nothing: ANY failure (copy or DB persist) logs a warning and
         returns ALL original paths — never a mixed list, never a failed job.
       - Idempotent: paths already under the durable prefix are not re-copied;
@@ -3696,46 +4303,169 @@ def _persist_durable_sources(job_id: str, clip_paths: list[str]) -> list[str]:
     """
     if not settings.GENERATIVE_TIMELINE_EDITOR_ENABLED:
         return clip_paths
+    from app.services.durable_attempt_cleanup import (  # noqa: PLC0415
+        SOURCE_COPY_CLEANUP_FIELD,
+        CleanupReceiptBackpressure,
+        CleanupReceiptLocator,
+        mark_cleanup_receipt_closed,
+        remove_cleanup_receipt,
+        reserve_source_copy_cleanup,
+    )
+    from app.services.speech_cleanup_identity import (  # noqa: PLC0415
+        validate_clip_source_identity,
+    )
     from app.storage import copy_object  # noqa: PLC0415
 
     prefix = _durable_sources_prefix(job_id)
-    if all(p.startswith(prefix) for p in clip_paths):
-        return clip_paths  # already durable — idempotent re-run
-    copied_paths: list[str] = []
-    cancelled = False
-    try:
-        durable: list[str] = []
-        for i, src in enumerate(clip_paths):
-            if src.startswith(prefix):
-                durable.append(src)
-                continue
-            dst = f"{prefix}{i:03d}_{os.path.basename(src)}"
-            copy_object(src, dst)
-            copied_paths.append(dst)
-            durable.append(dst)
-        with _sync_session() as db:
-            job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
-            if job is not None and _cancelled_job_write_rejected(
-                job, operation="persist_durable_sources", db=db
-            ):
-                cancelled = True
-            elif job is not None:
-                all_candidates = dict(job.all_candidates or {})
-                all_candidates["clip_paths"] = list(durable)
-                job.all_candidates = all_candidates
+    original_paths = list(clip_paths)
+    identity = source_identity
+
+    # One complete optimistic retry is permitted when another writer changes
+    # the ordered (path, source-instance-id) vector while copies are in flight.
+    for vector_attempt in range(2):
+        if identity is None or vector_attempt:
+            identity = _provision_clip_source_identity(job_id)
+        if identity is None or not identity.valid:
+            log.warning(
+                "generative_durable_sources_identity_unavailable",
+                job_id=job_id,
+                identity_status=getattr(identity, "status", "job_missing"),
+            )
+            return original_paths
+        captured_pairs = tuple(identity.pairs)
+        if vector_attempt == 0 and list(identity.clip_paths) != original_paths:
+            # Provision/read raced a source edit. Reload once instead of copying
+            # the stale caller vector under fresh identities.
+            continue
+
+        working_paths = list(identity.clip_paths)
+        attempt_id = uuid.uuid4().hex
+        locator = CleanupReceiptLocator(
+            field=SOURCE_COPY_CLEANUP_FIELD,
+            receipt_id=attempt_id,
+        )
+
+        # Fenced preflight + durable receipt commit happens before the first
+        # lifecycle-exempt object can be written.
+        try:
+            with _sync_session() as db:
+                job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+                if job is None or _cancelled_job_write_rejected(
+                    job,
+                    operation="reserve_durable_source_copy",
+                    db=db,
+                ):
+                    return original_paths
+                current = validate_clip_source_identity(job.all_candidates or {})
+                if not current.valid or tuple(current.pairs) != captured_pairs:
+                    identity = None
+                    continue
+                if all(path.startswith(prefix) for path in working_paths):
+                    return working_paths
+                plan = copy.deepcopy(job.assembly_plan or {})
+                reserve_source_copy_cleanup(
+                    plan,
+                    job_id=job_id,
+                    copy_attempt_id=attempt_id,
+                    lease_expires_at=_upload_lease_deadline(),
+                )
+                job.assembly_plan = plan
                 db.commit()
-    except Exception as exc:  # noqa: BLE001 — durability is best-effort, never job-fatal
+        except CleanupReceiptBackpressure as exc:
+            raise RuntimeError("source_copy_cleanup_backpressure") from exc
+
+        durable: list[str] = []
+        copy_error: Exception | None = None
+        try:
+            for source_slot, (src, _source_instance_id) in enumerate(captured_pairs):
+                if src.startswith(prefix):
+                    durable.append(src)
+                    continue
+                extension = os.path.splitext(src.split("?", 1)[0])[1].lower()
+                if extension not in {
+                    ".3gp",
+                    ".avi",
+                    ".hevc",
+                    ".m4v",
+                    ".mkv",
+                    ".mov",
+                    ".mp4",
+                    ".mpeg",
+                    ".mpg",
+                    ".webm",
+                }:
+                    extension = ".mp4"
+                dst = f"{prefix}copy-attempts/{attempt_id}/slot-{source_slot:04d}{extension}"
+                copy_object(src, dst)
+                durable.append(dst)
+        except Exception as exc:  # noqa: BLE001 - original sources remain readable
+            copy_error = exc
+
+        disposition = "copy_failed" if copy_error is not None else "stale_source_vector"
+        try:
+            with _sync_session() as db:
+                job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+                if job is None:
+                    disposition = "job_missing"
+                else:
+                    plan = copy.deepcopy(job.assembly_plan or {})
+                    mark_cleanup_receipt_closed(plan, locator)
+                    if copy_error is None and not _cancelled_job_write_rejected(
+                        job,
+                        operation="persist_durable_sources",
+                        db=db,
+                    ):
+                        all_candidates = copy.deepcopy(job.all_candidates or {})
+                        current = validate_clip_source_identity(all_candidates)
+                        if current.valid and tuple(current.pairs) == captured_pairs:
+                            all_candidates["clip_paths"] = list(durable)
+                            all_candidates["clip_source_instance_ids"] = list(
+                                identity.source_instance_ids
+                            )
+                            job.all_candidates = all_candidates
+                            if not remove_cleanup_receipt(plan, locator):
+                                raise RuntimeError("source copy receipt disappeared")
+                            disposition = "persisted"
+                        else:
+                            disposition = "stale_source_vector"
+                    elif copy_error is None:
+                        disposition = "terminal_write_rejected"
+                    job.assembly_plan = plan
+                    db.commit()
+        except Exception as exc:  # noqa: BLE001 - receipt/lease preserves hard-kill cleanup
+            log.warning(
+                "generative_durable_sources_finalize_failed",
+                job_id=job_id,
+                error_class=type(exc).__name__,
+            )
+            # Commit outcome is ambiguous here: the exact copied paths may
+            # already be the live source vector with their receipt consumed.
+            # Never delete them from this stale process view. The precommitted
+            # receipt (if still present) is reconciled from a fresh row lock and
+            # full storage-reference proof by the indexed Beat sweep.
+            return original_paths
+
+        if disposition == "persisted":
+            log.info("generative_durable_sources_persisted", job_id=job_id, clips=len(durable))
+            return durable
+
+        # Keep cleanup destructive I/O behind the durable reconciler's fresh
+        # reference proof. Direct exact-key deletion is unsafe after any commit
+        # ambiguity and unnecessary here: this receipt is closed and indexed.
+        if disposition == "stale_source_vector" and vector_attempt == 0:
+            identity = None
+            continue
+        if disposition == "stale_source_vector":
+            raise RuntimeError("source_list_changed")
         log.warning(
             "generative_durable_sources_failed",
             job_id=job_id,
-            error=str(exc),
+            status=disposition,
+            error_class=type(copy_error).__name__ if copy_error is not None else None,
         )
-        return clip_paths
-    if cancelled:
-        _delete_cancelled_job_objects(job_id, copied_paths)
-        return clip_paths
-    log.info("generative_durable_sources_persisted", job_id=job_id, clips=len(durable))
-    return durable
+        return original_paths
+
+    raise RuntimeError("source_list_changed")
 
 
 def _pretonemap_hdr_clips(
@@ -4411,6 +5141,15 @@ def _run_masonry_audio_only_song_swap(
     if "video_path" not in patch or "output_url" not in patch:
         raise ValueError("masonry audio-only song swap missing current video_path")
 
+    will_reapply_sfx = _will_reapply_sfx_layer(
+        _fresh_variant_snapshot(job_id, variant_id) or existing
+    )
+    if will_reapply_sfx:
+        # The audio swap is not terminal until the outermost persisted SFX lane
+        # has been rebuilt. Keep polls and editor dispatches behind the same
+        # generation-owned rendering barrier used by caption/overlay reburns.
+        patch["render_status"] = "rendering"
+        patch.pop("render_finished_at", None)
     if not _update_variant_entry(
         job_id,
         variant_id,
@@ -4432,11 +5171,23 @@ def _run_masonry_audio_only_song_swap(
         "masonry_audio_only_swap",
         {"variant_id": variant_id, "track_id": track.id},
     )
-    _reapply_persisted_sfx_if_any(
+    sfx_owned = _reapply_persisted_sfx_if_any(
         job_id=job_id,
         variant_id=variant_id,
         expected_render_gen_id=expected_render_gen_id,
     )
+    if will_reapply_sfx and not sfx_owned:
+        _update_variant_entry(
+            job_id,
+            variant_id,
+            {
+                "render_status": "ready",
+                "render_finished_at": datetime.utcnow().isoformat() + "Z",
+            },
+            expected_render_gen_id=expected_render_gen_id,
+            outcome="masonry_audio_swap_sfx_reapply_noop",
+            cleanup_followup="none",
+        )
     return True
 
 
@@ -4541,6 +5292,12 @@ def _run_music_window_audio_only_swap(
     if "video_path" not in patch or "output_url" not in patch:
         raise ValueError("music-window audio-only swap missing current video_path")
 
+    will_reapply_sfx = _will_reapply_sfx_layer(
+        _fresh_variant_snapshot(job_id, variant_id) or existing
+    )
+    if will_reapply_sfx:
+        patch["render_status"] = "rendering"
+        patch.pop("render_finished_at", None)
     if not _update_variant_entry(
         job_id,
         variant_id,
@@ -4562,11 +5319,23 @@ def _run_music_window_audio_only_swap(
         "music_window_audio_only_swap",
         {"variant_id": variant_id, "track_id": track.id, "music_start_s": music_start_s},
     )
-    _reapply_persisted_sfx_if_any(
+    sfx_owned = _reapply_persisted_sfx_if_any(
         job_id=job_id,
         variant_id=variant_id,
         expected_render_gen_id=expected_render_gen_id,
     )
+    if will_reapply_sfx and not sfx_owned:
+        _update_variant_entry(
+            job_id,
+            variant_id,
+            {
+                "render_status": "ready",
+                "render_finished_at": datetime.utcnow().isoformat() + "Z",
+            },
+            expected_render_gen_id=expected_render_gen_id,
+            outcome="music_window_audio_swap_sfx_reapply_noop",
+            cleanup_followup="none",
+        )
     return True
 
 
@@ -4757,6 +5526,12 @@ def _run_media_overlay_pass(
             current_video_path,
             job_id=job_id,
             source_kind="generative_output_overlay_clear",
+            destination_path=_generation_poster_destination(
+                job_id,
+                expected_render_gen_id,
+                source_kind="generative_output_overlay_clear",
+                source_path=current_video_path,
+            ),
         )
         pre_overlay_poster_path = existing.get("pre_overlay_poster_path") if clean_path else None
         if clean_path and not pre_overlay_poster_path:
@@ -4764,6 +5539,12 @@ def _run_media_overlay_pass(
                 clean_path,
                 job_id=job_id,
                 source_kind="generative_pre_overlay",
+                destination_path=_generation_poster_destination(
+                    job_id,
+                    expected_render_gen_id,
+                    source_kind="generative_pre_overlay",
+                    source_path=clean_path,
+                ),
             )
         accepted, will_reapply_sfx, _, _cancelled = _persist_result(
             output_url=signed_url,
@@ -4850,11 +5631,23 @@ def _run_media_overlay_pass(
         current_video_path,
         job_id=job_id,
         source_kind="generative_output_overlay",
+        destination_path=_generation_poster_destination(
+            job_id,
+            expected_render_gen_id,
+            source_kind="generative_output_overlay",
+            source_path=current_video_path,
+        ),
     )
     pre_overlay_poster_path = generate_and_upload_from_gcs(
         pre_clean,
         job_id=job_id,
         source_kind="generative_pre_overlay",
+        destination_path=_generation_poster_destination(
+            job_id,
+            expected_render_gen_id,
+            source_kind="generative_pre_overlay",
+            source_path=pre_clean,
+        ),
     )
     accepted, will_reapply_sfx, stale_write_skipped, cancelled = _persist_result(
         output_url=new_url,
@@ -5463,6 +6256,12 @@ def _run_sfx_pass(
             current_video_path,
             job_id=job_id,
             source_kind="generative_output_sfx_clear",
+            destination_path=_generation_poster_destination(
+                job_id,
+                expected_render_gen_id,
+                source_kind="generative_output_sfx_clear",
+                source_path=current_video_path,
+            ),
         )
         if not _update_variant_entry(
             job_id,
@@ -5562,6 +6361,12 @@ def _run_sfx_pass(
             current_video_path,
             job_id=job_id,
             source_kind="generative_output_sfx",
+            destination_path=_generation_poster_destination(
+                job_id,
+                expected_render_gen_id,
+                source_kind="generative_output_sfx",
+                source_path=current_video_path,
+            ),
         ),
         "render_status": "ready",
         "render_finished_at": datetime.utcnow().isoformat() + "Z",
@@ -6186,7 +6991,11 @@ def _ensure_visual_blocks_base(
 
     from app.pipeline.visual_blocks import apply_visual_blocks  # noqa: PLC0415
 
-    cache_path = f"generative-jobs/{job_id}/visual-blocks/{variant_id}_{uuid.uuid4().hex[:10]}.mp4"
+    cache_path = _variant_storage_key(
+        job_id,
+        f"visual-blocks/{variant_id}_{uuid.uuid4().hex[:10]}.mp4",
+        _storage_generation_from_key(job_id, base_gcs_path),
+    )
     log.info(
         "visual_blocks_cache_miss",
         job_id=job_id,
@@ -6392,7 +7201,11 @@ def _ensure_motion_base(
         )
         return str(cached), str(cached)
 
-    cache_path = f"generative-jobs/{job_id}/motion/{variant_id}_{uuid.uuid4().hex[:10]}.mp4"
+    cache_path = _variant_storage_key(
+        job_id,
+        f"motion/{variant_id}_{uuid.uuid4().hex[:10]}.mp4",
+        _storage_generation_from_key(job_id, base_gcs_path),
+    )
     apply_motion_scenes(
         base_gcs_path=base_gcs_path,
         instances=scenes,
@@ -6516,6 +7329,7 @@ def _reburn_text_on_base(
     text_behind_subject: bool | None = None,
     storage_generation: str | None = None,
     created_storage_paths: list[str] | None = None,
+    refresh_persisted_snapshot: bool = True,
 ) -> dict:
     """Fast reburn: download base → rebuild overlay → burn → upload.
 
@@ -6840,7 +7654,11 @@ def _reburn_text_on_base(
             # A Carousel full rebuild creates a fresh caption-free base. Burn
             # the projected authored text and persisted captions back on top,
             # even when those are the only downstream lanes that exist.
-            persisted_snapshot = _fresh_variant_snapshot(job_id, variant_id) or existing
+            persisted_snapshot = (
+                (_fresh_variant_snapshot(job_id, variant_id) or existing)
+                if refresh_persisted_snapshot
+                else existing
+            )
             render_snapshot = _project_carousel_timed_lanes(persisted_snapshot)
             final_path, subtitled_matte_path = _compose_subtitled_final(
                 local_base,
@@ -10583,6 +11401,7 @@ def _attach_variant_posters(
     while an extraction/upload failure remains an explicit null poster.
     """
     enriched = dict(payload)
+    storage_generation = enriched.get("render_generation_id")
     generated_paths: list[str] = []
     poster_by_video_path: dict[str, str | None] = {}
     for video_field, poster_field, source_kind in (
@@ -10606,12 +11425,350 @@ def _attach_variant_posters(
                 video_path,
                 job_id=job_id,
                 source_kind=source_kind,
+                destination_path=(
+                    _variant_storage_key(
+                        job_id,
+                        f"{source_kind}.poster.jpg",
+                        storage_generation,
+                    )
+                    if storage_generation
+                    else None
+                ),
             )
             poster_by_video_path[video_path] = poster_path
         enriched[poster_field] = poster_path
         if poster_path:
             generated_paths.append(poster_path)
     return enriched, generated_paths
+
+
+def _reserve_required_speech_pending(
+    job_id: str,
+    pending_variant: dict[str, Any],
+    *,
+    generation: str,
+    expected_operation_id: str | None = None,
+    expected_attempt_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Reserve, exactly resume, or atomically rotate one required generation."""
+
+    from app.services.speech_cleanup_terminal import (  # noqa: PLC0415
+        RequiredSpeechOwnershipError,
+        classify_required_speech_resume,
+        reserve_required_speech_generation,
+        rotate_required_speech_generation_for_retry,
+    )
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        if job is None or _cancelled_job_write_rejected(
+            job,
+            operation="reserve_required_speech_generation",
+            db=db,
+        ):
+            return None
+        plan = copy.deepcopy(job.assembly_plan or {})
+        if expected_operation_id and expected_attempt_id:
+            control = plan.get("speech_cut_control") or {}
+            if (
+                not _speech_cut_claim_matches(
+                    control,
+                    expected_operation_id,
+                    expected_attempt_id,
+                )
+                or str(
+                    (control.get("finalizer_claim") or {}).get("render_generation_id")
+                    or control.get("render_generation_id")
+                    or ""
+                )
+                != generation
+            ):
+                return None
+        elif expected_operation_id is None and expected_attempt_id is None:
+            from app.services.speech_cleanup_selection import (  # noqa: PLC0415
+                DETECTOR_VERSION,
+            )
+            from app.storage import object_exists_once  # noqa: PLC0415
+
+            decision = classify_required_speech_resume(
+                plan,
+                job_id=job_id,
+                variant_id=str(pending_variant.get("variant_id") or ""),
+                expected_music_track_id=pending_variant.get("music_track_id"),
+                expected_analysis_view=(
+                    "talking_head_spine_capped"
+                    if pending_variant.get("variant_id") == "talking_head"
+                    else "full_clip"
+                ),
+                expected_detector_version=DETECTOR_VERSION,
+                object_exists=lambda path: object_exists_once(path, timeout_s=3.0),
+            )
+            if decision.status == "resumable":
+                assert decision.generation is not None
+                assert decision.staged_result is not None
+                return {
+                    "generation": decision.generation,
+                    "resumed_result": decision.staged_result,
+                }
+            if decision.status == "blocked":
+                log.warning(
+                    "required_speech_resume_blocked",
+                    job_id=job_id,
+                    variant_id=pending_variant.get("variant_id"),
+                    reason=decision.reason,
+                )
+                if decision.reason == "uploads_still_active":
+                    raise _RequiredSpeechAttemptBusy(
+                        decision.reason,
+                        retry_after_s=decision.retry_after_s or 0.0,
+                    )
+                return None
+            if decision.status == "rotate":
+                assert decision.generation is not None
+                try:
+                    rotate_required_speech_generation_for_retry(
+                        plan,
+                        job_id=job_id,
+                        variant_id=str(pending_variant.get("variant_id") or ""),
+                        generation=decision.generation,
+                    )
+                except RequiredSpeechOwnershipError as exc:
+                    log.warning(
+                        "required_speech_retry_rotation_blocked",
+                        job_id=job_id,
+                        error_class=type(exc).__name__,
+                    )
+                    return None
+        reserve_required_speech_generation(
+            plan,
+            job_id=job_id,
+            pending_variant=pending_variant,
+            generation=generation,
+            lease_expires_at=_upload_lease_deadline(),
+        )
+        job.assembly_plan = plan
+        db.commit()
+        return {"generation": generation, "resumed_result": None}
+
+
+def _mark_required_speech_rendering(
+    job_id: str,
+    variant_id: str,
+    *,
+    generation: str,
+    render_started_at: str,
+    expected_operation_id: str | None = None,
+    expected_attempt_id: str | None = None,
+) -> bool:
+    from app.services.speech_cleanup_terminal import (  # noqa: PLC0415
+        RequiredSpeechOwnershipError,
+        mark_required_speech_rendering,
+    )
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        if job is None or _cancelled_job_write_rejected(
+            job,
+            operation="mark_required_speech_rendering",
+            db=db,
+        ):
+            return False
+        plan = copy.deepcopy(job.assembly_plan or {})
+        if expected_operation_id and expected_attempt_id:
+            control = plan.get("speech_cut_control") or {}
+            if (
+                not _speech_cut_claim_matches(
+                    control,
+                    expected_operation_id,
+                    expected_attempt_id,
+                )
+                or str(
+                    (control.get("finalizer_claim") or {}).get("render_generation_id")
+                    or control.get("render_generation_id")
+                    or ""
+                )
+                != generation
+            ):
+                return False
+        try:
+            mark_required_speech_rendering(
+                plan,
+                variant_id=variant_id,
+                generation=generation,
+                render_started_at=render_started_at,
+            )
+        except (RequiredSpeechOwnershipError, ValueError):
+            return False
+        job.assembly_plan = plan
+        db.commit()
+        return True
+
+
+def _stage_required_speech_result_decision(
+    job_id: str,
+    result: dict[str, Any],
+    *,
+    generation: str,
+    close_uploads: bool = True,
+    expected_operation_id: str | None = None,
+    expected_attempt_id: str | None = None,
+) -> RequiredSpeechStageDecision:
+    """Attach generation-scoped posters and privately stage the owned result.
+
+    Initial renders have no later storage-producing phase, so their upload guard
+    closes here.  A speech-cut rerender keeps the same guard writing through its
+    caption/text/media composition and closes it only in publish or rollback.
+    """
+
+    from app.services.speech_cleanup_terminal import (  # noqa: PLC0415
+        RequiredSpeechOwnershipError,
+        close_required_speech_generation_uploads,
+        stage_required_speech_generation,
+    )
+
+    enriched, generated_poster_paths = _attach_variant_posters(result, job_id=job_id)
+    result.update(enriched)
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        if job is None:
+            _delete_generated_poster_objects_if_unreferenced(
+                job_id,
+                generated_poster_paths,
+                locked_job=job,
+            )
+            return RequiredSpeechStageDecision("job_missing")
+        if job.status == _CANCELLED_JOB_STATUS:
+            _cancelled_job_write_rejected(
+                job,
+                operation="stage_required_speech_generation",
+                db=db,
+            )
+            _delete_generated_poster_objects_if_unreferenced(
+                job_id,
+                generated_poster_paths,
+                locked_job=job,
+            )
+            return RequiredSpeechStageDecision("job_cancelled")
+        if _content_plan_write_rejected(
+            db,
+            job,
+            operation="stage_required_speech_generation",
+        ):
+            _delete_generated_poster_objects_if_unreferenced(
+                job_id,
+                generated_poster_paths,
+                locked_job=job,
+            )
+            return RequiredSpeechStageDecision("owner_rejected")
+        plan = copy.deepcopy(job.assembly_plan or {})
+        if expected_operation_id and expected_attempt_id:
+            control = plan.get("speech_cut_control") or {}
+            if (
+                not _speech_cut_claim_matches(
+                    control,
+                    expected_operation_id,
+                    expected_attempt_id,
+                )
+                or str(
+                    (control.get("finalizer_claim") or {}).get("render_generation_id")
+                    or control.get("render_generation_id")
+                    or ""
+                )
+                != generation
+            ):
+                internal = plan.get("_speech_cleanup_internal")
+                locks = (
+                    internal.get("required_speech_generation_locks")
+                    if isinstance(internal, dict)
+                    else None
+                )
+                outcome_status = None
+                # A duplicate delivery can lose the claim while the same
+                # generation remains owned by the winner. That is a worker
+                # decision, not a terminal generation disposition. Emit only
+                # when the rendered generation itself has lost ownership.
+                generation_superseded = (
+                    not isinstance(locks, dict) or locks.get(result.get("variant_id")) != generation
+                )
+                if generation_superseded:
+                    outcome_status = _append_required_speech_terminal_outcome_locked(
+                        job,
+                        result,
+                        outcome="discarded_superseded",
+                    )
+                    db.commit()
+                _delete_generated_poster_objects_if_unreferenced(
+                    job_id,
+                    generated_poster_paths,
+                    locked_job=job,
+                )
+                return RequiredSpeechStageDecision(
+                    "generation_superseded" if generation_superseded else "claim_superseded",
+                    outcome_status=outcome_status,
+                )
+        try:
+            stage_required_speech_generation(
+                plan,
+                result=result,
+                generation=generation,
+            )
+            if close_uploads:
+                close_required_speech_generation_uploads(plan, generation=generation)
+        except RequiredSpeechOwnershipError as exc:
+            outcome_status = None
+            if str(exc) in {
+                "generation_lock_mismatch",
+                "working_generation_mismatch",
+                "public_generation_mismatch",
+            }:
+                outcome_status = _append_required_speech_terminal_outcome_locked(
+                    job,
+                    result,
+                    outcome="discarded_superseded",
+                )
+                db.commit()
+            _delete_generated_poster_objects_if_unreferenced(
+                job_id,
+                generated_poster_paths,
+                locked_job=job,
+            )
+            return RequiredSpeechStageDecision(
+                (
+                    "generation_superseded"
+                    if str(exc)
+                    in {
+                        "generation_lock_mismatch",
+                        "working_generation_mismatch",
+                        "public_generation_mismatch",
+                    }
+                    else "failed"
+                ),
+                outcome_status=outcome_status,
+            )
+        job.assembly_plan = plan
+        db.commit()
+        return RequiredSpeechStageDecision("accepted")
+
+
+def _stage_required_speech_result(
+    job_id: str,
+    result: dict[str, Any],
+    *,
+    generation: str,
+    close_uploads: bool = True,
+    expected_operation_id: str | None = None,
+    expected_attempt_id: str | None = None,
+) -> bool:
+    """Compatibility bool wrapper for legacy/direct callers."""
+
+    return _stage_required_speech_result_decision(
+        job_id,
+        result,
+        generation=generation,
+        close_uploads=close_uploads,
+        expected_operation_id=expected_operation_id,
+        expected_attempt_id=expected_attempt_id,
+    ).accepted
 
 
 def _upsert_variant_entry(job_id: str, result: dict[str, Any]) -> bool:
@@ -12299,9 +13456,37 @@ def _variant_storage_key(job_id: str, filename: str, generation: object = None) 
     """Return an immutable generation-scoped key for re-render outputs."""
     token = "".join(character for character in str(generation or "") if character.isalnum())[:32]
     if token:
-        stem, extension = os.path.splitext(filename)
-        filename = f"{stem}_{token}{extension}"
+        return f"generative-jobs/{job_id}/render-generations/{token}/{filename}"
     return f"generative-jobs/{job_id}/{filename}"
+
+
+def _storage_generation_from_key(job_id: str, object_path: object) -> str | None:
+    """Extract only this Job's syntactically valid render-generation token."""
+
+    prefix = f"generative-jobs/{job_id}/render-generations/"
+    if not isinstance(object_path, str) or not object_path.startswith(prefix):
+        return None
+    token = object_path[len(prefix) :].split("/", 1)[0]
+    if not token or len(token) > 32 or not token.isalnum():
+        return None
+    return token
+
+
+def _generation_poster_destination(
+    job_id: str,
+    generation: str | None,
+    *,
+    source_kind: str,
+    source_path: str,
+) -> str | None:
+    if not generation:
+        return None
+    digest = hashlib.sha1(source_path.encode("utf-8")).hexdigest()[:12]  # noqa: S324
+    return _variant_storage_key(
+        job_id,
+        f"posters/{source_kind}_{digest}.poster.jpg",
+        generation,
+    )
 
 
 def _discard_generation_storage(
@@ -13835,6 +15020,9 @@ def _render_talking_head_variant(
     silence_cut_disabled: bool = False,
     silence_cut_cache: _SilenceCutCache | None = None,
     speech_cleanup_contract: str = "legacy_auto",
+    render_trace_id: str | None = None,
+    storage_generation: str | None = None,
+    speech_cleanup_assignment_by_clip_id: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Render the talking_head variant: spine audio + B-roll, then burn the AI intro.
 
@@ -13916,7 +15104,22 @@ def _render_talking_head_variant(
         "speech_cuts_disabled": False,
         "silence_cut_outcome": None,
         "speech_cleanup_failure_reason": None,
+        "render_generation_id": storage_generation,
     }
+    silence_cut_out: dict[str, Any] = {}
+    cleanup_required = speech_cleanup_contract == "required_v1"
+    cleanup_off = speech_cleanup_contract == "off_v1"
+    cleanup_assignment = _speech_cleanup_assignment_for_clip(
+        speech_cleanup_assignment_by_clip_id,
+        spine_clip_id,
+    )
+
+    def _adopt_analyzed_cleanup_context() -> bool:
+        context = silence_cut_out.get("speech_cleanup_outcome_context")
+        if not isinstance(context, dict):
+            return False
+        base["_speech_cleanup_outcome_context"] = context
+        return True
     if creator_target_duration_s is not None:
         base["creator_target_duration_s"] = creator_target_duration_s
     if creator_pacing is not None:
@@ -13934,9 +15137,14 @@ def _render_talking_head_variant(
         # assembler runs its pre-T6 flow byte-identically. The has_audio gate
         # needs the SPINE probe, so it lives inside the assembler (same event).
         silence_cut_fn = None
-        silence_cut_out: dict[str, Any] = {}
-        cleanup_required = speech_cleanup_contract == "required_v1"
-        cleanup_off = speech_cleanup_contract == "off_v1"
+        if cleanup_required:
+            base["_speech_cleanup_outcome_context"] = _speech_cleanup_outcome_context(
+                analysis_policy="required_v1",
+                assignment=cleanup_assignment,
+                render_trace_id=render_trace_id,
+                analysis_view="talking_head_spine_capped",
+                candidate_status="analysis_not_started",
+            )
         if not cleanup_off and (
             cleanup_required or settings.silence_cut_enabled or settings.retake_cut_enabled
         ):
@@ -13965,6 +15173,9 @@ def _render_talking_head_variant(
                         "cache": silence_cut_cache,
                         "cache_key": cache_key,
                         "source_fingerprint": source_fingerprint,
+                        "render_trace_id": render_trace_id,
+                        "speech_cleanup_assignment": cleanup_assignment,
+                        "analysis_view": "talking_head_spine_capped",
                     }
                     if cleanup_required:
                         kwargs.update(
@@ -13992,6 +15203,17 @@ def _render_talking_head_variant(
             silence_cut_out=silence_cut_out,
             strict_speech_cleanup=cleanup_required,
         )
+        if silence_cut_out.get("precheck_no_audio"):
+            base["_speech_cleanup_outcome_context"] = _record_speech_cleanup_precheck(
+                analysis_policy="required_v1" if cleanup_required else "legacy_auto",
+                assignment=cleanup_assignment,
+                render_trace_id=render_trace_id,
+                analysis_view="talking_head_spine_capped",
+                candidate_status="precheck_no_audio",
+                duration_s=None,
+            )
+        else:
+            _adopt_analyzed_cleanup_context()
         base["silence_cut"] = silence_cut_out.get("summary")
         base["silence_cut_outcome"] = (
             silence_cut_out.get("outcome")
@@ -14015,7 +15237,11 @@ def _render_talking_head_variant(
         # narrated path below: a failed base upload only costs fast-reburn +
         # WYSIWYG editing, so it must never fail an otherwise-good render.
         if os.path.exists(base_path) and os.path.getsize(base_path) > 0:
-            base_gcs = f"generative-jobs/{job_id}/base_{rank}_{variant_id}.mp4"
+            base_gcs = _variant_storage_key(
+                job_id,
+                f"base_{rank}_{variant_id}.mp4",
+                storage_generation,
+            )
             try:
                 upload_public_read(base_path, base_gcs)
                 base["base_video_path"] = base_gcs
@@ -14092,7 +15318,11 @@ def _render_talking_head_variant(
         if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
             raise RuntimeError(f"variant {variant_id} produced empty output")
 
-        output_gcs = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}.mp4"
+        output_gcs = _variant_storage_key(
+            job_id,
+            f"variant_{rank}_{variant_id}.mp4",
+            storage_generation,
+        )
         output_url = upload_public_read(final_path, output_gcs)
         log.info("generative_variant_uploaded", job_id=job_id, variant_id=variant_id)
         return {
@@ -14108,8 +15338,39 @@ def _render_talking_head_variant(
             ),
         }
     except SpineExtractionError:
-        raise  # job-level degrade to montage (handled by the caller)
+        has_analysis_context = _adopt_analyzed_cleanup_context()
+        if cleanup_required and not has_analysis_context:
+            base["_speech_cleanup_outcome_context"] = _record_speech_cleanup_precheck(
+                analysis_policy="required_v1",
+                assignment=cleanup_assignment,
+                render_trace_id=render_trace_id,
+                analysis_view="talking_head_spine_capped",
+                candidate_status="outer_media_probe_failed",
+            )
+            failure = SpeechCleanupFailure("outer_media_probe_failed")
+            return {
+                **base,
+                "ok": False,
+                "render_status": "failed",
+                "error": str(failure),
+                "error_class": _classify_error(failure),
+                "speech_cleanup_failure_reason": failure.reason,
+            }
+        raise  # legacy-auto keeps the job-level montage degradation
     except Exception as exc:
+        has_analysis_context = _adopt_analyzed_cleanup_context()
+        if (
+            cleanup_required
+            and not has_analysis_context
+            and getattr(exc, "reason", None) == "probe_failed"
+        ):
+            base["_speech_cleanup_outcome_context"] = _record_speech_cleanup_precheck(
+                analysis_policy="required_v1",
+                assignment=cleanup_assignment,
+                render_trace_id=render_trace_id,
+                analysis_view="talking_head_spine_capped",
+                candidate_status="outer_media_probe_failed",
+            )
         err = str(exc)[:MAX_ERROR_DETAIL_LEN]
         log.error(
             "generative_variant_failed",
@@ -14530,6 +15791,113 @@ def _silence_cut_retake_spans(  # noqa: ANN001
         return [], []
 
 
+def _speech_cleanup_assignment_for_clip(
+    assignments: Mapping[str, Any] | None,
+    clip_id: str | None,
+):  # noqa: ANN202
+    """Resolve one rendered clip without ever falling back to source position."""
+
+    from app.services.speech_cleanup_identity import (  # noqa: PLC0415
+        SpeechCleanupAssignment,
+    )
+
+    if clip_id and assignments is not None:
+        assignment = assignments.get(clip_id)
+        if isinstance(assignment, SpeechCleanupAssignment):
+            return assignment
+    return SpeechCleanupAssignment(None, None, "unmapped_clip_id")
+
+
+def _mixed_gap_selection(analysis_policy: str, assignment):  # noqa: ANN001, ANN202
+    from app.services.speech_cleanup_selection import select_mixed_gap_mode  # noqa: PLC0415
+
+    return select_mixed_gap_mode(
+        analysis_policy=analysis_policy,
+        configured_mode=settings.speech_cleanup_mixed_gap_mode,
+        rollout_percent=settings.speech_cleanup_mixed_gap_rollout_percent,
+        assignment=assignment,
+    )
+
+
+def _speech_cleanup_outcome_context(
+    *,
+    analysis_policy: str,
+    assignment,  # noqa: ANN001
+    render_trace_id: str | None,
+    analysis_view: Literal["full_clip", "talking_head_spine_capped"],
+    candidate_status: str,
+    selected_plan: Literal["baseline", "candidate"] = "baseline",
+    plan: Any | None = None,
+) -> dict[str, Any] | None:
+    """Build the task-local scalar capsule later consumed at terminal publish."""
+
+    selection = _mixed_gap_selection(analysis_policy, assignment)
+    if selection.effective_mode == "off" or not render_trace_id:
+        return None
+    from app.services.speech_cleanup_selection import DETECTOR_VERSION  # noqa: PLC0415
+
+    removals = list(getattr(plan, "removed", []) or []) if plan is not None else []
+    return {
+        "analysis_attempt_id": render_trace_id,
+        "analysis_view": analysis_view,
+        "detector_version": DETECTOR_VERSION,
+        "source_tag": selection.source_tag,
+        "selected_plan": selected_plan,
+        "candidate_status": candidate_status,
+        "output_removal_count": len(removals),
+        "output_removed_ms": max(
+            0,
+            int(round(float(getattr(plan, "time_saved_s", 0.0) or 0.0) * 1000)),
+        ),
+    }
+
+
+def _record_speech_cleanup_precheck(
+    *,
+    analysis_policy: str,
+    assignment,  # noqa: ANN001
+    render_trace_id: str | None,
+    analysis_view: Literal["full_clip", "talking_head_spine_capped"],
+    candidate_status: str,
+    silence_detection_status: str = "not_run",
+    duration_s: float | None = None,
+) -> dict[str, Any] | None:
+    """Emit the fixed-shape receipt for a gate that prevents media analysis."""
+
+    selection = _mixed_gap_selection(analysis_policy, assignment)
+    if selection.effective_mode == "off":
+        return None
+    from app.services.pipeline_trace import record_speech_cleanup_detection  # noqa: PLC0415
+    from app.services.speech_cleanup_selection import (  # noqa: PLC0415
+        build_minimal_mixed_gap_receipt,
+    )
+
+    status = record_speech_cleanup_detection(
+        build_minimal_mixed_gap_receipt(
+            selection=selection,
+            analysis_attempt_id=render_trace_id,
+            analysis_view=analysis_view,
+            analysis_policy=analysis_policy,
+            candidate_status=candidate_status,
+            silence_detection_status=silence_detection_status,
+            duration_s=duration_s,
+        )
+    )
+    log.info(
+        "speech_cleanup_detection_receipt",
+        persistence_status=status,
+        candidate_status=candidate_status,
+        effective_mode=selection.effective_mode,
+    )
+    return _speech_cleanup_outcome_context(
+        analysis_policy=analysis_policy,
+        assignment=assignment,
+        render_trace_id=render_trace_id,
+        analysis_view=analysis_view,
+        candidate_status=candidate_status,
+    )
+
+
 def _silence_cut_analysis(
     clip_path: str,
     duration_s: float,
@@ -14541,6 +15909,9 @@ def _silence_cut_analysis(
     include_retakes: bool | None = None,
     include_silence_and_fillers: bool | None = None,
     analysis_policy: str = "legacy_auto",
+    render_trace_id: str | None = None,
+    speech_cleanup_assignment=None,  # noqa: ANN001
+    analysis_view: Literal["full_clip", "talking_head_spine_capped"] = "full_clip",
 ) -> dict[str, Any]:
     """Detection inputs + CutPlan for one clip, computed once per job (7A).
 
@@ -14582,6 +15953,9 @@ def _silence_cut_analysis(
     except Exception as exc:  # noqa: BLE001 — optional review state fails open
         log.warning("speech_cut_control_read_failed", job_id=job_id, error=str(exc)[:160])
 
+    assignment = speech_cleanup_assignment or _speech_cleanup_assignment_for_clip(None, None)
+    mixed_gap_selection = _mixed_gap_selection(analysis_policy, assignment)
+
     def _compute() -> dict[str, Any]:
         entry: dict[str, Any] = {
             "failed": False,
@@ -14591,6 +15965,7 @@ def _silence_cut_analysis(
             "retake_span_count": 0,
             "review_candidates": [],
             "cut_video_path": None,
+            "speech_cleanup_outcome_context": None,
         }
         try:
             from app.pipeline.silence_cut import (  # noqa: PLC0415
@@ -14598,11 +15973,15 @@ def _silence_cut_analysis(
                 MIN_CLIP_S,
                 SILENCE_CUT_VERBATIM_PROMPT,
                 build_cut_plan,
+                build_cut_plan_comparison,
                 clamp_metadata,
                 no_op_plan,
             )
             from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
-            from app.services.clip_speech import detect_silences  # noqa: PLC0415
+            from app.services.clip_speech import (  # noqa: PLC0415
+                detect_silences,
+                detect_silences_with_status,
+            )
 
             # P3: below the cutting floor build_cut_plan would bail anyway —
             # return the no-op plan BEFORE spending whisper + silencedetect +
@@ -14615,6 +15994,15 @@ def _silence_cut_analysis(
                     "silence_cut", "silence_cut_bailout", {"reason": plan.bailout_reason}
                 )
                 entry["plan"] = plan
+                if mixed_gap_selection.effective_mode != "off":
+                    entry["speech_cleanup_outcome_context"] = _record_speech_cleanup_precheck(
+                        analysis_policy=analysis_policy,
+                        assignment=assignment,
+                        render_trace_id=render_trace_id,
+                        analysis_view=analysis_view,
+                        candidate_status="precheck_clip_too_short",
+                        duration_s=duration_s,
+                    )
                 return entry
 
             # Detection runs on the ORIGINAL clip, never the rendered base — the
@@ -14629,8 +16017,19 @@ def _silence_cut_analysis(
                 if include_silence_and_fillers is not None
                 else bool(settings.silence_cut_enabled)
             )
-            silences = detect_silences(clip_path, min_silence_s=0.1) if silence_enabled else []
-            if not silences:
+            silence_detection_status = "not_run"
+            if silence_enabled and mixed_gap_selection.effective_mode != "off":
+                silence_result = detect_silences_with_status(
+                    clip_path,
+                    min_silence_s=0.1,
+                )
+                silences = list(silence_result.spans)
+                silence_detection_status = silence_result.status
+            elif silence_enabled:
+                silences = detect_silences(clip_path, min_silence_s=0.1)
+            else:
+                silences = []
+            if not silences and silence_detection_status in {"ok", "not_run"}:
                 # Calibration gate visibility: zero silencedetect ranges means
                 # rule 2 self-disables inside build_cut_plan (noisy footage —
                 # aggressiveness must never scale WITH background noise).
@@ -14657,15 +16056,107 @@ def _silence_cut_analysis(
                 if analysis_policy == "required_v1" and settings.speech_cleanup_budget_clamp_enabled
                 else "bailout"
             )
-            plan = build_cut_plan(
-                transcript.words,
-                silences,
-                duration_s,
-                retake_spans=retake_spans,
-                forced_removals=forced_removals,
-                include_silence_and_fillers=silence_enabled,
-                over_budget_policy=over_budget_policy,
-            )
+            if mixed_gap_selection.effective_mode == "off":
+                plan = build_cut_plan(
+                    transcript.words,
+                    silences,
+                    duration_s,
+                    retake_spans=retake_spans,
+                    forced_removals=forced_removals,
+                    include_silence_and_fillers=silence_enabled,
+                    over_budget_policy=over_budget_policy,
+                )
+            else:
+                comparison = build_cut_plan_comparison(
+                    transcript.words,
+                    silences,
+                    duration_s,
+                    retake_spans=retake_spans,
+                    forced_removals=forced_removals,
+                    include_silence_and_fillers=silence_enabled,
+                    over_budget_policy=over_budget_policy,
+                )
+                candidate_status = comparison.candidate_status
+                if silence_detection_status != "ok":
+                    candidate_status = "tool_unavailable"
+                select_candidate = (
+                    mixed_gap_selection.effective_mode == "apply"
+                    and candidate_status == "ready"
+                    and comparison.candidate is not None
+                )
+                plan = comparison.candidate if select_candidate else comparison.baseline
+                selected_plan = "candidate" if select_candidate else "baseline"
+                try:
+                    from app.services.pipeline_trace import (  # noqa: PLC0415
+                        record_speech_cleanup_detection,
+                    )
+                    from app.services.speech_cleanup_selection import (  # noqa: PLC0415
+                        build_minimal_mixed_gap_receipt,
+                        build_mixed_gap_receipt,
+                    )
+
+                    try:
+                        receipt = build_mixed_gap_receipt(
+                            selection=mixed_gap_selection,
+                            analysis_attempt_id=render_trace_id,
+                            analysis_view=analysis_view,
+                            analysis_policy=analysis_policy,
+                            candidate_status=candidate_status,
+                            silence_detection_status=silence_detection_status,
+                            duration_s=duration_s,
+                            words=list(transcript.words),
+                            silence_spans=list(silences),
+                            baseline_plan=comparison.baseline,
+                            candidate_plan=comparison.candidate,
+                            selected_plan=selected_plan,
+                        )
+                    except Exception as exc:  # candidate evidence cannot poison baseline
+                        log.warning(
+                            "speech_cleanup_receipt_build_failed",
+                            error_class=type(exc).__name__,
+                        )
+                        # Applying V2 without its bounded evidence would make
+                        # the rendered decision unauditable. Receipt formation
+                        # is therefore part of candidate readiness: keep the
+                        # already-valid baseline and make the terminal context
+                        # say exactly why treatment was withheld.
+                        candidate_status = "receipt_build_failed"
+                        select_candidate = False
+                        selected_plan = "baseline"
+                        plan = comparison.baseline
+                        receipt = build_minimal_mixed_gap_receipt(
+                            selection=mixed_gap_selection,
+                            analysis_attempt_id=render_trace_id,
+                            analysis_view=analysis_view,
+                            analysis_policy=analysis_policy,
+                            candidate_status=candidate_status,
+                            silence_detection_status=silence_detection_status,
+                            duration_s=duration_s,
+                        )
+                    receipt_status = record_speech_cleanup_detection(receipt)
+                    log.info(
+                        "speech_cleanup_detection_receipt",
+                        persistence_status=receipt_status,
+                        candidate_status=candidate_status,
+                        effective_mode=mixed_gap_selection.effective_mode,
+                    )
+                except Exception as exc:  # noqa: BLE001 — baseline render remains authoritative
+                    candidate_status = "receipt_build_failed"
+                    selected_plan = "baseline"
+                    plan = comparison.baseline
+                    log.warning(
+                        "speech_cleanup_receipt_failed",
+                        error_class=type(exc).__name__,
+                    )
+                entry["speech_cleanup_outcome_context"] = _speech_cleanup_outcome_context(
+                    analysis_policy=analysis_policy,
+                    assignment=assignment,
+                    render_trace_id=render_trace_id,
+                    analysis_view=analysis_view,
+                    candidate_status=candidate_status,
+                    selected_plan=selected_plan,
+                    plan=plan,
+                )
             review_candidates = [
                 candidate
                 for candidate in review_candidates
@@ -14711,6 +16202,13 @@ def _silence_cut_analysis(
                 "silence_cut", "silence_cut_analysis_failed", {"error": str(exc)[:200]}
             )
             entry["failed"] = True
+            entry["speech_cleanup_outcome_context"] = _speech_cleanup_outcome_context(
+                analysis_policy=analysis_policy,
+                assignment=assignment,
+                render_trace_id=render_trace_id,
+                analysis_view=analysis_view,
+                candidate_status="analysis_failed",
+            )
         return entry
 
     if cache is None:
@@ -14721,6 +16219,16 @@ def _silence_cut_analysis(
             json.dumps(forced_removals, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()[:16]
         key = f"{key}::policy={analysis_policy}::forced={forced_digest}"
+    if mixed_gap_selection.effective_mode != "off":
+        from app.services.speech_cleanup_selection import DETECTOR_VERSION  # noqa: PLC0415
+
+        identity_key = assignment.rollout_fingerprint or f"unassigned:{assignment.status}"
+        key = (
+            f"{key}::detector={DETECTOR_VERSION}"
+            f"::mixed={mixed_gap_selection.effective_mode}"
+            f"::clamp={int(settings.speech_cleanup_budget_clamp_enabled)}"
+            f"::source={identity_key}"
+        )
     # Per-key locking (R3c): hold the global lock only to get-or-insert the
     # key's slot. The first arrival computes OUTSIDE the lock (whisper +
     # silencedetect + retakes are seconds of network/CPU) and then publishes;
@@ -15442,6 +16950,7 @@ def _render_subtitled_variant(
     speech_cleanup_contract: str = "legacy_auto",
     smart_captions: dict[str, str] | None = None,
     render_trace_id: str | None = None,
+    speech_cleanup_assignment_by_clip_id: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Render the subtitled single-clip variant.
 
@@ -15494,6 +17003,9 @@ def _render_subtitled_variant(
     from app.storage import upload_public_read  # noqa: PLC0415
 
     variant_id = spec["variant_id"]
+    storage_generation = spec.get("storage_generation")
+    cleanup_required = speech_cleanup_contract == "required_v1"
+    cleanup_off = speech_cleanup_contract == "off_v1"
 
     def _stage_timer(
         stage: str,
@@ -15659,6 +17171,7 @@ def _render_subtitled_variant(
         "speech_cuts_disabled": False,
         "silence_cut_outcome": None,
         "speech_cleanup_failure_reason": None,
+        "render_generation_id": storage_generation,
     }
     if base.get("smart_caption_policy") is not None:
         base["smart_caption_policy"] = _effective_smart_caption_policy(
@@ -15674,9 +17187,22 @@ def _render_subtitled_variant(
         # uploader caps new subtitled items at ONE clip, but an item switched from
         # montage can carry more — record the drop so admin job-debug explains why
         # only one clip appears (never a silent mystery).
-        clip_path = next(iter(clip_id_to_local.values()), None)
+        selected_clip_id = next(iter(clip_id_to_local), None)
+        clip_path = clip_id_to_local.get(selected_clip_id) if selected_clip_id else None
         if not clip_path:
             raise ValueError("subtitled variant has no clip")
+        cleanup_assignment = _speech_cleanup_assignment_for_clip(
+            speech_cleanup_assignment_by_clip_id,
+            selected_clip_id,
+        )
+        if cleanup_required:
+            base["_speech_cleanup_outcome_context"] = _speech_cleanup_outcome_context(
+                analysis_policy="required_v1",
+                assignment=cleanup_assignment,
+                render_trace_id=render_trace_id,
+                analysis_view="full_clip",
+                candidate_status="analysis_not_started",
+            )
         if len(clip_id_to_local) > 1:
             record_pipeline_event(
                 "assembly",
@@ -15726,8 +17252,6 @@ def _render_subtitled_variant(
         sc_apply = False  # True ⇒ pass keep_segments into the reframe
         sc_apply_failed = False
         strict_silence_cut = False
-        cleanup_required = speech_cleanup_contract == "required_v1"
-        cleanup_off = speech_cleanup_contract == "off_v1"
         if not cleanup_off and (
             cleanup_required or settings.silence_cut_enabled or settings.retake_cut_enabled
         ):
@@ -15764,6 +17288,14 @@ def _render_subtitled_variant(
                 record_pipeline_event(
                     "silence_cut", "silence_cut_skipped_no_audio", {"variant_id": variant_id}
                 )
+                base["_speech_cleanup_outcome_context"] = _record_speech_cleanup_precheck(
+                    analysis_policy="required_v1" if cleanup_required else "legacy_auto",
+                    assignment=cleanup_assignment,
+                    render_trace_id=render_trace_id,
+                    analysis_view="full_clip",
+                    candidate_status="precheck_no_audio",
+                    duration_s=float(probe.duration_s),
+                )
             else:
                 with _stage_timer("silence_cut_analysis"):
                     sc_entry = _silence_cut_analysis(
@@ -15775,7 +17307,14 @@ def _render_subtitled_variant(
                         include_retakes=False if cleanup_required else None,
                         include_silence_and_fillers=True if cleanup_required else None,
                         analysis_policy="required_v1" if cleanup_required else "legacy_auto",
+                        render_trace_id=render_trace_id,
+                        speech_cleanup_assignment=cleanup_assignment,
+                        analysis_view="full_clip",
                     )
+                if sc_entry.get("speech_cleanup_outcome_context") is not None:
+                    base["_speech_cleanup_outcome_context"] = sc_entry[
+                        "speech_cleanup_outcome_context"
+                    ]
                 if strict_silence_cut and sc_entry["failed"]:
                     record_pipeline_event(
                         "silence_cut",
@@ -16313,7 +17852,11 @@ def _render_subtitled_variant(
         # Deterministic caption-free-base key — also the matte cache anchor
         # (`{key}` + `_MATTE_CACHE_SUFFIX`), so build it once here and reuse
         # it for the conditional base upload below.
-        base_gcs_key = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_base.mp4"
+        base_gcs_key = _variant_storage_key(
+            job_id,
+            f"variant_{rank}_{variant_id}_base.mp4",
+            storage_generation,
+        )
         subtitled_matte_path = base.get("subject_matte_path")
         subtitled_created_storage: list[str] = []
         if getattr(settings, "subtitled_text_lane_enabled", False) or smart_compiled is not None:
@@ -16334,7 +17877,11 @@ def _render_subtitled_variant(
                     job_id=job_id,
                     variant_id=variant_id,
                     upload_key_base=(
-                        f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_camera_base.mp4"
+                        _variant_storage_key(
+                            job_id,
+                            f"variant_{rank}_{variant_id}_camera_base.mp4",
+                            storage_generation,
+                        )
                         if camera_render_applied
                         else base_gcs_key
                     ),
@@ -16392,7 +17939,11 @@ def _render_subtitled_variant(
         if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
             raise RuntimeError("subtitled variant produced empty output")
 
-        output_gcs = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}.mp4"
+        output_gcs = _variant_storage_key(
+            job_id,
+            f"variant_{rank}_{variant_id}.mp4",
+            storage_generation,
+        )
         output_url: str | None = None
         rendered_gcs: str | None = None
         sound_effects: list[dict[str, Any]] = []
@@ -16552,13 +18103,19 @@ def _render_subtitled_variant(
             try:
                 from app.pipeline.media_overlay import apply_media_overlays  # noqa: PLC0415
 
-                pre_media_gcs = (
-                    f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_pre_media.mp4"
+                pre_media_gcs = _variant_storage_key(
+                    job_id,
+                    f"variant_{rank}_{variant_id}_pre_media.mp4",
+                    storage_generation,
                 )
                 with _stage_timer("upload", counts={"artifact": "pre_media"}):
                     upload_public_read(final_path, pre_media_gcs)
                 media_target = (
-                    f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_pre_sfx.mp4"
+                    _variant_storage_key(
+                        job_id,
+                        f"variant_{rank}_{variant_id}_pre_sfx.mp4",
+                        storage_generation,
+                    )
                     if sound_effects or music_treatment
                     else output_gcs
                 )
@@ -16635,8 +18192,10 @@ def _render_subtitled_variant(
                 )
 
                 if rendered_gcs is None:
-                    pre_sfx_gcs = (
-                        f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_pre_sfx.mp4"
+                    pre_sfx_gcs = _variant_storage_key(
+                        job_id,
+                        f"variant_{rank}_{variant_id}_pre_sfx.mp4",
+                        storage_generation,
                     )
                     with _stage_timer("upload", counts={"artifact": "pre_sfx"}):
                         upload_public_read(final_path, pre_sfx_gcs)
@@ -17649,7 +19208,10 @@ def _run_reburn_narrated_captions(
     if not _update_variant_entry(
         job_id,
         variant_id,
-        {"render_status": "rendering"},
+        {
+            "render_status": "rendering",
+            **({"render_generation_id": render_gen_id} if render_gen_id is not None else {}),
+        },
         expected_render_gen_id=render_gen_id,
         outcome="caption_reburn_start",
     ):
@@ -17667,7 +19229,11 @@ def _run_reburn_narrated_captions(
         base_gcs_path=base_path,
     )
     custom_effect_cleared = False
-    new_gcs = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_cap_{uuid.uuid4().hex[:8]}.mp4"
+    new_gcs = _variant_storage_key(
+        job_id,
+        f"variant_{rank}_{variant_id}_cap_{uuid.uuid4().hex[:8]}.mp4",
+        render_gen_id,
+    )
     caption_created_storage: list[str] = []
     with tempfile.TemporaryDirectory(prefix="nova_caption_reburn_") as tmpdir:
         base_local = os.path.join(tmpdir, "base.mp4")
@@ -17715,6 +19281,7 @@ def _run_reburn_narrated_captions(
     patch: dict[str, Any] = {
         "video_path": new_gcs,
         "output_url": output_url,
+        **({"render_generation_id": render_gen_id} if render_gen_id is not None else {}),
         # Deliberate reset, never a stale round-trip: the old snapshots point at
         # the pre-reburn video (deleted below), so a stale key is a download-404.
         "pre_media_overlay_video_path": None,
@@ -19151,7 +20718,81 @@ def _clip_set_summary(clip_metas: list) -> str:
 # ── Speech-cut rerender publication ─────────────────────────────────────────────
 
 
-_SPEECH_CUT_FINALIZER_CLAIM_TTL_S = 1810.0
+_SPEECH_VARIANT_STORAGE_FIELDS = frozenset(
+    {
+        "video_path",
+        "base_video_path",
+        "poster_path",
+        "base_poster_path",
+        "pre_media_overlay_video_path",
+        "pre_overlay_poster_path",
+        "pre_sfx_video_path",
+        "subject_matte_path",
+        "visual_blocks_base_path",
+        "motion_base_path",
+        "motion_base_source_path",
+    }
+)
+
+
+def _owned_storage_references(value: Any, *, job: Job) -> set[str]:
+    references: set[str] = set()
+    if isinstance(value, dict):
+        for field, nested in value.items():
+            references.update(_owned_storage_references(nested, job=job))
+            if field == "subject_matte_path":
+                matte_path = owned_job_output_path(nested, job)
+                if (
+                    matte_path is not None
+                    and matte_path.endswith(".mp4")
+                    and _matte_delete_allowed(matte_path)
+                ):
+                    sidecar = owned_job_output_path(f"{matte_path}.json", job)
+                    if sidecar is not None:
+                        references.add(sidecar)
+    elif isinstance(value, (list, tuple)):
+        for nested in value:
+            references.update(_owned_storage_references(nested, job=job))
+    else:
+        path = owned_job_output_path(value, job)
+        if path is not None:
+            references.add(path)
+    return references
+
+
+def _retired_speech_variant_storage_paths(
+    previous_snapshots: Any,
+    *,
+    published_plan: dict[str, Any],
+    job: Job,
+) -> list[str]:
+    """Return fixed legacy keys whose last rollback reference is retiring."""
+
+    snapshots = (
+        previous_snapshots
+        if isinstance(previous_snapshots, list)
+        else [previous_snapshots]
+        if isinstance(previous_snapshots, dict)
+        else []
+    )
+    candidates: set[str] = set()
+    for snapshot in snapshots:
+        if not isinstance(snapshot, dict):
+            continue
+        for field in _SPEECH_VARIANT_STORAGE_FIELDS:
+            path = owned_job_output_path(snapshot.get(field), job)
+            if path is not None:
+                candidates.add(path)
+                if (
+                    field == "subject_matte_path"
+                    and path.endswith(".mp4")
+                    and _matte_delete_allowed(path)
+                ):
+                    sidecar = owned_job_output_path(f"{path}.json", job)
+                    if sidecar is not None:
+                        candidates.add(sidecar)
+    live = _owned_storage_references(published_plan, job=job)
+    return sorted(candidates - live)
 
 
 def _legacy_silence_disabled_after_operation(plan: dict[str, Any], desired: bool) -> bool:
@@ -19185,6 +20826,18 @@ def _claim_speech_cut_finalize(
     """
     from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
 
+    from app.services.speech_cleanup_terminal import (  # noqa: PLC0415
+        REQUIRED_SPEECH_CLAIM_TTL_S,
+        STAGED_RENDER_RESULTS_KEY,
+        TERMINAL_PENDING_KEY,
+        WORKING_RENDER_VARIANTS_KEY,
+        classify_required_speech_claim,
+    )
+    from app.services.variant_generation_guard import (  # noqa: PLC0415
+        PRIVATE_SPEECH_CLEANUP_KEY,
+        REQUIRED_SPEECH_LOCKS_KEY,
+    )
+
     now_s = time.time()
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
@@ -19192,34 +20845,228 @@ def _claim_speech_cut_finalize(
             return False
         if _cancelled_job_write_rejected(job, operation="claim_speech_cut_finalize", db=db):
             return False
-        plan = job.assembly_plan or {}
+        plan = copy.deepcopy(job.assembly_plan or {})
         control = dict(plan.get("speech_cut_control") or {})
         if control.get("operation_id") != operation_id:
             return False
         claim = control.get("finalizer_claim") or {}
-        try:
-            claim_age_s = now_s - float(claim.get("claimed_at_epoch_s"))
-        except (TypeError, ValueError):
-            claim_age_s = _SPEECH_CUT_FINALIZER_CLAIM_TTL_S
-        try:
-            claimed_retry_number = int(claim.get("retry_number") or 0)
-        except (TypeError, ValueError):
-            claimed_retry_number = 0
-        same_task_newer_retry = bool(
-            task_id and claim.get("task_id") == task_id and retry_number > claimed_retry_number
+        claim_disposition = classify_required_speech_claim(
+            claim,
+            now_epoch_s=now_s,
+            task_id=task_id,
+            retry_number=retry_number,
+            ttl_s=REQUIRED_SPEECH_CLAIM_TTL_S,
         )
+        if not claim_disposition.recoverable:
+            return False
+        variants = list(plan.get("variants") or [])
+        variant_id = str(control.get("variant_id") or "")
+        current_variant = next(
+            (
+                variant
+                for variant in variants
+                if isinstance(variant, dict) and variant.get("variant_id") == variant_id
+            ),
+            None,
+        )
+        atomic_required_rerender = plan.get("speech_cleanup_contract") == "required_v1"
+        current_generation = str(
+            control.get("render_generation_id")
+            or (
+                (current_variant or {}).get("render_generation_id")
+                if not atomic_required_rerender
+                else ""
+            )
+            or ""
+        )
+        recovering_claim = bool(claim.get("attempt_id"))
+        if recovering_claim and claim.get("operation_id") != operation_id:
+            return False
         if (
-            claim.get("attempt_id")
-            and not same_task_newer_retry
-            and claim_age_s < _SPEECH_CUT_FINALIZER_CLAIM_TTL_S
+            recovering_claim
+            and atomic_required_rerender
+            and claim.get("render_generation_id") != current_generation
         ):
             return False
+        render_generation = uuid.uuid4().hex if recovering_claim else current_generation
+        if not render_generation:
+            render_generation = uuid.uuid4().hex
+
+        if recovering_claim and current_generation:
+            # The expired/released attempt may have privately staged bytes.  Its
+            # durable receipt remains cleanup debt, but the new claim must never
+            # inherit the old lock or stage.  The hard-limit-sized claim lease (or
+            # the same-task retry proof above) establishes that no old upload may
+            # legitimately start after this row-locked rotation.
+            internal = plan.get(PRIVATE_SPEECH_CLEANUP_KEY)
+            if internal is not None and not isinstance(internal, dict):
+                log.warning(
+                    "speech_cut_claim_rotation_private_state_malformed",
+                    job_id=job_id,
+                )
+                return False
+            if isinstance(internal, dict):
+                locks = internal.get(REQUIRED_SPEECH_LOCKS_KEY)
+                stages = internal.get(STAGED_RENDER_RESULTS_KEY)
+                working = internal.get(WORKING_RENDER_VARIANTS_KEY)
+                terminal_pending = internal.get(TERMINAL_PENDING_KEY)
+                malformed_containers = (
+                    locks is not None
+                    and (
+                        not isinstance(locks, dict)
+                        or any(
+                            not isinstance(key, str) or not isinstance(value, str)
+                            for key, value in locks.items()
+                        )
+                    )
+                ) or any(
+                    container is not None
+                    and (
+                        not isinstance(container, dict)
+                        or any(
+                            not isinstance(key, str) or not isinstance(value, dict)
+                            for key, value in container.items()
+                        )
+                    )
+                    for container in (stages, working, terminal_pending)
+                )
+                if malformed_containers:
+                    log.warning(
+                        "speech_cut_claim_rotation_private_state_malformed",
+                        job_id=job_id,
+                    )
+                    return False
+                stage_key = f"{variant_id}:{current_generation}"
+                owns_old_generation = (
+                    isinstance(locks, dict) and locks.get(variant_id) == current_generation
+                )
+                if owns_old_generation:
+                    from app.services.durable_attempt_cleanup import (  # noqa: PLC0415
+                        RENDER_GENERATION_CLEANUP_FIELD,
+                        CleanupReceiptLocator,
+                        mark_cleanup_receipt_closed,
+                        render_generation_prefix,
+                    )
+
+                    receipts = internal.get(RENDER_GENERATION_CLEANUP_FIELD)
+                    matches = (
+                        [
+                            receipt
+                            for receipt in receipts
+                            if isinstance(receipt, dict)
+                            and receipt.get("generation") == current_generation
+                        ]
+                        if isinstance(receipts, list)
+                        else []
+                    )
+                    if len(matches) != 1 or matches[0].get("prefix") != render_generation_prefix(
+                        job_id, current_generation
+                    ):
+                        log.warning(
+                            "speech_cut_claim_rotation_receipt_missing",
+                            job_id=job_id,
+                        )
+                        return False
+                    try:
+                        mark_cleanup_receipt_closed(
+                            plan,
+                            CleanupReceiptLocator(
+                                field=RENDER_GENERATION_CLEANUP_FIELD,
+                                receipt_id=current_generation,
+                            ),
+                        )
+                    except Exception as exc:  # noqa: BLE001 - fail closed before unlock
+                        log.warning(
+                            "speech_cut_claim_rotation_receipt_close_failed",
+                            job_id=job_id,
+                            error_class=type(exc).__name__,
+                        )
+                        return False
+                    locks.pop(variant_id, None)
+                    if not locks:
+                        internal.pop(REQUIRED_SPEECH_LOCKS_KEY, None)
+                    if isinstance(stages, dict):
+                        stages.pop(stage_key, None)
+                        if not stages:
+                            internal.pop(STAGED_RENDER_RESULTS_KEY, None)
+                    if isinstance(working, dict):
+                        working.pop(stage_key, None)
+                        if not working:
+                            internal.pop(WORKING_RENDER_VARIANTS_KEY, None)
+                    if isinstance(terminal_pending, dict):
+                        terminal_pending.pop(stage_key, None)
+                        if not terminal_pending:
+                            internal.pop(TERMINAL_PENDING_KEY, None)
+                elif any(
+                    isinstance(container, dict) and stage_key in container
+                    for container in (stages, working, terminal_pending)
+                ):
+                    log.warning(
+                        "speech_cut_claim_rotation_orphan_private_state",
+                        job_id=job_id,
+                    )
+                    return False
+                if not internal:
+                    plan.pop(PRIVATE_SPEECH_CLEANUP_KEY, None)
+
+        if atomic_required_rerender:
+            previous_variants = plan.get("speech_cut_previous_variants")
+            previous_variant = plan.get("speech_cut_previous_variant")
+            if isinstance(previous_variants, list) and all(
+                isinstance(row, dict) for row in previous_variants
+            ):
+                restored = copy.deepcopy(previous_variants)
+            elif isinstance(previous_variant, dict) and current_variant is not None:
+                restored = [
+                    copy.deepcopy(previous_variant if row.get("variant_id") == variant_id else row)
+                    for row in variants
+                    if isinstance(row, dict)
+                ]
+            else:
+                return False
+            restored_ids = [row.get("variant_id") for row in restored]
+            if restored_ids.count(variant_id) != 1 or len(restored_ids) != len(set(restored_ids)):
+                return False
+            plan["variants"] = restored
+            variants = restored
+            current_variant = next(row for row in restored if row.get("variant_id") == variant_id)
+        if current_variant is not None and recovering_claim and not atomic_required_rerender:
+            previous = plan.get("speech_cut_previous_variant")
+            replacement = dict(previous) if isinstance(previous, dict) else dict(current_variant)
+            for field in (
+                "speech_cut_candidates",
+                "speech_cut_forced_removals",
+                "speech_cuts_disabled",
+                "speech_cut_in_flight",
+                "speech_cut_last_error",
+            ):
+                if field in current_variant:
+                    replacement[field] = current_variant.get(field)
+            replacement.update(
+                render_generation_id=render_generation,
+                render_status="rendering",
+                ok=False,
+            )
+            variants = [
+                replacement if variant is current_variant else variant for variant in variants
+            ]
+            plan["variants"] = variants
+        elif (
+            current_variant is not None
+            and not atomic_required_rerender
+            and current_variant.get("render_generation_id") != render_generation
+        ):
+            current_variant["render_generation_id"] = render_generation
+            plan["variants"] = variants
+
+        control["render_generation_id"] = render_generation
         control["finalizer_claim"] = {
             "operation_id": operation_id,
             "attempt_id": attempt_id,
             "task_id": task_id,
             "retry_number": retry_number,
             "claimed_at_epoch_s": now_s,
+            "render_generation_id": render_generation,
         }
         job.assembly_plan = {**plan, "speech_cut_control": control}
         flag_modified(job, "assembly_plan")
@@ -19238,7 +21085,7 @@ def _assert_speech_cut_finalize_claim(job_id: str, operation_id: str, attempt_id
 
 
 def _release_speech_cut_finalize_claim(job_id: str, operation_id: str, attempt_id: str) -> bool:
-    """Release only this attempt's claim so an OperationalError retry can run."""
+    """Mark this claim released while retaining its generation for retry rotation."""
     from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
 
     with _sync_session() as db:
@@ -19251,7 +21098,10 @@ def _release_speech_cut_finalize_claim(job_id: str, operation_id: str, attempt_i
         control = dict(plan.get("speech_cut_control") or {})
         if not _speech_cut_claim_matches(control, operation_id, attempt_id):
             return False
-        control["finalizer_claim"] = None
+        released_claim = dict(control.get("finalizer_claim") or {})
+        released_claim["released"] = True
+        released_claim["released_at_epoch_s"] = time.time()
+        control["finalizer_claim"] = released_claim
         job.assembly_plan = {**plan, "speech_cut_control": control}
         flag_modified(job, "assembly_plan")
         db.commit()
@@ -19292,7 +21142,7 @@ def _merge_speech_cut_prior_state(
             if expected_operation_id and expected_attempt_id:
                 raise RuntimeError("speech cut operation was cancelled during render")
             return result
-        plan = job.assembly_plan or {}
+        plan = copy.deepcopy(job.assembly_plan or {})
         control = plan.get("speech_cut_control") or {}
         prior = plan.get("speech_cut_previous_variant")
     if (
@@ -19435,7 +21285,7 @@ def _restore_failed_speech_cut_rerender(
             return False
         if _cancelled_job_write_rejected(job, operation="restore_failed_speech_cut", db=db):
             return False
-        plan = job.assembly_plan or {}
+        plan = copy.deepcopy(job.assembly_plan or {})
         prior = plan.get("speech_cut_previous_variant")
         control = plan.get("speech_cut_control") or {}
         if (
@@ -19446,15 +21296,91 @@ def _restore_failed_speech_cut_rerender(
             return False
         if not isinstance(prior, dict):
             return False
-        previous_variants = plan.get("speech_cut_previous_variants")
-        variants = (
-            list(previous_variants)
-            if isinstance(previous_variants, list)
-            else [
-                prior if v.get("variant_id") == control.get("variant_id") else v
-                for v in plan.get("variants") or []
-            ]
+        variant_id = str(control.get("variant_id") or "")
+        generation = str(
+            (control.get("finalizer_claim") or {}).get("render_generation_id")
+            or control.get("render_generation_id")
+            or ""
         )
+        internal = plan.get("_speech_cleanup_internal")
+        locks = (
+            internal.get("required_speech_generation_locks") if isinstance(internal, dict) else None
+        )
+        required_owned = isinstance(locks, dict) and variant_id in locks
+        pending_outcome: dict[str, Any] | None = None
+        if required_owned:
+            if not generation:
+                generation = str(locks.get(variant_id) or "")
+            try:
+                from app.services.speech_cleanup_terminal import (  # noqa: PLC0415
+                    RequiredSpeechOwnershipError,
+                    peek_required_speech_generation,
+                    terminalize_required_speech_generations,
+                )
+
+                # A render can fail before it reaches the private stage.  Lack
+                # of a staged result means there is no complete outcome capsule,
+                # not that ownership recovery should be skipped.  The shared
+                # terminalizer remains authoritative for the lock/public row /
+                # cleanup receipt correlation and restores the last-good vector.
+                try:
+                    staged = peek_required_speech_generation(
+                        plan,
+                        variant_id=variant_id,
+                        generation=generation,
+                    )
+                except RequiredSpeechOwnershipError:
+                    staged = None
+                if staged is not None:
+                    pending_outcome = _build_required_speech_terminal_outcome(
+                        {
+                            **staged,
+                            "ok": False,
+                            "error_class": "RequiredSpeechRenderFailure",
+                        }
+                    )
+                recovery = terminalize_required_speech_generations(
+                    plan,
+                    job_id=job_id,
+                    error=str(error),
+                    expected_operation_id=expected_operation_id,
+                    expected_attempt_id=expected_attempt_id,
+                )
+            except Exception as exc:  # noqa: BLE001 - ownership failure stays recoverable
+                log.warning(
+                    "speech_cut_failed_restore_terminalization_error",
+                    job_id=job_id,
+                    error_class=type(exc).__name__,
+                )
+                return False
+            if recovery.status != "terminalized":
+                log.warning(
+                    "speech_cut_failed_restore_terminalization_blocked",
+                    job_id=job_id,
+                    reason=recovery.reason,
+                )
+                return False
+            plan = recovery.plan
+            prior = plan.get("speech_cut_previous_variant")
+            control = plan.get("speech_cut_control") or control
+            if pending_outcome is not None:
+                from app.services.speech_cleanup_outcome import (  # noqa: PLC0415
+                    append_speech_cleanup_render_outcome_locked,
+                )
+
+                append_speech_cleanup_render_outcome_locked(job, pending_outcome)
+        previous_variants = plan.get("speech_cut_previous_variants")
+        if required_owned:
+            variants = list(plan.get("variants") or [])
+        else:
+            variants = (
+                list(previous_variants)
+                if isinstance(previous_variants, list)
+                else [
+                    prior if v.get("variant_id") == control.get("variant_id") else v
+                    for v in plan.get("variants") or []
+                ]
+            )
         failure = {
             "operation_id": control.get("operation_id"),
             "message": str(error)[:300],
@@ -19497,37 +21423,110 @@ def _publish_speech_cut_rerender(
             return
         if _cancelled_job_write_rejected(job, operation="publish_speech_cut", db=db):
             return
-        plan = job.assembly_plan or {}
+        plan = copy.deepcopy(job.assembly_plan or {})
         control = plan.get("speech_cut_control") or {}
         if not _speech_cut_claim_matches(control, expected_operation_id, expected_attempt_id):
             raise RuntimeError("speech cut publication was superseded")
         variant_id = control.get("variant_id")
         if not variant_id:
             raise RuntimeError("speech cut publication target disappeared")
+        render_generation = str(
+            (control.get("finalizer_claim") or {}).get("render_generation_id")
+            or control.get("render_generation_id")
+            or ""
+        )
         variants = list(plan.get("variants") or [])
-        published = False
-        for variant in variants:
-            if variant.get("variant_id") != variant_id:
-                continue
-            _validate_speech_cut_publication(control, variant)
-            operation = dict(control.get("operation") or {})
-            if operation.get("operation") == "apply_speech_cut_candidate":
-                for candidate in variant.get("speech_cut_candidates") or []:
-                    if candidate.get("candidate_id") == operation.get("candidate_id"):
-                        candidate["status"] = "accepted"
-            variant["speech_cut_forced_removals"] = list(control.get("forced_removals") or [])
-            variant["speech_cuts_disabled"] = bool(control.get("desired_disabled"))
-            variant["speech_cut_in_flight"] = None
-            operation["render_generation_id"] = variant.get("render_generation_id")
-            operation["status"] = "applied"
-            variant["speech_cut_revision"] = cut_revision(variant)
-            operation["revision"] = variant["speech_cut_revision"]
-            variant["speech_cut_last_receipt"] = operation
-            variant["speech_cut_last_error"] = None
-            published = True
-            break
-        if not published:
-            raise RuntimeError("speech cut publication variant disappeared")
+        # Required-v1 keeps its private lock, staged core result, and upload
+        # guard through every compose upload.  Only this claim-owned transaction
+        # closes the guard, consumes the exact private owner, and records the
+        # final outcome.  Legacy speech-cut jobs retain their established path.
+        internal = plan.get("_speech_cleanup_internal")
+        locks = (
+            internal.get("required_speech_generation_locks") if isinstance(internal, dict) else None
+        )
+        required_owned = isinstance(locks, dict) and variant_id in locks
+        staged_result: dict[str, Any] | None = None
+        if required_owned:
+            if not render_generation or locks.get(variant_id) != render_generation:
+                raise RuntimeError("speech cut publication private owner was superseded")
+            from app.services.speech_cleanup_terminal import (  # noqa: PLC0415
+                close_required_speech_generation_uploads,
+                consume_required_speech_generation,
+                peek_required_speech_generation,
+            )
+
+            staged_result = peek_required_speech_generation(
+                plan,
+                variant_id=str(variant_id),
+                generation=render_generation,
+            )
+            winning_variant = copy.deepcopy(staged_result)
+        else:
+            winning_variant = next(
+                (
+                    copy.deepcopy(variant)
+                    for variant in variants
+                    if variant.get("variant_id") == variant_id
+                ),
+                None,
+            )
+            if winning_variant is None:
+                raise RuntimeError("speech cut publication variant disappeared")
+            if (
+                render_generation
+                and winning_variant.get("render_generation_id") != render_generation
+            ):
+                raise RuntimeError("speech cut publication generation was superseded")
+
+        _validate_speech_cut_publication(control, winning_variant)
+        operation = dict(control.get("operation") or {})
+        if operation.get("operation") == "apply_speech_cut_candidate":
+            for candidate in winning_variant.get("speech_cut_candidates") or []:
+                if candidate.get("candidate_id") == operation.get("candidate_id"):
+                    candidate["status"] = "accepted"
+        winning_variant["speech_cut_forced_removals"] = list(control.get("forced_removals") or [])
+        winning_variant["speech_cuts_disabled"] = bool(control.get("desired_disabled"))
+        winning_variant["speech_cut_in_flight"] = None
+        operation["render_generation_id"] = winning_variant.get("render_generation_id")
+        operation["status"] = "applied"
+        winning_variant["speech_cut_revision"] = cut_revision(winning_variant)
+        operation["revision"] = winning_variant["speech_cut_revision"]
+        winning_variant["speech_cut_last_receipt"] = operation
+        winning_variant["speech_cut_last_error"] = None
+
+        private_retired_paths = list(winning_variant.pop("_retired_storage_paths", []) or [])
+        winning_variant.pop("_speech_cleanup_outcome_context", None)
+
+        if required_owned:
+            close_required_speech_generation_uploads(plan, generation=render_generation)
+            consumed_result = consume_required_speech_generation(
+                plan,
+                job_id=job_id,
+                variant_id=str(variant_id),
+                generation=render_generation,
+            )
+            outcome_payload = _build_required_speech_terminal_outcome(
+                {
+                    **consumed_result,
+                    "ok": bool(winning_variant.get("ok")),
+                    "render_status": winning_variant.get("render_status"),
+                }
+            )
+            if outcome_payload is not None:
+                from app.services.speech_cleanup_outcome import (  # noqa: PLC0415
+                    append_speech_cleanup_render_outcome_locked,
+                )
+
+                append_speech_cleanup_render_outcome_locked(job, outcome_payload)
+        target_indexes = [
+            index
+            for index, variant in enumerate(variants)
+            if isinstance(variant, dict) and variant.get("variant_id") == variant_id
+        ]
+        if len(target_indexes) != 1:
+            raise RuntimeError("speech cut publication target was ambiguous")
+        previous_public_variant = copy.deepcopy(variants[target_indexes[0]])
+        variants[target_indexes[0]] = winning_variant
         raw_cleanup_receipts = plan.get(VIDEO_POSTER_BACKFILL_CLEANUP_FIELD)
         if isinstance(raw_cleanup_receipts, list):
             journaled_poster_paths = [
@@ -19535,7 +21534,10 @@ def _publish_speech_cut_rerender(
                 for receipt in raw_cleanup_receipts
                 if isinstance(receipt, dict) and isinstance(receipt.get("old_path"), str)
             ]
-        job.assembly_plan = {
+        previous_snapshots = plan.get("speech_cut_previous_variants") or plan.get(
+            "speech_cut_previous_variant"
+        )
+        published_plan = {
             **plan,
             "silence_cut_disabled": _legacy_silence_disabled_after_operation(
                 plan, bool(control.get("desired_disabled"))
@@ -19546,6 +21548,40 @@ def _publish_speech_cut_rerender(
             "speech_cut_last_error": None,
             "variants": variants,
         }
+        journaled_poster_paths.extend(
+            append_retired_variant_poster_receipts(
+                published_plan,
+                previous_public_variant,
+                winning_variant,
+            )
+        )
+        if required_owned:
+            retired_paths = set(
+                _retired_speech_variant_storage_paths(
+                    previous_snapshots,
+                    published_plan=published_plan,
+                    job=job,
+                )
+            )
+            live_paths = _owned_storage_references(published_plan, job=job)
+            retired_paths.update(
+                path
+                for raw_path in private_retired_paths
+                if (path := owned_job_output_path(raw_path, job)) is not None
+                and path not in live_paths
+            )
+            if retired_paths:
+                from app.services.durable_attempt_cleanup import (  # noqa: PLC0415
+                    append_exact_key_cleanup,
+                )
+
+                append_exact_key_cleanup(
+                    published_plan,
+                    job=job,
+                    debt_id=uuid.uuid4().hex,
+                    paths=sorted(retired_paths),
+                )
+        job.assembly_plan = published_plan
         flag_modified(job, "assembly_plan")
         db.commit()
     # The successful publication removes rollback snapshots that may have kept
@@ -19557,31 +21593,283 @@ def _publish_speech_cut_rerender(
     )
 
 
-def _compose_speech_cut_rerender(
+def _required_speech_staged_variant(
+    job_id: str,
+    *,
+    variant_id: str,
+    generation: str,
+    expected_operation_id: str,
+    expected_attempt_id: str,
+) -> dict[str, Any]:
+    """Read one claim-owned private working variant without exposing it."""
+
+    from app.services.speech_cleanup_terminal import (  # noqa: PLC0415
+        peek_required_speech_generation,
+    )
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        if job is None or job.status == _CANCELLED_JOB_STATUS:
+            raise RuntimeError("speech cut composition was cancelled")
+        plan = job.assembly_plan or {}
+        control = plan.get("speech_cut_control") or {}
+        if not _speech_cut_claim_matches(control, expected_operation_id, expected_attempt_id):
+            raise RuntimeError("speech cut composition was superseded")
+        return peek_required_speech_generation(
+            plan,
+            variant_id=variant_id,
+            generation=generation,
+        )
+
+
+def _update_required_speech_staged_variant(
+    job_id: str,
+    *,
+    variant_id: str,
+    generation: str,
+    patch: dict[str, Any],
+    expected_operation_id: str,
+    expected_attempt_id: str,
+) -> bool:
+    """Generation-CAS a compose patch into private state only.
+
+    Any replaced generation-owned artifact is carried as private exact-key
+    retirement input.  Publication converts that bounded list into durable
+    cleanup debt in the same transaction as the one public variant swap.
+    """
+
+    from app.services.speech_cleanup_terminal import (  # noqa: PLC0415
+        peek_required_speech_generation,
+        update_required_speech_generation,
+    )
+
+    enriched_patch, generated_poster_paths = _attach_variant_posters(patch, job_id=job_id)
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        if job is None or _cancelled_job_write_rejected(
+            job,
+            operation="update_required_speech_stage",
+            db=db,
+        ):
+            _delete_generated_poster_objects_if_unreferenced(
+                job_id,
+                generated_poster_paths,
+                locked_job=job,
+            )
+            return False
+        plan = copy.deepcopy(job.assembly_plan or {})
+        control = plan.get("speech_cut_control") or {}
+        if (
+            not _speech_cut_claim_matches(
+                control,
+                expected_operation_id,
+                expected_attempt_id,
+            )
+            or str(
+                (control.get("finalizer_claim") or {}).get("render_generation_id")
+                or control.get("render_generation_id")
+                or ""
+            )
+            != generation
+        ):
+            _delete_generated_poster_objects_if_unreferenced(
+                job_id,
+                generated_poster_paths,
+                locked_job=job,
+            )
+            return False
+        current = peek_required_speech_generation(
+            plan,
+            variant_id=variant_id,
+            generation=generation,
+        )
+        merged = {
+            **current,
+            **{key: value for key, value in enriched_patch.items() if key != "variant_id"},
+        }
+        current_for_retirement = {
+            key: value for key, value in current.items() if key != "_retired_storage_paths"
+        }
+        merged_for_liveness = {
+            key: value for key, value in merged.items() if key != "_retired_storage_paths"
+        }
+        retired = set(current.get("_retired_storage_paths") or [])
+        retired.update(
+            _retired_speech_variant_storage_paths(
+                current_for_retirement,
+                published_plan={"variants": [merged_for_liveness]},
+                job=job,
+            )
+        )
+        if retired:
+            enriched_patch["_retired_storage_paths"] = sorted(retired)
+        update_required_speech_generation(
+            plan,
+            variant_id=variant_id,
+            generation=generation,
+            patch=enriched_patch,
+        )
+        job.assembly_plan = plan
+        db.commit()
+    return True
+
+
+def _compose_required_speech_private_media_layers(
+    *,
+    job_id: str,
+    variant_id: str,
+    generation: str,
+    variant: dict[str, Any],
+) -> dict[str, Any]:
+    """Reapply user media/SFX to a private generation without DB publication."""
+
+    from app.storage import copy_object, object_exists  # noqa: PLC0415
+
+    current_video_path = str(variant.get("video_path") or "")
+    if not current_video_path:
+        raise RuntimeError("speech cut private compose has no video")
+    if not current_video_path.startswith(
+        f"generative-jobs/{job_id}/render-generations/{generation}/"
+    ):
+        raise RuntimeError("speech cut private compose escaped its generation")
+
+    patch: dict[str, Any] = {
+        "video_path": current_video_path,
+        "pre_media_overlay_video_path": None,
+        "pre_overlay_poster_path": None,
+        "pre_sfx_video_path": None,
+        "render_generation_id": generation,
+    }
+    output_url = str(variant.get("output_url") or "")
+    render_variant = _project_carousel_timed_lanes(variant)
+
+    if settings.media_overlays_enabled and render_variant.get("media_overlays"):
+        from app.agents._schemas.media_overlay import (  # noqa: PLC0415
+            coerce_media_overlays,
+        )
+        from app.pipeline.media_overlay import apply_media_overlays  # noqa: PLC0415
+
+        cards = coerce_media_overlays(render_variant.get("media_overlays") or []) or []
+        if cards:
+            pre_overlay = _variant_storage_key(
+                job_id,
+                "speech-compose/pre_media_overlay.mp4",
+                generation,
+            )
+            if not object_exists(pre_overlay):
+                copy_object(current_video_path, pre_overlay)
+            output_url = apply_media_overlays(
+                base_gcs_path=pre_overlay,
+                cards=cards,
+                output_gcs_path=current_video_path,
+                job_id=job_id,
+                **_canvas_kwargs(canvas_for_orientation(variant.get("orientation"))),
+            )
+            patch.update(
+                {
+                    "pre_media_overlay_video_path": pre_overlay,
+                    "media_overlays": [card.model_dump() for card in cards],
+                    "media_overlays_applied_ids": None,
+                    "media_overlays_render_dirty": False,
+                }
+            )
+
+    placements: list[Any] = []
+    if settings.sound_effects_enabled:
+        from app.agents._schemas.sound_effect import coerce_sound_effects  # noqa: PLC0415
+
+        placements = coerce_sound_effects(render_variant.get("sound_effects") or []) or []
+    music_treatment = (
+        render_variant.get("background_music_treatment")
+        or render_variant.get("smart_music_treatment")
+        if settings.smart_music_bed_enabled
+        else None
+    )
+    if placements or music_treatment:
+        from app.agents._schemas.visual_block import coerce_visual_blocks  # noqa: PLC0415
+        from app.pipeline.sound_effects import (  # noqa: PLC0415
+            apply_smart_audio_treatment,
+            apply_sound_effects,
+        )
+
+        pre_sfx = _variant_storage_key(
+            job_id,
+            "speech-compose/pre_sfx.mp4",
+            generation,
+        )
+        if not object_exists(pre_sfx):
+            copy_object(current_video_path, pre_sfx)
+        muted_sfx_intervals = (
+            [
+                (block.start_s, block.end_s)
+                for block in coerce_visual_blocks(render_variant.get("visual_blocks") or [])
+                if block.audio_policy.sfx == "mute"
+            ]
+            if settings.visual_blocks_enabled
+            else []
+        )
+        if music_treatment:
+            output_url, audio_receipt = apply_smart_audio_treatment(
+                base_gcs_path=pre_sfx,
+                effects=placements,
+                output_gcs_path=current_video_path,
+                music_bed=music_treatment,
+                job_id=job_id,
+                mute_intervals=muted_sfx_intervals,
+            )
+            patch["smart_audio_receipt"] = audio_receipt
+        else:
+            output_url = apply_sound_effects(
+                base_gcs_path=pre_sfx,
+                effects=placements,
+                output_gcs_path=current_video_path,
+                job_id=job_id,
+                mute_intervals=muted_sfx_intervals,
+            )
+        patch["pre_sfx_video_path"] = pre_sfx
+        patch["sound_effects"] = [placement.model_dump() for placement in placements]
+
+    patch.update(
+        {
+            "output_url": output_url,
+            "render_status": "ready",
+            "ok": True,
+            "render_finished_at": datetime.utcnow().isoformat() + "Z",
+        }
+    )
+    return patch
+
+
+def _compose_legacy_speech_cut_rerender(
     job_id: str, *, expected_operation_id: str, expected_attempt_id: str
 ) -> None:
-    """Burn projected creator text/captions and reapply media before publish."""
+    """Preserve the public-in-flight compose path for pre-required contracts."""
+
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id))
         if job is None:
             return
         if job.status == _CANCELLED_JOB_STATUS:
             raise RuntimeError("speech cut composition was cancelled")
-        control = (job.assembly_plan or {}).get("speech_cut_control") or {}
+        plan = job.assembly_plan or {}
+        control = plan.get("speech_cut_control") or {}
         if not _speech_cut_claim_matches(control, expected_operation_id, expected_attempt_id):
             raise RuntimeError("speech cut composition was superseded")
         variant_id = control.get("variant_id")
         variant = next(
-            (
-                v
-                for v in (job.assembly_plan or {}).get("variants") or []
-                if v.get("variant_id") == variant_id
-            ),
+            (row for row in plan.get("variants") or [] if row.get("variant_id") == variant_id),
             None,
         )
     if not isinstance(variant, dict):
         raise RuntimeError("speech cut target variant disappeared")
-    render_gen_id = uuid.uuid4().hex
+    render_gen_id = (
+        str(
+            (control.get("finalizer_claim") or {}).get("render_generation_id")
+            or control.get("render_generation_id")
+            or ""
+        )
+        or uuid.uuid4().hex
+    )
     if not _update_variant_entry(
         job_id,
         str(variant_id),
@@ -19642,16 +21930,206 @@ def _compose_speech_cut_rerender(
     _assert_speech_cut_finalize_claim(job_id, expected_operation_id, expected_attempt_id)
 
 
+def _compose_speech_cut_rerender(
+    job_id: str, *, expected_operation_id: str, expected_attempt_id: str
+) -> None:
+    """Compose a private generation, leaving last-good public until publish."""
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        if job is None:
+            return
+        plan = job.assembly_plan or {}
+        control = plan.get("speech_cut_control") or {}
+    if not _speech_cut_claim_matches(control, expected_operation_id, expected_attempt_id):
+        raise RuntimeError("speech cut composition was superseded")
+    variant_id = str(control.get("variant_id") or "")
+    internal = plan.get("_speech_cleanup_internal")
+    locks = internal.get("required_speech_generation_locks") if isinstance(internal, dict) else None
+    if not isinstance(locks, dict) or variant_id not in locks:
+        _compose_legacy_speech_cut_rerender(
+            job_id,
+            expected_operation_id=expected_operation_id,
+            expected_attempt_id=expected_attempt_id,
+        )
+        return
+    render_gen_id = str(
+        (control.get("finalizer_claim") or {}).get("render_generation_id")
+        or control.get("render_generation_id")
+        or ""
+    )
+    if not variant_id or not render_gen_id:
+        raise RuntimeError("speech cut compose owner disappeared")
+    variant = _required_speech_staged_variant(
+        job_id,
+        variant_id=variant_id,
+        generation=render_gen_id,
+        expected_operation_id=expected_operation_id,
+        expected_attempt_id=expected_attempt_id,
+    )
+    archetype = variant.get("resolved_archetype")
+    if archetype not in {"subtitled", "talking_head"}:
+        raise RuntimeError(f"unsupported speech cut archetype: {archetype}")
+
+    speech_reburn_created: list[str] = []
+    patch = _reburn_text_on_base(
+        job_id=job_id,
+        variant_id=variant_id,
+        existing=variant,
+        agent_text=variant.get("intro_text"),
+        agent_form=None,
+        text_mode=str(variant.get("text_mode") or "none"),
+        resolved_style_set_id=variant.get("style_set_id"),
+        size_override_px=None,
+        settings=settings,
+        language="en",
+        storage_generation=render_gen_id,
+        created_storage_paths=speech_reburn_created,
+        refresh_persisted_snapshot=False,
+    )
+    patch.pop("_old_video_path_for_delete", None)
+    patch["render_generation_id"] = render_gen_id
+    patch["render_status"] = "rendering"
+    if not _update_required_speech_staged_variant(
+        job_id,
+        variant_id=variant_id,
+        generation=render_gen_id,
+        patch=patch,
+        expected_operation_id=expected_operation_id,
+        expected_attempt_id=expected_attempt_id,
+    ):
+        raise RuntimeError("speech cut text recomposition was superseded")
+
+    variant = _required_speech_staged_variant(
+        job_id,
+        variant_id=variant_id,
+        generation=render_gen_id,
+        expected_operation_id=expected_operation_id,
+        expected_attempt_id=expected_attempt_id,
+    )
+    media_patch = _compose_required_speech_private_media_layers(
+        job_id=job_id,
+        variant_id=variant_id,
+        generation=render_gen_id,
+        variant=variant,
+    )
+    if not _update_required_speech_staged_variant(
+        job_id,
+        variant_id=variant_id,
+        generation=render_gen_id,
+        patch=media_patch,
+        expected_operation_id=expected_operation_id,
+        expected_attempt_id=expected_attempt_id,
+    ):
+        raise RuntimeError("speech cut media recomposition was superseded")
+    _assert_speech_cut_finalize_claim(job_id, expected_operation_id, expected_attempt_id)
+
+
 # ── Status helpers ──────────────────────────────────────────────────────────────
 
 
-def _finalize_job(
+def _build_required_speech_terminal_outcome(
+    result: dict[str, Any],
+    *,
+    outcome_override: Literal[
+        "discarded_superseded",
+        "discarded_finalization_rejected",
+        "failed_owned",
+    ]
+    | None = None,
+    failure_phase: str | None = None,
+    failure_class: str | None = None,
+) -> dict[str, Any] | None:
+    """Build fail-open scalar evidence before entering the winning transaction."""
+
+    context = result.get("_speech_cleanup_outcome_context")
+    generation = result.get("render_generation_id")
+    variant_id = result.get("variant_id")
+    if not isinstance(context, dict) or not generation or not variant_id:
+        return None
+    try:
+        from app.services.speech_cleanup_outcome import (  # noqa: PLC0415
+            build_speech_cleanup_render_outcome,
+        )
+
+        selected_plan = context.get("selected_plan")
+        removal_count = int(context.get("output_removal_count") or 0)
+        if outcome_override is not None:
+            outcome = outcome_override
+        elif result.get("ok"):
+            if removal_count == 0:
+                outcome = "published_no_change"
+            elif selected_plan == "candidate":
+                outcome = "published_applied"
+            else:
+                outcome = "published_baseline_fallback"
+            failure_phase = None
+            failure_class = None
+        else:
+            outcome = "failed_owned"
+            failure_phase = failure_phase or "render"
+            failure_class = failure_class or str(result.get("error_class") or "RenderFailure")
+        if outcome not in {"failed_owned"}:
+            failure_phase = None
+            failure_class = None
+        return build_speech_cleanup_render_outcome(
+            outcome=outcome,
+            analysis_attempt_id=str(context["analysis_attempt_id"]),
+            analysis_view=context["analysis_view"],
+            detector_version=str(context["detector_version"]),
+            source_tag=context.get("source_tag"),
+            variant_id=str(variant_id),
+            render_generation_id=str(generation),
+            selected_plan=selected_plan,
+            candidate_status=context.get("candidate_status"),
+            output_removal_count=removal_count,
+            output_removed_ms=int(context.get("output_removed_ms") or 0),
+            failure_phase=failure_phase,
+            failure_class=failure_class,
+        )
+    except Exception as exc:  # noqa: BLE001 - evidence never blocks publication
+        log.warning(
+            "speech_cleanup_terminal_outcome_build_failed",
+            error_class=type(exc).__name__,
+        )
+        return None
+
+
+def _append_required_speech_terminal_outcome_locked(
+    job: Job,
+    result: dict[str, Any],
+    *,
+    outcome: Literal[
+        "discarded_superseded",
+        "discarded_finalization_rejected",
+        "failed_owned",
+    ],
+    failure_phase: str | None = None,
+    failure_class: str | None = None,
+) -> Literal["persisted", "dropped_cap", "error"] | None:
+    payload = _build_required_speech_terminal_outcome(
+        result,
+        outcome_override=outcome,
+        failure_phase=failure_phase,
+        failure_class=failure_class,
+    )
+    if payload is None:
+        return None
+    from app.services.speech_cleanup_outcome import (  # noqa: PLC0415
+        append_speech_cleanup_render_outcome_locked,
+    )
+
+    return append_speech_cleanup_render_outcome_locked(job, payload)
+
+
+def _finalize_job_decision(
     job_id: str,
     results: list[dict[str, Any]],
     *,
     expected_operation_id: str | None = None,
     expected_attempt_id: str | None = None,
-) -> bool:
+    required_speech_results: dict[str, dict[str, Any]] | None = None,
+) -> JobFinalizationResult:
     successes = [r for r in results if r.get("ok")]
     failures = [r for r in results if not r.get("ok")]
     if successes and failures:
@@ -19677,7 +22155,17 @@ def _finalize_job(
         if expected_operation_id and expected_attempt_id
         else {}
     )
+    required_speech_outcomes = (
+        {
+            variant_id: payload
+            for variant_id, result in required_speech_results.items()
+            if (payload := _build_required_speech_terminal_outcome(result)) is not None
+        }
+        if required_speech_results is not None
+        else None
+    )
 
+    decision_sink: list[JobFinalizationResult] = []
     accepted = _set_status(
         job_id,
         terminal,
@@ -19711,6 +22199,11 @@ def _finalize_job(
                     "intro_behind_subject": r.get("intro_behind_subject"),
                     "base_video_path": r.get("base_video_path"),
                     "base_poster_path": r.get("base_poster_path"),
+                    # Text-behind-subject cache is a two-object live artifact
+                    # (matte video + JSON sidecar). Keep its primary reference
+                    # through the terminal whitelist; retirement derives the
+                    # sidecar from this path in the same winning transaction.
+                    "subject_matte_path": r.get("subject_matte_path"),
                     # Visual replacement blocks render below text/captions. The
                     # original clean base remains immutable; the derived cache
                     # is reused by text-only reburns.
@@ -19904,10 +22397,54 @@ def _finalize_job(
             if terminal == "variants_failed" and cleanup_failure_reason
             else None
         ),
+        required_speech_results=required_speech_results,
+        required_speech_outcomes=required_speech_outcomes,
+        retain_required_speech_ownership=bool(expected_operation_id and expected_attempt_id),
+        _decision_sink=decision_sink,
         **speech_cut_status_kwargs,
     )
+    if decision_sink:
+        decision = decision_sink[-1]
+    else:
+        # Compatibility for legacy/test doubles that still return only bool.
+        # Ordinary render results are exact attempt-owned objects and must be
+        # retired on rejection. Required-speech results retain their durable
+        # generation owner/receipt for the authoritative reconciler instead.
+        rejected_state: Literal["superseded", "failed"] = (
+            "failed" if required_speech_results is not None else "superseded"
+        )
+        decision = JobFinalizationResult(
+            "accepted" if accepted is not False else "failed",
+            variants=(
+                ()
+                if accepted is not False
+                else tuple(
+                    VariantFinalizationDecision(
+                        variant_id=str(result.get("variant_id") or ""),
+                        render_generation_id=(
+                            str(result.get("render_generation_id"))
+                            if result.get("render_generation_id")
+                            else None
+                        ),
+                        state=rejected_state,
+                    )
+                    for result in results
+                    if result.get("variant_id")
+                )
+            ),
+        )
     if accepted is False:
+        superseded_generations = {
+            (variant.variant_id, variant.render_generation_id)
+            for variant in decision.variants
+            if variant.state == "superseded"
+        }
         for result in results:
+            if (
+                result.get("variant_id"),
+                result.get("render_generation_id"),
+            ) not in superseded_generations:
+                continue
             _discard_generation_storage(
                 result,
                 job_id=job_id,
@@ -19920,7 +22457,7 @@ def _finalize_job(
                     else result.get("render_generation_id")
                 ),
             )
-        return False
+        return decision
     log.info(
         "generative_job_done",
         job_id=job_id,
@@ -19928,7 +22465,29 @@ def _finalize_job(
         successes=len(successes),
         failures=len(failures),
     )
-    return True
+    return decision
+
+
+def _finalize_job(
+    job_id: str,
+    results: list[dict[str, Any]],
+    *,
+    expected_operation_id: str | None = None,
+    expected_attempt_id: str | None = None,
+    required_speech_results: dict[str, dict[str, Any]] | None = None,
+) -> bool:
+    """Compatibility bool/raise surface for direct and legacy callers."""
+
+    decision = _finalize_job_decision(
+        job_id,
+        results,
+        expected_operation_id=expected_operation_id,
+        expected_attempt_id=expected_attempt_id,
+        required_speech_results=required_speech_results,
+    )
+    if decision.error is not None:
+        raise decision.error
+    return decision.accepted
 
 
 def _persist_archetype_fallback(job_id: str, declared: str, reason: str | None) -> None:
@@ -20033,6 +22592,65 @@ def _merge_finalized_variants(
     return merged
 
 
+def _prepare_required_speech_terminalization(
+    existing: dict[str, Any],
+    *,
+    job_id: str,
+    required_speech_results: dict[str, dict[str, Any]],
+    retain_required_speech_ownership: bool,
+) -> tuple[dict[str, Any], set[str], dict[str, dict[str, Any]]]:
+    """Validate exact private stages and advance only their owned generations."""
+
+    from app.services.speech_cleanup_terminal import (  # noqa: PLC0415
+        RequiredSpeechOwnershipError,
+        consume_required_speech_generation,
+        peek_required_speech_generation,
+        terminalize_required_speech_generations,
+    )
+
+    if not required_speech_results:
+        raise RequiredSpeechOwnershipError("required_terminal_result_missing")
+    staged_by_variant: dict[str, dict[str, Any]] = {}
+    for variant_id, expected_result in required_speech_results.items():
+        generation = str(expected_result.get("render_generation_id") or "")
+        if not variant_id or expected_result.get("variant_id") != variant_id or not generation:
+            raise RequiredSpeechOwnershipError("required_terminal_owner_invalid")
+        staged_result = peek_required_speech_generation(
+            existing,
+            variant_id=variant_id,
+            generation=generation,
+        )
+        if staged_result != expected_result:
+            raise RequiredSpeechOwnershipError("staged_terminal_result_changed")
+        staged_by_variant[variant_id] = staged_result
+
+    required_failure_ids: set[str] = set()
+    if not retain_required_speech_ownership:
+        for variant_id, staged_result in staged_by_variant.items():
+            if staged_result.get("ok") and staged_result.get("render_status") == "ready":
+                consume_required_speech_generation(
+                    existing,
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    generation=str(staged_result["render_generation_id"]),
+                )
+            else:
+                required_failure_ids.add(variant_id)
+
+        if required_failure_ids:
+            recovery = terminalize_required_speech_generations(
+                existing,
+                job_id=job_id,
+                error="required speech render failed before publication",
+            )
+            if recovery.status != "terminalized":
+                raise RequiredSpeechOwnershipError(
+                    f"required_failure_terminalization_{recovery.status}"
+                )
+            existing = recovery.plan
+    return existing, required_failure_ids, staged_by_variant
+
+
 def _set_status(
     job_id: str,
     status: str,
@@ -20042,6 +22660,10 @@ def _set_status(
     failure_reason: str | None = None,
     expected_speech_cut_operation_id: str | None = None,
     expected_speech_cut_attempt_id: str | None = None,
+    required_speech_results: dict[str, dict[str, Any]] | None = None,
+    required_speech_outcomes: dict[str, dict[str, Any]] | None = None,
+    retain_required_speech_ownership: bool = False,
+    _decision_sink: list[JobFinalizationResult] | None = None,
 ) -> bool:
     # Row-locked RMW (mirrors _upsert_variant_entry / _update_variant_entry).
     # `extra_plan` merges into assembly_plan — _finalize_job writes the WHOLE
@@ -20049,12 +22671,62 @@ def _set_status(
     # lazy overlay-preview backfill read-modify-write the same JSONB concurrently,
     # so without SELECT ... FOR UPDATE a stale read silently clobbers their state.
     journaled_poster_paths: list[str] = []
+
+    def _finish(decision: JobFinalizationResult) -> bool:
+        if _decision_sink is not None:
+            _decision_sink.append(decision)
+        return decision.accepted
+
+    def _rejected_variants() -> tuple[VariantFinalizationDecision, ...]:
+        rejected_rows = (
+            required_speech_results.values()
+            if required_speech_results is not None
+            else (extra_plan or {}).get("variants") or []
+        )
+        # Required private ownership is deliberately left for its durable
+        # plan owner/reaper. Ordinary outputs are exact values from this
+        # rejected attempt and can be retired immediately.
+        state: Literal["superseded", "failed"] = (
+            "failed" if required_speech_results is not None else "superseded"
+        )
+        return tuple(
+            VariantFinalizationDecision(
+                variant_id=str(result.get("variant_id") or ""),
+                render_generation_id=(
+                    str(result.get("render_generation_id"))
+                    if result.get("render_generation_id")
+                    else None
+                ),
+                state=state,
+            )
+            for result in rejected_rows
+            if isinstance(result, dict) and result.get("variant_id")
+        )
+
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
-            return False
-        if _cancelled_job_write_rejected(job, operation=f"set_status:{status}", db=db):
-            return False
+            return _finish(
+                JobFinalizationResult(
+                    "job_missing",
+                    variants=_rejected_variants(),
+                )
+            )
+        if job.status == _CANCELLED_JOB_STATUS:
+            _cancelled_job_write_rejected(job, operation=f"set_status:{status}", db=db)
+            return _finish(
+                JobFinalizationResult(
+                    "job_cancelled",
+                    variants=_rejected_variants(),
+                )
+            )
+        if _content_plan_write_rejected(db, job, operation=f"set_status:{status}"):
+            return _finish(
+                JobFinalizationResult(
+                    "owner_rejected",
+                    variants=_rejected_variants(),
+                )
+            )
         if expected_speech_cut_operation_id and expected_speech_cut_attempt_id:
             control = (job.assembly_plan or {}).get("speech_cut_control") or {}
             if not _speech_cut_claim_matches(
@@ -20062,17 +22734,123 @@ def _set_status(
                 expected_speech_cut_operation_id,
                 expected_speech_cut_attempt_id,
             ):
-                raise RuntimeError("speech cut finalization was superseded")
+                plan = job.assembly_plan or {}
+                internal = plan.get("_speech_cleanup_internal")
+                locks = (
+                    internal.get("required_speech_generation_locks")
+                    if isinstance(internal, dict)
+                    else None
+                )
+                variant_decisions: list[VariantFinalizationDecision] = []
+                for variant_id, result in (required_speech_results or {}).items():
+                    generation = str(result.get("render_generation_id") or "") or None
+                    generation_lost = generation is not None and (
+                        not isinstance(locks, dict) or locks.get(variant_id) != generation
+                    )
+                    variant_decisions.append(
+                        VariantFinalizationDecision(
+                            variant_id=variant_id,
+                            render_generation_id=generation,
+                            state="superseded" if generation_lost else "live",
+                        )
+                    )
+                    if generation_lost:
+                        _append_required_speech_terminal_outcome_locked(
+                            job,
+                            result,
+                            outcome="discarded_superseded",
+                        )
+                db.commit()
+                error = RuntimeError("speech cut finalization was superseded")
+                decision = JobFinalizationResult(
+                    "claim_superseded",
+                    variants=tuple(variant_decisions),
+                    error=error,
+                )
+                if _decision_sink is None:
+                    raise error
+                return _finish(decision)
+        existing = copy.deepcopy(job.assembly_plan or {})
+        required_failure_ids: set[str] = set()
+        staged_by_variant: dict[str, dict[str, Any]] = {}
+        if required_speech_results is not None:
+            from app.services.speech_cleanup_terminal import (  # noqa: PLC0415
+                RequiredSpeechOwnershipError,
+            )
+
+            try:
+                existing, required_failure_ids, staged_by_variant = (
+                    _prepare_required_speech_terminalization(
+                        existing,
+                        job_id=job_id,
+                        required_speech_results=required_speech_results,
+                        retain_required_speech_ownership=retain_required_speech_ownership,
+                    )
+                )
+            except RequiredSpeechOwnershipError as exc:
+                rejected = tuple(
+                    VariantFinalizationDecision(
+                        variant_id=variant_id,
+                        render_generation_id=(
+                            str(result.get("render_generation_id"))
+                            if result.get("render_generation_id")
+                            else None
+                        ),
+                        state="failed",
+                    )
+                    for variant_id, result in required_speech_results.items()
+                )
+                for result in required_speech_results.values():
+                    _append_required_speech_terminal_outcome_locked(
+                        job,
+                        result,
+                        outcome="discarded_finalization_rejected",
+                    )
+                # Persist the terminal disposition while the exact rejection
+                # proof and Job row lock are still held. The private owner stays
+                # untouched for recovery; this transaction changes trace only.
+                db.commit()
+                decision = JobFinalizationResult(
+                    "failed",
+                    variants=rejected,
+                    error=exc,
+                )
+                if _decision_sink is None:
+                    raise
+                return _finish(decision)
         job.status = status
         if failure_reason:
             job.failure_reason = failure_reason
         if extra_plan is not None:
-            existing = copy.deepcopy(job.assembly_plan or {})
             plan_patch = extra_plan
-            if merge_finalized_variants and isinstance(extra_plan.get("variants"), list):
+            if (
+                retain_required_speech_ownership
+                and merge_finalized_variants
+                and isinstance(extra_plan.get("variants"), list)
+            ):
+                # Speech-cut rerender finalization is deliberately only a task
+                # status checkpoint. The staged generation remains private;
+                # compose advances it there and publish performs the sole
+                # last-good -> winner public swap.
+                plan_patch = {key: value for key, value in extra_plan.items() if key != "variants"}
+                job.assembly_plan = {**existing, **plan_patch}
+            elif merge_finalized_variants and isinstance(extra_plan.get("variants"), list):
+                finalized_input = extra_plan["variants"]
+                if required_failure_ids:
+                    terminal_by_id = {
+                        row.get("variant_id"): row
+                        for row in existing.get("variants") or []
+                        if isinstance(row, dict)
+                    }
+                    finalized_input = [
+                        terminal_by_id.get(row.get("variant_id"), row)
+                        if isinstance(row, dict) and row.get("variant_id") in required_failure_ids
+                        else row
+                        for row in finalized_input
+                    ]
                 finalized_variants = _merge_finalized_variants(
                     existing.get("variants"),
-                    extra_plan["variants"],
+                    finalized_input,
                 )
                 plan_patch = {
                     **extra_plan,
@@ -20096,9 +22874,95 @@ def _set_status(
                                 finalized,
                             )
                         )
+                if required_speech_results is not None:
+                    successful_required_ids = {
+                        variant_id
+                        for variant_id, staged in staged_by_variant.items()
+                        if staged.get("ok") is True and staged.get("render_status") == "ready"
+                    }
+                    previous_required = [
+                        row
+                        for row in existing.get("variants") or []
+                        if isinstance(row, dict)
+                        and row.get("variant_id") in successful_required_ids
+                    ]
+                    retired_paths = _retired_speech_variant_storage_paths(
+                        previous_required,
+                        published_plan=next_plan,
+                        job=job,
+                    )
+                    if retired_paths:
+                        from app.services.durable_attempt_cleanup import (  # noqa: PLC0415
+                            append_exact_key_cleanup,
+                        )
+
+                        append_exact_key_cleanup(
+                            next_plan,
+                            job=job,
+                            debt_id=uuid.uuid4().hex,
+                            paths=retired_paths,
+                        )
                 job.assembly_plan = next_plan
             else:
                 job.assembly_plan = {**existing, **plan_patch}
+        elif required_speech_results is not None:
+            job.assembly_plan = existing
+        variant_decisions: list[VariantFinalizationDecision] = []
+        if required_speech_results is not None:
+            final_plan = job.assembly_plan if isinstance(job.assembly_plan, dict) else {}
+            final_rows = [row for row in final_plan.get("variants") or [] if isinstance(row, dict)]
+            for variant_id, staged_result in staged_by_variant.items():
+                generation = str(staged_result.get("render_generation_id") or "") or None
+                if retain_required_speech_ownership:
+                    state: Literal["live", "superseded", "failed"] = "live"
+                else:
+                    matches = [row for row in final_rows if row.get("variant_id") == variant_id]
+                    live = matches[0] if len(matches) == 1 else None
+                    if live is not None and live.get("render_generation_id") != generation:
+                        state = "superseded"
+                    elif (
+                        live is not None
+                        and generation is not None
+                        and live.get("render_generation_id") == generation
+                        and staged_result.get("ok") is True
+                        and staged_result.get("render_status") == "ready"
+                        and live.get("ok") is True
+                        and live.get("render_status") == "ready"
+                    ):
+                        state = "live"
+                    else:
+                        state = "failed"
+                variant_decisions.append(
+                    VariantFinalizationDecision(
+                        variant_id=variant_id,
+                        render_generation_id=generation,
+                        state=state,
+                    )
+                )
+                if retain_required_speech_ownership:
+                    continue
+                if state == "superseded":
+                    payload = _build_required_speech_terminal_outcome(
+                        staged_result,
+                        outcome_override="discarded_superseded",
+                    )
+                elif state == "failed" and staged_result.get("ok") is True:
+                    payload = _build_required_speech_terminal_outcome(
+                        staged_result,
+                        outcome_override="discarded_finalization_rejected",
+                    )
+                else:
+                    payload = (required_speech_outcomes or {}).get(variant_id)
+                if payload is not None:
+                    from app.services.speech_cleanup_outcome import (  # noqa: PLC0415
+                        append_speech_cleanup_render_outcome_locked,
+                    )
+
+                    append_speech_cleanup_render_outcome_locked(job, payload)
+        terminal_decision = JobFinalizationResult(
+            "accepted",
+            variants=tuple(variant_decisions),
+        )
         db.commit()
     if expected_speech_cut_operation_id and expected_speech_cut_attempt_id:
         # Speech-cut ``_set_status`` is only an intermediate commit: compose and
@@ -20111,7 +22975,7 @@ def _set_status(
             job_id,
             journaled_poster_paths,
         )
-    return True
+    return _finish(terminal_decision)
 
 
 def _fail_job(
@@ -20130,18 +22994,67 @@ def _fail_job(
             if job:
                 if _cancelled_job_write_rejected(job, operation="fail_job", db=db):
                     return False
-                job.status = "processing_failed"
-                job.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]
-                if failure_reason:
-                    job.failure_reason = failure_reason
-
                 # Reconcile per-variant render_status.  Any variant still at
                 # "rendering" or "pending" when the task fails will freeze the
                 # frontend poll loop forever (the anyRendering predicate keeps
                 # polling while any variant claims to be rendering).  Flip those
                 # to "failed" now so the UI reaches a terminal state immediately.
-                ap = job.assembly_plan or {}
-                if isinstance(ap, dict):
+                stored_plan = job.assembly_plan
+                if isinstance(stored_plan, dict):
+                    ap = copy.deepcopy(stored_plan)
+                    pending_outcomes: list[dict[str, Any]] = []
+                    internal = ap.get("_speech_cleanup_internal")
+                    locks = (
+                        internal.get("required_speech_generation_locks")
+                        if isinstance(internal, dict)
+                        else None
+                    )
+                    if isinstance(locks, dict) and locks:
+                        from app.services.speech_cleanup_terminal import (  # noqa: PLC0415
+                            RequiredSpeechOwnershipError,
+                            peek_required_speech_generation,
+                            terminalize_required_speech_generations,
+                        )
+
+                        for variant_id, generation in locks.items():
+                            try:
+                                staged = peek_required_speech_generation(
+                                    ap,
+                                    variant_id=variant_id,
+                                    generation=generation,
+                                )
+                            except RequiredSpeechOwnershipError:
+                                continue
+                            payload = _build_required_speech_terminal_outcome(
+                                {
+                                    **staged,
+                                    "ok": False,
+                                    "error_class": "RequiredSpeechRenderFailure",
+                                }
+                            )
+                            if payload is not None:
+                                pending_outcomes.append(payload)
+
+                        recovery = terminalize_required_speech_generations(
+                            ap,
+                            job_id=job_id,
+                            error=error_detail,
+                        )
+                        if recovery.status == "blocked":
+                            log.warning(
+                                "generative_fail_job_required_speech_blocked",
+                                job_id=job_id,
+                                reason=recovery.reason,
+                            )
+                            return False
+                        ap = recovery.plan
+                        for payload in pending_outcomes:
+                            from app.services.speech_cleanup_outcome import (  # noqa: PLC0415
+                                append_speech_cleanup_render_outcome_locked,
+                            )
+
+                            append_speech_cleanup_render_outcome_locked(job, payload)
+
                     variants = ap.get("variants") or []
                     new_variants = [
                         {
@@ -20156,8 +23069,12 @@ def _fail_job(
                     patch = {"variants": new_variants} if new_variants != variants else {}
                     if speech_cleanup_failure_reason:
                         patch["speech_cleanup_failure_reason"] = speech_cleanup_failure_reason
-                    if patch:
-                        job.assembly_plan = {**ap, **patch}
+                    job.assembly_plan = {**ap, **patch} if patch else ap
+
+                job.status = "processing_failed"
+                job.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]
+                if failure_reason:
+                    job.failure_reason = failure_reason
 
                 db.commit()
                 return True

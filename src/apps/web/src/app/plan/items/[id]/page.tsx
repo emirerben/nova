@@ -3480,7 +3480,7 @@ function FocusedResults({
             : ""
         }.`
       : variant?.silence_cut_outcome === "no_change"
-        ? "Speech cleanup checked the audio; no filler sounds needed removal."
+        ? "Speech cleanup ran; no cuts were made."
         : variant?.silence_cut_outcome === "insufficient_source_speech"
           ? "Speech cleanup skipped: there was not enough source speech to process."
           : null;

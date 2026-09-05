@@ -30,6 +30,10 @@ from sqlalchemy import and_, delete, or_, select
 from app.config import settings
 from app.database import sync_session
 from app.models import JobStorageDeletion
+from app.services.job_storage_deletion import (
+    cleanup_job_storage_manifest,
+    parse_job_storage_manifest,
+)
 from app.services.job_storage_paths import JOB_OUTPUT_PREFIXES
 from app.services.video_poster_cleanup import (
     jobs_with_video_poster_cleanup_receipts,
@@ -208,7 +212,9 @@ def purge_user_storage(
     }
 
 
-def _claim_job_storage_deletion(outbox_id: str) -> tuple[list[str], int] | None:
+def _claim_job_storage_deletion(
+    outbox_id: str,
+) -> tuple[uuid.UUID, object, int] | None:
     """Claim one due manifest, recovering leases abandoned by dead workers."""
     now = datetime.now(UTC)
     with sync_session() as db:
@@ -227,42 +233,64 @@ def _claim_job_storage_deletion(outbox_id: str) -> tuple[list[str], int] | None:
         deletion.attempts += 1
         deletion.lease_until = now + _JOB_STORAGE_DELETION_LEASE
         db.commit()
-        paths = deletion.object_paths if isinstance(deletion.object_paths, list) else []
-        return list(paths), deletion.attempts
+        payload = deletion.object_paths
+        if isinstance(payload, list):
+            payload = list(payload)
+        elif isinstance(payload, dict):
+            payload = dict(payload)
+        return deletion.job_id, payload, deletion.attempts
 
 
 def _finish_job_storage_deletion(
     outbox_id: str,
     *,
-    deleted: int,
-    failed: list[str],
+    expected_attempt: int,
+    remaining_payload: object,
+    completed: bool,
     error: str | None = None,
-) -> None:
+    retry_not_before: datetime | None = None,
+) -> bool:
+    """Finish only the exact lease claim that produced ``remaining_payload``.
+
+    A storage sweep can outlive its lease.  In that case another worker may
+    reclaim the row, or account erasure may merge additional cleanup debt and
+    reset it to pending.  The old worker's result was computed from a stale
+    manifest and must never overwrite either newer state.
+    """
     now = datetime.now(UTC)
     with sync_session() as db:
         deletion = db.execute(
             select(JobStorageDeletion).where(JobStorageDeletion.id == outbox_id).with_for_update()
         ).scalar_one_or_none()
-        if deletion is None:
-            return
+        if (
+            deletion is None
+            or deletion.status != "processing"
+            or deletion.attempts != expected_attempt
+        ):
+            return False
 
         deletion.lease_until = None
-        if failed:
+        if not completed:
             deletion.status = "pending"
-            deletion.object_paths = list(dict.fromkeys(failed))
+            deletion.object_paths = remaining_payload
             retry_delay = min(
                 _JOB_STORAGE_DELETION_RETRY_BASE_S * (2 ** min(max(deletion.attempts - 1, 0), 6)),
                 _JOB_STORAGE_DELETION_RETRY_MAX_S,
             )
-            deletion.next_attempt_at = now + timedelta(seconds=retry_delay)
-            deletion.last_error = error or f"{len(failed)} storage objects could not be deleted"
+            retry_at = now + timedelta(seconds=retry_delay)
+            if retry_not_before is not None:
+                retry_at = max(retry_at, retry_not_before.astimezone(UTC))
+            deletion.next_attempt_at = retry_at
+            deletion.last_error = error
+            deletion.completed_at = None
         else:
             deletion.status = "completed"
-            deletion.object_paths = []
+            deletion.object_paths = remaining_payload
             deletion.next_attempt_at = None
             deletion.last_error = None
             deletion.completed_at = now
         db.commit()
+        return True
 
 
 @celery_app.task(
@@ -278,33 +306,113 @@ def purge_job_storage(outbox_id: str) -> dict:
     if claimed is None:
         return {"status": "skipped", "deleted": 0, "failed": 0}
 
-    object_paths, attempt = claimed
+    job_id, payload, attempt = claimed
     error: str | None = None
-    try:
-        deleted, failed = cleanup_job_storage_paths(object_paths)
-    except Exception as exc:  # noqa: BLE001 — lease recovery handles outages
-        deleted = 0
-        failed = object_paths
-        error = f"{type(exc).__name__}: {exc}"
+    prefixes_verified = 0
+    prefixes_pending = 0
+    retry_not_before: datetime | None = None
+    if isinstance(payload, list):
+        try:
+            deleted, failed = cleanup_job_storage_paths(payload)
+        except SoftTimeLimitExceeded:
+            raise
+        except Exception as exc:  # noqa: BLE001 — lease recovery handles outages
+            deleted = 0
+            failed = payload
+            error = type(exc).__name__
+        remaining_payload: object = failed
+        completed = not failed
+        failed_count = len(failed)
+        if failed and error is None:
+            error = f"{failed_count} storage objects could not be deleted"
+    else:
+        now = datetime.now(UTC)
+        try:
+            manifest = parse_job_storage_manifest(payload, job_id=job_id)
+            cleanup = cleanup_job_storage_manifest(manifest, now=now)
+        except SoftTimeLimitExceeded:
+            # Do not overwrite the committed manifest when Celery's execution
+            # budget expires; the processing lease makes it recoverable.
+            raise
+        except Exception as exc:  # noqa: BLE001 — malformed debt is retained
+            deleted = 0
+            failed_count = 1
+            completed = False
+            remaining_payload = payload
+            error = type(exc).__name__
+        else:
+            deleted = cleanup.exact_deleted
+            failed_count = len(cleanup.remaining.exact_paths)
+            prefixes_verified = cleanup.prefixes_verified
+            prefixes_pending = len(cleanup.remaining.prefixes)
+            completed = cleanup.complete
+            remaining_payload = cleanup.remaining.to_payload()
+            if cleanup.status == "unavailable":
+                error = "storage_unavailable"
+            elif not completed and (
+                cleanup.remaining.exact_paths
+                or any(entry.not_before <= now for entry in cleanup.remaining.prefixes)
+            ):
+                error = "storage_cleanup_incomplete"
+            if (
+                not cleanup.remaining.exact_paths
+                and cleanup.remaining.prefixes
+                and all(entry.not_before > now for entry in cleanup.remaining.prefixes)
+            ):
+                retry_not_before = min(entry.not_before for entry in cleanup.remaining.prefixes)
 
-    _finish_job_storage_deletion(
+    finish_accepted = _finish_job_storage_deletion(
         outbox_id,
-        deleted=deleted,
-        failed=failed,
+        expected_attempt=attempt,
+        remaining_payload=remaining_payload,
+        completed=completed,
         error=error,
+        retry_not_before=retry_not_before,
     )
-    if failed:
+    if not finish_accepted:
+        log.info(
+            "purge_job_storage_result_superseded",
+            outbox_id=outbox_id,
+            attempt=attempt,
+        )
+        result = {
+            "status": "superseded",
+            "deleted": deleted,
+            "failed": failed_count,
+        }
+        if isinstance(payload, dict):
+            result.update(
+                prefixes_verified=prefixes_verified,
+                prefixes_pending=prefixes_pending,
+            )
+        return result
+    if not completed:
         log.warning(
             "purge_job_storage_pending_retry",
             outbox_id=outbox_id,
             deleted=deleted,
-            failed=len(failed),
+            failed=failed_count,
+            prefixes_pending=prefixes_pending,
             attempt=attempt,
         )
-        return {"status": "pending", "deleted": deleted, "failed": len(failed)}
+        result = {"status": "pending", "deleted": deleted, "failed": failed_count}
+        if isinstance(payload, dict):
+            result.update(
+                prefixes_verified=prefixes_verified,
+                prefixes_pending=prefixes_pending,
+            )
+        return result
 
-    log.info("purge_job_storage_done", outbox_id=outbox_id, deleted=deleted)
-    return {"status": "completed", "deleted": deleted, "failed": 0}
+    log.info(
+        "purge_job_storage_done",
+        outbox_id=outbox_id,
+        deleted=deleted,
+        prefixes_verified=prefixes_verified,
+    )
+    result = {"status": "completed", "deleted": deleted, "failed": 0}
+    if isinstance(payload, dict):
+        result.update(prefixes_verified=prefixes_verified, prefixes_pending=0)
+    return result
 
 
 @celery_app.task(

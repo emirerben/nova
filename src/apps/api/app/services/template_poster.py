@@ -277,11 +277,12 @@ def upload_video_poster(
     video_object_path: str,
     *,
     job_id: str | uuid.UUID | None = None,
+    destination_path: str | None = None,
 ) -> str:
     """Extract and upload a poster for a browser-visible video object."""
     if not os.path.isfile(local_video_path):
         raise PosterExtractionError(f"video source does not exist: {local_video_path}")
-    poster_path = poster_object_path(video_object_path, job_id=job_id)
+    poster_path = destination_path or poster_object_path(video_object_path, job_id=job_id)
     poster_bytes = extract_poster_bytes(local_video_path)
     upload_bytes_public_read(poster_bytes, poster_path, content_type="image/jpeg")
     log.info(
@@ -298,6 +299,7 @@ def generate_and_upload_from_gcs(
     *,
     job_id: str | None = None,
     source_kind: str = "video",
+    destination_path: str | None = None,
 ) -> str | None:
     """Best-effort poster generation for a video already uploaded to GCS.
 
@@ -312,7 +314,14 @@ def generate_and_upload_from_gcs(
         local_path = f"{tmpdir}/source.mp4"
         try:
             download_to_file(video_object_path, local_path)
-            return upload_video_poster(local_path, video_object_path, job_id=job_id)
+            if destination_path is None:
+                return upload_video_poster(local_path, video_object_path, job_id=job_id)
+            return upload_video_poster(
+                local_path,
+                video_object_path,
+                job_id=job_id,
+                destination_path=destination_path,
+            )
         except Exception as exc:  # noqa: BLE001 - poster is fail-open by contract
             log.warning(
                 "video_poster_extract_failed",

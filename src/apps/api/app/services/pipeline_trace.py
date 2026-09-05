@@ -24,12 +24,14 @@ Failure modes — all swallowed:
 from __future__ import annotations
 
 import contextlib
+import copy
+import re
 import time
 import uuid
 from collections.abc import Iterator
 from contextvars import ContextVar
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 
@@ -42,6 +44,17 @@ _current_job_id: ContextVar[str | None] = ContextVar("pipeline_trace_job_id", de
 # the JSONB column up. Past the cap, events are dropped (with a single
 # warning per job).
 _MAX_EVENTS = 500
+_MAX_SPEECH_CLEANUP_EVENT_BYTES = 16 * 1024
+
+SpeechCleanupTraceStatus = Literal[
+    "persisted",
+    "dropped_no_context",
+    "dropped_invalid_job",
+    "dropped_job_missing",
+    "dropped_cancelled",
+    "dropped_cap",
+    "error",
+]
 
 
 def set_pipeline_job_id(job_id: str | uuid.UUID | None) -> object:
@@ -205,6 +218,86 @@ def record_render_stage(
     record_pipeline_event("render_stage", stage, payload)
 
 
+def record_speech_cleanup_detection(data: dict[str, Any]) -> SpeechCleanupTraceStatus:
+    """Persist one bounded, timing-only mixed-gap analysis receipt.
+
+    Unlike :func:`record_pipeline_event`, this helper reports the exact best-effort
+    persistence branch so the worker can emit fleet-safe scalar telemetry without
+    assuming that an admin receipt landed. It never raises and never logs receipt
+    contents or exception messages.
+    """
+
+    job_id_str = _current_job_id.get()
+    if not job_id_str:
+        return "dropped_no_context"
+    try:
+        job_uuid = uuid.UUID(job_id_str)
+    except (ValueError, AttributeError):
+        return "dropped_invalid_job"
+
+    try:
+        safe = _sanitize_speech_cleanup_detection_payload(data)
+        encoded = _json_dumps(safe)
+        if encoded == "[]" or len(encoded.encode("utf-8")) > _MAX_SPEECH_CLEANUP_EVENT_BYTES:
+            return "dropped_cap"
+
+        from sqlalchemy import text  # noqa: PLC0415
+
+        from app.database import sync_engine  # noqa: PLC0415
+
+        payload = {
+            "ts": datetime.now(UTC).isoformat(),
+            "stage": "silence_cut",
+            "event": "silence_cut_mixed_gap_analysis",
+            "data": safe,
+        }
+        with sync_engine.begin() as conn:
+            row = (
+                conn.execute(
+                    text(
+                        """
+                    SELECT status,
+                           jsonb_array_length(COALESCE(pipeline_trace, '[]'::jsonb)) AS trace_len
+                    FROM jobs
+                    WHERE id = :job_id
+                    FOR UPDATE
+                    """
+                    ),
+                    {"job_id": str(job_uuid)},
+                )
+                .mappings()
+                .first()
+            )
+            if row is None:
+                return "dropped_job_missing"
+            if row["status"] == "cancelled":
+                return "dropped_cancelled"
+            if int(row["trace_len"] or 0) >= _MAX_EVENTS:
+                return "dropped_cap"
+            conn.execute(
+                text(
+                    """
+                    UPDATE jobs
+                    SET pipeline_trace = COALESCE(pipeline_trace, '[]'::jsonb)
+                                         || CAST(:event_json AS JSONB)
+                    WHERE id = :job_id
+                    """
+                ),
+                {
+                    "job_id": str(job_uuid),
+                    "event_json": _json_dumps([payload]),
+                },
+            )
+        return "persisted"
+    except Exception as exc:  # noqa: BLE001 - diagnostics must never break rendering
+        log.warning(
+            "speech_cleanup_trace_persist_failed",
+            job_id=job_id_str,
+            error_class=type(exc).__name__,
+        )
+        return "error"
+
+
 class RenderStageTimer:
     """Best-effort context manager for stage timing.
 
@@ -302,6 +395,438 @@ def _safe_shallow_dict(value: dict[str, Any]) -> dict[str, Any]:
         if isinstance(raw, (str, int, float, bool)) or raw is None:
             safe[key] = raw
     return safe
+
+
+_DETECTION_TOP_KEYS = frozenset(
+    {
+        "schema_version",
+        "detector_version",
+        "analysis_attempt_id",
+        "analysis_view",
+        "source_slot",
+        "assignment_status",
+        "source_tag",
+        "analysis_policy",
+        "configured_mode",
+        "effective_mode",
+        "candidate_status",
+        "rollout_percent",
+        "rollout_bucket",
+        "duration_ms",
+        "thresholds_ms",
+        "inputs",
+        "mixed_gap_scan",
+        "allocator",
+        "baseline_plan",
+        "candidate_plan",
+        "selected_plan",
+    }
+)
+_THRESHOLD_KEYS = frozenset(
+    {"silence_min", "island_min", "island_max", "flank_silence_min", "min_cut"}
+)
+_INPUT_KEYS = frozenset(
+    {
+        "silence_detection_status",
+        "asr_word_count",
+        "asr_word_spans_ms",
+        "asr_word_spans_omitted",
+        "silence_spans_total",
+        "silence_spans_ms",
+        "silence_spans_omitted",
+        "lexical_candidate_spans_ms",
+        "lexical_candidates_omitted",
+    }
+)
+_SCAN_KEYS = frozenset(
+    {"word_windows_total", "islands_total", "eligible_total", "records", "records_omitted"}
+)
+_DECISION_KEYS = frozenset(
+    {
+        "window_start_ms",
+        "window_end_ms",
+        "island_start_ms",
+        "island_end_ms",
+        "left_silence_ms",
+        "right_silence_ms",
+        "detection",
+        "reason",
+        "plan_disposition",
+    }
+)
+_ALLOCATOR_KEYS = frozenset(
+    {
+        "atomic_disposition_fields",
+        "atomic_dispositions_total",
+        "atomic_dispositions",
+        "atomic_dispositions_omitted",
+    }
+)
+_PLAN_KEYS = frozenset(
+    {
+        "removed_count",
+        "removed_ms",
+        "removed_spans_ms",
+        "removed_spans_omitted",
+        "clamped",
+        "bailout_reason",
+        "mixed_gap_full",
+        "mixed_gap_partial",
+        "mixed_gap_dropped",
+    }
+)
+_OUTCOME_KEYS = frozenset(
+    {
+        "schema_version",
+        "outcome_id",
+        "outcome",
+        "analysis_attempt_id",
+        "analysis_view",
+        "detector_version",
+        "source_tag",
+        "variant_id",
+        "render_generation_id",
+        "selected_plan",
+        "candidate_status",
+        "output_removal_count",
+        "output_removed_ms",
+        "failure_phase",
+        "failure_class",
+    }
+)
+_ASSIGNMENT_STATUSES = frozenset(
+    {
+        "assigned",
+        "missing_source_instance",
+        "cardinality_mismatch",
+        "invalid_source_instance",
+        "duplicate_source_instance",
+        "unmapped_clip_id",
+        "ambiguous_clip_id",
+        "identity_cache_unavailable",
+    }
+)
+_CANDIDATE_STATUSES = frozenset(
+    {
+        "analysis_failed",
+        "analysis_not_started",
+        "build_failed",
+        "outer_media_probe_failed",
+        "precheck_clip_too_short",
+        "precheck_no_audio",
+        "ready",
+        "receipt_build_failed",
+        "tool_unavailable",
+        "validation_failed",
+    }
+)
+_SILENCE_STATUSES = frozenset(
+    {
+        "ok",
+        "not_run",
+        "probe_failed",
+        "invalid_duration",
+        "no_audio",
+        "ffmpeg_timeout",
+        "ffmpeg_failed",
+        "ffmpeg_nonzero",
+        "parse_failed",
+    }
+)
+_DECISION_REASONS = frozenset(
+    {
+        "bilateral_silence",
+        "touches_window_boundary",
+        "left_silence_too_short",
+        "right_silence_too_short",
+        "island_too_short",
+        "island_too_long",
+    }
+)
+_DISPOSITIONS = frozenset(
+    {
+        "selected_full",
+        "promoted_protected",
+        "dropped_budget",
+        "dropped_max_removals",
+        "dropped_min_cut",
+        "dropped_micro_gap",
+        "dropped_safety_bailout",
+        "not_candidate",
+    }
+)
+_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
+_SOURCE_TAG_RE = re.compile(r"^[0-9a-f]{16}$")
+_ATOMIC_FIELDS = [
+    "atom_start_ms",
+    "atom_end_ms",
+    "group_start_ms",
+    "group_end_ms",
+    "atom_kind",
+    "priority",
+    "disposition",
+]
+
+
+def _exact_keys(value: object, allowed: frozenset[str], label: str) -> dict[str, Any]:
+    if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
+        raise ValueError(f"{label} must be an object")
+    unknown = set(value) - allowed
+    if unknown:
+        raise ValueError(f"{label} contains unsupported fields")
+    return value
+
+
+def _bounded_int(
+    value: object,
+    *,
+    label: str,
+    maximum: int = 86_400_000,
+    nullable: bool = False,
+) -> int | None:
+    if value is None and nullable:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= maximum:
+        raise ValueError(f"{label} must be a bounded non-negative integer")
+    return value
+
+
+def _enum(value: object, allowed: frozenset[str], label: str, *, nullable: bool = False):
+    if value is None and nullable:
+        return None
+    if not isinstance(value, str) or value not in allowed:
+        raise ValueError(f"{label} is not supported")
+    return value
+
+
+def _token(value: object, label: str, *, nullable: bool = False, maximum: int = 128):
+    if value is None and nullable:
+        return None
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value) > maximum
+        or not _TOKEN_RE.fullmatch(value)
+    ):
+        raise ValueError(f"{label} must be a bounded token")
+    return value
+
+
+def _timing_spans(value: object, *, label: str, limit: int) -> list[list[int]]:
+    if not isinstance(value, (list, tuple)) or len(value) > limit:
+        raise ValueError(f"{label} exceeds its span cap")
+    spans: list[list[int]] = []
+    for raw in value:
+        if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+            raise ValueError(f"{label} contains an invalid span")
+        lo = _bounded_int(raw[0], label=f"{label}.start")
+        hi = _bounded_int(raw[1], label=f"{label}.end")
+        assert lo is not None and hi is not None
+        if hi < lo:
+            raise ValueError(f"{label} contains a reversed span")
+        spans.append([lo, hi])
+    return spans
+
+
+def _sanitize_plan(value: object, label: str) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    plan = _exact_keys(value, _PLAN_KEYS, label)
+    safe: dict[str, Any] = {}
+    for key in plan:
+        raw = plan[key]
+        if key == "removed_spans_ms":
+            safe[key] = _timing_spans(raw, label=f"{label}.{key}", limit=100)
+        elif key == "clamped":
+            if not isinstance(raw, bool):
+                raise ValueError(f"{label}.{key} must be boolean")
+            safe[key] = raw
+        elif key == "bailout_reason":
+            safe[key] = _enum(
+                raw,
+                frozenset(
+                    {"no_words", "clip_too_short", "max_removal_exceeded", "output_too_short"}
+                ),
+                f"{label}.{key}",
+                nullable=True,
+            )
+        else:
+            safe[key] = _bounded_int(
+                raw,
+                label=f"{label}.{key}",
+                maximum=86_400_000 if key == "removed_ms" else 1_000_000,
+            )
+    return safe
+
+
+def _sanitize_speech_cleanup_detection_payload(value: dict[str, Any]) -> dict[str, Any]:
+    """Validate the exact timing-only mixed-gap receipt schema."""
+
+    receipt = _exact_keys(value, _DETECTION_TOP_KEYS, "speech cleanup receipt")
+    if receipt.get("schema_version") != 1:
+        raise ValueError("speech cleanup receipt schema version is not supported")
+    safe: dict[str, Any] = {"schema_version": 1}
+    scalar_enums = {
+        "analysis_view": frozenset({"full_clip", "talking_head_spine_capped"}),
+        "assignment_status": _ASSIGNMENT_STATUSES,
+        "analysis_policy": frozenset({"required_v1", "legacy_auto", "off_v1"}),
+        "configured_mode": frozenset({"off", "shadow", "apply"}),
+        "effective_mode": frozenset({"off", "shadow", "apply"}),
+        "candidate_status": _CANDIDATE_STATUSES,
+        "selected_plan": frozenset({"baseline", "candidate"}),
+    }
+    for key, allowed in scalar_enums.items():
+        if key in receipt:
+            safe[key] = _enum(receipt[key], allowed, key)
+    if "detector_version" in receipt:
+        safe["detector_version"] = _token(
+            receipt["detector_version"], "detector_version", maximum=80
+        )
+    if "analysis_attempt_id" in receipt:
+        safe["analysis_attempt_id"] = _token(
+            receipt["analysis_attempt_id"], "analysis_attempt_id", nullable=True
+        )
+    if "source_tag" in receipt:
+        source_tag = receipt["source_tag"]
+        if source_tag is not None and (
+            not isinstance(source_tag, str) or not _SOURCE_TAG_RE.fullmatch(source_tag)
+        ):
+            raise ValueError("source_tag is invalid")
+        safe["source_tag"] = source_tag
+    for key, maximum in (
+        ("source_slot", 1_000_000),
+        ("rollout_percent", 100),
+        ("rollout_bucket", 99),
+        ("duration_ms", 86_400_000),
+    ):
+        if key in receipt:
+            safe[key] = _bounded_int(receipt[key], label=key, maximum=maximum, nullable=True)
+
+    if "thresholds_ms" in receipt:
+        thresholds = _exact_keys(receipt["thresholds_ms"], _THRESHOLD_KEYS, "thresholds_ms")
+        safe["thresholds_ms"] = {
+            key: _bounded_int(value, label=f"thresholds_ms.{key}", maximum=60_000)
+            for key, value in thresholds.items()
+        }
+    if "inputs" in receipt:
+        inputs = _exact_keys(receipt["inputs"], _INPUT_KEYS, "inputs")
+        safe_inputs: dict[str, Any] = {}
+        for key, raw in inputs.items():
+            if key == "silence_detection_status":
+                safe_inputs[key] = _enum(raw, _SILENCE_STATUSES, f"inputs.{key}")
+            elif key == "asr_word_spans_ms":
+                safe_inputs[key] = _timing_spans(raw, label=f"inputs.{key}", limit=128)
+            elif key == "silence_spans_ms":
+                safe_inputs[key] = _timing_spans(raw, label=f"inputs.{key}", limit=128)
+            elif key == "lexical_candidate_spans_ms":
+                safe_inputs[key] = _timing_spans(raw, label=f"inputs.{key}", limit=32)
+            else:
+                safe_inputs[key] = _bounded_int(raw, label=f"inputs.{key}", maximum=1_000_000)
+        safe["inputs"] = safe_inputs
+    if "mixed_gap_scan" in receipt:
+        scan = _exact_keys(receipt["mixed_gap_scan"], _SCAN_KEYS, "mixed_gap_scan")
+        safe_scan: dict[str, Any] = {}
+        for key, raw in scan.items():
+            if key != "records":
+                safe_scan[key] = _bounded_int(raw, label=f"mixed_gap_scan.{key}", maximum=1_000_000)
+                continue
+            if not isinstance(raw, list) or len(raw) > 32:
+                raise ValueError("mixed_gap_scan.records exceeds its cap")
+            records: list[dict[str, Any]] = []
+            for item in raw:
+                record = _exact_keys(item, _DECISION_KEYS, "mixed_gap_scan.record")
+                safe_record: dict[str, Any] = {}
+                for field, value in record.items():
+                    if field == "detection":
+                        safe_record[field] = _enum(
+                            value, frozenset({"eligible", "rejected"}), field
+                        )
+                    elif field == "reason":
+                        safe_record[field] = _enum(value, _DECISION_REASONS, field)
+                    elif field == "plan_disposition":
+                        safe_record[field] = _enum(value, _DISPOSITIONS, field)
+                    else:
+                        safe_record[field] = _bounded_int(value, label=field)
+                records.append(safe_record)
+            safe_scan[key] = records
+        safe["mixed_gap_scan"] = safe_scan
+    if "allocator" in receipt:
+        allocator = _exact_keys(receipt["allocator"], _ALLOCATOR_KEYS, "allocator")
+        safe_allocator: dict[str, Any] = {}
+        for key, raw in allocator.items():
+            if key == "atomic_disposition_fields":
+                if raw != _ATOMIC_FIELDS:
+                    raise ValueError("allocator fields are invalid")
+                safe_allocator[key] = list(_ATOMIC_FIELDS)
+            elif key == "atomic_dispositions":
+                if not isinstance(raw, list) or len(raw) > 64:
+                    raise ValueError("atomic dispositions exceed their cap")
+                rows: list[list[Any]] = []
+                for row in raw:
+                    if not isinstance(row, (list, tuple)) or len(row) != 7:
+                        raise ValueError("atomic disposition row is invalid")
+                    rows.append(
+                        [
+                            *[
+                                _bounded_int(value, label="atomic disposition timing")
+                                for value in row[:4]
+                            ],
+                            _enum(
+                                row[4],
+                                frozenset({"filler_lexical", "filler_acoustic", "retake"}),
+                                "atom_kind",
+                            ),
+                            _enum(
+                                row[5],
+                                frozenset({"protected", "filler", "retake"}),
+                                "priority",
+                            ),
+                            _enum(row[6], _DISPOSITIONS - {"not_candidate"}, "disposition"),
+                        ]
+                    )
+                safe_allocator[key] = rows
+            else:
+                safe_allocator[key] = _bounded_int(raw, label=f"allocator.{key}", maximum=1_000_000)
+        safe["allocator"] = safe_allocator
+    for key in ("baseline_plan", "candidate_plan"):
+        if key in receipt:
+            safe[key] = _sanitize_plan(receipt[key], key)
+    return copy.deepcopy(safe)
+
+
+def _sanitize_speech_cleanup_payload(value: dict[str, Any]) -> dict[str, Any]:
+    """Validate an exact scalar terminal-outcome payload."""
+
+    payload = _exact_keys(value, _OUTCOME_KEYS, "speech cleanup outcome")
+    if set(payload) != _OUTCOME_KEYS or payload.get("schema_version") != 1:
+        raise ValueError("speech cleanup outcome has an invalid shape")
+    safe: dict[str, Any] = {}
+    for key, raw in payload.items():
+        if raw is None:
+            safe[key] = None
+        elif isinstance(raw, bool) or not isinstance(raw, (str, int)):
+            raise ValueError("speech cleanup outcome must contain scalar values")
+        elif isinstance(raw, int):
+            safe[key] = _bounded_int(raw, label=key, maximum=86_400_000)
+        else:
+            safe[key] = _token(raw, key, maximum=128)
+    return safe
+
+
+def sanitize_speech_cleanup_trace_payload(value: dict[str, Any]) -> dict[str, Any]:
+    """Return the shared privacy-safe speech-cleanup trace representation.
+
+    Terminal speech-cleanup state transitions append to an already row-locked
+    ``Job`` instead of opening the independent transaction used by
+    :func:`record_speech_cleanup_detection`.  Exposing the same sanitizer keeps
+    both persistence paths on one content/privacy boundary.
+
+    Raises ``ValueError`` for content-bearing, oversized, nested, or unsupported
+    values.  Callers that participate in a terminal state transition must catch
+    failures so diagnostics remain fail-open.
+    """
+
+    return _sanitize_speech_cleanup_payload(value)
 
 
 def _json_dumps(value: Any) -> str:

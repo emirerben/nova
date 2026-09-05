@@ -21,6 +21,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models import Job
+from app.services.speech_cleanup_identity import (
+    ClipSourceIdentityError,
+    append_clip_source,
+    provision_clip_source_instance_ids,
+    remove_clip_source_at,
+)
 
 log = structlog.get_logger()
 
@@ -386,10 +392,27 @@ async def cancel_omni_asset(
                 and clip_index >= 0
                 and clip_paths[clip_index] == storage_path
             ):
-                clip_paths.pop()
-                candidates["clip_paths"] = clip_paths
-                job.all_candidates = candidates
-                released = True
+                try:
+                    candidates, _removed = remove_clip_source_at(
+                        candidates,
+                        clip_index,
+                        expected_path=storage_path,
+                    )
+                except (ClipSourceIdentityError, IndexError, ValueError) as exc:
+                    # Cancellation remains available, but malformed historical
+                    # identity must never be silently regenerated.  Retaining
+                    # the claimed object and operation makes later cleanup
+                    # reference-safe instead of deleting media still reachable
+                    # from the editor pool.
+                    log.warning(
+                        "omni_asset.release_identity_unavailable",
+                        job_id=str(job.id),
+                        asset_id=asset_id,
+                        error_class=type(exc).__name__,
+                    )
+                else:
+                    job.all_candidates = candidates
+                    released = True
         record.update(
             status="cancelled",
             progress=0.0,
@@ -476,12 +499,28 @@ async def claim_omni_asset(
         )
     candidates = copy.deepcopy(job.all_candidates or {})
     clip_paths = list(candidates.get("clip_paths") or [])
-    if storage_path in clip_paths:
-        clip_index = clip_paths.index(storage_path)
-    else:
-        clip_paths.append(storage_path)
-        clip_index = len(clip_paths) - 1
-    candidates["clip_paths"] = clip_paths
+    try:
+        if storage_path in clip_paths:
+            candidates, identity = provision_clip_source_instance_ids(candidates)
+            if not identity.valid:
+                raise ClipSourceIdentityError(identity.status)
+            clip_index = clip_paths.index(storage_path)
+        else:
+            candidates, clip_index, _source_instance_id = append_clip_source(
+                candidates,
+                storage_path,
+            )
+    except ClipSourceIdentityError as exc:
+        log.warning(
+            "omni_asset.claim_identity_unavailable",
+            job_id=str(job.id),
+            asset_id=asset_id,
+            identity_status=exc.status,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="omni_clip_source_identity_unavailable",
+        ) from exc
     job.all_candidates = candidates
     record["claimed_at"] = datetime.now(UTC).isoformat()
     if record.get("action") == "restyle_segment":

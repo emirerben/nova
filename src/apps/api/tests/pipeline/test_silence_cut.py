@@ -80,6 +80,55 @@ def assert_no_cuts(plan: CutPlan, duration: float = DUR):
     assert plan.time_saved_s == pytest.approx(0.0, abs=1e-9)
 
 
+def test_v2_count_cap_is_enforced_after_word_free_components_coalesce() -> None:
+    items = [
+        silence_cut._AllocationItem(
+            start_s=index * 0.2,
+            end_s=index * 0.2 + 0.1,
+            reason=REASON_SILENCE,
+            kind="flexible",
+        )
+        for index in range(MAX_REMOVALS + 1)
+    ]
+    assert silence_cut._item_component_count(items) == MAX_REMOVALS + 1
+
+    bridged, ok = silence_cut._apply_v2_micro_gap_hygiene(
+        items,
+        [],
+        (MAX_REMOVALS + 1) * 0.2 - 0.1,
+        1000.0,
+        [],
+        {},
+    )
+    capped, cap_ok = silence_cut._enforce_v2_component_cap(bridged, {})
+
+    assert ok is True
+    assert cap_ok is True
+    assert silence_cut._item_component_count(capped) == 1
+    assert sum(item.kind == "flexible" for item in capped) == MAX_REMOVALS + 1
+
+
+def test_v2_protected_micro_bridge_is_budget_exempt_during_validation() -> None:
+    plan = build_cut_plan(
+        [w("hello", 2.0, 2.5), w("world", 3.0, 3.5)],
+        [],
+        8.0,
+        forced_removals=[
+            {"start_s": 0.5, "end_s": 0.7, "reason": "manual"},
+            {"start_s": 0.8, "end_s": 1.0, "reason": "manual"},
+        ],
+        include_silence_and_fillers=False,
+        mixed_gap_enabled=True,
+        over_budget_policy="clamp",
+    )
+
+    assert plan.bailout_reason is None
+    assert_spans(
+        [(removal.start_s, removal.end_s) for removal in plan.removed],
+        [(0.5, 1.0)],
+    )
+
+
 def test_retake_only_plan_does_not_apply_silence_or_filler_rules() -> None:
     plan = build_cut_plan(
         [

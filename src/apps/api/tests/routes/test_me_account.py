@@ -8,6 +8,7 @@ order dispatching the async GCS purge, and the export bundle's shape.
 
 from __future__ import annotations
 
+import copy
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -45,6 +46,9 @@ def _job(*, user_id: uuid.UUID, raw_storage_path: str = "users/x/job/raw.mp4") -
     job.transcript = None
     job.selected_platforms = None
     job.assembly_plan = {}
+    job.all_candidates = {}
+    job.content_plan_item_id = None
+    job.celery_task_id = None
     return job
 
 
@@ -56,6 +60,7 @@ def _scalars(rows: list) -> MagicMock:
 
 def _db(execute_results: list) -> AsyncMock:
     db = AsyncMock()
+    db.add = MagicMock()
     db.commit = AsyncMock()
     db.execute = AsyncMock(side_effect=execute_results)
     return db
@@ -130,34 +135,51 @@ def test_delete_confirm_deletes_in_fk_safe_order_and_dispatches_purge() -> None:
     token = Fernet(_KEY.encode()).encrypt(str(user.id).encode()).decode()
 
     # execute() call order in confirm_account_deletion:
-    #   1. select jobs (for job_ids/raw_paths)
-    #   2. update Job.content_plan_item_id -> NULL
-    #   3. select tiktok OAuthToken rows
-    #   4. delete TikTokPublication
-    #   5. delete OAuthToken
-    #   6. delete Job
-    #   7. delete User
+    #   1-2. lock ContentPlan then Persona (global mutation order)
+    #   3. select+lock jobs (for job ids/raw paths/storage manifests)
+    #   4-6. lock clips, publications, and existing deletion outboxes
+    #   7. update Job.content_plan_item_id -> NULL
+    #   8. select tiktok OAuthToken rows
+    #   9-12. delete publications, tokens, Job, User
     db = _db(
         [
-            _scalars([job]),  # 1
-            MagicMock(),  # 2
-            _scalars([]),  # 3 — no tiktok token, nothing to revoke
-            MagicMock(),  # 4
-            MagicMock(),  # 5
-            MagicMock(),  # 6
+            _scalars([]),  # 1 — no plans
+            MagicMock(),  # 2 — Persona lock
+            _scalars([job]),  # 3
+            _scalars([]),  # 4 — no JobClip rows
+            _scalars([]),  # 5 — no publications
+            _scalars([]),  # 6 — no existing storage outbox
             MagicMock(),  # 7
+            _scalars([]),  # 8 — no tiktok token, nothing to revoke
+            MagicMock(),  # 9
+            MagicMock(),  # 10
+            MagicMock(),  # 11
+            MagicMock(),  # 12
         ]
     )
     _override(user, db)
+    dispatch = AsyncMock()
     with (
         patch("app.routes.me.settings.token_encryption_key", _KEY),
         patch("app.tasks.account_lifecycle.purge_user_storage.delay") as mock_purge,
+        patch("app.routes.me._delete_job_storage_after_commit", dispatch),
     ):
         resp = client.post("/me/account/delete-confirm", json={"token": token})
 
     assert resp.status_code == 204
-    assert db.execute.await_count == 7
+    assert db.execute.await_count == 12
+    lock_sql = [str(call.args[0]) for call in db.execute.await_args_list[:3]]
+    assert "content_plans" in lock_sql[0]
+    assert "personas" in lock_sql[1]
+    assert "jobs" in lock_sql[2]
     db.commit.assert_awaited_once()
+    outbox = db.add.call_args.args[0]
+    assert outbox.job_id == job.id
+    assert outbox.object_paths["version"] == 2
+    assert f"generative-jobs/{job.id}/" in {
+        entry["prefix"] for entry in outbox.object_paths["prefixes"]
+    }
+    dispatch.assert_awaited_once_with(outbox.id)
     mock_purge.assert_called_once_with(str(user.id), [str(job.id)], [job.raw_storage_path])
 
 
@@ -170,6 +192,8 @@ def test_delete_confirm_revokes_tiktok_token_before_deleting(monkeypatch) -> Non
 
     db = _db(
         [
+            _scalars([]),  # no plans
+            MagicMock(),  # Persona lock
             _scalars([]),  # jobs
             MagicMock(),  # null content_plan_item_id
             _scalars([tiktok_row]),  # tiktok OAuthToken rows
@@ -229,6 +253,170 @@ def test_export_returns_full_bundle() -> None:
     assert len(body["jobs"]) == 1
     assert body["jobs"][0]["source_media_url"] == "https://signed.example/raw.mp4"
     assert "All jobs include a re-signed source-media link" in body["note"]
+
+
+def test_export_projects_private_speech_cleanup_state_without_mutating_job() -> None:
+    user = _user()
+    job = _job(user_id=user.id)
+    job.assembly_plan = {
+        "title": "Keep this",
+        "_speech_cleanup_internal": {"terminal_pending": {"secret": True}},
+        "candidate_snapshot": {
+            "clip_source_instance_ids": ["00000000-0000-4000-8000-000000000001"],
+            "clip_metadata_identity_index_v2": {"records": []},
+            "clip_paths": ["source.mp4"],
+        },
+    }
+    stored = copy.deepcopy(job.assembly_plan)
+    db = _db(
+        [
+            MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
+            _scalars([]),
+            _scalars([job]),
+            _scalars([]),
+            _scalars([]),
+        ]
+    )
+    _override(user, db)
+
+    with patch("app.routes.me.signed_get_url", return_value="https://signed.example/raw.mp4"):
+        resp = client.get("/me/export")
+
+    assert resp.status_code == 200
+    assert resp.json()["jobs"][0]["assembly_plan"] == {
+        "title": "Keep this",
+        "candidate_snapshot": {},
+    }
+    assert job.assembly_plan == stored
+
+
+def test_export_redacts_provisional_media_when_required_speech_state_is_malformed() -> None:
+    user = _user()
+    job = _job(user_id=user.id)
+    provisional = {
+        "variant_id": "subtitled",
+        "render_status": "rendering",
+        "render_generation_id": "generation-new",
+        "ok": True,
+        "video_path": (
+            f"generative-jobs/{job.id}/render-generations/generation-new/PROVISIONAL.mp4"
+        ),
+        "output_url": "https://private.example/PROVISIONAL",
+        "poster_path": f"generative-jobs/{job.id}/PROVISIONAL.jpg",
+        "candidate_snapshot": {
+            "clip_source_instance_ids": ["00000000-0000-4000-8000-000000000001"],
+            "source_references": [f"generative-jobs/{job.id}/PROVISIONAL-source.mov"],
+            "source_tag": "0123456789abcdef",
+        },
+    }
+    job.assembly_plan = {
+        "speech_cleanup_contract": "required_v1",
+        "speech_cut_control": {
+            "variant_id": "subtitled",
+            "render_generation_id": "generation-new",
+        },
+        "speech_cut_previous_variant": copy.deepcopy(provisional),
+        "speech_cut_previous_variants": [copy.deepcopy(provisional)],
+        "_speech_cleanup_internal": {
+            "required_speech_generation_locks": {"subtitled": "generation-mismatch"},
+        },
+        "variants": [copy.deepcopy(provisional)],
+    }
+    stored = copy.deepcopy(job.assembly_plan)
+    db = _db(
+        [
+            MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
+            _scalars([]),
+            _scalars([job]),
+            _scalars([]),
+            _scalars([]),
+        ]
+    )
+    _override(user, db)
+
+    with patch("app.routes.me.signed_get_url", return_value="https://signed.example/raw.mp4"):
+        resp = client.get("/me/export")
+
+    assert resp.status_code == 200
+    exported_plan = resp.json()["jobs"][0]["assembly_plan"]
+    [visible] = exported_plan["variants"]
+    assert visible == {
+        "variant_id": "subtitled",
+        "render_status": "rendering",
+        "ok": False,
+        "candidate_snapshot": {},
+    }
+    assert "provisional" not in str(exported_plan).lower()
+    assert "generation-new" not in str(exported_plan)
+    assert "generation-mismatch" not in str(exported_plan)
+    assert "00000000-0000-4000-8000-000000000001" not in str(exported_plan)
+    assert job.assembly_plan == stored
+
+
+def test_export_serialization_never_leaks_source_uuid_through_omni_references() -> None:
+    """Owner export keeps opaque durable paths while stripping stable identities."""
+    user = _user()
+    job = _job(user_id=user.id)
+    source_instance_id = "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+    copy_attempt_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    durable_source_path = (
+        f"generative-jobs/{job.id}/sources/copy-attempts/{copy_attempt_id}/slot-0000.mov"
+    )
+    assert source_instance_id not in durable_source_path
+
+    job.raw_storage_path = durable_source_path
+    job.all_candidates = {
+        "clip_paths": [durable_source_path],
+        "clip_source_instance_ids": [source_instance_id],
+    }
+    job.assembly_plan = {
+        "variants": [
+            {
+                "variant_id": "song_text",
+                "candidate_snapshot": {
+                    "clip_paths": [durable_source_path],
+                    "clip_source_instance_ids": [source_instance_id],
+                },
+                "ai_timeline": {
+                    "slots": [{"clip_index": 0, "source_gcs_path": durable_source_path}]
+                },
+            }
+        ],
+        "omni_generated_assets": {
+            "asset-opaque": {
+                "status": "ready",
+                "source_references": [durable_source_path],
+                "clip_source_instance_ids": [source_instance_id],
+            }
+        },
+    }
+    db = _db(
+        [
+            MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
+            _scalars([]),
+            _scalars([job]),
+            _scalars([]),
+            _scalars([]),
+        ]
+    )
+    _override(user, db)
+    signed_source_paths: list[str] = []
+
+    def _sign(path: str, expiration_minutes: int) -> str:
+        signed_source_paths.append(path)
+        return f"https://signed.example/{path}?ttl={expiration_minutes}"
+
+    with patch("app.routes.me.signed_get_url", side_effect=_sign):
+        resp = client.get("/me/export")
+
+    assert resp.status_code == 200
+    serialized_export = resp.content.decode("utf-8")
+    exported_job = resp.json()["jobs"][0]
+    exported_omni = exported_job["assembly_plan"]["omni_generated_assets"]["asset-opaque"]
+    assert exported_omni["source_references"] == [durable_source_path]
+    assert signed_source_paths == [durable_source_path]
+    assert source_instance_id not in serialized_export
+    assert source_instance_id not in exported_job["source_media_url"]
 
 
 def test_export_survives_a_signing_failure_without_500ing() -> None:

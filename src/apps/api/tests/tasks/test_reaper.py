@@ -6,9 +6,30 @@ so the suite runs without Postgres/Redis.
 
 from __future__ import annotations
 
+import uuid
+from copy import deepcopy
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+from app.services.durable_attempt_cleanup import CleanupReconcileResult
+from app.services.speech_cleanup_terminal import (
+    close_required_speech_generation_uploads,
+    reserve_required_speech_generation,
+    stage_required_speech_generation,
+)
+
+
+@pytest.fixture(autouse=True)
+def _stub_post_terminal_storage_cleanup(monkeypatch):
+    reconcile = MagicMock(return_value=CleanupReconcileResult())
+    monkeypatch.setattr(
+        "app.tasks.reaper.reconcile_storage_attempt_cleanup",
+        reconcile,
+    )
+    return reconcile
 
 
 def _make_celery_with_inspect(active=None, reserved=None, raises=None):
@@ -32,27 +53,28 @@ def _make_celery_with_inspect(active=None, reserved=None, raises=None):
 def _patch_sync_session(rowcount: int = 0, reaped_rows: list | None = None):
     """Returns a patch context for sync_session that yields a fake session.
 
-    The first execute() call (the RETURNING UPDATE) returns a result whose
+    The first execute() call (the locking SELECT) returns a result whose
     fetchall() yields `reaped_rows` (default: `rowcount` empty-assembly-plan
-    tuples so the variant-reconciliation loop is a no-op).  Subsequent
-    execute() calls return a plain rowcount result to absorb the variant /
-    PlanItem reconciliation UPDATEs without raising.
+    tuples so the variant-reconciliation loop is a no-op). Subsequent
+    execute() calls model one successful fenced UPDATE per candidate.
     """
     if reaped_rows is None:
         import uuid as _uuid
 
-        reaped_rows = [(_uuid.uuid4(), None) for _ in range(rowcount)]
+        reaped_rows = [(_uuid.uuid4(), None, []) for _ in range(rowcount)]
+    else:
+        reaped_rows = [(*row, []) if len(row) == 2 else row for row in reaped_rows]
 
     session = MagicMock()
 
-    # First execute: the RETURNING UPDATE
+    # First execute: the FOR UPDATE SKIP LOCKED candidate SELECT.
     first_result = MagicMock()
     first_result.rowcount = len(reaped_rows)
     first_result.fetchall.return_value = reaped_rows
 
-    # Subsequent executes: variant/PlanItem reconciliation UPDATEs
+    # Subsequent executes: one fenced terminal UPDATE per selected job.
     subsequent_result = MagicMock()
-    subsequent_result.rowcount = 0
+    subsequent_result.rowcount = 1
     subsequent_result.fetchall.return_value = []
 
     # Return first_result on the first call, subsequent_result on later calls.
@@ -63,6 +85,89 @@ def _patch_sync_session(rowcount: int = 0, reaped_rows: list | None = None):
     ctx.__exit__ = MagicMock(return_value=False)
 
     return patch("app.tasks.reaper.sync_session", return_value=ctx), session
+
+
+def _required_speech_plan(
+    job_id: str,
+    generation: str,
+    *,
+    close_uploads: bool = True,
+) -> dict:
+    plan: dict = {"variants": []}
+    reserve_required_speech_generation(
+        plan,
+        job_id=job_id,
+        pending_variant={
+            "variant_id": "subtitled",
+            "render_generation_id": generation,
+            "render_status": "rendering",
+            "ok": False,
+            "video_path": (
+                f"generative-jobs/{job_id}/render-generations/{generation}/provisional.mp4"
+            ),
+        },
+        generation=generation,
+        lease_expires_at=datetime.now(UTC) + timedelta(minutes=35),
+    )
+    stage_required_speech_generation(
+        plan,
+        generation=generation,
+        result={
+            "variant_id": "subtitled",
+            "render_generation_id": generation,
+            "render_status": "ready",
+            "ok": True,
+            "video_path": (f"generative-jobs/{job_id}/render-generations/{generation}/staged.mp4"),
+            "_speech_cleanup_outcome_context": {
+                "analysis_attempt_id": uuid.uuid4().hex,
+                "analysis_view": "full_clip",
+                "detector_version": "mixed-gap-v1",
+                "source_tag": "0123456789abcdef",
+                "selected_plan": "candidate",
+                "candidate_status": "ready",
+                "output_removal_count": 1,
+                "output_removed_ms": 572,
+            },
+        },
+    )
+    if close_uploads:
+        close_required_speech_generation_uploads(plan, generation=generation)
+    return plan
+
+
+def _assembly_plan_from_update_call(call) -> dict | None:
+    params = call.args[0].compile().params
+    return next(
+        (value for value in params.values() if isinstance(value, dict) and "variants" in value),
+        None,
+    )
+
+
+def _speech_cleanup_outcomes_from_update_call(call) -> list[dict]:
+    params = call.args[0].compile().params
+    traces = [
+        value
+        for value in params.values()
+        if isinstance(value, list)
+        and any(isinstance(event, dict) and event.get("stage") == "silence_cut" for event in value)
+    ]
+    if not traces:
+        return []
+    return [
+        event["data"]
+        for event in traces[0]
+        if isinstance(event, dict) and event.get("event") == "speech_cleanup_render_outcome"
+    ]
+
+
+def _speech_cleanup_outcomes(trace: list[dict]) -> list[dict]:
+    return [
+        event["data"]
+        for event in trace
+        if isinstance(event, dict)
+        and event.get("stage") == "silence_cut"
+        and event.get("event") == "speech_cleanup_render_outcome"
+    ]
 
 
 class TestLiveJobIds:
@@ -169,7 +274,7 @@ class TestReapOrphans:
             reap_orphans(app)
         # Inspect the SQL statement passed to execute() — verify NOT IN clause
         # exists and references the live job id (as a UUID parameter).
-        stmt = session.execute.call_args[0][0]
+        stmt = session.execute.call_args_list[0][0][0]
         # Render with bind params visible (not literal — UUID type can't
         # always be literal-rendered across dialects).
         sql_str = str(stmt)
@@ -186,7 +291,7 @@ class TestReapOrphans:
         patch_ctx, session = _patch_sync_session(rowcount=3)
         with patch_ctx:
             reap_orphans(app)
-        stmt = session.execute.call_args[0][0]
+        stmt = session.execute.call_args_list[0][0][0]
         sql_str = str(stmt)
         # The two safety clauses (status IN, updated_at <) must always be present.
         assert "status" in sql_str
@@ -235,6 +340,30 @@ class TestReapOrphans:
         assert "processing_failed" in values
         assert "unknown" in values
         assert any("Resubmit" in str(v) for v in values)  # user-facing error_detail
+
+    def test_reconciles_durable_storage_receipts_after_terminal_commit(
+        self,
+        _stub_post_terminal_storage_cleanup,
+    ):
+        import uuid as _uuid
+
+        from app.tasks.reaper import reap_orphans
+
+        job_id = _uuid.uuid4()
+        app = _make_celery_with_inspect(active={}, reserved={})
+        patch_ctx, session = _patch_sync_session(
+            rowcount=1,
+            reaped_rows=[(job_id, {})],
+        )
+        with patch_ctx:
+            assert reap_orphans(app) == 1
+
+        session.commit.assert_called_once()
+        _stub_post_terminal_storage_cleanup.assert_called_once_with(
+            job_id,
+            source_limit=1,
+            render_limit=1,
+        )
 
 
 class TestThresholdConstant:
@@ -393,12 +522,10 @@ def test_reaper_reconciles_frozen_rendering_variants():
 
     assert count == 1
 
-    # The second execute() call should be the variant-reconciliation UPDATE.
-    # Extract it and verify it writes original_text → "failed".
-    assert session.execute.call_count >= 2, (
-        "Expected at least 2 execute() calls: RETURNING UPDATE + variant reconciliation"
-    )
-    # Find the reconciliation UPDATE (second call to execute after the RETURNING one).
+    # The second execute() call is the single terminal UPDATE carrying the
+    # reconciled assembly plan.
+    assert session.execute.call_count >= 2, "Expected SELECT + terminal UPDATE"
+    # Find the terminal UPDATE after the locking SELECT.
     recon_stmt = session.execute.call_args_list[1][0][0]
     params = recon_stmt.compile().params
     # The updated assembly_plan should have the stuck variant flipped to "failed".
@@ -415,6 +542,95 @@ def test_reaper_reconciles_frozen_rendering_variants():
     assert new_statuses["song_text"] == "ready", "Ready variants must not be touched"
 
 
+def test_reaper_terminalizes_required_speech_before_generic_variant_repair() -> None:
+    """A staged/provisional required result can never become ready by path presence."""
+
+    from app.tasks.reaper import reap_orphans
+
+    job_id = uuid.uuid4()
+    generation = uuid.uuid4().hex
+    plan = _required_speech_plan(str(job_id), generation)
+    app = _make_celery_with_inspect(active={}, reserved={})
+    patch_ctx, session = _patch_sync_session(
+        rowcount=1,
+        reaped_rows=[(job_id, plan)],
+    )
+
+    with patch_ctx:
+        assert reap_orphans(app) == 1
+
+    updated = _assembly_plan_from_update_call(session.execute.call_args_list[1])
+    assert updated is not None
+    variant = updated["variants"][0]
+    assert variant["render_status"] == "failed"
+    assert variant["ok"] is False
+    assert "video_path" not in variant
+    internal = updated["_speech_cleanup_internal"]
+    assert "required_speech_generation_locks" not in internal
+    assert "staged_render_results" not in internal
+    assert internal["render_generation_cleanup_pending"][0]["upload_state"] == "closed"
+    outcomes = _speech_cleanup_outcomes_from_update_call(session.execute.call_args_list[1])
+    assert len(outcomes) == 1
+    assert outcomes[0]["outcome"] == "failed_owned"
+    assert outcomes[0]["render_generation_id"] == generation
+    assert outcomes[0]["failure_class"] == "WorkerDied"
+
+
+def test_reaper_blocked_required_speech_leaves_job_untouched(
+    _stub_post_terminal_storage_cleanup,
+) -> None:
+    """Missing ownership proof must block the whole orphan transition."""
+
+    from app.services.durable_attempt_cleanup import (
+        RENDER_GENERATION_CLEANUP_FIELD,
+        CleanupReceiptLocator,
+        remove_cleanup_receipt,
+    )
+    from app.tasks.reaper import reap_orphans
+
+    job_id = uuid.uuid4()
+    generation = uuid.uuid4().hex
+    plan = _required_speech_plan(str(job_id), generation)
+    assert remove_cleanup_receipt(
+        plan,
+        CleanupReceiptLocator(
+            field=RENDER_GENERATION_CLEANUP_FIELD,
+            receipt_id=generation,
+        ),
+    )
+    original = deepcopy(plan)
+    app = _make_celery_with_inspect(active={}, reserved={})
+    patch_ctx, session = _patch_sync_session(reaped_rows=[(job_id, plan)])
+
+    with patch_ctx:
+        assert reap_orphans(app) == 0
+
+    assert plan == original
+    assert session.execute.call_count == 1  # locking SELECT only; no terminal UPDATE
+    session.commit.assert_called_once()
+    _stub_post_terminal_storage_cleanup.assert_not_called()
+
+
+def test_reaper_defers_required_speech_while_upload_lease_is_fresh(
+    _stub_post_terminal_storage_cleanup,
+) -> None:
+    from app.tasks.reaper import reap_orphans
+
+    job_id = uuid.uuid4()
+    generation = uuid.uuid4().hex
+    plan = _required_speech_plan(str(job_id), generation, close_uploads=False)
+    original = deepcopy(plan)
+    app = _make_celery_with_inspect(active={}, reserved={})
+    patch_ctx, session = _patch_sync_session(reaped_rows=[(job_id, plan)])
+
+    with patch_ctx:
+        assert reap_orphans(app) == 0
+
+    assert plan == original
+    assert session.execute.call_count == 1
+    _stub_post_terminal_storage_cleanup.assert_not_called()
+
+
 def test_reaper_no_variant_reconciliation_when_no_rows():
     """When the reaper reaped zero rows, no variant reconciliation runs."""
     from app.tasks.reaper import reap_orphans
@@ -423,7 +639,7 @@ def test_reaper_no_variant_reconciliation_when_no_rows():
     patch_ctx, session = _patch_sync_session(rowcount=0)
     with patch_ctx:
         assert reap_orphans(app) == 0
-    # Only the RETURNING UPDATE; no extra variant UPDATEs when nothing was reaped.
+    # Only the locking SELECT when no candidates were found.
     assert session.execute.call_count == 1
 
 
@@ -442,8 +658,8 @@ def test_reaper_no_variant_reconciliation_when_assembly_plan_is_none():
         count = reap_orphans(app)
 
     assert count == 1
-    # Only the RETURNING UPDATE — no extra variant UPDATE when assembly_plan is None.
-    assert session.execute.call_count == 1, "No variant UPDATE expected when assembly_plan is None"
+    # SELECT + terminal UPDATE. No separate variant reconciliation write is needed.
+    assert session.execute.call_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -452,12 +668,23 @@ def test_reaper_no_variant_reconciliation_when_assembly_plan_is_none():
 
 
 def _patch_sync_session_for_reconcile(candidate_rows):
-    """sync_session whose first execute() (the SELECT) yields candidate_rows
-    and whose subsequent execute()s (per-job UPDATE) are absorbed."""
+    """Model ID discovery, one locked re-read, and an update per candidate."""
+    normalized_rows = [(*row, []) if len(row) == 2 else row for row in candidate_rows]
+    locked_rows = iter(normalized_rows)
     session = MagicMock()
-    select_result = MagicMock()
-    select_result.fetchall.return_value = candidate_rows
-    session.execute.side_effect = [select_result] + [MagicMock()] * 50
+
+    def execute(statement):
+        sql = str(statement)
+        result = MagicMock()
+        if getattr(statement, "is_update", False):
+            result.rowcount = 1
+        elif "FOR UPDATE" in sql:
+            result.fetchone.return_value = next(locked_rows, None)
+        else:
+            result.scalars.return_value.all.return_value = [row[0] for row in normalized_rows]
+        return result
+
+    session.execute.side_effect = execute
     ctx = MagicMock()
     ctx.__enter__ = MagicMock(return_value=session)
     ctx.__exit__ = MagicMock(return_value=False)
@@ -527,14 +754,75 @@ class TestReconcileStuckVariants:
         patch_ctx, session = _patch_sync_session_for_reconcile([(_uuid.uuid4(), plan)])
         with patch_ctx:
             assert reconcile_stuck_variants(app) == 1
-        # one SELECT + one UPDATE
-        assert session.execute.call_count == 2
+        # ID discovery + locked revalidation + one UPDATE.
+        assert session.execute.call_count == 3
         session.commit.assert_called_once()
 
         select_sql = str(session.execute.call_args_list[0].args[0])
-        update_sql = str(session.execute.call_args_list[1].args[0])
+        lock_sql = str(session.execute.call_args_list[1].args[0])
+        update_sql = str(session.execute.call_args_list[2].args[0])
         assert "jobs.status !=" in select_sql
+        assert "FOR UPDATE" not in select_sql
+        assert "@?" in select_sql
+        assert "LIMIT" in select_sql
+        assert "FOR UPDATE" in lock_sql
+        assert "@?" in lock_sql
         assert "jobs.status !=" in update_sql
+
+    def test_required_speech_generation_is_failed_before_path_based_promotion(self):
+        from app.tasks.reaper import reconcile_stuck_variants
+
+        job_id = uuid.uuid4()
+        generation = uuid.uuid4().hex
+        plan = _required_speech_plan(str(job_id), generation)
+        app = _make_celery_with_inspect(active={}, reserved={})
+        patch_ctx, session = _patch_sync_session_for_reconcile([(job_id, plan)])
+
+        with patch_ctx:
+            assert reconcile_stuck_variants(app) == 1
+
+        updated = _assembly_plan_from_update_call(session.execute.call_args_list[2])
+        assert updated is not None
+        variant = updated["variants"][0]
+        assert variant["render_status"] == "failed"
+        assert variant["ok"] is False
+        assert "video_path" not in variant
+        internal = updated["_speech_cleanup_internal"]
+        assert "required_speech_generation_locks" not in internal
+        assert "staged_render_results" not in internal
+        assert internal["render_generation_cleanup_pending"][0]["upload_state"] == "closed"
+        outcomes = _speech_cleanup_outcomes_from_update_call(session.execute.call_args_list[2])
+        assert len(outcomes) == 1
+        assert outcomes[0]["outcome"] == "failed_owned"
+        assert outcomes[0]["render_generation_id"] == generation
+        assert outcomes[0]["failure_class"] == "WorkerDied"
+
+    def test_blocked_required_speech_recovery_never_falls_through_to_generic_promotion(self):
+        from app.services.durable_attempt_cleanup import (
+            RENDER_GENERATION_CLEANUP_FIELD,
+            CleanupReceiptLocator,
+            remove_cleanup_receipt,
+        )
+        from app.tasks.reaper import reconcile_stuck_variants
+
+        job_id = uuid.uuid4()
+        generation = uuid.uuid4().hex
+        plan = _required_speech_plan(str(job_id), generation)
+        assert remove_cleanup_receipt(
+            plan,
+            CleanupReceiptLocator(
+                field=RENDER_GENERATION_CLEANUP_FIELD,
+                receipt_id=generation,
+            ),
+        )
+        app = _make_celery_with_inspect(active={}, reserved={})
+        patch_ctx, session = _patch_sync_session_for_reconcile([(job_id, plan)])
+
+        with patch_ctx:
+            assert reconcile_stuck_variants(app) == 0
+
+        assert session.execute.call_count == 2
+        session.commit.assert_called_once()
 
     def test_skips_live_re_render(self):
         import uuid as _uuid
@@ -547,8 +835,28 @@ class TestReconcileStuckVariants:
         patch_ctx, session = _patch_sync_session_for_reconcile([(jid, plan)])
         with patch_ctx:
             assert reconcile_stuck_variants(app) == 0
-        # SELECT only — the live job is skipped, no UPDATE
-        assert session.execute.call_count == 1
+        # Discovery + locked revalidation only — the live job is never updated.
+        assert session.execute.call_count == 2
+        session.commit.assert_called_once()
+
+    def test_non_job_live_task_ids_do_not_enter_uuid_discovery_bind(self):
+        """Other Celery task args must not make the Job UUID query fail."""
+
+        from app.tasks.reaper import reconcile_stuck_variants
+
+        app = _make_celery_with_inspect(active={}, reserved={})
+        patch_ctx, session = _patch_sync_session_for_reconcile([])
+        with patch_ctx:
+            assert (
+                reconcile_stuck_variants(
+                    app,
+                    live={"track:not-a-job", "not-a-uuid"},
+                )
+                == 0
+            )
+
+        discovery = session.execute.call_args_list[0].args[0]
+        assert "jobs.id NOT IN" not in str(discovery)
 
     def test_no_update_when_all_variants_terminal(self):
         import uuid as _uuid
@@ -565,7 +873,110 @@ class TestReconcileStuckVariants:
         patch_ctx, session = _patch_sync_session_for_reconcile([(_uuid.uuid4(), plan)])
         with patch_ctx:
             assert reconcile_stuck_variants(app) == 0
-        assert session.execute.call_count == 1  # SELECT only
+        assert session.execute.call_count == 2  # discovery + locked revalidation
+        session.commit.assert_called_once()
+
+    def test_commits_each_candidate_before_locking_the_next(self):
+        import uuid as _uuid
+
+        from app.tasks.reaper import reconcile_stuck_variants
+
+        app = _make_celery_with_inspect(active={}, reserved={})
+        rows = [
+            (
+                _uuid.uuid4(),
+                {"variants": [{"render_status": "rendering", "video_path": "g/a.mp4"}]},
+            ),
+            (
+                _uuid.uuid4(),
+                {"variants": [{"render_status": "pending", "video_path": "g/b.mp4"}]},
+            ),
+        ]
+        patch_ctx, session = _patch_sync_session_for_reconcile(rows)
+
+        with patch_ctx:
+            assert reconcile_stuck_variants(app, batch_limit=2) == 2
+
+        assert session.commit.call_count == 2
+        statements = [str(call.args[0]) for call in session.execute.call_args_list]
+        assert sum("FOR UPDATE" in statement for statement in statements) == 2
+        assert sum(statement.lstrip().startswith("UPDATE") for statement in statements) == 2
+
+
+class TestReconcileCancelledRequiredSpeech:
+    @staticmethod
+    def _session_for(job):
+        session = MagicMock()
+        session.get.return_value = job
+        context = MagicMock()
+        context.__enter__.return_value = session
+        context.__exit__.return_value = False
+        return patch("app.tasks.reaper.sync_session", return_value=context), session
+
+    def test_fresh_writing_owner_is_retained_byte_for_byte(self):
+        from app.tasks.reaper import reconcile_cancelled_required_speech_job
+
+        job_id = uuid.uuid4()
+        generation = uuid.uuid4().hex
+        plan = _required_speech_plan(str(job_id), generation, close_uploads=False)
+        original = deepcopy(plan)
+        job = SimpleNamespace(
+            id=job_id,
+            status="cancelled",
+            assembly_plan=plan,
+            pipeline_trace=[],
+        )
+        patch_ctx, session = self._session_for(job)
+
+        with patch_ctx:
+            decision = reconcile_cancelled_required_speech_job(job_id)
+
+        assert decision.status == "deferred"
+        assert decision.reason == "generation_uploads_still_active"
+        assert job.status == "cancelled"
+        assert job.assembly_plan == original
+        assert job.pipeline_trace == []
+        session.commit.assert_not_called()
+
+    @pytest.mark.parametrize("upload_proof", ["closed", "expired"])
+    def test_safe_owner_terminalizes_without_changing_cancelled_status(self, upload_proof):
+        from app.tasks.reaper import reconcile_cancelled_required_speech_job
+
+        job_id = uuid.uuid4()
+        generation = uuid.uuid4().hex
+        plan = _required_speech_plan(
+            str(job_id),
+            generation,
+            close_uploads=upload_proof == "closed",
+        )
+        if upload_proof == "expired":
+            receipt = plan["_speech_cleanup_internal"]["render_generation_cleanup_pending"][0]
+            receipt["lease_expires_at"] = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+        job = SimpleNamespace(
+            id=job_id,
+            status="cancelled",
+            assembly_plan=plan,
+            pipeline_trace=[],
+        )
+        patch_ctx, session = self._session_for(job)
+
+        with patch_ctx:
+            decision = reconcile_cancelled_required_speech_job(job_id)
+
+        assert decision.status == "terminalized"
+        assert job.status == "cancelled"
+        assert job.assembly_plan["variants"][0]["render_status"] == "failed"
+        internal = job.assembly_plan["_speech_cleanup_internal"]
+        assert "required_speech_generation_locks" not in internal
+        assert "staged_render_results" not in internal
+        assert internal["render_generation_cleanup_pending"][0]["upload_state"] == "closed"
+        outcomes = _speech_cleanup_outcomes(job.pipeline_trace)
+        assert len(outcomes) == 1
+        assert outcomes[0]["outcome"] == "cancelled_owned"
+        assert outcomes[0]["render_generation_id"] == generation
+        assert outcomes[0]["failure_phase"] is None
+        assert outcomes[0]["failure_class"] is None
+        session.commit.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

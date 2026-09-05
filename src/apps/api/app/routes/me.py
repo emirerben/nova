@@ -59,13 +59,29 @@ from app.services.content_plan_persona import (
     PlanPersonaOwnershipError,
     load_owned_plan_persona,
 )
+from app.services.durable_attempt_cleanup import job_render_not_quiescent
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
+from app.services.job_storage_deletion import (
+    ACCOUNT_ERASURE_STORAGE_QUIESCENCE,
+    JobStorageManifestError,
+    build_account_erasure_manifest_for_job,
+    build_job_storage_manifest_for_job,
+    merge_job_storage_manifests,
+)
 from app.services.job_storage_paths import (
     job_output_path,
     normalize_job_storage_path,
     owned_job_output_path,
 )
+from app.services.public_assembly_plan import (
+    project_public_assembly_plan,
+    project_public_assembly_plan_with_metadata,
+)
 from app.services.token_crypto import decrypt_token
+from app.services.variant_generation_guard import (
+    VariantInitialRenderInProgress,
+    assert_variant_generation_editable,
+)
 from app.services.video_poster_cleanup import VIDEO_POSTER_BACKFILL_CLEANUP_FIELD
 from app.storage import object_exists_once, signed_download_url, signed_get_url
 
@@ -105,6 +121,7 @@ _POSTER_REPAIR_MARKER_FIELD = "_poster_repair"
 OPEN_IN_EDITOR_NOT_READY_DETAIL = "Video is not ready to open in the editor."
 OPEN_IN_EDITOR_LINK_CONFLICT_DETAIL = "Video is linked to a different plan item."
 DELETE_JOB_NOT_TERMINAL_DETAIL = "This video is still being prepared or posted."
+DELETE_JOB_RENDER_NOT_QUIESCENT_DETAIL = "job_render_not_quiescent"
 PLAYBACK_NOT_READY_DETAIL = "Video preview is not ready."
 PLAYBACK_SIGNING_FAILED_DETAIL = "Video preview is temporarily unavailable."
 
@@ -323,7 +340,8 @@ def _variant_rank(variant: dict, fallback: int) -> tuple[int, int]:
 
 
 def _lowest_rank_ready_variant(job: Job) -> dict | None:
-    variants = (job.assembly_plan or {}).get("variants")
+    plan = project_public_assembly_plan(job.assembly_plan)
+    variants = plan.get("variants") if isinstance(plan, dict) else None
     if not isinstance(variants, list):
         return None
     ready = [
@@ -392,13 +410,18 @@ def _preview(job: Job, clips: list[JobClip] | None = None) -> _LibraryPreview | 
     """
     if job.status == "cancelled":
         return None
-    plan = job.assembly_plan if isinstance(job.assembly_plan, dict) else {}
+    projection = project_public_assembly_plan_with_metadata(job.assembly_plan)
+    plan = projection.value if isinstance(projection.value, dict) else {}
     variants = plan.get("variants")
     if isinstance(variants, list):
         ready = [
             (index, variant)
             for index, variant in enumerate(variants)
-            if isinstance(variant, dict) and variant.get("render_status") == "ready"
+            if isinstance(variant, dict)
+            and (
+                variant.get("render_status") == "ready"
+                or variant.get("variant_id") in projection.masked_last_good_variant_ids
+            )
         ]
         for index, variant in sorted(ready, key=lambda item: _variant_rank(item[1], item[0])):
             video_path = owned_job_output_path(
@@ -429,6 +452,11 @@ def _preview(job: Job, clips: list[JobClip] | None = None) -> _LibraryPreview | 
                     legacy_url=legacy_url,
                 )
 
+    if projection.active_speech_projection:
+        # A failed-closed variant must not fall through to an unprojected
+        # top-level mirror or legacy JobClip row and regain a public URL.
+        return None
+
     video_path = owned_job_output_path(
         plan.get("output_path") or plan.get("video_path") or plan.get("output_url"), job
     )
@@ -454,6 +482,12 @@ def _preview(job: Job, clips: list[JobClip] | None = None) -> _LibraryPreview | 
                 poster_identity=video_path,
             )
     return None
+
+
+def _preview_media_suppressed(job: Job) -> bool:
+    """Whether projection forbids every fallback preview for this job."""
+
+    return project_public_assembly_plan_with_metadata(job.assembly_plan).active_speech_projection
 
 
 class LibraryTikTokPublication(BaseModel):
@@ -545,6 +579,18 @@ def _poster_repair_marker(job: Job) -> dict[str, Any]:
     plan = job.assembly_plan if isinstance(job.assembly_plan, dict) else {}
     marker = plan.get(_POSTER_REPAIR_MARKER_FIELD)
     return marker if isinstance(marker, dict) else {}
+
+
+def _preview_is_generation_locked(job: Job, preview: _LibraryPreview | None) -> bool:
+    """Fail closed when poster maintenance targets a private render generation."""
+    if preview is None or preview.variant_id is None:
+        return False
+    try:
+        assert_variant_generation_editable(job, preview.variant_id)
+    except VariantInitialRenderInProgress:
+        # Malformed private ownership is ambiguity, not permission to mutate.
+        return True
+    return False
 
 
 def _poster_repair_is_blocked(marker: dict[str, Any], video_path: str, now: datetime) -> bool:
@@ -1031,6 +1077,8 @@ async def _verify_broken_posters(
         preview = _preview(job, clips_by_job.get(job.id))
         if preview is None or not preview.poster_path or not preview.video_path:
             continue
+        if _preview_is_generation_locked(job, preview):
+            continue
         targets.append((job, preview))
     if not targets:
         return [], budget
@@ -1084,10 +1132,16 @@ async def _verify_broken_posters(
         # consults clips, so locking them there is pure round-trip cost on a
         # client-polled endpoint. Same predicate the bulk read uses.
         locked_clips = (
-            [] if _preview(locked) is not None else await _relocked_ready_clips(db, job_id)
+            []
+            if _preview(locked) is not None or _preview_media_suppressed(locked)
+            else await _relocked_ready_clips(db, job_id)
         )
         fresh = _preview(locked, locked_clips)
         if fresh is None or fresh.poster_path != preview.poster_path:
+            continue
+        # The initial render can claim this variant after the bulk read and
+        # storage probes, so ownership must be re-checked under the row lock.
+        if _preview_is_generation_locked(locked, fresh):
             continue
         if not _clear_preview_poster(locked, locked_clips, fresh):
             continue
@@ -1137,6 +1191,8 @@ async def _enqueue_poster_repairs(
         preview = _preview(job, clips_by_job.get(job.id))
         if preview is None or not preview.video_path or preview.poster_path:
             continue
+        if _preview_is_generation_locked(job, preview):
+            continue
         if _poster_repair_is_blocked(_poster_repair_marker(job), preview.video_path, now):
             continue
         locked = await _lock_owned_job(db, job.id, user_id)
@@ -1147,6 +1203,10 @@ async def _enqueue_poster_repairs(
         # (or another request may have stamped the marker) since the bulk read.
         preview = _preview(locked, clips_by_job.get(job.id))
         if preview is None or not preview.video_path or preview.poster_path:
+            continue
+        # Exact race guard for a generation claimed between the unlocked bulk
+        # read and this FOR UPDATE re-select.
+        if _preview_is_generation_locked(locked, preview):
             continue
         if _poster_repair_is_blocked(_poster_repair_marker(locked), preview.video_path, now):
             continue
@@ -1207,7 +1267,11 @@ async def refresh_library_posters(
     ordered_jobs = [jobs_by_id[job_id] for job_id in job_ids if job_id in jobs_by_id]
 
     clips_by_job: dict[uuid.UUID, list[JobClip]] = {}
-    jobs_needing_clips = [job.id for job in ordered_jobs if _preview(job) is None]
+    jobs_needing_clips = [
+        job.id
+        for job in ordered_jobs
+        if _preview(job) is None and not _preview_media_suppressed(job)
+    ]
     if jobs_needing_clips:
         ranked_clips = (
             select(
@@ -1337,7 +1401,7 @@ async def refresh_library_playback_url(
         )
 
     preview = _preview(job)
-    if preview is None:
+    if preview is None and not _preview_media_suppressed(job):
         clips = list(
             (
                 await db.execute(
@@ -1635,6 +1699,11 @@ async def delete_my_job(
     ).scalar_one_or_none()
     if locked_job is None or locked_job.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if job_render_not_quiescent(locked_job):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=DELETE_JOB_RENDER_NOT_QUIESCENT_DETAIL,
+        )
     if locked_job.status not in _JOB_READY | _JOB_FAILED:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1710,16 +1779,31 @@ async def delete_my_job(
             item.current_job_id = None
 
     locked_job.content_plan_item_id = None
-    deletion_outbox_id: uuid.UUID | None = None
-    if object_paths:
-        deletion_outbox_id = uuid.uuid4()
-        db.add(
-            JobStorageDeletion(
-                id=deletion_outbox_id,
-                job_id=jid,
-                object_paths=object_paths,
-            )
+    try:
+        storage_manifest = build_job_storage_manifest_for_job(
+            job=locked_job,
+            exact_paths=object_paths,
+            conservative_not_before=datetime.now(UTC),
+            # Legacy ``{user_id}/{job_id}/`` also held reusable plan inputs.
+            # Linked video deletion preserves those bytes; account erasure
+            # below intentionally includes the legacy root.
+            include_legacy_user_prefix=not linked_to_plan,
         )
+    except JobStorageManifestError as exc:
+        # Individual deletion can wait for private state repair. Never drop a
+        # malformed receipt or unknown future-writer owner with the Job row.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=DELETE_JOB_RENDER_NOT_QUIESCENT_DETAIL,
+        ) from exc
+    deletion_outbox_id = uuid.uuid4()
+    db.add(
+        JobStorageDeletion(
+            id=deletion_outbox_id,
+            job_id=jid,
+            object_paths=storage_manifest.to_payload(),
+        )
+    )
     await db.execute(
         delete(TikTokPublication).where(
             TikTokPublication.job_id == jid,
@@ -2407,7 +2491,11 @@ async def export_my_data(
                 "selected_platforms": job.selected_platforms,
                 # Cancellation makes rendered output references private even in
                 # the account export; retain the Job audit metadata around it.
-                "assembly_plan": None if job.status == "cancelled" else job.assembly_plan,
+                "assembly_plan": (
+                    None
+                    if job.status == "cancelled"
+                    else project_public_assembly_plan(job.assembly_plan)
+                ),
                 "source_media_url": source_url,
             }
         )
@@ -2509,6 +2597,7 @@ async def export_my_data(
 # infra for OAuthToken encryption, see services/token_crypto.py) rather than
 # adding a second secret to provision.
 _ACCOUNT_DELETE_TTL_SECONDS = 3600
+_ACCOUNT_DELETE_IMMEDIATE_OUTBOX_DISPATCH_LIMIT = 100
 
 
 def _account_delete_fernet() -> Fernet:
@@ -2606,9 +2695,129 @@ async def confirm_account_deletion(
             detail="Confirmation code does not match the signed-in account",
         )
 
-    jobs = (await db.execute(select(Job).where(Job.user_id == user.id))).scalars().all()
+    # Follow the repository mutation order before taking any Job lock. Plan
+    # editors acquire ContentPlan -> Persona -> PlanItem -> Job; account
+    # erasure must not invert that order while it snapshots durable storage.
+    locked_plan_ids = (
+        (
+            await db.execute(
+                select(ContentPlan.id)
+                .where(ContentPlan.user_id == user.id)
+                .order_by(ContentPlan.id)
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    await db.execute(
+        select(Persona.id).where(Persona.user_id == user.id).order_by(Persona.id).with_for_update()
+    )
+    if locked_plan_ids:
+        await db.execute(
+            select(PlanItem.id)
+            .where(PlanItem.content_plan_id.in_(locked_plan_ids))
+            .order_by(PlanItem.id)
+            .with_for_update()
+        )
+
+    jobs = (
+        (await db.execute(select(Job).where(Job.user_id == user.id).with_for_update()))
+        .scalars()
+        .all()
+    )
     job_ids = [str(j.id) for j in jobs]
     raw_paths = [j.raw_storage_path for j in jobs if j.raw_storage_path]
+    celery_task_ids = list(dict.fromkeys(j.celery_task_id for j in jobs if j.celery_task_id))
+
+    job_uuid_ids = [job.id for job in jobs]
+    clips_by_job: dict[uuid.UUID, list[JobClip]] = {job.id: [] for job in jobs}
+    publications_by_job: dict[uuid.UUID, list[TikTokPublication]] = {job.id: [] for job in jobs}
+    existing_outboxes: dict[uuid.UUID, JobStorageDeletion] = {}
+    if job_uuid_ids:
+        clips = (
+            (
+                await db.execute(
+                    select(JobClip).where(JobClip.job_id.in_(job_uuid_ids)).with_for_update()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for clip in clips:
+            clips_by_job.setdefault(clip.job_id, []).append(clip)
+        publications = (
+            (
+                await db.execute(
+                    select(TikTokPublication)
+                    .where(TikTokPublication.job_id.in_(job_uuid_ids))
+                    .with_for_update()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for publication in publications:
+            publications_by_job.setdefault(publication.job_id, []).append(publication)
+        outbox_rows = (
+            (
+                await db.execute(
+                    select(JobStorageDeletion)
+                    .where(JobStorageDeletion.job_id.in_(job_uuid_ids))
+                    .with_for_update()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        existing_outboxes = {row.job_id: row for row in outbox_rows}
+
+    # Account erasure cannot wait for an in-flight renderer. Externalize every
+    # exact path, private attempt receipt, and conservative job root before the
+    # Job row disappears. Prefixes remain dormant through the worker hard-limit
+    # window and are then verified empty by the durable outbox task.
+    storage_not_before = datetime.now(UTC) + ACCOUNT_ERASURE_STORAGE_QUIESCENCE
+    deletion_outbox_ids: list[uuid.UUID] = []
+    for job in jobs:
+        object_paths = _job_storage_paths(
+            job,
+            clips_by_job.get(job.id, []),
+            publications_by_job.get(job.id, []),
+            user_id=user.id,
+            linked_to_plan=False,
+        )
+        incoming = build_account_erasure_manifest_for_job(
+            job=job,
+            exact_paths=object_paths,
+            conservative_not_before=storage_not_before,
+        )
+        existing = existing_outboxes.get(job.id)
+        if existing is None:
+            existing = JobStorageDeletion(
+                id=uuid.uuid4(),
+                job_id=job.id,
+                object_paths=incoming.to_payload(),
+            )
+            db.add(existing)
+        else:
+            try:
+                merged = merge_job_storage_manifests(
+                    existing.object_paths,
+                    incoming,
+                    job_id=job.id,
+                )
+            except JobStorageManifestError:
+                # Corrupt private/outbox JSON must not hold an account hostage.
+                # The freshly rebuilt exact set plus every conservative prefix
+                # is the privacy-safe fallback after the Job row is gone.
+                merged = incoming
+            existing.object_paths = merged.to_payload()
+            existing.status = "pending"
+            existing.lease_until = None
+            existing.next_attempt_at = None
+            existing.last_error = None
+            existing.completed_at = None
+        deletion_outbox_ids.append(existing.id)
 
     # 1. Sever job → plan_item back-refs before the content_plan cascade fires.
     await db.execute(
@@ -2647,6 +2856,32 @@ async def confirm_account_deletion(
     await db.commit()
 
     from app.tasks.account_lifecycle import purge_user_storage  # noqa: PLC0415
+    from app.worker import celery_app  # noqa: PLC0415
+
+    if celery_task_ids:
+        try:
+            await run_in_threadpool(
+                celery_app.control.revoke,
+                celery_task_ids,
+                terminate=True,
+                signal="SIGTERM",
+            )
+        except Exception as exc:  # noqa: BLE001 — manifests own late bytes
+            log.warning(
+                "account_delete_revoke_failed",
+                user_id=str(user.id),
+                task_count=len(celery_task_ids),
+                error=str(exc),
+            )
+
+    for outbox_id in deletion_outbox_ids[:_ACCOUNT_DELETE_IMMEDIATE_OUTBOX_DISPATCH_LIMIT]:
+        await _delete_job_storage_after_commit(outbox_id)
+    if len(deletion_outbox_ids) > _ACCOUNT_DELETE_IMMEDIATE_OUTBOX_DISPATCH_LIMIT:
+        log.info(
+            "account_delete_outbox_dispatch_deferred",
+            user_id=str(user.id),
+            deferred=(len(deletion_outbox_ids) - _ACCOUNT_DELETE_IMMEDIATE_OUTBOX_DISPATCH_LIMIT),
+        )
 
     purge_user_storage.delay(str(user.id), job_ids, raw_paths)
 

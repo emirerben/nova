@@ -33,6 +33,7 @@ import {
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 
 import { SilenceCutStrip } from "./SilenceCutStrip";
+import { SpeechCleanupDiagnostics } from "./SpeechCleanupDiagnostics";
 import { Timeline } from "./Timeline";
 
 // Status values eligible for cancellation.
@@ -183,6 +184,7 @@ export default function JobDebugPage({
                 <TraceTab
                   events={(data.job.pipeline_trace ?? []) as PipelineTraceEvent[]}
                   summary={data.render_summary ?? null}
+                  assemblyPlan={data.job.assembly_plan}
                 />
               )}
               {tab === "raw" && <RawTab data={data} />}
@@ -584,14 +586,17 @@ function RecipeTab({ data }: { data: JobDebugResponse }): JSX.Element {
 function TraceTab({
   events,
   summary,
+  assemblyPlan,
 }: {
   events: PipelineTraceEvent[];
   summary: JobDebugResponse["render_summary"] | null;
+  assemblyPlan: unknown;
 }): JSX.Element {
   if (events.length === 0) {
     return (
       <div className="space-y-3">
         <RenderSummaryPanel summary={summary ?? null} />
+        <SpeechCleanupDiagnostics events={events} assemblyPlan={assemblyPlan} />
         <div className="rounded border border-zinc-800 px-4 py-8 text-center text-sm text-zinc-500">
           No pipeline events captured. Either this job pre-dates the trace
           feature, or no recorded decision points fired.
@@ -604,6 +609,7 @@ function TraceTab({
   return (
     <div className="space-y-3">
       <RenderSummaryPanel summary={summary ?? null} />
+      <SpeechCleanupDiagnostics events={events} assemblyPlan={assemblyPlan} />
       {sorted.map((ev, i) => {
         const color = STAGE_COLOR[ev.stage] ?? "bg-zinc-600/70";
         return (
