@@ -2597,10 +2597,11 @@ async def test_ready_revision_preparation_clears_pending_intent(
         active_plan={"version": 1, "plan_hash": "x" * 64},
     )
     job = SimpleNamespace(id=job_id, status="variants_ready")
+    call_order: list[str] = []
     db = Mock()
     db.get = AsyncMock(side_effect=[session, job])
-    db.commit = AsyncMock()
-    db.refresh = AsyncMock()
+    db.commit = AsyncMock(side_effect=lambda: call_order.append("commit"))
+    db.refresh = AsyncMock(side_effect=lambda _thread: call_order.append("refresh"))
     import app.routes.creation_threads as routes
 
     monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
@@ -2608,7 +2609,12 @@ async def test_ready_revision_preparation_clears_pending_intent(
     monkeypatch.setattr(routes, "reconcile_render_state", AsyncMock())
     monkeypatch.setattr(routes, "_agent_message", AsyncMock(return_value=thread))
     monkeypatch.setattr(routes, "_append", AsyncMock())
-    monkeypatch.setattr(routes, "_response", AsyncMock(return_value=thread))
+
+    async def response_after_reload(_db: AsyncSession, _thread: object) -> object:
+        call_order.append("response")
+        return thread
+
+    monkeypatch.setattr(routes, "_response", response_after_reload)
 
     await routes.action_thread(
         _request(),
@@ -2624,3 +2630,4 @@ async def test_ready_revision_preparation_clears_pending_intent(
     )
     assert "pending_revision_intent" not in thread.state
     assert thread.state["prepared_revision_job_id"] == str(job_id)
+    assert call_order[-3:] == ["commit", "refresh", "response"]
