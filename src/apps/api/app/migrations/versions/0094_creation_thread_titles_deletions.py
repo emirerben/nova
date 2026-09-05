@@ -4,8 +4,11 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision = "0093"
-down_revision = "0092"
+# ``0093`` is the storage-attempt index migration from origin/main.
+# Keep that deployed identity stable and apply the CreationThread lifecycle
+# additions as the next linear revision after the merge.
+revision = "0094"
+down_revision = "0093"
 branch_labels = None
 depends_on = None
 
