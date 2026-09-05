@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import ChatCreationWorkspace from "../_components/workspace/ChatCreationWorkspace";
 import SignInPrompt from "../_components/SignInPrompt";
@@ -9,7 +9,11 @@ import SignInPrompt from "../_components/SignInPrompt";
 function CreationThreadPageInner() {
   const { status } = useSession();
   const params = useParams<{ threadId: string }>();
-  const callbackUrl = `/plan/${params.threadId}`;
+  const searchParams = useSearchParams();
+  const query = searchParams.toString();
+  const callbackUrl = query
+    ? `/plan/${params.threadId}?${query}`
+    : `/plan/${params.threadId}`;
 
   if (status === "unauthenticated") {
     return <SignInPrompt callbackUrl={callbackUrl} />;

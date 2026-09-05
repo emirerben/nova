@@ -21,7 +21,7 @@ import {
 export function isChatFirstPlanPath(pathname: string): boolean {
   if (pathname === "/plan") return true;
   if (!pathname.startsWith("/plan/")) return false;
-  return !["items", "new", "persona", "style"].some((segment) =>
+  return !["items", "new", "persona", "style", "tiktok"].some((segment) =>
     pathname === `/plan/${segment}` || pathname.startsWith(`/plan/${segment}/`),
   );
 }

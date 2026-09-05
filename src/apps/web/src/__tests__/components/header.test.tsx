@@ -103,6 +103,15 @@ describe("Header — isLight predicate", () => {
     expect(container.querySelector("header")).toBeInTheDocument();
   });
 
+  it("keeps the global header on the TikTok connection surface", () => {
+    useSession.mockReturnValue({
+      data: { user: { name: "Test User", email: "test@example.com" } },
+      status: "authenticated",
+    });
+    const { container } = renderWithPathname("/plan/tiktok");
+    expect(container.querySelector("header")).toBeInTheDocument();
+  });
+
   it("test_header_light_on_library: /library is light", () => {
     const { container } = renderWithPathname("/library");
     const header = container.querySelector("header");
