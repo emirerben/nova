@@ -332,6 +332,7 @@ async def resolve_item_creator_context(
                 SoundEffect.status == "ready",
                 SoundEffect.published_at.is_not(None),
                 SoundEffect.archived_at.is_(None),
+                SoundEffect.audio_gcs_path.is_not(None),
             )
             .order_by(SoundEffect.published_at.desc(), SoundEffect.created_at.desc())
             .limit(max(0, 50 - len(catalog)))
@@ -473,6 +474,11 @@ def compile_active_plan(
         "opening_title": getattr(strategy, "opening_title", None),
         "font_family": getattr(strategy, "font_family", None),
         "text_color": getattr(strategy, "text_color", None),
+        "licensed_sfx": (
+            strategy.licensed_sfx.model_dump(mode="json")
+            if getattr(strategy, "licensed_sfx", None) is not None
+            else None
+        ),
         "target_duration_s": strategy.target_duration_s,
         "edit_plan": edit_plan.model_dump(mode="json", exclude_none=True),
     }

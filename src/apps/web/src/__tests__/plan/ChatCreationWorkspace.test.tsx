@@ -1,5 +1,5 @@
 import { StrictMode } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import ChatCreationWorkspace from "@/app/plan/_components/workspace/ChatCreationWorkspace";
 import {
@@ -351,6 +351,37 @@ describe("ChatCreationWorkspace", () => {
     ));
   });
 
+  it("keeps the last good cut playable when an editor replacement fails", async () => {
+    const failedReplacement = {
+      ...baseThread,
+      state: { format: "montage", edit_format: "montage", media_count: 1 },
+      active_plan_item_id: "item-1",
+      active_job_id: "job-1",
+      job: {
+        id: "job-1",
+        status: "variants_ready",
+        variants: [{
+          variant_id: "guided_story",
+          render_status: "failed",
+          render_generation_id: "generation-2",
+          output_url: "/last-good-cut.mp4",
+        }],
+      },
+      events: [],
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([failedReplacement]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(failedReplacement);
+
+    render(<ChatCreationWorkspace />);
+
+    expect(await screen.findByText("Partially ready", { selector: "div" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Download" })).toHaveAttribute(
+      "href",
+      "/last-good-cut.mp4",
+    );
+    expect(screen.getByRole("button", { name: /Retry failed variant/i })).toBeInTheDocument();
+  });
+
   it("selects a ready variant through the typed action before playing it", async () => {
     const ready = {
       ...baseThread,
@@ -508,8 +539,330 @@ describe("ChatCreationWorkspace", () => {
     ));
   });
 
+  it("polls a confirmed Creator turn before its Job exists and discovers the exact Job", async () => {
+    const preparing = {
+      ...baseThread,
+      revision: 4,
+      state: {
+        format: "montage",
+        edit_format: "montage",
+        media: [{ media_id: "m1" }],
+        media_count: 1,
+        creator_agent: { status: "executing" },
+        generation: { status: "queued" },
+      },
+      active_plan_item_id: "item-1",
+      active_creator_agent_session_id: "creator-1",
+      events: [{
+        id: "confirmed",
+        sequence: 1,
+        revision: 4,
+        role: "assistant" as const,
+        event_type: "agent_assistant_strategy",
+        content: "Use every clip once.",
+        payload: null,
+        created_at: "2026-01-01T00:00:00Z",
+      }],
+    };
+    const ready = {
+      ...preparing,
+      creator_agent: { status: "awaiting_feedback" },
+      state: { ...preparing.state, creator_agent: { status: "awaiting_feedback" }, generation: { status: "ready", job_id: "job-1" } },
+      active_job_id: "job-1",
+      job: { id: "job-1", status: "variants_ready", variants: [{ variant_id: "original_text", render_status: "ready", output_url: "/cut.mp4" }] },
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([preparing]);
+    jest.mocked(refreshCreationThread).mockResolvedValueOnce(ready);
+
+    render(<ChatCreationWorkspace />);
+
+    expect(await screen.findByRole("button", { name: "Play" })).toBeInTheDocument();
+    expect(refreshCreationThread).toHaveBeenCalledWith("thread-1");
+  });
+
+  it("does not let a delayed send overwrite a newer status poll", async () => {
+    jest.useFakeTimers();
+    const rendering = {
+      ...baseThread,
+      active_plan_item_id: "item-1",
+      active_job_id: "job-1",
+      job: { id: "job-1", status: "processing", variants: [] },
+    };
+    const freshPoll = {
+      ...rendering,
+      events: [...rendering.events, {
+        id: "fresh-poll",
+        sequence: 1,
+        revision: 1,
+        role: "assistant" as const,
+        event_type: "agent_assistant_execution",
+        content: "Fresh poll state",
+        payload: null,
+        created_at: "2026-01-01T00:00:01Z",
+      }],
+    };
+    const staleSend = {
+      ...rendering,
+      events: [...rendering.events, {
+        id: "stale-send",
+        sequence: 1,
+        revision: 1,
+        role: "assistant" as const,
+        event_type: "agent_assistant_execution",
+        content: "Stale send state",
+        payload: null,
+        created_at: "2026-01-01T00:00:01Z",
+      }],
+    };
+    let resolvePoll!: (value: typeof freshPoll) => void;
+    let resolveSend!: (value: typeof staleSend) => void;
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([rendering]);
+    jest.mocked(refreshCreationThread)
+      .mockResolvedValueOnce(rendering)
+      .mockResolvedValueOnce(rendering)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolvePoll = resolve; }));
+    jest.mocked(sendCreationMessage).mockImplementationOnce(() => new Promise((resolve) => { resolveSend = resolve; }));
+
+    try {
+      render(<ChatCreationWorkspace />);
+      await waitFor(() => expect(refreshCreationThread).toHaveBeenCalledTimes(2));
+      const composer = await screen.findByRole("textbox", { name: "Message Kria" });
+      fireEvent.change(composer, { target: { value: "Keep the opening warm" } });
+      fireEvent.keyDown(composer, { key: "Enter" });
+
+      await act(async () => { jest.advanceTimersByTime(2500); });
+      await waitFor(() => expect(refreshCreationThread).toHaveBeenCalledTimes(3));
+      await act(async () => { resolvePoll(freshPoll); });
+      expect(await screen.findByText("Fresh poll state")).toBeInTheDocument();
+
+      await act(async () => { resolveSend(staleSend); });
+      expect(screen.getByText("Fresh poll state")).toBeInTheDocument();
+      expect(screen.queryByText("Stale send state")).not.toBeInTheDocument();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("does not poll a stale rendering variant after the parent Job fails", async () => {
+    const failed = {
+      ...baseThread,
+      state: { ...baseThread.state, edit_format: "montage", media_count: 1 },
+      active_plan_item_id: "item-1",
+      active_job_id: "job-1",
+      job: {
+        id: "job-1",
+        status: "processing_failed",
+        variants: [{ variant_id: "original_text", render_status: "rendering", output_url: null }],
+      },
+      events: [],
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([failed]);
+    jest.mocked(refreshCreationThread).mockResolvedValueOnce(failed);
+
+    render(<ChatCreationWorkspace />);
+
+    expect(await screen.findByText("Render needs attention")).toBeInTheDocument();
+    expect(screen.queryByText("Kria is building your first cut…")).not.toBeInTheDocument();
+    expect(refreshCreationThread).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides duplicate confirmation while a pre-Job Creator turn is executing", async () => {
+    const preparing = {
+      ...baseThread,
+      state: {
+        format: "montage",
+        edit_format: "montage",
+        media: [{ media_id: "m1" }],
+        media_count: 1,
+        creator_agent: { status: "executing" },
+      },
+      active_plan_item_id: "item-1",
+      active_creator_agent_session_id: "creator-1",
+      events: [{
+        id: "direction",
+        sequence: 1,
+        revision: 2,
+        role: "assistant" as const,
+        event_type: "agent_assistant_strategy",
+        content: "Ready to render.",
+        payload: null,
+        created_at: "2026-01-01T00:00:00Z",
+      }],
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([preparing]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(preparing);
+
+    render(<ChatCreationWorkspace />);
+
+    expect((await screen.findAllByText("Preparing")).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "Create this video" })).not.toBeInTheDocument();
+  });
+
+  it("shows reconnecting copy when an in-flight status poll fails", async () => {
+    const rendering = {
+      ...baseThread,
+      active_plan_item_id: "item-1",
+      active_job_id: "job-1",
+      job: { id: "job-1", status: "processing", variants: [] },
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([rendering]);
+    jest.mocked(refreshCreationThread)
+      .mockResolvedValueOnce(rendering)
+      .mockRejectedValueOnce(new Error("network down"));
+
+    render(<ChatCreationWorkspace />);
+
+    expect(await screen.findByText("Reconnecting to render status…")).toBeInTheDocument();
+    expect(refreshCreationThread).toHaveBeenCalledWith("thread-1");
+  });
+
+  it("cancels a failed poll retry when the workspace unmounts", async () => {
+    jest.useFakeTimers();
+    const rendering = {
+      ...baseThread,
+      active_plan_item_id: "item-1",
+      active_job_id: "job-1",
+      job: { id: "job-1", status: "processing", variants: [] },
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([rendering]);
+    jest.mocked(refreshCreationThread)
+      .mockResolvedValueOnce(rendering)
+      .mockRejectedValueOnce(new Error("network down"));
+
+    try {
+      const view = render(<ChatCreationWorkspace />);
+      expect(await screen.findByText("Reconnecting to render status…")).toBeInTheDocument();
+      expect(refreshCreationThread).toHaveBeenCalledTimes(2);
+
+      view.unmount();
+      act(() => jest.advanceTimersByTime(5000));
+      expect(refreshCreationThread).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("does not start a status poll after an authoritative ready response", async () => {
+    const ready = {
+      ...baseThread,
+      state: { ...baseThread.state, edit_format: "montage" },
+      active_plan_item_id: "item-1",
+      active_job_id: "job-1",
+      job: {
+        id: "job-1",
+        status: "variants_ready",
+        variants: [{ variant_id: "original_text", render_status: "ready", output_url: "/cut.mp4" }],
+      },
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([ready]);
+    jest.mocked(refreshCreationThread).mockResolvedValueOnce(ready);
+
+    render(<ChatCreationWorkspace />);
+
+    expect(await screen.findByRole("button", { name: "Play" })).toBeInTheDocument();
+    await act(async () => { await Promise.resolve(); });
+    expect(refreshCreationThread).toHaveBeenCalledTimes(1);
+  });
+
+  it("tracks the exact embedded-editor generation and rejects a late stale refresh", async () => {
+    const oldReady = {
+      ...baseThread,
+      state: { ...baseThread.state, edit_format: "montage" },
+      active_plan_item_id: "item-1",
+      active_job_id: "job-1",
+      job: {
+        id: "job-1",
+        status: "variants_ready",
+        variants: [{
+          variant_id: "guided_story",
+          render_status: "ready",
+          render_generation_id: "generation-1",
+          output_url: "/old-cut.mp4",
+        }],
+      },
+    };
+    const rendering = {
+      ...oldReady,
+      job: {
+        ...oldReady.job,
+        variants: [{
+          ...oldReady.job.variants[0],
+          render_status: "rendering",
+          render_generation_id: "generation-2",
+        }],
+      },
+    };
+    const newReady = {
+      ...oldReady,
+      job: {
+        ...oldReady.job,
+        variants: [{
+          ...oldReady.job.variants[0],
+          render_status: "ready",
+          render_generation_id: "generation-2",
+          render_finished_at: "2026-01-01T00:02:00Z",
+          output_url: "/new-cut.mp4",
+        }],
+      },
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([oldReady]);
+    jest.mocked(refreshCreationThread).mockResolvedValueOnce(oldReady);
+
+    render(<ChatCreationWorkspace />);
+    const frame = await screen.findByTitle("Full video editor");
+    jest.useFakeTimers();
+
+    try {
+      let resolveStale!: (value: typeof oldReady) => void;
+      let resolveFresh!: (value: typeof rendering) => void;
+      jest.mocked(refreshCreationThread).mockReset();
+      jest.mocked(refreshCreationThread)
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveStale = resolve; }))
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveFresh = resolve; }))
+        .mockResolvedValue(newReady);
+
+      act(() => {
+        window.dispatchEvent(new MessageEvent("message", {
+          origin: window.location.origin,
+          source: (frame as HTMLIFrameElement).contentWindow,
+          data: {
+            type: "nova:embedded-editor-leave",
+            refresh: true,
+            variant_id: "guided_story",
+            render_generation_id: "generation-2",
+          },
+        }));
+      });
+
+      expect(await screen.findByText("Kria is building your first cut…")).toBeInTheDocument();
+      await waitFor(() => expect(refreshCreationThread).toHaveBeenCalledTimes(2));
+
+      await act(async () => { resolveFresh(rendering); });
+      await act(async () => {
+        jest.advanceTimersByTime(2500);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(refreshCreationThread).toHaveBeenCalledTimes(3);
+      expect(await screen.findByRole("link", { name: "Download" })).toHaveAttribute(
+        "href",
+        "/new-cut.mp4",
+      );
+
+      // The first post-Save request returns last with the pre-Save generation.
+      // It must not overwrite the already-observed replacement generation.
+      await act(async () => { resolveStale(oldReady); });
+      expect(screen.getByRole("link", { name: "Download" })).toHaveAttribute(
+        "href",
+        "/new-cut.mp4",
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it("reloads a stale chat revision while keeping the composer draft", async () => {
-    jest.mocked(sendCreationMessage).mockRejectedValueOnce(new CreationThreadError("stale", 409));
+    jest.mocked(sendCreationMessage).mockRejectedValueOnce(new CreationThreadError("Creation thread changed", 409));
     render(<ChatCreationWorkspace />);
     const composer = await screen.findByRole("textbox", { name: "Message Kria" });
     fireEvent.change(composer, { target: { value: "Keep this intimate" } });
@@ -517,6 +870,18 @@ describe("ChatCreationWorkspace", () => {
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/changed in another window/i));
     expect(composer).toHaveValue("Keep this intimate");
     expect(refreshCreationThread).toHaveBeenCalledWith("thread-1");
+  });
+
+  it("shows a specific busy conflict without stale-window copy", async () => {
+    jest.mocked(sendCreationMessage).mockRejectedValueOnce(new CreationThreadError("Creator session is busy", 409));
+    render(<ChatCreationWorkspace />);
+    const composer = await screen.findByRole("textbox", { name: "Message Kria" });
+    fireEvent.change(composer, { target: { value: "Make it warmer" } });
+    fireEvent.keyDown(composer, { key: "Enter" });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Creator session is busy");
+    expect(screen.getByRole("alert")).not.toHaveTextContent(/another window/i);
+    expect(composer).toHaveValue("Make it warmer");
   });
 
   it("offers the shared voice recorder for Narrated projects", async () => {

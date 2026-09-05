@@ -61,6 +61,11 @@ from app.agents.retake_detector import (
 from app.agents.scene_matcher import SceneMatcherInput, SceneMatcherOutput
 from app.agents.sequence_emphasis import SequenceEmphasisInput, SequenceEmphasisOutput
 from app.agents.sequence_quote_writer import SequenceQuoteOutput, quote_structural_failures
+from app.agents.sfx_placement import (
+    MAX_SFX_PLACEMENTS,
+    SfxPlacementInput,
+    SfxPlacementOutput,
+)
 from app.agents.shot_ranker import ShotRankerInput, ShotRankerOutput
 from app.agents.smart_edit_planner import SmartEditPlannerInput, SmartEditPlannerOutput
 from app.agents.song_classifier import SongClassifierOutput
@@ -1344,6 +1349,50 @@ def check_sequence_quote(output: SequenceQuoteOutput) -> list[str]:
     return quote_structural_failures(output.quote)
 
 
+def check_sfx_placement(
+    output: SfxPlacementOutput,
+    input: SfxPlacementInput,  # noqa: A002
+) -> list[str]:
+    """Keep SFX suggestions inside the server-supplied evidence envelope.
+
+    The SFX agent only selects a catalog effect and an evidence mark. The
+    materializer owns the final policy, but replay/live evals should catch a
+    prompt regression before that layer has to discard every suggestion.
+    """
+
+    failures: list[str] = []
+    known_effect_ids = {effect.effect_id for effect in input.effects}
+    marks = {
+        round(float(mark), 2)
+        for record in [*input.words, *input.pauses, *input.moments]
+        for mark in (
+            record.get("start_s", record.get("s")),
+            record.get("end_s", record.get("e")),
+        )
+        if mark is not None
+    }
+    if len(output.placements) > MAX_SFX_PLACEMENTS:
+        failures.append(
+            f"{len(output.placements)} placements exceeds MAX_SFX_PLACEMENTS={MAX_SFX_PLACEMENTS}"
+        )
+    ordered_at: list[float] = []
+    for index, placement in enumerate(output.placements):
+        if placement.effect_id not in known_effect_ids:
+            failures.append(f"placement {index}: unknown effect_id={placement.effect_id!r}")
+        at_s = float(placement.at_s)
+        ordered_at.append(at_s)
+        if round(at_s, 2) not in marks:
+            failures.append(
+                f"placement {index}: at_s={at_s:.2f} is not a supplied word/pause/moment mark"
+            )
+        if input.duration_s - at_s < 0.5:
+            failures.append(f"placement {index}: at_s={at_s:.2f} violates the 0.5s end keepout")
+    for earlier, later in zip(sorted(ordered_at), sorted(ordered_at)[1:]):
+        if later - earlier < 1.5:
+            failures.append(f"placements are {later - earlier:.2f}s apart; minimum spacing is 1.5s")
+    return failures
+
+
 def check_retake_detector(
     output: RetakeDetectorOutput,
     input: RetakeDetectorInput,  # noqa: A002
@@ -2412,13 +2461,37 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
             ):
                 failures.append("sport label request was not preserved exactly")
         if "emir olympics" in normalized_request:
-            if action.strategy.opening_title != "Emir Olympics":
+            expected_title = (
+                "Emir Olympics. Ann Arbor 2022."
+                if "ann arbor 2022" in normalized_request
+                else "Emir Olympics"
+            )
+            if action.strategy.opening_title != expected_title:
                 failures.append("explicit opening title was not preserved exactly")
             if "rascal" in normalized_request and action.strategy.font_family != "Rascal":
                 failures.append("explicit title font was not preserved exactly")
             if "yellow" in normalized_request and action.strategy.text_color != "#FFD24A":
                 failures.append("explicit title color was not preserved exactly")
+        if "fah" in normalized_request and "sound effect" in normalized_request:
+            intent = action.strategy.licensed_sfx
+            if intent is None:
+                failures.append("explicit Fah request was dropped from typed licensed_sfx intent")
+            else:
+                if intent.effect_id != "sfx-fah":
+                    failures.append(
+                        f"Fah request resolved to unexpected effect_id={intent.effect_id!r}"
+                    )
+                if intent.semantics != "funny_moments":
+                    failures.append("Fah request does not use funny_moments semantics")
+                if not 1 <= intent.max_placements <= 6:
+                    failures.append("Fah max_placements is outside [1, 6]")
+                if "sfx" in action.strategy.optional_treatments:
+                    failures.append("explicit Fah request silently degraded to optional sfx")
         return failures
+    if agent_name == "nova.compose.sfx_placement":
+        if not isinstance(output, SfxPlacementOutput) or not isinstance(input, SfxPlacementInput):
+            return ["sfx placement input/output type mismatch"]
+        return check_sfx_placement(output, input)
     if agent_name == "nova.plan.conformance_feedback":
         return check_conformance_feedback(output)
     if agent_name == "nova.video.style_observation":

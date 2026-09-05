@@ -25,6 +25,11 @@ from pydantic import (
 )
 
 from app.agents._schemas.edit_format import EditFormat, RenderProgram
+from app.agents._schemas.sfx_intent import (
+    CreatorSfxIntent,
+    LicensedSfxIntent,
+    SfxIntent,
+)
 from app.schemas.edit_proposal import (
     BeatLayout,
     MixedMediaTimingProfile,
@@ -282,6 +287,13 @@ class CreativeStrategy(_CreatorModel):
     render_program: RenderProgram = "guided"
     selected_media_ids: list[str] = Field(default_factory=list, max_length=MAX_CREATOR_MEDIA_REFS)
     optional_treatments: list[OptionalTreatment] = Field(default_factory=list, max_length=4)
+    # A named licensed effect is an explicit, required treatment. It is kept
+    # separate from optional_treatments so an unavailable named effect cannot
+    # silently degrade to a generic SFX suggestion.
+    licensed_sfx: LicensedSfxIntent | None = Field(
+        default=None,
+        validation_alias=AliasChoices("licensed_sfx", "sfx_intent"),
+    )
     mixed_media_timing: MixedMediaTimingProfile | None = None
     montage_audio: MontageAudioPlan | None = None
     montage_cadence: MontageCadenceConstraint | None = Field(
@@ -352,6 +364,12 @@ class CreativeStrategy(_CreatorModel):
         if len(values) != len(set(values)):
             raise ValueError("optional_treatments must not contain duplicates")
         return values
+
+    @property
+    def sfx_intent(self) -> LicensedSfxIntent | None:
+        """Compatibility accessor for the strategy's typed SFX intent."""
+
+        return self.licensed_sfx
 
     @property
     def pace(self) -> CreativePace:
@@ -1037,6 +1055,7 @@ __all__ = [
     "CreatorEditPlan",
     "CreatorLimits",
     "CreatorMediaRef",
+    "CreatorSfxIntent",
     "ContextLabelIntent",
     "CreatorRevisionProposal",
     "CreatorReviewEvidence",
@@ -1049,6 +1068,8 @@ __all__ = [
     "CreatorWorkspaceRelevanceDecision",
     "CreatorWorkspaceRelevanceProposal",
     "CreativeStrategy",
+    "LicensedSfxIntent",
+    "SfxIntent",
     "MixedMediaTimingProfile",
     "DispatchRenderCommand",
     "DraftGuidedProposalCommand",

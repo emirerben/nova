@@ -25,6 +25,7 @@ import copy
 import math
 import os
 import re
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -7758,6 +7759,38 @@ def require_guided_story_editor_commit(
         _require_guided_story_text_ids(variant, payload.text_elements)
 
 
+_EDITOR_RENDER_ATTEMPT_LEASE_S = 180.0
+
+
+def editor_commit_render_task_id(job_id: str, variant_id: str, generation: str) -> str:
+    """Return the bounded deterministic Celery id for one editor generation."""
+
+    digest = uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        f"nova:editor-render:{job_id}:{variant_id}:{generation}",
+    ).hex
+    # Reuse the durable creator-craft claim implementation in the worker. The
+    # suffix is a digest rather than user-controlled variant text so task ids
+    # stay bounded and safe to expose to Celery inspection.
+    return f"creator-craft-editor-{digest}"
+
+
+def _stamp_editor_render_attempt(
+    variant: dict, *, job_id: str, variant_id: str, generation: str
+) -> str:
+    """Persist a short recovery lease before an editor render is published."""
+
+    task_id = editor_commit_render_task_id(job_id, variant_id, generation)
+    now_epoch_s = time.time()
+    variant["editor_render_attempt"] = {
+        "generation_id": generation,
+        "task_id": task_id,
+        "dispatched_at_epoch_s": now_epoch_s,
+        "lease_expires_at_epoch_s": now_epoch_s + _EDITOR_RENDER_ATTEMPT_LEASE_S,
+    }
+    return task_id
+
+
 def prepare_editor_commit(
     job: Job,
     variant_id: str,
@@ -7838,8 +7871,33 @@ def prepare_editor_commit(
             )
         if payload.base_generation != variant_render_baseline(variant):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="baseline_conflict")
+        # The prior Save already persisted this exact revision/generation but
+        # its broker publish failed. Re-arm that same generation before the
+        # post-commit retry enqueue so status polling cannot observe a terminal
+        # failure and conclude the retry already finished.
+        variants = list((job.assembly_plan or {}).get("variants") or [])
+        for index, value in enumerate(variants):
+            if value.get("variant_id") != variant_id:
+                continue
+            rearmed = dict(value)
+            rearmed.pop("error", None)
+            rearmed.pop("error_class", None)
+            rearmed.pop("creator_craft_claim", None)
+            rearmed["ok"] = None
+            stamp_variant_attempt(rearmed)
+            render_task_id = _stamp_editor_render_attempt(
+                rearmed,
+                job_id=str(job.id),
+                variant_id=variant_id,
+                generation=variant_render_baseline(variant),
+            )
+            variants[index] = rearmed
+            job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+            mark_reattempt(job)
+            break
         return {
             "generation": variant_render_baseline(variant),
+            "render_task_id": render_task_id,
             "guided_revision": current,
             "guided_revision_render": True,
             "has_render_section": True,
@@ -8822,6 +8880,12 @@ def prepare_editor_commit(
             # overwrite any write made to the original dict. This is the primary
             # Save path for both the item page and the pocket editor.
             stamp_variant_attempt(updated)
+            render_task_id = _stamp_editor_render_attempt(
+                updated,
+                job_id=str(job.id),
+                variant_id=variant_id,
+                generation=new_gen,
+            )
             mark_reattempt(job)
         if base_affecting_commit:
             # A newer text-only commit is allowed to supersede this render.
@@ -8849,6 +8913,7 @@ def prepare_editor_commit(
 
     return {
         "generation": new_gen or payload.base_generation,
+        "render_task_id": render_task_id if new_gen is not None else None,
         "guided_revision": guided_revision if guided_v2 else None,
         "guided_revision_render": bool(guided_v2 and guided_revision),
         "revision_number": (
@@ -8932,6 +8997,15 @@ def enqueue_editor_commit_render(
     """
     if not prep["has_render_section"]:
         return
+    task_id = (
+        task_id
+        or prep.get("render_task_id")
+        or editor_commit_render_task_id(
+            job_id,
+            variant_id,
+            str(prep["generation"]),
+        )
+    )
     if prep.get("guided_revision_render"):
         from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 

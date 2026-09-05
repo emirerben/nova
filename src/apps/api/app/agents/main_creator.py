@@ -29,7 +29,7 @@ from app.schemas.edit_proposal import (
     rejects_round_robin_cadence,
 )
 
-MAIN_CREATOR_PROMPT_VERSION = "2026-09-03-v12"
+MAIN_CREATOR_PROMPT_VERSION = "2026-09-05-v13"
 
 
 class MainCreatorInput(BaseModel):

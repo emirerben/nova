@@ -38,6 +38,7 @@ Design notes:
 
 from __future__ import annotations
 
+import hashlib
 import math
 import os
 import re
@@ -106,6 +107,17 @@ from app.pipeline.text_overlay import (
     _validate_overlay,
 )
 from app.pipeline.text_wrap import balanced_word_wrap_indices
+
+
+def _sha256_file(path: str) -> str:
+    """Return a stable digest for strict render-artifact comparisons."""
+
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
 
 log = structlog.get_logger()
 
@@ -3955,6 +3967,7 @@ def _ffmpeg_burn_pngs(
     output_path: str,
     *,
     canvas: Canvas = PORTRAIT,
+    strict: bool = False,
 ) -> None:
     """Build and run the FFmpeg command that overlays PNG sequences onto
     `input_video`. Uses image2 demuxer for animated sequences (one input per
@@ -4041,9 +4054,11 @@ def _ffmpeg_burn_pngs(
             elapsed_ms=burn_elapsed_ms,
             stderr=result.stderr.decode(errors="replace")[-500:],
         )
+        if strict:
+            raise RuntimeError(f"Skia text burn failed with ffmpeg exit code {result.returncode}")
         # Mirror the Pillow burn's failure handling: copy through so the rest
         # of the pipeline keeps going. A failed text burn shouldn't kill the
-        # whole job.
+        # whole job. Strict guided renders opt out above and fail closed.
         shutil.copy2(input_video, output_path)
     else:
         log.info(
@@ -4309,6 +4324,7 @@ def burn_text_overlays_skia_with_evidence(
     """Strict guided burn returning per-TextElement rendered-alpha evidence."""
 
     _validate_input_canvas(input_path, canvas, input_probe=input_probe)
+    input_sha256 = _sha256_file(input_path)
     sequences, work_dir = render_text_overlay_sequences(
         overlays,
         tmpdir,
@@ -4322,9 +4338,25 @@ def burn_text_overlays_skia_with_evidence(
             canvas=canvas,
         )
         if not sequences:
-            shutil.copy2(input_path, output_path)
-            return evidence
-        _ffmpeg_burn_pngs(input_path, sequences, output_path, **_canvas_kwargs(canvas))
+            raise RuntimeError("strict guided text burn produced no renderable overlays")
+        # `_ffmpeg_burn_pngs` intentionally remains fail-open for the generic
+        # renderer.  A guided story is receipt-backed, so ask it to fail closed
+        # and then verify the bytes that actually came out of FFmpeg.  This
+        # catches both a subprocess failure and a mocked/alternate renderer
+        # that silently copied the clean text-stage input through.
+        _ffmpeg_burn_pngs(
+            input_path,
+            sequences,
+            output_path,
+            strict=True,
+            **_canvas_kwargs(canvas),
+        )
+        if (
+            not os.path.exists(output_path)
+            or os.path.getsize(output_path) <= 0
+            or _sha256_file(output_path) == input_sha256
+        ):
+            raise RuntimeError("strict guided text burn produced a copy-through artifact")
         return evidence
     finally:
         if work_dir:

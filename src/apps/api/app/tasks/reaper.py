@@ -40,7 +40,7 @@ from sqlalchemy import and_, func, literal_column, or_, select, update
 from app.database import sync_session
 from app.models import Job
 from app.services.durable_attempt_cleanup import reconcile_storage_attempt_cleanup
-from app.services.queue_state import get_live_job_index
+from app.services.queue_state import get_live_job_index, get_task_runtime_state
 from app.services.speech_cleanup_terminal import terminalize_required_speech_generations
 
 log = structlog.get_logger()
@@ -89,6 +89,7 @@ _STUCK_VARIANT_STATUSES = ("rendering", "pending")
 # below then limits the bounded ID-only discovery page to rows with repairable
 # state instead of loading every recent terminal assembly plan.
 _RECONCILE_LOOKBACK_DAYS = 7
+_EDITOR_RENDER_SCAN_AGE_S = 180
 
 # Keep the terminal-job watchdog bounded even when the seven-day window contains
 # a large fleet of completed jobs. Discovery reads IDs only; each candidate is
@@ -379,22 +380,65 @@ def reap_orphans(
     return count
 
 
-def _finalize_stuck_variant(v: dict) -> dict:
+def _expired_editor_render_attempt(v: dict, now_epoch_s: float) -> bool:
+    """Return whether a still-current editor generation has lost its lease."""
+
+    attempt = v.get("editor_render_attempt") if isinstance(v, dict) else None
+    if not isinstance(attempt, dict):
+        return False
+    if str(attempt.get("generation_id") or "") != str(v.get("render_generation_id") or ""):
+        return False
+    try:
+        expires_at = float(attempt.get("lease_expires_at_epoch_s"))
+    except (TypeError, ValueError):
+        return False
+    return expires_at <= now_epoch_s
+
+
+def _editor_render_task_is_absent(celery_app: Celery, v: dict) -> bool:
+    """Confirm an expired editor task is absent from both possible queues.
+
+    Active/reserved work is already excluded by the job-level live index. This
+    broker scan closes the remaining gap: an unreserved task can wait in Redis
+    behind a busy or stopped worker and must never be mistaken for a dead one.
+    Unknown/deep queue state fails safe and defers recovery to the next sweep.
+    """
+
+    attempt = v.get("editor_render_attempt") if isinstance(v, dict) else None
+    task_id = str((attempt or {}).get("task_id") or "")
+    if not task_id:
+        return False
+    for queue_name in ("celery", "overlay-jobs"):
+        state = get_task_runtime_state(celery_app, task_id, queue_name=queue_name).state
+        if state != "not_found":
+            return False
+    return True
+
+
+def _finalize_stuck_variant(v: dict, *, failed_replacement: bool = False) -> dict:
     """Flip a single stuck variant to a terminal render_status.
 
     A variant that already has a last-good rendered video (`video_path`) is
-    flipped to "ready" — the file is playable; only the status was frozen.
-    One with no output is a "failed" render.
+    flipped to "ready" only for legacy status drift. An expired, generation-
+    stamped editor replacement is failed while retaining that playable path,
+    so the old artifact is never presented as if it contained the saved edit.
     """
     if not isinstance(v, dict) or v.get("render_status") not in _STUCK_VARIANT_STATUSES:
         return v
-    if v.get("video_path"):
+    if v.get("video_path") and not failed_replacement:
         return {**v, "render_status": "ready", "ok": True}
     return {
         **v,
         "render_status": "failed",
         "ok": False,
-        "error": v.get("error") or "render interrupted: worker died (reaped as stuck)",
+        "error": v.get("error")
+        or (
+            "Your saved edit could not finish rendering. The previous video is still available."
+            if failed_replacement and v.get("video_path")
+            else "render interrupted: worker died (reaped as stuck)"
+        ),
+        "error_class": v.get("error_class")
+        or ("render_worker_lost" if failed_replacement else None),
     }
 
 
@@ -430,16 +474,26 @@ def reconcile_stuck_variants(
 
     now = datetime.now(UTC)
     cutoff = now - timedelta(minutes=threshold_min)
+    editor_scan_cutoff = now - timedelta(seconds=_EDITOR_RENDER_SCAN_AGE_S)
     lookback = now - timedelta(days=_RECONCILE_LOOKBACK_DAYS)
 
     state_predicate = _terminal_reconcile_state_predicate()
+    editor_state_predicate = Job.assembly_plan.op("@?")(
+        literal_column(
+            '\'$.variants[*] ? (@.render_status == "rendering" '
+            "&& @.editor_render_attempt)'::jsonpath"
+        )
+    )
+    repairable_state_predicate = or_(
+        and_(Job.updated_at < cutoff, state_predicate),
+        and_(Job.updated_at < editor_scan_cutoff, editor_state_predicate),
+    )
     discovery_clauses = [
         Job.status.notin_(_NON_TERMINAL_STATUSES),
         Job.status != "cancelled",
-        Job.updated_at < cutoff,
         Job.updated_at >= lookback,
         Job.assembly_plan.isnot(None),
-        state_predicate,
+        repairable_state_predicate,
     ]
     live_job_uuids: list[uuid.UUID] = []
     for raw_job_id in live:
@@ -476,15 +530,14 @@ def reconcile_stuck_variants(
             # after discovery. SKIP LOCKED prevents concurrent sweepers from
             # queueing behind a creator mutation or another watchdog.
             locked_row = db.execute(
-                select(Job.id, Job.assembly_plan, Job.pipeline_trace)
+                select(Job.id, Job.assembly_plan, Job.updated_at, Job.pipeline_trace)
                 .where(
                     Job.id == candidate_id,
                     Job.status.notin_(_NON_TERMINAL_STATUSES),
                     Job.status != "cancelled",
-                    Job.updated_at < cutoff,
                     Job.updated_at >= lookback,
                     Job.assembly_plan.isnot(None),
-                    _terminal_reconcile_state_predicate(),
+                    repairable_state_predicate,
                 )
                 .with_for_update(skip_locked=True)
                 .limit(1)
@@ -492,7 +545,7 @@ def reconcile_stuck_variants(
             if locked_row is None:
                 db.commit()
                 continue
-            job_id_val, assembly_plan, pipeline_trace = locked_row
+            job_id_val, assembly_plan, job_updated_at, pipeline_trace = locked_row
             # A re-render actively running on a live worker is NEVER reaped.
             if live and str(job_id_val) in live:
                 db.commit()
@@ -534,7 +587,31 @@ def reconcile_stuck_variants(
                     fixed_job_ids.append(job_id_val)
                 db.commit()
                 continue
-            new_variants = [_finalize_stuck_variant(v) for v in variants]
+            row_is_generically_stale = job_updated_at < cutoff
+            now_epoch_s = now.timestamp()
+            new_variants = []
+            failed_replacement_seen = False
+            for value in variants:
+                attempt = value.get("editor_render_attempt") if isinstance(value, dict) else None
+                has_editor_attempt = isinstance(attempt, dict) and str(
+                    attempt.get("generation_id") or ""
+                ) == str(value.get("render_generation_id") or "")
+                if has_editor_attempt and _expired_editor_render_attempt(value, now_epoch_s):
+                    # Lease expiry alone is not proof of worker death. A task
+                    # may still be queued, reserved, active, or invisible while
+                    # the broker is recovering, so require an absent result from
+                    # every editor queue before failing the replacement.
+                    if _editor_render_task_is_absent(celery_app, value):
+                        failed_replacement_seen = True
+                        new_variants.append(_finalize_stuck_variant(value, failed_replacement=True))
+                    else:
+                        new_variants.append(value)
+                elif has_editor_attempt:
+                    new_variants.append(value)
+                elif row_is_generically_stale:
+                    new_variants.append(_finalize_stuck_variant(value))
+                else:
+                    new_variants.append(value)
             final_plan = (
                 {**recovered_plan, "variants": new_variants}
                 if new_variants != variants
@@ -544,6 +621,8 @@ def reconcile_stuck_variants(
                 values = {"assembly_plan": final_plan}
                 if final_trace != pipeline_trace:
                     values["pipeline_trace"] = final_trace
+                if failed_replacement_seen:
+                    values["status"] = "variants_ready_partial"
                 db.execute(
                     update(Job)
                     .where(Job.id == job_id_val, Job.status != "cancelled")

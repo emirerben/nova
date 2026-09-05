@@ -15,7 +15,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
+
+from app.agents._schemas.sfx_intent import LicensedSfxIntent
 
 ProposalStatus = Literal[
     "briefing",
@@ -612,6 +614,14 @@ class EditProposalSnapshot(BaseModel):
             "fullscreen uses the established cover crop."
         ),
     )
+    # Confirmed licensed-SFX intent is part of the immutable proposal. It is
+    # not represented as optional_treatments: a named effect must either be
+    # materialized from this exact catalog identity or fail visibly.
+    licensed_sfx: LicensedSfxIntent | None = Field(
+        default=None,
+        validation_alias=AliasChoices("licensed_sfx", "sfx_intent"),
+        exclude_if=lambda value: value is None,
+    )
 
     @field_validator("font_family")
     @classmethod
@@ -933,6 +943,11 @@ class ProposalBrief(BaseModel):
     text_color: str | None = Field(default=None, max_length=16)
     image_layout: BeatLayout | None = Field(
         default=None,
+        exclude_if=lambda value: value is None,
+    )
+    licensed_sfx: LicensedSfxIntent | None = Field(
+        default=None,
+        validation_alias=AliasChoices("licensed_sfx", "sfx_intent"),
         exclude_if=lambda value: value is None,
     )
 

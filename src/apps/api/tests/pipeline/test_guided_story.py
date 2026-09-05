@@ -2831,6 +2831,237 @@ def test_guided_text_reburn_uses_video_stream_duration_not_padded_container(
     assert receipt["actual_duration_s"] == pytest.approx(expected_duration_s + (1 / 30), abs=0.001)
 
 
+def test_guided_text_reburn_accepts_intentional_empty_text_copy_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.pipeline import guided_story
+
+    plan = compile_execution_plan(_guided_snapshot(), track=None)
+    expected_duration_s = float(plan["resolved_duration_s"])
+    final = tmp_path / "final.mp4"
+    base = tmp_path / "base.mp4"
+    final.write_bytes(b"same-clean-base")
+    base.write_bytes(b"same-clean-base")
+    monkeypatch.setattr(
+        guided_story,
+        "probe_video",
+        lambda _path: SimpleNamespace(
+            duration_s=expected_duration_s,
+            video_stream_duration_s=expected_duration_s,
+            width=1080,
+            height=1920,
+            codec="h264",
+        ),
+    )
+    monkeypatch.setattr(guided_story, "_audio_codec", lambda _path: "aac")
+
+    receipt = verify_guided_text_reburn(_verified_receipt(plan), [], [], str(final), str(base))
+
+    assert receipt["verified"] is True
+    assert receipt["expected_text_ids"] == []
+    assert receipt["actual_text_ids"] == []
+
+
+@pytest.mark.parametrize(
+    "placements",
+    [
+        [
+            {
+                "id": "sfx-1",
+                "sound_effect_id": "other",
+                "src_gcs_path": "sound-effects/fah.mp3",
+                "at_s": 1.0,
+            }
+        ],
+        [
+            {
+                "id": "sfx-1",
+                "sound_effect_id": "sfx-fah",
+                "src_gcs_path": "sound-effects/fah.mp3",
+                "at_s": 1.0,
+            },
+            {
+                "id": "sfx-2",
+                "sound_effect_id": "sfx-fah",
+                "src_gcs_path": "sound-effects/fah.mp3",
+                "at_s": 1.5,
+            },
+        ],
+    ],
+    ids=["identity", "spacing"],
+)
+def test_validate_execution_plan_rejects_untrusted_runtime_sfx(placements: list[dict]) -> None:
+    guided = _guided_snapshot()
+    guided["approved_proposal"] = {
+        **guided["approved_proposal"],
+        "licensed_sfx": {"effect_id": "sfx-fah", "semantics": "funny_moments"},
+    }
+    plan = compile_execution_plan(guided, track=None)
+    plan["editor_sound_effects"] = placements
+
+    with pytest.raises(GuidedStoryError, match="licensed sound-effect plan"):
+        validate_execution_plan(plan, guided)
+
+
+def test_validate_execution_plan_accepts_case_insensitive_catalog_sfx_identity() -> None:
+    guided = _guided_snapshot()
+    guided["approved_proposal"] = {
+        **guided["approved_proposal"],
+        "licensed_sfx": {"effect_id": "SFX-FAH", "semantics": "funny_moments"},
+    }
+    plan = compile_execution_plan(guided, track=None)
+    plan["editor_sound_effects"] = [
+        {
+            "id": "sfx-1",
+            "sound_effect_id": "sfx-fah",
+            "src_gcs_path": "sound-effects/fah.mp3",
+            "at_s": 1.0,
+        }
+    ]
+
+    validated = validate_execution_plan(plan, guided)
+
+    assert validated["editor_sound_effects"][0]["sound_effect_id"] == "sfx-fah"
+
+
+def test_first_guided_render_applies_materialized_sfx_after_text(monkeypatch, tmp_path) -> None:
+    """The first strict render must carry ordinary SFX placements into the audio lane."""
+    from app import storage
+    from app.pipeline import generative_overlays, guided_story, sound_effects, text_overlay_skia
+
+    plan = compile_execution_plan(_guided_snapshot(), track=None)
+    plan["editor_sound_effects"] = [
+        {
+            "id": "sfx-1",
+            "sound_effect_id": "sfx-fah",
+            "src_gcs_path": "sound-effects/fah.mp3",
+            "at_s": 1.0,
+            "gain": 0.8,
+            "duration_s": 0.7,
+            "label": "Fah",
+            "source": "creator_explicit",
+            "smart_role": "funny_moments",
+        }
+    ]
+    applied: list[object] = []
+
+    monkeypatch.setattr(
+        guided_story,
+        "_download_selected",
+        lambda *_args: ({}, [{"media_id": "coast-video"}]),
+    )
+    monkeypatch.setattr(
+        guided_story,
+        "_render_moments",
+        lambda *_args: (["moment.mp4"], [{"moment_id": "moment-1"}]),
+    )
+
+    def fake_concat(_paths, output, *_args, **_kwargs):
+        Path(output).write_bytes(b"assembled")
+
+    monkeypatch.setattr("app.tasks.template_orchestrate._concat_demuxer", fake_concat)
+    monkeypatch.setattr(guided_story, "_audio_codec", lambda _path: "aac")
+    monkeypatch.setattr(
+        generative_overlays, "build_overlays_from_text_elements", lambda *_args, **_kwargs: []
+    )
+
+    def fake_burn(_source, _overlays, output, *_args, **_kwargs):
+        Path(output).write_bytes(b"text")
+        return [{"element_id": "title", "visible": True}]
+
+    monkeypatch.setattr(text_overlay_skia, "burn_text_overlays_skia_with_evidence", fake_burn)
+    monkeypatch.setattr(storage, "upload_local_file", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(storage, "delete_object_best_effort", lambda *_args, **_kwargs: None)
+
+    def fake_download(_key, local_path):
+        Path(local_path).write_bytes(b"sfx-rendered")
+
+    monkeypatch.setattr(storage, "download_to_file", fake_download)
+
+    def fake_apply(_base, effects, _output, **_kwargs):
+        applied.extend(effects or [])
+
+    monkeypatch.setattr(sound_effects, "apply_sound_effects", fake_apply)
+    monkeypatch.setattr(
+        guided_story,
+        "_verify_receipt",
+        lambda *_args, **_kwargs: _verified_receipt(plan),
+    )
+    monkeypatch.setattr(
+        guided_story,
+        "_upload_verified_outputs",
+        lambda *_args, **_kwargs: (
+            "https://example.test/final.mp4",
+            {"path": "base.mp4", "generation": "base", "size": 8, "md5_hash": None},
+            {"path": "final.mp4", "generation": "final", "size": 8, "md5_hash": None},
+        ),
+    )
+
+    result = guided_story.render_execution_plan(
+        plan,
+        job_id="job-1",
+        tmpdir=str(tmp_path),
+        track=None,
+        attempt_id="attempt-1",
+    )
+
+    assert len(applied) == 1
+    assert applied[0].sound_effect_id == "sfx-fah"
+    assert result["sound_effects"][0]["source"] == "creator_explicit"
+    assert result["output_url"].endswith("final.mp4")
+
+
+def test_verify_receipt_rejects_text_stage_copy_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.pipeline import guided_story
+
+    plan = compile_execution_plan(_guided_snapshot(), track=None)
+    final = tmp_path / "final.mp4"
+    base = tmp_path / "base.mp4"
+    final.write_bytes(b"final")
+    base.write_bytes(b"base")
+    monkeypatch.setattr(
+        guided_story,
+        "probe_video",
+        lambda _path: SimpleNamespace(
+            duration_s=plan["resolved_duration_s"],
+            width=1080,
+            height=1920,
+            codec="h264",
+        ),
+    )
+    monkeypatch.setattr(guided_story, "_audio_codec", lambda _path: "aac")
+    monkeypatch.setattr(
+        guided_story,
+        "_sha256",
+        lambda path: "same" if Path(path) in {base, final} else "other",
+    )
+    moments = [
+        {
+            "moment_id": row["moment_id"],
+            "beat_id": row["beat_id"],
+            "media_id": row["media_id"],
+            "kind": row["kind"],
+        }
+        for row in plan["story_timeline"]
+    ]
+    media = [{"media_id": media_id} for media_id in plan["selected_media_ids"]]
+    text = [{"element_id": row["id"], "visible": True} for row in plan["text_elements"]]
+
+    with pytest.raises(GuidedStoryError, match="finished video did not match"):
+        _verify_receipt(
+            plan,
+            media,
+            moments,
+            text,
+            str(final),
+            music_applied=False,
+            text_stage_input_path=str(base),
+            text_stage_output_path=str(final),
+        )
+
+
 @pytest.mark.parametrize("drop", ["supporting_card", "media", "text"])
 def test_receipt_fault_injection_never_publishes_a_missing_required_stage(
     drop: str, tmp_path, monkeypatch: pytest.MonkeyPatch

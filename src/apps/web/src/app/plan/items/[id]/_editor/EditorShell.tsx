@@ -560,11 +560,20 @@ export function shouldNotifyEmbeddedEditor(search: string, parentIsSelf: boolean
   return new URLSearchParams(search).get("embedded") === "1" && !parentIsSelf;
 }
 
-export function notifyEmbeddedEditorLeave(refresh = false): boolean {
+export function notifyEmbeddedEditorLeave(
+  refresh = false,
+  render?: { variantId: string; generation: string },
+): boolean {
   if (typeof window === "undefined") return false;
   if (!shouldNotifyEmbeddedEditor(window.location.search, window.parent === window)) return false;
   window.parent.postMessage(
-    { type: "nova:embedded-editor-leave", refresh },
+    {
+      type: "nova:embedded-editor-leave",
+      refresh,
+      ...(render
+        ? { variant_id: render.variantId, render_generation_id: render.generation }
+        : {}),
+    },
     window.location.origin,
   );
   return true;
@@ -6429,7 +6438,12 @@ export default function EditorShell({
         expectedDurationS: renderStarted ? res.expected_duration_s ?? null : null,
         revisionHash: renderStarted ? res.revision_hash ?? null : null,
       });
-      if (!notifyEmbeddedEditorLeave(renderStarted)) router.push(returnHref);
+      if (!notifyEmbeddedEditorLeave(
+        renderStarted,
+        renderStarted
+          ? { variantId: variant.variant_id, generation: res.generation }
+          : undefined,
+      )) router.push(returnHref);
     } catch (err) {
       if (err instanceof EditorCommitConflictError) {
         setSaveState("conflict");

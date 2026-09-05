@@ -19,7 +19,7 @@ from typing import Annotated, Any
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -83,6 +83,10 @@ from app.services.creator_autonomy import (
     build_auto_bundle,
     evaluate_auto_iteration,
     recover_auto_bundle,
+)
+from app.services.creator_capabilities import (
+    CreatorSfxUnavailableError,
+    resolve_creator_sfx_catalog_ref,
 )
 from app.services.creator_craft import (
     CreatorCraftValidationError,
@@ -363,8 +367,89 @@ def _confirmed_creator_request(events: list[CreatorAgentEvent], current_message:
     return "\n".join(messages)[:1000]
 
 
+def _explicit_sfx_name(creator_request: str, *, manifest: Any | None = None) -> str | None:
+    """Extract one explicitly named effect without granting catalog authority."""
+
+    request = " ".join(str(creator_request or "").split())
+    patterns = (
+        r"\b(?:sound\s+effect|sfx)\s+(?:named|called|titled)\s+[\"'“‘]([^\"'”’]{1,160})[\"'”’]",
+        r"\b(?:sound\s+effect|sfx)\s*[=:]\s*[\"'“‘]([^\"'”’]{1,160})[\"'”’]",
+        r"[\"'“‘]([^\"'”’]{1,160})[\"'”’]\s+(?:sound\s+effect|sfx)\b",
+        r"\b(?:add|use|choose|pick|place|include)\s+(?:the\s+)?"
+        r"([A-Za-z0-9][A-Za-z0-9 _-]{0,159}?)\s+(?:sound\s+effect|sfx)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, request, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+    if manifest is None:
+        return None
+    catalog_effects = sorted(
+        (item for item in manifest.catalog if item.kind == "sound_effect" and item.label),
+        key=lambda item: len(item.label or ""),
+        reverse=True,
+    )
+    for effect in catalog_effects:
+        label = str(effect.label or "").strip()
+        label_re = rf"(?<!\w){re.escape(label)}(?!\w)"
+        near_effect = (
+            rf"{label_re}.{{0,80}}\b(?:sound\s+effect|sfx)\b"
+            rf"|\b(?:sound\s+effect|sfx)\b.{{0,80}}{label_re}"
+        )
+        if re.search(near_effect, request, re.IGNORECASE):
+            return label
+    return None
+
+
+async def _resolve_explicit_sfx_outside_manifest(
+    db: AsyncSession,
+    requested: str | None,
+    *,
+    manifest: Any,
+) -> Any:
+    """Add an exact live DB match to the planning view without widening the prompt catalog."""
+
+    if not requested or resolve_creator_sfx_catalog_ref(manifest, requested) is not None:
+        return manifest
+    needle = " ".join(requested.split()).casefold()
+    rows = (
+        (
+            await db.execute(
+                select(SoundEffect).where(
+                    or_(
+                        func.lower(SoundEffect.id) == needle,
+                        func.lower(SoundEffect.name) == needle,
+                    ),
+                    SoundEffect.status == "ready",
+                    SoundEffect.published_at.is_not(None),
+                    SoundEffect.archived_at.is_(None),
+                    SoundEffect.audio_gcs_path.is_not(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(rows) != 1:
+        return manifest
+    effect = rows[0]
+    from app.agents._schemas.creator_agent import CreatorCatalogRef  # noqa: PLC0415
+
+    trusted_ref = CreatorCatalogRef(
+        catalog_id=str(effect.id),
+        kind="sound_effect",
+        label=str(effect.name)[:160],
+    )
+    # Preserve the original manifest hash: this exact row was resolved from a
+    # user-authored name at the authenticated DB boundary, is included in the
+    # plan hash, and is revalidated again immediately before materialization.
+    return manifest.model_copy(update={"catalog": [*manifest.catalog, trusted_ref]})
+
+
 def _apply_explicit_render_intent(
-    strategy: CreativeStrategy, creator_request: str
+    strategy: CreativeStrategy,
+    creator_request: str,
+    manifest: Any | None = None,
 ) -> CreativeStrategy:
     """Promote explicit creator wording into the typed render contract.
 
@@ -387,7 +472,23 @@ def _apply_explicit_render_intent(
         "text_color": None,
         "context_label": None,
         "image_layout": None,
+        "licensed_sfx": None,
     }
+
+    # A named SFX is a required request, never an optional treatment. Resolve
+    # names only by exact case-insensitive match against the server manifest;
+    # an unresolved name is retained as an inert id so compilation fails
+    # visibly rather than silently dropping to optional_treatments.
+    sfx_name = _explicit_sfx_name(request, manifest=manifest)
+    if sfx_name:
+        resolved = (
+            resolve_creator_sfx_catalog_ref(manifest, sfx_name) if manifest is not None else None
+        )
+        updates["licensed_sfx"] = {
+            "effect_id": resolved.catalog_id if resolved is not None else sfx_name,
+            "semantics": "funny_moments",
+            "max_placements": 6,
+        }
     # Creators use both ``title 'Emir Olympics'`` and the equally natural
     # ``'Emir Olympics' title``. Keep the quoted text bounded and require the
     # title noun next to it so unrelated quoted direction never reaches pixels.
@@ -399,7 +500,8 @@ def _apply_explicit_render_intent(
     if title_match is None:
         title_match = re.search(
             r"\b(?:opening\s+)?(?:title|intro|hook)\s*(?:text|copy)?\s*"
-            r"(?:is|to|should\s+say|as|:)?\s*[\"'“‘](.{1,280}?)[\"'”’]",
+            r"(?:is|to|should\s+say|saying|that\s+says|which\s+says|as|:)?\s*"
+            r"[\"'“‘](.{1,280}?)[\"'”’]",
             request,
             re.IGNORECASE,
         )
@@ -409,8 +511,9 @@ def _apply_explicit_render_intent(
         # never become on-screen copy.
         title_match = re.search(
             r"\b(?:opening\s+)?(?:title|intro|hook)\s*(?:text|copy)?\s*"
-            r"(?:is|to|should\s+say|as|:)?\s*"
-            r"([A-Za-z0-9][^,\n]{0,279}?)(?=\s*(?:,|$)|\s+(?:using|with|font|colou?r)\b)",
+            r"(?:is|to|should\s+say|saying|that\s+says|which\s+says|as|:)?\s*"
+            r"([A-Za-z0-9][^,\n]{0,279}?)(?=\s*(?:,|$)|\s+(?:using|with|font|colou?r)\b"
+            r"|\s+(?:use|make|set)\b(?=[^.]{0,80}\b(?:font|text|colou?r)\b))",
             request,
             re.IGNORECASE,
         )
@@ -1337,13 +1440,22 @@ async def _run_planning_turn(
             # Model-authored media references are repaired only at this trust
             # boundary. The subsequent compiler remains strict, so persisted
             # plans can contain only IDs from the authoritative manifest.
-            strategy = _apply_explicit_render_intent(strategy, creator_request)
+            planning_manifest = await _resolve_explicit_sfx_outside_manifest(
+                db,
+                _explicit_sfx_name(creator_request, manifest=manifest),
+                manifest=manifest,
+            )
+            strategy = _apply_explicit_render_intent(
+                strategy,
+                creator_request,
+                manifest=planning_manifest,
+            )
             strategy = normalize_creator_strategy_media(
-                manifest, strategy, repair_model_output=True
+                planning_manifest, strategy, repair_model_output=True
             )
             locked.active_plan = compile_active_plan(
                 locked,
-                manifest=manifest,
+                manifest=planning_manifest,
                 strategy=strategy,
                 summary=summary,
                 creator_request=creator_request,
@@ -1354,6 +1466,22 @@ async def _run_planning_turn(
                 session_id=str(locked.id),
                 error=str(exc)[:300],
             )
+            if isinstance(exc, CreatorSfxUnavailableError):
+                locked.status = "failed"
+                locked.last_error = {
+                    "code": "licensed_sfx_unavailable",
+                    "message": str(exc)[:300],
+                }
+                await append_event(
+                    db,
+                    locked,
+                    event_type="assistant_error",
+                    payload={
+                        "message": str(exc)[:300],
+                        "code": "licensed_sfx_unavailable",
+                    },
+                )
+                return await _response(db, locked)
             if isinstance(exc, MontageCadenceUnavailableError):
                 await _record_cadence_unavailable(db, locked, exc)
                 return await _response(db, locked)
@@ -1779,6 +1907,7 @@ def _seed_guided_specialist_brief(
             font_family=plan.strategy.font_family,
             text_color=plan.strategy.text_color,
             image_layout=plan.strategy.image_layout,
+            licensed_sfx=plan.strategy.licensed_sfx,
             mixed_media_timing=plan.strategy.mixed_media_timing,
             montage_audio=specialist_audio,
             montage_cadence=specialist_cadence,
@@ -2499,7 +2628,11 @@ async def _resolve_creator_licensed_sfx(
     """
 
     effect = (
-        await db.execute(select(SoundEffect).where(SoundEffect.id == command.sound_effect_id))
+        await db.execute(
+            select(SoundEffect).where(
+                func.lower(SoundEffect.id) == command.sound_effect_id.strip().casefold()
+            )
+        )
     ).scalar_one_or_none()
     if (
         effect is None

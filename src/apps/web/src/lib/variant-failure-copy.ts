@@ -24,6 +24,10 @@ export function unplacedShotCopy(reason: string | null | undefined): string {
 
 export function variantFailureCopy(errorClass?: string | null): string {
   switch (errorClass) {
+    case "guided_story_music_missing":
+      return "The music attached to this edit is no longer available. Choose another song and save again.";
+    case "render_enqueue_failed":
+      return "Your edits were saved, but the render didn't start. Open the editor and retry Save.";
     case "lyrics_unsupported_language":
       return "Lyrics aren't available for this song's language yet — try a different song.";
     case "lyric_alignment_error":
