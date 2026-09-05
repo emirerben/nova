@@ -30,6 +30,7 @@ from app.services.job_storage_paths import (
     job_input_path_matches_owner,
     project_media_reference_lock_key,
 )
+from app.services.public_assembly_plan import project_public_assembly_plan
 from app.services.template_validation import (
     get_template_or_404,
     require_ready,
@@ -416,7 +417,7 @@ async def get_template_job_debug(
         if tpl:
             template_recipe = tpl.recipe_cached
 
-    assembly_plan = job.assembly_plan or {}
+    assembly_plan = project_public_assembly_plan(job.assembly_plan) or {}
     steps = assembly_plan.get("steps", [])
     clip_ids_used = [s.get("clip_id") for s in steps]
     clips_used_unique = len(set(clip_ids_used))
@@ -458,7 +459,7 @@ async def get_template_job_eval(
     if job is None or job.job_type != "template":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
-    assembly_plan = job.assembly_plan or {}
+    assembly_plan = project_public_assembly_plan(job.assembly_plan) or {}
     cancelled = job.status == "cancelled"
     steps = assembly_plan.get("steps", [])
 
@@ -529,7 +530,9 @@ async def get_template_job_status(
         job_id=str(job.id),
         status=job.status,
         template_id=job.template_id,
-        assembly_plan=None if job.status == "cancelled" else job.assembly_plan,
+        assembly_plan=(
+            None if job.status == "cancelled" else project_public_assembly_plan(job.assembly_plan)
+        ),
         error_detail=None if job.status == "cancelled" else job.error_detail,
         failure_reason=job.failure_reason,
         current_phase=job.current_phase,

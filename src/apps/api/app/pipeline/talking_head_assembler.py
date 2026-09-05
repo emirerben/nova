@@ -233,6 +233,7 @@ def _spine_silence_cut_plan(
     target_duration_s: float | None,
     tmpdir: str,
     silence_cut_fn: Callable[..., dict[str, Any]],
+    silence_cut_out: dict[str, Any] | None = None,
     job_id: str | None,
     strict_required: bool = False,
 ) -> tuple[Any, float, int, list[dict[str, Any]]]:
@@ -260,6 +261,11 @@ def _spine_silence_cut_plan(
         record_pipeline_event(
             "silence_cut", "silence_cut_skipped_no_audio", {"variant_id": "talking_head"}
         )
+        # Task-local marker only: lets the caller emit one timing-only mixed-gap
+        # receipt without guessing that a later no-words bailout meant no audio.
+        # It is never copied into the public variant payload.
+        if silence_cut_out is not None:
+            silence_cut_out["precheck_no_audio"] = True
         return None, spine_dur, 0, []
 
     # Spine pre-cap (14A): bound the working window BEFORE detection so the
@@ -302,6 +308,10 @@ def _spine_silence_cut_plan(
         cache_key=cache_key,
         source_fingerprint=source_fingerprint,
     )
+    if silence_cut_out is not None and isinstance(entry, dict):
+        silence_cut_out["speech_cleanup_outcome_context"] = entry.get(
+            "speech_cleanup_outcome_context"
+        )
     if not isinstance(entry, dict) or entry.get("failed") or entry.get("plan") is None:
         if strict_required and (
             not isinstance(entry, dict) or entry.get("failed") or entry.get("plan") is None
@@ -564,6 +574,7 @@ def assemble_talking_head(
             target_duration_s=target_duration_s,
             tmpdir=tmpdir,
             silence_cut_fn=silence_cut_fn,
+            silence_cut_out=silence_cut_out,
             job_id=job_id,
             strict_required=strict_speech_cleanup,
         )

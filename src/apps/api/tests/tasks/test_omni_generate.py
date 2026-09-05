@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import copy
+import uuid
 from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -259,6 +261,10 @@ async def test_claim_atomically_appends_clip_and_emits_operation(monkeypatch) ->
     )
 
     assert job.all_candidates["clip_paths"][-1] == "generative-jobs/job/omni/asset-1.mp4"
+    source_ids = job.all_candidates["clip_source_instance_ids"]
+    assert len(source_ids) == 2
+    assert len(set(source_ids)) == 2
+    assert all(uuid.UUID(value) for value in source_ids)
     assert response.operation is not None
     assert response.operation.clip_index == 1
     assert response.operation.duration_s == 4.234
@@ -373,7 +379,13 @@ async def test_cancel_releases_a_claimed_asset_that_never_reached_the_draft(monk
                 )
             },
         },
-        all_candidates={"clip_paths": ["source-a.mp4", storage_path]},
+        all_candidates={
+            "clip_paths": ["source-a.mp4", storage_path],
+            "clip_source_instance_ids": [
+                "00000000-0000-4000-8000-000000000001",
+                "00000000-0000-4000-8000-000000000002",
+            ],
+        },
     )
     db = SimpleNamespace(commit=AsyncMock())
     delete = MagicMock()
@@ -384,8 +396,48 @@ async def test_cancel_releases_a_claimed_asset_that_never_reached_the_draft(monk
 
     assert response.status == "cancelled"
     assert response.operation is None
-    assert job.all_candidates == {"clip_paths": ["source-a.mp4"]}
+    assert job.all_candidates == {
+        "clip_paths": ["source-a.mp4"],
+        "clip_source_instance_ids": ["00000000-0000-4000-8000-000000000001"],
+    }
     delete.assert_called_once_with(storage_path)
+
+
+@pytest.mark.asyncio
+async def test_claim_rejects_present_malformed_source_identity_without_mutation(
+    monkeypatch,
+) -> None:
+    record = _record(
+        status="ready",
+        storage_path="generative-jobs/job/omni/asset-1.mp4",
+        normalized_duration_s=4.0,
+        operation=None,
+    )
+    original_candidates = {
+        "clip_paths": ["source-a.mp4"],
+        "clip_source_instance_ids": [],
+    }
+    job = SimpleNamespace(
+        id="00000000-0000-0000-0000-000000000001",
+        assembly_plan={"omni_generated_assets": {"asset-1": record}},
+        all_candidates=copy.deepcopy(original_candidates),
+    )
+    db = SimpleNamespace(commit=AsyncMock())
+    monkeypatch.setattr(_omni, "_lock_job", AsyncMock(return_value=job))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await claim_omni_asset(
+            job,
+            "asset-1",
+            OmniAssetClaimBody(draft_revision="v1-test"),
+            db,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == "omni_clip_source_identity_unavailable"
+    assert job.all_candidates == original_candidates
+    assert record["operation"] is None
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -616,12 +668,15 @@ def test_whole_job_cancellation_rejects_child_updates_and_late_ready_output(
     monkeypatch.setattr(omni_generate, "sync_session", fake_session)
     monkeypatch.setattr(omni_generate, "delete_object_best_effort", deleted)
 
-    assert omni_generate._update(  # noqa: SLF001
-        "00000000-0000-0000-0000-000000000001",
-        "asset-1",
-        status="ready",
-        progress=1.0,
-    ) == {}
+    assert (
+        omni_generate._update(  # noqa: SLF001
+            "00000000-0000-0000-0000-000000000001",
+            "asset-1",
+            status="ready",
+            progress=1.0,
+        )
+        == {}
+    )
     assert (
         omni_generate._commit_ready(  # noqa: SLF001
             "00000000-0000-0000-0000-000000000001",

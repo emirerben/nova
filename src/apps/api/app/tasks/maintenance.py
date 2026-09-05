@@ -24,11 +24,22 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import structlog
+from billiard.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import and_, case, or_, select, text
 
 from app.database import sync_session
 from app.models import Job, PlanItem, PlanItemAsset
-from app.tasks.reaper import _live_job_ids, reap_orphans, reconcile_stuck_variants
+from app.services.durable_attempt_cleanup import (
+    job_render_not_quiescent,
+    jobs_with_storage_attempt_cleanup_receipts,
+    reconcile_storage_attempt_cleanup,
+)
+from app.tasks.reaper import (
+    _live_job_ids,
+    reap_orphans,
+    reconcile_cancelled_required_speech_job,
+    reconcile_stuck_variants,
+)
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -50,6 +61,46 @@ _POOL_DEDUPE_RECEIPT_RETENTION = timedelta(hours=24)
 # this is a backfill, not the fast path; new uploads get their preview inline
 # in `analyze_pool_asset`.
 _POOL_PREVIEW_BACKFILL_BATCH = 25
+# One Job × one source + one render receipt keeps verified prefix I/O below
+# 18s worst case (three 3s calls per prefix), leaving the 60s Beat task ample
+# room for pool reconciliation and broker inspection.
+_STORAGE_ATTEMPT_CLEANUP_JOB_LIMIT = 1
+
+
+def reconcile_storage_attempt_receipts(
+    *,
+    limit: int = _STORAGE_ATTEMPT_CLEANUP_JOB_LIMIT,
+) -> int:
+    """Reconcile an indexed, bounded fleet page of lifecycle-exempt debt."""
+    bounded_limit = min(max(limit, 0), _STORAGE_ATTEMPT_CLEANUP_JOB_LIMIT)
+    if bounded_limit == 0:
+        return 0
+    with sync_session() as db:
+        job_ids = jobs_with_storage_attempt_cleanup_receipts(db, limit=bounded_limit)
+
+    receipts_seen = 0
+    for job_id in job_ids:
+        # Cancel is a public tombstone, not proof that an upload stopped. Close
+        # its exact private owner under row lock before storage reconciliation;
+        # a fresh lease/claim remains untouched and the receipt pass waits.
+        try:
+            reconcile_cancelled_required_speech_job(job_id)
+        except SoftTimeLimitExceeded:
+            raise
+        except Exception as exc:  # noqa: BLE001 - destructive cleanup fails closed
+            log.warning(
+                "cancelled_required_speech_reconcile_failed",
+                job_id=str(job_id),
+                error_class=type(exc).__name__,
+            )
+            continue
+        result = reconcile_storage_attempt_cleanup(
+            job_id,
+            source_limit=1,
+            render_limit=1,
+        )
+        receipts_seen += result.receipts_seen
+    return receipts_seen
 
 
 def _heif_decoder_recovery_predicate():
@@ -416,6 +467,15 @@ def sweep_stale_jobs(self) -> int:
     """
     try:
         try:
+            reconcile_storage_attempt_receipts()
+        except SoftTimeLimitExceeded:
+            raise
+        except Exception as exc:  # noqa: BLE001 — next Beat firing retries
+            log.warning(
+                "reconcile_storage_attempt_receipts_failed",
+                error_class=type(exc).__name__,
+            )
+        try:
             reconcile_stale_pool_assets()
         except Exception as exc:  # noqa: BLE001
             log.warning("reconcile_stale_pool_assets_failed", error_type=type(exc).__name__)
@@ -433,9 +493,13 @@ def sweep_stale_jobs(self) -> int:
         # failing doesn't skip the other.
         try:
             reconcile_stuck_variants(celery_app, live=live)
+        except SoftTimeLimitExceeded:
+            raise
         except Exception as exc:  # noqa: BLE001
             log.warning("reconcile_stuck_variants_failed", error=str(exc))
         return count
+    except SoftTimeLimitExceeded:
+        raise
     except Exception as exc:  # noqa: BLE001
         log.warning("sweep_stale_jobs_failed", error=str(exc))
         return 0
@@ -476,6 +540,61 @@ def cleanup_cancelled_job(self, job_id: str) -> int:
     from app.config import settings  # noqa: PLC0415
     from app.storage import _get_client  # noqa: PLC0415
 
+    # Cancellation terminalization deliberately retains closed durable-source
+    # and render-generation receipts. Reconcile those lifecycle-exempt prefixes
+    # from a fresh row/reference proof before handling ordinary temp objects.
+    # Beat remains the retry backstop for retained or failed receipts.
+    try:
+        ownership = reconcile_cancelled_required_speech_job(job_id)
+    except SoftTimeLimitExceeded:
+        raise
+    except Exception as exc:  # noqa: BLE001 - broad cleanup must fail closed
+        log.warning(
+            "cleanup_cancelled_job_private_owner_failed",
+            job_id=job_id,
+            error_class=type(exc).__name__,
+        )
+        return 0
+    if not ownership.cleanup_safe:
+        log.info(
+            "cleanup_cancelled_job_private_owner_deferred",
+            job_id=job_id,
+            reason=ownership.reason,
+        )
+        return 0
+    try:
+        durable_cleanup = reconcile_storage_attempt_cleanup(
+            job_id,
+            source_limit=4,
+            render_limit=8,
+        )
+        if durable_cleanup.receipts_seen:
+            log.info(
+                "cleanup_cancelled_job_durable_receipts",
+                job_id=job_id,
+                receipts_seen=durable_cleanup.receipts_seen,
+                deleted=durable_cleanup.deleted,
+                retained=durable_cleanup.retained,
+                failures=durable_cleanup.failures,
+            )
+        if not durable_cleanup.ok:
+            # In particular, a fresh ``writing`` lease is retained here. Never
+            # fall through to the broad prefix sweep while that upload can still
+            # settle after the revoke request.
+            return 0
+    except SoftTimeLimitExceeded:
+        raise
+    except Exception as exc:  # noqa: BLE001 — durable receipts remain indexed
+        log.warning(
+            "cleanup_cancelled_job_durable_failed",
+            job_id=job_id,
+            error_class=type(exc).__name__,
+        )
+
+    if not _cancelled_job_storage_quiescent(job_id):
+        log.info("cleanup_cancelled_job_render_not_quiescent", job_id=job_id)
+        return 0
+
     try:
         bucket = _get_client().bucket(settings.storage_bucket)
     except Exception as exc:  # noqa: BLE001
@@ -511,6 +630,20 @@ def cleanup_cancelled_job(self, job_id: str) -> int:
     if deleted:
         log.info("cleanup_cancelled_job_done", job_id=job_id, deleted=deleted)
     return deleted
+
+
+def _cancelled_job_storage_quiescent(job_id: str) -> bool:
+    """Prove broad cancellation cleanup cannot race a live/private writer."""
+
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except (TypeError, ValueError):
+        return False
+    with sync_session() as db:
+        job = db.get(Job, job_uuid, with_for_update=True)
+        return bool(
+            job is not None and job.status == "cancelled" and not job_render_not_quiescent(job)
+        )
 
 
 # Per-batch ceiling for the agent_run pruner. Caps the row count held by any

@@ -171,6 +171,7 @@ from app.services.media_overlay_preview import (
     is_heif_overlay,
     nonblank_str,
 )
+from app.services.public_assembly_plan import project_public_assembly_plan
 from app.services.speech_cleanup import (
     acknowledge_notice,
     capability_for_item,
@@ -178,6 +179,32 @@ from app.services.speech_cleanup import (
     reconcile_item_policy_change,
     renderer_enabled_for_item,
 )
+from app.services.variant_generation_guard import (
+    VariantInitialRenderInProgress,
+    assert_variant_generation_editable,
+)
+
+
+def _assert_variant_generation_editable_or_409(job: Job, variant_id: str) -> None:
+    """Reject route-owned writes while an initial speech render is private."""
+
+    try:
+        assert_variant_generation_editable(job, variant_id)
+    except VariantInitialRenderInProgress as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="variant_initial_render_in_progress",
+        ) from exc
+
+
+def _variant_generation_is_locked(job: Job, variant_id: str) -> bool:
+    """Read-safe lock probe: malformed private state suppresses hidden writes."""
+
+    try:
+        assert_variant_generation_editable(job, variant_id)
+    except VariantInitialRenderInProgress:
+        return True
+    return False
 
 
 async def _load_plan_persona_or_409(
@@ -624,7 +651,7 @@ def plan_item_response(
         and raw_speech_notice.get("reason")
         else None
     )
-    return PlanItemResponse(
+    response = PlanItemResponse(
         id=str(item.id),
         day_index=item.day_index,
         theme=item.theme,
@@ -680,6 +707,9 @@ def plan_item_response(
         source_idea_seed_text=(seed_text_by_id or {}).get(item.source_idea_seed_id)
         if item.source_idea_seed_id
         else None,
+    )
+    return PlanItemResponse.model_validate(
+        project_public_assembly_plan(response.model_dump(mode="python"))
     )
 
 
@@ -3898,22 +3928,40 @@ async def apply_plan_item_speech_cut(
         candidate_id=candidate_id,
         expected_revision=body.expected_revision,
     )
+    dispatch_job_id = job.id
+    operation_id = str(request.get("operation_id") or "")
+    generation_id = str(
+        ((job.assembly_plan or {}).get("speech_cut_control") or {}).get("render_generation_id")
+        or ""
+    )
     await db.commit()
     try:
         enqueue()
     except Exception as exc:  # noqa: BLE001 — committed dispatch must be reversible
-        result = await db.execute(select(Job).where(Job.id == job.id).with_for_update())
-        fresh_job = result.scalar_one_or_none()
+        await db.rollback()
+        fresh_job = await db.get(
+            Job,
+            dispatch_job_id,
+            populate_existing=True,
+            with_for_update=True,
+        )
+        rollback_disposition = "not_owned"
         if fresh_job is not None and fresh_job.status != "cancelled":
-            rollback_speech_cut_dispatch(
+            rollback_disposition = rollback_speech_cut_dispatch(
                 fresh_job,
                 str(exc),
-                expected_operation_id=str(request.get("operation_id") or ""),
+                expected_operation_id=operation_id,
+                expected_generation_id=generation_id,
+                expected_variant_id=variant_id,
             )
         await db.commit()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="The cut could not be queued. The current video is unchanged.",
+            detail=(
+                "The queue acknowledgement was interrupted; your cut may still complete."
+                if rollback_disposition == "enqueue_uncertain"
+                else "The cut could not be queued. The current video is unchanged."
+            ),
         ) from exc
     return SpeechCutDispatchResponse(request=request)
 
@@ -3934,22 +3982,40 @@ async def restore_plan_item_speech_timing(
     request, enqueue = dispatch_restore_original_timing(
         job, variant_id, expected_revision=body.expected_revision
     )
+    dispatch_job_id = job.id
+    operation_id = str(request.get("operation_id") or "")
+    generation_id = str(
+        ((job.assembly_plan or {}).get("speech_cut_control") or {}).get("render_generation_id")
+        or ""
+    )
     await db.commit()
     try:
         enqueue()
     except Exception as exc:  # noqa: BLE001 — committed dispatch must be reversible
-        result = await db.execute(select(Job).where(Job.id == job.id).with_for_update())
-        fresh_job = result.scalar_one_or_none()
+        await db.rollback()
+        fresh_job = await db.get(
+            Job,
+            dispatch_job_id,
+            populate_existing=True,
+            with_for_update=True,
+        )
+        rollback_disposition = "not_owned"
         if fresh_job is not None and fresh_job.status != "cancelled":
-            rollback_speech_cut_dispatch(
+            rollback_disposition = rollback_speech_cut_dispatch(
                 fresh_job,
                 str(exc),
-                expected_operation_id=str(request.get("operation_id") or ""),
+                expected_operation_id=operation_id,
+                expected_generation_id=generation_id,
+                expected_variant_id=variant_id,
             )
         await db.commit()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="The timing restore could not be queued. The current video is unchanged.",
+            detail=(
+                "The queue acknowledgement was interrupted; your timing restore may still complete."
+                if rollback_disposition == "enqueue_uncertain"
+                else "The timing restore could not be queued. The current video is unchanged."
+            ),
         ) from exc
     return SpeechCutDispatchResponse(request=request)
 
@@ -4201,13 +4267,14 @@ async def apply_item_custom_effect(
     panel control could reuse it too. v1: a single active custom effect —
     each call replaces any previously-applied one, never stacks.
     """
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
+    _assert_variant_generation_editable_or_409(job, variant_id)
     from app.config import settings as _settings  # noqa: PLC0415
 
     if not _settings.custom_effects_enabled:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Custom effects not available."
         )
-    job = await _owned_item_render_job(item_id, user.id, db)  # ownership check only
     # dispatch_apply_custom_effect does its OWN row-locked re-fetch by job.id
     # and commits internally — same discipline as dispatch_retranscribe_captions
     # above (the task's start write is token-checked against the just-minted
@@ -4565,7 +4632,9 @@ async def plan_item_omni_asset_status(
 ) -> OmniAssetResponse:
     """Poll one generated asset; only ready responses contain an editor op."""
     job = await _owned_item_render_job(item_id, user.id, db)
-    require_editable_variant(job, variant_id)
+    # Polling is a read boundary: verify ownership/existence without applying
+    # the private initial-generation write barrier.
+    _find_variant_dict(job, variant_id)
     return get_omni_asset(job, asset_id)
 
 
@@ -5291,6 +5360,7 @@ def _persist_overlay_metadata_only(
     """
     from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
 
+    _assert_variant_generation_editable_or_409(job, variant_id)
     variants = list((job.assembly_plan or {}).get("variants") or [])
     variant_for_check = next((v for v in variants if v.get("variant_id") == variant_id), {})
     validated = validate_media_overlays_for_user(
@@ -5339,15 +5409,14 @@ async def set_item_media_overlays(
     When `render=False`, only card metadata is persisted — no render is queued.
     The frontend uses render=False for auto-save; render=True only on download.
     """
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
+    require_editable_variant(job, variant_id)
     from app.config import settings as _settings  # noqa: PLC0415
 
     if not _settings.media_overlays_enabled:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Media overlays not available."
         )
-
-    job = await _locked_owned_item_render_job(item_id, user.id, db)
-    require_editable_variant(job, variant_id)
     await _require_verified_pool_paths(
         item_id=item_id,
         user_id=user.id,
@@ -5509,6 +5578,7 @@ async def set_source_audio_mix(
     )
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
+    _assert_variant_generation_editable_or_409(job, variant_id)
     variants = list((job.assembly_plan or {}).get("variants") or [])
     variant = next((row for row in variants if row.get("variant_id") == variant_id), None)
     options = variant.get("source_audio_options") if isinstance(variant, dict) else None
@@ -5575,6 +5645,7 @@ async def editor_commit_item(
             status_code=status.HTTP_409_CONFLICT,
             detail="Cancelled videos cannot be edited.",
         )
+    _assert_variant_generation_editable_or_409(locked_job, variant_id)
     # Guided stories accept TextElement-only reburns. Run this policy before
     # media/SFX/music/title validation so every unsupported section gets the
     # same stable 422 without performing unrelated lookups or mutations.
@@ -6062,15 +6133,14 @@ async def set_item_sound_effects(
     triggered here; call POST /{item_id}/variants/{variant_id}/render-sfx
     (e.g. on Download) to burn the placements in.
     """
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
+    require_editable_variant(job, variant_id)
     from app.config import settings as _settings  # noqa: PLC0415
 
     if not _settings.sound_effects_enabled:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Sound effects not available."
         )
-
-    job = await _locked_owned_item_render_job(item_id, user.id, db)
-    require_editable_variant(job, variant_id)
 
     resolved_placements = await _resolve_sound_effect_placements(
         body.placements,
@@ -6114,14 +6184,14 @@ async def render_item_sound_effects(
     Called by the Download button when sound_effects are set. The variant flips to
     render_status="rendering" and the mix-pass runs async. Returns immediately.
     """
+    job = await _locked_owned_item_render_job(item_id, user.id, db)
+    require_editable_variant(job, variant_id)
     from app.config import settings as _settings  # noqa: PLC0415
 
     if not _settings.sound_effects_enabled:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Sound effects not available."
         )
-
-    job = await _locked_owned_item_render_job(item_id, user.id, db)
 
     # Read persisted placements from assembly_plan.
     variants = list((job.assembly_plan or {}).get("variants") or [])
@@ -8125,6 +8195,23 @@ def _clear_suggestions_for_asset(job: Job, asset_id: str) -> int:
     removed = 0
     changed = False
     variants = list((job.assembly_plan or {}).get("variants") or [])
+    affected = [
+        variant
+        for variant in variants
+        if isinstance(variant, dict)
+        and (
+            any(
+                isinstance(suggestion, dict) and str(suggestion.get("asset_id")) == asset_id
+                for suggestion in (variant.get("overlay_suggestions") or [])
+            )
+            or variant.get("overlay_suggest_attempt_token") is not None
+        )
+    ]
+    for variant in affected:
+        _assert_variant_generation_editable_or_409(
+            job,
+            str(variant.get("variant_id") or ""),
+        )
     for v in variants:
         pending = v.get("overlay_suggestions") or []
         kept = [s for s in pending if str(s.get("asset_id")) != asset_id]
@@ -8155,6 +8242,22 @@ def _clear_pending_overlay_suggestions(job: Job) -> int:
     removed = 0
     changed = False
     variants = list((job.assembly_plan or {}).get("variants") or [])
+    affected = [
+        variant
+        for variant in variants
+        if isinstance(variant, dict)
+        and (
+            bool(variant.get("overlay_suggestions"))
+            or bool(variant.get("overlay_suggest_status"))
+            or bool(variant.get("overlay_suggest_hash"))
+            or bool(variant.get("overlay_suggest_attempt_token"))
+        )
+    ]
+    for variant in affected:
+        _assert_variant_generation_editable_or_409(
+            job,
+            str(variant.get("variant_id") or ""),
+        )
     for v in variants:
         pending = v.get("overlay_suggestions") or []
         if (
@@ -8331,6 +8434,7 @@ async def suggest_overlays(
     _require_autoplace()
     item = await _load_owned_item(item_id, user.id, db)
     job = await _locked_owned_item_render_job(item_id, user.id, db)
+    _assert_variant_generation_editable_or_409(job, variant_id)
     variant = _find_variant_dict(job, variant_id)
 
     # Music-variant guard (review C20): mirror the zero-click auto path's G2-A
@@ -8460,7 +8564,11 @@ async def get_overlay_suggestions(
     variant = _find_variant_dict(job, variant_id)
 
     stale_cleared = False
-    if (variant.get("overlay_suggestions") or None) and persisted_hash_is_stale(variant):
+    if (
+        (variant.get("overlay_suggestions") or None)
+        and persisted_hash_is_stale(variant)
+        and not _variant_generation_is_locked(job, variant_id)
+    ):
         variants = list((job.assembly_plan or {}).get("variants") or [])
         for v in variants:
             if v.get("variant_id") == variant_id:
@@ -8475,11 +8583,14 @@ async def get_overlay_suggestions(
         variant = _find_variant_dict(job, variant_id)
         stale_cleared = True
 
-    return OverlaySuggestionsResponse(
+    response = OverlaySuggestionsResponse(
         status=variant.get("overlay_suggest_status"),
         suggestions=list(variant.get("overlay_suggestions") or []),
         wishlist=list(variant.get("overlay_suggest_wishlist") or []),
         stale_cleared=stale_cleared,
+    )
+    return OverlaySuggestionsResponse.model_validate(
+        project_public_assembly_plan(response.model_dump(mode="python"))
     )
 
 
@@ -8512,6 +8623,7 @@ async def apply_overlay_suggestions(
     _require_autoplace()
     await _load_owned_item(item_id, user.id, db)
     job = await _locked_owned_item_render_job(item_id, user.id, db)
+    _assert_variant_generation_editable_or_409(job, variant_id)
     _find_variant_dict(job, variant_id)
 
     await _require_ready_pool_paths(
@@ -8555,6 +8667,7 @@ async def dismiss_overlay_suggestions(
     _require_autoplace()
     await _load_owned_item(item_id, user.id, db)
     job = await _locked_owned_item_render_job(item_id, user.id, db)
+    _assert_variant_generation_editable_or_409(job, variant_id)
     _find_variant_dict(job, variant_id)
 
     variants = list((job.assembly_plan or {}).get("variants") or [])

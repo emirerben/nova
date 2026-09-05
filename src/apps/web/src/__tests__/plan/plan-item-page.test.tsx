@@ -740,6 +740,33 @@ describe("PlanItemPage — ProgressTheater renders with phase data", () => {
 });
 
 describe("PlanItemPage — result cleanup", () => {
+  it("describes a no-change speech cleanup as no cuts, without claiming no filler existed", async () => {
+    const item = makeItem({
+      status: "ready",
+      current_job_id: "job-speech-no-change",
+      clip_gcs_paths: ["uploads/test.mp4"],
+    });
+    const variant = {
+      ...makeVariant("required-v1", "ready", "https://cdn/required-v1.mp4"),
+      silence_cut_outcome: "no_change",
+    };
+    mockUsePolledJobStatus.mockReturnValue({
+      data: {
+        item,
+        job: makeJob({ status: "variants_ready", variants: [variant] }),
+      },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.getByText("Speech cleanup ran; no cuts were made.")).toBeInTheDocument();
+    expect(screen.queryByText(/no filler sounds needed removal/i)).toBeNull();
+  });
+
   it("renders an empty overlay replacement when the last baked card was removed", async () => {
     mockSetVariantMediaOverlays.mockReset();
     mockSetVariantMediaOverlays.mockResolvedValue(undefined);

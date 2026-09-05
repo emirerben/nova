@@ -4,6 +4,7 @@ These exercise validation + guard paths against a mocked DB. Pipeline-level
 behavior (Celery enqueue → orchestrate_music_job) is covered separately.
 """
 
+import copy
 import re
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -884,6 +885,45 @@ def test_admin_job_status_returns_status_for_matching_job(client: TestClient) ->
     assert body["job_id"] == str(job_uuid)
     assert body["status"] == "music_ready"
     assert body["assembly_plan"]["output_url"] == "https://signed-url.example/output.mp4"
+
+
+def test_admin_job_status_projects_private_generation_state_without_mutating_row(
+    client: TestClient,
+) -> None:
+    track = _ready_unpublished_track()
+    job_uuid = uuid4()
+    job = MagicMock()
+    job.id = job_uuid
+    job.status = "music_ready"
+    job.job_type = "music"
+    job.music_track_id = track.id
+    job.assembly_plan = {
+        "output_url": "https://signed-url.example/output.mp4",
+        "clip_source_instance_ids": ["private-source"],
+        "_speech_cleanup_internal": {
+            "required_speech_generation_locks": {"subtitled": "private-generation"}
+        },
+    }
+    stored = copy.deepcopy(job.assembly_plan)
+    job.error_detail = None
+    job.created_at = datetime.now(UTC)
+    job.updated_at = datetime.now(UTC)
+    override, _session = _override_db_returning(track=track, job=job)
+
+    app.dependency_overrides[get_db] = override
+    try:
+        response = client.get(
+            f"/admin/music-tracks/{track.id}/jobs/{job_uuid}/status",
+            headers=_admin_headers(),
+        )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 200, response.text
+    # An active/malformed private generation fails closed even on the admin
+    # status surface; provisional media must never be re-exposed.
+    assert response.json()["assembly_plan"] == {}
+    assert job.assembly_plan == stored
 
 
 def test_admin_job_status_404_when_job_belongs_to_other_track(

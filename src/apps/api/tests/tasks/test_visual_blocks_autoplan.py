@@ -1074,6 +1074,27 @@ def test_autoplan_render_restarts_the_attempt_clock(monkeypatch) -> None:
     assert (datetime.now(UTC) - job.started_at).total_seconds() < 5
 
 
+def test_autoplan_never_mutates_or_dispatches_through_required_speech_lock(
+    monkeypatch,
+) -> None:
+    job = _Job()
+    variant = job.assembly_plan["variants"][0]
+    variant["render_status"] = "ready"
+    job.assembly_plan["_speech_cleanup_internal"] = {
+        "required_speech_generation_locks": {"subtitled": uuid.uuid4().hex}
+    }
+    before = deepcopy(job.assembly_plan)
+    _arm_planner(
+        monkeypatch,
+        job,
+        dispatch=lambda **_kwargs: pytest.fail("required-speech lock must block autoplan dispatch"),
+    )
+
+    autoplace.plan_visual_blocks.run(JOB_ID, "subtitled")
+
+    assert job.assembly_plan == before
+
+
 def test_render_dispatch_failure_rolls_the_tile_clock_back(monkeypatch) -> None:
     """A dispatch that never reached the broker restores the previous
     `render_started_at` alongside `render_status` — a rolled-back variant reading

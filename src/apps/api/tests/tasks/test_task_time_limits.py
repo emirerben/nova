@@ -139,6 +139,28 @@ def test_render_orchestrator_time_limits_under_visibility_timeout() -> None:
         )
 
 
+def test_required_speech_upload_lease_expires_by_task_soft_timeout() -> None:
+    """Soft-timeout recovery must be able to terminalize its own upload owner."""
+
+    worker_source = _read_source("app/worker.py")
+    render_source = _read_source("app/tasks/generative_build.py")
+    visibility_timeout = _extract_visibility_timeout(worker_source)
+    decorator = _extract_celery_task_decorator(
+        render_source,
+        "orchestrate_generative_job",
+    )
+    soft_limit = _extract_limit_kwarg(decorator, "soft_time_limit")
+    hard_limit = _extract_limit_kwarg(decorator, "time_limit")
+    lease_match = re.search(
+        r"_REQUIRED_SPEECH_UPLOAD_LEASE_S\s*=\s*(\d+)\s*\*\s*(\d+)",
+        render_source,
+    )
+    assert lease_match, "required speech upload lease constant not found"
+    lease_s = int(lease_match.group(1)) * int(lease_match.group(2))
+
+    assert lease_s <= soft_limit < hard_limit < visibility_timeout
+
+
 def test_poster_repair_time_limits_under_visibility_timeout() -> None:
     """`tasks.repair_job_poster` is not a render orchestrator (deliberately kept
     out of `_RENDER_ORCHESTRATORS`, which is documented as render-only), but it

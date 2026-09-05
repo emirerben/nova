@@ -32,6 +32,10 @@ from sqlalchemy import and_, delete, func, or_, select
 from app.config import settings
 from app.database import sync_session
 from app.models import ContentPlan, Job, JobStorageDeletion, PlanItem
+from app.services.job_storage_deletion import (
+    cleanup_job_storage_manifest,
+    parse_job_storage_manifest,
+)
 from app.services.job_storage_paths import (
     JOB_OUTPUT_PREFIXES,
     normalize_job_storage_path,
@@ -320,7 +324,9 @@ def purge_user_storage(
     }
 
 
-def _claim_job_storage_deletion(outbox_id: str) -> tuple[list[str], list[str], int] | None:
+def _claim_job_storage_deletion(
+    outbox_id: str,
+) -> tuple[uuid.UUID, object, int] | None:
     """Claim one due manifest, recovering leases abandoned by dead workers."""
     now = datetime.now(UTC)
     with sync_session() as db:
@@ -339,52 +345,86 @@ def _claim_job_storage_deletion(outbox_id: str) -> tuple[list[str], list[str], i
         deletion.attempts += 1
         deletion.lease_until = now + _JOB_STORAGE_DELETION_LEASE
         db.commit()
-        paths = deletion.object_paths if isinstance(deletion.object_paths, list) else []
-        prefixes = (
-            deletion.object_prefixes
-            if isinstance(getattr(deletion, "object_prefixes", None), list)
-            else []
-        )
-        return list(paths), list(prefixes), deletion.attempts
+        payload = deletion.object_paths
+        if isinstance(payload, list):
+            payload = list(payload)
+        elif isinstance(payload, dict):
+            payload = dict(payload)
+        # Creation-thread deletion predates the versioned Job manifest and
+        # stores project prefixes in the companion column. Keep those prefixes
+        # in a private envelope so the claim/lease protocol remains identical
+        # for both formats; they are handled by the project reference guard,
+        # not by the Job-only allowlist parser.
+        prefixes = getattr(deletion, "object_prefixes", None)
+        if isinstance(prefixes, list) and prefixes:
+            payload = {
+                "_creation_project_exact_paths": payload if isinstance(payload, list) else [],
+                "_creation_project_prefixes": list(prefixes),
+            }
+        return deletion.job_id, payload, deletion.attempts
 
 
 def _finish_job_storage_deletion(
     outbox_id: str,
     *,
-    deleted: int,
-    failed: list[str],
-    failed_prefixes: list[str],
+    expected_attempt: int,
+    remaining_payload: object,
+    completed: bool,
     error: str | None = None,
-) -> None:
+    retry_not_before: datetime | None = None,
+) -> bool:
+    """Finish only the exact lease claim that produced ``remaining_payload``.
+
+    A storage sweep can outlive its lease.  In that case another worker may
+    reclaim the row, or account erasure may merge additional cleanup debt and
+    reset it to pending.  The old worker's result was computed from a stale
+    manifest and must never overwrite either newer state.
+    """
     now = datetime.now(UTC)
     with sync_session() as db:
         deletion = db.execute(
             select(JobStorageDeletion).where(JobStorageDeletion.id == outbox_id).with_for_update()
         ).scalar_one_or_none()
-        if deletion is None:
-            return
+        if (
+            deletion is None
+            or deletion.status != "processing"
+            or deletion.attempts != expected_attempt
+        ):
+            return False
 
         deletion.lease_until = None
-        if failed or failed_prefixes:
+        if not completed:
             deletion.status = "pending"
-            deletion.object_paths = list(dict.fromkeys(failed))
-            deletion.object_prefixes = list(dict.fromkeys(failed_prefixes))
+            if (
+                isinstance(remaining_payload, dict)
+                and isinstance(remaining_payload.get("_creation_project_exact_paths"), list)
+                and isinstance(remaining_payload.get("_creation_project_prefixes"), list)
+            ):
+                deletion.object_paths = list(remaining_payload["_creation_project_exact_paths"])
+                if hasattr(deletion, "object_prefixes"):
+                    deletion.object_prefixes = list(remaining_payload["_creation_project_prefixes"])
+            else:
+                deletion.object_paths = remaining_payload
             retry_delay = min(
                 _JOB_STORAGE_DELETION_RETRY_BASE_S * (2 ** min(max(deletion.attempts - 1, 0), 6)),
                 _JOB_STORAGE_DELETION_RETRY_MAX_S,
             )
-            deletion.next_attempt_at = now + timedelta(seconds=retry_delay)
-            failed_total = len(failed) + len(failed_prefixes)
-            target_label = "storage targets" if failed_prefixes else "storage objects"
-            deletion.last_error = error or f"{failed_total} {target_label} could not be deleted"
+            retry_at = now + timedelta(seconds=retry_delay)
+            if retry_not_before is not None:
+                retry_at = max(retry_at, retry_not_before.astimezone(UTC))
+            deletion.next_attempt_at = retry_at
+            deletion.last_error = error
+            deletion.completed_at = None
         else:
             deletion.status = "completed"
-            deletion.object_paths = []
-            deletion.object_prefixes = []
+            deletion.object_paths = remaining_payload
+            if hasattr(deletion, "object_prefixes"):
+                deletion.object_prefixes = []
             deletion.next_attempt_at = None
             deletion.last_error = None
             deletion.completed_at = now
         db.commit()
+        return True
 
 
 @celery_app.task(
@@ -400,42 +440,145 @@ def purge_job_storage(outbox_id: str) -> dict:
     if claimed is None:
         return {"status": "skipped", "deleted": 0, "failed": 0}
 
-    object_paths, object_prefixes, attempt = claimed
+    job_id, payload, attempt = claimed
     error: str | None = None
-    try:
-        with _guard_project_storage_targets(object_paths, object_prefixes) as (
-            object_paths,
-            object_prefixes,
-        ):
-            deleted, failed = cleanup_job_storage_paths(object_paths)
-            prefix_deleted, failed_prefixes = cleanup_job_storage_prefixes(object_prefixes)
-            deleted += prefix_deleted
-    except Exception as exc:  # noqa: BLE001 — lease recovery handles outages
-        deleted = 0
-        failed = object_paths
-        failed_prefixes = object_prefixes
-        error = f"{type(exc).__name__}: {exc}"
-
-    _finish_job_storage_deletion(
-        outbox_id,
-        deleted=deleted,
-        failed=failed,
-        failed_prefixes=failed_prefixes,
-        error=error,
+    prefixes_verified = 0
+    prefixes_pending = 0
+    retry_not_before: datetime | None = None
+    project_payload = (
+        isinstance(payload, dict)
+        and isinstance(payload.get("_creation_project_exact_paths"), list)
+        and isinstance(payload.get("_creation_project_prefixes"), list)
     )
-    failed_count = len(failed) + len(failed_prefixes)
-    if failed_count:
+    if project_payload:
+        object_paths = list(payload["_creation_project_exact_paths"])
+        object_prefixes = list(payload["_creation_project_prefixes"])
+        try:
+            with _guard_project_storage_targets(object_paths, object_prefixes) as (
+                guarded_paths,
+                guarded_prefixes,
+            ):
+                deleted, failed = cleanup_job_storage_paths(guarded_paths)
+                prefix_deleted, failed_prefixes = cleanup_job_storage_prefixes(guarded_prefixes)
+                deleted += prefix_deleted
+        except SoftTimeLimitExceeded:
+            raise
+        except Exception as exc:  # noqa: BLE001 — lease recovery handles outages
+            deleted = 0
+            failed = object_paths
+            failed_prefixes = object_prefixes
+            error = f"{type(exc).__name__}: {exc}"
+        remaining_payload = {
+            "_creation_project_exact_paths": failed,
+            "_creation_project_prefixes": failed_prefixes,
+        }
+        failed_count = len(failed) + len(failed_prefixes)
+        completed = not failed_count
+        if failed_count and error is None:
+            target_label = "storage targets" if failed_prefixes else "storage objects"
+            error = f"{failed_count} {target_label} could not be deleted"
+    elif isinstance(payload, list):
+        try:
+            deleted, failed = cleanup_job_storage_paths(payload)
+        except SoftTimeLimitExceeded:
+            raise
+        except Exception as exc:  # noqa: BLE001 — lease recovery handles outages
+            deleted = 0
+            failed = payload
+            error = type(exc).__name__
+        remaining_payload: object = failed
+        completed = not failed
+        failed_count = len(failed)
+        if failed and error is None:
+            error = f"{failed_count} storage objects could not be deleted"
+    else:
+        now = datetime.now(UTC)
+        try:
+            manifest = parse_job_storage_manifest(payload, job_id=job_id)
+            cleanup = cleanup_job_storage_manifest(manifest, now=now)
+        except SoftTimeLimitExceeded:
+            # Do not overwrite the committed manifest when Celery's execution
+            # budget expires; the processing lease makes it recoverable.
+            raise
+        except Exception as exc:  # noqa: BLE001 — malformed debt is retained
+            deleted = 0
+            failed_count = 1
+            completed = False
+            remaining_payload = payload
+            error = type(exc).__name__
+        else:
+            deleted = cleanup.exact_deleted
+            failed_count = len(cleanup.remaining.exact_paths)
+            prefixes_verified = cleanup.prefixes_verified
+            prefixes_pending = len(cleanup.remaining.prefixes)
+            completed = cleanup.complete
+            remaining_payload = cleanup.remaining.to_payload()
+            if cleanup.status == "unavailable":
+                error = "storage_unavailable"
+            elif not completed and (
+                cleanup.remaining.exact_paths
+                or any(entry.not_before <= now for entry in cleanup.remaining.prefixes)
+            ):
+                error = "storage_cleanup_incomplete"
+            if (
+                not cleanup.remaining.exact_paths
+                and cleanup.remaining.prefixes
+                and all(entry.not_before > now for entry in cleanup.remaining.prefixes)
+            ):
+                retry_not_before = min(entry.not_before for entry in cleanup.remaining.prefixes)
+
+    finish_accepted = _finish_job_storage_deletion(
+        outbox_id,
+        expected_attempt=attempt,
+        remaining_payload=remaining_payload,
+        completed=completed,
+        error=error,
+        retry_not_before=retry_not_before,
+    )
+    if not finish_accepted:
+        log.info(
+            "purge_job_storage_result_superseded",
+            outbox_id=outbox_id,
+            attempt=attempt,
+        )
+        result = {
+            "status": "superseded",
+            "deleted": deleted,
+            "failed": failed_count,
+        }
+        if isinstance(payload, dict) and payload.get("version") == 2:
+            result.update(
+                prefixes_verified=prefixes_verified,
+                prefixes_pending=prefixes_pending,
+            )
+        return result
+    if not completed:
         log.warning(
             "purge_job_storage_pending_retry",
             outbox_id=outbox_id,
             deleted=deleted,
             failed=failed_count,
+            prefixes_pending=prefixes_pending,
             attempt=attempt,
         )
-        return {"status": "pending", "deleted": deleted, "failed": failed_count}
+        result = {"status": "pending", "deleted": deleted, "failed": failed_count}
+        if isinstance(payload, dict) and payload.get("version") == 2:
+            result.update(
+                prefixes_verified=prefixes_verified,
+                prefixes_pending=prefixes_pending,
+            )
+        return result
 
-    log.info("purge_job_storage_done", outbox_id=outbox_id, deleted=deleted)
-    return {"status": "completed", "deleted": deleted, "failed": 0}
+    log.info(
+        "purge_job_storage_done",
+        outbox_id=outbox_id,
+        deleted=deleted,
+        prefixes_verified=prefixes_verified,
+    )
+    result = {"status": "completed", "deleted": deleted, "failed": 0}
+    if isinstance(payload, dict) and payload.get("version") == 2:
+        result.update(prefixes_verified=prefixes_verified, prefixes_pending=0)
+    return result
 
 
 @celery_app.task(

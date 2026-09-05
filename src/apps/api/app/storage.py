@@ -5,11 +5,14 @@ import json
 import mimetypes
 import re
 import shutil
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import Literal
 from urllib.parse import quote
 
+from billiard.exceptions import SoftTimeLimitExceeded
 from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage as gcs
 from google.oauth2 import service_account
@@ -82,6 +85,35 @@ class ObjectMetadata:
     size: int
     content_type: str
     md5_hash: str | None = None
+
+
+PrefixDeletionStatus = Literal["verified_empty", "partial", "unavailable"]
+
+# Maintenance callers pass a request timeout while holding ownership locks.
+# Keep that path to one small storage page and at most two delete RPCs. A
+# successful final re-list is still required before durable debt may clear.
+VERIFIED_PREFIX_DELETE_OBJECT_CAP = 2
+
+
+@dataclass(frozen=True)
+class PrefixDeletionResult:
+    """Bounded outcome for one list-delete-relist prefix cleanup attempt.
+
+    ``deleted`` counts objects whose deletion completed (including an object
+    concurrently removed after the first listing). ``remaining`` is ``None``
+    when the final listing could not prove the prefix's state. Callers with a
+    durable receipt must clear it only when ``status == "verified_empty"``.
+    """
+
+    status: PrefixDeletionStatus
+    listed: int = 0
+    deleted: int = 0
+    failed: int = 0
+    remaining: int | None = None
+
+    @property
+    def verified_empty(self) -> bool:
+        return self.status == "verified_empty"
 
 
 def get_gcp_credentials(
@@ -481,22 +513,210 @@ def delete_object_generation_best_effort(object_path: str, *, generation: str) -
         return False
 
 
-def delete_prefix_best_effort(prefix: str) -> int:
-    """Delete every object under a GCS prefix, swallowing per-object failures.
-
-    Used for account erasure (`tasks.account_lifecycle.purge_user_storage`) to clear
-    `users/{user_id}/` and `generative-jobs/{job_id}/` — both are lifecycle-exempt
-    (see infra/gcs-lifecycle.json) so nothing else ever removes them. Returns the
-    count of objects actually deleted, for observability; never raises, so a bucket
-    listing hiccup costs storage, never blocks the caller's account-deletion flow.
-
-    Guardrail: refuses empty or single-character prefixes so a bug upstream can't
-    accidentally wipe the whole bucket.
-    """
-    if len(prefix.strip("/")) < 3:
+def _validate_delete_prefix(prefix: str) -> str:
+    normalized = prefix.strip()
+    if len(normalized.strip("/")) < 3:
         raise ValueError(f"Refusing to delete an unsafe prefix: {prefix!r}")
+    return normalized
+
+
+def delete_prefix_verified(
+    prefix: str,
+    *,
+    timeout_s: float | None = None,
+) -> PrefixDeletionResult:
+    """Delete a prefix and prove the result with a successful empty re-list.
+
+    Storage transport failures are represented by ``unavailable`` instead of
+    being confused with an already-empty prefix. A successful re-list with
+    objects still present is ``partial``. The GCS SDK's implicit retries can
+    optionally be disabled with ``timeout_s`` so durable maintenance callers
+    retain control of their own retry and lease budgets.
+
+    When ``timeout_s`` is supplied, one attempt is capped at
+    ``VERIFIED_PREFIX_DELETE_OBJECT_CAP`` objects and a total deadline of
+    ``timeout_s * (cap + 2)`` (list + deletes + proof re-list). Larger prefixes
+    return ``partial`` and are drained by later durable sweeps. Without a
+    timeout, the historical all-at-once behavior is preserved for callers that
+    do not hold database locks.
+    """
+    normalized = _validate_delete_prefix(prefix)
+    if timeout_s is not None and timeout_s <= 0:
+        raise ValueError("timeout_s must be positive")
+
+    object_cap = VERIFIED_PREFIX_DELETE_OBJECT_CAP if timeout_s is not None else None
+    deadline = (
+        time.monotonic() + timeout_s * (VERIFIED_PREFIX_DELETE_OBJECT_CAP + 2)
+        if timeout_s is not None
+        else None
+    )
+
+    def request_timeout() -> float | None:
+        if deadline is None:
+            return timeout_s
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("verified prefix deletion budget exhausted")
+        assert timeout_s is not None
+        return min(timeout_s, remaining)
+
     if _uses_local_storage():
-        directory = local_object_path(prefix.rstrip("/"))
+        try:
+            directory = local_object_path(normalized.rstrip("/"))
+            listed_paths: list[Path] = []
+            if directory.exists():
+                for path in directory.rglob("*"):
+                    if deadline is not None and time.monotonic() >= deadline:
+                        raise TimeoutError("verified prefix deletion budget exhausted")
+                    if path.is_file():
+                        listed_paths.append(path)
+                        if object_cap is not None and len(listed_paths) > object_cap:
+                            break
+        except SoftTimeLimitExceeded:
+            raise
+        except Exception:  # noqa: BLE001 — status is the durable retry contract
+            return PrefixDeletionResult(status="unavailable", remaining=None)
+
+        deleted = 0
+        failed = 0
+        paths_to_delete = listed_paths if object_cap is None else listed_paths[:object_cap]
+        for path in paths_to_delete:
+            try:
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise TimeoutError("verified prefix deletion budget exhausted")
+                path.unlink()
+                deleted += 1
+            except FileNotFoundError:
+                deleted += 1
+            except SoftTimeLimitExceeded:
+                raise
+            except Exception:  # noqa: BLE001 — verify below and retain receipt
+                failed += 1
+
+        try:
+            remaining_paths: list[Path] = []
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError("verified prefix deletion budget exhausted")
+            if directory.exists():
+                for path in directory.rglob("*"):
+                    if deadline is not None and time.monotonic() >= deadline:
+                        raise TimeoutError("verified prefix deletion budget exhausted")
+                    if path.is_file():
+                        remaining_paths.append(path)
+                        if object_cap is not None:
+                            break
+        except SoftTimeLimitExceeded:
+            raise
+        except Exception:  # noqa: BLE001 — deletion may have succeeded, proof did not
+            return PrefixDeletionResult(
+                status="unavailable",
+                listed=len(listed_paths),
+                deleted=deleted,
+                failed=failed,
+                remaining=None,
+            )
+
+        remaining = len(remaining_paths)
+        if remaining == 0 and directory.exists():
+            # Directories are not storage objects. Remove them only as local
+            # fixture hygiene; failure does not invalidate the empty proof.
+            try:
+                for path in sorted(
+                    (path for path in directory.rglob("*") if path.is_dir()),
+                    key=lambda value: len(value.parts),
+                    reverse=True,
+                ):
+                    path.rmdir()
+                directory.rmdir()
+            except OSError:
+                pass
+        return PrefixDeletionResult(
+            status="verified_empty" if remaining == 0 else "partial",
+            listed=len(listed_paths),
+            deleted=deleted,
+            failed=failed,
+            remaining=remaining,
+        )
+
+    bucket = _get_client().bucket(settings.storage_bucket)
+    list_kwargs: dict[str, object] = {"prefix": normalized}
+    if object_cap is not None:
+        # max_results + matching page_size ensures the iterator cannot amplify
+        # one bounded attempt into multiple list RPCs.
+        list_kwargs.update(max_results=object_cap + 1, page_size=object_cap + 1)
+    if timeout_s is not None:
+        try:
+            list_kwargs.update(timeout=request_timeout(), retry=None)
+        except TimeoutError:
+            return PrefixDeletionResult(status="unavailable", remaining=None)
+    try:
+        listed_blobs = list(bucket.list_blobs(**list_kwargs))
+    except SoftTimeLimitExceeded:
+        raise
+    except Exception:  # noqa: BLE001 — unavailable is distinct from empty
+        return PrefixDeletionResult(status="unavailable", remaining=None)
+
+    deleted = 0
+    failed = 0
+    blobs_to_delete = listed_blobs if object_cap is None else listed_blobs[:object_cap]
+    for blob in blobs_to_delete:
+        try:
+            delete_kwargs = (
+                {} if timeout_s is None else {"timeout": request_timeout(), "retry": None}
+            )
+            blob.delete(**delete_kwargs)
+            deleted += 1
+        except NotFound:
+            # A concurrent cleanup completed this exact listed object.
+            deleted += 1
+        except SoftTimeLimitExceeded:
+            raise
+        except Exception:  # noqa: BLE001 — final re-list decides partial vs complete
+            failed += 1
+
+    try:
+        proof_kwargs: dict[str, object] = {"prefix": normalized}
+        if object_cap is not None:
+            # Empty/non-empty is the only proof needed after a bounded pass.
+            proof_kwargs.update(max_results=1, page_size=1)
+        if timeout_s is not None:
+            proof_kwargs.update(timeout=request_timeout(), retry=None)
+        remaining = sum(1 for _ in bucket.list_blobs(**proof_kwargs))
+    except SoftTimeLimitExceeded:
+        raise
+    except Exception:  # noqa: BLE001 — never claim completion without the proof
+        return PrefixDeletionResult(
+            status="unavailable",
+            listed=len(listed_blobs),
+            deleted=deleted,
+            failed=failed,
+            remaining=None,
+        )
+
+    return PrefixDeletionResult(
+        status="verified_empty" if remaining == 0 else "partial",
+        listed=len(listed_blobs),
+        deleted=deleted,
+        failed=failed,
+        remaining=remaining,
+    )
+
+
+# Descriptive alias for call sites that frame this as an outcome-bearing
+# replacement for the legacy best-effort helper.
+delete_prefix_with_status = delete_prefix_verified
+
+
+def delete_prefix_best_effort(prefix: str) -> int:
+    """Delete every object under a prefix with the historical one-pass contract.
+
+    Existing fire-and-forget callers keep their integer return type and single
+    listing. New durable callers must use :func:`delete_prefix_verified` and
+    retain their receipt unless it reports ``verified_empty``.
+    """
+    normalized = _validate_delete_prefix(prefix)
+    if _uses_local_storage():
+        directory = local_object_path(normalized.rstrip("/"))
         if not directory.exists():
             return 0
         files = [path for path in directory.rglob("*") if path.is_file()]
@@ -513,7 +733,7 @@ def delete_prefix_best_effort(prefix: str) -> int:
     bucket = _get_client().bucket(settings.storage_bucket)
     deleted = 0
     try:
-        for blob in bucket.list_blobs(prefix=prefix):
+        for blob in bucket.list_blobs(prefix=normalized):
             try:
                 blob.delete()
                 deleted += 1

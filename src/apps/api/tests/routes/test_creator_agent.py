@@ -1,5 +1,6 @@
 """Focused Main Creator route/controller contracts."""
 
+import copy
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -221,6 +222,74 @@ def test_creator_speech_cut_uses_candidate_specific_kill_switch(monkeypatch) -> 
     assert _creator_speech_cut_source_enabled("untrusted_source") is False
 
 
+def test_required_creator_speech_dispatch_keeps_last_good_public(monkeypatch) -> None:
+    from app.agents._schemas.creator_agent import ApplySpeechCutCommand
+    from app.pipeline.speech_cut_state import cut_revision, make_candidate
+
+    candidate = make_candidate(
+        start_s=1.0,
+        end_s=1.5,
+        reason="filler_acoustic",
+        source="retake_review",
+        preview="um",
+        source_fingerprint="source-a",
+        transcript_hash="transcript-a",
+    )
+    job_id = uuid.uuid4()
+    variant = {
+        "variant_id": "subtitled",
+        "resolved_archetype": "subtitled",
+        "render_generation_id": uuid.uuid4().hex,
+        "render_status": "ready",
+        "ok": True,
+        "video_path": f"generative-jobs/{job_id}/last-good.mp4",
+        "base_video_path": f"generative-jobs/{job_id}/base.mp4",
+        "speech_cut_candidates": [candidate],
+        "speech_cut_forced_removals": [],
+        "speech_cuts_disabled": False,
+        "silence_cut": {"removed": []},
+    }
+    variant["speech_cut_revision"] = cut_revision(variant)
+    public_before = copy.deepcopy(variant)
+    job = SimpleNamespace(
+        id=job_id,
+        status="variants_ready",
+        assembly_plan={
+            "speech_cleanup_contract": "required_v1",
+            "silence_cut_disabled": True,
+            "variants": [variant],
+        },
+    )
+    command = ApplySpeechCutCommand(
+        command="apply_speech_cut",
+        candidate_id=candidate["candidate_id"],
+        expected_cut_revision=variant["speech_cut_revision"],
+        expected_manifest_hash="a" * 64,
+        expected_context_hash="b" * 64,
+        expected_job_id=str(job_id),
+        expected_variant_id="subtitled",
+        expected_generation_id=variant["render_generation_id"],
+        expected_revision=1,
+        expected_ownership_epoch=1,
+    )
+    monkeypatch.setattr(creator_routes.settings, "retake_cut_enabled", True)
+    monkeypatch.setattr("sqlalchemy.orm.attributes.flag_modified", lambda *_a, **_k: None)
+
+    request, _operation_id, _prior = creator_routes._stage_creator_speech_cut(
+        job,
+        variant_id="subtitled",
+        command=command,
+    )
+
+    assert request["operation"] == "apply_speech_cut_candidate"
+    assert job.assembly_plan["variants"] == [public_before]
+    assert job.assembly_plan["speech_cut_previous_variants"] == [public_before]
+    assert job.assembly_plan["silence_cut_disabled"] is True
+    control = job.assembly_plan["speech_cut_control"]
+    assert control["render_generation_id"]
+    assert control["in_flight"]
+
+
 @pytest.mark.parametrize(
     ("count", "status", "expected"),
     [
@@ -400,6 +469,351 @@ def _craft_route_context(*, user_id: uuid.UUID, job_id: uuid.UUID, session_id: u
     return item, plan, session, job, manifest
 
 
+def _required_speech_craft_context(
+    *,
+    user_id: uuid.UUID,
+    job_id: uuid.UUID,
+    session_id: uuid.UUID,
+    with_caption: bool = False,
+):
+    from app.pipeline.speech_cut_state import cut_revision, make_candidate
+
+    item, plan, session, job, _manifest = _craft_route_context(
+        user_id=user_id,
+        job_id=job_id,
+        session_id=session_id,
+    )
+    candidate = make_candidate(
+        start_s=1.0,
+        end_s=1.5,
+        reason="filler_acoustic",
+        source="retake_review",
+        preview="um",
+        source_fingerprint="source-a",
+        transcript_hash="transcript-a",
+    )
+    variant = {
+        "variant_id": "variant-1",
+        "resolved_archetype": "subtitled",
+        "render_generation_id": "generation-2",
+        "render_status": "ready",
+        "ok": True,
+        "video_path": f"generative-jobs/{job_id}/last-good.mp4",
+        "base_video_path": f"generative-jobs/{job_id}/base.mp4",
+        "voiceover_caption_style": "sentence",
+        "speech_cut_candidates": [candidate],
+        "speech_cut_forced_removals": [],
+        "speech_cuts_disabled": False,
+        "silence_cut": {"removed": []},
+    }
+    variant["speech_cut_revision"] = cut_revision(variant)
+    job.assembly_plan = {
+        "speech_cleanup_contract": "required_v1",
+        "silence_cut_disabled": True,
+        "variants": [variant],
+    }
+    manifest = SimpleNamespace(
+        manifest_hash="a" * 64,
+        context_hash="b" * 64,
+        capabilities={
+            "automatic_cut": SimpleNamespace(available=True),
+            "caption_style": SimpleNamespace(available=True),
+        },
+    )
+    pins = {
+        "expected_manifest_hash": manifest.manifest_hash,
+        "expected_context_hash": manifest.context_hash,
+        "expected_job_id": str(job_id),
+        "expected_variant_id": "variant-1",
+        "expected_generation_id": "generation-2",
+        "expected_revision": 3,
+        "expected_ownership_epoch": 4,
+    }
+    commands = [
+        {
+            **pins,
+            "command": "apply_speech_cut",
+            "candidate_id": candidate["candidate_id"],
+            "expected_cut_revision": variant["speech_cut_revision"],
+        }
+    ]
+    if with_caption:
+        commands.append({**pins, "command": "set_caption_style", "caption_style": "word"})
+    body = CreatorCraftBundle(
+        session_id=str(session_id),
+        idempotency_key=("speech-caption" if with_caption else "speech-only"),
+        commands=commands,
+        **pins,
+    )
+    return item, plan, session, job, manifest, body
+
+
+def _configure_required_speech_craft(
+    monkeypatch,
+    *,
+    item,
+    plan,
+    session,
+    manifest,
+) -> None:
+    monkeypatch.setattr(creator_routes, "_require_feature", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, plan, SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(creator_routes, "_stable_manifest_fingerprint", lambda _manifest: "stable")
+    monkeypatch.setattr(creator_routes.settings, "retake_cut_enabled", True)
+    monkeypatch.setattr("sqlalchemy.orm.attributes.flag_modified", lambda *_args, **_kwargs: None)
+
+
+def test_creator_speech_cut_rejects_inflight_sibling_before_snapshot(monkeypatch) -> None:
+    from app.agents._schemas.creator_agent import ApplySpeechCutCommand
+
+    user_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    _item, _plan, _session, job, _manifest, body = _required_speech_craft_context(
+        user_id=user_id,
+        job_id=job_id,
+        session_id=uuid.uuid4(),
+    )
+    job.assembly_plan["variants"].append(
+        {
+            "variant_id": "song_text",
+            "render_generation_id": uuid.uuid4().hex,
+            "render_status": "pending",
+            "ok": False,
+        }
+    )
+    before = copy.deepcopy(job.assembly_plan)
+    command = next(value for value in body.commands if isinstance(value, ApplySpeechCutCommand))
+    monkeypatch.setattr(creator_routes.settings, "retake_cut_enabled", True)
+
+    with pytest.raises(HTTPException) as caught:
+        creator_routes._stage_creator_speech_cut(
+            job,
+            variant_id="variant-1",
+            command=command,
+        )
+
+    assert caught.value.status_code == 409
+    assert caught.value.detail == "variant_initial_render_in_progress"
+    assert job.assembly_plan == before
+
+
+def test_creator_craft_response_projects_private_state_without_mutating_receipt() -> None:
+    import copy
+
+    receipt = SimpleNamespace(
+        id=uuid.uuid4(),
+        status="succeeded",
+        result={
+            "generation": "generation-3",
+            "preview": {
+                "caption_style": "word",
+                "_speech_cleanup_internal": {"secret": True},
+                "candidate": {
+                    "clip_source_instance_ids": ["private-id"],
+                    "clip_metadata_identity_index_v2": {"records": []},
+                    "clip_paths": ["source.mp4"],
+                },
+            },
+        },
+    )
+    stored = copy.deepcopy(receipt.result)
+
+    response = creator_routes._craft_response(receipt)
+
+    assert response.preview == {
+        "caption_style": "word",
+        "candidate": {"clip_paths": ["source.mp4"]},
+    }
+    assert receipt.result == stored
+
+
+def test_creator_session_response_projects_nested_private_state(monkeypatch) -> None:
+    payload = {
+        "id": str(uuid.uuid4()),
+        "status": "awaiting_feedback",
+        "revision": 3,
+        "render_attempts": 1,
+        "max_render_attempts": 2,
+        "can_render": True,
+        "pending_plan": {
+            "summary": "Keep this",
+            "_speech_cleanup_internal": {"secret": True},
+            "candidate": {
+                "clip_source_instance_ids": ["private-id"],
+                "clip_paths": ["source.mp4"],
+            },
+        },
+        "current_job_id": None,
+        "last_review": None,
+        "events": [],
+        "auto_iteration": None,
+        "created_at": "2026-09-01T00:00:00Z",
+        "updated_at": "2026-09-01T00:00:00Z",
+    }
+    monkeypatch.setattr(creator_routes, "serialize_session", lambda _session: payload)
+
+    response = creator_routes._creator_session_response(SimpleNamespace())
+
+    assert response.pending_plan == {
+        "summary": "Keep this",
+        "candidate": {"clip_paths": ["source.mp4"]},
+    }
+
+
+@pytest.mark.asyncio
+async def test_required_creator_speech_only_uses_one_private_generation(monkeypatch) -> None:
+    from app.tasks.generative_build import rerender_speech_timing
+
+    user_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    item, plan, session, job, manifest, body = _required_speech_craft_context(
+        user_id=user_id,
+        job_id=job_id,
+        session_id=session_id,
+    )
+    public_before = copy.deepcopy(job.assembly_plan["variants"])
+    db = AsyncMock()
+    receipt_result = MagicMock()
+    receipt_result.scalar_one_or_none.return_value = None
+    db.execute.return_value = receipt_result
+    db.get.return_value = job
+    captured: dict[str, CreatorAgentExecution] = {}
+
+    def add(value):
+        if isinstance(value, CreatorAgentExecution):
+            value.id = uuid.uuid4()
+            captured["receipt"] = value
+
+    db.add = MagicMock(side_effect=add)
+    enqueue = MagicMock()
+    monkeypatch.setattr(rerender_speech_timing, "apply_async", enqueue)
+    _configure_required_speech_craft(
+        monkeypatch,
+        item=item,
+        plan=plan,
+        session=session,
+        manifest=manifest,
+    )
+
+    response = await creator_routes.execute_creator_craft(
+        str(item.id), body, SimpleNamespace(id=user_id), db
+    )
+
+    receipt = captured["receipt"]
+    control = job.assembly_plan["speech_cut_control"]
+    generation = control["render_generation_id"]
+    assert response.generation == generation
+    assert receipt.result["generation"] == generation
+    assert receipt.result["prepared"]["generation"] == generation
+    assert receipt.result["speech_cut_operation_id"] == control["operation_id"]
+    assert receipt.result["prepared"]["speech_cut_operation_id"] == control["operation_id"]
+    assert session.target_generation_id == generation
+    assert job.assembly_plan["variants"] == public_before
+    assert job.assembly_plan["speech_cut_previous_variants"] == public_before
+    staged = job.assembly_plan["speech_cut_previous_variant"]
+    assert staged["render_generation_id"] == generation
+    assert staged["speech_cut_candidates"][0]["status"] == "applying"
+    enqueue.assert_called_once_with(
+        args=[str(job_id), control["operation_id"]],
+        queue="plan-jobs",
+        task_id=f"creator-craft-{receipt.id}-{generation}",
+    )
+
+
+@pytest.mark.asyncio
+async def test_required_creator_speech_and_editor_keep_editor_lane_private(monkeypatch) -> None:
+    from app.tasks.generative_build import rerender_speech_timing
+
+    user_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    item, plan, session, job, manifest, body = _required_speech_craft_context(
+        user_id=user_id,
+        job_id=job_id,
+        session_id=session_id,
+        with_caption=True,
+    )
+    public_before = copy.deepcopy(job.assembly_plan["variants"])
+    db = AsyncMock()
+    receipt_result = MagicMock()
+    receipt_result.scalar_one_or_none.return_value = None
+    db.execute.return_value = receipt_result
+    db.get.return_value = job
+    captured: dict[str, CreatorAgentExecution] = {}
+
+    def add(value):
+        if isinstance(value, CreatorAgentExecution):
+            value.id = uuid.uuid4()
+            captured["receipt"] = value
+
+    db.add = MagicMock(side_effect=add)
+
+    def prepare_editor(job_value, variant_id, *_args, **_kwargs):
+        variants = copy.deepcopy(job_value.assembly_plan["variants"])
+        target = next(value for value in variants if value["variant_id"] == variant_id)
+        assert target == public_before[0]
+        target.update(
+            {
+                "voiceover_caption_style": "word",
+                "render_generation_id": "discarded-editor-generation",
+                "render_status": "rendering",
+                "ok": False,
+            }
+        )
+        job_value.assembly_plan = {**job_value.assembly_plan, "variants": variants}
+        return {
+            "generation": "discarded-editor-generation",
+            "has_render_section": True,
+            "sections": {"caption_meta": True},
+        }
+
+    enqueue = MagicMock()
+    monkeypatch.setattr(creator_routes, "prepare_editor_commit", prepare_editor)
+    monkeypatch.setattr(rerender_speech_timing, "apply_async", enqueue)
+    _configure_required_speech_craft(
+        monkeypatch,
+        item=item,
+        plan=plan,
+        session=session,
+        manifest=manifest,
+    )
+
+    response = await creator_routes.execute_creator_craft(
+        str(item.id), body, SimpleNamespace(id=user_id), db
+    )
+
+    receipt = captured["receipt"]
+    control = job.assembly_plan["speech_cut_control"]
+    generation = control["render_generation_id"]
+    staged = job.assembly_plan["speech_cut_previous_variant"]
+    assert response.generation == generation
+    assert receipt.result["generation"] == generation
+    assert receipt.result["prepared"]["generation"] == generation
+    assert session.target_generation_id == generation
+    assert staged["render_generation_id"] == generation
+    assert staged["voiceover_caption_style"] == "word"
+    assert staged["speech_cut_candidates"][0]["status"] == "applying"
+    assert job.assembly_plan["variants"] == public_before
+    assert job.assembly_plan["speech_cut_previous_variants"] == public_before
+    assert "discarded-editor-generation" not in repr(job.assembly_plan)
+    enqueue.assert_called_once_with(
+        args=[str(job_id), control["operation_id"]],
+        queue="plan-jobs",
+        task_id=f"creator-craft-{receipt.id}-{generation}",
+    )
+
+
 @pytest.mark.asyncio
 async def test_creator_craft_rejects_stale_exact_generation_pin(monkeypatch) -> None:
     user_id = uuid.uuid4()
@@ -441,6 +855,167 @@ async def test_creator_craft_rejects_stale_exact_generation_pin(monkeypatch) -> 
     assert caught.value.status_code == 409
     assert caught.value.detail == "Creator render generation changed"
     db.add.assert_not_called()
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_creator_craft_rejects_private_initial_generation_before_staging(
+    monkeypatch,
+) -> None:
+    import copy
+
+    user_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    item, plan, session, job, manifest = _craft_route_context(
+        user_id=user_id, job_id=job_id, session_id=session_id
+    )
+    job.assembly_plan["_speech_cleanup_internal"] = {
+        "required_speech_generation_locks": {"variant-1": "initial-generation"}
+    }
+    job.status = "processing"
+    stored = copy.deepcopy(job.assembly_plan)
+    db = AsyncMock()
+    receipt_result = MagicMock()
+    receipt_result.scalar_one_or_none.return_value = None
+    db.execute.return_value = receipt_result
+    db.get.return_value = job
+    monkeypatch.setattr(creator_routes, "_require_feature", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, plan, SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    resolve_context = AsyncMock(return_value=(manifest, []))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        resolve_context,
+    )
+    build_commit = MagicMock()
+    monkeypatch.setattr(creator_routes, "build_core_craft_editor_commit", build_commit)
+
+    with pytest.raises(HTTPException) as caught:
+        await creator_routes.execute_creator_craft(
+            str(item.id),
+            _craft_bundle(
+                session_id=session_id,
+                job_id=job_id,
+                generation_id="generation-2",
+            ),
+            SimpleNamespace(id=user_id),
+            db,
+        )
+
+    assert caught.value.status_code == 409
+    assert caught.value.detail == "variant_initial_render_in_progress"
+    assert job.assembly_plan == stored
+    resolve_context.assert_not_awaited()
+    build_commit.assert_not_called()
+    db.add.assert_not_called()
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_auto_iteration_rejects_private_initial_generation_without_controller_write(
+    monkeypatch,
+) -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    item_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    session = SimpleNamespace(
+        id=session_id,
+        creator_id=user.id,
+        plan_item_id=item_id,
+        status="awaiting_feedback",
+        revision=11,
+        ownership_epoch=7,
+        auto_iteration_opt_in=False,
+        max_render_attempts=2,
+        render_attempts=1,
+        automatic_revision_count=0,
+        target_job_id=job_id,
+        target_variant_id="variant-1",
+        target_generation_id="generation-1",
+        last_review={
+            "status": "complete",
+            "review_mode": "objective",
+            "render_generation_id": "generation-1",
+            "confidence": 0.9,
+            "quality_score": 3.0,
+            "expected_improvement": 0.5,
+            "objective_tag": "objective_quality",
+            "allowlist_action": "caption_legibility",
+            "proposed_revision": {"revision_id": "revision-1", "summary": "Fix captions"},
+        },
+    )
+    item = SimpleNamespace(id=item_id)
+    plan = SimpleNamespace(ownership_epoch=7)
+    job = SimpleNamespace(
+        id=job_id,
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "variant-1",
+                    "render_generation_id": "generation-1",
+                    "render_status": "pending",
+                }
+            ],
+            "_speech_cleanup_internal": {
+                "required_speech_generation_locks": {"variant-1": "initial-generation"}
+            },
+        },
+    )
+    db = AsyncMock()
+    no_row = MagicMock()
+    no_row.scalar_one_or_none.return_value = None
+    db.execute.return_value = no_row
+    db.get.return_value = job
+    append_event = AsyncMock()
+    resolve_context = AsyncMock()
+    craft = AsyncMock()
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, plan, SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(creator_routes, "append_event", append_event)
+    monkeypatch.setattr(creator_routes, "resolve_item_creator_context", resolve_context)
+    monkeypatch.setattr(creator_routes, "execute_creator_craft", craft)
+    monkeypatch.setattr(
+        creator_routes,
+        "evaluate_auto_iteration",
+        lambda *_args, **_kwargs: SimpleNamespace(decision="eligible"),
+    )
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_execution_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_review_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_quality_review_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_auto_iteration_enabled", True)
+    monkeypatch.setattr(settings, "main_creator_agent_rollout_percent", 100)
+
+    with pytest.raises(HTTPException) as caught:
+        await creator_routes.request_creator_auto_iteration(
+            str(item_id),
+            AutoIterationBody(
+                session_id=session_id,
+                expected_revision=11,
+                opt_in=True,
+                client_event_id="auto-event-locked",
+            ),
+            user,
+            db,
+        )
+
+    assert caught.value.status_code == 409
+    assert caught.value.detail == "variant_initial_render_in_progress"
+    assert session.auto_iteration_opt_in is False
+    append_event.assert_not_awaited()
+    resolve_context.assert_not_awaited()
+    craft.assert_not_awaited()
     db.commit.assert_not_awaited()
 
 
@@ -606,6 +1181,73 @@ async def test_creator_craft_enqueue_failure_restores_plan_and_fails_receipt(mon
 
 
 @pytest.mark.asyncio
+async def test_required_creator_speech_enqueue_failure_rolls_back_private_owner(
+    monkeypatch,
+) -> None:
+    from app.tasks.generative_build import rerender_speech_timing
+
+    user_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    item, plan, session, job, manifest, body = _required_speech_craft_context(
+        user_id=user_id,
+        job_id=job_id,
+        session_id=session_id,
+    )
+    plan_before = copy.deepcopy(job.assembly_plan)
+    db = AsyncMock()
+    receipt_result = MagicMock()
+    receipt_result.scalar_one_or_none.return_value = None
+    db.execute.return_value = receipt_result
+    captured: dict[str, CreatorAgentExecution] = {}
+
+    def add(value):
+        if isinstance(value, CreatorAgentExecution):
+            value.id = uuid.uuid4()
+            captured["receipt"] = value
+
+    def get(model, *_args, **_kwargs):
+        if model is Job:
+            return job
+        if model is CreatorAgentSession:
+            return session
+        if model is CreatorAgentExecution:
+            return captured["receipt"]
+        raise AssertionError(f"unexpected model lookup: {model}")
+
+    db.add = MagicMock(side_effect=add)
+    db.get = AsyncMock(side_effect=get)
+    enqueue = MagicMock(side_effect=RuntimeError("broker unavailable"))
+    monkeypatch.setattr(rerender_speech_timing, "apply_async", enqueue)
+    _configure_required_speech_craft(
+        monkeypatch,
+        item=item,
+        plan=plan,
+        session=session,
+        manifest=manifest,
+    )
+
+    with pytest.raises(HTTPException) as caught:
+        await creator_routes.execute_creator_craft(
+            str(item.id), body, SimpleNamespace(id=user_id), db
+        )
+
+    receipt = captured["receipt"]
+    assert caught.value.status_code == 503
+    assert job.assembly_plan == plan_before
+    assert job.status == "variants_ready"
+    assert job.started_at is None
+    assert session.status == "awaiting_feedback"
+    assert session.revision == 3
+    assert getattr(session, "target_generation_id", None) is None
+    assert receipt.status == "failed"
+    assert receipt.error["code"] == "craft_enqueue_failed"
+    assert receipt.error["rolled_back"] is True
+    assert receipt.error["generation"] in enqueue.call_args.kwargs["task_id"]
+    db.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_creator_craft_rollback_restores_speech_owned_state_only() -> None:
     job_id = uuid.uuid4()
     receipt_id = uuid.uuid4()
@@ -700,6 +1342,342 @@ async def test_creator_craft_rollback_restores_speech_owned_state_only() -> None
         Job,
         CreatorAgentExecution,
     ]
+
+
+@pytest.mark.asyncio
+async def test_required_creator_speech_rollback_refuses_superseding_operation() -> None:
+    job_id = uuid.uuid4()
+    receipt_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    previous_plan = {
+        "speech_cleanup_contract": "required_v1",
+        "variants": [
+            {"variant_id": "target", "render_generation_id": "old", "render_status": "ready"}
+        ],
+    }
+    current_plan = {
+        "speech_cleanup_contract": "required_v1",
+        "variants": copy.deepcopy(previous_plan["variants"]),
+        "speech_cut_control": {
+            "variant_id": "target",
+            "operation_id": "superseding-operation",
+            # Reusing the token makes this specifically prove that operation id,
+            # not generation alone, is part of the private ownership CAS.
+            "render_generation_id": "speech-generation",
+        },
+        "speech_cut_previous_variant": {"variant_id": "target", "private": "new"},
+        "speech_cut_previous_variants": copy.deepcopy(previous_plan["variants"]),
+    }
+    job = SimpleNamespace(
+        id=job_id,
+        status="processing",
+        started_at=datetime.now(UTC),
+        assembly_plan=copy.deepcopy(current_plan),
+    )
+    session = SimpleNamespace(
+        id=session_id,
+        status="rendering",
+        target_job_id=job_id,
+        target_variant_id="target",
+        target_generation_id="speech-generation",
+        render_attempts=2,
+        iteration_count=2,
+        revision=4,
+    )
+    receipt = SimpleNamespace(id=receipt_id, status="running", error=None)
+    db = AsyncMock()
+    db.get.side_effect = [session, job, receipt]
+    stored_plan = copy.deepcopy(job.assembly_plan)
+    stored_started_at = job.started_at
+
+    await creator_routes._rollback_craft_commit(
+        db,
+        receipt_id=receipt_id,
+        session_id=session_id,
+        job_id=job_id,
+        previous_assembly_plan=previous_plan,
+        variant_id="target",
+        generation="speech-generation",
+        speech_cut_operation_id="original-operation",
+        error=RuntimeError("broker unavailable"),
+        previous_job_state={"status": "variants_ready", "started_at": None},
+        previous_session_state={
+            "status": "awaiting_feedback",
+            "target_job_id": str(job_id),
+            "target_variant_id": "target",
+            "target_generation_id": "old",
+            "render_attempts": 1,
+            "iteration_count": 1,
+            "revision": 3,
+        },
+    )
+
+    assert job.assembly_plan == stored_plan
+    assert job.status == "processing"
+    assert job.started_at == stored_started_at
+    assert session.status == "rendering"
+    assert session.target_generation_id == "speech-generation"
+    assert session.revision == 4
+    assert receipt.status == "failed"
+    assert receipt.error["rolled_back"] is False
+
+
+@pytest.mark.asyncio
+async def test_required_creator_enqueue_response_loss_preserves_adopted_private_owner() -> None:
+    """A published task may claim/reserve before ``apply_async`` reports failure."""
+
+    job_id = uuid.uuid4()
+    receipt_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    operation_id = "speech-operation"
+    generation = "speech-generation"
+    last_good = {
+        "variant_id": "target",
+        "render_generation_id": "last-good",
+        "render_status": "ready",
+        "ok": True,
+    }
+    previous_plan = {
+        "speech_cleanup_contract": "required_v1",
+        "variants": [copy.deepcopy(last_good)],
+    }
+    current_plan = {
+        **copy.deepcopy(previous_plan),
+        "speech_cut_control": {
+            "variant_id": "target",
+            "operation_id": operation_id,
+            "render_generation_id": generation,
+            "finalizer_claim": {
+                "operation_id": operation_id,
+                "attempt_id": "task-1:0:attempt",
+                "render_generation_id": generation,
+            },
+        },
+        "speech_cut_previous_variant": {
+            **copy.deepcopy(last_good),
+            "render_generation_id": generation,
+            "render_status": "rendering",
+            "ok": False,
+        },
+        "speech_cut_previous_variants": [copy.deepcopy(last_good)],
+        "_speech_cleanup_internal": {
+            "required_speech_generation_locks": {"target": generation},
+            "working_render_variants": {
+                f"target:{generation}": {
+                    "variant_id": "target",
+                    "render_generation_id": generation,
+                    "render_status": "rendering",
+                    "ok": False,
+                }
+            },
+            "render_generation_cleanup_pending": [
+                {
+                    "generation": generation,
+                    "prefix": f"generative-jobs/{job_id}/render-generations/{generation}/",
+                    "upload_state": "writing",
+                    "lease_expires_at": "2026-09-02T12:30:00+00:00",
+                }
+            ],
+        },
+    }
+    job = SimpleNamespace(
+        id=job_id,
+        status="processing",
+        started_at=datetime.now(UTC),
+        assembly_plan=copy.deepcopy(current_plan),
+    )
+    session = SimpleNamespace(
+        id=session_id,
+        status="rendering",
+        target_job_id=job_id,
+        target_variant_id="target",
+        target_generation_id=generation,
+        render_attempts=2,
+        iteration_count=2,
+        revision=4,
+    )
+    receipt = SimpleNamespace(
+        id=receipt_id,
+        status="running",
+        result={"prepared": {"generation": generation}},
+        error=None,
+        completed_at=None,
+    )
+    db = AsyncMock()
+    db.get.side_effect = [session, job, receipt]
+    stored_job_plan = copy.deepcopy(job.assembly_plan)
+    stored_job_state = (job.status, job.started_at)
+    stored_session_state = copy.deepcopy(session.__dict__)
+
+    disposition = await creator_routes._rollback_craft_commit(
+        db,
+        receipt_id=receipt_id,
+        session_id=session_id,
+        job_id=job_id,
+        previous_assembly_plan=previous_plan,
+        variant_id="target",
+        generation=generation,
+        speech_cut_operation_id=operation_id,
+        error=RuntimeError("broker response lost"),
+        previous_job_state={"status": "variants_ready", "started_at": None},
+        previous_session_state={
+            "status": "awaiting_feedback",
+            "target_job_id": str(job_id),
+            "target_variant_id": "target",
+            "target_generation_id": "last-good",
+            "render_attempts": 1,
+            "iteration_count": 1,
+            "revision": 3,
+        },
+    )
+
+    assert disposition == "enqueue_uncertain"
+    assert job.assembly_plan == stored_job_plan
+    assert (job.status, job.started_at) == stored_job_state
+    assert session.__dict__ == stored_session_state
+    assert receipt.status == "running"
+    assert receipt.result == {"prepared": {"generation": generation}}
+    assert receipt.error["code"] == "craft_enqueue_uncertain"
+    assert receipt.error["rolled_back"] is False
+    assert receipt.completed_at is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "claim",
+    [
+        {},
+        "malformed-claim",
+        {"operation_id": "speech-operation"},
+    ],
+    ids=["empty", "non-object", "incomplete"],
+)
+async def test_required_creator_rollback_preserves_malformed_claim(claim) -> None:
+    """Only ``finalizer_claim=None`` is route-owned pre-reservation state."""
+
+    job_id = uuid.uuid4()
+    receipt_id = uuid.uuid4()
+    operation_id = "speech-operation"
+    generation = "speech-generation"
+    previous_plan = {
+        "speech_cleanup_contract": "required_v1",
+        "variants": [
+            {"variant_id": "target", "render_generation_id": "old", "render_status": "ready"}
+        ],
+    }
+    current_plan = {
+        **copy.deepcopy(previous_plan),
+        "speech_cut_control": {
+            "variant_id": "target",
+            "operation_id": operation_id,
+            "render_generation_id": generation,
+            "finalizer_claim": copy.deepcopy(claim),
+        },
+        "speech_cut_previous_variant": {"variant_id": "target"},
+        "speech_cut_previous_variants": copy.deepcopy(previous_plan["variants"]),
+    }
+    job = SimpleNamespace(
+        id=job_id,
+        status="processing",
+        started_at=datetime.now(UTC),
+        assembly_plan=copy.deepcopy(current_plan),
+    )
+    receipt = SimpleNamespace(
+        id=receipt_id,
+        status="running",
+        result={"prepared": {"generation": generation}},
+        error=None,
+        completed_at=None,
+    )
+    db = AsyncMock()
+    db.get.side_effect = [job, receipt]
+
+    disposition = await creator_routes._rollback_craft_commit(
+        db,
+        receipt_id=receipt_id,
+        session_id=uuid.uuid4(),
+        job_id=job_id,
+        previous_assembly_plan=previous_plan,
+        variant_id="target",
+        generation=generation,
+        speech_cut_operation_id=operation_id,
+        error=RuntimeError("broker response lost"),
+    )
+
+    assert disposition == "enqueue_uncertain"
+    assert job.assembly_plan == current_plan
+    assert job.status == "processing"
+    assert receipt.status == "running"
+    assert receipt.error["code"] == "craft_enqueue_uncertain"
+
+
+@pytest.mark.asyncio
+async def test_required_creator_rollback_preserves_already_published_generation() -> None:
+    """A lost broker response can arrive after the worker's final transaction."""
+
+    job_id = uuid.uuid4()
+    receipt_id = uuid.uuid4()
+    generation = uuid.uuid4().hex
+    previous_plan = {
+        "speech_cleanup_contract": "required_v1",
+        "variants": [
+            {
+                "variant_id": "target",
+                "render_generation_id": uuid.uuid4().hex,
+                "render_status": "ready",
+            }
+        ],
+    }
+    published_plan = {
+        "speech_cleanup_contract": "required_v1",
+        "speech_cut_control": None,
+        "speech_cut_previous_variant": None,
+        "speech_cut_previous_variants": None,
+        "variants": [
+            {
+                "variant_id": "target",
+                "render_generation_id": generation,
+                "render_status": "ready",
+                "video_path": (
+                    f"generative-jobs/{job_id}/render-generations/{generation}/final.mp4"
+                ),
+            }
+        ],
+    }
+    job = SimpleNamespace(
+        id=job_id,
+        status="variants_ready",
+        started_at=datetime.now(UTC),
+        assembly_plan=copy.deepcopy(published_plan),
+    )
+    receipt = SimpleNamespace(
+        id=receipt_id,
+        status="running",
+        result={"prepared": {"generation": generation}},
+        error=None,
+        completed_at=None,
+    )
+    db = AsyncMock()
+    db.get.side_effect = [job, receipt]
+
+    disposition = await creator_routes._rollback_craft_commit(
+        db,
+        receipt_id=receipt_id,
+        session_id=uuid.uuid4(),
+        job_id=job_id,
+        previous_assembly_plan=previous_plan,
+        variant_id="target",
+        generation=generation,
+        speech_cut_operation_id=uuid.uuid4().hex,
+        error=RuntimeError("broker response lost"),
+    )
+
+    assert disposition == "enqueue_uncertain"
+    assert job.assembly_plan == published_plan
+    assert job.status == "variants_ready"
+    assert receipt.status == "running"
+    assert receipt.error["code"] == "craft_enqueue_uncertain"
+    assert receipt.completed_at is None
 
 
 class _ExpiringNamespace:

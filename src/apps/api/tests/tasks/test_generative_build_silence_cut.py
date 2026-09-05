@@ -153,6 +153,7 @@ def _patch_pipeline(
     silences=None,
     has_audio=True,
     duration=DURATION,
+    silence_status="ok",
 ):
     """Stub every ffmpeg/network-shaped dependency of `_render_subtitled_variant`
     and return the call-capture dict. `build_cut_plan`/`remap_words` run REAL."""
@@ -166,7 +167,14 @@ def _patch_pipeline(
     import app.services.pipeline_trace as pt
     import app.storage as storage
 
-    calls: dict = {"transcribe": [], "detect": [], "reframe": [], "cues": [], "events": []}
+    calls: dict = {
+        "transcribe": [],
+        "detect": [],
+        "reframe": [],
+        "cues": [],
+        "events": [],
+        "receipts": [],
+    }
 
     monkeypatch.setattr(
         probe_mod,
@@ -208,6 +216,18 @@ def _patch_pipeline(
         return list(silences if silences is not None else SILENCES)
 
     monkeypatch.setattr(clip_speech_mod, "detect_silences", _fake_detect, raising=False)
+    monkeypatch.setattr(
+        clip_speech_mod,
+        "detect_silences_with_status",
+        lambda path, **kw: (
+            calls["detect"].append({"path": path, **kw})
+            or clip_speech_mod.SilenceDetectionResult(
+                spans=tuple(silences if silences is not None else SILENCES),
+                status=silence_status,
+            )
+        ),
+        raising=False,
+    )
 
     def _fake_cues(cue_words, offset_s=0.0, *, attach_words=False):
         calls["cues"].append(list(cue_words))
@@ -241,6 +261,12 @@ def _patch_pipeline(
         lambda stage, event, data=None: calls["events"].append((stage, event, data or {})),
         raising=False,
     )
+    monkeypatch.setattr(
+        pt,
+        "record_speech_cleanup_detection",
+        lambda payload: calls["receipts"].append(payload) or "persisted",
+        raising=False,
+    )
     return calls
 
 
@@ -265,6 +291,9 @@ def _render(
     cache=None,
     subdir="variant",
     speech_cleanup_contract="legacy_auto",
+    render_trace_id=None,
+    assignment_by_clip_id=None,
+    storage_generation=None,
 ):
     # `subdir` mirrors prod: every variant render gets its OWN variant_dir
     # (variant_{rank}) — multi-render tests must not share one, or the cache's
@@ -274,13 +303,20 @@ def _render(
     return gb._render_subtitled_variant(
         job_id=JOB_ID,
         rank=1,
-        spec={"variant_id": "subtitled", "archetype": "subtitled", "caption_style": "sentence"},
+        spec={
+            "variant_id": "subtitled",
+            "archetype": "subtitled",
+            "caption_style": "sentence",
+            "storage_generation": storage_generation,
+        },
         clip_id_to_local={"c1": str(tmp_path / "clip.mp4")},
         variant_dir=str(vdir),
         language="en",
         silence_cut_disabled=disabled,
         silence_cut_cache=cache,
         speech_cleanup_contract=speech_cleanup_contract,
+        render_trace_id=render_trace_id,
+        speech_cleanup_assignment_by_clip_id=assignment_by_clip_id,
     )
 
 
@@ -331,6 +367,26 @@ def test_subtitled_text_lane_uploads_base_even_without_cues(monkeypatch, tmp_pat
         "variant_1_subtitled.mp4",
         "variant_1_subtitled_base.mp4",
     ]
+
+
+def test_required_subtitled_outputs_share_one_generation_prefix(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    _patch_pipeline(monkeypatch)
+    generation = "12345678123456781234567812345678"
+
+    result = _render(
+        monkeypatch,
+        tmp_path,
+        speech_cleanup_contract="required_v1",
+        storage_generation=generation,
+    )
+
+    expected_prefix = f"generative-jobs/{JOB_ID}/render-generations/{generation}/"
+    assert result["ok"] is True
+    assert result["render_generation_id"] == generation
+    assert result["video_path"].startswith(expected_prefix)
+    assert result["base_video_path"].startswith(expected_prefix)
 
 
 def test_subtitled_text_lane_flag_off_keeps_no_cue_base_upload_unchanged(monkeypatch, tmp_path):
@@ -509,6 +565,174 @@ def test_required_over_budget_clamps_and_renders(monkeypatch, tmp_path):
         "outcome": "applied",
     }
     assert res["silence_cut_outcome"] == "applied"
+
+
+def _mixed_gap_words():
+    return [
+        Word(text="well", start_s=0.3, end_s=0.7, confidence=1.0),
+        Word(text="today", start_s=0.8, end_s=1.2, confidence=1.0),
+        Word(text="we", start_s=1.3, end_s=1.6, confidence=1.0),
+        Word(text="built", start_s=4.6, end_s=4.9, confidence=1.0),
+        Word(text="a", start_s=5.0, end_s=5.2, confidence=1.0),
+        Word(text="thing", start_s=5.3, end_s=5.9, confidence=1.0),
+    ]
+
+
+def _assigned_cleanup_source():
+    from app.services.speech_cleanup_identity import SpeechCleanupAssignment
+
+    return {
+        "c1": SpeechCleanupAssignment(
+            source_slot=0,
+            rollout_fingerprint="a" * 64,
+            status="assigned",
+        )
+    }
+
+
+def test_required_shadow_detects_mixed_island_but_renders_baseline(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    monkeypatch.setattr(gb.settings, "speech_cleanup_mixed_gap_mode", "shadow", raising=False)
+    monkeypatch.setattr(
+        gb.settings,
+        "speech_cleanup_mixed_gap_rollout_percent",
+        100,
+        raising=False,
+    )
+    calls = _patch_pipeline(
+        monkeypatch,
+        words=_mixed_gap_words(),
+        silences=[(1.6, 3.0), (3.5, 4.6)],
+        duration=6.5,
+    )
+
+    result = _render(
+        monkeypatch,
+        tmp_path,
+        speech_cleanup_contract="required_v1",
+        render_trace_id="a" * 32,
+        assignment_by_clip_id=_assigned_cleanup_source(),
+    )
+
+    assert result["ok"] is True
+    assert result["silence_cut"]["version"] == 1
+    assert result["silence_cut"]["time_saved_s"] == pytest.approx(2.25)
+    assert calls["receipts"][0]["selected_plan"] == "baseline"
+    assert calls["receipts"][0]["candidate_status"] == "ready"
+    assert calls["receipts"][0]["mixed_gap_scan"]["eligible_total"] == 1
+    assert result["_speech_cleanup_outcome_context"]["selected_plan"] == "baseline"
+
+
+def test_required_apply_uses_valid_candidate_for_assigned_source(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    monkeypatch.setattr(gb.settings, "speech_cleanup_mixed_gap_mode", "apply", raising=False)
+    monkeypatch.setattr(
+        gb.settings,
+        "speech_cleanup_mixed_gap_rollout_percent",
+        100,
+        raising=False,
+    )
+    calls = _patch_pipeline(
+        monkeypatch,
+        words=_mixed_gap_words(),
+        silences=[(1.6, 3.0), (3.5, 4.6)],
+        duration=6.5,
+    )
+
+    result = _render(
+        monkeypatch,
+        tmp_path,
+        speech_cleanup_contract="required_v1",
+        render_trace_id="b" * 32,
+        assignment_by_clip_id=_assigned_cleanup_source(),
+    )
+
+    assert result["ok"] is True
+    assert result["silence_cut"]["version"] == 2
+    assert result["silence_cut"]["time_saved_s"] == pytest.approx(2.75)
+    assert calls["receipts"][0]["selected_plan"] == "candidate"
+    assert calls["receipts"][0]["candidate_status"] == "ready"
+    context = result["_speech_cleanup_outcome_context"]
+    assert context["selected_plan"] == "candidate"
+    assert context["output_removed_ms"] == 2750
+
+
+def test_required_apply_receipt_builder_failure_keeps_auditable_baseline(monkeypatch, tmp_path):
+    import app.services.speech_cleanup_selection as selection_mod
+
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    monkeypatch.setattr(gb.settings, "speech_cleanup_mixed_gap_mode", "apply", raising=False)
+    monkeypatch.setattr(
+        gb.settings,
+        "speech_cleanup_mixed_gap_rollout_percent",
+        100,
+        raising=False,
+    )
+    calls = _patch_pipeline(
+        monkeypatch,
+        words=_mixed_gap_words(),
+        silences=[(1.6, 3.0), (3.5, 4.6)],
+        duration=6.5,
+    )
+
+    def _fail_receipt(**_kwargs):
+        raise ValueError("synthetic receipt failure")
+
+    monkeypatch.setattr(selection_mod, "build_mixed_gap_receipt", _fail_receipt)
+
+    result = _render(
+        monkeypatch,
+        tmp_path,
+        speech_cleanup_contract="required_v1",
+        render_trace_id="d" * 32,
+        assignment_by_clip_id=_assigned_cleanup_source(),
+    )
+
+    assert result["ok"] is True
+    assert result["silence_cut"]["version"] == 1
+    assert len(calls["receipts"]) == 1
+    assert calls["receipts"][0]["candidate_status"] == "receipt_build_failed"
+    assert calls["receipts"][0]["selected_plan"] == "baseline"
+    assert "mixed_gap_scan" not in calls["receipts"][0]
+    context = result["_speech_cleanup_outcome_context"]
+    assert context["candidate_status"] == "receipt_build_failed"
+    assert context["selected_plan"] == "baseline"
+
+
+def test_required_apply_tool_failure_falls_back_to_baseline(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    monkeypatch.setattr(gb.settings, "speech_cleanup_mixed_gap_mode", "apply", raising=False)
+    monkeypatch.setattr(
+        gb.settings,
+        "speech_cleanup_mixed_gap_rollout_percent",
+        100,
+        raising=False,
+    )
+    calls = _patch_pipeline(
+        monkeypatch,
+        words=_mixed_gap_words(),
+        silences=[],
+        silence_status="ffmpeg_failed",
+        duration=6.5,
+    )
+
+    result = _render(
+        monkeypatch,
+        tmp_path,
+        speech_cleanup_contract="required_v1",
+        render_trace_id="c" * 32,
+        assignment_by_clip_id=_assigned_cleanup_source(),
+    )
+
+    assert result["ok"] is True
+    assert result["silence_cut"]["version"] == 1
+    assert calls["receipts"][0]["candidate_status"] == "tool_unavailable"
+    assert calls["receipts"][0]["selected_plan"] == "baseline"
+    assert result["_speech_cleanup_outcome_context"]["selected_plan"] == "baseline"
 
 
 def test_short_clip_bails_before_any_asr_spend(monkeypatch, tmp_path):
@@ -1305,7 +1529,18 @@ def test_talking_head_cut_fn_routes_shared_analysis_with_cache(monkeypatch, tmp_
 
     seen: dict = {}
 
-    def _fake_analysis(path, duration_s, *, job_id, cache, cache_key=None, source_fingerprint=None):
+    def _fake_analysis(
+        path,
+        duration_s,
+        *,
+        job_id,
+        cache,
+        cache_key=None,
+        source_fingerprint=None,
+        render_trace_id=None,
+        speech_cleanup_assignment=None,
+        analysis_view="full_clip",
+    ):
         seen.update(
             path=path,
             duration_s=duration_s,
@@ -1313,6 +1548,9 @@ def test_talking_head_cut_fn_routes_shared_analysis_with_cache(monkeypatch, tmp_
             cache=cache,
             cache_key=cache_key,
             source_fingerprint=source_fingerprint,
+            render_trace_id=render_trace_id,
+            speech_cleanup_assignment=speech_cleanup_assignment,
+            analysis_view=analysis_view,
         )
         return {"failed": True, "plan": None, "retake_span_count": 0}
 
@@ -1331,6 +1569,8 @@ def test_talking_head_cut_fn_routes_shared_analysis_with_cache(monkeypatch, tmp_
         cache_key="spine.mp4::cap=120.0",
         source_fingerprint="spine-clip-id",
     )
+    from app.services.speech_cleanup_identity import SpeechCleanupAssignment
+
     assert seen == {
         "path": "spine_cut_analysis.wav",
         "duration_s": 42.0,
@@ -1338,6 +1578,13 @@ def test_talking_head_cut_fn_routes_shared_analysis_with_cache(monkeypatch, tmp_
         "cache": cache,
         "cache_key": "spine.mp4::cap=120.0",
         "source_fingerprint": "spine-clip-id",
+        "render_trace_id": None,
+        "speech_cleanup_assignment": SpeechCleanupAssignment(
+            source_slot=None,
+            rollout_fingerprint=None,
+            status="unmapped_clip_id",
+        ),
+        "analysis_view": "talking_head_spine_capped",
     }
     # cache_key is optional — omitted ⇒ None (analysis keys by the path itself).
     fn("spine.mp4", 42.0)
@@ -1596,6 +1843,22 @@ def test_budget_clamp_flag_defaults_on():
     assert Settings.model_fields["speech_cleanup_budget_clamp_enabled"].default is True
 
 
+def test_mixed_gap_rollout_defaults_off_and_bounded():
+    from pydantic import ValidationError
+
+    from app.config import Settings
+
+    assert Settings.model_fields["speech_cleanup_mixed_gap_mode"].default == "off"
+    assert Settings.model_fields["speech_cleanup_mixed_gap_rollout_percent"].default == 0
+
+    with pytest.raises(ValidationError):
+        Settings(
+            storage_bucket="test",
+            database_url="postgresql://test/test",
+            speech_cleanup_mixed_gap_rollout_percent=101,
+        )
+
+
 @pytest.mark.parametrize("failure_reason", ["analysis_failed", "analysis_no_plan"])
 def test_talking_head_required_analysis_failures_are_typed(monkeypatch, tmp_path, failure_reason):
     """Every strict analysis outcome fails before any composite is published."""
@@ -1712,6 +1975,54 @@ def test_talking_head_required_apply_failure_is_typed(monkeypatch, tmp_path):
     assert len(calls["reframe"]) == 1
     assert "keep_segments" in calls["reframe"][0]
     assert calls["cmds"] == []
+
+
+def test_talking_head_post_analysis_failure_preserves_selected_plan_context(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    calls = _patch_th_full(monkeypatch)
+    import app.pipeline.talking_head_assembler as tha
+
+    context = {
+        "analysis_attempt_id": "analysis-after-detection",
+        "analysis_view": "talking_head_spine_capped",
+        "detector_version": "mixed-gap-v2",
+        "source_tag": "0123456789abcdef",
+        "selected_plan": "candidate",
+        "candidate_status": "ready",
+        "output_removal_count": 2,
+        "output_removed_ms": 2440,
+    }
+    plan = build_cut_plan(_cut_words(), SILENCES, DURATION)
+    monkeypatch.setattr(
+        gb,
+        "_silence_cut_analysis",
+        lambda *_args, **_kwargs: {
+            "failed": False,
+            "plan": plan,
+            "retake_span_count": 0,
+            "review_candidates": [],
+            "speech_cleanup_outcome_context": context,
+        },
+    )
+
+    def _fail_after_analysis(input_path, start_s, end_s, aspect, ass, output_path, **kw):
+        calls["reframe"].append({"input": input_path, "start": start_s, "end": end_s, **kw})
+        raise RuntimeError("post-analysis segment filter failed")
+
+    monkeypatch.setattr(tha, "reframe_and_export", _fail_after_analysis, raising=False)
+
+    result = _render_th(
+        monkeypatch,
+        tmp_path,
+        probe_map=_th_probe_map(duration=DURATION),
+        target=DURATION,
+        speech_cleanup_contract="required_v1",
+    )
+
+    assert result["ok"] is False
+    assert result["speech_cleanup_failure_reason"] == "apply_failed"
+    assert result["_speech_cleanup_outcome_context"] == context
 
 
 def test_talking_head_off_contract_skips_cleanup(monkeypatch, tmp_path):

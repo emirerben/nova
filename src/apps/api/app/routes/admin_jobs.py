@@ -36,12 +36,17 @@ from app.routes._admin_schemas import (
     agent_run_to_payload_summary,
 )
 from app.routes.admin import _require_admin
+from app.services.public_assembly_plan import (
+    project_admin_debug_candidates,
+    project_public_assembly_plan,
+)
 from app.services.queue_state import (
     get_job_runtime_state,
     get_queue_position,
     get_queue_snapshot,
 )
 from app.services.render_summary import build_render_summary
+from app.services.speech_cleanup_terminal import active_speech_claim_task_id
 
 log = structlog.get_logger()
 
@@ -665,8 +670,11 @@ async def get_job_debug(
         probe_metadata=job.probe_metadata,
         transcript=job.transcript,
         scene_cuts=job.scene_cuts,
-        all_candidates=job.all_candidates,
-        assembly_plan=job.assembly_plan,
+        # Admin audition receives only the top-level ordered source UUID vector;
+        # indexed metadata and generation controls remain private. Creator and
+        # account-export surfaces continue using the stricter public projection.
+        all_candidates=project_admin_debug_candidates(job.all_candidates),
+        assembly_plan=project_public_assembly_plan(job.assembly_plan),
         pipeline_trace=job.pipeline_trace,
         started_at=job.started_at,
         finished_at=job.finished_at,
@@ -785,9 +793,9 @@ async def cancel_job(
     Flow:
       1. SELECT FOR UPDATE — 404 if missing, 409 if already terminal.
       2. Atomically flip status and append the cancellation audit event.
-      3. Release the row lock, then revoke the Celery task (terminate=True,
-         SIGTERM). Revoking an unknown task_id is a no-op. Skipped when
-         celery_task_id is NULL (legacy row / dispatch failed).
+      3. Release the row lock, then revoke the original Celery task and any
+         structurally proven live speech-rerender claim (terminate=True,
+         SIGTERM). Revoking an unknown task_id is a no-op.
       4. Enqueue cleanup_cancelled_job as a Celery task (best-effort GCS
          temp delete — 24h lifecycle is the real backstop).
     """
@@ -804,7 +812,46 @@ async def cancel_job(
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
-    if job.status not in _CANCELLABLE_STATUSES:
+    # Capture the speech worker identity from the same locked snapshot used for
+    # cancellation. Terminalization may legitimately clear this control below.
+    speech_task_id = active_speech_claim_task_id(job.assembly_plan)
+
+    from app.services.speech_cleanup_terminal import (  # noqa: PLC0415
+        terminalize_required_speech_generations,
+    )
+
+    terminalization = terminalize_required_speech_generations(
+        job.assembly_plan or {},
+        job_id=job_id,
+        error="render cancelled by administrator",
+    )
+    private_internal = (
+        (job.assembly_plan or {}).get("_speech_cleanup_internal")
+        if isinstance(job.assembly_plan, dict)
+        else None
+    )
+    private_locks = (
+        private_internal.get("required_speech_generation_locks")
+        if isinstance(private_internal, dict)
+        else None
+    )
+    terminal_gap_cancellable = job.status in {
+        "variants_ready",
+        "variants_ready_partial",
+        "variants_failed",
+    } and (
+        (terminalization.status == "terminalized" and terminalization.restored_last_good)
+        # Cancellation is an immediate tombstone even when fresh/malformed
+        # private ownership cannot yet be safely released. Preserve the exact
+        # owner on the cancelled row; the cancelled-row reaper will retry after
+        # claim/upload leases expire. Never turn ambiguity into a public swap.
+        or (
+            terminalization.status == "blocked"
+            and isinstance(private_locks, dict)
+            and private_locks
+        )
+    )
+    if job.status not in _CANCELLABLE_STATUSES and not terminal_gap_cancellable:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
@@ -815,6 +862,20 @@ async def cancel_job(
 
     previous_status = job.status
     task_id = job.celery_task_id
+    revoke_task_ids = list(
+        dict.fromkeys(value for value in (task_id, speech_task_id) if isinstance(value, str))
+    )
+    terminal_plan = (
+        terminalization.plan if terminalization.status == "terminalized" else job.assembly_plan
+    )
+    if terminalization.status == "blocked":
+        # Cancellation remains immediate, but ambiguous ownership is retained
+        # on the cancelled row so the bounded Beat reconciler can retry safely.
+        log.warning(
+            "admin_cancel_required_speech_terminalization_blocked",
+            job_id=job_id,
+            reason=terminalization.reason,
+        )
 
     # Lock and fail receipts that provably have not crossed the provider
     # boundary. ``submitting`` is deliberately excluded: that state can mean
@@ -858,21 +919,64 @@ async def cancel_job(
         "data": {
             "previous_status": previous_status,
             "task_id": task_id,
-            "revoke_requested": bool(task_id),
+            "speech_task_id": speech_task_id,
+            "revoke_requested": bool(revoke_task_ids),
         },
     }
+    if terminalization.status == "terminalized":
+        internal = (job.assembly_plan or {}).get("_speech_cleanup_internal")
+        stages = internal.get("staged_render_results") if isinstance(internal, dict) else None
+        if isinstance(stages, dict):
+            from app.services.speech_cleanup_outcome import (  # noqa: PLC0415
+                append_speech_cleanup_render_outcome_locked,
+                build_speech_cleanup_render_outcome,
+            )
+
+            for staged in stages.values():
+                if not isinstance(staged, dict):
+                    continue
+                context = staged.get("_speech_cleanup_outcome_context")
+                generation = staged.get("render_generation_id")
+                variant_id = staged.get("variant_id")
+                if not isinstance(context, dict) or not generation or not variant_id:
+                    continue
+                try:
+                    append_speech_cleanup_render_outcome_locked(
+                        job,
+                        build_speech_cleanup_render_outcome(
+                            outcome="cancelled_owned",
+                            analysis_attempt_id=str(context["analysis_attempt_id"]),
+                            analysis_view=context["analysis_view"],
+                            detector_version=str(context["detector_version"]),
+                            source_tag=context.get("source_tag"),
+                            variant_id=str(variant_id),
+                            render_generation_id=str(generation),
+                            selected_plan=context.get("selected_plan"),
+                            candidate_status=context.get("candidate_status"),
+                            output_removal_count=int(context.get("output_removal_count") or 0),
+                            output_removed_ms=int(context.get("output_removed_ms") or 0),
+                        ),
+                    )
+                except Exception as exc:  # noqa: BLE001 - cancellation is authoritative
+                    log.warning(
+                        "admin_cancel_speech_outcome_build_failed",
+                        job_id=job_id,
+                        error_class=type(exc).__name__,
+                    )
+
     trace = list(job.pipeline_trace or [])
     if len(trace) < 500:
         trace.append(cancel_event)
     result = await db.execute(
         update(Job)
-        .where(Job.id == job_uuid, Job.status.in_(_CANCELLABLE_STATUSES))
+        .where(Job.id == job_uuid, Job.status == previous_status)
         .values(
             status="cancelled",
             finished_at=cancelled_at,
             failure_reason="cancelled_by_admin",
             error_detail="Cancelled via admin UI",
             pipeline_trace=trace,
+            assembly_plan=terminal_plan,
         )
     )
     if result.rowcount == 0:
@@ -886,19 +990,19 @@ async def cancel_job(
     from app.worker import celery_app  # noqa: PLC0415
 
     revoke_dispatched = False
-    if task_id:
+    for revoke_task_id in revoke_task_ids:
         try:
             # terminate=True sends the configured signal to the worker
             # process running the task. SIGTERM lets a Python try/except
             # SoftTimeLimitExceeded-style handler run; SIGKILL would
             # drop pending DB writes and FFmpeg subprocesses uncleanly.
-            celery_app.control.revoke(task_id, terminate=True, signal="SIGTERM")
+            celery_app.control.revoke(revoke_task_id, terminate=True, signal="SIGTERM")
             revoke_dispatched = True
         except Exception as exc:  # noqa: BLE001
             log.warning(
                 "admin_cancel_revoke_failed",
                 job_id=job_id,
-                task_id=task_id,
+                task_id=revoke_task_id,
                 error=str(exc),
             )
 
@@ -933,6 +1037,7 @@ async def cancel_job(
         job_id=job_id,
         previous_status=previous_status,
         task_id=task_id,
+        speech_task_id=speech_task_id,
         revoke_dispatched=revoke_dispatched,
     )
     return CancelJobResponse(

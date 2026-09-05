@@ -13,8 +13,19 @@ All notable changes to this project will be documented in this file.
 - **Waiting and rendering states now explain real progress.** Short waits begin with quiet thinking dots, longer waits use time-aware copy, and one reduced-motion-safe loader moves through footage review, music selection, rendering, finishing, partial readiness, and recovery.
 
 ### Fixed
-- **Collapsed navigation no longer collides with the project heading.** The sidebar control has a reserved slot, and the workspace heading uses the actual project name instead of “Create with Kria.”
+- **Collapsed navigation stays anchored beside the project heading.** The sidebar and its reserved left-side control animate together, preserve proper title spacing, and respect reduced-motion preferences; the heading uses the actual project name instead of “Create with Kria.”
 - **Permanent cleanup is complete and retry-safe.** Deletion removes project-owned database records and media through a durable outbox while preserving shared plans, seeds, unrelated projects, and media still referenced by another project.
+
+## [0.60.0.0] — 2026-09-02
+
+### Added
+- **Speech cleanup can now find soundful fillers that ASR misses.** The detector inspects silence-bounded islands inside long tokenless gaps, exposes shadow/apply canary controls, and gives operators a layered receipt showing what AI, FFmpeg, the detector, the budget allocator, and publication each decided.
+- **Admins can inspect speech-cleanup decisions per job.** The diagnostics view shows candidate spans, accepted/rejected cuts, budget allocation, and terminal publication state; an operator-only audit helper can produce a local shadow audition.
+
+### Fixed
+- **A Turkish “ıııı” hesitation no longer survives solely because Whisper omitted it.** Acoustic fillers are preserved as atomic spans, prioritized within the consent budget, and validated against word boundaries and output duration before they can be applied.
+- **Speech renders no longer publish or expose provisional media.** Required cleanup uses generation-owned staging, exact compare-and-swap publication, last-good projections, durable retry/cancel/reaper cleanup, and fail-closed rollback across editor and creator routes.
+- **Cleanup storage and source identities are now crash-safe and private.** Attempt-scoped keys, verified deletion, bounded leases, and admin-only timing receipts prevent stale workers, deleted jobs, or public exports from leaking or deleting another generation’s media.
 
 ## [0.59.4.0] — 2026-09-03
 

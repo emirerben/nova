@@ -20,6 +20,7 @@ from app.services.pipeline_trace import (
     pipeline_trace_for,
     record_pipeline_event,
     record_render_stage,
+    record_speech_cleanup_detection,
     render_stage_timer,
 )
 
@@ -172,3 +173,71 @@ def test_render_stage_timer_records_failure_then_reraises():
     assert "base_reframe_encode" in event_json
     assert "failed" in event_json
     assert "RuntimeError" in event_json
+
+
+def test_record_speech_cleanup_detection_reports_no_context():
+    assert record_speech_cleanup_detection({"schema_version": 1}) == "dropped_no_context"
+
+
+def test_record_speech_cleanup_detection_rejects_content_bearing_fields():
+    engine, _captured = _fake_engine_capturing()
+    j = uuid.uuid4()
+    with patch("app.database.sync_engine", engine):
+        with pipeline_trace_for(j):
+            status = record_speech_cleanup_detection(
+                {"schema_version": 1, "transcript": "private speech"}
+            )
+    assert status == "error"
+    engine.begin.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"schema_version": 1, "message": "private speech"},
+        {"schema_version": 1, "content": "private speech"},
+        {"schema_version": 1, "words": ["private", "speech"]},
+        {"schema_version": 1, "candidate_status": "private_speech"},
+    ],
+)
+def test_record_speech_cleanup_detection_is_exact_allowlist(payload):
+    engine, _captured = _fake_engine_capturing()
+    with patch("app.database.sync_engine", engine):
+        with pipeline_trace_for(uuid.uuid4()):
+            status = record_speech_cleanup_detection(payload)
+
+    assert status == "error"
+    engine.begin.assert_not_called()
+
+
+def test_record_speech_cleanup_detection_persists_timing_only_receipt():
+    conn = MagicMock()
+    selected = MagicMock()
+    selected.mappings.return_value.first.return_value = {
+        "status": "rendering",
+        "trace_len": 4,
+    }
+    conn.execute.side_effect = [selected, MagicMock()]
+    ctx = MagicMock()
+    ctx.__enter__.return_value = conn
+    ctx.__exit__.return_value = False
+    engine = MagicMock()
+    engine.begin.return_value = ctx
+    j = uuid.uuid4()
+
+    with patch("app.database.sync_engine", engine):
+        with pipeline_trace_for(j):
+            status = record_speech_cleanup_detection(
+                {
+                    "schema_version": 1,
+                    "analysis_attempt_id": "attempt-a",
+                    "inputs": {"asr_word_count": 3, "asr_word_spans_ms": [[10, 20]]},
+                    "selected_plan": "baseline",
+                }
+            )
+
+    assert status == "persisted"
+    assert conn.execute.call_count == 2
+    written = conn.execute.call_args_list[1].args[1]["event_json"]
+    assert "silence_cut_mixed_gap_analysis" in written
+    assert "attempt-a" in written

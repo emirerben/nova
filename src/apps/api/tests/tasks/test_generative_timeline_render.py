@@ -461,9 +461,18 @@ def test_durable_sources_rewrites_order_preserving(monkeypatch):
     out = gb._persist_durable_sources(JOB_ID, list(originals))
 
     prefix = f"generative-jobs/{JOB_ID}/sources/"
-    assert out == [f"{prefix}000_a.mp4", f"{prefix}001_b.mov"]  # strictly order-preserving
+    source_ids = job.all_candidates["clip_source_instance_ids"]
+    assert len(source_ids) == 2
+    attempt_prefix = out[0].rsplit("/", 1)[0]
+    assert attempt_prefix.startswith(f"{prefix}copy-attempts/")
+    assert out == [
+        f"{attempt_prefix}/slot-0000.mp4",
+        f"{attempt_prefix}/slot-0001.mov",
+    ]
+    assert all(source_id not in path for source_id in source_ids for path in out)
     assert copies == [(originals[0], out[0]), (originals[1], out[1])]
     assert job.all_candidates["clip_paths"] == out  # persisted on the job row
+    assert "_speech_cleanup_internal" not in job.assembly_plan
 
 
 def test_durable_sources_copy_failure_keeps_all_originals(monkeypatch):
@@ -486,6 +495,71 @@ def test_durable_sources_copy_failure_keeps_all_originals(monkeypatch):
 
     assert out == originals  # never a mixed durable/original list
     assert job.all_candidates["clip_paths"] == originals  # DB untouched
+    receipt = job.assembly_plan["_speech_cleanup_internal"]["durable_source_copy_pending"][0]
+    assert receipt["upload_state"] == "closed"
+
+
+@pytest.mark.parametrize("mutate_twice", [False, True])
+def test_durable_sources_cas_never_overwrites_a_concurrent_source_edit(
+    monkeypatch,
+    mutate_twice,
+):
+    """A source edit during copy is reloaded once, then fails closed if it races again."""
+    import app.storage as storage
+    from app.services.speech_cleanup_identity import validate_clip_source_identity
+
+    source_ids = [
+        "00000000-0000-4000-8000-000000000001",
+        "00000000-0000-4000-8000-000000000002",
+        "00000000-0000-4000-8000-000000000003",
+    ]
+    source_paths = [
+        "music-uploads/original.mp4",
+        "slot-uploads/first-edit.mov",
+        "slot-uploads/second-edit.webm",
+    ]
+    job = _FakeJob([source_paths[0]], [])
+    job.all_candidates["clip_source_instance_ids"] = [source_ids[0]]
+    initial_identity = validate_clip_source_identity(job.all_candidates)
+    copies: list[tuple[str, str]] = []
+
+    def _copy_then_edit(src, dst):
+        copies.append((src, dst))
+        edit_index = len(copies)
+        if edit_index == 1 or (mutate_twice and edit_index == 2):
+            job.all_candidates = {
+                "clip_paths": [source_paths[edit_index]],
+                "clip_source_instance_ids": [source_ids[edit_index]],
+            }
+
+    monkeypatch.setattr(storage, "copy_object", _copy_then_edit, raising=False)
+    _patch_sessions(monkeypatch, job)
+
+    if mutate_twice:
+        with pytest.raises(RuntimeError, match="source_list_changed"):
+            gb._persist_durable_sources(
+                JOB_ID,
+                [source_paths[0]],
+                source_identity=initial_identity,
+            )
+        assert job.all_candidates == {
+            "clip_paths": [source_paths[2]],
+            "clip_source_instance_ids": [source_ids[2]],
+        }
+    else:
+        result = gb._persist_durable_sources(
+            JOB_ID,
+            [source_paths[0]],
+            source_identity=initial_identity,
+        )
+        assert result == job.all_candidates["clip_paths"]
+        assert result[0].endswith("/slot-0000.mov")
+        assert job.all_candidates["clip_source_instance_ids"] == [source_ids[1]]
+
+    assert [src for src, _dst in copies] == source_paths[: len(copies)]
+    assert all(source_id not in dst for _src, dst in copies for source_id in source_ids)
+    receipts = job.assembly_plan["_speech_cleanup_internal"]["durable_source_copy_pending"]
+    assert all(receipt["upload_state"] == "closed" for receipt in receipts)
 
 
 def test_durable_sources_idempotent_when_already_durable(monkeypatch):
@@ -971,6 +1045,85 @@ def test_collage_song_swap_takes_audio_only_path_without_timeline_reset(monkeypa
     assert called["audio_swap"] is True
     assert updates == [{"render_status": "rendering", "ok": False, "error": None}]
     assert job.assembly_plan["variants"][0]["user_timeline"] == variant["user_timeline"]
+
+
+@pytest.mark.parametrize(
+    ("runner", "swap_outcome", "noop_outcome"),
+    [
+        (
+            gb._run_masonry_audio_only_song_swap,
+            "masonry_audio_swap",
+            "masonry_audio_swap_sfx_reapply_noop",
+        ),
+        (
+            gb._run_music_window_audio_only_swap,
+            "music_window_audio_swap",
+            "music_window_audio_swap_sfx_reapply_noop",
+        ),
+    ],
+)
+def test_audio_only_swap_defers_ready_until_fresh_sfx_hook_and_finalizes_noop(
+    monkeypatch,
+    runner,
+    swap_outcome,
+    noop_outcome,
+):
+    """A fresh active SFX lane owns terminal ready, even if the input snapshot lacked it."""
+
+    import app.services.pipeline_trace as pipeline_trace
+
+    generation = "render-generation-1"
+    existing = _existing_variant(
+        variant_id="song_text",
+        rank=1,
+        text_mode="agent_text",
+        music_track_id="t1",
+        music_start_s=8.0,
+        video_path=f"generative-jobs/{JOB_ID}/variant_1_song_text.mp4",
+        base_video_path=f"generative-jobs/{JOB_ID}/base_1_song_text.mp4",
+        sound_effects=[],
+    )
+    fresh = {**existing, "sound_effects": [{"id": "fresh-sfx"}]}
+    updates: list[dict] = []
+
+    monkeypatch.setattr(gb.settings, "sound_effects_enabled", True, raising=False)
+    monkeypatch.setattr(gb, "_fresh_variant_snapshot", lambda *_args: fresh)
+    monkeypatch.setattr(
+        gb,
+        "_mux_track_audio_preserve_video",
+        lambda **kwargs: f"https://signed/{kwargs['output_gcs_path']}",
+    )
+    monkeypatch.setattr(pipeline_trace, "record_pipeline_event", lambda *_args, **_kwargs: None)
+
+    def _persist(_job_id, _variant_id, patch, **kwargs):
+        updates.append({"patch": dict(patch), **kwargs})
+        return True
+
+    def _sfx_hook(**kwargs):
+        assert kwargs["expected_render_gen_id"] == generation
+        assert len(updates) == 1
+        assert updates[0]["patch"]["render_status"] == "rendering"
+        assert "render_finished_at" not in updates[0]["patch"]
+        return False
+
+    monkeypatch.setattr(gb, "_update_variant_entry", _persist)
+    monkeypatch.setattr(gb, "_reapply_persisted_sfx_if_any", _sfx_hook)
+
+    assert (
+        runner(
+            job_id=JOB_ID,
+            variant_id="song_text",
+            existing=existing,
+            track=_track("t2"),
+            expected_render_gen_id=generation,
+        )
+        is True
+    )
+
+    assert [update["outcome"] for update in updates] == [swap_outcome, noop_outcome]
+    assert updates[1]["patch"]["render_status"] == "ready"
+    assert updates[1]["expected_render_gen_id"] == generation
+    assert updates[1]["cleanup_followup"] == "none"
 
 
 @pytest.mark.parametrize("preset", ["masonry", "polaroid_wall"])

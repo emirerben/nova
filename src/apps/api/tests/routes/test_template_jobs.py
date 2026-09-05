@@ -1,5 +1,6 @@
 """Unit tests for routes/template_jobs.py — template job creation and status."""
 
+import copy
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -11,6 +12,7 @@ from fastapi.testclient import TestClient
 from app.database import get_db
 from app.main import app
 from app.models import VideoTemplate
+from app.routes import template_jobs
 from app.routes.template_jobs import reroll_template_job
 
 
@@ -335,6 +337,38 @@ class TestGetTemplateJobStatus:
     def test_invalid_uuid_returns_404(self, client):
         res = client.get("/template-jobs/not-a-uuid/status")
         assert res.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_debug_steps_are_public_projection_and_stored_plan_is_unchanged(self):
+        job = MagicMock()
+        job.id = uuid.uuid4()
+        job.job_type = "template"
+        job.template_id = None
+        job.status = "template_ready"
+        job.error_detail = None
+        job.failure_reason = None
+        job.assembly_plan = {
+            "steps": [
+                {
+                    "clip_id": "clip-1",
+                    "slot": {"position": 1},
+                    "clip_source_instance_ids": ["private-source"],
+                    "_speech_cleanup_internal": {"secret": True},
+                }
+            ],
+            "_speech_cleanup_internal": {"terminal_pending": {"secret": True}},
+        }
+        stored = copy.deepcopy(job.assembly_plan)
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = job
+        db = AsyncMock()
+        db.execute = AsyncMock(return_value=result)
+
+        payload = await template_jobs.get_template_job_debug(str(job.id), db=db)
+
+        assert payload["assembly_plan"]["steps"] == [{"slot": {"position": 1}}]
+        assert payload["assembly_plan"]["clips_used_unique"] == 1
+        assert job.assembly_plan == stored
 
 
 class TestInputsWhitespaceStrip:

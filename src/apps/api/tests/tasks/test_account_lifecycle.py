@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from inspect import getsource
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -8,7 +9,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from billiard.exceptions import SoftTimeLimitExceeded
 
+import app.tasks.account_lifecycle as account_lifecycle
+from app.services.job_storage_deletion import build_job_storage_manifest
 from app.services.video_poster_cleanup import VideoPosterCleanupResult
+from app.storage import PrefixDeletionResult
 from app.tasks.account_lifecycle import (
     _guard_project_storage_targets,
     cleanup_job_storage_paths,
@@ -91,9 +95,10 @@ def _session_context(deletion: SimpleNamespace) -> MagicMock:
     return context
 
 
-def _deletion(paths: list[str]) -> SimpleNamespace:
+def _deletion(paths: list[str] | dict, *, job_id: uuid.UUID | None = None) -> SimpleNamespace:
     return SimpleNamespace(
         id="outbox-1",
+        job_id=job_id or uuid.uuid4(),
         status="pending",
         object_paths=paths,
         attempts=0,
@@ -222,6 +227,69 @@ def test_purge_job_storage_retries_failed_prefixes_durably() -> None:
     assert deletion.object_paths == []
     assert deletion.object_prefixes == ["users/user/project/"]
     assert deletion.next_attempt_at is not None
+
+
+def test_purge_job_storage_stale_finish_cannot_overwrite_account_erasure_merge() -> None:
+    """An in-flight delete must not erase debt merged after its claim."""
+
+    deletion = _deletion(["jobs/job-1/old.mp4"])
+    session = _session_context(deletion)
+    merged_payload = ["jobs/job-1/old.mp4", "jobs/job-1/late-upload.mp4"]
+
+    def cleanup(_paths):
+        # Model confirm_account_deletion merging a fresh manifest while this
+        # worker is outside the row lock doing remote storage I/O.
+        deletion.status = "pending"
+        deletion.object_paths = list(merged_payload)
+        deletion.lease_until = None
+        deletion.next_attempt_at = None
+        return 1, []
+
+    with (
+        patch("app.tasks.account_lifecycle.sync_session", return_value=session),
+        patch(
+            "app.tasks.account_lifecycle.cleanup_job_storage_paths",
+            side_effect=cleanup,
+        ),
+    ):
+        result = purge_job_storage.run("outbox-1")
+
+    assert result == {"status": "superseded", "deleted": 1, "failed": 0}
+    assert deletion.status == "pending"
+    assert deletion.object_paths == merged_payload
+    assert deletion.completed_at is None
+
+
+def test_purge_job_storage_stale_finish_cannot_overwrite_newer_lease_claim() -> None:
+    """An expired worker A cannot publish after worker B reclaims the row."""
+
+    deletion = _deletion(["jobs/job-1/output.mp4"])
+    session = _session_context(deletion)
+    reclaimed: list[tuple] = []
+
+    def cleanup(_paths):
+        deletion.lease_until = datetime.now(UTC) - timedelta(seconds=1)
+        claim = account_lifecycle._claim_job_storage_deletion("outbox-1")
+        assert claim is not None
+        reclaimed.append(claim)
+        return 1, []
+
+    with (
+        patch("app.tasks.account_lifecycle.sync_session", return_value=session),
+        patch(
+            "app.tasks.account_lifecycle.cleanup_job_storage_paths",
+            side_effect=cleanup,
+        ),
+    ):
+        result = purge_job_storage.run("outbox-1")
+
+    assert result == {"status": "superseded", "deleted": 1, "failed": 0}
+    assert len(reclaimed) == 1
+    assert reclaimed[0][2] == 2
+    assert deletion.status == "processing"
+    assert deletion.attempts == 2
+    assert deletion.object_paths == ["jobs/job-1/output.mp4"]
+    assert deletion.completed_at is None
 
 
 def test_sweep_job_storage_deletions_dispatches_due_rows_and_prunes_completed() -> None:
@@ -370,3 +438,73 @@ def test_sweep_propagates_soft_time_limit_instead_of_starting_another_job() -> N
         sweep_job_storage_deletions.run(limit=10)
 
     assert [call.args for call in reconcile.call_args_list] == [(first_job_id,)]
+
+
+def test_purge_job_storage_v2_waits_until_prefix_quiescence(monkeypatch) -> None:
+    job_id = uuid.uuid4()
+    deadline = datetime.now(UTC) + timedelta(minutes=20)
+    manifest = build_job_storage_manifest(
+        job_id=job_id,
+        exact_paths=[],
+        prefixes=[f"generative-jobs/{job_id}/"],
+        not_before=deadline,
+    )
+    deletion = _deletion(manifest.to_payload(), job_id=job_id)
+    session = _session_context(deletion)
+    monkeypatch.setattr(account_lifecycle, "sync_session", lambda: session)
+    monkeypatch.setattr(
+        "app.storage.delete_prefix_verified",
+        lambda *_args, **_kwargs: pytest.fail("future prefix must not be touched"),
+    )
+
+    result = purge_job_storage.run("outbox-1")
+
+    assert result == {
+        "status": "pending",
+        "deleted": 0,
+        "failed": 0,
+        "prefixes_verified": 0,
+        "prefixes_pending": 1,
+    }
+    assert deletion.status == "pending"
+    assert deletion.next_attempt_at >= deadline
+    assert deletion.object_paths == manifest.to_payload()
+
+
+def test_purge_job_storage_v2_completes_only_after_verified_empty(monkeypatch) -> None:
+    job_id = uuid.uuid4()
+    prefix = f"generative-jobs/{job_id}/"
+    manifest = build_job_storage_manifest(
+        job_id=job_id,
+        exact_paths=[f"{prefix}output.mp4"],
+        prefixes=[prefix],
+        not_before=datetime.now(UTC) - timedelta(seconds=1),
+    )
+    deletion = _deletion(manifest.to_payload(), job_id=job_id)
+    session = _session_context(deletion)
+    monkeypatch.setattr(account_lifecycle, "sync_session", lambda: session)
+    monkeypatch.setattr(
+        "app.storage.delete_prefix_verified",
+        lambda value, *, timeout_s: PrefixDeletionResult(
+            status="verified_empty",
+            listed=1,
+            deleted=1,
+            remaining=0,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.storage.delete_object_once",
+        lambda *_args, **_kwargs: pytest.fail("verified parent proves exact key absent"),
+    )
+
+    result = purge_job_storage.run("outbox-1")
+
+    assert result == {
+        "status": "completed",
+        "deleted": 1,
+        "failed": 0,
+        "prefixes_verified": 1,
+        "prefixes_pending": 0,
+    }
+    assert deletion.status == "completed"
+    assert deletion.object_paths == {"version": 2, "exact_paths": [], "prefixes": []}
