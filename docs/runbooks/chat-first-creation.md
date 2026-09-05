@@ -41,7 +41,7 @@ The same-origin web proxy exposes the lifecycle API under
 | Action | Request | Success | Expected failures |
 | --- | --- | --- | --- |
 | Rename | `PATCH /{thread_id}` with `title`, `expected_revision`, and `client_event_id` | Updated thread and revision | `404` for missing/foreign IDs; `409` for a stale revision |
-| Delete | `DELETE /{thread_id}?expected_revision=N` | `204 No Content` | `404` for missing/foreign IDs; `409` for a stale revision or active agent, render, upload mutation, or TikTok publication |
+| Delete | `DELETE /{thread_id}?expected_revision=N` | `204 No Content` | `404` for missing/foreign IDs; `409` for a stale revision or active agent, render, upload mutation, artifact processing, or TikTok publication |
 
 Titles are trimmed, non-empty, and at most 120 characters. A first prompt may
 replace only the default **Untitled video** title; an explicit rename must never
