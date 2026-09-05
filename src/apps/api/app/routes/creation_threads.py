@@ -2343,6 +2343,11 @@ async def action_thread(
             )
             thread.state = state
             await db.commit()
+            # The nested Creator flow may expire server-managed columns such
+            # as updated_at while it commits and rehydrates its own rows.
+            # Reload before _response accesses them; otherwise the implicit
+            # lazy load runs outside SQLAlchemy's greenlet context.
+            await db.refresh(thread)
             return await _response(db, thread)
         result = await creator_agent.confirm_creator_plan_controller(
             str(thread.active_plan_item_id),
