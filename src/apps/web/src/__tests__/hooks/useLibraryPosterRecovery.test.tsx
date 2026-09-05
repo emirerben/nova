@@ -3,6 +3,8 @@ import { useState } from "react";
 import {
   POSTER_ERROR_REFRESH_DEBOUNCE_MS,
   POSTER_RECOVERY_DELAYS_MS,
+  POSTER_REFRESH_TIMEOUT_MS,
+  POSTER_REFRESH_TRANSPORT_DELAYS_MS,
   useLibraryPosterRecovery,
 } from "@/hooks/useLibraryPosterRecovery";
 import { refreshMyJobPosters, type LibraryJob } from "@/lib/me-api";
@@ -158,6 +160,147 @@ describe("useLibraryPosterRecovery", () => {
       await Promise.resolve();
     });
 
+    expect(refreshMyJobPosters).toHaveBeenCalledTimes(1);
+  });
+
+  it("backs off after a rejected refresh instead of spinning", async () => {
+    jest.mocked(refreshMyJobPosters).mockRejectedValue(new Error("offline"));
+    const { result } = renderHook(() => useHarness([job()]));
+
+    await act(async () => {
+      jest.advanceTimersByTime(POSTER_RECOVERY_DELAYS_MS[0]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(refreshMyJobPosters).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      jest.advanceTimersByTime(POSTER_REFRESH_TRANSPORT_DELAYS_MS[1] - 1);
+      await Promise.resolve();
+    });
+    expect(refreshMyJobPosters).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      jest.advanceTimersByTime(1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(refreshMyJobPosters).toHaveBeenCalledTimes(2);
+    expect(result.current.recovery.refreshUnavailableJobIds).toEqual(new Set());
+  });
+
+  it("aborts an in-flight refresh when its timeout expires", async () => {
+    let requestSignal: AbortSignal | undefined;
+    jest.mocked(refreshMyJobPosters).mockImplementation((_jobIds, signal) => {
+      requestSignal = signal;
+      return new Promise(() => undefined);
+    });
+    const { unmount } = renderHook(() => useHarness([job()]));
+
+    await act(async () => {
+      jest.advanceTimersByTime(POSTER_RECOVERY_DELAYS_MS[0]);
+      await Promise.resolve();
+    });
+    expect(requestSignal?.aborted).toBe(false);
+
+    await act(async () => {
+      jest.advanceTimersByTime(POSTER_REFRESH_TIMEOUT_MS);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(requestSignal?.aborted).toBe(true);
+    unmount();
+  });
+
+  it("marks a partial response unavailable after bounded transport retries", async () => {
+    jest.mocked(refreshMyJobPosters).mockResolvedValue({ jobs: [] });
+    const { result } = renderHook(() => useHarness([job()]));
+
+    await act(async () => {
+      jest.advanceTimersByTime(POSTER_RECOVERY_DELAYS_MS[0]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    for (const delay of POSTER_REFRESH_TRANSPORT_DELAYS_MS.slice(1)) {
+      await act(async () => {
+        jest.advanceTimersByTime(delay);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    }
+
+    expect(refreshMyJobPosters).toHaveBeenCalledTimes(
+      POSTER_REFRESH_TRANSPORT_DELAYS_MS.length,
+    );
+    expect(result.current.recovery.refreshUnavailableJobIds).toEqual(
+      new Set(["job-1"]),
+    );
+  });
+
+  it("settles a persistent repairing poster after the recovery ladder", async () => {
+    jest.mocked(refreshMyJobPosters).mockResolvedValue({
+      jobs: [
+        {
+          id: "job-1",
+          poster_url: null,
+          poster_identity: "variant-1:generation-1",
+          poster_status: "repairing",
+        },
+      ],
+    });
+    const { result } = renderHook(() => useHarness([job()]));
+
+    await act(async () => {
+      jest.advanceTimersByTime(POSTER_RECOVERY_DELAYS_MS[0]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    for (const delay of POSTER_RECOVERY_DELAYS_MS.slice(1)) {
+      await act(async () => {
+        jest.advanceTimersByTime(delay);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    }
+
+    expect(refreshMyJobPosters).toHaveBeenCalledTimes(
+      POSTER_RECOVERY_DELAYS_MS.length,
+    );
+    expect(result.current.recovery.exhaustedJobIds).toEqual(new Set(["job-1"]));
+    expect(result.current.recovery.refreshUnavailableJobIds).toEqual(new Set());
+  });
+
+  it("clears a browser failure when the same poster identity later loads", async () => {
+    const existing = job({
+      poster_url: "https://example.test/expired.jpg",
+      poster_status: "ready",
+    });
+    jest.mocked(refreshMyJobPosters).mockResolvedValue({ jobs: [] });
+    const { result } = renderHook(() => useHarness([existing]));
+
+    act(() =>
+      result.current.recovery.onPosterLoadError(
+        existing.id,
+        existing.poster_identity ?? null,
+      ),
+    );
+    await act(async () => {
+      jest.advanceTimersByTime(POSTER_ERROR_REFRESH_DEBOUNCE_MS);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(refreshMyJobPosters).toHaveBeenCalledTimes(1);
+
+    act(() =>
+      result.current.recovery.onPosterLoadSuccess(
+        existing.id,
+        existing.poster_identity ?? null,
+      ),
+    );
+    await act(async () => {
+      jest.advanceTimersByTime(POSTER_REFRESH_TRANSPORT_DELAYS_MS.at(-1) ?? 0);
+      await Promise.resolve();
+    });
     expect(refreshMyJobPosters).toHaveBeenCalledTimes(1);
   });
 });

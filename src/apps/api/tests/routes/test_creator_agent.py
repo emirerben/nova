@@ -3551,7 +3551,7 @@ async def test_start_locks_an_existing_session_before_appending(monkeypatch) -> 
     planning = AsyncMock(return_value=SimpleNamespace(id="response"))
     monkeypatch.setattr(creator_routes, "_run_planning_turn", planning)
 
-    await creator_routes.start_creator_session(
+    await creator_routes.start_creator_session_controller(
         Request(
             {
                 "type": "http",
@@ -3568,10 +3568,12 @@ async def test_start_locks_an_existing_session_before_appending(monkeypatch) -> 
         StartBody(message="Make it personal", client_event_id="event-1"),
         user,
         db,
+        allow_chat=True,
     )
 
     load_session.assert_awaited_once_with(db, session.id, user.id, item.id, for_update=True)
     planning.assert_awaited_once()
+    assert planning.await_args.kwargs["allow_chat"] is True
 
 
 @pytest.mark.asyncio
