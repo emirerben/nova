@@ -134,11 +134,11 @@ full Jest/Playwright, and `bash scripts/preship-check.sh`.
 
 ## Deployment and Rollback
 
-Deploy database/API first, then web. Defaults are on in source. Before launch,
-verify no production override keeps either flag off. Roll back web with the
-frontend flag; roll back API with the backend flag after the web fallback is
-live. Existing PlanItems, Jobs, editor links, and completed Gallery entries stay
-valid in either mode.
+Deploy database/API first, then web. Chat-first creation is unconditional for
+authenticated users; there are no rollout flags or cohort overrides. Rollback is
+a normal deploy revert of the API and web releases, not a switch to the retired
+plan UI. Existing PlanItems, Jobs, editor links, and completed Gallery entries
+remain valid because their data and render contracts are unchanged.
 
 ## What Already Exists
 
@@ -147,7 +147,8 @@ valid in either mode.
 - Direct owned uploads, PlanItem media, generative Jobs, variant re-signing,
   render dispatch, Gallery data, voice recording, and EditorShell remain the
   production implementations.
-- Existing plan home is retained only as the rollback renderer.
+- Legacy entry URLs remain redirect-compatible; the former plan home and
+  onboarding renderer are removed.
 
 ## NOT in Scope
 
@@ -177,7 +178,7 @@ is sequential.
 |--------|---------|-----|------|--------|----------|
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | not run | Approved user plan is the product decision |
 | Codex Review | `/codex review` | Independent second opinion | 0 | pending diff | Runs before ship |
-| Eng Review | `/plan-eng-review` | Architecture & tests | 1 | clear | Existing contracts reused; ownership, deploy skew, pending intent, and rollback specified |
+| Eng Review | `/plan-eng-review` | Architecture & tests | 1 | clear | Existing contracts reused; ownership, deploy skew, pending intent, and deploy-revert rollback specified |
 | Design Review | `/plan-design-review` | UI/UX gaps | 1 | clear | Paper desktop, mobile, and recovery states are acceptance criteria |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | not run | Local setup and complete gates specified |
 
