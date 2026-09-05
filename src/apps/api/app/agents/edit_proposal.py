@@ -22,6 +22,7 @@ from app.schemas.edit_proposal import (
     MontageAudioPlan,
     MontageCadenceConstraint,
     MontageTextBinding,
+    media_context_group,
     mixed_media_hold_bounds,
     uses_quick_photo_long_video_timing,
 )
@@ -46,6 +47,54 @@ _FAST_DURATION_EPSILON_S = 0.001
 EDIT_PROPOSAL_AGENT_MEDIA_LIMIT = 32
 
 log = structlog.get_logger()
+
+
+def _validate_requested_mixed_media_sequence(
+    cuts: list[FastMontageCut],
+    media_by_id: dict[str, EditProposalMedia],
+    profile: MixedMediaTimingProfile,
+) -> None:
+    if profile.image_grouping == "runs":
+        image_cut_count = sum(media_by_id[cut.media_id].kind == "image" for cut in cuts)
+        minimum_run = min(3, image_cut_count)
+        if minimum_run > 1:
+            run_lengths: list[int] = []
+            run = 0
+            for cut in cuts:
+                if media_by_id[cut.media_id].kind == "image":
+                    run += 1
+                elif run:
+                    run_lengths.append(run)
+                    run = 0
+            if run:
+                run_lengths.append(run)
+            singleton_runs = sum(length == 1 for length in run_lengths)
+            if (
+                not run_lengths
+                or max(run_lengths) < minimum_run
+                or singleton_runs > max(1, image_cut_count // 5)
+            ):
+                raise SchemaError("edit_proposal: requested grouped photo runs were scattered")
+
+    if profile.sequence_grouping != "sport_context":
+        return
+    sequence = [
+        media_context_group(
+            media_by_id[cut.media_id].user_context,
+            media_by_id[cut.media_id].subject,
+            media_by_id[cut.media_id].description,
+            media_by_id[cut.media_id].on_screen_text,
+        )
+        for cut in cuts
+    ]
+    collapsed = [
+        group for index, group in enumerate(sequence) if index == 0 or group != sequence[index - 1]
+    ]
+    if len(collapsed) != len(set(collapsed)):
+        raise SchemaError("edit_proposal: requested sport/context chapters were interleaved")
+    requested = [group for group in profile.sequence_group_order if group in collapsed]
+    if requested != sorted(requested, key=collapsed.index):
+        raise SchemaError("edit_proposal: requested sport chapter order changed")
 
 
 def minimum_required_sources(
@@ -76,11 +125,32 @@ def minimum_required_sources(
     ):
         return floor
 
+    fit_count = maximum_distinct_sources(
+        media,
+        target_duration_s=target_duration_s,
+        mixed_media_timing=mixed_media_timing,
+    )
+    return min(floor, max(1, fit_count))
+
+
+def maximum_distinct_sources(
+    media: Sequence[object],
+    *,
+    target_duration_s: int | float,
+    mixed_media_timing: MixedMediaTimingProfile | None,
+) -> int:
+    """Return the most distinct usable sources that fit the mixed-media target."""
+
+    if not uses_quick_photo_long_video_timing(mixed_media_timing):
+        return minimum_required_sources(len(media))
+
     minimum_holds_by_kind: dict[str, list[float]] = defaultdict(list)
     for ref in media:
         kind = getattr(ref, "kind", None)
         if kind == "image":
-            minimum_holds_by_kind[kind].append(mixed_media_hold_bounds("image").minimum_s)
+            minimum_holds_by_kind[kind].append(
+                mixed_media_hold_bounds("image", mixed_media_timing).minimum_s
+            )
             continue
         if kind != "video":
             continue
@@ -91,10 +161,16 @@ def minimum_required_sources(
             duration_s = float(duration_s)
         except (TypeError, ValueError):
             continue
-        if not math.isfinite(duration_s) or duration_s < 0.4 - _FAST_DURATION_EPSILON_S:
+        if not math.isfinite(duration_s) or duration_s < 0.1 - _FAST_DURATION_EPSILON_S:
             continue
         minimum_holds_by_kind[kind].append(
-            max(0.4, min(mixed_media_hold_bounds("video").minimum_s, duration_s))
+            max(
+                0.1,
+                min(
+                    mixed_media_hold_bounds("video", mixed_media_timing).minimum_s,
+                    duration_s,
+                ),
+            )
         )
 
     capacity_s = max(0.0, float(target_duration_s))
@@ -102,7 +178,7 @@ def minimum_required_sources(
     fit_count = len(mandatory_holds)
     consumed_s = sum(mandatory_holds.values())
     if consumed_s > capacity_s + _FAST_DURATION_EPSILON_S:
-        return min(floor, 1)
+        return 1
     remaining_holds_s: list[float] = []
     for kind, holds in minimum_holds_by_kind.items():
         mandatory_index = holds.index(mandatory_holds[kind])
@@ -114,7 +190,7 @@ def minimum_required_sources(
         fit_count += 1
     # The target is validated as >=3s, so a usable source should always fit;
     # keeping this defensive floor avoids returning zero for malformed callers.
-    return min(floor, max(1, fit_count))
+    return max(1, fit_count)
 
 
 def _neutralize_sensory_modifier(text: str) -> str:
@@ -339,12 +415,30 @@ def _resolve_model_media_references(
                 repairs += 1
             if media_id is not None:
                 raw_cut["media_id"] = media_id
+                if uses_quick_photo_long_video_timing(input.mixed_media_timing):
+                    # The renderer's typed profile owns transitions. Providers
+                    # sometimes echo prose such as ``fast_photo`` even though
+                    # only a hard cut is executable; normalize that advisory
+                    # spelling to the confirmed contract. Still images have no
+                    # source timeline, so repair a zero source window to their
+                    # already-bounded output hold.
+                    raw_cut["transition"] = "none"
+                    media = media_by_id[media_id]
+                    if media.kind == "image":
+                        try:
+                            output_duration_s = float(raw_cut.get("output_duration_s"))
+                        except (TypeError, ValueError):
+                            output_duration_s = 0.0
+                        if math.isfinite(output_duration_s) and output_duration_s > 0:
+                            raw_cut["source_start_s"] = 0.0
+                            raw_cut["source_end_s"] = output_duration_s
                 used.add(media_id)
                 previous = media_id
 
     raw_bindings = payload.get("montage_text_bindings")
     if isinstance(raw_bindings, list):
         normalized_bindings: list[dict] = []
+        seen_binding_sources: set[str] = set()
         source_ids: list[str] = []
         for raw_cut in payload.get("fast_cuts") or []:
             if not isinstance(raw_cut, dict):
@@ -355,18 +449,29 @@ def _resolve_model_media_references(
                 source_ids.append(media_id)
         for index, raw_binding in enumerate(raw_bindings):
             if isinstance(raw_binding, str):
-                if index < len(source_ids) and raw_binding.strip():
+                if (
+                    index < len(source_ids)
+                    and raw_binding.strip()
+                    and source_ids[index] not in seen_binding_sources
+                ):
                     normalized_bindings.append(
                         {"media_id": source_ids[index], "text": raw_binding.strip()}
                     )
+                    seen_binding_sources.add(source_ids[index])
                 continue
             if not isinstance(raw_binding, dict):
                 continue
             raw_id = str(raw_binding.get("media_id") or "")
             resolved_id = alias_to_id.get(raw_id) or (raw_id if raw_id in id_to_alias else None)
-            if resolved_id is not None:
+            if resolved_id is not None and resolved_id not in seen_binding_sources:
                 normalized_bindings.append({**raw_binding, "media_id": resolved_id})
-        payload["montage_text_bindings"] = normalized_bindings
+                seen_binding_sources.add(resolved_id)
+        # Text bindings are optional enhancements. Keep their deterministic
+        # schema ceiling instead of failing an otherwise renderable media plan
+        # because a provider emitted one label per source. The Creator's exact
+        # title and trusted contextual-label contract travel separately on the
+        # Job and are never dropped by this bound.
+        payload["montage_text_bindings"] = normalized_bindings[:12]
 
     raw_audio = payload.get("montage_audio")
     if isinstance(raw_audio, dict):
@@ -456,7 +561,10 @@ class _RawFastMontageCut(BaseModel):
     media_id: str = Field(min_length=1, max_length=100)
     source_start_s: float = Field(ge=0)
     source_end_s: float = Field(gt=0)
-    output_duration_s: float = Field(ge=0.4, le=3.0)
+    # Numeric still holds may be as short as 0.1s. Video minimums are enforced
+    # later with the source-aware mixed-media profile; this provider boundary
+    # only needs to admit the typed value for normalization.
+    output_duration_s: float = Field(ge=0.1, le=3.0)
     role: Literal["hook", "build", "payoff"]
     transition: Literal["none"] = "none"
     beat_align: bool = False
@@ -587,14 +695,14 @@ def _normalize_fast_montage_duration(
     declared_duration_s = float(declared_duration)
     target_duration_s = float(input.target_duration_s)
     target_delta_s = target_duration_s - declared_duration_s
-    if abs(target_delta_s) > _FAST_DURATION_RECONCILE_TOLERANCE_S:
+    quick_mixed_timing = uses_quick_photo_long_video_timing(input.mixed_media_timing)
+    if not quick_mixed_timing and abs(target_delta_s) > _FAST_DURATION_RECONCILE_TOLERANCE_S:
         raise SchemaError("edit_proposal: fast montage duration is too far from the server target")
 
     raw_cuts = payload.get("fast_cuts")
     if not isinstance(raw_cuts, list) or not raw_cuts:
         # Let the normal output model retain its established missing/shape error.
         return payload, set()
-    quick_mixed_timing = uses_quick_photo_long_video_timing(input.mixed_media_timing)
     split_limit_s = (
         input.montage_cadence.cut_duration_s
         if input.montage_cadence is not None
@@ -646,7 +754,7 @@ def _normalize_fast_montage_duration(
         if remaining_s < 0:
             source_duration_s = float(media.duration_s or 0.0)
             if quick_mixed_timing:
-                bounds = mixed_media_hold_bounds(media.kind)
+                bounds = mixed_media_hold_bounds(media.kind, input.mixed_media_timing)
                 minimum_duration_s = (
                     bounds.minimum_s
                     if media.kind == "video" and source_duration_s >= bounds.minimum_s
@@ -661,7 +769,7 @@ def _normalize_fast_montage_duration(
             capacity_s = cut.output_duration_s - minimum_duration_s
             adjustment_s = -min(-remaining_s, max(0.0, capacity_s))
         else:
-            mixed_bounds = mixed_media_hold_bounds(media.kind)
+            mixed_bounds = mixed_media_hold_bounds(media.kind, input.mixed_media_timing)
             max_duration_s = mixed_bounds.maximum_s if quick_mixed_timing else 1.2
             capacity_s = max_duration_s - cut.output_duration_s
             if media.kind == "video":
@@ -936,7 +1044,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                 if input.montage_cadence is not None:
                     continue
                 if uses_quick_photo_long_video_timing(input.mixed_media_timing):
-                    bounds = mixed_media_hold_bounds(media.kind)
+                    bounds = mixed_media_hold_bounds(media.kind, input.mixed_media_timing)
                     if media.kind == "image":
                         valid_timing = (
                             bounds.minimum_s - _FAST_DURATION_EPSILON_S
@@ -950,7 +1058,7 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                         valid_timing = (
                             cut.output_duration_s >= bounds.minimum_s - _FAST_DURATION_EPSILON_S
                             if source_allows_longer
-                            else cut.output_duration_s >= 0.4 - _FAST_DURATION_EPSILON_S
+                            else cut.output_duration_s >= 0.1 - _FAST_DURATION_EPSILON_S
                         ) and (cut.output_duration_s <= bounds.maximum_s + _FAST_DURATION_EPSILON_S)
                     if not valid_timing:
                         raise SchemaError(
@@ -963,15 +1071,22 @@ class EditProposalAgent(Agent[EditProposalAgentInput, EditProposalAgentOutput]):
                         raise SchemaError(
                             "edit_proposal: fast cuts target 0.8-1.2s except truly short sources"
                         )
+            if input.mixed_media_timing is not None:
+                _validate_requested_mixed_media_sequence(
+                    cuts,
+                    media_by_id,
+                    input.mixed_media_timing,
+                )
             minimum = (
                 len(input.montage_cadence.source_media_ids)
                 if input.montage_cadence is not None
-                else minimum_required_sources(
-                    len(input.media),
+                else maximum_distinct_sources(
+                    input.media,
                     target_duration_s=input.target_duration_s,
-                    media=input.media,
                     mixed_media_timing=input.mixed_media_timing,
                 )
+                if uses_quick_photo_long_video_timing(input.mixed_media_timing)
+                else minimum_required_sources(len(input.media))
             )
             if len(cut_sources) < minimum:
                 raise SchemaError(

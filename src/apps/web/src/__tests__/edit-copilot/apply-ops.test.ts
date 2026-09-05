@@ -3,6 +3,7 @@ import {
   applyCopilotOps,
   applyCopilotOpsAtomic,
   snapToBeatMark,
+  textActionsChangeTextSection,
 } from "@/lib/edit-copilot/apply-ops";
 import { buildCopilotSnapshot, bulkSelectionDigest } from "@/lib/edit-copilot/snapshot";
 import type { CopilotSnapshot } from "@/lib/edit-copilot/snapshot";
@@ -384,9 +385,9 @@ describe("applyCopilotOps", () => {
     };
     const snapshot = buildCopilotSnapshot([], slots, sourcePool, capabilities, [], { sourcePool, motionScenesEnabled: true });
     const result = applyCopilotOpsAtomic([
-      { op: "add_unused_sources", selector: { scope: "unused_sources", media_kind: "all", quantifier: "all" }, integrity: bulkIntegrity(snapshot, slots, sourcePool, "unused_sources", "all") },
-      { op: "set_media_duration", selector: { scope: "timeline", media_kind: "image", quantifier: "all" }, duration_s: 0.2, integrity: bulkIntegrity(snapshot, slots, sourcePool, "timeline", "image") },
-      { op: "stack_images", selector: { scope: "timeline", media_kind: "image", quantifier: "all" }, integrity: bulkIntegrity(snapshot, slots, sourcePool, "timeline", "image") },
+      { op: "add_unused_sources", selector: { unused: true, status: "ready" }, integrity: bulkIntegrity(snapshot, slots, sourcePool, "unused_sources", "all") },
+      { op: "set_media_duration", selector: { kind: "image" }, duration_s: 0.2, integrity: bulkIntegrity(snapshot, slots, sourcePool, "timeline", "image") },
+      { op: "stack_images", selector: { kind: "image" }, integrity: bulkIntegrity(snapshot, slots, sourcePool, "timeline", "image") },
     ], {
       bars: [], slots, clips: sourcePool, sourcePool, snapshot,
       capabilities,
@@ -774,6 +775,75 @@ describe("applyCopilotOps", () => {
 
     expect(applyCopilotOps([{ op: "remove_text", bar_index: 1 }], ctx()).textActions)
       .toEqual([{ type: "DELETE_BAR", id: "bar-2" }]);
+  });
+
+  it("does not mark a timeline-only turn text-dirty on the elements model", () => {
+    const bars = [bar({ id: "canonical" })];
+    expect(textActionsChangeTextSection([], bars, true)).toBe(false);
+    expect(
+      textActionsChangeTextSection(
+        [{ type: "PATCH_BARS", patches: [] }],
+        bars,
+        true,
+      ),
+    ).toBe(false);
+    expect(
+      textActionsChangeTextSection(
+        [{ type: "ADD_TEXT", bar: bar({ id: "kria-addition" }) }],
+        bars,
+        true,
+      ),
+    ).toBe(true);
+  });
+
+  it("recognizes only authoritative text actions, including optional lyric bars", () => {
+    const lyric = bar({ id: "lyric-1", role: "lyric_line" });
+    const caption = bar({ id: "caption-1", role: "narrated_caption" });
+
+    expect(
+      textActionsChangeTextSection(
+        [{ type: "EDIT_TEXT", id: lyric.id, text: "new lyric" }],
+        [lyric],
+        false,
+      ),
+    ).toBe(false);
+    expect(
+      textActionsChangeTextSection(
+        [{ type: "EDIT_TEXT", id: lyric.id, text: "new lyric" }],
+        [lyric],
+        true,
+      ),
+    ).toBe(true);
+    expect(
+      textActionsChangeTextSection(
+        [{ type: "EDIT_TEXT", id: caption.id, text: "new caption" }],
+        [caption],
+        true,
+      ),
+    ).toBe(false);
+  });
+
+  it("does not mark no-op or unknown text actions dirty", () => {
+    const lyric = bar({ id: "lyric-1", role: "lyric_line" });
+    const text = bar({ id: "text-1", role: "generative_intro" });
+
+    expect(textActionsChangeTextSection([{ type: "ADD_LYRIC_BARS", bars: [] }], [text], true)).toBe(false);
+    expect(textActionsChangeTextSection([{ type: "REMOVE_LYRIC_BARS" }], [text], true)).toBe(false);
+    expect(textActionsChangeTextSection([{ type: "REMOVE_LYRIC_BARS" }], [lyric], true)).toBe(true);
+    expect(
+      textActionsChangeTextSection(
+        [{ type: "EDIT_TEXT", id: "missing", text: "ignored" }],
+        [text],
+        true,
+      ),
+    ).toBe(false);
+    expect(
+      textActionsChangeTextSection(
+        [{ type: "PATCH_BARS", patches: [{ id: "missing", patch: { text: "ignored" } }] }],
+        [text],
+        true,
+      ),
+    ).toBe(false);
   });
 
   it("allows lyric text edits but rejects lyric timing and removal", () => {

@@ -31,6 +31,7 @@ from app.services.generative_upload_paths import direct_clip_owner
 DEFAULT_PLATFORMS = ["tiktok", "instagram", "youtube"]
 CONTENT_PLAN_PRIMARY_VARIANT_POLICY = "content_plan_primary"
 CONTENT_PLAN_ORIGINAL_VARIANT_POLICY = "content_plan_original"
+CREATOR_RENDER_CONTRACT_VERSION = "2026-09-03-v1"
 _SMART_PRESET_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 
 
@@ -230,6 +231,7 @@ def build_generative_job(
     variant_policy: str | None = None,
     smart_captions: dict | None = None,
     creator_strategy: dict | None = None,
+    creator_clip_order: list[int] | None = None,
 ) -> Job:
     """Construct (not persist) a generative Job after validating clip prefixes.
 
@@ -359,6 +361,17 @@ def build_generative_job(
         all_candidates["creator_strategy"] = CreativeStrategy.model_validate(
             creator_strategy
         ).model_dump(mode="json", exclude_none=True)
+        all_candidates["creator_render_contract_version"] = CREATOR_RENDER_CONTRACT_VERSION
+    if creator_clip_order:
+        normalized_creator_order: list[int] = []
+        for value in creator_clip_order:
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError("creator clip order must contain integer indices")
+            if not 0 <= value < len(clip_paths) or value in normalized_creator_order:
+                continue
+            normalized_creator_order.append(value)
+        if normalized_creator_order:
+            all_candidates["creator_clip_order"] = normalized_creator_order
     # Landscape-fit preference (plan-item editor). Only stash when "fit" so
     # public/legacy jobs keep byte-identical all_candidates shape — same omit-
     # when-default discipline used for persona / user_style / filming_guide above.

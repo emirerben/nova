@@ -101,6 +101,9 @@ class User(Base):
     creator_agent_sessions: Mapped[list["CreatorAgentSession"]] = relationship(
         back_populates="creator", cascade="all, delete-orphan"
     )
+    creation_threads: Mapped[list["CreationThread"]] = relationship(
+        back_populates="creator", cascade="all, delete-orphan"
+    )
 
 
 class OAuthToken(Base):
@@ -763,6 +766,111 @@ class JobClip(Base):
         Index("idx_job_clips_job_id", "job_id"),
         Index("idx_job_clips_rank", "job_id", "rank"),
         Index("idx_job_clips_music_track_id", "music_track_id"),
+    )
+
+
+class CreationThread(Base):
+    """Durable chat projection for one creator-owned video project.
+
+    ``PlanItem`` and ``Job`` remain the render/editor authority.  ``state`` is
+    limited to the conversation projection (intent, selected format, and
+    opaque media identifiers); the transcript itself is the append-only event
+    table below.
+    """
+
+    __tablename__ = "creation_threads"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    state: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    content_plan_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("content_plans.id", ondelete="SET NULL"), nullable=True
+    )
+    active_plan_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_items.id", ondelete="SET NULL"), nullable=True
+    )
+    active_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True
+    )
+    active_creator_agent_session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_agent_sessions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    creator: Mapped["User"] = relationship(back_populates="creation_threads")
+    content_plan: Mapped["ContentPlan | None"] = relationship(foreign_keys=[content_plan_id])
+    active_plan_item: Mapped["PlanItem | None"] = relationship(foreign_keys=[active_plan_item_id])
+    active_job: Mapped["Job | None"] = relationship(foreign_keys=[active_job_id])
+    active_creator_agent_session: Mapped["CreatorAgentSession | None"] = relationship(
+        foreign_keys=[active_creator_agent_session_id]
+    )
+    events: Mapped[list["CreationThreadEvent"]] = relationship(
+        back_populates="thread",
+        cascade="all, delete-orphan",
+        order_by="CreationThreadEvent.sequence",
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active','archived','failed')", name="ck_creation_threads_status"
+        ),
+        CheckConstraint("revision >= 0", name="ck_creation_threads_revision"),
+        UniqueConstraint("active_plan_item_id", name="uq_creation_threads_active_plan_item"),
+        Index("idx_creation_threads_creator_updated", "creator_id", "updated_at"),
+        Index("idx_creation_threads_active_job", "active_job_id"),
+        Index("idx_creation_threads_active_session", "active_creator_agent_session_id"),
+    )
+
+
+class CreationThreadEvent(Base):
+    """Append-only, idempotent event in a creation thread transcript."""
+
+    __tablename__ = "creation_thread_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("creation_threads.id", ondelete="CASCADE"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    client_event_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    role: Mapped[str] = mapped_column(Text, nullable=False, server_default="system")
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    thread: Mapped["CreationThread"] = relationship(back_populates="events")
+
+    __table_args__ = (
+        CheckConstraint(
+            "sequence >= 0 AND revision >= 0", name="ck_creation_thread_events_counters"
+        ),
+        CheckConstraint(
+            "role IN ('user','assistant','system')", name="ck_creation_thread_events_role"
+        ),
+        UniqueConstraint("thread_id", "sequence", name="uq_creation_thread_events_sequence"),
+        UniqueConstraint("thread_id", "revision", name="uq_creation_thread_events_revision"),
+        UniqueConstraint(
+            "thread_id", "client_event_id", name="uq_creation_thread_events_client_id"
+        ),
+        Index("idx_creation_thread_events_thread_created", "thread_id", "created_at"),
+        Index(
+            "idx_creation_thread_events_client_created",
+            "client_event_id",
+            "event_type",
+            "created_at",
+            postgresql_where=text("client_event_id IS NOT NULL"),
+        ),
     )
 
 

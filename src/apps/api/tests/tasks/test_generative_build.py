@@ -721,6 +721,22 @@ def test_build_no_music_recipe_no_guide_is_uniform():
     assert durations[0] == durations[1] == durations[2]
 
 
+def test_creator_no_music_recipe_honors_duration_and_relaxed_pacing():
+    metas = [_Meta(f"c{i}", 10.0) for i in range(4)]
+    recipe = gb._build_no_music_recipe(
+        metas,
+        available_footage_s=40.0,
+        target_duration_s=12.0,
+        pacing="relaxed",
+    )
+
+    assert recipe["pacing_style"] == "slow"
+    assert recipe["total_duration_s"] == 12.0
+    assert len(recipe["slots"]) == 2
+    assert recipe["slots"][1]["transition_in"] == "crossfade"
+    assert recipe["slots"][1]["transition_duration_s"] == 0.3
+
+
 def test_available_footage_sums_probes():
     pm = {"/a.mp4": _Probe(3.0), "/b.mp4": _Probe(4.5)}
     assert gb._available_footage_s(pm) == 7.5
@@ -4557,6 +4573,28 @@ def test_regenerate_reuses_persisted_intro_text():
     assert text_mode == "agent_text"
 
 
+def test_regenerate_uses_confirmed_creator_title_without_llm():
+    llm_called = {"called": False}
+
+    def _run_text_agents_fn():
+        llm_called["called"] = True
+        return types.SimpleNamespace(text="LLM text", highlight_word=None), {}
+
+    agent_text, _agent_form, text_mode = gb._resolve_regen_text(
+        override_text=None,
+        remove_text=False,
+        existing_text_mode="agent_text",
+        persisted_text=None,
+        persisted_highlight=None,
+        run_text_agents_fn=_run_text_agents_fn,
+        confirmed_text="Emir Olympics",
+    )
+
+    assert llm_called["called"] is False
+    assert agent_text.text == "Emir Olympics"
+    assert text_mode == "agent_text"
+
+
 def test_regenerate_lyrics_mode_never_runs_intro_writer():
     """REGRESSION (2026-07-18 E2E): a lyrics-variant full re-render with no text
     override fell through to intro_writer, fabricating an intro AND flipping
@@ -5629,6 +5667,64 @@ def test_build_generative_job_clamps_count_to_clip_count():
         narrative_shot_count=5,
     )
     assert job.all_candidates["narrative_shot_count"] == 1
+
+
+def test_build_generative_job_persists_creator_clip_order():
+    import uuid as _uuid
+
+    from app.services.generative_jobs import build_generative_job
+
+    job = build_generative_job(
+        user_id=_uuid.uuid4(),
+        clip_paths=["users/u/plan/i/a.mp4", "users/u/plan/i/b.mp4"],
+        mode="content_plan",
+        content_plan_item_id=_uuid.uuid4(),
+        content_plan_ownership_epoch=0,
+        creator_clip_order=[1, 0],
+    )
+
+    assert job.all_candidates["creator_clip_order"] == [1, 0]
+
+
+def test_build_generative_job_drops_invalid_creator_clip_order_indices():
+    import uuid as _uuid
+
+    from app.services.generative_jobs import build_generative_job
+
+    job = build_generative_job(
+        user_id=_uuid.uuid4(),
+        clip_paths=["users/u/plan/i/a.mp4", "users/u/plan/i/b.mp4"],
+        mode="content_plan",
+        content_plan_item_id=_uuid.uuid4(),
+        content_plan_ownership_epoch=0,
+        creator_clip_order=[1, 99, 1, -1],
+    )
+
+    assert job.all_candidates["creator_clip_order"] == [1]
+
+
+def test_creator_preserved_narrative_order_uses_only_current_manifest_clips():
+    assert gb._creator_preserved_narrative_order(
+        [1, 0, 1, 99, -1],
+        {"clip_0": "new/a.mp4", "clip_1": "new/b.mp4"},
+    ) == ["clip_1", "clip_0"]
+
+
+def test_full_rerender_keeps_creator_clip_order_authoritative(monkeypatch):
+    monkeypatch.setattr(gb.settings, "NARRATIVE_CLIP_ORDER_ENABLED", True)
+
+    assert gb._resolve_regen_narrative_order(
+        2,
+        [2, 0, 2, 99],
+        {"clip_0": "a.mp4", "clip_1": "b.mp4", "clip_2": "c.mp4"},
+        job_id="job-1",
+        resolved_archetype="montage",
+    ) == ["clip_2", "clip_0"]
+
+
+def test_worker_rejects_unversioned_creator_render_contract():
+    with pytest.raises(ValueError, match="Creator render contract version mismatch"):
+        gb._creator_strategy_from_candidates({"creator_strategy": {"edit_format": "montage"}})
 
 
 # ---------------------------------------------------------------------------

@@ -29,6 +29,7 @@ from app.agents._runtime import RunContext, TerminalError
 from app.agents._schemas.creator_agent import (
     ApplySpeechCutCommand,
     AskUser,
+    ContextLabelIntent,
     CreativeStrategy,
     CreatorCraftBundle,
     CreatorEditPlan,
@@ -36,6 +37,7 @@ from app.agents._schemas.creator_agent import (
     ReviewDecision,
     SetLicensedSfxCommand,
     canonical_context_hash,
+    normalize_creator_text_color,
 )
 from app.agents._schemas.creator_policy import (
     MAX_MAIN_CREATOR_SELECTED_MEDIA,
@@ -66,9 +68,11 @@ from app.routes.generative_jobs import (
     visual_block_variant_duration,
 )
 from app.schemas.edit_proposal import (
+    MixedMediaTimingProfile,
     MontageCadenceConstraint,
     recognize_cadence_reuse_policy,
     recognize_explicit_cadence_reuse_policy,
+    recognize_image_layout,
     recognize_mixed_media_timing,
     recognize_round_robin_cadence,
     recognize_total_duration_s,
@@ -201,12 +205,15 @@ def _creator_session_response(session: CreatorAgentSession) -> CreatorSessionRes
     return CreatorSessionResponse.model_validate(payload)
 
 
-def _require_feature(user_id: uuid.UUID, *, execution: bool = False) -> None:
-    if not rollout_eligible(user_id):
+def _require_feature(
+    user_id: uuid.UUID, *, execution: bool = False, allow_chat: bool = False
+) -> None:
+    chat_enabled = allow_chat and settings.creation_threads_enabled
+    if not chat_enabled and not rollout_eligible(user_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Creator agent unavailable"
         )
-    if execution and not settings.main_creator_agent_execution_enabled:
+    if execution and not chat_enabled and not settings.main_creator_agent_execution_enabled:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Creator agent rendering is not enabled yet",
@@ -354,6 +361,285 @@ def _confirmed_creator_request(events: list[CreatorAgentEvent], current_message:
     if current_message.strip() and (not messages or messages[-1] != current_message.strip()):
         messages.append(current_message.strip())
     return "\n".join(messages)[:1000]
+
+
+def _apply_explicit_render_intent(
+    strategy: CreativeStrategy, creator_request: str
+) -> CreativeStrategy:
+    """Promote explicit creator wording into the typed render contract.
+
+    The Main Creator model may describe an exact title/style in prose while the
+    original v1 schema only had advisory ``intro_hook``.  This deterministic
+    extractor runs at the authenticated planning boundary, fills only missing
+    typed fields, and never creates executable operations. Unsupported styles
+    are ignored here and therefore cannot reach a renderer without schema
+    validation.
+    """
+
+    request = " ".join(str(creator_request or "").split())
+    # These fields become pixels, so only explicit creator-authored wording may
+    # populate them. Clear any model-authored values first, then promote the
+    # bounded request matches below. This prevents a plausible-but-wrong model
+    # title/style from overriding the user's exact copy.
+    updates: dict[str, object] = {
+        "opening_title": None,
+        "font_family": None,
+        "text_color": None,
+        "context_label": None,
+        "image_layout": None,
+    }
+    # Creators use both ``title 'Emir Olympics'`` and the equally natural
+    # ``'Emir Olympics' title``. Keep the quoted text bounded and require the
+    # title noun next to it so unrelated quoted direction never reaches pixels.
+    title_match = re.search(
+        r"[\"'“‘](.{1,280}?)[\"'”’]\s+(?:opening\s+)?(?:title|intro|hook)\b",
+        request,
+        re.IGNORECASE,
+    )
+    if title_match is None:
+        title_match = re.search(
+            r"\b(?:opening\s+)?(?:title|intro|hook)\s*(?:text|copy)?\s*"
+            r"(?:is|to|should\s+say|as|:)?\s*[\"'“‘](.{1,280}?)[\"'”’]",
+            request,
+            re.IGNORECASE,
+        )
+    if title_match is None:
+        # Chat-first users commonly omit quoting for a short title. Stop at
+        # the first comma or style qualifier so the rest of the request can
+        # never become on-screen copy.
+        title_match = re.search(
+            r"\b(?:opening\s+)?(?:title|intro|hook)\s*(?:text|copy)?\s*"
+            r"(?:is|to|should\s+say|as|:)?\s*"
+            r"([A-Za-z0-9][^,\n]{0,279}?)(?=\s*(?:,|$)|\s+(?:using|with|font|colou?r)\b)",
+            request,
+            re.IGNORECASE,
+        )
+    if title_match and title_match.group(1).strip():
+        updates["opening_title"] = title_match.group(1).strip()
+
+    from app.agents._schemas.text_element import _ALLOWED_FONTS  # noqa: PLC0415
+
+    # Match the canonical registry names directly (longest first), rather
+    # than greedily capturing prose such as “using Rascal” as the font.
+    for name in sorted(_ALLOWED_FONTS, key=len, reverse=True):
+        escaped = re.escape(name)
+        if re.search(
+            rf"(?<!\w){escaped}(?!\w)\s+font\b|"
+            rf"\b(?:font|typeface)\s*(?:is|to|:)?\s*{escaped}(?!\w)|"
+            rf"(?<!\w){escaped}(?!\w)(?=\s*(?:,|$))",
+            request,
+            re.IGNORECASE,
+        ):
+            updates["font_family"] = name
+            break
+
+    color_match = re.search(
+        r"\b(?:text\s+)?colou?r\s*(?:is|to|:)?\s*(#[0-9A-Fa-f]{6}|[A-Za-z]+)\b"
+        r"|\b(?:make|set)\s+(?:the\s+)?(?:text|title|intro)\s+"
+        r"(#[0-9A-Fa-f]{6}|yellow|gold|white|black)\b"
+        r"|\b(yellow|gold|white|black)\s+(?:text|title|intro)\b",
+        # Also accept a comma-delimited style list such as
+        # "title Emir Olympics, Rascal, yellow".
+        # The bounded vocabulary keeps arbitrary adjectives out.
+        request,
+        re.IGNORECASE,
+    )
+    if color_match is None:
+        color_match = re.search(
+            r"\b(yellow|gold|white|black)(?=\s*(?:,|$))",
+            request,
+            re.IGNORECASE,
+        )
+    if color_match:
+        updates["text_color"] = normalize_creator_text_color(
+            color_match.group(1) or color_match.group(2) or color_match.group(3)
+        )
+
+    # This is intent, not model-authored copy. The trusted render pipeline
+    # must resolve the actual label from server-side evidence before rendering.
+    sport_label_requested = bool(
+        re.search(
+            r"\b(?:name|label|text)\s+(?:of\s+)?(?:the\s+)?sports?\b"
+            r"|\b(?:label|identify|show|display|add)\b.{0,80}\b(?:each\s+)?sports?\b"
+            r"|\bsports?\b.{0,80}\b(?:bottom\s+right|bottom-right)\b",
+            request,
+            re.IGNORECASE,
+        )
+    )
+    if sport_label_requested:
+        updates["context_label"] = ContextLabelIntent(
+            kind="sport",
+            source="clip_metadata",
+            placement="bottom_right",
+            size="small",
+            per_clip=True,
+        )
+
+    updates["image_layout"] = recognize_image_layout(request)
+
+    mixed_media_timing = recognize_mixed_media_timing(request)
+    if mixed_media_timing is None:
+        # The existing PlanItem contract represents the fastest supported
+        # still-image cadence as ``very_fast`` (0.5-0.8s). Creators often ask
+        # for that intent numerically, as in "photos ... 0.1 seconds", without
+        # also spelling out "hold videos longer". Requiring both phrases left
+        # valid pool images outside the guided proposal while the assistant
+        # still promised a photo sequence. Promote only an affirmative,
+        # sub-second photo request that explicitly places photos among videos.
+        normalized = request.casefold()
+        photo_subsecond = bool(
+            re.search(
+                r"\b(?:photos?|images?|stills?|pictures?)\b.{0,80}"
+                r"\b0?\.[0-9]+\s*(?:s|sec(?:ond)?s?)\b",
+                normalized,
+            )
+            or re.search(
+                r"\b(?:photos?|images?|stills?|pictures?)\b.{0,80}"
+                r"\b[1-9][0-9]{0,2}\s*(?:ms|milliseconds?)\b",
+                normalized,
+            )
+        )
+        has_video_context = bool(re.search(r"\b(?:videos?|clips?|footage)\b", normalized))
+        timing_negated = bool(
+            re.search(
+                r"\b(?:do not|don't|dont|never|not)\b.{0,40}"
+                r"\b(?:photos?|images?|stills?|pictures?)\b",
+                normalized,
+            )
+        )
+        if photo_subsecond and has_video_context and not timing_negated:
+            numeric_match = re.search(
+                r"\b(?:photos?|images?|stills?|pictures?)\b.{0,80}?"
+                r"\b(0?\.[0-9]+|[1-9][0-9]{0,2})\s*"
+                r"(?:s|sec(?:ond)?s?|ms|milliseconds?)\b",
+                normalized,
+            )
+            image_hold_s = None
+            if numeric_match:
+                image_hold_s = float(numeric_match.group(1))
+                if "ms" in numeric_match.group(0) or "millisecond" in numeric_match.group(0):
+                    image_hold_s /= 1000
+                if not 0.1 <= image_hold_s <= 0.8:
+                    image_hold_s = None
+            mixed_media_timing = MixedMediaTimingProfile(
+                image_hold="very_fast",
+                image_hold_s=image_hold_s,
+                video_hold="longer",
+                boundary_style="cut",
+            )
+    updates["mixed_media_timing"] = mixed_media_timing
+    if mixed_media_timing is not None:
+        # A rapid still sequence among longer video moments is an exact-cut
+        # montage contract. Keep the guided render program (so pool photos are
+        # first-class media), but send the specialist through its source-aware
+        # fast-cut schema instead of asking a story-beat plan to express
+        # sub-second image timing it cannot represent.
+        updates["direction"] = "fast_montage"
+
+    if re.search(r"\b(?:fast|snappy|quick)\s+(?:pace|pacing)\b", request, re.IGNORECASE):
+        updates["pacing"] = "fast"
+    elif re.search(r"\b(?:relaxed|slow|calm)\s+(?:pace|pacing)\b", request, re.IGNORECASE):
+        updates["pacing"] = "relaxed"
+    elif re.search(r"\bbalanced\s+(?:pace|pacing)\b", request, re.IGNORECASE):
+        updates["pacing"] = "balanced"
+
+    target_duration_s = recognize_total_duration_s(request)
+    if target_duration_s is not None:
+        updates["target_duration_s"] = target_duration_s
+    return CreativeStrategy.model_validate({**strategy.model_dump(mode="json"), **updates})
+
+
+def _requests_preserved_clip_order(creator_request: str) -> bool:
+    """Recognize an explicit request to keep the current source sequence."""
+
+    normalized = " ".join(creator_request.casefold().split())
+    return bool(
+        re.search(
+            r"\b(?:keep|preserve|maintain)\b.{0,80}\b(?:clip\s+)?(?:order|sequence)\b",
+            normalized,
+        )
+        or re.search(r"\b(?:same|unchanged)\s+(?:clip\s+)?(?:order|sequence)\b", normalized)
+    )
+
+
+def _source_basename(path: str) -> str:
+    return str(path or "").rsplit("/", 1)[-1]
+
+
+def _source_matches_item_path(previous_path: str, item_path: str) -> bool:
+    """Match durable Job snapshots back to their owner-scoped upload paths."""
+
+    previous_name = _source_basename(previous_path)
+    item_name = _source_basename(item_path)
+    return previous_name == item_name or previous_name.split("_", 1)[-1] == item_name
+
+
+async def _previous_creator_clip_order(
+    db: AsyncSession,
+    item: PlanItem,
+    session: CreatorAgentSession,
+    creator_request: str,
+) -> list[int] | None:
+    """Resolve the prior rendered first-appearance order for an explicit preserve request."""
+
+    if not _requests_preserved_clip_order(creator_request) or not item.current_job_id:
+        return None
+    previous_job = await db.get(Job, item.current_job_id)
+    if previous_job is None or previous_job.user_id != session.creator_id:
+        return None
+    if (
+        previous_job.content_plan_item_id != item.id
+        or previous_job.status not in PLAN_ITEM_JOB_READY
+    ):
+        return None
+    previous_paths = list((previous_job.all_candidates or {}).get("clip_paths") or [])
+    variants = list((previous_job.assembly_plan or {}).get("variants") or [])
+    target_variant_id = session.target_variant_id
+    variant = next(
+        (
+            value
+            for value in variants
+            if isinstance(value, dict)
+            and (target_variant_id is None or value.get("variant_id") == target_variant_id)
+            and value.get("render_status") == "ready"
+        ),
+        None,
+    )
+    # The editor's user_timeline is authoritative when present; ai_timeline is
+    # only the fallback for cuts that have not been manually rearranged.
+    raw_timeline = (variant or {}).get("user_timeline") or (variant or {}).get("ai_timeline")
+    timeline = raw_timeline if isinstance(raw_timeline, dict) else {}
+    slots = [slot for slot in timeline.get("slots") or [] if isinstance(slot, dict)]
+    if not previous_paths or not slots:
+        return None
+    item_paths = list(item.clip_gcs_paths or [])
+    order: list[int] = []
+
+    def _slot_order(value: dict) -> int:
+        try:
+            return int(value.get("order", 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    for slot in sorted(slots, key=_slot_order):
+        try:
+            previous_index = int(slot["clip_index"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not 0 <= previous_index < len(previous_paths):
+            continue
+        previous_path = str(previous_paths[previous_index])
+        item_index = next(
+            (
+                index
+                for index, item_path in enumerate(item_paths)
+                if _source_matches_item_path(previous_path, str(item_path))
+            ),
+            None,
+        )
+        if item_index is not None and item_index not in order:
+            order.append(item_index)
+    return order or None
 
 
 def _latest_cadence_question(events: list[CreatorAgentEvent]) -> dict[str, Any] | None:
@@ -679,7 +965,14 @@ def _fallback_strategy(manifest: Any, *, user_message: str = "") -> CreativeStra
 def _strict_creator_format(edit_format: str) -> bool:
     """Formats that must fail visibly instead of falling back to montage."""
 
-    return edit_format in {"day_vlog", "single_hero"}
+    return edit_format in {
+        "day_vlog",
+        "single_hero",
+        "subtitled",
+        "narrated",
+        "narrated_planned",
+        "narrated_ready",
+    }
 
 
 def _auto_iteration_already_finalized(session: CreatorAgentSession) -> bool:
@@ -1041,6 +1334,13 @@ async def _run_planning_turn(
                 )
                 return await _response(db, locked)
         try:
+            # Model-authored media references are repaired only at this trust
+            # boundary. The subsequent compiler remains strict, so persisted
+            # plans can contain only IDs from the authoritative manifest.
+            strategy = _apply_explicit_render_intent(strategy, creator_request)
+            strategy = normalize_creator_strategy_media(
+                manifest, strategy, repair_model_output=True
+            )
             locked.active_plan = compile_active_plan(
                 locked,
                 manifest=manifest,
@@ -1142,17 +1442,17 @@ async def get_creator_session(
     return _creator_session_response(session)
 
 
-@router.post("/{item_id}/creator-agent/session", response_model=CreatorSessionResponse)
-@limiter.limit(CREATOR_AGENT_MUTATION_RATE_LIMIT)
-async def start_creator_session(
+async def start_creator_session_controller(
     request: Request,
     item_id: str,
     body: StartBody,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    *,
+    allow_chat: bool = False,
 ) -> CreatorSessionResponse:
     _ = request
-    _require_feature(user.id)
+    _require_feature(user.id, allow_chat=allow_chat)
     # Serialize session creation against direct generation's PlanItem lock.
     item, plan, _persona = await _owned_context(db, item_id, user.id, for_update=True)
 
@@ -1307,17 +1607,29 @@ async def start_creator_session(
     )
 
 
-@router.post("/{item_id}/creator-agent/turn", response_model=CreatorSessionResponse)
+@router.post("/{item_id}/creator-agent/session", response_model=CreatorSessionResponse)
 @limiter.limit(CREATOR_AGENT_MUTATION_RATE_LIMIT)
-async def creator_session_turn(
+async def start_creator_session(
+    request: Request,
+    item_id: str,
+    body: StartBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> CreatorSessionResponse:
+    return await start_creator_session_controller(request, item_id, body, user, db)
+
+
+async def creator_session_turn_controller(
     request: Request,
     item_id: str,
     body: TurnBody,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    *,
+    allow_chat: bool = False,
 ) -> CreatorSessionResponse:
     _ = request
-    _require_feature(user.id)
+    _require_feature(user.id, allow_chat=allow_chat)
     item, _plan, _persona = await _owned_context(db, item_id, user.id)
     session = await _load_session(db, body.session_id, user.id, item.id, for_update=True)
     duplicate = (
@@ -1356,6 +1668,18 @@ async def creator_session_turn(
         expected_revision=expected_revision,
         user_message=body.message.strip(),
     )
+
+
+@router.post("/{item_id}/creator-agent/turn", response_model=CreatorSessionResponse)
+@limiter.limit(CREATOR_AGENT_MUTATION_RATE_LIMIT)
+async def creator_session_turn(
+    request: Request,
+    item_id: str,
+    body: TurnBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> CreatorSessionResponse:
+    return await creator_session_turn_controller(request, item_id, body, user, db)
 
 
 def _apply_plan_intent(item: PlanItem, plan: CreatorEditPlan) -> None:
@@ -1451,6 +1775,10 @@ def _seed_guided_specialist_brief(
             pace=plan.strategy.pacing,
             duration_s=plan.strategy.target_duration_s,
             creator_request=creator_request,
+            opening_title=plan.strategy.opening_title,
+            font_family=plan.strategy.font_family,
+            text_color=plan.strategy.text_color,
+            image_layout=plan.strategy.image_layout,
             mixed_media_timing=plan.strategy.mixed_media_timing,
             montage_audio=specialist_audio,
             montage_cadence=specialist_cadence,
@@ -1463,6 +1791,13 @@ def _seed_guided_specialist_brief(
         suggestions=[],
         ready_to_plan=True,
     )
+    # Keep legacy no-title briefs byte-compatible. These keys become part of
+    # the durable contract only when the creator explicitly supplied them.
+    stored_brief = (item.edit_proposal or {}).get("brief")
+    if isinstance(stored_brief, dict):
+        for field in ("opening_title", "font_family", "text_color", "image_layout"):
+            if getattr(plan.strategy, field) is None:
+                stored_brief.pop(field, None)
 
 
 def _confirmed_edit_plan(active: dict[str, Any]) -> CreatorEditPlan:
@@ -1506,14 +1841,39 @@ async def _concurrent_render_response(
     return await _response(db, conflicted)
 
 
-@router.post("/{item_id}/creator-agent/confirm", response_model=CreatorSessionResponse)
-async def confirm_creator_plan(
+async def _lock_confirmed_render_graph(
+    db: AsyncSession,
+    *,
+    item_id: uuid.UUID,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    job_id: uuid.UUID,
+) -> CreatorAgentSession:
+    """Lock a dispatched render before binding it to the Creator session.
+
+    The generative worker enters through Plan -> Persona -> PlanItem -> Job.
+    Finalization must take those same locks before CreatorAgentSession: setting
+    ``target_job_id`` otherwise holds a Job foreign-key lock while a later
+    session flush asks PostgreSQL for PlanItem key-share, deadlocking against
+    a worker that already owns PlanItem and is waiting for Job.
+    """
+
+    item, _plan, _persona = await _owned_context(db, str(item_id), user_id, for_update=True)
+    job = await db.get(Job, job_id, populate_existing=True, with_for_update=True)
+    if job is None or job.user_id != user_id or job.content_plan_item_id != item.id:
+        raise RuntimeError("creator render job changed during finalization")
+    return await _load_session(db, session_id, user_id, item.id, for_update=True)
+
+
+async def confirm_creator_plan_controller(
     item_id: str,
     body: ConfirmBody,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    *,
+    allow_chat: bool = False,
 ) -> CreatorSessionResponse:
-    _require_feature(user.id, execution=True)
+    _require_feature(user.id, execution=True, allow_chat=allow_chat)
     item, plan_row, persona = await _owned_context(db, item_id, user.id, for_update=True)
     session = await _load_session(db, body.session_id, user.id, item.id, for_update=True)
     # Keep identity/ownership scalars local.  The guided auto-design helper
@@ -1761,11 +2121,18 @@ async def confirm_creator_plan(
         else:
             from app.tasks.content_plan_build import dispatch_item_render_for  # noqa: PLC0415
 
+            preserved_clip_order = await _previous_creator_clip_order(
+                db,
+                item,
+                session,
+                str(active.get("creator_request") or ""),
+            )
             outcome = await asyncio.to_thread(
                 dispatch_item_render_for,
                 item_id,
                 int(plan_row.ownership_epoch or 0),
                 creator_strategy=edit_plan.strategy.model_dump(mode="json", exclude_none=True),
+                creator_clip_order=preserved_clip_order,
             )
             if outcome.outcome == "already_active":
                 return await _concurrent_render_response(
@@ -1804,7 +2171,17 @@ async def confirm_creator_plan(
         )
         return await _response(db, failed)
 
-    completed = await _load_session(db, creator_session_id, user_id, plan_item_id, for_update=True)
+    completed = (
+        await _lock_confirmed_render_graph(
+            db,
+            item_id=plan_item_id,
+            user_id=user_id,
+            session_id=creator_session_id,
+            job_id=job_id,
+        )
+        if job_id is not None
+        else await _load_session(db, creator_session_id, user_id, plan_item_id, for_update=True)
+    )
     if guided_generation_attempt_id is not None:
         completed.active_plan = {
             **(completed.active_plan or {}),
@@ -1830,6 +2207,16 @@ async def confirm_creator_plan(
         },
     )
     return await _response(db, completed)
+
+
+@router.post("/{item_id}/creator-agent/confirm", response_model=CreatorSessionResponse)
+async def confirm_creator_plan(
+    item_id: str,
+    body: ConfirmBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> CreatorSessionResponse:
+    return await confirm_creator_plan_controller(item_id, body, user, db)
 
 
 def _craft_response(receipt: CreatorAgentExecution) -> CreatorCraftResponse:

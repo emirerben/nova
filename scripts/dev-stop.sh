@@ -20,16 +20,10 @@ if [[ -f "$PID_FILE" ]]; then
   rm -f "$PID_FILE"
 fi
 
-# Free dev ports just in case anything orphaned
-for port in 3000 8000; do
-  pids=$(lsof -ti ":$port" 2>/dev/null || true)
-  if [[ -n "$pids" ]]; then
-    log "Freeing port $port..."
-    kill -9 $pids 2>/dev/null || true
-  fi
-done
-
-log "Stopping redis + postgres containers..."
-(cd "$REPO" && docker-compose stop redis db) > /dev/null 2>&1 || true
+# Ports and infra are shared by worktrees. Do not kill an untracked process on
+# :3000/:8000 or stop the shared Redis/Postgres containers; only the PIDs in
+# this checkout's .dev/pids file are in scope above. This makes stopping one
+# worktree unable to disrupt another worktree's worker or API.
+log "Leaving shared dev ports and Redis/Postgres untouched."
 
 log "Done."

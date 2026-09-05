@@ -28,14 +28,14 @@ def test_story_native_goldens_pin_the_current_prompt_version() -> None:
     )
 
 
-def _kria_fixture(name: str):
+def _fixture(name: str):
     path = next(path for path in FIXTURE_PATHS if path.stem == name)
     return load_fixture(path)
 
 
 def test_kria_bulk_followup_replays_typed_image_selector() -> None:
     """The fourth turn must preserve the image referent and stay bulk/atomic."""
-    fixture = _kria_fixture("kria_bulk_followup_satisfiable")
+    fixture = _fixture("kria_bulk_followup_satisfiable")
     result = run_eval(fixture)
     assert result.passed, f"{result.fixture_id}: {result.summary()} {result.error}"
     assert result.output is not None
@@ -94,7 +94,7 @@ def test_kria_bulk_followup_replays_typed_image_selector() -> None:
 
 def test_kria_bulk_followup_replays_honest_impossible_all() -> None:
     """An unrepresentable all-source request must be a zero-op clarification."""
-    fixture = _kria_fixture("kria_bulk_followup_impossible_all")
+    fixture = _fixture("kria_bulk_followup_impossible_all")
     assert fixture.input["variant_snapshot"]["motion"]["unused_ready_source_count"] > 100
     clarification = fixture.input["prior_turns"][-1]
     assert clarification["clarification_context"]["selector"] == {
@@ -115,6 +115,18 @@ def test_kria_bulk_followup_replays_honest_impossible_all() -> None:
     assert "10 Card Stacks" not in result.output["reply"]
     assert "eight-block limit" not in result.output["reply"]
     assert "8-second motion" not in result.output["reply"]
+
+
+def test_sfx_hallucinated_catalog_id_replays_zero_ops() -> None:
+    """Unknown sound IDs must remain a clarification, never an executable edit."""
+    fixture = _fixture("sfx_hallucinated_effect_id")
+    result = run_eval(fixture)
+
+    assert result.passed, f"{result.fixture_id}: {result.summary()} {result.error}"
+    assert result.output is not None
+    assert result.output["ops"] == []
+    assert result.output["needs_clarification"] is True
+    assert result.output["intent"] == "edit"
 
 
 @pytest.mark.skipif(

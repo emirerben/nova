@@ -271,6 +271,52 @@ def test_mixed_timing_source_floor_accounts_for_video_minimum_hold() -> None:
     )
 
 
+def test_mixed_timing_parse_rejects_scattered_photos_when_runs_were_requested() -> None:
+    profile = MixedMediaTimingProfile(
+        image_hold="very_fast",
+        image_hold_s=0.2,
+        video_hold="longer",
+        boundary_style="cut",
+        image_grouping="runs",
+    )
+    media = [
+        EditProposalMedia(media_id=f"photo-{index}", lane="asset", kind="image")
+        for index in range(3)
+    ] + [
+        EditProposalMedia(media_id=f"video-{index}", lane="clip", kind="video", duration_s=1.8)
+        for index in range(3)
+    ]
+    sources = ["video-0", "photo-0", "video-1", "photo-1", "video-2", "photo-2"]
+    payload = {
+        "title": "Scattered photos",
+        "duration_s": 6,
+        "story_beats": [],
+        "fast_cuts": [
+            {
+                "cut_id": f"cut-{index}",
+                "media_id": media_id,
+                "source_start_s": 0,
+                "source_end_s": 0.2 if media_id.startswith("photo") else 1.8,
+                "output_duration_s": 0.2 if media_id.startswith("photo") else 1.8,
+                "role": "hook" if index == 0 else "payoff" if index == 5 else "build",
+            }
+            for index, media_id in enumerate(sources)
+        ],
+    }
+
+    with pytest.raises(SchemaError, match="grouped photo runs"):
+        EditProposalAgent(None).parse(  # type: ignore[arg-type]
+            json.dumps(payload),
+            EditProposalAgentInput(
+                direction="fast_montage",
+                pace="fast",
+                target_duration_s=6,
+                mixed_media_timing=profile,
+                media=media,
+            ),
+        )
+
+
 def test_mixed_timing_parse_accepts_only_sources_that_fit_low_target() -> None:
     profile = MixedMediaTimingProfile(
         image_hold="very_fast", video_hold="longer", boundary_style="cut"
@@ -458,6 +504,108 @@ def test_mixed_timing_parse_forces_profile_and_accepts_short_video_exception() -
     assert [cut.output_duration_s for cut in output.fast_cuts or []] == [1.8, 0.6, 0.6]
 
 
+def test_mixed_timing_repairs_provider_advisory_fields_without_dropping_plan() -> None:
+    payload = _mixed_timing_payload()
+    payload["duration_s"] = 5.0  # provider arithmetic; server target remains 3s
+    for cut in payload["fast_cuts"]:
+        cut["transition"] = "fast_photo"
+        if cut["media_id"] == "photo":
+            cut["source_end_s"] = 0.0
+    payload["montage_text_bindings"] = [
+        {"media_id": "photo", "text": f"Sport {index}"} for index in range(13)
+    ]
+
+    output = EditProposalAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(payload),
+        _mixed_timing_input(),
+    )
+
+    cuts = output.fast_cuts or []
+    assert output.duration_s == 3
+    assert sum(cut.output_duration_s for cut in cuts) == pytest.approx(3)
+    assert all(cut.transition == "none" for cut in cuts)
+    photo = next(cut for cut in cuts if cut.media_id == "photo")
+    assert photo.source_start_s == 0
+    assert photo.source_end_s == photo.output_duration_s
+    assert len(output.montage_text_bindings) == 1
+
+
+def test_montage_text_bindings_dedupe_after_aliases_resolve_to_owned_media() -> None:
+    """Repeated provider labels cannot fail the final unique-source schema."""
+
+    from app.agents.edit_proposal import _resolve_model_media_references
+
+    agent_input = EditProposalAgentInput(
+        direction="fast_montage",
+        pace="fast",
+        target_duration_s=3,
+        media=[
+            EditProposalMedia(media_id="owned-a", lane="clip", kind="video", duration_s=3),
+            EditProposalMedia(media_id="owned-b", lane="clip", kind="video", duration_s=3),
+        ],
+    )
+    payload = {
+        "fast_cuts": [
+            {
+                "cut_id": "cut-1",
+                "media_id": "m001",
+                "source_start_s": 0,
+                "source_end_s": 1.5,
+                "output_duration_s": 1.5,
+                "role": "hook",
+            },
+            {
+                "cut_id": "cut-2",
+                "media_id": "m002",
+                "source_start_s": 0,
+                "source_end_s": 1.5,
+                "output_duration_s": 1.5,
+                "role": "payoff",
+            },
+        ],
+        "montage_text_bindings": [
+            {"media_id": "m001", "text": "First label"},
+            # The provider used the owned ID for the same source on a later
+            # pass; alias resolution must still dedupe it.
+            {"media_id": "owned-a", "text": "Duplicate label"},
+            {"media_id": "m002", "text": "Second label"},
+            {"media_id": "m001", "text": "Another duplicate"},
+        ],
+    }
+
+    normalized = _resolve_model_media_references(payload, agent_input)
+
+    assert normalized["montage_text_bindings"] == [
+        {"media_id": "owned-a", "text": "First label"},
+        {"media_id": "owned-b", "text": "Second label"},
+    ]
+
+    cap_input = agent_input.model_copy(
+        update={
+            "media": [
+                EditProposalMedia(
+                    media_id=f"owned-{index}",
+                    lane="clip",
+                    kind="video",
+                    duration_s=3,
+                )
+                for index in range(14)
+            ]
+        }
+    )
+    capped = _resolve_model_media_references(
+        {
+            "montage_text_bindings": [
+                {"media_id": f"m{index + 1:03d}", "text": f"Label {index}"} for index in range(14)
+            ]
+        },
+        cap_input,
+    )
+    assert [binding["media_id"] for binding in capped["montage_text_bindings"]] == [
+        f"owned-{index}" for index in range(12)
+    ]
+
+
 def test_mixed_timing_parse_rejects_photo_outside_profile_bounds() -> None:
     with pytest.raises(SchemaError, match="mixed-media timing profile was not honored"):
         EditProposalAgent(None).parse(  # type: ignore[arg-type]
@@ -588,7 +736,7 @@ def test_fast_montage_splits_and_interleaves_recoverable_overlong_windows() -> N
         (lambda cut: cut.update(transition="dissolve"), "Input should be 'none'"),
         (
             lambda cut: cut.update(output_duration_s=0.3, source_end_s=0.3),
-            "greater than or equal to 0.4",
+            "overlong fast cut cannot be split safely",
         ),
     ],
 )

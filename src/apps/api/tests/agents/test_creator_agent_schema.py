@@ -28,6 +28,7 @@ from app.agents._schemas.creator_agent import (
     canonical_context_hash,
     canonical_manifest_hash,
 )
+from app.agents.main_creator import _repair_action_envelope
 
 
 def _strategy() -> CreativeStrategy:
@@ -58,6 +59,21 @@ def test_agent_output_is_discriminated_and_strict() -> None:
         CREATOR_AGENT_OUTPUT_ADAPTER.validate_python(
             {"kind": "ask_user", "question": "Which cut?", "reason_code": "x", "url": "bad"}
         )
+
+
+def test_known_nested_summary_typo_is_repaired_before_strict_parse() -> None:
+    repaired = _repair_action_envelope(
+        {
+            "kind": "propose_strategy",
+            "strategy": {"summary": "A sports montage", "edit_format": "montage"},
+        }
+    )
+
+    assert isinstance(repaired, dict)
+    assert repaired["summary"] == "A sports montage"
+    assert "summary" not in repaired["strategy"]
+    parsed = CREATOR_AGENT_OUTPUT_ADAPTER.validate_python(repaired)
+    assert isinstance(parsed, ProposeStrategy)
 
 
 def test_context_hash_is_canonical_and_manifest_hash_excludes_self() -> None:
@@ -133,6 +149,22 @@ def test_strategy_carries_bounded_editorial_decisions() -> None:
 
     with pytest.raises(ValidationError):
         CreativeStrategy(optional_treatments=["sfx", "sfx"])
+
+
+def test_strategy_exact_render_fields_use_registry_and_color_contract() -> None:
+    strategy = CreativeStrategy(
+        opening_title=" Emir Olympics ",
+        font_family="rascal",
+        text_color="yellow",
+    )
+
+    assert strategy.opening_title == "Emir Olympics"
+    assert strategy.font_family == "Rascal"
+    assert strategy.text_color == "#FFD24A"
+    with pytest.raises(ValidationError):
+        CreativeStrategy(font_family="not-a-font")
+    with pytest.raises(ValidationError):
+        CreativeStrategy(text_color="chartreuse")
 
 
 def _target_kwargs() -> dict[str, str | int]:

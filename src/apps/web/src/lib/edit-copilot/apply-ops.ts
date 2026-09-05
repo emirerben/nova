@@ -30,6 +30,8 @@ import {
 import { nextAddedKey } from "@/app/generative/timeline-math";
 import {
   buildCaptionTextReplacement,
+  isCaptionBar,
+  isLyricBar,
   smartStyleForRole,
 } from "@/app/plan/items/[id]/_editor/editor-bars";
 import {
@@ -240,6 +242,36 @@ let motionIdCounter = 0;
 function defaultTextBarId(): string {
   textIdCounter += 1;
   return `copilot-text-${textIdCounter}`;
+}
+
+/**
+ * Whether a Copilot result changed the authoritative text-elements section.
+ * This deliberately inspects the actions rather than the active lyrics model:
+ * `lyricsOptionalActive` is a capability/model flag, not evidence that this
+ * turn edited text. Keeping this decision pure makes it testable and prevents
+ * timeline-only turns from sending a full text lane on Save.
+ */
+export function textActionsChangeTextSection(
+  actions: TextEditorAction[],
+  bars: TextElementBar[],
+  lyricsOptionalActive: boolean,
+): boolean {
+  return actions.some((action) => {
+    if (action.type === "ADD_TEXT") return true;
+    if (action.type === "ADD_LYRIC_BARS") return action.bars.length > 0;
+    if (action.type === "REMOVE_LYRIC_BARS") return bars.some(isLyricBar);
+    if (action.type === "PATCH_BARS") {
+      return action.patches.some((patch) => {
+        const bar = bars.find((candidate) => candidate.id === patch.id);
+        if (!bar) return false;
+        return !isCaptionBar(bar) && (lyricsOptionalActive || !isLyricBar(bar));
+      });
+    }
+    if (!("id" in action)) return false;
+    const bar = bars.find((candidate) => candidate.id === action.id);
+    if (!bar) return false;
+    return !isCaptionBar(bar) && (lyricsOptionalActive || !isLyricBar(bar));
+  });
 }
 
 function defaultSlotKey(slot: DraftSlot): string {
@@ -1013,27 +1045,24 @@ export function applyCopilotOps(
     .map((raw, index) => ({ raw, index, rank: bulkOpRank(raw) }))
     .sort((left, right) => left.rank - right.rank || left.index - right.index)
     .map(({ raw }) => raw);
-  const hasBulkAddUnusedSources = orderedRawOps.some(
-    (raw) => raw != null && typeof raw === "object" &&
-      String((raw as Record<string, unknown>).op ?? "") === "add_unused_sources",
-  );
-  const hasBulkImageDuration = orderedRawOps.some(
-    (raw) => raw != null && typeof raw === "object" &&
-      String((raw as Record<string, unknown>).op ?? "") === "set_media_duration" &&
-      (raw as Record<string, unknown>).selector != null &&
-      ((raw as Record<string, unknown>).selector as Record<string, unknown>).media_kind === "image",
-  );
-  const hasBulkVideoDuration = orderedRawOps.some(
-    (raw) => raw != null && typeof raw === "object" &&
-      String((raw as Record<string, unknown>).op ?? "") === "set_media_duration" &&
-      (raw as Record<string, unknown>).selector != null &&
-      ["video", "all"].includes(String(((raw as Record<string, unknown>).selector as Record<string, unknown>).media_kind ?? "")),
-  );
 
   for (const raw of orderedRawOps) {
     const result = validateCopilotOp(raw, ctx.snapshot);
     if (result.ok) validBundleOps.push(result.op);
   }
+  // Bundle semantics must inspect canonical operations, not raw prompt
+  // spellings. The validator accepts compact selector aliases and normalizes
+  // them before integrity checks and combined-duration fitting.
+  const hasBulkAddUnusedSources = validBundleOps.some(
+    (op) => op.op === "add_unused_sources",
+  );
+  const hasBulkImageDuration = validBundleOps.some(
+    (op) => op.op === "set_media_duration" && op.selector.media_kind === "image",
+  );
+  const hasBulkVideoDuration = validBundleOps.some(
+    (op) => op.op === "set_media_duration" &&
+      (op.selector.media_kind === "video" || op.selector.media_kind === "all"),
+  );
   const bundleEffectGroupIds = new Map<string, string>();
   const bundleIds = new Set(
     validBundleOps.flatMap((op) =>
@@ -2842,7 +2871,9 @@ export function applyCopilotOps(
     }
   }
 
-  const hasBulkOps = orderedRawOps.some((raw) => raw != null && typeof raw === "object" && ["add_unused_sources", "set_media_duration", "stack_images"].includes(String((raw as Record<string, unknown>).op ?? "")));
+  const hasBulkOps = validBundleOps.some((op) =>
+    op.op === "add_unused_sources" || op.op === "set_media_duration" || op.op === "stack_images"
+  );
   if (hasBulkOps) {
     let finalSlots = nextSlots ?? workingSlots;
     const activeCount = finalSlots.filter((slot) => !slot.removed).length;

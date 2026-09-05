@@ -67,6 +67,7 @@ def test_confirmed_creator_strategy_is_schema_bounded_and_persisted() -> None:
         },
     )
     assert job.all_candidates["creator_strategy"]["intro_hook"] == ("The one thing I learned")
+    assert job.all_candidates["creator_render_contract_version"] == "2026-09-03-v1"
 
     with pytest.raises(ValueError):
         build_generative_job(

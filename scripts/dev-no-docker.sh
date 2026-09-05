@@ -25,9 +25,11 @@ if [[ -f "$PID_FILE" ]]; then
   rm -f "$PID_FILE"
   sleep 1
 fi
+# A port may belong to another worktree. Only tracked PIDs are in scope for
+# this checkout, so report conflicts instead of killing unrelated processes.
 for port in 3000 8000; do
   pids=$(lsof -ti ":$port" 2>/dev/null || true)
-  [[ -n "$pids" ]] && kill -9 $pids 2>/dev/null || true
+  [[ -n "$pids" ]] && log "Port :$port is already in use; leaving its process untouched."
 done
 
 # ── Verify prerequisites ─────────────────────────────────────────────────────
@@ -49,6 +51,9 @@ set -a
 # shellcheck source=/dev/null
 source "$REPO/.env"
 set +a
+export NOVA_CELERY_QUEUE_NAMESPACE="$(bash "$REPO/scripts/dev-namespace.sh" "$REPO")"
+CELERY_DEV_QUEUES="celery,plan-jobs,overlay-jobs,creator-guided-jobs,creator-render-v2"
+log "Celery namespace: $NOVA_CELERY_QUEUE_NAMESPACE (Redis key prefix nova-dev:$NOVA_CELERY_QUEUE_NAMESPACE:)"
 
 # ── Migrations ───────────────────────────────────────────────────────────────
 log "Running alembic migrations..."
@@ -79,7 +84,7 @@ log "Starting Celery worker (watchfiles auto-restart)..."
 (
   cd "$REPO/src/apps/api"
   PATH="$REPO/src/apps/api/.venv/bin:$PATH" exec .venv/bin/watchfiles --filter python \
-    "celery -A app.worker:celery_app worker --loglevel=info --concurrency=2 --pool=${CELERY_POOL:-prefork} -Q celery,plan-jobs,overlay-jobs,creator-guided-jobs" \
+    "celery -A app.worker:celery_app worker --loglevel=info --concurrency=2 --pool=${CELERY_POOL:-prefork} -Q $CELERY_DEV_QUEUES -n worker-${NOVA_CELERY_QUEUE_NAMESPACE}@%h" \
     app
 ) > "$DEV_DIR/worker.log" 2>&1 &
 echo $! >> "$PID_FILE"
@@ -96,7 +101,7 @@ sleep 2
 log ""
 log "Dev environment started:"
 log "  API:      http://localhost:8000"
-log "  Worker:   celery (auto-restart on .py edits)"
+log "  Worker:   celery [$NOVA_CELERY_QUEUE_NAMESPACE] (auto-restart on .py edits)"
 log "  Frontend: http://localhost:3000"
 log ""
 log "Logs:"

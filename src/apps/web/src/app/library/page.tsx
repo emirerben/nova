@@ -1,9 +1,9 @@
 import { redirect } from "next/navigation";
 
 /**
- * /library is gone — past edits live on the /plan home now (v0.44 redesign).
- * Kept as a redirect so old bookmarks and external links keep working.
+ * Past edits live in the canonical chat workspace Gallery. Keep this redirect
+ * so old bookmarks and external links open the correct workspace state.
  */
 export default function LibraryRedirect() {
-  redirect("/plan");
+  redirect("/plan?view=gallery");
 }

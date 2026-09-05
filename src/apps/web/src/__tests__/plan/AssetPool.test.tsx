@@ -145,6 +145,17 @@ describe("AssetPool — flag gating", () => {
       "2 visuals saved (1 photo, 1 video)",
     );
   });
+
+  it("removes repeated embedded copy when the parent card labels the pool", async () => {
+    process.env[FLAG] = "true";
+    mockFetch(listRoute([]));
+    await renderPool({ embedded: true, concise: true });
+
+    expect(screen.queryByText("Photos and supporting videos")).not.toBeInTheDocument();
+    expect(screen.queryByText("No visuals saved")).not.toBeInTheDocument();
+    expect(screen.getByText("Choose files or drop them here")).toBeInTheDocument();
+    expect(screen.queryByText("They are saved to Visuals when they appear below")).not.toBeInTheDocument();
+  });
 });
 
 describe("AssetPool — upload flow (presigned direct-PUT, R1/C9+C14)", () => {

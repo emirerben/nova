@@ -30,6 +30,13 @@ if [ ! -d "$PRIMARY" ]; then
   exit 1
 fi
 
+# The dev launchers export this value before starting both API and workers.
+# Show it during bootstrap so a worktree's Redis namespace is visible before
+# any task is created (the shared .env remains untouched).
+if [ -x "$REPO/scripts/dev-namespace.sh" ]; then
+  log "Celery dev namespace: $(bash "$REPO/scripts/dev-namespace.sh" "$REPO")"
+fi
+
 # ── 1. Symlink shared, git-ignored assets from the primary checkout ──────────
 # Each link is skipped if the target already exists (real dir/file or link).
 link() {

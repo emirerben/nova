@@ -63,6 +63,7 @@ export default function AssetPool({
   onMutated,
   onAssetsChanged,
   embedded = false,
+  concise = false,
 }: {
   itemId: string;
   /** gcs_paths already attached as clips — flips a promoted tile to "In edit ✓". */
@@ -87,6 +88,8 @@ export default function AssetPool({
    *  "Visuals pool" eyebrow + outer bordered container (the Card already
    *  supplies both) and swaps the empty state for the shared Dropzone. */
   embedded?: boolean;
+  /** Parent already supplies the Visuals title and description. */
+  concise?: boolean;
 }) {
   const guidedEditEnabled = process.env.NEXT_PUBLIC_GUIDED_EDIT_ENABLED === "true";
   const enabled =
@@ -328,7 +331,7 @@ export default function AssetPool({
         </div>
       )}
 
-      {embedded && !unavailable && (
+      {embedded && !concise && !unavailable && (
         <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
           <div>
             <p className="text-sm font-medium text-[#0c0c0e]">Photos and supporting videos</p>
@@ -387,8 +390,8 @@ export default function AssetPool({
                   accept={POOL_ASSET_MIME_TYPES.join(",")}
                   multiple
                   disabled={atCap}
-                  title="Drop photos or supporting videos"
-                  subline="They are saved to Visuals when they appear below"
+                  title={concise ? "Choose files or drop them here" : "Drop photos or supporting videos"}
+                  subline={concise ? undefined : "They are saved to Visuals when they appear below"}
                   ariaLabel="Add visuals"
                   inputAriaLabel="Add visuals to your pool (embedded)"
                 />

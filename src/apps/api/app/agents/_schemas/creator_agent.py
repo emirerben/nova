@@ -14,10 +14,19 @@ import math
 from collections.abc import Mapping
 from typing import Annotated, Any, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    field_validator,
+    model_validator,
+)
 
 from app.agents._schemas.edit_format import EditFormat, RenderProgram
 from app.schemas.edit_proposal import (
+    BeatLayout,
     MixedMediaTimingProfile,
     MontageAudioPlan,
     MontageCadenceConstraint,
@@ -32,6 +41,12 @@ MAX_CREATOR_REVIEW_EVIDENCE = 12
 MAX_CREATOR_REVISION_EVIDENCE_IDS = 8
 MAX_CREATOR_WORKSPACE_MEDIA_IDS = 50
 MAX_CREATOR_CRAFT_COMMANDS = 3
+CREATOR_COLOR_ALIASES: dict[str, str] = {
+    "yellow": "#FFD24A",
+    "gold": "#F4D03F",
+    "white": "#FFFFFF",
+    "black": "#000000",
+}
 
 
 class _CreatorModel(BaseModel):
@@ -59,6 +74,21 @@ def _sha256_hex(value: str, *, field_name: str) -> str:
     if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
         raise ValueError(f"{field_name} must be a lowercase SHA-256 hex digest")
     return value
+
+
+def normalize_creator_text_color(value: object) -> str | None:
+    """Normalize the small Creator color vocabulary to renderer hex values."""
+
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip().lower()
+    if candidate in CREATOR_COLOR_ALIASES:
+        return CREATOR_COLOR_ALIASES[candidate]
+    from app.agents._schemas.text_element import _HEX_COLOR_RE  # noqa: PLC0415
+
+    if _HEX_COLOR_RE.match(value.strip()):
+        return value.strip().upper()
+    return None
 
 
 class CreatorMediaRef(_CreatorModel):
@@ -173,10 +203,33 @@ CreativePace = Literal["relaxed", "balanced", "fast"]
 AudioStrategy = Literal["licensed_music", "original_audio", "voiceover"]
 CaptionStyle = Literal["none", "clean", "kinetic", "karaoke", "editorial", "auto"]
 OptionalTreatment = Literal["overlays", "sfx", "transitions", "looks"]
+ContextLabelKind = Literal["sport"]
+ContextLabelSource = Literal["clip_metadata", "user_provided"]
+
+
+class ContextLabelIntent(_CreatorModel):
+    """Bounded intent for a trusted pipeline-resolved contextual label.
+
+    This carries no label text. Clip metadata is descriptive evidence and must
+    be resolved and confirmed by the trusted render pipeline before rendering.
+    """
+
+    kind: ContextLabelKind = "sport"
+    source: ContextLabelSource = "clip_metadata"
+    placement: Literal["bottom_right"] = "bottom_right"
+    size: Literal["small"] = "small"
+    per_clip: bool = True
 
 
 class CreativeStrategy(_CreatorModel):
-    """Bounded editorial choices selected by the orchestrator."""
+    """Bounded editorial choices selected by the orchestrator.
+
+    ``intro_hook`` remains an advisory concept for backwards compatibility.
+    ``opening_title`` is the separate, confirmed copy contract: when present it
+    is burned verbatim (after the renderer's normal surrounding trim), rather
+    than being sent back through an LLM.  The optional typography fields use
+    the same font/color vocabulary as the authoritative TextElement schema.
+    """
 
     direction: CreativeDirection = "fast_montage"
     edit_format: EditFormat = "montage"
@@ -190,6 +243,38 @@ class CreativeStrategy(_CreatorModel):
         description=(
             "Opening concept shown for creative approval; never treated as trusted "
             "or burned verbatim by the renderer"
+        ),
+    )
+    opening_title: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("opening_title", "title_text", "intro_title"),
+        max_length=280,
+        description="Confirmed exact opening title copy; never an LLM-generated suggestion.",
+    )
+    font_family: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("font_family", "intro_font_family"),
+        max_length=160,
+        description="Confirmed intro font registry key.",
+    )
+    text_color: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("text_color", "intro_text_color", "color"),
+        max_length=16,
+        description="Confirmed intro color (#RRGGBB or a supported color alias).",
+    )
+    context_label: ContextLabelIntent | None = Field(
+        default=None,
+        description=(
+            "Confirmed request for a server-resolved contextual label; this carries "
+            "no model-authored label text."
+        ),
+    )
+    image_layout: BeatLayout | None = Field(
+        default=None,
+        description=(
+            "Confirmed image-only layout. supporting_card shows the full image; "
+            "fullscreen fills the canvas with a cover crop."
         ),
     )
     pacing: CreativePace = "balanced"
@@ -211,6 +296,50 @@ class CreativeStrategy(_CreatorModel):
         if any(not value.strip() or len(value) > 120 for value in values):
             raise ValueError("story_structure entries must be 1-120 characters")
         return [value.strip() for value in values]
+
+    @field_validator("opening_title", mode="before")
+    @classmethod
+    def _validate_opening_title(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("opening_title must be a string")
+        value = value.strip()
+        if not value:
+            raise ValueError("opening_title must not be empty")
+        if any(ord(char) < 32 for char in value):
+            raise ValueError("opening_title must not contain control characters")
+        return value
+
+    @field_validator("font_family", mode="before")
+    @classmethod
+    def _validate_creator_font_family(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        # TextElement owns this allowlist and loads the versioned font registry;
+        # do not duplicate a second Creator-specific list here.
+        from app.agents._schemas.text_element import _ALLOWED_FONTS  # noqa: PLC0415
+
+        if not isinstance(value, str):
+            raise ValueError("font_family must be a known font registry key")
+        candidate = value.strip()
+        canonical = next(
+            (font for font in _ALLOWED_FONTS if font.casefold() == candidate.casefold()),
+            None,
+        )
+        if canonical is None:
+            raise ValueError("font_family must be a known font registry key")
+        return canonical
+
+    @field_validator("text_color", mode="before")
+    @classmethod
+    def _normalize_creator_text_color(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        normalized = normalize_creator_text_color(value)
+        if normalized is None:
+            raise ValueError("text_color must be a #RRGGBB hex string or supported alias")
+        return normalized
 
     @field_validator("selected_media_ids")
     @classmethod
@@ -908,6 +1037,7 @@ __all__ = [
     "CreatorEditPlan",
     "CreatorLimits",
     "CreatorMediaRef",
+    "ContextLabelIntent",
     "CreatorRevisionProposal",
     "CreatorReviewEvidence",
     "CreatorReviewReceipt",

@@ -393,6 +393,12 @@ describe("buildEditorCommitRequest", () => {
       variant: { render_generation_id: "gen-current" },
     });
     expect(body.text_elements).toEqual([element]);
+    expect(body.sound_effects).toBeUndefined();
+    expect(body.media_overlays).toBeUndefined();
+    expect(body.visual_blocks).toBeUndefined();
+    expect(body.motion_scenes).toBeUndefined();
+    expect(body.camera_effects).toBeUndefined();
+    expect(body.timeline_slots).toBeUndefined();
     expect(body.lyrics).toEqual({
       enabled: true,
       line_overrides: {

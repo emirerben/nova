@@ -17,8 +17,9 @@ from billiard.exceptions import SoftTimeLimitExceeded
 from celery.exceptions import MaxRetriesExceededError, Retry
 from sqlalchemy import func, select
 
+from app.agents._schemas.creator_agent import CreatorEditPlan
 from app.database import sync_session
-from app.models import ContentPlan, PlanItem, PlanItemAsset
+from app.models import ContentPlan, CreatorAgentSession, PlanItem, PlanItemAsset
 from app.schemas.edit_proposal import (
     GUIDED_STORY_MIN_MOMENT_S,
     MAIN_CREATOR_FAIL_CLOSED,
@@ -79,6 +80,57 @@ def _locked_item(
     if item is None or item.content_plan_id != plan.id:
         return None
     return item, plan.user_id
+
+
+def _creator_strategy_for_guided_attempt(
+    db,
+    *,
+    item_id: uuid.UUID,
+    owner_id: uuid.UUID,
+    attempt_id: str,
+) -> dict | None:
+    """Recover the confirmed Creator strategy for one guided render attempt.
+
+    Guided proposal drafting is asynchronous, so its final dispatch runs after
+    the request-scoped Creator controller has returned. The proposal owns media
+    selection and timing; the linked Creator session remains authoritative for
+    the user's exact title, typography, and trusted contextual-label intent.
+    Match the immutable attempt id and validate the complete typed plan before
+    allowing those fields onto the Job.
+    """
+
+    sessions = list(
+        db.execute(
+            select(CreatorAgentSession)
+            .where(
+                CreatorAgentSession.plan_item_id == item_id,
+                CreatorAgentSession.creator_id == owner_id,
+            )
+            .order_by(
+                CreatorAgentSession.updated_at.desc(),
+                CreatorAgentSession.created_at.desc(),
+            )
+        ).scalars()
+    )
+    for session in sessions:
+        active_plan = session.active_plan if isinstance(session.active_plan, dict) else {}
+        if active_plan.get("guided_generation_attempt_id") != attempt_id:
+            continue
+        raw_edit_plan = active_plan.get("edit_plan")
+        if not isinstance(raw_edit_plan, dict):
+            return None
+        try:
+            edit_plan = CreatorEditPlan.model_validate(raw_edit_plan)
+        except ValueError:
+            log.warning(
+                "edit_proposal.creator_strategy_invalid",
+                item_id=str(item_id),
+                attempt_id=attempt_id,
+                session_id=str(session.id),
+            )
+            return None
+        return edit_plan.strategy.model_dump(mode="json", exclude_none=True)
+    return None
 
 
 def _kind(content_type: str, path: str) -> str:
@@ -738,9 +790,11 @@ def _dispatch_after_auto_design(
     from app.tasks.content_plan_build import dispatch_item_render_for  # noqa: PLC0415
 
     bypass = False
+    creator_strategy: dict | None = None
     with sync_session() as db:
         locked = _locked_item(db, iid, ownership_epoch)
         item = locked[0] if locked else None
+        owner_id = locked[1] if locked else None
         current = parse_edit_proposal(item.edit_proposal) if item else None
         if item is None or current is None or current.generation_attempt_id != attempt_id:
             return  # superseded by a newer attempt — nothing to do
@@ -775,8 +829,26 @@ def _dispatch_after_auto_design(
         else:
             return
 
+        if current.design_fallback == MAIN_CREATOR_FAIL_CLOSED:
+            assert owner_id is not None
+            creator_strategy = _creator_strategy_for_guided_attempt(
+                db,
+                item_id=item.id,
+                owner_id=owner_id,
+                attempt_id=attempt_id,
+            )
+            if creator_strategy is None:
+                log.warning(
+                    "edit_proposal.creator_strategy_missing",
+                    item_id=item_id,
+                    attempt_id=attempt_id,
+                )
+                return
+
     dispatch_kwargs = {"bypass_guided_edit_gate": bypass}
     dispatch_kwargs["creator_guided_attempt_id"] = attempt_id
+    if creator_strategy is not None:
+        dispatch_kwargs["creator_strategy"] = creator_strategy
     # `design_fallback=MAIN_CREATOR_FAIL_CLOSED` is the deploy-skew-safe,
     # durable marker for a Main Creator-owned guided attempt. Every ordinary
     # one-click auto-design dispatch must re-check for a session that may have
@@ -1312,7 +1384,13 @@ def _run_draft_attempt(
             goal=brief.goal,
             pace=brief.pace,
             duration_s=output.duration_s if output is not None else target_duration_s,
-            title=output.title if output is not None else "A few moments",
+            # A confirmed Main Creator title is immutable and beats any
+            # specialist/copy-writer title for every render.
+            title=brief.opening_title or (output.title if output is not None else "A few moments"),
+            opening_title=brief.opening_title,
+            font_family=brief.font_family,
+            text_color=brief.text_color,
+            image_layout=brief.image_layout,
             media=media,
             story_beats=(
                 [
