@@ -44,6 +44,8 @@ export interface CreationJob {
 
 export interface CreationThread {
   id: string;
+  /** User-authored project label. Older rows may omit it while they hydrate. */
+  title?: string | null;
   status: "active" | "archived" | "failed";
   revision: number;
   state: Record<string, unknown>;
@@ -51,6 +53,13 @@ export interface CreationThread {
   active_plan_item_id: string | null;
   active_creator_agent_session_id: string | null;
   active_job_id: string | null;
+  creator_agent?: {
+    status?: string | null;
+    revision?: number;
+    summary?: string | null;
+    plan_hash?: string | null;
+    version?: string | null;
+  } | null;
   media_capabilities?: CreationMediaCapabilities | null;
   events: CreationThreadEvent[];
   job: CreationJob | null;
@@ -146,6 +155,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new CreationThreadError(message, response.status);
   }
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
@@ -357,6 +367,29 @@ export async function archiveCreationThread(thread: CreationThread): Promise<Cre
   });
 }
 
+/** Persist the short label shown in the project rail and workspace header. */
+export function renameCreationThread(
+  thread: CreationThread,
+  name: string,
+): Promise<CreationThread> {
+  return request<CreationThread>(`/${thread.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      title: name.trim(),
+      expected_revision: thread.revision,
+      client_event_id: id("rename"),
+    }),
+  });
+}
+
+/** Remove a project from the creator's project list. */
+export function deleteCreationThread(thread: CreationThread): Promise<void> {
+  const query = new URLSearchParams({ expected_revision: String(thread.revision) });
+  return request<void>(`/${thread.id}?${query.toString()}`, {
+    method: "DELETE",
+  });
+}
+
 /** Render append-only server events as conversation rows. */
 export function threadMessages(thread: CreationThread): Array<{
   id: string;
@@ -371,7 +404,8 @@ export function threadMessages(thread: CreationThread): Array<{
   // initial direction as a bogus "Revision ready" card after refresh. The
   // action events cover newer projections, while the agent events preserve
   // recovered threads whose action projection was not appended.
-  const latestGenerationSequence = thread.events.reduce(
+  const events = [...thread.events].sort((left, right) => left.sequence - right.sequence);
+  const latestGenerationSequence = events.reduce(
     (latest, event) => [
       "action_generate",
       "action_confirm_generation",
@@ -382,20 +416,20 @@ export function threadMessages(thread: CreationThread): Array<{
       : latest,
     -1,
   );
-  const latestStrategySequence = thread.events.reduce(
+  const latestStrategySequence = events.reduce(
     (latest, event) => event.event_type === "agent_assistant_strategy"
       ? Math.max(latest, event.sequence)
       : latest,
     -1,
   );
-  return thread.events.flatMap((event) => {
+  return events.flatMap((event) => {
     const payload = event.payload ?? {};
     const kind = String(payload.kind ?? event.event_type);
     const content = event.content?.trim();
-    if (!content && event.role === "user") return [];
+    if (!content && event.role === "user" && event.event_type !== "media_added") return [];
     let artifact: "format" | "upload" | "voiceover" | "confirmation" | "revision" | "progress" | "result" | "failure" | undefined;
     if (["select_format", "select_edit_format", "format_options"].includes(kind)) artifact = "format";
-    else if (["collect_media", "upload_prompt"].includes(kind)) artifact = "upload";
+    else if (["collect_media", "upload_prompt"].includes(kind) || event.event_type === "media_added") artifact = "upload";
     else if (["collect_voiceover", "voiceover_prompt"].includes(kind)) artifact = "voiceover";
     else if (["confirm_generation", "confirmation"].includes(kind)) artifact = "confirmation";
     else if (["confirm_revision", "revision"].includes(kind)) artifact = "revision";
@@ -409,9 +443,12 @@ export function threadMessages(thread: CreationThread): Array<{
           : "confirmation";
       }
     }
-    else if (["generation_started", "rendering"].includes(event.event_type)) artifact = "progress";
-    else if (["generation_failed", "render_failed"].includes(event.event_type)) artifact = "failure";
-    else if (event.event_type === "generation_ready") artifact = "result";
+    else if (["generation_started", "rendering"].includes(event.event_type)
+      || (event.event_type === "agent_assistant_execution" && ["started", "rendering", "queued"].includes(String(payload.status)))) artifact = "progress";
+    else if (["generation_failed", "render_failed"].includes(event.event_type)
+      || (event.event_type === "agent_assistant_execution" && ["failed", "error"].includes(String(payload.status)))) artifact = "failure";
+    else if (event.event_type === "generation_ready"
+      || (event.event_type === "agent_assistant_execution" && ["ready", "completed"].includes(String(payload.status)))) artifact = "result";
     if (!content && !artifact) return [];
     return [{
       id: event.id,

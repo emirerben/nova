@@ -549,6 +549,7 @@ class JobStorageDeletion(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     job_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     object_paths: Mapped[list] = mapped_column(JSONB, nullable=False)
+    object_prefixes: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     # pending → processing → completed. A failed processing attempt returns
     # to pending with next_attempt_at set for the durable sweeper.
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
@@ -771,6 +772,7 @@ class CreationThread(Base):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
+    title: Mapped[str] = mapped_column(Text, nullable=False, server_default="Untitled video")
     revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     state: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     content_plan_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -810,6 +812,7 @@ class CreationThread(Base):
             "status IN ('active','archived','failed')", name="ck_creation_threads_status"
         ),
         CheckConstraint("revision >= 0", name="ck_creation_threads_revision"),
+        CheckConstraint("length(title) BETWEEN 1 AND 120", name="ck_creation_threads_title_length"),
         UniqueConstraint("active_plan_item_id", name="uq_creation_threads_active_plan_item"),
         Index("idx_creation_threads_creator_updated", "creator_id", "updated_at"),
         Index("idx_creation_threads_active_job", "active_job_id"),
@@ -857,6 +860,48 @@ class CreationThreadEvent(Base):
             "created_at",
             postgresql_where=text("client_event_id IS NOT NULL"),
         ),
+    )
+
+
+class CreationThreadDeletion(Base):
+    """Owner-scoped tombstone for an erased creation project.
+
+    The thread itself is permanently removed, so this tiny row preserves the
+    same-owner idempotency contract for a DELETE retried after the request
+    committed. It intentionally has no FK to ``creation_threads``.
+    """
+
+    __tablename__ = "creation_thread_deletions"
+
+    thread_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    __table_args__ = (Index("idx_creation_thread_deletions_creator", "creator_id"),)
+
+
+class CreationThreadUploadReservation(Base):
+    """Durable record for a signed project-media PUT that may still arrive."""
+
+    __tablename__ = "creation_thread_upload_reservations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("creation_threads.id", ondelete="CASCADE"), nullable=False
+    )
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    media_id: Mapped[str] = mapped_column(Text, nullable=False)
+    object_path: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("thread_id", "media_id", name="uq_creation_thread_upload_media"),
+        Index("idx_creation_thread_upload_expiry", "thread_id", "expires_at"),
     )
 
 

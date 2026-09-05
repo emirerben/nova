@@ -5,24 +5,38 @@ import Link from "next/link";
 import { useSession, signOut } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  ArrowUp, Check, Download, Film, FolderOpen, Menu, PanelLeftClose,
+  ArrowUp, Check, Download, Film, FolderOpen, Menu, MoreHorizontal, PanelLeftClose,
   PanelLeftOpen, Pencil, Play, Plus, RefreshCw, Sparkles, Trash2, WifiOff,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dropzone } from "@/components/ui/dropzone";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter,
+  DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ChatBubble } from "@/components/chat/ChatBubble";
 import { ChatThinking } from "@/components/chat/ChatThinking";
 import { ChatArtifactCard } from "@/components/chat/ChatArtifactCard";
+import { BeamLoader } from "@/components/progress";
 import { VoiceRecorder } from "@/app/generative/VoiceRecorder";
 import {
   applyCreationAction, creationFormat, creationFormatLabel, creationJobFailed,
   creationJobPartial, creationJobReady, creationJobSettled, creationThreadMediaCount, createCreationThread,
-  CreationThreadError, getCreationCapabilities, listCreationThreads, refreshCreationThread,
-  creationClipLimit, sendCreationMessage, threadMessages, uploadCreationMedia,
+  CreationThreadError, deleteCreationThread, getCreationCapabilities, listCreationThreads, refreshCreationThread,
+  creationClipLimit, renameCreationThread, sendCreationMessage, threadMessages, uploadCreationMedia,
   type CreationFormat, type CreationThread,
 } from "@/lib/creation-thread-api";
 import { setChatFirstFallback } from "@/lib/chat-first";
@@ -56,12 +70,10 @@ function formatFromThread(thread: CreationThread | null): CreationFormat | null 
 }
 
 function projectTitle(thread: CreationThread): string {
-  const intent = thread.state.intent;
-  if (typeof intent === "string" && intent.trim()) return intent;
-  const creatorAgent = thread.state.creator_agent;
-  if (creatorAgent && typeof creatorAgent === "object" && "summary" in creatorAgent) {
-    const summary = creatorAgent.summary;
-    if (typeof summary === "string" && summary.trim()) return summary;
+  for (const candidate of [
+    thread.title,
+  ]) {
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
   }
   return "Untitled video";
 }
@@ -69,10 +81,27 @@ function projectTitle(thread: CreationThread): string {
 function projectStatusLabel(thread: CreationThread): string {
   if (thread.status === "archived") return "Archived";
   if (creationJobFailed(thread)) return "Needs attention";
+  if (thread.job?.status === "variants_ready_partial") return "Partially ready";
+  if (thread.job && ["done", "variants_ready"].includes(thread.job.status)) return "Ready";
   if (creationJobReady(thread)) return creationJobPartial(thread) ? "Partially ready" : "Ready";
   if (thread.active_job_id) return "Rendering";
   if (creationThreadMediaCount(thread) > 0) return "Shaping direction";
   return "New project";
+}
+
+function projectDeletionBlocked(thread: CreationThread): boolean {
+  const stateStatus = [thread.state.job_status, thread.state.render_status]
+    .map((value) => typeof value === "string" ? value.toLowerCase() : "")
+    .find(Boolean);
+  const agentStatus = thread.creator_agent?.status?.toLowerCase();
+  return Boolean(
+    (thread.job && !creationJobSettled(thread))
+    || (agentStatus && [
+      "briefing", "planning", "awaiting_confirmation", "executing", "rendering",
+      "reviewing", "awaiting_feedback", "revising",
+    ].includes(agentStatus))
+    || (stateStatus && ["queued", "processing", "generating", "rendering"].includes(stateStatus)),
+  );
 }
 
 interface AttachedMedia {
@@ -115,11 +144,106 @@ function variantLabel(variantId: string | undefined): string {
   return (variantId ?? "Cut").replaceAll("_", " ").replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
-export interface ChatCreationWorkspaceProps {
-  onLegacyFallback?: () => void;
+export function renderPhaseLabel(phase?: string | null): string {
+  const normalized = phase?.trim().toLowerCase();
+  const labels: Record<string, string> = {
+    queued: "Your edit is queued…",
+    analyze_clips: "Finding the story in your footage…",
+    match_song: "Choosing the right sound…",
+    render_variants: "Rendering the edit variations…",
+    finalize: "Polishing the final cut…",
+    analyzing: "Finding the story in your footage…",
+    matching: "Choosing the strongest moments…",
+    assembling: "Assembling your footage and sound…",
+    rendering: "Rendering the edit…",
+    finalizing: "Polishing the final cut…",
+  };
+  return (normalized && labels[normalized]) || "Building your cut…";
 }
 
-export default function ChatCreationWorkspace({ onLegacyFallback }: ChatCreationWorkspaceProps) {
+function RenderStatusCard({ thread }: { thread: CreationThread }) {
+  const phase = renderPhaseLabel(thread.job?.current_phase);
+  const playable = readyVariants(thread);
+  const total = thread.job?.variants.length ?? 0;
+  const count = playable.length > 0 && total > 0 ? `${playable.length} of ${total} ready` : null;
+  return (
+    <ChatArtifactCard badge={<Badge variant="secondary">Rendering</Badge>} title={count ?? "Kria is building your cut…"} description={phase}>
+      <BeamLoader tone="light" mode="line" strength="medium" ariaLabel={`${phase}${count ? ` ${count}.` : ""}`} className="rounded-lg">
+        <div className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground">
+          <span className="size-1.5 motion-safe:animate-ping rounded-full bg-lime-600" aria-hidden="true" />
+          <span>{phase}</span>
+        </div>
+      </BeamLoader>
+      {playable.length > 0 ? (
+        <div className="mt-3 flex flex-wrap gap-2" aria-label="Playable cuts">
+          {playable.map((variant) => (
+            <Button
+              key={variant.variant_id}
+              type="button"
+              variant="outline"
+              onClick={() => window.open(variant.output_url ?? "", "_blank", "noopener,noreferrer")}
+            >
+              <Play /> Play {variantLabel(variant.variant_id)}
+            </Button>
+          ))}
+        </div>
+      ) : null}
+    </ChatArtifactCard>
+  );
+}
+
+function FailureStatusCard({
+  thread,
+  busy,
+  onRetry,
+  onAdjust,
+}: {
+  thread: CreationThread;
+  busy: boolean;
+  onRetry: () => void;
+  onAdjust: () => void;
+}) {
+  return (
+    <ChatArtifactCard badge={<Badge variant="outline">Render needs attention</Badge>} title="Your project is safe" description="The render did not finish, but your direction and footage are still here.">
+      <div className="flex flex-wrap gap-2"><Button type="button" onClick={onRetry} disabled={busy}><RefreshCw /> Retry render</Button><Button type="button" variant="outline" onClick={onAdjust}>Adjust direction</Button></div>
+    </ChatArtifactCard>
+  );
+}
+
+function ReadyStatusCard({
+  thread,
+  isPartial,
+  selectedReadyVariant,
+  selectedFailedVariant,
+  busy,
+  onSelectVariant,
+  onOpenEditor,
+  onRetryVariant,
+}: {
+  thread: CreationThread;
+  isPartial: boolean;
+  selectedReadyVariant: ReturnType<typeof readyVariant>;
+  selectedFailedVariant: ReturnType<typeof failedVariant>;
+  busy: boolean;
+  onSelectVariant: (id: string) => void;
+  onOpenEditor: () => void;
+  onRetryVariant: (id: string) => void;
+}) {
+  return (
+    <ChatArtifactCard badge={<Badge variant="secondary"><Check /> {isPartial ? "Partially ready" : "Ready"}</Badge>} title={isPartial ? "Your cut is ready; one variant needs another pass" : "Your cut is ready"} description={isPartial ? "The playable cut is available now. Retry the failed variant whenever you’re ready." : "Play it here, download it, open the editor, or keep chatting for a confirmed revision."}>
+      {readyVariants(thread).length > 1 ? <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label="Available cuts">{readyVariants(thread).map((variant) => <Button key={variant.variant_id} type="button" variant={selectedReadyVariant?.variant_id === variant.variant_id ? "secondary" : "outline"} aria-pressed={selectedReadyVariant?.variant_id === variant.variant_id} disabled={busy} onClick={() => onSelectVariant(variant.variant_id ?? "")}>{variantLabel(variant.variant_id)}</Button>)}</div> : null}
+      <div className="flex flex-wrap gap-2">{selectedReadyVariant?.output_url ? <><Button type="button" onClick={() => window.open(selectedReadyVariant.output_url ?? "", "_blank", "noopener,noreferrer")}><Play /> Play</Button><Button type="button" variant="outline" asChild><a href={selectedReadyVariant.output_url ?? ""} download><Download /> Download</a></Button></> : null}<Button type="button" variant="outline" onClick={onOpenEditor} disabled={!thread.active_plan_item_id}><Pencil /> Open editor</Button>{isPartial && selectedFailedVariant?.variant_id ? <Button type="button" variant="ghost" onClick={() => onRetryVariant(selectedFailedVariant.variant_id ?? "")} disabled={busy}><RefreshCw /> Retry failed variant</Button> : null}</div>
+    </ChatArtifactCard>
+  );
+}
+
+export interface ChatCreationWorkspaceProps {
+  onLegacyFallback?: () => void;
+  /** When present, hydrate this exact project instead of choosing the latest. */
+  initialThreadId?: string;
+}
+
+export default function ChatCreationWorkspace({ onLegacyFallback, initialThreadId }: ChatCreationWorkspaceProps) {
   const { data: session } = useSession();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -138,6 +262,12 @@ export default function ChatCreationWorkspace({ onLegacyFallback }: ChatCreation
   const [mobileTab, setMobileTab] = useState<"chat" | "editor">("chat");
   const [editorOpen, setEditorOpen] = useState(true);
   const [galleryOpen, setGalleryOpen] = useState(() => searchParams.get("view") === "gallery");
+  const [threadUnavailable, setThreadUnavailable] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<CreationThread | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<CreationThread | null>(null);
+  const [projectActionBusy, setProjectActionBusy] = useState(false);
+  const [projectActionError, setProjectActionError] = useState<string | null>(null);
   const [galleryJobs, setGalleryJobs] = useState<LibraryJob[]>([]);
   const [formatPickerOpen, setFormatPickerOpen] = useState(false);
   const [availableFormats, setAvailableFormats] = useState<CreationFormat[]>(["montage", "narrated_planned", "subtitled"]);
@@ -146,6 +276,7 @@ export default function ChatCreationWorkspace({ onLegacyFallback }: ChatCreation
     || process.env.NEXT_PUBLIC_GUIDED_EDIT_ENABLED === "true";
   const editorFrameRef = useRef<HTMLIFrameElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const latestMessageRef = useRef<HTMLDivElement>(null);
   const queuedMessageRef = useRef<{ threadId: string; message: string } | null>(null);
   const preparedRevisionRef = useRef<string | null>(null);
   const activeThreadIdRef = useRef<string | null>(null);
@@ -153,6 +284,7 @@ export default function ChatCreationWorkspace({ onLegacyFallback }: ChatCreation
 
   const activateThread = useCallback((next: CreationThread) => {
     activeThreadIdRef.current = next.id;
+    setThreadUnavailable(false);
     setThread(next);
   }, []);
 
@@ -166,14 +298,26 @@ export default function ChatCreationWorkspace({ onLegacyFallback }: ChatCreation
       setAvailableFormats(capabilities.formats.map((item) => item.edit_format));
       setCapabilities(capabilities);
       setProjects(listed);
+      const requestedId = initialThreadId?.trim() || null;
       const current = thread ? listed.find((item) => item.id === thread.id) : null;
-      const summary = current ?? listed.find((item) => item.status === "active");
-      const next = summary ? await refreshCreationThread(summary.id) : await createCreationThread();
+      const summary = requestedId
+        ? listed.find((item) => item.id === requestedId)
+        : current ?? listed.find((item) => item.status === "active");
+      const next = requestedId
+        ? await refreshCreationThread(requestedId)
+        : summary ? await refreshCreationThread(summary.id) : await createCreationThread();
       activateThread(next);
+      if (!requestedId) router.replace(`/plan/${next.id}`, { scroll: false });
       setChatFirstFallback(false);
       window.dispatchEvent(new CustomEvent("nova:chat-first-ready"));
       if (!current && !listed.some((item) => item.id === next.id)) setProjects((items) => [next, ...items]);
     } catch (cause) {
+      if (initialThreadId && cause instanceof CreationThreadError && cause.status === 404) {
+        activeThreadIdRef.current = null;
+        setThread(null);
+        setThreadUnavailable(true);
+        return;
+      }
       if (cause instanceof CreationThreadError && cause.status === 404) {
         setChatFirstFallback(true);
         window.dispatchEvent(new CustomEvent("nova:chat-first-fallback"));
@@ -182,7 +326,7 @@ export default function ChatCreationWorkspace({ onLegacyFallback }: ChatCreation
       }
       setError("I couldn’t open this creation chat. Check your connection and try again.");
     }
-  }, [activateThread, onLegacyFallback, thread]);
+  }, [activateThread, initialThreadId, onLegacyFallback, router, thread]);
 
   useEffect(() => {
     // React Strict Mode replays effects in local development. Keep the initial
@@ -276,12 +420,73 @@ export default function ChatCreationWorkspace({ onLegacyFallback }: ChatCreation
   const mediaCount = creationThreadMediaCount(thread);
   const hasReady = Boolean(thread && creationJobReady(thread));
   const isPartial = Boolean(thread && creationJobPartial(thread));
-  const messages = useMemo(() => thread ? threadMessages(thread) : [], [thread]);
-  const hasPendingConfirmation = messages.some((message) =>
-    message.artifact === "confirmation" || (message.artifact === "revision" && !hasReady),
+  const eventMessages = useMemo(() => thread ? threadMessages(thread) : [], [thread]);
+  const eventSequenceById = useMemo(
+    () => new Map((thread?.events ?? []).map((event) => [event.id, event.sequence])),
+    [thread?.events],
+  );
+  const latestGenerationSequence = useMemo(
+    () => (thread?.events ?? []).reduce((latest, event) => (
+      ["action_generate", "action_confirm_generation", "generation_started", "agent_user_confirmation", "agent_assistant_execution"].includes(event.event_type)
+        ? Math.max(latest, event.sequence)
+        : latest
+    ), -1),
+    [thread?.events],
+  );
+  const hasPendingConfirmation = eventMessages.some((message) =>
+    (message.artifact === "confirmation" || (message.artifact === "revision" && !hasReady))
+    && (eventSequenceById.get(message.id) ?? -1) > latestGenerationSequence,
   );
   const canConfirmDirection = !thread?.active_job_id || Boolean(thread && creationJobFailed(thread));
   const media = useMemo(() => attachedMedia(thread), [thread]);
+  const variantStillRendering = Boolean(thread?.job?.variants.some((variant) => variant.render_status === "rendering"));
+  const messages = useMemo(() => {
+    if (!thread) return eventMessages;
+    let lifecycleMessageId: string | null = null;
+    const rows = eventMessages.map((message) => {
+      if (!["progress", "result", "failure"].includes(String(message.artifact))) return message;
+      lifecycleMessageId = message.id;
+      return { ...message, artifact: undefined };
+    });
+    const synthetic = (artifact: NonNullable<(typeof eventMessages)[number]["artifact"]>, suffix: string) => ({
+      id: `${thread.id}:${suffix}`,
+      role: "assistant" as const,
+      content: "",
+      eventType: `state_${suffix}`,
+      artifact,
+    });
+    const insertAfter = (predicate: (row: (typeof rows)[number]) => boolean, row: (typeof rows)[number]) => {
+      const index = rows.reduce((found, current, currentIndex) => predicate(current) ? currentIndex : found, -1);
+      rows.splice(index + 1, 0, row);
+    };
+    // State-only/recovered threads still receive their actionable cards at a
+    // deterministic point in the transcript, never in a trailing side rail.
+    if ((!format || formatPickerOpen) && !eventMessages.some((message) => message.artifact === "format")) {
+      rows.unshift(synthetic("format", "format"));
+    }
+    if (format && !thread.active_job_id && !eventMessages.some((message) => message.artifact === "upload" || message.artifact === "voiceover")) {
+      insertAfter((row) => row.artifact === "format", synthetic("upload", "upload"));
+    }
+    const lifecycleAnchor = (row: (typeof rows)[number]) =>
+      ["confirmation", "revision", "progress"].includes(String(row.artifact))
+      || ["action_generate", "action_confirm_generation", "agent_user_confirmation", "agent_assistant_execution"].includes(row.eventType);
+    const lifecycleArtifact = creationJobFailed(thread) && !hasPendingConfirmation
+      ? "failure"
+      : thread.active_job_id && (!creationJobSettled(thread) || variantStillRendering)
+        ? "progress"
+        : hasReady ? "result" : null;
+    if (lifecycleArtifact) {
+      const lifecycleIndex = lifecycleMessageId
+        ? rows.findIndex((message) => message.id === lifecycleMessageId)
+        : -1;
+      if (lifecycleIndex >= 0) {
+        rows[lifecycleIndex] = { ...rows[lifecycleIndex], artifact: lifecycleArtifact };
+      } else {
+        insertAfter(lifecycleAnchor, synthetic(lifecycleArtifact, "lifecycle"));
+      }
+    }
+    return rows;
+  }, [eventMessages, format, formatPickerOpen, hasPendingConfirmation, hasReady, thread, variantStillRendering]);
   const lastMessageId = messages[messages.length - 1]?.id;
   const latestAudio = [...media].reverse().find((item) => item.kind === "audio") ?? null;
   const clipMedia = media.filter((item) => item.kind === "video");
@@ -291,8 +496,9 @@ export default function ChatCreationWorkspace({ onLegacyFallback }: ChatCreation
   useEffect(() => {
     const transcript = transcriptRef.current;
     if (!transcript) return;
+    latestMessageRef.current?.scrollIntoView?.({ block: "end" });
     transcript.scrollTop = transcript.scrollHeight;
-  }, [hasReady, lastMessageId, thinking, thread?.id]);
+  }, [hasReady, lastMessageId, thinking, thread?.id, variantStillRendering]);
 
   async function selectFormat(value: CreationFormat) {
     if (!thread || busy || (format && !formatPickerOpen) || !availableFormats.includes(value)) return;
@@ -462,6 +668,66 @@ export default function ChatCreationWorkspace({ onLegacyFallback }: ChatCreation
     finally { setBusy(false); }
   }
 
+  function beginRename(project: CreationThread) {
+    setRenameTarget(project);
+    setRenameValue(projectTitle(project));
+    setProjectActionError(null);
+  }
+
+  async function renameProject() {
+    const target = renameTarget;
+    const name = renameValue.trim();
+    if (!target || !name || projectActionBusy) return;
+    setProjectActionBusy(true);
+    setProjectActionError(null);
+    setError(null);
+    try {
+      const next = await renameCreationThread(target, name);
+      setProjects((items) => items.map((item) => item.id === next.id ? next : item));
+      setThread((current) => current?.id === target.id ? next : current);
+      setRenameTarget(null);
+    } catch {
+      setProjectActionError("I couldn’t rename that project. Try again in a moment.");
+      setError("I couldn’t rename that project. Try again in a moment.");
+    } finally {
+      setProjectActionBusy(false);
+    }
+  }
+
+  async function deleteProject() {
+    const target = deleteTarget;
+    if (!target || projectActionBusy) return;
+    setProjectActionBusy(true);
+    setProjectActionError(null);
+    setError(null);
+    try {
+      await deleteCreationThread(target);
+      const remaining = projects.filter((item) => item.id !== target.id);
+      setProjects(remaining);
+      setDeleteTarget(null);
+      if (activeThreadIdRef.current === target.id) {
+        const nextProject = remaining[0];
+        if (nextProject) {
+          activeThreadIdRef.current = nextProject.id;
+          setThread(nextProject);
+          router.replace(`/plan/${nextProject.id}`, { scroll: false });
+          void refreshCreationThread(nextProject.id)
+            .then((next) => acceptThreadResponse(nextProject.id, next))
+            .catch(() => setError("I deleted that project, but couldn’t refresh the next one yet."));
+        } else {
+          activeThreadIdRef.current = null;
+          setThread(null);
+          router.replace("/plan", { scroll: false });
+        }
+      }
+    } catch {
+      setProjectActionError("I couldn’t delete that project. It may have changed elsewhere.");
+      setError("I couldn’t delete that project. It may have changed elsewhere.");
+    } finally {
+      setProjectActionBusy(false);
+    }
+  }
+
   async function startNew() {
     if (busy || thinking || uploading) return;
     const previousThreadId = activeThreadIdRef.current;
@@ -475,7 +741,7 @@ export default function ChatCreationWorkspace({ onLegacyFallback }: ChatCreation
       setInput("");
       setProjectsOpen(false);
       setGalleryOpen(false);
-      router.replace("/plan", { scroll: false });
+      router.replace(`/plan/${next.id}`, { scroll: false });
     } catch {
       // A failed create must not strand the currently open project. Keep its
       // identity authoritative so refresh/actions still target that thread.
@@ -493,7 +759,7 @@ export default function ChatCreationWorkspace({ onLegacyFallback }: ChatCreation
     setInput("");
     setProjectsOpen(false);
     setGalleryOpen(false);
-    router.replace("/plan", { scroll: false });
+    router.replace(`/plan/${project.id}`, { scroll: false });
     try { acceptThreadResponse(project.id, await refreshCreationThread(project.id)); }
     catch { if (activeThreadIdRef.current === project.id) setError("I couldn’t open that project."); }
   }
@@ -501,12 +767,12 @@ export default function ChatCreationWorkspace({ onLegacyFallback }: ChatCreation
   function openGallery() {
     setProjectsOpen(false);
     setGalleryOpen(true);
-    router.replace("/plan?view=gallery", { scroll: false });
+    router.replace(`${thread ? `/plan/${thread.id}` : "/plan"}?view=gallery`, { scroll: false });
   }
 
   function closeGallery() {
     setGalleryOpen(false);
-    router.replace("/plan", { scroll: false });
+    router.replace(thread ? `/plan/${thread.id}` : "/plan", { scroll: false });
   }
 
   const selectedReadyVariant = readyVariant(thread);
@@ -514,6 +780,18 @@ export default function ChatCreationWorkspace({ onLegacyFallback }: ChatCreation
   const editorUrl = thread?.active_plan_item_id
     ? `/plan/items/${thread.active_plan_item_id}/edit?embedded=1${selectedReadyVariant?.variant_id ? `&variant=${selectedReadyVariant.variant_id}` : ""}`
     : null;
+
+  if (threadUnavailable) {
+    return (
+      <div className="flex h-dvh items-center justify-center bg-background px-6 text-center text-foreground">
+        <div className="max-w-md space-y-4">
+          <h1 className="font-display text-3xl font-medium">Project unavailable</h1>
+          <p className="text-sm text-muted-foreground">This project may have been deleted or you may no longer have access to it.</p>
+          <Button type="button" asChild><Link href="/plan">Back to projects</Link></Button>
+        </div>
+      </div>
+    );
+  }
 
   const sidebar = (
     <aside className="flex h-full w-[260px] shrink-0 flex-col border-r border-border bg-background p-4" aria-label="Projects">
@@ -524,7 +802,22 @@ export default function ChatCreationWorkspace({ onLegacyFallback }: ChatCreation
       <Button type="button" className="mt-6 min-h-11 justify-start" disabled={busy || thinking || uploading} onClick={() => void startNew()}><Film /> New video</Button>
       <div className="mt-8 flex items-center justify-between px-2"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Projects</p><Button type="button" variant="ghost" className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground" disabled={busy || thinking || uploading} onClick={openGallery}>Gallery</Button></div>
       <nav className="mt-2 space-y-1 overflow-y-auto" aria-label="Recent projects">
-        {projects.slice(0, 10).map((project) => <Button key={project.id} type="button" variant={project.id === thread?.id ? "secondary" : "ghost"} className="h-auto min-h-11 w-full justify-start text-left" disabled={busy || thinking || uploading} onClick={() => void openProject(project)}><FolderOpen className="shrink-0" /><span className="min-w-0"><span className="block truncate">{projectTitle(project)}</span><span className="block truncate text-[11px] font-normal text-muted-foreground">{projectStatusLabel(project)}</span></span></Button>)}
+        {projects.slice(0, 10).map((project) => {
+          const title = projectTitle(project);
+          return (
+            <div key={project.id} className="flex min-w-0 items-center gap-1">
+              <Button type="button" variant={project.id === thread?.id ? "secondary" : "ghost"} className="h-auto min-h-11 min-w-0 flex-1 justify-start text-left" disabled={busy || thinking || uploading} onClick={() => void openProject(project)}><FolderOpen className="shrink-0" /><span className="min-w-0"><span className="block truncate">{title}</span><span className="block truncate text-[11px] font-normal text-muted-foreground">{projectStatusLabel(project)}</span></span></Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="icon" className="size-9 shrink-0" aria-label={`Project actions for ${title}`} disabled={busy || thinking || uploading}><MoreHorizontal /></Button></DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onSelect={() => beginRename(project)}>Rename project</DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem className="text-destructive focus:text-destructive" disabled={projectDeletionBlocked(project)} title={projectDeletionBlocked(project) ? "Finish the active render before deleting this project." : undefined} onSelect={() => setDeleteTarget(project)}>{projectDeletionBlocked(project) ? "Delete after rendering" : "Delete project"}</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          );
+        })}
       </nav>
       <div className="mt-auto border-t pt-4">
         <p className="truncate text-sm font-medium">{accountName}</p>
@@ -567,27 +860,51 @@ export default function ChatCreationWorkspace({ onLegacyFallback }: ChatCreation
     </ChatArtifactCard>
   ) : null;
 
+  const projectDialogs = (
+    <>
+      <Dialog open={Boolean(renameTarget)} onOpenChange={(open) => { if (!open && !projectActionBusy) setRenameTarget(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Rename project</DialogTitle><DialogDescription>Choose a short name you’ll recognize in your project list.</DialogDescription></DialogHeader>
+          <form onSubmit={(event) => { event.preventDefault(); void renameProject(); }} className="space-y-4">
+            <Input aria-label="Project name" value={renameValue} maxLength={120} onChange={(event) => setRenameValue(event.target.value)} autoFocus aria-describedby={projectActionError ? "project-action-error" : undefined} />
+            {projectActionError ? <p id="project-action-error" className="text-sm text-destructive" role="alert">{projectActionError}</p> : null}
+            <DialogFooter><DialogClose asChild><Button type="button" variant="outline" disabled={projectActionBusy}>Cancel</Button></DialogClose><Button type="submit" disabled={!renameValue.trim() || projectActionBusy}>{projectActionBusy ? "Saving…" : "Save name"}</Button></DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open && !projectActionBusy) setDeleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader><AlertDialogTitle>Delete project?</AlertDialogTitle><AlertDialogDescription>“{deleteTarget ? projectTitle(deleteTarget) : "This project"}” will permanently delete this chat, its uploads, edit data, and completed Kria videos. This cannot be recovered. Published TikTok posts remain on TikTok.</AlertDialogDescription></AlertDialogHeader>
+          {projectActionError ? <p className="text-sm text-destructive" role="alert">{projectActionError}</p> : null}<AlertDialogFooter><AlertDialogCancel disabled={projectActionBusy}>Cancel</AlertDialogCancel><AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" disabled={projectActionBusy} onClick={(event) => { event.preventDefault(); void deleteProject(); }}>{projectActionBusy ? "Deleting…" : "Delete project"}</AlertDialogAction></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+
   const chat = (
+    <>
     <section className="flex min-h-0 flex-1 flex-col" aria-label="Kria creation chat">
-      <header className="flex h-14 shrink-0 items-center justify-between border-b px-4 sm:px-6"><div className="min-w-0"><h1 className="truncate text-xl font-semibold">Create with Kria</h1><p className="truncate text-xs text-muted-foreground">{format ? `${creationFormatLabel(format)} · ${clipCount} ${clipCount === 1 ? "clip" : "clips"}` : "Start with a format, then tell me what you’re imagining"}</p></div><Button type="button" variant="ghost" size="icon" className="size-11 md:hidden" aria-label="Open projects" onClick={() => setProjectsOpen(true)}><Menu /></Button></header>
+      <header className={cn("flex h-14 shrink-0 items-center justify-between border-b px-4 sm:px-6", sidebarHidden && "md:pl-14")}>
+          <div className="min-w-0"><h1 data-testid="project-title" className="truncate font-display text-xl font-medium">{thread ? projectTitle(thread) : "Loading project…"}</h1><p className="truncate text-xs text-muted-foreground">{format ? `${creationFormatLabel(format)} · ${clipCount} ${clipCount === 1 ? "clip" : "clips"}` : "Start with a format, then tell me what you’re imagining"}</p></div>
+        <div className="flex items-center gap-1">
+          {sidebarHidden ? <Button type="button" variant="ghost" size="icon" className="size-11" aria-label="Show project sidebar" onClick={() => setSidebarHidden(false)}><PanelLeftOpen /></Button> : null}
+          <Button type="button" variant="ghost" size="icon" className="size-11 md:hidden" aria-label="Open projects" onClick={() => setProjectsOpen(true)}><Menu /></Button>
+        </div>
+      </header>
       <div ref={transcriptRef} role="log" aria-label="Conversation history" aria-live="polite" aria-relevant="additions text" tabIndex={0} className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]"><div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-6 sm:px-8">
         {!thread ? <div className="space-y-3" role="status"><div className="h-5 w-40 motion-safe:animate-pulse rounded bg-muted" /><div className="h-20 w-full motion-safe:animate-pulse rounded bg-muted" /></div> : null}
-        {messages.map((message) => <div key={message.id} className="space-y-3"><ChatBubble role={message.role}>{message.content}</ChatBubble>{message.artifact === "format" && (!format || formatPickerOpen) ? formatArtifact : null}{message.artifact === "upload" && !thread?.active_job_id ? uploadArtifact : null}{message.artifact === "voiceover" && !thread?.active_job_id ? uploadArtifact : null}{(message.artifact === "confirmation" || (message.artifact === "revision" && !hasReady)) && canConfirmDirection ? <ChatArtifactCard badge={<Badge variant="secondary">Creative direction</Badge>} title={`${creationFormatLabel(format)} is ready to make`} description={typeof thread?.state.intent === "string" && thread.state.intent ? thread.state.intent : "I’ll find the strongest opening and shape your footage into a concise first cut."}><Button type="button" className="min-h-11 w-full" disabled={busy || clipCount === 0} onClick={() => void confirm("generate")}><Sparkles />{busy ? "Starting…" : "Create this video"}</Button></ChatArtifactCard> : null}{message.artifact === "revision" && hasReady ? <ChatArtifactCard badge={<Badge variant="secondary">Revision ready</Badge>} title="Apply this direction?" description="This creates a new generation from the finished cut."><Button type="button" className="min-h-11 w-full" disabled={busy} onClick={() => void confirm("generate", { base_generation: thread?.job?.id })}><RefreshCw /> Create revision</Button></ChatArtifactCard> : null}</div>)}
-        {thread && (!format || formatPickerOpen) && !messages.some((message) => message.artifact === "format") ? formatArtifact : null}
-        {thread && format && !thread.active_job_id && !messages.some((message) => message.artifact === "upload" || message.artifact === "voiceover") ? uploadArtifact : null}
-        {visualsArtifact}
+        {messages.map((message, index) => <div key={message.id} ref={index === messages.length - 1 ? latestMessageRef : undefined} className="space-y-3">{message.content ? <ChatBubble role={message.role}>{message.content}</ChatBubble> : null}{message.artifact === "format" && (!format || formatPickerOpen) ? formatArtifact : null}{message.artifact === "upload" && !thread?.active_job_id ? <>{uploadArtifact}{visualsArtifact}</> : null}{message.artifact === "voiceover" && !thread?.active_job_id ? uploadArtifact : null}{(message.artifact === "confirmation" || (message.artifact === "revision" && !hasReady)) && canConfirmDirection ? <ChatArtifactCard badge={<Badge variant="secondary">Creative direction</Badge>} title={`${creationFormatLabel(format)} is ready to make`} description={typeof thread?.state.intent === "string" && thread.state.intent ? thread.state.intent : "I’ll find the strongest opening and shape your footage into a concise first cut."}><Button type="button" className="min-h-11 w-full" disabled={busy || clipCount === 0} onClick={() => void confirm("generate")}><Sparkles />{busy ? "Starting…" : "Create this video"}</Button></ChatArtifactCard> : null}{message.artifact === "revision" && hasReady ? <ChatArtifactCard badge={<Badge variant="secondary">Revision ready</Badge>} title="Apply this direction?" description="This creates a new generation from the finished cut."><Button type="button" className="min-h-11 w-full" disabled={busy} onClick={() => void confirm("generate", { base_generation: thread?.job?.id })}><RefreshCw /> Create revision</Button></ChatArtifactCard> : null}{message.artifact === "progress" && thread?.active_job_id && !creationJobFailed(thread) ? <RenderStatusCard thread={thread} /> : null}{message.artifact === "failure" && thread && creationJobFailed(thread) && !hasPendingConfirmation ? <FailureStatusCard thread={thread} busy={busy} onRetry={() => void confirm("retry")} onAdjust={() => setInput("Try a different opening and keep the pacing quick.")} /> : null}{message.artifact === "result" && thread && hasReady ? <ReadyStatusCard thread={thread} isPartial={isPartial} selectedReadyVariant={selectedReadyVariant} selectedFailedVariant={selectedFailedVariant} busy={busy} onSelectVariant={(id) => void selectVariant(id)} onOpenEditor={() => { setEditorOpen(true); setMobileTab("editor"); }} onRetryVariant={(id) => void confirm("retry", { variant_id: id })} /> : null}</div>)}
         {thinking ? <ChatThinking /> : null}
-        {thread && thread.active_job_id && !hasReady && !creationJobFailed(thread) ? <ChatArtifactCard badge={<Badge variant="secondary">Rendering</Badge>} title="Kria is building your first cut…" description={thread.job?.current_phase ?? "Finding the story in your footage."}><div className="h-2 w-full motion-safe:animate-pulse rounded-full bg-muted" /></ChatArtifactCard> : null}
-        {thread && creationJobFailed(thread) && !hasPendingConfirmation ? <ChatArtifactCard badge={<Badge variant="destructive">Render needs attention</Badge>} title="Your project is safe" description={thread.job?.failure_reason ?? "The render did not finish, but your direction and footage are still here."}><div className="flex flex-wrap gap-2"><Button type="button" onClick={() => void confirm("retry")} disabled={busy}><RefreshCw /> Retry render</Button><Button type="button" variant="outline" onClick={() => setInput("Try a different opening and keep the pacing quick.")}>Adjust direction</Button></div></ChatArtifactCard> : null}
-        {thread && hasReady ? <ChatArtifactCard badge={<Badge variant="secondary"><Check /> {isPartial ? "Partially ready" : "Ready"}</Badge>} title={isPartial ? "Your cut is ready; one variant needs another pass" : "Your cut is ready"} description={isPartial ? "The playable cut is available now. Retry the failed variant whenever you’re ready." : "Play it here, download it, open the editor, or keep chatting for a confirmed revision."}>{readyVariants(thread).length > 1 ? <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label="Available cuts">{readyVariants(thread).map((variant) => <Button key={variant.variant_id} type="button" variant={selectedReadyVariant?.variant_id === variant.variant_id ? "secondary" : "outline"} aria-pressed={selectedReadyVariant?.variant_id === variant.variant_id} disabled={busy} onClick={() => void selectVariant(variant.variant_id ?? "")}>{variantLabel(variant.variant_id)}</Button>)}</div> : null}<div className="flex flex-wrap gap-2">{selectedReadyVariant?.output_url ? <><Button type="button" onClick={() => window.open(selectedReadyVariant.output_url ?? "", "_blank", "noopener,noreferrer")}><Play /> Play</Button><Button type="button" variant="outline" asChild><a href={selectedReadyVariant.output_url ?? ""} download><Download /> Download</a></Button></> : null}<Button type="button" variant="outline" onClick={() => { setEditorOpen(true); setMobileTab("editor"); }} disabled={!thread.active_plan_item_id}><Pencil /> Open editor</Button>{isPartial && selectedFailedVariant?.variant_id ? <Button type="button" variant="ghost" onClick={() => void confirm("retry", { variant_id: selectedFailedVariant.variant_id })} disabled={busy}><RefreshCw /> Retry failed variant</Button> : null}</div></ChatArtifactCard> : null}
       </div></div>
       <div className="shrink-0 border-t bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4"><form className="mx-auto flex max-w-2xl items-end gap-2 rounded-2xl border bg-background p-2 shadow-sm focus-within:ring-1 focus-within:ring-ring" onSubmit={(event) => { event.preventDefault(); void send(); }}><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Attach primary video clips" disabled={!thread || uploading || Boolean(thread?.active_job_id) || clipCount >= clipLimit} onClick={() => document.getElementById("creation-file-picker")?.click()}><Plus /></Button><input id="creation-file-picker" type="file" className="sr-only" accept="video/*" multiple={format !== "subtitled"} onChange={(event) => { void attach(event.target.files); event.target.value = ""; }} /><Textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="Tell Kria what you’re imagining…" aria-label="Message Kria" rows={1} className="max-h-32 min-h-11 resize-none border-0 bg-transparent py-3 shadow-none focus-visible:ring-0" /><Button type="submit" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Send message" disabled={!input.trim() || thinking || !thread}><ArrowUp /></Button></form>{offline ? <p className="mx-auto mt-2 flex max-w-2xl items-center gap-1 text-xs text-muted-foreground" role="status"><WifiOff className="size-3" /> Offline — messages stay in the composer until you reconnect.</p> : null}{pollReconnecting ? <p className="mx-auto mt-2 flex max-w-2xl items-center gap-1 text-xs text-muted-foreground" role="status"><RefreshCw className="size-3 motion-safe:animate-spin" /> Reconnecting to render status…</p> : null}{error ? <p className="mx-auto mt-2 max-w-2xl text-sm text-destructive" role="alert">{error}</p> : null}</div>
     </section>
+    {projectDialogs}
+    </>
   );
 
   const editor = <section className="flex min-w-0 flex-1 flex-col overflow-hidden border-l bg-muted/10" aria-label="Video editor"><header className="flex h-14 shrink-0 items-center justify-between border-b bg-background px-4"><div><p className="text-sm font-medium">Editor</p><p className="text-xs text-muted-foreground">Feature-complete overlay editor</p></div><Badge variant="secondary"><Check /> Ready</Badge></header>{editorUrl ? <iframe ref={editorFrameRef} src={editorUrl} title="Full video editor" className="min-h-0 flex-1 border-0 bg-background" /> : <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">The editor will appear when your first cut is ready.</div>}</section>;
 
   if (galleryOpen) return <div className="flex h-dvh flex-col overflow-hidden bg-background"><header className="flex h-14 shrink-0 items-center justify-between border-b px-4"><h1 className="text-lg font-semibold">Gallery</h1><Button type="button" onClick={closeGallery}>Back to chat</Button></header><main className="min-h-0 flex-1 overflow-y-auto p-6"><ul className="mx-auto grid max-w-5xl grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">{galleryJobs.map((job) => <li key={job.id}><LibraryTile job={job} /></li>)}</ul>{galleryJobs.length === 0 ? <p className="mx-auto max-w-md py-16 text-center text-sm text-muted-foreground">Your finished cuts will appear here.</p> : null}</main></div>;
 
-  return <div className="relative flex h-dvh min-h-0 overflow-hidden bg-background text-foreground"><div className={cn("hidden md:block", sidebarHidden && "md:hidden")}>{sidebar}</div><Sheet open={projectsOpen} onOpenChange={setProjectsOpen}><SheetContent side="left" className="w-[260px] p-0 sm:max-w-[260px]"><SheetHeader className="sr-only"><SheetTitle>Projects</SheetTitle><SheetDescription>Move between creation projects and your gallery.</SheetDescription></SheetHeader>{sidebar}</SheetContent></Sheet><div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{hasReady && editorOpen ? <div className="shrink-0 border-b p-2 lg:hidden"><Tabs value={mobileTab} onValueChange={(value) => setMobileTab(value as "chat" | "editor")}><TabsList className="grid h-11 w-full grid-cols-2"><TabsTrigger value="chat">Chat</TabsTrigger><TabsTrigger value="editor">Editor</TabsTrigger></TabsList></Tabs></div> : null}<div className="flex min-h-0 flex-1 overflow-hidden">{sidebarHidden ? <Button type="button" variant="ghost" size="icon" className="absolute left-2 top-2 z-10 hidden size-9 md:inline-flex" aria-label="Show project sidebar" onClick={() => setSidebarHidden(false)}><PanelLeftOpen /></Button> : null}<div className={cn("min-h-0 min-w-0 flex-1 flex-col overflow-hidden", hasReady && editorOpen && "lg:flex-none lg:w-[420px]", hasReady && mobileTab === "editor" ? "hidden lg:flex" : "flex")}>{chat}</div>{hasReady && editorOpen ? <div className={cn("min-h-0 min-w-0 flex-1 overflow-hidden", mobileTab === "chat" ? "hidden lg:flex" : "flex")}>{editor}</div> : null}</div></div></div>;
+  return <div className="relative flex h-dvh min-h-0 overflow-hidden bg-background text-foreground"><div className={cn("hidden md:block", sidebarHidden && "md:hidden")}>{sidebar}</div><Sheet open={projectsOpen} onOpenChange={setProjectsOpen}><SheetContent side="left" className="w-[260px] p-0 sm:max-w-[260px]"><SheetHeader className="sr-only"><SheetTitle>Projects</SheetTitle><SheetDescription>Move between creation projects and your gallery.</SheetDescription></SheetHeader>{sidebar}</SheetContent></Sheet><div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{hasReady && editorOpen ? <div className="shrink-0 border-b p-2 lg:hidden"><Tabs value={mobileTab} onValueChange={(value) => setMobileTab(value as "chat" | "editor")}><TabsList className="grid h-11 w-full grid-cols-2"><TabsTrigger value="chat">Chat</TabsTrigger><TabsTrigger value="editor">Editor</TabsTrigger></TabsList></Tabs></div> : null}<div className="flex min-h-0 flex-1 overflow-hidden"><div className={cn("min-h-0 min-w-0 flex-1 flex-col overflow-hidden", hasReady && editorOpen && "lg:flex-none lg:w-[420px]", hasReady && mobileTab === "editor" ? "hidden lg:flex" : "flex")}>{chat}</div>{hasReady && editorOpen ? <div className={cn("min-h-0 min-w-0 flex-1 overflow-hidden", mobileTab === "chat" ? "hidden lg:flex" : "flex")}>{editor}</div> : null}</div></div></div>;
 }

@@ -36,7 +36,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import storage
@@ -84,6 +84,7 @@ from app.services.generative_upload_paths import (
     direct_voiceover_path,
 )
 from app.services.job_phases import mark_reattempt, stamp_variant_attempt
+from app.services.job_storage_paths import project_media_reference_lock_key
 from app.services.media_overlay_preview import (
     convert_heif_overlay_preview,
     is_heif_overlay,
@@ -8969,6 +8970,12 @@ async def create_generative_job(
     db: AsyncSession = Depends(get_db),
 ) -> GenerativeJobResponse:
     """Create a generative edit job (auto song + AI text, three variants)."""
+    # Serialize reuse of persistent project media with the project-deletion
+    # sweeper. Either this transaction commits the reference first and cleanup
+    # preserves it, or cleanup deletes first and metadata validation fails.
+    await db.execute(
+        select(func.pg_advisory_xact_lock(project_media_reference_lock_key(current_user.id)))
+    )
     await validate_direct_uploads(req, current_user)
     first_image_path = next(
         (

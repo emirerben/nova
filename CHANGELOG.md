@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.61.0.0] — 2026-09-05
+
+### Added
+- **Every Kria project now has a name and its own shareable URL.** Creators can rename projects, reload or deep-link directly to `/plan/{project-id}`, switch projects without losing their place, and see a clear unavailable state for missing or inaccessible links.
+- **Projects can be permanently deleted from the project menu.** Kria explains exactly what will be removed, blocks deletion while uploads, renders, agent work, or TikTok publishing are active, and safely opens the next project afterward.
+
+### Changed
+- **The conversation now reads in the order it happened.** Prompts, replies, upload steps, render progress, playable results, retries, and failures stay in one chronological transcript, with the newest response brought into view automatically.
+- **Waiting and rendering states now explain real progress.** Short waits begin with quiet thinking dots, longer waits use time-aware copy, and one reduced-motion-safe loader moves through footage review, music selection, rendering, finishing, partial readiness, and recovery.
+
+### Fixed
+- **Collapsed navigation no longer collides with the project heading.** The sidebar control has a reserved slot, and the workspace heading uses the actual project name instead of “Create with Kria.”
+- **Permanent cleanup is complete and retry-safe.** Deletion removes project-owned database records and media through a durable outbox while preserving shared plans, seeds, unrelated projects, and media still referenced by another project.
+
 ## [0.59.4.0] — 2026-09-03
 
 ### Added

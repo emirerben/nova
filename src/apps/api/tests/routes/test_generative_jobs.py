@@ -131,7 +131,7 @@ async def test_create_route_rejects_photo_with_final_voiceover_before_enqueue(mo
         voiceover_gcs_path="voiceover-uploads/legacy/voice.webm",
     )
     user = SimpleNamespace(id=uuid.uuid4())
-    db = SimpleNamespace(add=MagicMock())
+    db = SimpleNamespace(add=MagicMock(), execute=AsyncMock())
     monkeypatch.setattr("app.routes.generative_jobs.validate_direct_uploads", AsyncMock())
 
     with pytest.raises(HTTPException) as exc:

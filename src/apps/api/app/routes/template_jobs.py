@@ -26,6 +26,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import CurrentUserOrSynthetic, ensure_job_owner
 from app.database import AsyncSessionLocal, get_db
 from app.models import Job, VideoTemplate
+from app.services.job_storage_paths import (
+    job_input_path_matches_owner,
+    project_media_reference_lock_key,
+)
 from app.services.template_validation import (
     get_template_or_404,
     require_ready,
@@ -190,6 +194,11 @@ async def create_template_job(
     db: AsyncSession = Depends(get_db),
 ) -> TemplateJobResponse:
     """Create a template-mode job. Validates template existence and clip count."""
+    if any(not job_input_path_matches_owner(path, current_user.id) for path in req.clip_gcs_paths):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Upload owner mismatch")
+    await db.execute(
+        select(func.pg_advisory_xact_lock(project_media_reference_lock_key(current_user.id)))
+    )
     template = await get_template_or_404(req.template_id, db)
     require_ready(template)
     validate_clip_count(template, len(req.clip_gcs_paths))
@@ -253,9 +262,7 @@ async def list_template_jobs(
     offset: int = Query(default=0, ge=0),
 ) -> TemplateJobListResponse:
     """List template jobs ordered by created_at DESC. Scoped to the current user."""
-    base_query = (
-        select(Job).where(Job.user_id == current_user.id).where(Job.job_type == "template")
-    )
+    base_query = select(Job).where(Job.user_id == current_user.id).where(Job.job_type == "template")
 
     # Count total
     count_result = await db.execute(select(func.count()).select_from(base_query.subquery()))
@@ -303,11 +310,15 @@ async def reroll_template_job(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
+    await db.execute(
+        select(func.pg_advisory_xact_lock(project_media_reference_lock_key(current_user.id)))
+    )
     result = await db.execute(select(Job).where(Job.id == job_uuid))
     original = result.scalar_one_or_none()
 
     if original is None or original.job_type != "template":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    ensure_job_owner(original.user_id, current_user)
 
     if original.status != "template_ready":
         raise HTTPException(
@@ -492,9 +503,7 @@ async def get_template_job_eval(
         "slots": slots_eval,
         "template_url": template_url,
         "output_url": None if cancelled else assembly_plan.get("output_url"),
-        "comparison_grid_url": (
-            None if cancelled else assembly_plan.get("comparison_grid_url")
-        ),
+        "comparison_grid_url": (None if cancelled else assembly_plan.get("comparison_grid_url")),
     }
 
 

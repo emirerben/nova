@@ -116,11 +116,41 @@ cd ../web && npm run lint && npx tsc --noEmit && npm test
 cd ../../.. && bash scripts/preship-check.sh
 ```
 
-The deterministic fixture at `/dev-qa/chat-first-creation` is enabled only when
-`E2E_FIXTURES=true`. It covers choose, upload, confirmation, rendering, ready,
-revision, upload retry/removal, voiceover-needed, stale revision, offline,
-unavailable format, partial success, terminal failure, Projects, Gallery,
-embedded editor, mobile tabs, 200% zoom, and reduced motion.
+The deterministic fixture at `/dev-qa/chat-first-creation` is enabled only for
+local E2E runs (`E2E_FIXTURES=true`) or Vercel Preview (`VERCEL_ENV=preview`);
+the route returns `404` in production. It covers choose, upload, confirmation,
+rendering with BeamLoader progress, ready, chronological post-clip revision
+chat, timed thinking copy at the `0`, `1500`, `8000`, and `20000` ms boundaries, upload
+retry/removal, voiceover-needed, stale revision, offline, unavailable format,
+partial success, terminal failure, Projects, Gallery, embedded editor, mobile
+tabs, 200% zoom, reduced motion, collapsed-sidebar spacing, project rename,
+delete confirmation, and canonical project deep-links (`project=<id>`).
+
+For a reviewable proof pass, open the fixture on a Preview deployment at the
+following URLs (the query string makes every state deterministic):
+
+```text
+/dev-qa/chat-first-creation?project=project-corfu&state=ready
+/dev-qa/chat-first-creation?project=project-corfu&state=revision
+/dev-qa/chat-first-creation?project=project-corfu&state=thinking&elapsed=0
+/dev-qa/chat-first-creation?project=project-corfu&state=thinking&elapsed=1500
+/dev-qa/chat-first-creation?project=project-corfu&state=thinking&elapsed=8000
+/dev-qa/chat-first-creation?project=project-corfu&state=thinking&elapsed=20000
+/dev-qa/chat-first-creation?project=project-corfu&state=rendering
+/dev-qa/chat-first-creation?project=project-corfu&state=partial
+```
+
+The focused Playwright proof command is:
+
+```bash
+cd src/apps/web && npm run e2e -- --project=chat-first-creation --workers=1
+```
+
+Before production approval, share the Preview URL and verify the ready
+deep-link, post-clip order, each thinking tier, render and partial progress,
+collapsed sidebar, rename dialog, delete confirmation, and deleted state from
+that URL. Confirm the API/web build versions in the review note; only then
+proceed with the normal pre-merge and deploy gates.
 
 The real local smoke flow is: create a thread, attach mixed footage, send a
 creative-direction message, confirm the proposal, wait for the ready Job, play

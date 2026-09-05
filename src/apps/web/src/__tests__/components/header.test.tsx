@@ -80,6 +80,24 @@ describe("Header — isLight predicate", () => {
     expect(container.querySelector("header")).not.toBeInTheDocument();
   });
 
+  it("hides the global header on a canonical project route", () => {
+    useSession.mockReturnValue({
+      data: { user: { name: "Test User", email: "test@example.com" } },
+      status: "authenticated",
+    });
+    const { container } = renderWithPathname("/plan/thread-42");
+    expect(container.querySelector("header")).not.toBeInTheDocument();
+  });
+
+  it("keeps the global header on excluded plan surfaces", () => {
+    useSession.mockReturnValue({
+      data: { user: { name: "Test User", email: "test@example.com" } },
+      status: "authenticated",
+    });
+    const { container } = renderWithPathname("/plan/items/item-42");
+    expect(container.querySelector("header")).toBeInTheDocument();
+  });
+
   it("test_header_light_on_library: /library is light", () => {
     const { container } = renderWithPathname("/library");
     const header = container.querySelector("header");
