@@ -55,7 +55,7 @@ describe("dev-login provider gating", () => {
   test("legacy preview client ID remains a fallback for Google sign-in", () => {
     delete process.env.GOOGLE_CLIENT_ID;
     delete process.env.YOUTUBE_CLIENT_ID;
-    process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID = "preview-client-id";
+    process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID = "preview-client-id\n";
 
     expect(loadProviders()[0].clientId).toBe("preview-client-id");
   });

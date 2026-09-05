@@ -5,6 +5,17 @@ import GoogleProvider from "next-auth/providers/google";
 const API_BASE =
   process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY ?? "";
+const GOOGLE_CLIENT_ID = (
+  process.env.GOOGLE_CLIENT_ID ??
+  process.env.YOUTUBE_CLIENT_ID ??
+  process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ??
+  ""
+).trim();
+const GOOGLE_CLIENT_SECRET = (
+  process.env.GOOGLE_CLIENT_SECRET ??
+  process.env.YOUTUBE_CLIENT_SECRET ??
+  ""
+).trim();
 
 // DEV-ONLY email login, gated entirely behind ALLOW_DEV_LOGIN. It exists so the
 // content-plan flow (which is Google-gated) can be exercised end-to-end in local
@@ -33,13 +44,8 @@ const providers: NextAuthOptions["providers"] = [
     // The old YOUTUBE_* pair and public client ID still work as fallbacks so
     // existing preview deployments don't break until env vars are renamed.
     // OAuth client IDs are public identifiers; secrets never use a public var.
-    clientId:
-      process.env.GOOGLE_CLIENT_ID ??
-      process.env.YOUTUBE_CLIENT_ID ??
-      process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ??
-      "",
-    clientSecret:
-      process.env.GOOGLE_CLIENT_SECRET ?? process.env.YOUTUBE_CLIENT_SECRET ?? "",
+    clientId: GOOGLE_CLIENT_ID,
+    clientSecret: GOOGLE_CLIENT_SECRET,
     authorization: {
       params: {
         // openid + email + profile is sufficient for identity.
