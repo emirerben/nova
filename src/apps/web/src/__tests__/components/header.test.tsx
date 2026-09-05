@@ -79,6 +79,12 @@ describe("Header — isLight predicate", () => {
     expect(container.querySelector("header")).not.toBeInTheDocument();
   });
 
+  it("hides the global header while /plan authentication is loading", () => {
+    useSession.mockReturnValue({ data: null, status: "loading" });
+    const { container } = renderWithPathname("/plan");
+    expect(container.querySelector("header")).not.toBeInTheDocument();
+  });
+
   it("test_header_light_on_library: /library is light", () => {
     const { container } = renderWithPathname("/library");
     const header = container.querySelector("header");

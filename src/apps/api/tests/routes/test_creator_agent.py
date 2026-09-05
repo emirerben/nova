@@ -44,6 +44,7 @@ from app.routes.creator_agent import (
     _next_balanced_integer_duration_s,
     _previous_creator_clip_order,
     _requests_preserved_clip_order,
+    _require_feature,
     _reset_render_target,
     _resolved_cadence_for_turn,
     _seed_guided_specialist_brief,
@@ -3232,6 +3233,16 @@ def test_creator_route_rollout_gate_is_hidden_as_404(client: TestClient) -> None
     )
     assert response.status_code == 404
     assert response.json()["detail"] == "Creator agent unavailable"
+
+
+@pytest.mark.parametrize("execution", [False, True])
+def test_chat_controller_bypasses_legacy_creator_rollout_gates(
+    monkeypatch: pytest.MonkeyPatch, execution: bool
+) -> None:
+    monkeypatch.setattr(creator_routes, "rollout_eligible", lambda _user_id: False)
+    monkeypatch.setattr(settings, "main_creator_agent_execution_enabled", False)
+
+    _require_feature(uuid.uuid4(), execution=execution, allow_chat=True)
 
 
 @pytest.mark.parametrize(

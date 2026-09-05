@@ -7,11 +7,14 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
 from app.agents._schemas.persona import Persona as PersonaSchema
+from app.auth import get_current_user
 from app.config import settings
+from app.main import app
 from app.models import ContentPlan, CreatorAgentSession, Job, PlanItem
 from app.models import Persona as PersonaRow
 from app.routes.creation_threads import (
@@ -43,6 +46,34 @@ from app.routes.creation_threads import (
     message_thread,
     upload_urls,
 )
+
+
+def test_creation_thread_router_rejects_unauthenticated_http_requests() -> None:
+    client = TestClient(app, raise_server_exceptions=False)
+
+    capabilities_response = client.get("/creation-threads/capabilities")
+    create_response = client.post("/creation-threads", json={})
+
+    assert capabilities_response.status_code == 401
+    assert create_response.status_code == 401
+
+
+def test_creation_thread_capabilities_are_available_to_any_authenticated_account() -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), email="any-account@example.com")
+
+    async def current_user_override() -> object:
+        return user
+
+    app.dependency_overrides[get_current_user] = current_user_override
+    try:
+        response = TestClient(app, raise_server_exceptions=False).get(
+            "/creation-threads/capabilities"
+        )
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+    assert response.status_code == 200
+    assert response.json()["formats"][0]["id"] == "montage"
 
 
 @pytest.mark.asyncio
