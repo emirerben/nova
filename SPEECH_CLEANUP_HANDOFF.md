@@ -75,6 +75,8 @@ small cohort to `apply`. Legacy and `off_v1` behavior remains unchanged.
 - Frontend Jest suite: **293 suites / 3489 tests passed**.
 - Ruff lint: clean.
 - Changed Python files are formatted; `git diff --check` is clean.
+- CI projection regressions now assert that malformed/active private state
+  exposes no provisional output URL and marks affected variants unavailable.
 - Full backend suite previously passed **11300 passed, 19 skipped, 2 xfailed**
   before the final ownership hardening pass; rerun it before merging if time
   permits.
