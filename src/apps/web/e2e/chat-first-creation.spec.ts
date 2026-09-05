@@ -152,8 +152,10 @@ test.describe("Kria chat-first creation fixture", () => {
       body: JSON.stringify(thread),
     }));
 
-    await page.goto("/plan");
-    await expect(page.getByRole("heading", { name: "Create with Kria" })).toBeVisible();
+    await page.goto("/plan/thread-e2e");
+    await expect(page).toHaveURL(/\/plan\/thread-e2e$/);
+    await expect(page.getByTestId("project-title")).toBeVisible();
+    await expect(page.getByTestId("project-title")).not.toHaveText("Create with Kria");
     await expect(page.getByLabel("Attach primary video clips")).toBeVisible();
     await page.getByRole("button", { name: "Change format" }).click();
     await expect(page.getByRole("button", { name: /^Montage/ })).toBeVisible();
@@ -166,5 +168,107 @@ test.describe("Kria chat-first creation fixture", () => {
     await page.evaluate(() => { document.body.style.zoom = "2"; });
     await expect(page.getByLabel("Message Kria")).toBeVisible();
     await expect(page.getByRole("button", { name: "Send message" })).toBeVisible();
+  });
+
+  test("canonical project deep-link reloads the named project", async ({ page }) => {
+    await page.goto(`${fixture}?project=project-corfu&state=ready`);
+    await expect(page.getByTestId("chat-first-creation-fixture")).toHaveAttribute("data-project-id", "project-corfu");
+    await expect(page.getByTestId("chat-project-title")).toHaveText("Weekend in Corfu");
+    await expect(page).toHaveURL(/project=project-corfu/);
+    await page.reload();
+    await expect(page.getByTestId("chat-project-title")).toHaveText("Weekend in Corfu");
+  });
+
+  test("renames a project and confirms deletion before removing it", async ({ page }) => {
+    await page.goto(`${fixture}?state=ready`);
+    await page.getByRole("button", { name: "Rename" }).click();
+    await expect(page.getByRole("dialog", { name: "Rename project" })).toBeVisible();
+    await page.getByLabel("Project name").fill("Corfu highlights");
+    await page.getByRole("button", { name: "Save name" }).click();
+    await expect(page.getByTestId("chat-project-title")).toHaveText("Corfu highlights");
+    await expect(page.getByTestId("project-link")).toContainText("Corfu highlights");
+
+    await page.getByRole("button", { name: "Delete" }).click();
+    await expect(page.getByRole("dialog", { name: "Delete project?" })).toBeVisible();
+    const deleteDialog = page.getByRole("dialog", { name: "Delete project?" });
+    await expect(deleteDialog).toContainText("chat, uploads, edit data, and completed Kria videos");
+    await expect(deleteDialog).toContainText("permanently removed and cannot be recovered");
+    await expect(deleteDialog).toContainText("Published TikTok posts remain");
+    await page.getByRole("button", { name: "Delete project" }).click();
+    await expect(page.getByTestId("deleted-state")).toBeVisible();
+    await expect(page.getByRole("region", { name: "Projects" })).toHaveCount(0);
+  });
+
+  test("keeps post-clip chat in chronological order", async ({ page }) => {
+    await page.goto(`${fixture}?state=revision`);
+    const clips = page.getByTestId("clips-section");
+    const userMessage = page.getByTestId("post-clip-user-message");
+    const assistantMessage = page.getByTestId("post-clip-assistant-message");
+    const order = await page.evaluate(() => {
+      const clips = document.querySelector("[data-testid='clips-section']")!;
+      const user = document.querySelector("[data-testid='post-clip-user-message']")!;
+      const assistant = document.querySelector("[data-testid='post-clip-assistant-message']")!;
+      return {
+        clipsBeforeUser: Boolean(clips.compareDocumentPosition(user) & Node.DOCUMENT_POSITION_FOLLOWING),
+        userBeforeAssistant: Boolean(user.compareDocumentPosition(assistant) & Node.DOCUMENT_POSITION_FOLLOWING),
+      };
+    });
+    expect(order).toEqual({ clipsBeforeUser: true, userBeforeAssistant: true });
+    await expect(clips).toBeVisible();
+    await expect(userMessage).toBeVisible();
+    await expect(assistantMessage).toBeVisible();
+    await expect(page.getByTestId("latest-chat-anchor")).toBeVisible();
+  });
+
+  test("uses meaningful timed thinking states instead of generic first-second copy", async ({ page }) => {
+    const cases = [
+      ["0", "dots", ""],
+      ["1499", "dots", ""],
+      ["1500", "reading", "Reading your direction…"],
+      ["7999", "reading", "Reading your direction…"],
+      ["8000", "shaping", "Shaping the edit around your clips…"],
+      ["19999", "shaping", "Shaping the edit around your clips…"],
+      ["20000", "long", "Still working — your direction is saved."],
+    ] as const;
+    for (const [elapsed, tier, copy] of cases) {
+      await page.goto(`${fixture}?state=thinking&elapsed=${elapsed}`);
+      await expect(page.getByTestId("thinking-state")).toHaveAttribute("data-thinking-tier", tier);
+      if (copy) {
+        await expect(page.getByRole("status")).toContainText(copy);
+      } else {
+        await expect(page.getByRole("status", { name: "Kria is thinking" })).toHaveText("");
+      }
+    }
+  });
+
+  test("shows BeamLoader render progress and partial-result recovery", async ({ page }) => {
+    await page.goto(`${fixture}?state=rendering`);
+    await expect(page.getByTestId("render-progress")).toContainText("68%");
+    await expect(page.locator(".beam-loader")).toHaveAttribute("data-mode", "line");
+    await expect(page.getByRole("status", { name: "Rendering your video" })).toBeVisible();
+
+    await page.goto(`${fixture}?state=partial`);
+    await expect(page.getByTestId("partial-progress")).toContainText("Ready");
+    await expect(page.getByRole("button", { name: "Retry variant" })).toBeVisible();
+  });
+
+  test("collapsed sidebar keeps the project title clear of its reveal control", async ({ page }) => {
+    await page.goto(`${fixture}?state=ready`);
+    await page.getByRole("button", { name: "Hide projects" }).click();
+    await expect(page.getByTestId("show-projects")).toBeVisible();
+    const reveal = await page.getByTestId("show-projects").boundingBox();
+    const title = await page.getByTestId("chat-project-title").boundingBox();
+    expect(reveal).not.toBeNull();
+    expect(title).not.toBeNull();
+    expect(reveal!.x + reveal!.width).toBeLessThanOrEqual(title!.x);
+    await page.getByTestId("show-projects").click();
+    await expect(page.getByRole("button", { name: "Hide projects" })).toBeVisible();
+  });
+
+  test("reduced motion disables fixture transitions and BeamLoader motion", async ({ page }) => {
+    await page.goto(`${fixture}?state=rendering`);
+    await page.getByTestId("reduced-motion-toggle").evaluate((button) => (button as HTMLButtonElement).click());
+    await expect(page.locator("main")).toHaveClass(/chat-fixture-reduced-motion/);
+    await expect(page.locator(".beam-loader__line")).toHaveCSS("animation-name", "none");
   });
 });

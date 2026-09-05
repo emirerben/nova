@@ -16,6 +16,7 @@ import pytest
 from app.config import settings
 from app.services.job_storage_paths import (
     JOB_OUTPUT_PREFIXES,
+    job_input_path_matches_owner,
     job_output_path,
     normalize_job_storage_path,
     owned_job_output_path,
@@ -29,6 +30,21 @@ def _job() -> SimpleNamespace:
 
 def test_durable_poster_prefix_is_allowlisted() -> None:
     assert "job-posters/{job_id}/" in JOB_OUTPUT_PREFIXES
+
+
+def test_job_input_path_owner_validation_preserves_legacy_and_rejects_foreign_namespaces() -> None:
+    owner = uuid.uuid4()
+    foreign = uuid.uuid4()
+
+    assert job_input_path_matches_owner(f"users/{owner}/plan/item/clip.mp4", owner)
+    assert job_input_path_matches_owner(f"voiceover-uploads/direct/{owner}/voice.m4a", owner)
+    assert job_input_path_matches_owner(f"dev-user/{owner}/generative/clip.mp4", owner)
+    assert job_input_path_matches_owner(f"dev-user/{uuid.uuid4()}/raw.mp4", owner)
+    assert job_input_path_matches_owner("slot-uploads/legacy/clip.mp4", owner)
+    assert not job_input_path_matches_owner(f"users/{foreign}/plan/item/clip.mp4", owner)
+    assert not job_input_path_matches_owner(f"voiceover-uploads/direct/{foreign}/voice.m4a", owner)
+    assert not job_input_path_matches_owner(f"dev-user/{foreign}/generative/clip.mp4", owner)
+    assert not job_input_path_matches_owner(f"{foreign}/{uuid.uuid4()}/raw.mp4", owner)
 
 
 def test_owned_job_output_path_accepts_durable_poster_key() -> None:

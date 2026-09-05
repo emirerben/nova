@@ -2,15 +2,18 @@
 
 import copy
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.database import get_db
 from app.main import app
 from app.models import VideoTemplate
 from app.routes import template_jobs
+from app.routes.template_jobs import reroll_template_job
 
 
 @pytest.fixture()
@@ -49,6 +52,28 @@ def _make_template(
     t.required_inputs = required_inputs or []
     t.recipe_cached = recipe_cached or {}
     return t
+
+
+@pytest.mark.asyncio
+async def test_reroll_rejects_copying_another_users_template_media() -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    original = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        job_type="template",
+        status="template_ready",
+    )
+    lock_result = MagicMock()
+    original_result = MagicMock()
+    original_result.scalar_one_or_none.return_value = original
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[lock_result, original_result])
+
+    with pytest.raises(HTTPException) as exc_info:
+        await reroll_template_job(str(original.id), user, db)
+
+    assert exc_info.value.status_code == 404
+    db.add.assert_not_called()
 
 
 class TestCreateTemplateJobValidation:

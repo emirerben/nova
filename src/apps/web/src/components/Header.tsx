@@ -17,13 +17,22 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
+/** Canonical chat-first project routes, excluding the other plan surfaces. */
+export function isChatFirstPlanPath(pathname: string): boolean {
+  if (pathname === "/plan") return true;
+  if (!pathname.startsWith("/plan/")) return false;
+  return !["items", "new", "persona", "style"].some((segment) =>
+    pathname === `/plan/${segment}` || pathname.startsWith(`/plan/${segment}/`),
+  );
+}
+
 export default function Header() {
   const pathname = usePathname() ?? "";
   const { status } = useSession();
   const isAdmin = pathname.startsWith("/admin");
   const isChatFirstWorkspace =
     pathname === "/dev-qa/chat-first-creation" ||
-    (pathname === "/plan" && status !== "unauthenticated");
+    (isChatFirstPlanPath(pathname) && status !== "unauthenticated");
   const isLanding = pathname === "/" || pathname === "/auto-story";
   const [progress, setProgress] = useState(0);
 

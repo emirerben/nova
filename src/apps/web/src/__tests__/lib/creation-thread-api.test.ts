@@ -11,6 +11,8 @@ import {
   creationThreadMediaCount,
   CreationThreadError,
   getCreationCapabilities,
+  deleteCreationThread,
+  renameCreationThread,
   isCreationThreadRevisionConflict,
   refreshCreationThread,
   threadMessages,
@@ -84,6 +86,25 @@ describe("creation thread projection", () => {
     }
   });
 
+  it("uses the project title and revision-fenced delete contracts", async () => {
+    const previousFetch = global.fetch;
+    const fetchMock = jest.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ ...thread(), title: "Harbor arrival" }) })
+      .mockResolvedValueOnce({ ok: true, status: 204, json: async () => { throw new Error("204 has no body"); } });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    try {
+      await expect(renameCreationThread(thread(), " Harbor arrival ")).resolves.toMatchObject({ title: "Harbor arrival" });
+      await expect(deleteCreationThread(thread())).resolves.toBeUndefined();
+      expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/plan/creation-threads/thread-1");
+      expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: "PATCH" });
+      expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ title: "Harbor arrival", expected_revision: 4 });
+      expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/plan/creation-threads/thread-1?expected_revision=4");
+      expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: "DELETE" });
+    } finally {
+      global.fetch = previousFetch;
+    }
+  });
+
   it("bypasses caches when refreshing mutable render state", async () => {
     const previousFetch = global.fetch;
     global.fetch = jest.fn().mockResolvedValue({
@@ -101,6 +122,11 @@ describe("creation thread projection", () => {
     }
   });
 
+  it("recognizes revision conflict responses", () => {
+    expect(isCreationThreadRevisionConflict(new CreationThreadError("Creation thread changed", 409))).toBe(true);
+    expect(isCreationThreadRevisionConflict(new CreationThreadError("server", 500))).toBe(false);
+  });
+
   it("hydrates media count from durable state", () => {
     expect(creationThreadMediaCount(thread())).toBe(1);
     expect(creationThreadMediaCount(thread({ state: { media_count: 8 } }))).toBe(8);
@@ -113,6 +139,15 @@ describe("creation thread projection", () => {
       { id: "3", sequence: 2, revision: 3, role: "assistant", event_type: "confirm_generation", content: "Here’s the direction", payload: { kind: "confirm_generation" }, created_at: "2026-01-01T00:00:02Z" },
     ] }));
     expect(result.map((item) => item.artifact)).toEqual(["format", undefined, "confirmation"]);
+  });
+
+  it("keeps project rename receipts out of the creative conversation", () => {
+    const result = threadMessages(thread({ events: [
+      { id: "1", sequence: 0, revision: 1, role: "system", event_type: "thread_renamed", content: null, payload: { title: "Harbor arrival" }, created_at: "2026-01-01T00:00:00Z" },
+      { id: "2", sequence: 1, revision: 2, role: "user", event_type: "user_message", content: "Open on the harbor", payload: null, created_at: "2026-01-01T00:00:01Z" },
+    ] }));
+    expect(result).toHaveLength(1);
+    expect(result[0]?.content).toBe("Open on the harbor");
   });
 
   it("recognizes partial-ready and terminal failure states from authoritative job data", () => {
@@ -294,5 +329,15 @@ describe("creation thread projection", () => {
     const projected = threadMessages(thread({ events }));
     expect(projected.find((item) => item.id === "initial-strategy")?.artifact).toBeUndefined();
     expect(projected.find((item) => item.id === "revision-strategy")?.artifact).toBe("revision");
+  });
+
+  it("keeps media-added events in chronological transcript order", () => {
+    const projected = threadMessages(thread({ events: [
+      { id: "direction", sequence: 0, revision: 1, role: "user", event_type: "user_message", content: "Keep the harbor opening", payload: null, created_at: "2026-01-01T00:00:00Z" },
+      { id: "media", sequence: 1, revision: 2, role: "user", event_type: "media_added", content: null, payload: { media_count: 1 }, created_at: "2026-01-01T00:00:01Z" },
+      { id: "follow-up", sequence: 2, revision: 3, role: "user", event_type: "user_message", content: "Use a quick pace", payload: null, created_at: "2026-01-01T00:00:02Z" },
+    ] }));
+    expect(projected.map((item) => item.id)).toEqual(["direction", "media", "follow-up"]);
+    expect(projected[1]?.artifact).toBe("upload");
   });
 });

@@ -7,6 +7,7 @@ surface (or creating a route/service import cycle).
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from urllib.parse import unquote, urlparse
 
@@ -29,6 +30,49 @@ JOB_OUTPUT_PREFIXES = (
     # through the video prefixes above; the stored path is authoritative.
     JOB_POSTER_PATH_PREFIX,
 )
+
+
+def project_media_reference_lock_key(user_id: uuid.UUID) -> int:
+    """Stable positive BIGINT key for owner-scoped PostgreSQL advisory locks."""
+
+    digest = hashlib.sha256(f"project-media:{user_id}".encode()).digest()
+    return int.from_bytes(digest[:8], "big") & ((1 << 63) - 1)
+
+
+def job_input_path_matches_owner(path: object, user_id: uuid.UUID) -> bool:
+    """Reject another account's recognizable persistent upload namespaces.
+
+    Legacy curated/anonymous prefixes such as ``slot-uploads/`` have no owner
+    encoded in their key and remain compatible. Every namespace that does
+    encode an owner must match the authenticated caller.
+    """
+
+    candidate = normalize_job_storage_path(path)
+    if candidate is None:
+        return False
+    expected = str(user_id)
+    parts = candidate.split("/")
+    if parts[0] == "users" and len(parts) >= 2:
+        return parts[1] == expected
+    if parts[:2] == ["voiceover-uploads", "direct"] and len(parts) >= 3:
+        return parts[2] == expected
+    if (
+        parts[0] == "dev-user"
+        and len(parts) >= 3
+        and parts[2] in {"generative", "plan-pool", "plan-pool-reservations"}
+    ):
+        try:
+            encoded_owner = str(uuid.UUID(parts[1]))
+        except ValueError:
+            return True
+        return encoded_owner == expected
+    if parts[0] == "dev-user":
+        return True
+    try:
+        encoded_owner = str(uuid.UUID(parts[0]))
+    except ValueError:
+        return True
+    return encoded_owner == expected
 
 
 def normalize_job_storage_path(path: object) -> str | None:

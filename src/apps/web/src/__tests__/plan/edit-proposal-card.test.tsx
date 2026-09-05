@@ -349,7 +349,7 @@ describe("EditProposalCard", () => {
     briefing.conversation_in_progress = true;
     render(<EditProposalCard item={item(briefing)} onChanged={jest.fn()} />);
 
-    expect(screen.getByRole("status")).toHaveTextContent("Thinking it through");
+    expect(screen.getByRole("status")).toHaveTextContent("Kria is thinking");
     expect(screen.getByLabelText("Tell Kria what you want in the edit")).toBeEnabled();
     expect(screen.getByRole("button", { name: "Send direction" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Build this edit plan" })).toBeDisabled();
@@ -822,7 +822,7 @@ describe("EditProposalCard", () => {
     // Exactly one bubble while pending: the optimistic echo.
     expect(await screen.findByText("Make it about the coastline")).toBeInTheDocument();
     expect(screen.getAllByText("Make it about the coastline")).toHaveLength(1);
-    expect(screen.getByRole("status")).toHaveTextContent("Thinking it through");
+    expect(screen.getByRole("status")).toHaveTextContent("Kria is thinking");
 
     const revised = proposal("briefing");
     revised.proposal_version = 3;

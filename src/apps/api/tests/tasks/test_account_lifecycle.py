@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from inspect import getsource
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -13,7 +14,9 @@ from app.services.job_storage_deletion import build_job_storage_manifest
 from app.services.video_poster_cleanup import VideoPosterCleanupResult
 from app.storage import PrefixDeletionResult
 from app.tasks.account_lifecycle import (
+    _guard_project_storage_targets,
     cleanup_job_storage_paths,
+    cleanup_job_storage_prefixes,
     purge_job_storage,
     purge_user_storage,
     sweep_job_storage_deletions,
@@ -103,6 +106,7 @@ def _deletion(paths: list[str] | dict, *, job_id: uuid.UUID | None = None) -> Si
         lease_until=None,
         last_error=None,
         completed_at=None,
+        object_prefixes=[],
     )
 
 
@@ -138,6 +142,91 @@ def test_purge_job_storage_persists_only_failed_objects_for_durable_retry() -> N
     assert deletion.object_paths == ["jobs/job-1/transient.mp4"]
     assert deletion.next_attempt_at is not None
     assert deletion.last_error == "1 storage objects could not be deleted"
+
+
+def test_cleanup_job_storage_prefixes_deduplicates_and_preserves_failures() -> None:
+    calls: list[str] = []
+
+    def delete(prefix: str, *, timeout_s: float) -> int:
+        calls.append(prefix)
+        assert timeout_s == 5.0
+        if prefix.endswith("failed/"):
+            raise RuntimeError("bucket unavailable")
+        return 2
+
+    with patch("app.storage.delete_prefix_once", side_effect=delete):
+        deleted, failed = cleanup_job_storage_prefixes(
+            ["users/user/project/", "users/user/project/", "users/user/failed/"]
+        )
+
+    assert deleted == 2
+    assert failed == ["users/user/failed/"]
+    assert calls == ["users/user/project/", "users/user/failed/"]
+
+
+def test_project_storage_revalidation_preserves_new_job_and_plan_references() -> None:
+    owner_id = uuid.uuid4()
+    thread_prefix = f"users/{owner_id}/creation-threads/thread-1/"
+    plan_prefix = f"users/{owner_id}/plan/item-1/"
+    shared_job_clip = f"{thread_prefix}shared.mp4"
+    shared_plan_clip = f"{plan_prefix}shared.mp4"
+    private_output = "jobs/job-1/output.mp4"
+    session = MagicMock()
+    job_rows = MagicMock()
+    job_rows.all.return_value = [("jobs/source.mp4", {"clip_paths": [shared_job_clip]})]
+    item_rows = MagicMock()
+    item_rows.all.return_value = [([shared_plan_clip], [], None)]
+    advisory_lock = MagicMock()
+    session.execute.side_effect = [advisory_lock, job_rows, item_rows]
+    context = MagicMock()
+    context.__enter__.return_value = session
+    context.__exit__.return_value = False
+
+    with patch("app.tasks.account_lifecycle.sync_session", return_value=context):
+        with _guard_project_storage_targets(
+            [shared_job_clip, shared_plan_clip, private_output],
+            [thread_prefix, plan_prefix, "jobs/job-1/"],
+        ) as (paths, prefixes):
+            assert context.__exit__.call_count == 0
+
+    assert paths == [private_output]
+    assert prefixes == ["jobs/job-1/"]
+    assert context.__exit__.call_count == 1
+    assert "pg_advisory_xact_lock" in str(session.execute.call_args_list[0].args[0])
+
+
+def test_all_user_job_reference_writers_share_project_media_lock() -> None:
+    from app.routes.generative_jobs import create_generative_job
+    from app.routes.music_jobs import create_music_job
+    from app.routes.template_jobs import create_template_job
+
+    for writer in (create_generative_job, create_music_job, create_template_job):
+        source = getsource(writer)
+        lock_at = source.index("pg_advisory_xact_lock")
+        commit_at = source.index("await db.commit()")
+        assert lock_at < commit_at
+    for writer in (create_music_job, create_template_job):
+        assert "job_input_path_matches_owner" in getsource(writer)
+
+
+def test_purge_job_storage_retries_failed_prefixes_durably() -> None:
+    deletion = _deletion([])
+    deletion.object_prefixes = ["users/user/project/"]
+    session = _session_context(deletion)
+    with (
+        patch("app.tasks.account_lifecycle.sync_session", return_value=session),
+        patch("app.tasks.account_lifecycle.cleanup_job_storage_paths", return_value=(0, [])),
+        patch(
+            "app.tasks.account_lifecycle.cleanup_job_storage_prefixes",
+            return_value=(0, ["users/user/project/"]),
+        ),
+    ):
+        result = purge_job_storage.run("outbox-1")
+
+    assert result == {"status": "pending", "deleted": 0, "failed": 1}
+    assert deletion.object_paths == []
+    assert deletion.object_prefixes == ["users/user/project/"]
+    assert deletion.next_attempt_at is not None
 
 
 def test_purge_job_storage_stale_finish_cannot_overwrite_account_erasure_merge() -> None:

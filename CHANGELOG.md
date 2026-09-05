@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.61.0.0] — 2026-09-05
+## [0.62.0.0] — 2026-09-05
 
 ### Changed
 - **Chat-first creation is now the permanent product for every signed-in account.** `/plan` always opens the durable Kria conversation workspace, and creation-thread APIs no longer depend on a frontend flag, backend kill switch, or account allowlist.
@@ -12,9 +12,23 @@ All notable changes to this project will be documented in this file.
 - **The former plan home and onboarding creation funnel are retired.** The old workspace, interview, footage fork/grouping, standalone payoff, cohort fallback store, and their UI-only helpers and tests are removed; there is no second `/plan` implementation to drift from the standard.
 - **Old public entry points remain links, not products.** `/plan/new`, `/create`, `/create/manual`, `/library`, and `/generative` continue redirecting into chat or Gallery, while persisted PlanItem, Job, Creator Agent, and editor contracts remain intact.
 
-## [0.60.0.2] — 2026-09-05
+### Fixed
+- **Direct guided-edit routes retain their independent safety switch.** Chat creation opts into guided planning explicitly without bypassing the existing kill switch for other PlanItem entry points.
+- **Gallery thumbnails retain automatic poster recovery.** The canonical workspace re-signs or repairs missing posters without disturbing project lifecycle and production-preview behavior.
+
+## [0.61.0.0] — 2026-09-05
+
+### Added
+- **Every Kria project now has a name and its own shareable URL.** Creators can rename projects, reload or deep-link directly to `/plan/{project-id}`, switch projects without losing their place, and see a clear unavailable state for missing or inaccessible links.
+- **Projects can be permanently deleted from the project menu.** Kria explains exactly what will be removed, blocks deletion while uploads, renders, agent work, or TikTok publishing are active, and safely opens the next project afterward.
+
+### Changed
+- **The conversation now reads in the order it happened.** Prompts, replies, upload steps, render progress, playable results, retries, and failures stay in one chronological transcript, with the newest response brought into view automatically.
+- **Waiting and rendering states now explain real progress.** Short waits begin with quiet thinking dots, longer waits use time-aware copy, and one reduced-motion-safe loader moves through footage review, music selection, rendering, finishing, partial readiness, and recovery.
 
 ### Fixed
+- **Collapsed navigation stays anchored beside the project heading.** The sidebar and its reserved left-side control animate together, preserve proper title spacing, and respect reduced-motion preferences; the heading uses the actual project name instead of “Create with Kria.”
+- **Permanent cleanup is complete and retry-safe.** Deletion removes project-owned database records and media through a durable outbox while preserving shared plans, seeds, unrelated projects, and media still referenced by another project.
 - **Preparing a revision no longer returns an error after saving it.** The creation thread is reloaded after the nested Creator flow commits, so server-managed timestamps serialize safely instead of triggering a post-commit `MissingGreenlet` response.
 
 ## [0.60.0.1] — 2026-09-05
