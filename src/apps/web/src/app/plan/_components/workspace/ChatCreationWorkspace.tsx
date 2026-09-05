@@ -388,6 +388,7 @@ export default function ChatCreationWorkspace({
   const visualsEnabled = process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED === "true"
     || process.env.NEXT_PUBLIC_GUIDED_EDIT_ENABLED === "true";
   const editorFrameRef = useRef<HTMLIFrameElement>(null);
+  const desktopSidebarRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const latestMessageRef = useRef<HTMLDivElement>(null);
   const queuedMessageRef = useRef<{ threadId: string; message: string } | null>(null);
@@ -395,6 +396,13 @@ export default function ChatCreationWorkspace({
   const activeThreadIdRef = useRef<string | null>(null);
   const loadStartedRef = useRef(false);
   const productionGalleryLoadedRef = useRef(false);
+
+  useEffect(() => {
+    const sidebarNode = desktopSidebarRef.current;
+    if (!sidebarNode) return;
+    if (sidebarHidden) sidebarNode.setAttribute("inert", "");
+    else sidebarNode.removeAttribute("inert");
+  }, [sidebarHidden]);
 
   const activateThread = useCallback((next: CreationThread) => {
     activeThreadIdRef.current = next.id;
@@ -1109,10 +1117,44 @@ export default function ChatCreationWorkspace({
     <>
     <section className="flex min-h-0 flex-1 flex-col" aria-label="Kria creation chat">
       {productionPreview ? <div className="flex shrink-0 items-center justify-center gap-2 border-b border-lime-300 bg-lime-50 px-4 py-2 text-center text-xs text-lime-950" role="status" data-testid="production-preview-banner"><span className="size-2 rounded-full bg-lime-600" aria-hidden="true" /><strong>Live production data</strong><span>Read-only. Rename and delete are local previews that reset on reload.</span></div> : null}
-      <header className={cn("flex h-14 shrink-0 items-center justify-between border-b px-4 sm:px-6", sidebarHidden && "md:pl-14")}>
-          <div className="min-w-0"><h1 data-testid="project-title" className="truncate font-display text-xl font-medium">{thread ? projectTitle(thread) : "Loading project…"}</h1><p className="truncate text-xs capitalize text-muted-foreground">{headerSubtitle}</p></div>
-        <div className="flex items-center gap-1">
-          {sidebarHidden ? <Button type="button" variant="ghost" size="icon" className="size-11" aria-label="Show project sidebar" onClick={() => setSidebarHidden(false)}><PanelLeftOpen /></Button> : null}
+      <header className="flex h-14 shrink-0 items-center border-b px-4 sm:px-6">
+        <div className="flex min-w-0 flex-1 items-center" data-testid="workspace-header-start">
+          <div
+            className={cn(
+              "hidden shrink-0 overflow-hidden md:grid",
+              "motion-safe:transition-[grid-template-columns,margin-right,opacity] motion-safe:duration-[var(--t-accordion-dur)] motion-safe:ease-[var(--t-accordion-ease)]",
+              sidebarHidden
+                ? "md:mr-3 md:grid-cols-[2.75rem] md:opacity-100"
+                : "pointer-events-none md:mr-0 md:grid-cols-[0rem] md:opacity-0",
+            )}
+            data-state={sidebarHidden ? "open" : "closed"}
+            data-testid="sidebar-toggle-slot"
+          >
+            <div className="min-w-0 overflow-hidden">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className={cn(
+                  "size-11 shrink-0 motion-safe:transition-[transform,opacity] motion-safe:duration-[var(--t-accordion-dur)] motion-safe:ease-[var(--t-accordion-ease)]",
+                  sidebarHidden ? "translate-x-0 scale-100 opacity-100" : "-translate-x-1 scale-95 opacity-0",
+                )}
+                aria-label="Show project sidebar"
+                aria-hidden={!sidebarHidden}
+                disabled={!sidebarHidden}
+                tabIndex={sidebarHidden ? 0 : -1}
+                onClick={() => setSidebarHidden(false)}
+              >
+                <PanelLeftOpen />
+              </Button>
+            </div>
+          </div>
+          <div className="min-w-0">
+            <h1 data-testid="project-title" className="truncate font-display text-xl font-medium">{thread ? projectTitle(thread) : "Loading project…"}</h1>
+            <p className="truncate text-xs capitalize text-muted-foreground">{headerSubtitle}</p>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
           <Button type="button" variant="ghost" size="icon" className="size-11 md:hidden" aria-label="Open projects" onClick={() => setProjectsOpen(true)}><Menu /></Button>
         </div>
       </header>
@@ -1135,5 +1177,66 @@ export default function ChatCreationWorkspace({
     return <li key={job.id}><ProductionPreviewVideoCard job={job} title={matchingProject ? projectTitle(matchingProject) : productionLibraryTitle(job)} /></li>;
   })}</ul>{galleryJobs.length === 0 ? <p className="mx-auto max-w-md py-16 text-center text-sm text-muted-foreground">Your finished cuts will appear here.</p> : null}</main></div>;
 
-  return <div className="relative flex h-dvh min-h-0 overflow-hidden bg-background text-foreground"><div className={cn("hidden md:block", sidebarHidden && "md:hidden")}>{sidebar}</div><Sheet open={projectsOpen} onOpenChange={setProjectsOpen}><SheetContent side="left" className="w-[260px] p-0 sm:max-w-[260px]"><SheetHeader className="sr-only"><SheetTitle>Projects</SheetTitle><SheetDescription>Move between creation projects and your gallery.</SheetDescription></SheetHeader>{sidebar}</SheetContent></Sheet><div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{hasReady && editorOpen ? <div className="shrink-0 border-b p-2 lg:hidden"><Tabs value={mobileTab} onValueChange={(value) => setMobileTab(value as "chat" | "editor")}><TabsList className="grid h-11 w-full grid-cols-2"><TabsTrigger value="chat">Chat</TabsTrigger><TabsTrigger value="editor">Editor</TabsTrigger></TabsList></Tabs></div> : null}<div className="flex min-h-0 flex-1 overflow-hidden"><div className={cn("min-h-0 min-w-0 flex-1 flex-col overflow-hidden", hasReady && editorOpen && "lg:flex-none lg:w-[420px]", hasReady && mobileTab === "editor" ? "hidden lg:flex" : "flex")}>{chat}</div>{hasReady && editorOpen ? <div className={cn("min-h-0 min-w-0 flex-1 overflow-hidden", mobileTab === "chat" ? "hidden lg:flex" : "flex")}>{editor}</div> : null}</div></div></div>;
+  return (
+    <div className="relative flex h-dvh min-h-0 overflow-hidden bg-background text-foreground">
+      <div
+        ref={desktopSidebarRef}
+        className={cn(
+          "hidden h-full shrink-0 overflow-hidden md:block",
+          "motion-safe:transition-[width] motion-safe:duration-[var(--t-accordion-dur)] motion-safe:ease-[var(--t-accordion-ease)]",
+          sidebarHidden ? "pointer-events-none md:w-0" : "md:w-[260px]",
+        )}
+        data-state={sidebarHidden ? "closed" : "open"}
+        data-testid="project-sidebar-shell"
+        aria-hidden={sidebarHidden || undefined}
+      >
+        <div
+          className={cn(
+            "h-full w-[260px] motion-safe:transition-[transform,opacity] motion-safe:duration-[var(--t-accordion-dur)] motion-safe:ease-[var(--t-accordion-ease)]",
+            sidebarHidden ? "md:-translate-x-full md:opacity-0" : "md:translate-x-0 md:opacity-100",
+          )}
+          data-testid="project-sidebar-panel"
+        >
+          {sidebar}
+        </div>
+      </div>
+      <Sheet open={projectsOpen} onOpenChange={setProjectsOpen}>
+        <SheetContent side="left" className="w-[260px] p-0 sm:max-w-[260px]">
+          <SheetHeader className="sr-only">
+            <SheetTitle>Projects</SheetTitle>
+            <SheetDescription>Move between creation projects and your gallery.</SheetDescription>
+          </SheetHeader>
+          {sidebar}
+        </SheetContent>
+      </Sheet>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        {hasReady && editorOpen ? (
+          <div className="shrink-0 border-b p-2 lg:hidden">
+            <Tabs value={mobileTab} onValueChange={(value) => setMobileTab(value as "chat" | "editor")}>
+              <TabsList className="grid h-11 w-full grid-cols-2">
+                <TabsTrigger value="chat">Chat</TabsTrigger>
+                <TabsTrigger value="editor">Editor</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </div>
+        ) : null}
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <div
+            className={cn(
+              "min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
+              hasReady && editorOpen && "lg:flex-none lg:w-[420px]",
+              hasReady && mobileTab === "editor" ? "hidden lg:flex" : "flex",
+            )}
+          >
+            {chat}
+          </div>
+          {hasReady && editorOpen ? (
+            <div className={cn("min-h-0 min-w-0 flex-1 overflow-hidden", mobileTab === "chat" ? "hidden lg:flex" : "flex")}>
+              {editor}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
 }

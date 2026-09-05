@@ -114,6 +114,39 @@ describe("ChatCreationWorkspace", () => {
     expect(screen.getByRole("button", { name: "New video" })).toBeInTheDocument();
   });
 
+  it("keeps the sidebar toggle left of the title and animates the collapsed spacing", async () => {
+    const user = userEvent.setup();
+    render(<ChatCreationWorkspace />);
+
+    const title = await screen.findByTestId("project-title");
+    const sidebarShell = screen.getByTestId("project-sidebar-shell");
+    const sidebarPanel = screen.getByTestId("project-sidebar-panel");
+    const toggleSlot = screen.getByTestId("sidebar-toggle-slot");
+
+    expect(sidebarShell).toHaveAttribute("data-state", "open");
+    expect(sidebarShell).toHaveClass("md:w-[260px]", "motion-safe:transition-[width]");
+    await user.click(screen.getByRole("button", { name: "Hide project sidebar" }));
+
+    const showSidebar = await screen.findByRole("button", { name: "Show project sidebar" });
+    expect(screen.getByTestId("workspace-header-start").firstElementChild).toBe(toggleSlot);
+    expect(toggleSlot.nextElementSibling).toContainElement(title);
+    expect(showSidebar.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(toggleSlot).toHaveAttribute("data-state", "open");
+    expect(toggleSlot).toHaveClass("md:mr-3", "md:grid-cols-[2.75rem]");
+    expect(sidebarShell).toHaveAttribute("data-state", "closed");
+    expect(sidebarShell).toHaveAttribute("inert", "");
+    expect(sidebarShell).toHaveClass("md:w-0", "motion-safe:duration-[var(--t-accordion-dur)]");
+    expect(sidebarPanel).toHaveClass("md:-translate-x-full", "md:opacity-0");
+
+    await user.click(showSidebar);
+    expect(toggleSlot).toHaveAttribute("data-state", "closed");
+    expect(toggleSlot).toHaveClass("md:mr-0", "md:grid-cols-[0rem]");
+    expect(sidebarShell).toHaveAttribute("data-state", "open");
+    expect(sidebarShell).not.toHaveAttribute("inert");
+    expect(sidebarShell).toHaveClass("md:w-[260px]");
+    expect(sidebarPanel).toHaveClass("md:translate-x-0", "md:opacity-100");
+  });
+
   it("hydrates real production videos in a read-only preview without creating or mutating projects", async () => {
     const user = userEvent.setup();
     jest.mocked(listCreationThreads).mockRejectedValueOnce(new CreationThreadError("Unavailable", 404));
