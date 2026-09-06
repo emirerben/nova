@@ -141,6 +141,36 @@ def _creator_strategy_for_guided_attempt(
     return None
 
 
+def _creator_request_for_guided_attempt(
+    db,
+    *,
+    item_id: uuid.UUID,
+    owner_id: uuid.UUID,
+    attempt_id: str,
+) -> str:
+    """Recover the bounded user brief for a deferred Creator render."""
+
+    sessions = list(
+        db.execute(
+            select(CreatorAgentSession)
+            .where(
+                CreatorAgentSession.plan_item_id == item_id,
+                CreatorAgentSession.creator_id == owner_id,
+            )
+            .order_by(
+                CreatorAgentSession.updated_at.desc(),
+                CreatorAgentSession.created_at.desc(),
+            )
+        ).scalars()
+    )
+    for session in sessions:
+        active_plan = session.active_plan if isinstance(session.active_plan, dict) else {}
+        if active_plan.get("guided_generation_attempt_id") != attempt_id:
+            continue
+        return str(active_plan.get("creator_request") or "")[:1000]
+    return ""
+
+
 def _bind_creator_job_after_auto_design(
     *,
     item_id: uuid.UUID,
@@ -960,6 +990,7 @@ def _dispatch_after_auto_design(
 
     bypass = False
     creator_strategy: dict | None = None
+    creator_request = ""
     with sync_session() as db:
         locked = _locked_item(db, iid, ownership_epoch)
         item = locked[0] if locked else None
@@ -1013,11 +1044,19 @@ def _dispatch_after_auto_design(
                     attempt_id=attempt_id,
                 )
                 return
+            creator_request = _creator_request_for_guided_attempt(
+                db,
+                item_id=item.id,
+                owner_id=owner_id,
+                attempt_id=attempt_id,
+            )
 
     dispatch_kwargs = {"bypass_guided_edit_gate": bypass}
     dispatch_kwargs["creator_guided_attempt_id"] = attempt_id
     if creator_strategy is not None:
         dispatch_kwargs["creator_strategy"] = creator_strategy
+    if creator_request:
+        dispatch_kwargs["creator_request"] = creator_request
     # `design_fallback=MAIN_CREATOR_FAIL_CLOSED` is the deploy-skew-safe,
     # durable marker for a Main Creator-owned guided attempt. Every ordinary
     # one-click auto-design dispatch must re-check for a session that may have

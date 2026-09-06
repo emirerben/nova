@@ -179,6 +179,9 @@ class Settings(BaseSettings):
     # Flipped on with the narrated captions + no-freeze work (PR1). The flag
     # stays the rollback lever: set False to revert to the voiceover-montage path.
     narrated_archetype_enabled: bool = True
+    # Transcript-grounded visual matching and editable narrative overlays for
+    # recorded voiceover edits. Off preserves the legacy upload-order path.
+    narrated_storyboard_enabled: bool = False
 
     # Kill switch for the subtitled single-clip talking-head archetype. When False,
     # a job whose plan declares edit_format="subtitled" falls back to montage (so an

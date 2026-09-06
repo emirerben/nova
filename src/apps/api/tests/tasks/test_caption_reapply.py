@@ -739,6 +739,36 @@ def test_text_fast_reburn_without_lanes_stays_terminal_no_deferral(monkeypatch):
     assert v["render_finished_at"]
 
 
+def test_narrated_visual_block_autoplan_routes_through_caption_compositor(monkeypatch):
+    """Block-only autoplan must not require a generated TextElement to render."""
+
+    monkeypatch.setattr(gb.settings, "visual_blocks_enabled", True, raising=False)
+    variant = _narrated_variant(
+        variant_id="subtitled",
+        resolved_archetype="narrated",
+        caption_language="en",
+        voiceover_caption_style="sentence",
+        visual_blocks=[{"id": "block-1", "kind": "fullscreen", "start_s": 0.0, "end_s": 1.0}],
+        text_elements_user_edited=False,
+        render_generation_id="tok-1",
+    )
+    job = _make_job(
+        assembly_plan={"variants": [variant]},
+        all_candidates={"clip_paths": ["slot-uploads/a.mp4"]},
+    )
+    _patch_job_session(monkeypatch, job)
+    calls = []
+    monkeypatch.setattr(
+        gb,
+        "_run_reburn_narrated_captions",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    gb._run_regenerate_variant(JOB_ID, "subtitled", None, None, False, render_gen_id="tok-1")
+
+    assert calls == [((JOB_ID, "subtitled"), {"render_gen_id": "tok-1", "output_tag": "text"})]
+
+
 def _assert_reapply_call_no_deadline(reapply: list[dict], *, variant_id: str, gen: str | None):
     # The fast reburn enters the chain at task start (no mid-task burn budget to
     # clamp), so unlike the caption terminals it threads no deadline.

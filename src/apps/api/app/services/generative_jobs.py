@@ -65,6 +65,10 @@ _MAX_PREFERENCE_SUMMARY_CHARS = 1000
 # existed can't bloat all_candidates / the intro_writer prompt.
 _MAX_TIKTOK_SUMMARY_CHARS = 1200
 
+# Storage-side cap for the confirmed Main Creator direction. This is persisted
+# on the Job so retries and editor re-renders retain the same user intent.
+_MAX_CREATOR_REQUEST_CHARS = 1000
+
 # Filming-guide caps — mirror the schema-side constants so the storage layer
 # independently enforces them without importing the schema.
 _MAX_FILMING_GUIDE_SHOTS = 4
@@ -232,6 +236,7 @@ def build_generative_job(
     smart_captions: dict | None = None,
     creator_strategy: dict | None = None,
     creator_clip_order: list[int] | None = None,
+    creator_request: str = "",
 ) -> Job:
     """Construct (not persist) a generative Job after validating clip prefixes.
 
@@ -362,6 +367,9 @@ def build_generative_job(
             creator_strategy
         ).model_dump(mode="json", exclude_none=True)
         all_candidates["creator_render_contract_version"] = CREATOR_RENDER_CONTRACT_VERSION
+    bounded_creator_request = str(creator_request or "").strip()[:_MAX_CREATOR_REQUEST_CHARS]
+    if bounded_creator_request:
+        all_candidates["creator_request"] = bounded_creator_request
     if creator_clip_order:
         normalized_creator_order: list[int] = []
         for value in creator_clip_order:

@@ -240,6 +240,48 @@ export function creationJobSettled(thread: CreationThread): boolean {
   ].includes(thread.job.status);
 }
 
+/** Whether Creator planning failed before a render Job was created. */
+export function creationPlanningFailed(thread: CreationThread): boolean {
+  if (thread.job) return false;
+  const status = thread.creator_agent?.status
+    ?? (thread.state.creator_agent && typeof thread.state.creator_agent === "object"
+      ? (thread.state.creator_agent as { status?: unknown }).status
+      : null);
+  if (typeof status === "string" && status) {
+    return ["failed", "error"].includes(status.toLowerCase());
+  }
+  // Legacy/deploy-skew responses may omit the projected Creator status. In
+  // that case only the newest relevant event is authoritative: an old error
+  // must not poison the fresh session started by a later user direction.
+  const planningLifecycleEvents = new Set([
+    "user_message",
+    "assistant_error",
+    "agent_assistant_error",
+    "agent_assistant_strategy",
+    "agent_assistant_execution",
+    "agent_user_confirmation",
+    "generation_started",
+    "generation_failed",
+    "generation_ready",
+  ]);
+  const latest = [...thread.events]
+    .filter((event) => planningLifecycleEvents.has(event.event_type))
+    .sort((left, right) => right.sequence - left.sequence)[0];
+  return Boolean(latest && ["assistant_error", "agent_assistant_error"].includes(latest.event_type));
+}
+
+/** Return the latest user-authored direction for the composer recovery action. */
+export function latestCreationDirection(thread: CreationThread): string {
+  const events = [...thread.events].sort((left, right) => right.sequence - left.sequence);
+  for (const event of events) {
+    if (event.role !== "user" || event.event_type !== "user_message") continue;
+    const payload = event.payload ?? {};
+    const content = event.content ?? (typeof payload.message === "string" ? payload.message : null);
+    if (content?.trim()) return content.trim();
+  }
+  return "";
+}
+
 const CREATOR_PROGRESS_STATES = new Set(["executing", "rendering", "reviewing"]);
 const GENERATION_PROGRESS_STATES = new Set(["queued", "rendering"]);
 
@@ -511,11 +553,12 @@ export function threadMessages(thread: CreationThread): Array<{
   return events.flatMap((event) => {
     const payload = event.payload ?? {};
     const kind = String(payload.kind ?? event.event_type);
-    const content = event.content?.trim();
-    if (!content && event.role === "user" && event.event_type !== "media_added") return [];
+    const content = (event.content
+      ?? (typeof payload.message === "string" ? payload.message : undefined))?.trim();
+    if (!content && event.role === "user") return [];
     let artifact: "format" | "upload" | "voiceover" | "confirmation" | "revision" | "progress" | "result" | "failure" | undefined;
     if (["select_format", "select_edit_format", "format_options"].includes(kind)) artifact = "format";
-    else if (["collect_media", "upload_prompt"].includes(kind) || event.event_type === "media_added") artifact = "upload";
+    else if (["collect_media", "upload_prompt"].includes(kind)) artifact = "upload";
     else if (["collect_voiceover", "voiceover_prompt"].includes(kind)) artifact = "voiceover";
     else if (["confirm_generation", "confirmation"].includes(kind)) artifact = "confirmation";
     else if (["confirm_revision", "revision"].includes(kind)) artifact = "revision";
@@ -531,7 +574,7 @@ export function threadMessages(thread: CreationThread): Array<{
     }
     else if (["generation_started", "rendering"].includes(event.event_type)
       || (event.event_type === "agent_assistant_execution" && ["started", "rendering", "queued"].includes(String(payload.status)))) artifact = "progress";
-    else if (["generation_failed", "render_failed"].includes(event.event_type)
+    else if (["generation_failed", "render_failed", "assistant_error", "agent_assistant_error"].includes(event.event_type)
       || (event.event_type === "agent_assistant_execution" && ["failed", "error"].includes(String(payload.status)))) artifact = "failure";
     else if (event.event_type === "generation_ready"
       || (event.event_type === "agent_assistant_execution" && ["ready", "completed"].includes(String(payload.status)))) artifact = "result";

@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.62.0.0] — 2026-09-06
+## [0.64.0.0] — 2026-09-06
 
 ### Changed
 - **Chat-first creation is now the permanent product for every signed-in account.** `/plan` always opens the durable Kria conversation workspace, and creation-thread APIs no longer depend on a frontend flag, backend kill switch, or account allowlist.
@@ -17,6 +17,25 @@ All notable changes to this project will be documented in this file.
 - **Direct guided-edit routes retain their independent safety switch.** Chat creation opts into guided planning explicitly without bypassing the existing kill switch for other PlanItem entry points.
 - **Gallery browsing and thumbnails recover without losing place.** Cursor pagination, retry handling, and automatic poster repair keep older finished edits reachable without disturbing project lifecycle or production-preview behavior.
 - **Starting a new project is race-safe.** Kria coalesces concurrent startup retries and prevents a quick “New video” action from creating or adopting duplicate orphan projects while the initial project is still loading.
+
+## [0.63.1.0] — 2026-09-06
+
+### Fixed
+- **Narrated sports edits now turn ordinary spoken results into editable score text.** Transcript-grounded parsing recognizes phrases such as “one nil,” “one all,” “two one,” and “six to four,” repairs missing or narrow storyboard anchors, and never trusts model-authored score copy.
+
+## [0.63.0.0] — 2026-09-06
+
+### Added
+- **Narrated Creator edits can now follow the voiceover's storyline.** Kria matches transcript segments to analyzed footage and can create editable intro, player-placeholder, and transcript-grounded score text, while safely falling back to the existing narrated edit when AI storyboarding is unavailable.
+
+### Fixed
+- **Creative directions such as “add intro texts” no longer become a one-letter title or a misleading rollout error.** Generic text requests remain creative intent, exact quoted titles stay exact, and planning failures offer an actionable retry without losing uploaded media.
+- **Narrated text and visual layers survive the complete editing lifecycle.** Initial renders, text and caption edits, music-bed reburns, and visual autoplan all use the same ordered compositor and retain validated storyboard assignments.
+
+## [0.61.0.1] — 2026-09-06
+
+### Fixed
+- **Uploading several clips now leaves one actionable upload card.** Durable media history no longer duplicates the complete attachment list in chat, and existing Kria projects render correctly when reopened.
 
 ## [0.61.0.0] — 2026-09-05
 

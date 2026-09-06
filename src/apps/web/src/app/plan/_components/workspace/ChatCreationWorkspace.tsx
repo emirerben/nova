@@ -34,12 +34,12 @@ import { BeamLoader } from "@/components/progress";
 import { VoiceRecorder } from "@/app/generative/VoiceRecorder";
 import {
   applyCreationAction, creationFormat, creationFormatLabel, creationJobFailed,
-  creationJobPartial, creationJobReady, creationJobSettled, creationThreadMediaCount, createCreationThread,
+  creationJobPartial, creationJobReady, creationJobSettled, creationPlanningFailed, creationThreadMediaCount, createCreationThread,
   CreationThreadError, deleteCreationThread, getCreationCapabilities, listCreationThreads, refreshCreationThread,
   creationClipLimit, sendCreationMessage, threadMessages, uploadCreationMedia,
   creationThreadInProgress, creationThreadPreparing, creationThreadProgressKey,
   isCreationThreadRevisionConflict,
-  creationVariantPlayable,
+  creationVariantPlayable, latestCreationDirection,
   renameCreationThread,
   type CreationFormat, type CreationThread,
 } from "@/lib/creation-thread-api";
@@ -85,7 +85,7 @@ function projectTitle(thread: CreationThread): string {
 
 function projectStatusLabel(thread: CreationThread): string {
   if (thread.status === "archived") return "Archived";
-  if (creationJobFailed(thread)) return "Needs attention";
+  if (creationJobFailed(thread) || creationPlanningFailed(thread)) return "Needs attention";
   if (thread.job?.status === "variants_ready_partial") return "Partially ready";
   if (thread.job && ["done", "variants_ready"].includes(thread.job.status)) return "Ready";
   if (creationJobReady(thread)) return creationJobPartial(thread) ? "Partially ready" : "Ready";
@@ -303,18 +303,20 @@ function FailureStatusCard({
   thread,
   busy,
   readOnly = false,
+  planningFailure = false,
   onRetry,
   onAdjust,
 }: {
   thread: CreationThread;
   busy: boolean;
   readOnly?: boolean;
-  onRetry: () => void;
+  planningFailure?: boolean;
+  onRetry?: () => void;
   onAdjust: () => void;
 }) {
   return (
-    <ChatArtifactCard badge={<Badge variant="outline">Render needs attention</Badge>} title="Your project is safe" description="The render did not finish, but your direction and footage are still here.">
-      <div className="flex flex-wrap gap-2"><Button type="button" onClick={onRetry} disabled={busy || readOnly}><RefreshCw /> Retry render</Button><Button type="button" variant="outline" onClick={onAdjust} disabled={readOnly}>Adjust direction</Button></div>
+    <ChatArtifactCard badge={<Badge variant="outline">{planningFailure ? "Direction needs attention" : "Render needs attention"}</Badge>} title={planningFailure ? "Let’s refine the direction" : "Your project is safe"} description={planningFailure ? "I couldn’t start this edit yet, but your direction, footage, and voiceover are still here." : "The render did not finish, but your direction and footage are still here."}>
+      <div className="flex flex-wrap gap-2">{onRetry ? <Button type="button" onClick={onRetry} disabled={busy || readOnly}><RefreshCw /> Retry render</Button> : null}<Button type="button" variant="outline" onClick={onAdjust} disabled={readOnly}>Edit direction and try again</Button></div>
     </ChatArtifactCard>
   );
 }
@@ -810,7 +812,9 @@ export default function ChatCreationWorkspace({
     (message.artifact === "confirmation" || (message.artifact === "revision" && !hasReady))
     && (eventSequenceById.get(message.id) ?? -1) > latestGenerationSequence,
   );
+  const planningFailed = Boolean(thread && creationPlanningFailed(thread));
   const canConfirmDirection = thread !== null
+    && !planningFailed
     && (!creationThreadInProgress(thread) || creationJobFailed(thread))
     && (!thread.active_job_id || creationJobFailed(thread));
   const media = useMemo(() => attachedMedia(thread), [thread]);
@@ -845,7 +849,8 @@ export default function ChatCreationWorkspace({
     const lifecycleAnchor = (row: (typeof rows)[number]) =>
       ["confirmation", "revision", "progress"].includes(String(row.artifact))
       || ["action_generate", "action_confirm_generation", "agent_user_confirmation", "agent_assistant_execution"].includes(row.eventType);
-    const lifecycleArtifact = creationJobFailed(thread) && !hasPendingConfirmation
+    const lifecycleArtifact = (creationJobFailed(thread) || planningFailed)
+      && (!hasPendingConfirmation || planningFailed)
       ? "failure"
       : thread.active_job_id && (!creationJobSettled(thread) || variantStillRendering)
         ? "progress"
@@ -861,7 +866,7 @@ export default function ChatCreationWorkspace({
       }
     }
     return rows;
-  }, [eventMessages, format, formatPickerOpen, hasPendingConfirmation, hasReady, productionPreview, thread, variantStillRendering]);
+  }, [eventMessages, format, formatPickerOpen, hasPendingConfirmation, hasReady, planningFailed, productionPreview, thread, variantStillRendering]);
   const lastMessageId = messages[messages.length - 1]?.id;
   const latestAudio = [...media].reverse().find((item) => item.kind === "audio") ?? null;
   const clipMedia = media.filter((item) => item.kind === "video");
@@ -1359,7 +1364,7 @@ export default function ChatCreationWorkspace({
       <div ref={transcriptRef} role="log" aria-label="Conversation history" aria-live="polite" aria-relevant="additions text" tabIndex={0} className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]"><div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-6 sm:px-8">
         {!thread && !error ? <div className="space-y-3" role="status"><div className="h-5 w-40 motion-safe:animate-pulse rounded bg-muted" /><div className="h-20 w-full motion-safe:animate-pulse rounded bg-muted" /></div> : null}
         {!thread && error ? <ChatArtifactCard title="Creation chat couldn’t load" description="Your projects are safe. Check your connection, then try again."><Button type="button" variant="outline" disabled={initialLoading} onClick={() => void load()}><RefreshCw /> {initialLoading ? "Retrying…" : "Retry"}</Button></ChatArtifactCard> : null}
-        {messages.map((message, index) => <div key={message.id} ref={index === messages.length - 1 ? latestMessageRef : undefined} className="space-y-3">{message.content ? <ChatBubble role={message.role}>{message.content}</ChatBubble> : null}{message.artifact === "format" && (!format || formatPickerOpen) ? formatArtifact : null}{message.artifact === "upload" && !thread?.active_job_id ? <>{uploadArtifact}{visualsArtifact}</> : null}{message.artifact === "voiceover" && !thread?.active_job_id ? uploadArtifact : null}{(message.artifact === "confirmation" || (message.artifact === "revision" && !hasReady)) && canConfirmDirection ? <ChatArtifactCard badge={<Badge variant="secondary">Creative direction</Badge>} title={`${creationFormatLabel(format)} is ready to make`} description={typeof thread?.state.intent === "string" && thread.state.intent ? thread.state.intent : "I’ll find the strongest opening and shape your footage into a concise first cut."}><Button type="button" className="min-h-11 w-full" disabled={productionPreview || busy || clipCount === 0} onClick={() => void confirm("generate")}><Sparkles />{busy ? "Starting…" : "Create this video"}</Button></ChatArtifactCard> : null}{message.artifact === "revision" && hasReady ? <ChatArtifactCard badge={<Badge variant="secondary">Revision ready</Badge>} title="Apply this direction?" description="This creates a new generation from the finished cut."><Button type="button" className="min-h-11 w-full" disabled={productionPreview || busy} onClick={() => void confirm("generate", { base_generation: thread?.job?.id })}><RefreshCw /> Create revision</Button></ChatArtifactCard> : null}{message.artifact === "progress" && thread?.active_job_id && !creationJobFailed(thread) ? <RenderStatusCard thread={thread} /> : null}{message.artifact === "failure" && thread && creationJobFailed(thread) && !hasPendingConfirmation ? <FailureStatusCard thread={thread} busy={busy} readOnly={productionPreview} onRetry={() => void confirm("retry")} onAdjust={() => setInput("Try a different opening and keep the pacing quick.")} /> : null}{message.artifact === "result" && thread && hasReady ? <ReadyStatusCard thread={thread} isPartial={isPartial} selectedReadyVariant={selectedReadyVariant} selectedFailedVariant={selectedFailedVariant} busy={busy} readOnly={productionPreview} onSelectVariant={(id) => void selectVariant(id)} onOpenEditor={() => { setEditorOpen(true); setMobileTab("editor"); }} onRetryVariant={(id) => void confirm("retry", { variant_id: id })} /> : null}</div>)}
+        {messages.map((message, index) => <div key={message.id} ref={index === messages.length - 1 ? latestMessageRef : undefined} className="space-y-3">{message.content ? <ChatBubble role={message.role}>{message.content}</ChatBubble> : null}{message.artifact === "format" && (!format || formatPickerOpen) ? formatArtifact : null}{message.artifact === "upload" && !thread?.active_job_id ? <>{uploadArtifact}{visualsArtifact}</> : null}{message.artifact === "voiceover" && !thread?.active_job_id ? uploadArtifact : null}{(message.artifact === "confirmation" || (message.artifact === "revision" && !hasReady)) && canConfirmDirection ? <ChatArtifactCard badge={<Badge variant="secondary">Creative direction</Badge>} title={`${creationFormatLabel(format)} is ready to make`} description={typeof thread?.state.intent === "string" && thread.state.intent ? thread.state.intent : "I’ll find the strongest opening and shape your footage into a concise first cut."}><Button type="button" className="min-h-11 w-full" disabled={productionPreview || busy || clipCount === 0} onClick={() => void confirm("generate")}><Sparkles />{busy ? "Starting…" : "Create this video"}</Button></ChatArtifactCard> : null}{message.artifact === "revision" && hasReady ? <ChatArtifactCard badge={<Badge variant="secondary">Revision ready</Badge>} title="Apply this direction?" description="This creates a new generation from the finished cut."><Button type="button" className="min-h-11 w-full" disabled={productionPreview || busy} onClick={() => void confirm("generate", { base_generation: thread?.job?.id })}><RefreshCw /> Create revision</Button></ChatArtifactCard> : null}{message.artifact === "progress" && thread?.active_job_id && !creationJobFailed(thread) ? <RenderStatusCard thread={thread} /> : null}{message.artifact === "failure" && thread && (creationJobFailed(thread) || planningFailed) && (!hasPendingConfirmation || planningFailed) ? <FailureStatusCard thread={thread} busy={busy} readOnly={productionPreview} planningFailure={planningFailed} onRetry={creationJobFailed(thread) ? () => void confirm("retry") : undefined} onAdjust={() => setInput(latestCreationDirection(thread) || "Try a different opening and keep the pacing quick.")} /> : null}{message.artifact === "result" && thread && hasReady ? <ReadyStatusCard thread={thread} isPartial={isPartial} selectedReadyVariant={selectedReadyVariant} selectedFailedVariant={selectedFailedVariant} busy={busy} readOnly={productionPreview} onSelectVariant={(id) => void selectVariant(id)} onOpenEditor={() => { setEditorOpen(true); setMobileTab("editor"); }} onRetryVariant={(id) => void confirm("retry", { variant_id: id })} /> : null}</div>)}
         {thinking ? <ChatThinking /> : null}
       </div></div>
       <div className="shrink-0 border-t bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4"><form className="mx-auto flex max-w-2xl items-end gap-2 rounded-2xl border bg-background p-2 shadow-sm focus-within:ring-1 focus-within:ring-ring" onSubmit={(event) => { event.preventDefault(); void send(); }}><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Attach primary video clips" disabled={productionPreview || !thread || uploading || Boolean(thread?.active_job_id) || clipCount >= clipLimit} onClick={() => document.getElementById("creation-file-picker")?.click()}><Plus /></Button><input id="creation-file-picker" type="file" className="sr-only" accept="video/*" multiple={format !== "subtitled"} disabled={productionPreview} onChange={(event) => { void attach(event.target.files); event.target.value = ""; }} /><Textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder={productionPreview ? "Read-only production preview" : "Tell Kria what you’re imagining…"} aria-label="Message Kria" rows={1} disabled={productionPreview} className="max-h-32 min-h-11 resize-none border-0 bg-transparent py-3 shadow-none focus-visible:ring-0" /><Button type="submit" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Send message" disabled={productionPreview || !input.trim() || thinking || !thread}><ArrowUp /></Button></form>{offline ? <p className="mx-auto mt-2 flex max-w-2xl items-center gap-1 text-xs text-muted-foreground" role="status"><WifiOff className="size-3" /> Offline — messages stay in the composer until you reconnect.</p> : null}{pollReconnecting ? <p className="mx-auto mt-2 flex max-w-2xl items-center gap-1 text-xs text-muted-foreground" role="status"><RefreshCw className="size-3 motion-safe:animate-spin" /> Reconnecting to render status…</p> : null}{error ? <p className="mx-auto mt-2 max-w-2xl text-sm text-destructive" role="alert">{error}</p> : null}</div>

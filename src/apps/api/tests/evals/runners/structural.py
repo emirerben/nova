@@ -44,6 +44,10 @@ from app.agents.intro_writer import (
 )
 from app.agents.main_creator import MainCreatorInput, MainCreatorOutput
 from app.agents.music_matcher import MusicMatcherInput, MusicMatcherOutput
+from app.agents.narrated_storyboard import (
+    NarratedStoryboardInput,
+    NarratedStoryboardOutput,
+)
 from app.agents.overlay_examples import load_overlay_examples
 from app.agents.overlay_format_matcher import (
     _ANCHORS,
@@ -2259,6 +2263,77 @@ def check_scene_matcher(
     return failures
 
 
+def check_narrated_storyboard(
+    output: NarratedStoryboardOutput,
+    input: NarratedStoryboardInput,  # noqa: A002
+) -> list[str]:
+    """Pin narrated clip ownership and transcript grounding independently of parse()."""
+    failures: list[str] = []
+    known_segments = {segment.segment_id for segment in input.segments}
+    known_clips = {clip.clip_id: clip for clip in input.clips}
+    for index, match in enumerate(output.matches):
+        clip = known_clips.get(match.clip_id)
+        if clip is None:
+            failures.append(f"match {index}: unknown clip {match.clip_id!r}")
+        if match.segment_id not in known_segments:
+            failures.append(f"match {index}: unknown segment {match.segment_id!r}")
+        if match.source_start_s is not None and clip is not None and clip.duration_s is not None:
+            if match.source_start_s >= clip.duration_s:
+                failures.append(f"match {index}: source start exceeds clip duration")
+
+    number_words = {
+        "zero",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten",
+        "eleven",
+        "twelve",
+        "thirteen",
+        "fourteen",
+        "fifteen",
+        "sixteen",
+        "seventeen",
+        "eighteen",
+        "nineteen",
+        "twenty",
+        "thirty",
+        "forty",
+        "fifty",
+        "sixty",
+        "seventy",
+        "eighty",
+        "ninety",
+    }
+    word_index = {str(word.get("word_id")): index for index, word in enumerate(input.words)}
+    for index, overlay in enumerate(output.overlays):
+        if overlay.kind == "intro" and not (overlay.text or "").strip():
+            failures.append(f"overlay {index}: intro has no proposed copy")
+        if overlay.kind == "score":
+            start = word_index.get(str(overlay.anchor_word_id))
+            end = word_index.get(str(overlay.end_word_id or overlay.anchor_word_id))
+            if start is None or end is None or end < start:
+                failures.append(f"overlay {index}: score has an invalid transcript span")
+                continue
+            tokens = [
+                str(word.get("text") or "").strip().casefold()
+                for word in input.words[start : end + 1]
+            ]
+            numeric = [token for token in tokens if token.isdigit() or token in number_words]
+            compact_score = any(
+                re.fullmatch(r"\d{1,3}\s*[-–:]\s*\d{1,3}", token) for token in tokens
+            )
+            if len(numeric) < 2 and not compact_score:
+                failures.append(f"overlay {index}: score is not grounded in two spoken numbers")
+    return failures
+
+
 def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # noqa: A002
     """Dispatch by agent name. Used by eval_runner."""
     if agent_name == "nova.compose.overlay_format_matcher":
@@ -2373,6 +2448,8 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_smart_edit_planner(output, input)
     if agent_name == "nova.compose.scene_matcher":
         return check_scene_matcher(output, input)
+    if agent_name == "nova.compose.narrated_storyboard":
+        return check_narrated_storyboard(output, input)
     if agent_name == "nova.compose.sequence_emphasis":
         return check_sequence_emphasis(output, input)
     if agent_name == "nova.compose.sequence_quote":

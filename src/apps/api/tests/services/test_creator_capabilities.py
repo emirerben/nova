@@ -11,6 +11,7 @@ from app.agents._schemas.creator_policy import (
 )
 from app.schemas.edit_proposal import MixedMediaTimingProfile, MontageCadenceConstraint
 from app.services import creator_capabilities as capabilities
+from app.services.creator_errors import CreatorCapabilityError, CreatorStrategyError
 from app.services.creator_sessions import compile_active_plan
 
 
@@ -557,7 +558,7 @@ def test_compile_rejects_format_whose_renderer_flag_is_off(monkeypatch) -> None:
     )
 
     assert manifest.capabilities["edit_format:subtitled"].available is False
-    with pytest.raises(ValueError, match="unavailable"):
+    with pytest.raises(CreatorCapabilityError, match="unavailable") as exc_info:
         capabilities.compile_strategy_to_plan(
             manifest,
             CreativeStrategy(
@@ -567,6 +568,7 @@ def test_compile_rejects_format_whose_renderer_flag_is_off(monkeypatch) -> None:
                 selected_media_ids=["clip-1"],
             ),
         )
+    assert exc_info.value.code == "edit_format_unavailable"
 
 
 def test_compile_rejects_exact_opening_title_on_caption_owned_formats(monkeypatch) -> None:
@@ -578,7 +580,7 @@ def test_compile_rejects_exact_opening_title_on_caption_owned_formats(monkeypatc
         media=[{"media_id": "clip-1", "kind": "video"}],
     )
 
-    with pytest.raises(ValueError, match="opening_title is not supported"):
+    with pytest.raises(CreatorStrategyError, match="opening_title is not supported") as exc_info:
         capabilities.compile_strategy_to_plan(
             manifest,
             CreativeStrategy(
@@ -588,6 +590,31 @@ def test_compile_rejects_exact_opening_title_on_caption_owned_formats(monkeypatc
                 selected_media_ids=["clip-1"],
             ),
         )
+    assert exc_info.value.code == "unsupported_treatment"
+
+
+def test_compile_preserves_exact_opening_title_on_narrated_voiceover(monkeypatch) -> None:
+    _enable_guided(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "narrated_archetype_enabled", True)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-1",
+        edit_format="narrated_planned",
+        has_voiceover=True,
+        media=[{"media_id": "clip-1", "kind": "video"}],
+    )
+
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="narrated_planned",
+            audio_strategy="voiceover",
+            opening_title="Match Day",
+            render_program="native",
+            selected_media_ids=["clip-1"],
+        ),
+    )
+
+    assert plan.strategy.opening_title == "Match Day"
 
 
 def test_cadence_forces_guided_renderer_even_with_original_audio(monkeypatch) -> None:

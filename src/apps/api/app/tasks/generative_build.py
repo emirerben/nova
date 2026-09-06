@@ -2117,6 +2117,12 @@ def _run_generative_job_impl(
         # Persona/series context for persona-coherent hooks (content-plan jobs
         # only — public generative jobs omit the key). Forwarded to intro_writer.
         persona: dict = all_candidates.get("persona") or {}
+        # The confirmed Creator request is advisory input to the narrated
+        # storyboard only; it never controls timing or storage references.
+        raw_creator_request = all_candidates.get("creator_request")
+        if not raw_creator_request and isinstance(all_candidates.get("brief"), dict):
+            raw_creator_request = (all_candidates.get("brief") or {}).get("creator_request")
+        creator_request = str(raw_creator_request or "")[:1000]
         # Per-user style (Creator Agent M1). Absent on legacy/public jobs →
         # all render branches fall through to today's byte-identical behavior.
         user_style: dict = all_candidates.get("user_style") or {}
@@ -2358,7 +2364,10 @@ def _run_generative_job_impl(
             edit_format=edit_format,
             job_mode=job.mode,
         )
-        _skip_clip_analysis = _narrated_voiceover
+        # Storyboard mode needs clip semantics for transcript→visual matching.
+        # Keep the legacy fast path (and its Gemini outage behavior) when the
+        # rollout is off; the narrated storyboard planner is explicitly opt-in.
+        _skip_clip_analysis = _narrated_voiceover and not settings.narrated_storyboard_enabled
         with render_stage_timer(
             "asset_loading_and_preprocess",
             trace_id=render_trace_id,
@@ -2625,10 +2634,7 @@ def _run_generative_job_impl(
             prefer_narrated_voiceover=(job.mode == "content_plan"),
             narrative_shot_count=narrative_shot_count,
         )
-        if creator_opening_title and archetype in {
-            "subtitled",
-            "narrated",
-        }:
+        if creator_opening_title and archetype == "subtitled":
             raise ValueError(f"opening_title is not supported by the {archetype} renderer")
         if archetype == "montage" and creator_clip_order:
             preserved_order = _creator_preserved_narrative_order(creator_clip_order, clip_id_to_gcs)
@@ -2791,6 +2797,10 @@ def _run_generative_job_impl(
                         filming_guide=filming_guide_candidates,
                         narrative_order=narrative_order,
                         clip_id_to_local=clip_id_to_local,
+                        clip_metas=clip_metas,
+                        clip_durations_s=clip_durations_s,
+                        creator_request=creator_request,
+                        explicit_opening_title=creator_opening_title,
                         variant_dir=variant_dir,
                         landscape_fit=landscape_fit,
                     )
@@ -6613,6 +6623,11 @@ def _maybe_add_text_elements_snapshot(result: dict) -> None:
     Never raises — a snapshot failure must never block a completed render.
     """
     if not _TEXT_ELEMENTS_ENABLED or not result.get("ok"):
+        return
+    # Narrated storyboard bars are an authored render artifact, not a legacy
+    # projection. Keep their stable IDs/source provenance for the editor and
+    # for subsequent reburns.
+    if result.get("text_elements_materialized_from") == "narrated_storyboard":
         return
     if result.get("text_elements_user_edited"):
         return
@@ -10577,17 +10592,22 @@ def _run_regenerate_variant(
             )
             return
         effective_orientation = _resolve_variant_orientation(existing, orientation_override)
-        _is_subtitled_text_reburn = (
-            existing.get("resolved_archetype") == "subtitled"
+        _is_caption_text_reburn = (
+            existing.get("resolved_archetype") in _CAPTION_REBURN_ARCHETYPES
             and (
-                getattr(settings, "subtitled_text_lane_enabled", False)
-                or (
+                (
                     getattr(settings, "visual_blocks_enabled", False)
                     and bool(existing.get("visual_blocks"))
                 )
+                or (
+                    _TEXT_ELEMENTS_ENABLED
+                    and existing.get("text_elements_user_edited")
+                    and (
+                        existing.get("resolved_archetype") == "narrated"
+                        or getattr(settings, "subtitled_text_lane_enabled", False)
+                    )
+                )
             )
-            and _TEXT_ELEMENTS_ENABLED
-            and existing.get("text_elements_user_edited")
             and new_track_id is None
             and mix_override is None
             and timeline_override is None
@@ -10610,14 +10630,20 @@ def _run_regenerate_variant(
             and intro_start_s_override is None
             and intro_end_s_override is None
         )
-        if existing.get("resolved_archetype") in _CAPTION_REBURN_ARCHETYPES and not (
-            _is_subtitled_text_reburn
-        ):
-            # Defense-in-depth (mirrors the reburn guard): the generic re-render funnels
-            # into the MONTAGE path — running it on a narrated/subtitled variant would
-            # overwrite resolved_archetype/video_path and orphan the captions the user
-            # may have hand-edited. Caption variants only change via their own tasks
-            # (reburn / re-transcribe); reject anything else loudly.
+        if _is_caption_text_reburn:
+            # TextElements are already persisted by the editor/autoplan route.
+            # Rebuild from the caption-free base so the authored layer remains
+            # under captions and persisted media/SFX lanes are reapplied.
+            _run_reburn_narrated_captions(
+                job_id,
+                variant_id,
+                render_gen_id=render_gen_id,
+                output_tag="text",
+            )
+            return
+        if existing.get("resolved_archetype") in _CAPTION_REBURN_ARCHETYPES:
+            # Defense-in-depth: unsupported caption-variant controls must not
+            # fall into the montage renderer and orphan the caption timeline.
             log.error(
                 "generative_regenerate_rejected_caption_variant",
                 job_id=job_id,
@@ -15702,6 +15728,408 @@ def _narrated_clip_assignments(
     return assignments
 
 
+def _narrated_word_rows(transcript: Any) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Give Whisper words stable IDs without changing the canonical timeline."""
+    rows: list[dict[str, Any]] = []
+    index_by_id: dict[str, int] = {}
+    for index, word in enumerate(getattr(transcript, "words", []) or []):
+        word_id = f"w{index:06d}"
+        index_by_id[word_id] = index
+        rows.append(
+            {
+                "word_id": word_id,
+                "text": str(getattr(word, "text", "")),
+                "start_s": float(getattr(word, "start_s", 0.0) or 0.0),
+                "end_s": float(getattr(word, "end_s", 0.0) or 0.0),
+            }
+        )
+    return rows, index_by_id
+
+
+def _narrated_storyboard_plan(
+    *,
+    transcript: Any,
+    clip_metas: list[Any],
+    clip_ids: list[str],
+    clip_durations_s: Mapping[str, float],
+    step_timings: list[Any],
+    filming_guide: list[dict[str, Any]] | None,
+    creator_request: str,
+    job_id: str,
+) -> dict[str, Any]:
+    """Ask the storyboard agent for semantic clip choices, failing open.
+
+    The returned matches are advisory only. Exact segment windows remain owned by
+    ``step_timings`` below, and copy is derived locally from transcript words.
+    """
+    words, _ = _narrated_word_rows(transcript)
+    if not words or not clip_ids:
+        return {"enabled": True, "status": "fallback", "matches": [], "overlays": []}
+    try:
+        from app.agents._model_client import default_client  # noqa: PLC0415
+        from app.agents._runtime import RunContext  # noqa: PLC0415
+        from app.agents.narrated_storyboard import (  # noqa: PLC0415
+            NarratedStoryboardAgent,
+            NarratedStoryboardClip,
+            NarratedStoryboardInput,
+            NarratedStoryboardSegment,
+        )
+
+        clip_by_id = {str(getattr(meta, "clip_id", "")): meta for meta in clip_metas}
+        clips = []
+        for clip_id in clip_ids:
+            meta = clip_by_id.get(clip_id)
+            if meta is None:
+                continue
+            clips.append(
+                NarratedStoryboardClip(
+                    clip_id=clip_id,
+                    summary=str(getattr(meta, "hook_text", "") or "")[:500],
+                    subject=str(getattr(meta, "detected_subject", "") or "")[:240],
+                    transcript=str(getattr(meta, "transcript", "") or "")[:500],
+                    content_type=str(getattr(meta, "content_type", "broll") or "broll"),
+                    duration_s=float(clip_durations_s.get(clip_id, 0.0) or 0.0) or None,
+                    best_moments=[
+                        moment if isinstance(moment, Mapping) else moment.model_dump(mode="json")
+                        for moment in (getattr(meta, "best_moments", []) or [])[:8]
+                        if isinstance(moment, Mapping) or hasattr(moment, "model_dump")
+                    ],
+                )
+            )
+        if not clips:
+            return {"enabled": True, "status": "fallback", "matches": [], "overlays": []}
+        guide_by_step: dict[str, str] = {}
+        for index, shot in enumerate(filming_guide or []):
+            if not isinstance(shot, Mapping):
+                continue
+            step_id = str(shot.get("shot_id") or f"step_{index + 1}")
+            guidance = " | ".join(
+                str(shot.get(key) or "").strip()
+                for key in ("what", "description", "shot_type", "voiceover", "script", "direction")
+                if str(shot.get(key) or "").strip()
+            )
+            if guidance:
+                guide_by_step[step_id] = guidance[:500]
+        segments = []
+        for timing in step_timings:
+            start_s = float(timing.start_s)
+            end_s = float(timing.end_s)
+            segments.append(
+                NarratedStoryboardSegment(
+                    segment_id=str(timing.step_id),
+                    start_s=start_s,
+                    end_s=end_s,
+                    transcript=" ".join(
+                        str(word["text"]).strip()
+                        for word in words
+                        if float(word["end_s"]) > start_s and float(word["start_s"]) < end_s
+                    )[:500],
+                    guidance=guide_by_step.get(str(timing.step_id), ""),
+                )
+            )
+        if not segments:
+            return {"enabled": True, "status": "fallback", "matches": [], "overlays": []}
+        output = NarratedStoryboardAgent(default_client()).run(
+            NarratedStoryboardInput(
+                words=words,
+                segments=segments,
+                clips=clips,
+                creator_request=(creator_request or "")[:1000],
+                language=str(getattr(transcript, "language", "") or ""),
+            ),
+            ctx=RunContext(job_id=job_id),
+        )
+        return {
+            "enabled": True,
+            "status": "ready",
+            "matches": [match.model_dump(mode="json") for match in output.matches],
+            "overlays": [overlay.model_dump(mode="json") for overlay in output.overlays],
+            "prompt_version": NarratedStoryboardAgent.spec.prompt_version,
+        }
+    except Exception as exc:  # noqa: BLE001 — storyboard is best effort
+        log.warning("narrated_storyboard_failed", job_id=job_id, error=str(exc)[:300])
+        return {
+            "enabled": True,
+            "status": "fallback",
+            "matches": [],
+            "overlays": [],
+            "failure_code": "storyboard_provider_error",
+        }
+
+
+def _creator_requests_narrated_treatment(request: str, pattern: str) -> bool:
+    """Return true only for a positive treatment mention in the creator brief."""
+
+    for match in re.finditer(pattern, request, re.IGNORECASE):
+        clause_start = max(
+            request.rfind(delimiter, 0, match.start()) for delimiter in (".", "!", "?", ";")
+        )
+        clause_prefix = request[clause_start + 1 : match.start()]
+        if not re.search(
+            r"\b(?:do\s+not|don't|dont|without|no|exclude|omit|skip)\b",
+            clause_prefix,
+            re.IGNORECASE,
+        ):
+            return True
+    return False
+
+
+def _narrated_storyboard_text_elements(
+    *,
+    transcript: Any,
+    step_timings: list[Any],
+    clip_assignments: list[Any],
+    clip_id_by_path: Mapping[str, str],
+    canonical_clip_ids: list[str] | None = None,
+    creator_request: str,
+    explicit_opening_title: str | None,
+    storyboard: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Build editable intro/player/score bars on the canonical voiceover time."""
+    from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
+
+    words, index_by_id = _narrated_word_rows(transcript)
+    if not words or not step_timings:
+        return []
+
+    elements: list[dict[str, Any]] = []
+    seen_sources: set[str] = set()
+
+    def stable_id(source: str) -> str:
+        return hashlib.sha256(f"narrated_storyboard:{source}".encode()).hexdigest()[:32]
+
+    raw_overlays = list(storyboard.get("overlays") or [])
+    request = creator_request or ""
+    wants_intro = _creator_requests_narrated_treatment(
+        request, r"\b(?:intro(?:duction)?|title|hook|opening)\b"
+    )
+    if explicit_opening_title or wants_intro:
+        first = words[0]
+        requested_intro = (" ".join(str(explicit_opening_title or "").split())[:80]) or next(
+            (
+                " ".join(str(item.get("text") or "").split())[:80]
+                for item in raw_overlays
+                if item.get("kind") == "intro" and str(item.get("text") or "").strip()
+            ),
+            "",
+        )
+        intro_text = (
+            requested_intro or " ".join(str(word["text"]).strip() for word in words[:6]).strip()
+        )
+        if intro_text:
+            elements.append(
+                TextElement(
+                    id=stable_id("intro"),
+                    text=intro_text,
+                    start_s=0.0,
+                    end_s=max(0.5, min(3.0, float(first["end_s"]) + 1.0)),
+                    role="generative_intro",
+                    position="top",
+                    size_class="large",
+                    effect="fade-in",
+                    source_params={"narrated_storyboard": "intro"},
+                ).model_dump(mode="json", exclude_none=True)
+            )
+
+    wants_players = _creator_requests_narrated_treatment(
+        request, r"\b(?:player|participant|name|everyone|person)\b"
+    )
+    player_by_clip: dict[str, int] = {}
+    canonical_player_numbers = {
+        str(clip_id): index + 1
+        for index, clip_id in enumerate(canonical_clip_ids or [])
+        if str(clip_id)
+    }
+    for index, assignment in enumerate(clip_assignments):
+        step_id = str(getattr(assignment, "step_id", ""))
+        timing = next((item for item in step_timings if item.step_id == step_id), None)
+        if timing is None:
+            continue
+        clip_path = str(getattr(assignment, "clip_path", ""))
+        clip_id = clip_id_by_path.get(clip_path)
+        # Number by the canonical upload/clip order, never by the storyboard's
+        # presentation order. Repeated appearances of one clip keep the same
+        # placeholder; ambiguous clips remain separate instead of implying
+        # biometric identity across files. The fallback preserves compatibility
+        # for callers that do not yet provide canonical IDs.
+        player_key = clip_id or clip_path or f"assignment-{index}"
+        player_index = canonical_player_numbers.get(clip_id or "")
+        if player_index is None:
+            player_index = player_by_clip.setdefault(player_key, len(player_by_clip) + 1)
+        source = f"narrated_storyboard:placeholder:{player_index}"
+        if wants_players and source not in seen_sources:
+            seen_sources.add(source)
+            elements.append(
+                TextElement(
+                    id=stable_id(source),
+                    text=f"PLAYER {player_index}",
+                    start_s=float(timing.start_s),
+                    end_s=float(timing.end_s),
+                    role="generative_sequence",
+                    position="bottom",
+                    size_class="small",
+                    effect="fade-in",
+                    source_params={
+                        "narrated_storyboard": source,
+                        "editable_placeholder": True,
+                        "participant_key": f"clip:{player_key}",
+                    },
+                ).model_dump(mode="json", exclude_none=True)
+            )
+
+    # Scores are copied only from a transcript-grounded span. Clip metadata and
+    # model rationale cannot invent numbers. Agent anchors are advisory hints;
+    # the deterministic parser canonicalizes them to the smallest score phrase
+    # and also handles missing or narrow anchors.
+    request_wants_scores = _creator_requests_narrated_treatment(
+        request, r"\b(?:score|scores|scoreboard|result|results)\b"
+    )
+    number_words = {
+        "zero",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten",
+        "eleven",
+        "twelve",
+        "thirteen",
+        "fourteen",
+        "fifteen",
+        "sixteen",
+        "seventeen",
+        "eighteen",
+        "nineteen",
+        "twenty",
+        "thirty",
+        "forty",
+        "fifty",
+        "sixty",
+        "seventy",
+        "eighty",
+        "ninety",
+    }
+    # Score copy is always derived from the canonical transcript.  The
+    # storyboard agent is allowed to omit score text (and may omit anchors),
+    # so this parser is the safety net for the common spoken forms used by
+    # sports narration: "one nil", "one all", "two one", and "six to four".
+    score_value_words = number_words | {"nil", "all"}
+    score_context_re = re.compile(
+        r"\b(?:score|scores|scoreboard|result|results|final|won|wins|winner|beat|beats|"
+        r"defeated|level|levels|tied|tie|game|games|match|matches|takes|took)\b"
+    )
+
+    def _score_value(text: Any) -> str | None:
+        token = re.sub(r"^[^a-z0-9]+|[^a-z0-9]+$", "", str(text).casefold())
+        if token.isdigit() or token in score_value_words:
+            return token
+        return None
+
+    def _score_has_context(start_index: int, end_index: int) -> bool:
+        context = " ".join(
+            str(words[index]["text"]).casefold()
+            for index in range(max(0, start_index - 5), min(len(words), end_index + 6))
+        )
+        return bool(score_context_re.search(context))
+
+    score_spans: list[tuple[int, int]] = []
+
+    def _add_score_span(start_index: int, end_index: int) -> None:
+        if (
+            request_wants_scores
+            and 0 <= start_index <= end_index < len(words)
+            and _score_has_context(start_index, end_index)
+        ):
+            # Model hints and the whole-transcript fallback may discover the
+            # same canonical phrase. Keep one stable transcript-start identity.
+            if any(
+                existing_start <= start_index and end_index <= existing_end
+                for existing_start, existing_end in score_spans
+            ):
+                return
+            score_spans[:] = [
+                (existing_start, existing_end)
+                for existing_start, existing_end in score_spans
+                if not (start_index <= existing_start and existing_end <= end_index)
+            ]
+            score_spans.append((start_index, end_index))
+
+    def _add_spoken_score_spans(start_index: int, end_index: int) -> None:
+        for index in range(start_index, end_index):
+            if _score_value(words[index]["text"]) and _score_value(words[index + 1]["text"]):
+                _add_score_span(index, index + 1)
+        for index in range(start_index, end_index - 1):
+            if (
+                _score_value(words[index]["text"])
+                and str(words[index + 1]["text"]).strip().casefold() == "to"
+                and _score_value(words[index + 2]["text"])
+            ):
+                _add_score_span(index, index + 2)
+
+    for overlay in raw_overlays:
+        if overlay.get("kind") != "score":
+            continue
+        start_id = str(overlay.get("anchor_word_id") or "")
+        end_id = str(overlay.get("end_word_id") or start_id)
+        if start_id not in index_by_id or end_id not in index_by_id:
+            continue
+        start_index = index_by_id[start_id]
+        end_index = index_by_id[end_id]
+        if end_index < start_index or end_index - start_index > 8:
+            continue
+        _add_spoken_score_spans(start_index, end_index)
+
+    transcript_text = " ".join(str(word["text"]) for word in words)
+    score_re = re.compile(r"\b\d{1,3}\s*[-–:]\s*\d{1,3}\b")
+    for match in score_re.finditer(transcript_text):
+        cursor = 0
+        start_index = end_index = None
+        for index, word in enumerate(words):
+            next_cursor = cursor + len(str(word["text"]))
+            if next_cursor >= match.start() and start_index is None:
+                start_index = index
+            if next_cursor >= match.end():
+                end_index = index
+                break
+            cursor = next_cursor + 1
+        if start_index is None or end_index is None:
+            continue
+        _add_score_span(start_index, end_index)
+
+    # Consecutive spoken numbers and “six to four” / “6 to 4” are common
+    # speech-recognition shapes.
+    _add_spoken_score_spans(0, len(words) - 1)
+
+    for start_index, end_index in sorted(score_spans):
+        start_s = float(words[start_index]["start_s"])
+        end_s = float(words[end_index]["end_s"])
+        source = f"narrated_storyboard:score:{start_index}"
+        if source in seen_sources:
+            continue
+        seen_sources.add(source)
+        elements.append(
+            TextElement(
+                id=stable_id(source),
+                text=" ".join(
+                    str(words[index]["text"]) for index in range(start_index, end_index + 1)
+                ),
+                start_s=start_s,
+                end_s=max(end_s, start_s + 0.5),
+                role="generative_sequence",
+                position="top",
+                size_class="large",
+                effect="pop-in",
+                source_params={"narrated_storyboard": source, "transcript_grounded": True},
+            ).model_dump(mode="json", exclude_none=True)
+        )
+    return elements
+
+
 def _render_narrated_variant(
     *,
     job_id: str,
@@ -15710,6 +16138,10 @@ def _render_narrated_variant(
     filming_guide: list[dict],
     narrative_order: list[str] | None,
     clip_id_to_local: dict[str, str],
+    clip_metas: list[Any] | None = None,
+    clip_durations_s: Mapping[str, float] | None = None,
+    creator_request: str = "",
+    explicit_opening_title: str | None = None,
     variant_dir: str,
     landscape_fit: str = "fill",
 ) -> dict[str, Any]:
@@ -15776,6 +16208,7 @@ def _render_narrated_variant(
         # Media-overlay cards (slice 1) — see montage finalize dict for docs.
         "media_overlays": None,
         "pre_media_overlay_video_path": None,
+        "text_elements_user_edited": False,
     }
     try:
         if not voiceover_gcs_path:
@@ -15785,6 +16218,7 @@ def _render_narrated_variant(
         # Caption accuracy: the narration becomes burned + editable captions, so use
         # the larger narrated model (local backend; flag-gated, kill-switch in config).
         transcript = transcribe_whisper(voiceover_local, model=settings.narrated_whisper_model)
+        from app.pipeline.narrated_assembler import NarratedClip  # noqa: PLC0415
 
         script_steps = _narrated_script_steps(filming_guide)
         if len(script_steps) >= 2:
@@ -15808,17 +16242,18 @@ def _render_narrated_variant(
             from app.pipeline.narrated_alignment import (  # noqa: PLC0415
                 contiguous_step_timings,
             )
-            from app.pipeline.narrated_assembler import NarratedClip  # noqa: PLC0415
             from app.pipeline.phrase_sequence import split_phrases  # noqa: PLC0415
             from app.tasks.template_orchestrate import _probe_duration  # noqa: PLC0415
 
             words = transcript.words
-            total_s = max((w.end_s for w in words), default=60.0)
+            vo_dur = _probe_duration(voiceover_local) or 0.0
+            total_s = max((w.end_s for w in words), default=vo_dur or 1.0)
             phrases = split_phrases(words, video_duration_s=total_s)
-            if len(phrases) < 2:
-                raise ValueError(
-                    "narrated_ready auto-segmentation produced fewer than two segments"
-                )
+            if not phrases:
+                # A transcription provider may legitimately return no timed
+                # words for a very short or noisy voiceover. Keep the audio and
+                # footage usable; captions/text simply remain empty.
+                phrases = [{"speech_start_s": 0.0, "speech_end_s": total_s}]
 
             # Bucket micro-phrases into at most n_clips segments so each clip shows once.
             # Strategy: fill each bucket until its accumulated duration covers its share
@@ -15827,7 +16262,7 @@ def _render_narrated_variant(
             if not ordered_ids:
                 raise ValueError("narrated_ready variant has no clips")
             n_clips = len(ordered_ids)
-            target_count = max(2, min(n_clips, len(phrases)))
+            target_count = max(1, min(n_clips, len(phrases)))
 
             if len(phrases) > target_count:
                 speech_start = phrases[0]["speech_start_s"]
@@ -15852,7 +16287,6 @@ def _render_narrated_variant(
             # the voiceover audio's natural timing — otherwise the compressed visual
             # makes the burned captions lead the spoken words. Use the probed audio
             # length as the end so nothing the user said gets cut.
-            vo_dur = _probe_duration(voiceover_local) or 0.0
             timeline_end = max(total_s, vo_dur)
             step_timings = contiguous_step_timings(
                 [float(p["speech_start_s"]) for p in phrases], timeline_end
@@ -15878,6 +16312,111 @@ def _render_narrated_variant(
             if not clip_assignments:
                 raise ValueError("narrated_ready variant: no valid clip paths found")
 
+        # Whisper timing is canonical. The storyboard may change which clip is
+        # shown for each existing segment, but never changes segment boundaries.
+        storyboard = {
+            "enabled": False,
+            "status": "disabled",
+            "matches": [],
+            "overlays": [],
+        }
+        storyboard_elements: list[dict[str, Any]] = []
+        clip_id_by_path = {path: clip_id for clip_id, path in clip_id_to_local.items()}
+        if settings.narrated_storyboard_enabled:
+            ordered_ids = list(narrative_order or list(clip_id_to_local))
+            storyboard = _narrated_storyboard_plan(
+                transcript=transcript,
+                clip_metas=list(clip_metas or []),
+                clip_ids=ordered_ids,
+                clip_durations_s=clip_durations_s or {},
+                step_timings=step_timings,
+                filming_guide=filming_guide,
+                creator_request=creator_request,
+                job_id=job_id,
+            )
+            if storyboard.get("status") == "ready":
+                match_by_step: dict[str, tuple[str, float | None]] = {}
+                for match in storyboard.get("matches") or []:
+                    timing = next(
+                        (
+                            item
+                            for item in step_timings
+                            if item.step_id == str(match.get("segment_id") or "")
+                        ),
+                        None,
+                    )
+                    if timing is None:
+                        continue
+                    clip_id = str(match.get("clip_id") or "")
+                    if clip_id in clip_id_to_local and timing.step_id not in match_by_step:
+                        raw_start = match.get("source_start_s")
+                        clip_duration = float((clip_durations_s or {}).get(clip_id, 0.0) or 0.0)
+                        segment_duration = max(0.0, float(timing.end_s) - float(timing.start_s))
+                        source_start = (
+                            max(
+                                0.0,
+                                min(
+                                    float(raw_start),
+                                    max(0.0, clip_duration - segment_duration),
+                                ),
+                            )
+                            if isinstance(raw_start, (int, float)) and clip_duration > 0
+                            else None
+                        )
+                        match_by_step[timing.step_id] = (clip_id, source_start)
+                planned_assignments: list[NarratedClip] = []
+                for index, timing in enumerate(step_timings):
+                    matched = match_by_step.get(timing.step_id)
+                    clip_id = matched[0] if matched else None
+                    source_start = matched[1] if matched else None
+                    if not clip_id and ordered_ids:
+                        clip_id = ordered_ids[index % len(ordered_ids)]
+                    clip_path = clip_id_to_local.get(clip_id or "")
+                    if clip_path:
+                        planned_assignments.append(
+                            NarratedClip(
+                                step_id=timing.step_id,
+                                clip_path=clip_path,
+                                source_start_s=source_start or 0.0,
+                            )
+                        )
+                if planned_assignments:
+                    clip_assignments = planned_assignments
+            if storyboard.get("status") == "ready" or explicit_opening_title:
+                storyboard_elements = _narrated_storyboard_text_elements(
+                    transcript=transcript,
+                    step_timings=step_timings,
+                    clip_assignments=clip_assignments,
+                    clip_id_by_path=clip_id_by_path,
+                    canonical_clip_ids=list(clip_id_to_local),
+                    # A provider failure must not trigger heuristic generated
+                    # copy. Exact creator-supplied title text remains safe to
+                    # materialize without the planner.
+                    creator_request=(
+                        creator_request if storyboard.get("status") == "ready" else ""
+                    ),
+                    explicit_opening_title=explicit_opening_title,
+                    storyboard=storyboard,
+                )
+
+        # Keep the exact visual assignment (including an agent-selected source
+        # window) beside the canonical voiceover timeline. Bed-level reburns must
+        # rebuild audio without reverting the storyboard's visual decisions.
+        narrated_clip_assignments = [
+            {
+                "step_id": str(getattr(assignment, "step_id", "")),
+                "clip_id": clip_id_by_path.get(str(getattr(assignment, "clip_path", ""))),
+                "participant_key": (
+                    "clip:" + str(clip_id_by_path.get(str(getattr(assignment, "clip_path", ""))))
+                ),
+                "source_start_s": max(
+                    0.0, float(getattr(assignment, "source_start_s", 0.0) or 0.0)
+                ),
+            }
+            for assignment in clip_assignments
+            if clip_id_by_path.get(str(getattr(assignment, "clip_path", "")))
+        ]
+
         final_path = os.path.join(variant_dir, "final.mp4")
         # Caption-free twin (same clips + voice + bed, no burned text) so the
         # creator can edit captions live on the video and reburn just the text.
@@ -15901,6 +16440,25 @@ def _render_narrated_variant(
             # Font for the burned captions (registry key; None → default).
             caption_font=caption_font,
         )
+        if storyboard_elements and os.path.exists(base_path):
+            # Keep TextElements on the clean caption-free base, then captions
+            # last. The same compositor is used by editor reburns below.
+            composed_variant = {
+                **base,
+                "duration_s": _rendered_duration_s(base_path),
+                "caption_cues": caption_cues or None,
+                "text_elements": storyboard_elements,
+                "text_elements_materialized_from": "narrated_storyboard",
+            }
+            composed, _ = _compose_subtitled_final(
+                base_path,
+                composed_variant,
+                variant_dir,
+                job_id=job_id,
+                variant_id=variant_id,
+                upload_key_base=f"generative-jobs/{job_id}/variant_{rank}_{variant_id}",
+            )
+            shutil.copy2(composed, final_path)
         if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
             raise RuntimeError("narrated variant produced empty output")
 
@@ -15910,7 +16468,11 @@ def _render_narrated_variant(
         # reburn work. Best-effort: a missing base just disables editing (the
         # burned video still plays/downloads). Only when captions actually exist.
         base_gcs: str | None = None
-        if caption_cues and os.path.exists(base_path) and os.path.getsize(base_path) > 0:
+        if (
+            (caption_cues or storyboard_elements)
+            and os.path.exists(base_path)
+            and os.path.getsize(base_path) > 0
+        ):
             base_gcs = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_base.mp4"
             upload_public_read(base_path, base_gcs)
         return {
@@ -15926,6 +16488,12 @@ def _render_narrated_variant(
             ),
             "base_video_path": base_gcs,
             "caption_cues": caption_cues or None,
+            "text_elements": storyboard_elements,
+            "text_elements_materialized_from": (
+                "narrated_storyboard" if storyboard_elements else None
+            ),
+            "narrated_storyboard": storyboard,
+            "narrated_clip_assignments": narrated_clip_assignments,
             # Narrated renders no media-overlay cards (v1), but the finalize whitelist
             # must round-trip these keys so a montage variant can never lose overlays
             # through a shared path. `**base` already carries them (None for narrated);
@@ -19050,7 +19618,10 @@ def _compose_subtitled_final(
     upload_key_base: str,
     created_storage_paths: list[str] | None = None,
 ) -> tuple[str, str | None]:
-    """Compose a subtitled final: authored text first, persisted captions last.
+    """Compose a captioned final: authored text first, persisted captions last.
+
+    Despite the historical name, this is shared by subtitled and narrated
+    variants. Narrated voiceover captions remain the final burn layer.
 
     Authored text elements burn through the Skia renderer, so behind_subject
     occlusion works here exactly like the montage lane: when any element wants
@@ -19113,12 +19684,18 @@ def _compose_subtitled_final(
 
 
 def _should_compose_subtitled_final(variant: dict) -> bool:
-    """Keep authored text and captions together on every subtitled reburn.
+    """Keep authored text and captions together on every caption-variant reburn.
 
     The public text lane, visual-block autoplan, and Smart Captions can each
     author text independently. Persisted Smart titles must therefore use the
     compositor even while the public text-lane rollout flag is off.
     """
+    if variant.get("resolved_archetype") == "narrated":
+        return bool(
+            variant.get("text_elements")
+            or variant.get("text_elements_materialized_from") == "narrated_storyboard"
+            or variant.get("text_elements_user_edited")
+        )
     return variant.get("resolved_archetype") == "subtitled" and (
         getattr(settings, "subtitled_text_lane_enabled", False)
         or (
@@ -19449,6 +20026,7 @@ def _run_reburn_narrated_captions(
     variant_id: str,
     render_gen_id: str | None = None,
     terminal_state: dict | None = None,
+    output_tag: str = "cap",
 ) -> None:
     from app.storage import (  # noqa: PLC0415
         delete_object_best_effort,
@@ -19504,7 +20082,7 @@ def _run_reburn_narrated_captions(
     custom_effect_cleared = False
     new_gcs = _variant_storage_key(
         job_id,
-        f"variant_{rank}_{variant_id}_cap_{uuid.uuid4().hex[:8]}.mp4",
+        f"variant_{rank}_{variant_id}_{output_tag}_{uuid.uuid4().hex[:8]}.mp4",
         render_gen_id,
     )
     caption_created_storage: list[str] = []
@@ -19801,25 +20379,56 @@ def _run_reburn_narrated_bed_level(
         voiceover_local = os.path.join(tmpdir, "voiceover_src")
         download_to_file(voiceover_gcs_path, voiceover_local)
 
-        # Same clip-to-step assignment rule the first render used — deterministic,
-        # transcript-independent (mirrors _render_narrated_variant's branch).
-        script_steps = _narrated_script_steps(filming_guide)
-        if len(script_steps) >= 2:
-            clip_assignments = _narrated_clip_assignments(
-                filming_guide, narrative_order, clip_id_to_local
-            )
-        else:
-            ordered_ids = list(narrative_order or list(clip_id_to_local))
-            if not ordered_ids:
-                raise ValueError(f"variant {variant_id} has no clips to rebuild the bed from")
-            clip_assignments = [
-                NarratedClip(
-                    step_id=str(t["step_id"]),
-                    clip_path=clip_id_to_local[ordered_ids[i % len(ordered_ids)]],
+        # Reuse the exact storyboard assignment from the initial render when it
+        # exists. The bed slider changes audio only; it must not silently restore
+        # upload/narrative order or lose an agent-selected source window. Legacy
+        # variants lack this receipt and retain the deterministic reconstruction.
+        persisted_assignments = variant.get("narrated_clip_assignments")
+        timing_ids = [str(t["step_id"]) for t in narrated_timings]
+        persisted_by_step: dict[str, NarratedClip] = {}
+        if isinstance(persisted_assignments, list):
+            for raw in persisted_assignments:
+                if not isinstance(raw, dict):
+                    continue
+                step_id = str(raw.get("step_id") or "")
+                clip_id = str(raw.get("clip_id") or "")
+                if not step_id or step_id not in timing_ids or step_id in persisted_by_step:
+                    continue
+                clip_path = clip_id_to_local.get(clip_id)
+                if not clip_path:
+                    continue
+                raw_start = raw.get("source_start_s", 0.0)
+                try:
+                    source_start_s = float(raw_start or 0.0)
+                except (TypeError, ValueError):
+                    source_start_s = 0.0
+                if not math.isfinite(source_start_s) or source_start_s < 0:
+                    source_start_s = 0.0
+                persisted_by_step[step_id] = NarratedClip(
+                    step_id=step_id,
+                    clip_path=clip_path,
+                    source_start_s=source_start_s,
                 )
-                for i, t in enumerate(narrated_timings)
-                if ordered_ids[i % len(ordered_ids)] in clip_id_to_local
-            ]
+        if len(persisted_by_step) == len(timing_ids):
+            clip_assignments = [persisted_by_step[step_id] for step_id in timing_ids]
+        else:
+            script_steps = _narrated_script_steps(filming_guide)
+            if len(script_steps) >= 2:
+                clip_assignments = _narrated_clip_assignments(
+                    filming_guide, narrative_order, clip_id_to_local
+                )
+            else:
+                ordered_ids = list(narrative_order or list(clip_id_to_local))
+                if not ordered_ids:
+                    raise ValueError(f"variant {variant_id} has no clips to rebuild the bed from")
+                clip_assignments = [
+                    NarratedClip(
+                        step_id=str(t["step_id"]),
+                        clip_path=clip_id_to_local[ordered_ids[i % len(ordered_ids)]],
+                    )
+                    for i, t in enumerate(narrated_timings)
+                    if ordered_ids[i % len(ordered_ids)] in clip_id_to_local
+                ]
         if not clip_assignments:
             raise ValueError(f"variant {variant_id}: could not rebuild clip assignments")
 
@@ -19868,13 +20477,12 @@ def _run_reburn_narrated_bed_level(
 
         caption_base_path = new_base_path
         custom_effect_cleared = False
+        custom_effect_applied = False
         if variant.get("custom_effects"):
             caption_base_path, custom_effect_cleared = reapply_persisted_custom_effect(
                 new_base_path, variant, tmpdir
             )
-
-        out_local = os.path.join(tmpdir, "out.mp4")
-        _burn_persisted_captions_onto_base(caption_base_path, out_local, variant, tmpdir)
+            custom_effect_applied = not custom_effect_cleared
 
         # Shared suffix so the burned + base pair are traceable to the same reburn.
         reburn_token = uuid.uuid4().hex[:8]
@@ -19884,6 +20492,26 @@ def _run_reburn_narrated_bed_level(
         new_base_gcs = (
             f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_bed_{reburn_token}_base.mp4"
         )
+        bed_created_storage: list[str] = []
+        bed_matte_path: str | None = None
+        bed_matte_persist = False
+        if _should_compose_subtitled_final(variant):
+            out_local, bed_matte_path = _compose_subtitled_final(
+                caption_base_path,
+                {**variant, "subject_matte_path": None} if custom_effect_applied else variant,
+                tmpdir,
+                job_id=job_id,
+                variant_id=variant_id,
+                upload_key_base=new_base_gcs,
+                created_storage_paths=bed_created_storage,
+            )
+            bed_matte_persist = not custom_effect_applied
+            if custom_effect_applied:
+                _delete_cancelled_job_objects(job_id, bed_created_storage)
+                bed_created_storage.clear()
+        else:
+            out_local = os.path.join(tmpdir, "out.mp4")
+            _burn_persisted_captions_onto_base(caption_base_path, out_local, variant, tmpdir)
         output_url = upload_public_read(out_local, new_video_gcs)
         upload_public_read(new_base_path, new_base_gcs)
 
@@ -19906,6 +20534,7 @@ def _run_reburn_narrated_bed_level(
         # reset explicitly: they point at the pre-reburn video deleted below.
         "pre_media_overlay_video_path": None,
         "pre_sfx_video_path": None,
+        **({"subject_matte_path": bed_matte_path} if bed_matte_persist else {}),
         **({"custom_effects": []} if custom_effect_cleared else {}),
     }
     if will_reapply:
@@ -19926,6 +20555,7 @@ def _run_reburn_narrated_bed_level(
         # F3: superseded — the just-uploaded pair was never referenced; free both.
         delete_object_best_effort(new_video_gcs)
         delete_object_best_effort(new_base_gcs)
+        _delete_cancelled_job_objects(job_id, bed_created_storage)
         return
     if terminal_state is not None:
         terminal_state["accepted"] = True  # F5: video swap landed
@@ -22570,6 +23200,8 @@ def _finalize_job_decision(
                     "orientation": r.get("orientation"),
                     "duration_s": r.get("duration_s"),
                     "text_elements_materialized_from": r.get("text_elements_materialized_from"),
+                    "narrated_storyboard": r.get("narrated_storyboard"),
+                    "narrated_clip_assignments": r.get("narrated_clip_assignments"),
                     # Strict guided-story state. These fields are the approval
                     # and publication receipt; stripping any of them would turn
                     # a verified first render into an unverifiable ready Job.

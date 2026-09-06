@@ -681,7 +681,33 @@ describe("ChatCreationWorkspace", () => {
     render(<ChatCreationWorkspace />);
 
     expect(await screen.findByRole("button", { name: "Retry render" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Adjust direction" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Edit direction and try again" })).toBeInTheDocument();
+  });
+
+  it("surfaces creator planning failures without a Job and restores the last direction", async () => {
+    const direction = "Match the content with the videos, add intro texts, and show the scores from my voiceover.";
+    const failed = {
+      ...baseThread,
+      state: { format: "narrated_planned", edit_format: "narrated_planned", media: [], media_count: 1 },
+      creator_agent: { status: "failed" },
+      events: [
+        { id: "direction", sequence: 0, revision: 1, role: "user" as const, event_type: "user_message", content: direction, payload: null, created_at: "2026-01-01T00:00:00Z" },
+        { id: "strategy", sequence: 1, revision: 2, role: "assistant" as const, event_type: "agent_assistant_strategy", content: "I’ll shape the story around your voiceover.", payload: null, created_at: "2026-01-01T00:00:01Z" },
+        { id: "planning-error", sequence: 2, revision: 3, role: "assistant" as const, event_type: "agent_assistant_error", content: null, payload: { message: "This direction needs another pass." }, created_at: "2026-01-01T00:00:02Z" },
+      ],
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([failed]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(failed);
+
+    render(<ChatCreationWorkspace />);
+
+    const editDirection = await screen.findByRole("button", { name: "Edit direction and try again" });
+    expect(screen.queryByRole("button", { name: "Retry render" })).not.toBeInTheDocument();
+    fireEvent.click(editDirection);
+    const composer = screen.getByRole("textbox", { name: "Message Kria" });
+    expect(composer).toHaveValue(direction);
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(sendCreationMessage).toHaveBeenCalledWith(failed, direction));
   });
 
   it("keeps state-only lifecycle cards before later user turns", async () => {
@@ -1377,6 +1403,48 @@ describe("ChatCreationWorkspace", () => {
     expect(changeFormat).toHaveClass("min-h-11");
     fireEvent.click(changeFormat);
     expect(await screen.findByRole("button", { name: /Montage Music-led/ })).toBeInTheDocument();
+  });
+
+  it("hydrates several media-added events into one uploader with one copy of each file", async () => {
+    const filenames = ["arrival.mp4", "harbor.mp4", "sunset.mp4"];
+    const hydrated = {
+      ...baseThread,
+      revision: 4,
+      state: {
+        format: "narrated",
+        edit_format: "narrated_planned",
+        media: filenames.map((filename, index) => ({
+          media_id: `media-${index + 1}.mp4`,
+          kind: "video",
+          filename,
+        })),
+        media_count: filenames.length,
+      },
+      events: [
+        ...baseThread.events,
+        ...filenames.map((filename, index) => ({
+          id: `media-added-${index + 1}`,
+          sequence: index + 1,
+          revision: index + 2,
+          role: "user" as const,
+          event_type: "media_added",
+          content: null,
+          payload: { filename, media_count: index + 1 },
+          created_at: `2026-01-01T00:00:0${index + 1}Z`,
+        })),
+      ],
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([hydrated]);
+    jest.mocked(refreshCreationThread).mockResolvedValueOnce(hydrated);
+
+    render(<ChatCreationWorkspace />);
+
+    expect(await screen.findByText("Add clips and voiceover")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Add primary video clips" })).toHaveLength(1);
+    for (const filename of filenames) {
+      expect(screen.getAllByText(filename)).toHaveLength(1);
+      expect(screen.getAllByRole("button", { name: `Remove attached ${filename}` })).toHaveLength(1);
+    }
   });
 
   it("removes an attached server media item through a revision-fenced action", async () => {

@@ -1556,7 +1556,17 @@ async def _sync_agent(db: AsyncSession, thread: CreationThread) -> None:
         safe_payload = {
             key: value
             for key, value in payload.items()
-            if key in {"message", "summary", "plan_hash", "review", "status", "reason"}
+            if key
+            in {
+                "message",
+                "summary",
+                "plan_hash",
+                "review",
+                "status",
+                "reason",
+                "code",
+                "edit_format",
+            }
         }
         await _append(
             db,

@@ -1,0 +1,22 @@
+{
+  "agent":"nova.compose.narrated_storyboard",
+  "prompt_version":"2026-09-06.4",
+  "input":{
+    "words":[
+      {"word_id":"w000000","text":"The","start_s":0.0,"end_s":0.2},
+      {"word_id":"w000001","text":"players","start_s":0.2,"end_s":0.5},
+      {"word_id":"w000002","text":"warmed","start_s":0.5,"end_s":0.8},
+      {"word_id":"w000003","text":"up","start_s":0.8,"end_s":1.0}
+    ],
+    "segments":[{"segment_id":"seg_0","start_s":0.0,"end_s":1.0,"transcript":"The players warmed up"}],
+    "clips":[{"clip_id":"clip-warmup","summary":"players warming up","duration_s":5.0}],
+    "creator_request":"Add player placeholders and only scores mentioned in the audio.",
+    "language":"en"
+  },
+  "raw_text":"{\"matches\":[{\"segment_id\":\"seg_0\",\"clip_id\":\"clip-warmup\",\"confidence\":\"high\"}],\"overlays\":[{\"kind\":\"placeholder\",\"anchor_word_id\":\"w000001\",\"placeholder_index\":1}]}",
+  "output":{
+    "matches":[{"segment_id":"seg_0","clip_id":"clip-warmup","confidence":"high","source_start_s":null,"reason":""}],
+    "overlays":[{"kind":"placeholder","anchor_word_id":"w000001","end_word_id":null,"placeholder_index":1,"text":null,"reason":""}]
+  },
+  "meta":{"source":"hand_authored_golden","scenario":"score request without transcript evidence"}
+}
