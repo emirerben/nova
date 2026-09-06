@@ -54,6 +54,16 @@ const baseThread = {
   job: null, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
 };
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("ChatCreationWorkspace", () => {
   it.each([
     ["queued", "Your edit is queued…"],
@@ -366,6 +376,42 @@ describe("ChatCreationWorkspace", () => {
     await waitFor(() => expect(createCreationThread).toHaveBeenCalledTimes(1));
   });
 
+  it("does not create a second project when New video is clicked during initial loading", async () => {
+    const listed = deferred<typeof baseThread[]>();
+    const capabilities = deferred<Awaited<ReturnType<typeof getCreationCapabilities>>>();
+    jest.mocked(listCreationThreads).mockReturnValueOnce(listed.promise);
+    jest.mocked(getCreationCapabilities).mockReturnValueOnce(capabilities.promise);
+
+    render(<ChatCreationWorkspace />);
+    const newVideo = screen.getByRole("button", { name: "New video" });
+    expect(newVideo).toBeDisabled();
+    fireEvent.click(newVideo);
+    expect(createCreationThread).not.toHaveBeenCalled();
+
+    listed.resolve([baseThread]);
+    capabilities.resolve({ formats: [], media: {} });
+    await screen.findByRole("heading", { name: "Untitled video" });
+    expect(createCreationThread).not.toHaveBeenCalled();
+    expect(mockReplace).not.toHaveBeenCalledWith("/plan/undefined", expect.anything());
+  });
+
+  it("coalesces repeated Retry clicks into one initial load", async () => {
+    jest.mocked(listCreationThreads).mockRejectedValueOnce(new CreationThreadError("down", 503));
+    render(<ChatCreationWorkspace />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn’t open/i);
+
+    const retry = deferred<typeof baseThread[]>();
+    jest.mocked(listCreationThreads).mockReturnValueOnce(retry.promise);
+    const retryButton = screen.getByRole("button", { name: "Retry" });
+    fireEvent.click(retryButton);
+    fireEvent.click(retryButton);
+    expect(listCreationThreads).toHaveBeenCalledTimes(2);
+
+    retry.resolve([baseThread]);
+    await screen.findByRole("heading", { name: "Untitled video" });
+    expect(createCreationThread).not.toHaveBeenCalled();
+  });
+
   it("sends a format action and uses the durable state for the next step", async () => {
     render(<ChatCreationWorkspace />);
     fireEvent.click(await screen.findByRole("button", { name: /Talking to camera A clean/ }));
@@ -407,11 +453,14 @@ describe("ChatCreationWorkspace", () => {
     };
     jest.mocked(sendCreationMessage).mockResolvedValueOnce(reply);
     render(<ChatCreationWorkspace />);
+    await screen.findByRole("heading", { name: "Untitled video" });
     fireEvent.click(await screen.findByRole("button", { name: "New video" }));
     await screen.findByRole("alert");
     const composer = screen.getByRole("textbox", { name: "Message Kria" });
     fireEvent.change(composer, { target: { value: "Keep this project" } });
-    fireEvent.keyDown(composer, { key: "Enter" });
+    await act(async () => {
+      fireEvent.keyDown(composer, { key: "Enter" });
+    });
     expect(await screen.findByText("Keep this project")).toBeInTheDocument();
   });
 

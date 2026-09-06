@@ -390,6 +390,7 @@ export default function ChatCreationWorkspace({
   const [galleryLoadError, setGalleryLoadError] = useState<string | null>(null);
   const [galleryRetryCursor, setGalleryRetryCursor] = useState<string | null>(null);
   const [formatPickerOpen, setFormatPickerOpen] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [availableFormats, setAvailableFormats] = useState<CreationFormat[]>(["montage", "narrated_planned", "subtitled"]);
   const [capabilities, setCapabilities] = useState<Awaited<ReturnType<typeof getCreationCapabilities>>>(() => ({ formats: [] }));
   const posterRecovery = useLibraryPosterRecovery({
@@ -414,6 +415,8 @@ export default function ChatCreationWorkspace({
   const threadRequestSequenceRef = useRef(0);
   const latestAcceptedThreadSequenceRef = useRef(0);
   const loadStartedRef = useRef(false);
+  const loadInFlightRef = useRef<Promise<void> | null>(null);
+  const loadSequenceRef = useRef(0);
   const productionGalleryLoadedRef = useRef(false);
 
   useEffect(() => {
@@ -483,93 +486,112 @@ export default function ChatCreationWorkspace({
   }, [acceptThreadResponse]);
 
   const load = useCallback(async () => {
-    setError(null);
-    try {
-      if (productionPreview) {
-        const [threadsResult, capabilitiesResult, library] = await Promise.all([
-          listCreationThreads().catch((cause) => {
-            if (cause instanceof CreationThreadError && cause.status === 404) return [];
-            throw cause;
-          }),
-          getCreationCapabilities().catch((cause) => {
-            if (cause instanceof CreationThreadError && cause.status === 404) return { formats: [] };
-            throw cause;
-          }),
-          listMyJobs({ limit: 24 }),
-        ]);
-        const planItemIds = [...new Set(library.jobs.flatMap((job) => job.content_plan_item_id ? [job.content_plan_item_id] : []))];
-        const planItems = await Promise.all(planItemIds.map(async (itemId) => {
-          try {
-            return [itemId, await getPlanItemFresh(itemId)] as const;
-          } catch {
-            return [itemId, undefined] as const;
+    if (loadInFlightRef.current) return loadInFlightRef.current;
+    const loadSequence = ++loadSequenceRef.current;
+    const isCurrentLoad = () => loadSequence === loadSequenceRef.current;
+    setInitialLoading(true);
+    let loadPromise: Promise<void>;
+    loadPromise = (async () => {
+      setError(null);
+      try {
+        if (productionPreview) {
+          const [threadsResult, capabilitiesResult, library] = await Promise.all([
+            listCreationThreads().catch((cause) => {
+              if (cause instanceof CreationThreadError && cause.status === 404) return [];
+              throw cause;
+            }),
+            getCreationCapabilities().catch((cause) => {
+              if (cause instanceof CreationThreadError && cause.status === 404) return { formats: [] };
+              throw cause;
+            }),
+            listMyJobs({ limit: 24 }),
+          ]);
+          const planItemIds = [...new Set(library.jobs.flatMap((job) => job.content_plan_item_id ? [job.content_plan_item_id] : []))];
+          const planItems = await Promise.all(planItemIds.map(async (itemId) => {
+            try {
+              return [itemId, await getPlanItemFresh(itemId)] as const;
+            } catch {
+              return [itemId, undefined] as const;
+            }
+          }));
+          const planItemById = new Map(planItems);
+          const liveThreads = threadsResult.map((item) => ({ ...item, title: inferredProductionTitle(item) }));
+          const linkedJobIds = new Set(liveThreads.flatMap((item) => item.active_job_id ? [item.active_job_id] : []));
+          const libraryThreads = library.jobs
+            .filter((job) => !linkedJobIds.has(job.id))
+            .map((job) => productionLibraryThread(
+              job,
+              job.content_plan_item_id ? planItemById.get(job.content_plan_item_id) : undefined,
+            ));
+          const listed = [...liveThreads, ...libraryThreads]
+            .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at));
+          if (!isCurrentLoad()) return;
+          productionGalleryLoadedRef.current = true;
+          setGalleryJobs(library.jobs);
+          setAvailableFormats(capabilitiesResult.formats.map((item) => item.edit_format));
+          setCapabilities(capabilitiesResult);
+          setProjects(listed);
+          const requestedId = initialThreadId?.trim() || null;
+          const summary = requestedId
+            ? listed.find((item) => item.id === requestedId)
+            : listed[0];
+          if (!summary) {
+            activeThreadIdRef.current = null;
+            setThread(null);
+            setThreadUnavailable(Boolean(requestedId));
+            return;
           }
-        }));
-        const planItemById = new Map(planItems);
-        const liveThreads = threadsResult.map((item) => ({ ...item, title: inferredProductionTitle(item) }));
-        const linkedJobIds = new Set(liveThreads.flatMap((item) => item.active_job_id ? [item.active_job_id] : []));
-        const libraryThreads = library.jobs
-          .filter((job) => !linkedJobIds.has(job.id))
-          .map((job) => productionLibraryThread(
-            job,
-            job.content_plan_item_id ? planItemById.get(job.content_plan_item_id) : undefined,
-          ));
-        const listed = [...liveThreads, ...libraryThreads]
-          .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at));
-        productionGalleryLoadedRef.current = true;
-        setGalleryJobs(library.jobs);
-        setAvailableFormats(capabilitiesResult.formats.map((item) => item.edit_format));
-        setCapabilities(capabilitiesResult);
-        setProjects(listed);
-        const requestedId = initialThreadId?.trim() || null;
-        const summary = requestedId
-          ? listed.find((item) => item.id === requestedId)
-          : listed[0];
-        if (!summary) {
-          activeThreadIdRef.current = null;
-          setThread(null);
-          setThreadUnavailable(Boolean(requestedId));
+          const hydrated = isProductionLibraryThread(summary)
+            ? summary
+            : await refreshCreationThread(summary.id);
+          const next = { ...hydrated, title: inferredProductionTitle(hydrated) };
+          if (!isCurrentLoad()) return;
+          activateThread(next);
           return;
         }
-        const hydrated = isProductionLibraryThread(summary)
-          ? summary
-          : await refreshCreationThread(summary.id);
-        const next = { ...hydrated, title: inferredProductionTitle(hydrated) };
+        const [listed, capabilities] = await Promise.all([listCreationThreads(), getCreationCapabilities()]);
+        if (!isCurrentLoad()) return;
+        setAvailableFormats(capabilities.formats.map((item) => item.edit_format));
+        setCapabilities(capabilities);
+        setProjects(listed);
+        const requestedId = initialThreadId?.trim() || null;
+        const current = activeThreadIdRef.current
+          ? listed.find((item) => item.id === activeThreadIdRef.current)
+          : null;
+        const summary = requestedId
+          ? listed.find((item) => item.id === requestedId)
+          : current ?? listed.find((item) => item.status === "active");
+        const requestSequence = ++threadRequestSequenceRef.current;
+        const next = requestedId
+          ? await refreshCreationThread(requestedId)
+          : summary ? await refreshCreationThread(summary.id) : await createCreationThread();
+        if (!isCurrentLoad()) return;
+        latestAcceptedThreadSequenceRef.current = requestSequence;
         activateThread(next);
-        return;
+        if (!requestedId) {
+          const destination = galleryOpen
+            ? `/plan/${next.id}?view=gallery`
+            : `/plan/${next.id}`;
+          router.replace(destination, { scroll: false });
+        }
+        if (!current && !listed.some((item) => item.id === next.id)) setProjects((items) => [next, ...items]);
+      } catch (cause) {
+        if (!isCurrentLoad()) return;
+        if (initialThreadId && cause instanceof CreationThreadError && cause.status === 404) {
+          activeThreadIdRef.current = null;
+          setThread(null);
+          setThreadUnavailable(true);
+          return;
+        }
+        setError("I couldn’t open this creation chat. Check your connection and try again.");
       }
-      const [listed, capabilities] = await Promise.all([listCreationThreads(), getCreationCapabilities()]);
-      setAvailableFormats(capabilities.formats.map((item) => item.edit_format));
-      setCapabilities(capabilities);
-      setProjects(listed);
-      const requestedId = initialThreadId?.trim() || null;
-      const current = thread ? listed.find((item) => item.id === thread.id) : null;
-      const summary = requestedId
-        ? listed.find((item) => item.id === requestedId)
-        : current ?? listed.find((item) => item.status === "active");
-      const requestSequence = ++threadRequestSequenceRef.current;
-      const next = requestedId
-        ? await refreshCreationThread(requestedId)
-        : summary ? await refreshCreationThread(summary.id) : await createCreationThread();
-      latestAcceptedThreadSequenceRef.current = requestSequence;
-      activateThread(next);
-      if (!requestedId) {
-        const destination = galleryOpen
-          ? `/plan/${next.id}?view=gallery`
-          : `/plan/${next.id}`;
-        router.replace(destination, { scroll: false });
-      }
-      if (!current && !listed.some((item) => item.id === next.id)) setProjects((items) => [next, ...items]);
-    } catch (cause) {
-      if (initialThreadId && cause instanceof CreationThreadError && cause.status === 404) {
-        activeThreadIdRef.current = null;
-        setThread(null);
-        setThreadUnavailable(true);
-        return;
-      }
-      setError("I couldn’t open this creation chat. Check your connection and try again.");
-    }
-  }, [activateThread, galleryOpen, initialThreadId, productionPreview, router, thread]);
+    })().finally(() => {
+      if (isCurrentLoad()) setInitialLoading(false);
+      if (loadInFlightRef.current === loadPromise) loadInFlightRef.current = null;
+    });
+    loadInFlightRef.current = loadPromise;
+    return loadPromise;
+  }, [activateThread, galleryOpen, initialThreadId, productionPreview, router]);
 
   useEffect(() => {
     // React Strict Mode replays effects in local development. Keep the initial
@@ -1111,7 +1133,7 @@ export default function ChatCreationWorkspace({
   }
 
   async function startNew() {
-    if (productionPreview || busy || thinking || uploading) return;
+    if (productionPreview || (initialLoading && !thread) || busy || thinking || uploading) return;
     const previousThreadId = activeThreadIdRef.current;
     setBusy(true);
     setError(null);
@@ -1205,7 +1227,7 @@ export default function ChatCreationWorkspace({
         <span className="flex items-center gap-2 text-lg font-semibold"><Sparkles className="size-4" /> Kria</span>
         <Button type="button" variant="ghost" size="icon" className="size-11 md:size-9" aria-label="Hide project sidebar" onClick={() => setSidebarHidden(true)}><PanelLeftClose /></Button>
       </div>
-      <Button type="button" className="mt-6 min-h-11 justify-start" disabled={productionPreview || busy || thinking || uploading} title={productionPreview ? "Production data is read-only in this preview." : undefined} onClick={() => void startNew()}><Film /> New video</Button>
+      <Button type="button" className="mt-6 min-h-11 justify-start" disabled={productionPreview || (initialLoading && !thread) || busy || thinking || uploading} title={productionPreview ? "Production data is read-only in this preview." : undefined} onClick={() => void startNew()}><Film /> New video</Button>
       <div className="mt-8 flex items-center justify-between px-2"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Projects</p><Button type="button" variant="ghost" className="min-h-11 px-2 text-xs text-muted-foreground hover:text-foreground md:h-8 md:min-h-8" disabled={busy || thinking || uploading} onClick={openGallery}>Gallery</Button></div>
       <nav className="mt-2 space-y-1 overflow-y-auto" aria-label="Recent projects">
         {projects.slice(0, 10).map((project) => {
@@ -1334,7 +1356,7 @@ export default function ChatCreationWorkspace({
       </header>
       <div ref={transcriptRef} role="log" aria-label="Conversation history" aria-live="polite" aria-relevant="additions text" tabIndex={0} className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]"><div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-6 sm:px-8">
         {!thread && !error ? <div className="space-y-3" role="status"><div className="h-5 w-40 motion-safe:animate-pulse rounded bg-muted" /><div className="h-20 w-full motion-safe:animate-pulse rounded bg-muted" /></div> : null}
-        {!thread && error ? <ChatArtifactCard title="Creation chat couldn’t load" description="Your projects are safe. Check your connection, then try again."><Button type="button" variant="outline" onClick={() => void load()}><RefreshCw /> Retry</Button></ChatArtifactCard> : null}
+        {!thread && error ? <ChatArtifactCard title="Creation chat couldn’t load" description="Your projects are safe. Check your connection, then try again."><Button type="button" variant="outline" disabled={initialLoading} onClick={() => void load()}><RefreshCw /> {initialLoading ? "Retrying…" : "Retry"}</Button></ChatArtifactCard> : null}
         {messages.map((message, index) => <div key={message.id} ref={index === messages.length - 1 ? latestMessageRef : undefined} className="space-y-3">{message.content ? <ChatBubble role={message.role}>{message.content}</ChatBubble> : null}{message.artifact === "format" && (!format || formatPickerOpen) ? formatArtifact : null}{message.artifact === "upload" && !thread?.active_job_id ? <>{uploadArtifact}{visualsArtifact}</> : null}{message.artifact === "voiceover" && !thread?.active_job_id ? uploadArtifact : null}{(message.artifact === "confirmation" || (message.artifact === "revision" && !hasReady)) && canConfirmDirection ? <ChatArtifactCard badge={<Badge variant="secondary">Creative direction</Badge>} title={`${creationFormatLabel(format)} is ready to make`} description={typeof thread?.state.intent === "string" && thread.state.intent ? thread.state.intent : "I’ll find the strongest opening and shape your footage into a concise first cut."}><Button type="button" className="min-h-11 w-full" disabled={productionPreview || busy || clipCount === 0} onClick={() => void confirm("generate")}><Sparkles />{busy ? "Starting…" : "Create this video"}</Button></ChatArtifactCard> : null}{message.artifact === "revision" && hasReady ? <ChatArtifactCard badge={<Badge variant="secondary">Revision ready</Badge>} title="Apply this direction?" description="This creates a new generation from the finished cut."><Button type="button" className="min-h-11 w-full" disabled={productionPreview || busy} onClick={() => void confirm("generate", { base_generation: thread?.job?.id })}><RefreshCw /> Create revision</Button></ChatArtifactCard> : null}{message.artifact === "progress" && thread?.active_job_id && !creationJobFailed(thread) ? <RenderStatusCard thread={thread} /> : null}{message.artifact === "failure" && thread && creationJobFailed(thread) && !hasPendingConfirmation ? <FailureStatusCard thread={thread} busy={busy} readOnly={productionPreview} onRetry={() => void confirm("retry")} onAdjust={() => setInput("Try a different opening and keep the pacing quick.")} /> : null}{message.artifact === "result" && thread && hasReady ? <ReadyStatusCard thread={thread} isPartial={isPartial} selectedReadyVariant={selectedReadyVariant} selectedFailedVariant={selectedFailedVariant} busy={busy} readOnly={productionPreview} onSelectVariant={(id) => void selectVariant(id)} onOpenEditor={() => { setEditorOpen(true); setMobileTab("editor"); }} onRetryVariant={(id) => void confirm("retry", { variant_id: id })} /> : null}</div>)}
         {thinking ? <ChatThinking /> : null}
       </div></div>
