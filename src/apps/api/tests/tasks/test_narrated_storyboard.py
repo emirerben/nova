@@ -50,6 +50,184 @@ def test_storyboard_text_elements_keep_voiceover_timeline_and_spoken_score() -> 
     )
 
 
+@pytest.mark.parametrize(
+    ("spoken_words", "expected"),
+    [
+        (["The", "game", "score", "was", "one", "nil"], "one nil"),
+        (["The", "match", "result", "was", "one", "all"], "one all"),
+        (["The", "final", "score", "was", "two", "one"], "two one"),
+        (["The", "match", "score", "was", "six", "to", "four"], "six to four"),
+        (["The", "game", "score", "was", "6", "to", "4"], "6 to 4"),
+    ],
+)
+def test_transcript_score_fallback_ignores_missing_model_text_and_anchors(
+    spoken_words: list[str], expected: str
+) -> None:
+    transcript = Transcript(
+        words=[
+            Word(word, index * 0.2, (index + 1) * 0.2, 1.0)
+            for index, word in enumerate(spoken_words)
+        ],
+        language="en",
+    )
+    elements = gb._narrated_storyboard_text_elements(
+        transcript=transcript,
+        step_timings=[SimpleNamespace(step_id="step_0", start_s=0.0, end_s=2.0)],
+        clip_assignments=[],
+        clip_id_by_path={},
+        creator_request="Add the scores mentioned in the audio.",
+        explicit_opening_title=None,
+        storyboard={"overlays": [{"kind": "score", "text": None}]},
+    )
+
+    score_elements = [
+        item
+        for item in elements
+        if item["source_params"]
+        .get("narrated_storyboard", "")
+        .startswith("narrated_storyboard:score:")
+    ]
+    assert [item["text"] for item in score_elements] == [expected]
+    assert score_elements[0]["source_params"]["transcript_grounded"] is True
+
+
+def test_transcript_score_fallback_ignores_hallucinated_model_text() -> None:
+    transcript = Transcript(
+        words=[
+            Word("The", 0.0, 0.2, 1.0),
+            Word("match", 0.2, 0.4, 1.0),
+            Word("score", 0.4, 0.6, 1.0),
+            Word("was", 0.6, 0.8, 1.0),
+            Word("one", 0.8, 1.0, 1.0),
+            Word("nil", 1.0, 1.2, 1.0),
+        ],
+        language="en",
+    )
+    elements = gb._narrated_storyboard_text_elements(
+        transcript=transcript,
+        step_timings=[SimpleNamespace(step_id="step_0", start_s=0.0, end_s=2.0)],
+        clip_assignments=[],
+        clip_id_by_path={},
+        creator_request="Add the scores mentioned in the audio.",
+        explicit_opening_title=None,
+        storyboard={"overlays": [{"kind": "score", "text": "99-99"}]},
+    )
+
+    assert [item["text"] for item in elements] == ["one nil"]
+
+
+def test_transcript_score_fallback_repairs_a_narrow_model_anchor() -> None:
+    transcript = Transcript(
+        words=[
+            Word("The", 0.0, 0.2, 1.0),
+            Word("match", 0.2, 0.4, 1.0),
+            Word("score", 0.4, 0.6, 1.0),
+            Word("was", 0.6, 0.8, 1.0),
+            Word("one", 0.8, 1.0, 1.0),
+            Word("nil", 1.0, 1.2, 1.0),
+        ],
+        language="en",
+    )
+    elements = gb._narrated_storyboard_text_elements(
+        transcript=transcript,
+        step_timings=[SimpleNamespace(step_id="step_0", start_s=0.0, end_s=2.0)],
+        clip_assignments=[],
+        clip_id_by_path={},
+        creator_request="Add the scores mentioned in the audio.",
+        explicit_opening_title=None,
+        storyboard={
+            "overlays": [
+                {
+                    "kind": "score",
+                    "anchor_word_id": "w000004",
+                    "end_word_id": "w000004",
+                    "text": None,
+                }
+            ]
+        },
+    )
+
+    assert [item["text"] for item in elements] == ["one nil"]
+
+
+def test_broad_model_anchor_is_canonicalized_to_score_phrase() -> None:
+    transcript = Transcript(
+        words=[
+            Word("The", 0.0, 0.2, 1.0),
+            Word("match", 0.2, 0.4, 1.0),
+            Word("score", 0.4, 0.6, 1.0),
+            Word("was", 0.6, 0.8, 1.0),
+            Word("one", 0.8, 1.0, 1.0),
+            Word("nil", 1.0, 1.2, 1.0),
+        ],
+        language="en",
+    )
+    elements = gb._narrated_storyboard_text_elements(
+        transcript=transcript,
+        step_timings=[SimpleNamespace(step_id="step_0", start_s=0.0, end_s=2.0)],
+        clip_assignments=[],
+        clip_id_by_path={},
+        creator_request="Add the scores mentioned in the audio.",
+        explicit_opening_title=None,
+        storyboard={
+            "overlays": [
+                {
+                    "kind": "score",
+                    "anchor_word_id": "w000002",
+                    "end_word_id": "w000005",
+                    "text": None,
+                }
+            ]
+        },
+    )
+
+    assert [item["text"] for item in elements] == ["one nil"]
+    assert elements[0]["source_params"]["narrated_storyboard"] == ("narrated_storyboard:score:4")
+
+
+def test_production_sports_storyline_materializes_every_spoken_score() -> None:
+    spoken_words = (
+        "Player one starts strongly with an ace and wins the opening game one nil "
+        "Player two answers with a long rally to level the score at one all "
+        "In the final game player one lands the winner and takes the match two one"
+    ).split()
+    transcript = Transcript(
+        words=[
+            Word(word, index * 0.2, (index + 1) * 0.2, 1.0)
+            for index, word in enumerate(spoken_words)
+        ],
+        language="en",
+    )
+    elements = gb._narrated_storyboard_text_elements(
+        transcript=transcript,
+        step_timings=[SimpleNamespace(step_id="step_0", start_s=0.0, end_s=8.0)],
+        clip_assignments=[],
+        clip_id_by_path={},
+        creator_request=(
+            "Match the content with the videos. Add intro texts, add a placeholder name for "
+            "everyone involved so I can update to show which video belongs to which player. "
+            "Add the scores that I mentioned in the audio as well"
+        ),
+        explicit_opening_title=None,
+        storyboard={
+            "overlays": [
+                {"kind": "score", "anchor_word_id": "w000012", "text": None},
+                {"kind": "score", "anchor_word_id": "w000025", "text": None},
+                {"kind": "score", "anchor_word_id": "w000039", "text": None},
+            ]
+        },
+    )
+
+    score_text = [
+        item["text"]
+        for item in elements
+        if item["source_params"]
+        .get("narrated_storyboard", "")
+        .startswith("narrated_storyboard:score:")
+    ]
+    assert score_text == ["one nil", "one all", "two one"]
+
+
 def test_narrated_text_reburn_uses_caption_compositor() -> None:
     assert gb._should_compose_subtitled_final(
         {
