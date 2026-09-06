@@ -58,6 +58,11 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
         "VisualTreatmentPlannerAgent",
     ),
     ("nova.compose.scene_matcher", "app.agents.scene_matcher", "SceneMatcherAgent"),
+    (
+        "nova.compose.narrated_storyboard",
+        "app.agents.narrated_storyboard",
+        "NarratedStoryboardAgent",
+    ),
     ("nova.compose.sequence_emphasis", "app.agents.sequence_emphasis", "SequenceEmphasisAgent"),
     (
         "nova.compose.sequence_quote",

@@ -94,6 +94,7 @@ from app.services.creator_craft import (
     build_media_overlay_craft_editor_commit,
     craft_preview,
 )
+from app.services.creator_errors import CreatorCapabilityError, CreatorStrategyError
 from app.services.creator_sessions import (
     ACTIVE_CREATOR_PHASES,
     append_event,
@@ -499,7 +500,8 @@ def _apply_explicit_render_intent(
     )
     if title_match is None:
         title_match = re.search(
-            r"\b(?:opening\s+)?(?:title|intro|hook)\s*(?:text|copy)?\s*"
+            r"\b(?:opening\s+)?(?:title|intro|hook)(?!\s+(?:texts|copies)\b)"
+            r"\s*(?:text|copy)?\b\s*"
             r"(?:is|to|should\s+say|saying|that\s+says|which\s+says|as|:)?\s*"
             r"[\"'“‘](.{1,280}?)[\"'”’]",
             request,
@@ -508,15 +510,26 @@ def _apply_explicit_render_intent(
     if title_match is None:
         # Chat-first users commonly omit quoting for a short title. Stop at
         # the first comma or style qualifier so the rest of the request can
-        # never become on-screen copy.
+        # never become on-screen copy. Unlike quoted copy, an unquoted title
+        # needs an explicit connector ("is", "should say", or a colon); a
+        # bare "add intro text" is a treatment directive, not literal pixels.
         title_match = re.search(
-            r"\b(?:opening\s+)?(?:title|intro|hook)\s*(?:text|copy)?\s*"
-            r"(?:is|to|should\s+say|saying|that\s+says|which\s+says|as|:)?\s*"
+            r"\b(?:opening\s+)?(?:title|intro|hook)(?!\s+(?:texts|copies)\b)"
+            r"\s*(?:text|copy)?\b\s*"
+            r"(?:is|to|should\s+say|saying|that\s+says|which\s+says|as|:)\s*"
             r"([A-Za-z0-9][^,\n]{0,279}?)(?=\s*(?:,|$)|\s+(?:using|with|font|colou?r)\b"
             r"|\s+(?:use|make|set)\b(?=[^.]{0,80}\b(?:font|text|colou?r)\b))",
             request,
             re.IGNORECASE,
         )
+    if title_match is not None:
+        clause_start = max(
+            request.rfind(delimiter, 0, title_match.start())
+            for delimiter in (".", "!", "?", ";", ",")
+        )
+        clause_prefix = request[clause_start + 1 : title_match.start()]
+        if re.search(r"\b(?:do\s+not|don't|dont|without|no)\b", clause_prefix, re.IGNORECASE):
+            title_match = None
     if title_match and title_match.group(1).strip():
         updates["opening_title"] = title_match.group(1).strip()
 
@@ -1450,9 +1463,19 @@ async def _run_planning_turn(
                 creator_request,
                 manifest=planning_manifest,
             )
-            strategy = normalize_creator_strategy_media(
-                planning_manifest, strategy, repair_model_output=True
-            )
+            try:
+                strategy = normalize_creator_strategy_media(
+                    planning_manifest, strategy, repair_model_output=True
+                )
+            except (MixedMediaTimingUnavailableError, MontageCadenceUnavailableError):
+                raise
+            except ValueError as exc:
+                if "edit format" in str(exc) and "unavailable" in str(exc):
+                    raise CreatorCapabilityError(
+                        str(exc),
+                        edit_format=strategy.edit_format,
+                    ) from exc
+                raise CreatorStrategyError(str(exc), edit_format=strategy.edit_format) from exc
             locked.active_plan = compile_active_plan(
                 locked,
                 manifest=planning_manifest,
@@ -1482,6 +1505,50 @@ async def _run_planning_turn(
                     },
                 )
                 return await _response(db, locked)
+            if isinstance(exc, CreatorCapabilityError):
+                edit_format = exc.edit_format or strategy.edit_format
+                locked.status = "failed"
+                locked.last_error = {
+                    "code": exc.code,
+                    "edit_format": edit_format,
+                    "message": str(exc)[:300],
+                }
+                await append_event(
+                    db,
+                    locked,
+                    event_type="assistant_error",
+                    payload={
+                        "message": (
+                            f"{edit_format} is not available for this Creator rollout. "
+                            "No fallback edit was rendered."
+                        ),
+                        "code": exc.code,
+                        "edit_format": edit_format,
+                    },
+                )
+                return await _response(db, locked)
+            if isinstance(exc, CreatorStrategyError):
+                edit_format = exc.edit_format or strategy.edit_format
+                locked.status = "failed"
+                locked.last_error = {
+                    "code": exc.code,
+                    "edit_format": edit_format,
+                    "message": str(exc)[:300],
+                }
+                await append_event(
+                    db,
+                    locked,
+                    event_type="assistant_error",
+                    payload={
+                        "message": (
+                            "I couldn't apply that exact creative direction to this "
+                            f"{edit_format} edit. No fallback edit was rendered."
+                        ),
+                        "code": exc.code,
+                        "edit_format": edit_format,
+                    },
+                )
+                return await _response(db, locked)
             if isinstance(exc, MontageCadenceUnavailableError):
                 await _record_cadence_unavailable(db, locked, exc)
                 return await _response(db, locked)
@@ -1505,9 +1572,12 @@ async def _run_planning_turn(
                 )
                 return await _response(db, locked)
             if _strict_creator_format(strategy.edit_format):
+                # Any real format-availability failure is classified above as
+                # CreatorCapabilityError. An untyped ValueError here is a bad
+                # treatment/strategy and must never masquerade as rollout state.
                 locked.status = "failed"
                 locked.last_error = {
-                    "code": "edit_format_unavailable",
+                    "code": "strategy_invalid",
                     "edit_format": strategy.edit_format,
                     "message": str(exc)[:300],
                 }
@@ -1517,10 +1587,10 @@ async def _run_planning_turn(
                     event_type="assistant_error",
                     payload={
                         "message": (
-                            f"{strategy.edit_format} is not available for this Creator rollout. "
-                            "No fallback edit was rendered."
+                            "I couldn't apply that creative treatment to this "
+                            f"{strategy.edit_format} edit. Edit the direction and try again."
                         ),
-                        "code": "edit_format_unavailable",
+                        "code": "strategy_invalid",
                         "edit_format": strategy.edit_format,
                     },
                 )
@@ -2262,6 +2332,7 @@ async def confirm_creator_plan_controller(
                 int(plan_row.ownership_epoch or 0),
                 creator_strategy=edit_plan.strategy.model_dump(mode="json", exclude_none=True),
                 creator_clip_order=preserved_clip_order,
+                creator_request=str(active.get("creator_request") or "")[:1000],
             )
             if outcome.outcome == "already_active":
                 return await _concurrent_render_response(

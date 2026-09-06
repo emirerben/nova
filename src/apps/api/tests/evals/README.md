@@ -25,6 +25,7 @@ pytest tests/evals/test_clip_metadata_evals.py -v --with-judge
 pytest tests/evals/test_transcript_evals.py -v --with-judge
 pytest tests/evals/test_platform_copy_evals.py -v --with-judge
 pytest tests/evals/test_audio_template_evals.py -v --with-judge
+pytest tests/evals/test_narrated_storyboard_evals.py -v --with-judge
 ```
 
 ## What gets checked
@@ -47,6 +48,7 @@ pytest tests/evals/test_audio_template_evals.py -v --with-judge
 | `nova.audio.retake_detector` | ✓ | `rubrics/retake_detector.md` | hand-authored golden only (spans not persisted); incl. TR/EN restarts + negative fixtures gated by `meta.expect_empty` | — |
 | `nova.creator.main` | ✓ | `rubrics/main_creator.md` | hand-authored golden + exported | — |
 | `nova.compose.sfx_placement` | ✓ | `rubrics/sfx_placement.md` | hand-authored golden (visual moments) | — |
+| `nova.compose.narrated_storyboard` | ✓ | `rubrics/narrated_storyboard.md` | hand-authored sports, non-sports, and adversarial golden fixtures | `Job.assembly_plan.variants[].narrated_storyboard` |
 
 ## Layer-2 text-overlay pipeline eval
 

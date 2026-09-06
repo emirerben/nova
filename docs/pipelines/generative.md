@@ -155,6 +155,8 @@ preset secrets empty; stored assignments remain pinned.
 
 - `src/apps/api/app/tasks/generative_build.py` — `orchestrate_generative_job` Celery
   task
+- `src/apps/api/app/agents/narrated_storyboard.py` — transcript-grounded narrated
+  clip matching and editable overlay planner
 - `src/apps/api/app/pipeline/look_presets.py` — canonical validation and shared
   FFmpeg graph for source-media looks; `none` is an exact bypass.
 - `src/apps/api/app/pipeline/generative_overlays.py` — intro overlay builder
@@ -474,6 +476,18 @@ lanes, same as montage variants — still behind `SOUND_EFFECTS_ENABLED` /
   CURRENT video, so a save racing an in-flight caption reburn could silently
   drop the caption edit. Legacy variants without a cached base fall through to
   the fast pass.
+
+### Narrated storyboard rollout
+
+When `NARRATED_STORYBOARD_ENABLED=true`, narrated renders run clip metadata analysis
+and `NarratedStoryboardAgent` to match analyzed visuals to the existing Whisper word
+timeline. The agent may propose one bounded intro title but never owns timeline,
+participant, or score copy: the worker preserves `narrated_timings`, derives score
+overlays only from transcript-grounded number spans, and persists stable editable
+`PLAYER N` placeholders as TextElements. Render
+order is caption-free base → TextElements → narrated captions. If analysis or the
+agent fails, phrase segmentation/upload order remains the deterministic fallback.
+The backend-only flag defaults false and must be set on API and worker together.
 
 Supersession discipline: every caption dispatch mints a `render_generation_id`
 and commits BEFORE enqueue (R1-1) — the reburn's start write is token-checked,

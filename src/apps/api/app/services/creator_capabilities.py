@@ -28,6 +28,8 @@ from app.agents._schemas.creator_agent import (
 from app.agents._schemas.creator_policy import (
     CAPABILITY_DRAFT_GUIDED_PROPOSAL,
     MAX_MAIN_CREATOR_SELECTED_MEDIA,
+    MixedMediaTimingUnavailableError,
+    MontageCadenceUnavailableError,
     effective_render_program,
     normalize_creator_strategy_media,
 )
@@ -38,6 +40,7 @@ from app.agents._schemas.edit_format import (
     render_program_for_intent,
 )
 from app.config import settings
+from app.services.creator_errors import CreatorCapabilityError, CreatorStrategyError
 
 CAPABILITY_SET_ITEM_INTENT = "set_item_intent"
 CAPABILITY_GUIDED_STORY = "guided_story"
@@ -48,7 +51,7 @@ CAPABILITY_CAPTION_STYLE = "caption_style"
 CAPABILITY_AUTOMATIC_CUT = "automatic_cut"
 
 
-class CreatorSfxUnavailableError(ValueError):
+class CreatorSfxUnavailableError(CreatorStrategyError):
     """An explicit licensed-SFX request cannot be fulfilled safely."""
 
 
@@ -318,7 +321,20 @@ def compile_strategy_to_plan(
     if an agent asks for one.
     """
 
-    strategy = normalize_creator_strategy_media(manifest, strategy)
+    try:
+        strategy = normalize_creator_strategy_media(manifest, strategy)
+    except (MixedMediaTimingUnavailableError, MontageCadenceUnavailableError):
+        # These established, actionable policy errors have dedicated Creator
+        # recovery flows. Preserve their types instead of flattening them into
+        # the generic invalid-strategy bucket.
+        raise
+    except ValueError as exc:
+        if "edit format" in str(exc) and "unavailable" in str(exc):
+            raise CreatorCapabilityError(
+                str(exc),
+                edit_format=strategy.edit_format,
+            ) from exc
+        raise CreatorStrategyError(str(exc)) from exc
     licensed_sfx = strategy.licensed_sfx
     if licensed_sfx is not None:
         if not manifest.capabilities.get(
@@ -339,16 +355,14 @@ def compile_strategy_to_plan(
                 "licensed_sfx": licensed_sfx.model_copy(update={"effect_id": resolved.catalog_id})
             }
         )
-    if strategy.opening_title and strategy.edit_format in {
-        "subtitled",
-        "narrated",
-        "narrated_planned",
-        "narrated_ready",
-    }:
-        # These lanes own captions/voiceover text and do not render a hero
-        # intro. Fail at the plan boundary rather than silently dropping a
-        # confirmed opening title in the worker.
-        raise ValueError(f"opening_title is not supported by the {strategy.edit_format} renderer")
+    if strategy.opening_title and strategy.edit_format == "subtitled":
+        # Caption-owned subtitled edits still do not render a hero intro. Fail
+        # at the plan boundary rather than silently dropping confirmed copy.
+        raise CreatorStrategyError(
+            f"opening_title is not supported by the {strategy.edit_format} renderer",
+            code="unsupported_treatment",
+            edit_format=strategy.edit_format,
+        )
     strategy_format = coerce_edit_format(strategy.edit_format)
     effective_program = strategy.render_program
     selected_media_ids = list(strategy.selected_media_ids)
@@ -461,6 +475,8 @@ __all__ = [
     "CAPABILITY_NATIVE_RENDER",
     "CAPABILITY_SELECT_READY_VARIANT",
     "CAPABILITY_SET_ITEM_INTENT",
+    "CreatorCapabilityError",
+    "CreatorStrategyError",
     "CreatorSfxUnavailableError",
     "MAX_MAIN_CREATOR_SELECTED_MEDIA",
     "build_creator_manifest",

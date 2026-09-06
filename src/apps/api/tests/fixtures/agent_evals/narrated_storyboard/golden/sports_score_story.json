@@ -1,0 +1,43 @@
+{
+  "agent": "nova.compose.narrated_storyboard",
+  "prompt_version": "2026-09-06.4",
+  "input": {
+    "words": [
+      {"word_id":"w000000","text":"First","start_s":0.0,"end_s":0.3},
+      {"word_id":"w000001","text":"Maya","start_s":0.3,"end_s":0.6},
+      {"word_id":"w000002","text":"served","start_s":0.6,"end_s":0.9},
+      {"word_id":"w000003","text":"and","start_s":0.9,"end_s":1.1},
+      {"word_id":"w000004","text":"won","start_s":1.1,"end_s":1.3},
+      {"word_id":"w000005","text":"six","start_s":1.3,"end_s":1.6},
+      {"word_id":"w000006","text":"four","start_s":1.6,"end_s":1.9},
+      {"word_id":"w000007","text":"Then","start_s":2.2,"end_s":2.5},
+      {"word_id":"w000008","text":"Leo","start_s":2.5,"end_s":2.8},
+      {"word_id":"w000009","text":"hit","start_s":2.8,"end_s":3.0},
+      {"word_id":"w000010","text":"the","start_s":3.0,"end_s":3.1},
+      {"word_id":"w000011","text":"winner","start_s":3.1,"end_s":3.5}
+    ],
+    "segments": [
+      {"segment_id":"seg_0","start_s":0.0,"end_s":2.2,"transcript":"First Maya served and won six four"},
+      {"segment_id":"seg_1","start_s":2.2,"end_s":3.5,"transcript":"Then Leo hit the winner"}
+    ],
+    "clips": [
+      {"clip_id":"clip-serve","summary":"tennis player serves","subject":"player serving","duration_s":8.0,"best_moments":[{"start_s":2.0,"end_s":4.0,"description":"serve lands"}]},
+      {"clip_id":"clip-winner","summary":"player hits a forehand winner","subject":"player at baseline","duration_s":7.0,"best_moments":[{"start_s":3.0,"end_s":5.0,"description":"winning forehand"}]}
+    ],
+    "creator_request":"Match the storyline. Add intro texts, player placeholders, and the scores from the audio.",
+    "language":"en"
+  },
+  "raw_text":"{\"matches\":[{\"segment_id\":\"seg_0\",\"clip_id\":\"clip-serve\",\"source_start_s\":2.0,\"confidence\":\"high\"},{\"segment_id\":\"seg_1\",\"clip_id\":\"clip-winner\",\"source_start_s\":3.0,\"confidence\":\"high\"}],\"overlays\":[{\"kind\":\"intro\",\"text\":\"Match Point Stories\",\"anchor_word_id\":\"w000000\"},{\"kind\":\"placeholder\",\"anchor_word_id\":\"w000001\",\"placeholder_index\":1},{\"kind\":\"score\",\"anchor_word_id\":\"w000005\",\"end_word_id\":\"w000006\"}]}",
+  "output": {
+    "matches": [
+      {"segment_id":"seg_0","clip_id":"clip-serve","source_start_s":2.0,"confidence":"high","reason":""},
+      {"segment_id":"seg_1","clip_id":"clip-winner","source_start_s":3.0,"confidence":"high","reason":""}
+    ],
+    "overlays": [
+      {"kind":"intro","anchor_word_id":"w000000","end_word_id":null,"placeholder_index":null,"text":"Match Point Stories","reason":""},
+      {"kind":"placeholder","anchor_word_id":"w000001","end_word_id":null,"placeholder_index":1,"text":null,"reason":""},
+      {"kind":"score","anchor_word_id":"w000005","end_word_id":"w000006","placeholder_index":null,"text":null,"reason":""}
+    ]
+  },
+  "meta": {"source":"hand_authored_golden","scenario":"sports scores and editable players"}
+}

@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.63.0.0] — 2026-09-06
+
+### Added
+- **Narrated Creator edits can now follow the voiceover's storyline.** Kria matches transcript segments to analyzed footage and can create editable intro, player-placeholder, and transcript-grounded score text, while safely falling back to the existing narrated edit when AI storyboarding is unavailable.
+
+### Fixed
+- **Creative directions such as “add intro texts” no longer become a one-letter title or a misleading rollout error.** Generic text requests remain creative intent, exact quoted titles stay exact, and planning failures offer an actionable retry without losing uploaded media.
+- **Narrated text and visual layers survive the complete editing lifecycle.** Initial renders, text and caption edits, music-bed reburns, and visual autoplan all use the same ordered compositor and retain validated storyboard assignments.
+
 ## [0.61.0.1] — 2026-09-06
 
 ### Fixed

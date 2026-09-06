@@ -6593,6 +6593,34 @@ def test_reburn_subtitled_flag_on_routes_caption_apply_through_compose(monkeypat
     assert job.assembly_plan["variants"][0]["video_path"].find("_cap_") != -1
 
 
+def test_reburn_narrated_storyboard_routes_caption_apply_through_compose(monkeypatch):
+    import uuid
+
+    monkeypatch.setattr(gb.settings, "subtitled_text_lane_enabled", False, raising=False)
+    variant = _narrated_caption_variant(
+        text_elements=[{"id": "player-1", "text": "PLAYER 1", "start_s": 0, "end_s": 1}],
+        text_elements_materialized_from="narrated_storyboard",
+    )
+    job = _FakeJob(assembly_plan={"variants": [variant]})
+    _patch_job_session(monkeypatch, job)
+    _patch_reburn_io(monkeypatch, {"called": False})
+    seen = {}
+
+    def _compose(_base_local, fresh_variant, tmpdir, **_matte_kwargs):
+        seen["variant"] = dict(fresh_variant)
+        out = f"{tmpdir}/composed.mp4"
+        with open(out, "wb") as handle:
+            handle.write(b"composed")
+        return out, None
+
+    monkeypatch.setattr(gb, "_compose_subtitled_final", _compose)
+
+    gb._run_reburn_narrated_captions(str(uuid.uuid4()), "narrated")
+
+    assert seen["variant"]["text_elements"][0]["text"] == "PLAYER 1"
+    assert job.assembly_plan["variants"][0]["render_status"] == "ready"
+
+
 def test_reburn_subtitled_persists_compositor_matte_path(monkeypatch):
     """The caption reburn must persist the matte path the compositor returns —
     the cache that keeps later behind-subject reburns download-fast instead of
@@ -6739,6 +6767,77 @@ def test_reburn_bed_level_happy_path_uses_auto_segment_assignment(monkeypatch):
     assert v["caption_cues"] == variant["caption_cues"]
 
 
+def test_reburn_bed_level_reuses_storyboard_assignment_and_source_window(monkeypatch):
+    """Changing the bed must preserve the storyboard's visual decisions."""
+    import uuid
+
+    variant = _narrated_bed_variant(
+        narrated_clip_assignments=[
+            {"step_id": "shot_1", "clip_id": "clip_1", "source_start_s": 1.25},
+            {"step_id": "shot_2", "clip_id": "clip_0", "source_start_s": 2.5},
+        ]
+    )
+    job = _FakeJobWithCandidates(
+        assembly_plan={"variants": [variant]},
+        all_candidates={
+            "voiceover_gcs_path": "voiceover-uploads/x/voice.webm",
+            "filming_guide": [],
+            "clip_paths": ["slot-uploads/a.mp4", "slot-uploads/b.mp4"],
+            "narrative_shot_count": 0,
+            "landscape_fit": "fill",
+        },
+    )
+    _patch_job_session(monkeypatch, job)
+    calls = []
+    _patch_bed_level_io(monkeypatch, assemble_calls=calls)
+
+    gb._run_reburn_narrated_bed_level(str(uuid.uuid4()), "narrated", 0.6)
+
+    assignments = calls[0]["clip_assignments"]
+    assert [assignment.clip_path.rsplit("/", 1)[-1] for assignment in assignments] == [
+        "local_1.mp4",
+        "local_0.mp4",
+    ]
+    assert [assignment.source_start_s for assignment in assignments] == [1.25, 2.5]
+
+
+def test_reburn_narrated_bed_level_keeps_text_below_captions(monkeypatch):
+    import uuid
+
+    variant = _narrated_bed_variant(
+        text_elements=[{"id": "player-1", "text": "PLAYER 1", "start_s": 0, "end_s": 1}],
+        text_elements_materialized_from="narrated_storyboard",
+    )
+    job = _FakeJobWithCandidates(
+        assembly_plan={"variants": [variant]},
+        all_candidates={
+            "voiceover_gcs_path": "voiceover-uploads/x/voice.webm",
+            "filming_guide": [],
+            "clip_paths": ["slot-uploads/a.mp4"],
+            "narrative_shot_count": 0,
+            "landscape_fit": "fill",
+        },
+    )
+    _patch_job_session(monkeypatch, job)
+    _patch_bed_level_io(monkeypatch, assemble_calls=[])
+    seen = {}
+
+    def _compose(base_local, render_variant, tmpdir, **_kwargs):
+        seen["base"] = base_local
+        seen["variant"] = render_variant
+        out = f"{tmpdir}/composed.mp4"
+        with open(out, "wb") as handle:
+            handle.write(b"composed")
+        return out, None
+
+    monkeypatch.setattr(gb, "_compose_subtitled_final", _compose)
+
+    gb._run_reburn_narrated_bed_level(str(uuid.uuid4()), "narrated", 0.4)
+
+    assert seen["variant"]["text_elements"][0]["text"] == "PLAYER 1"
+    assert job.assembly_plan["variants"][0]["render_status"] == "ready"
+
+
 def test_reburn_bed_level_uses_scripted_assignment_when_guide_has_2plus_steps(monkeypatch):
     """filming_guide has >= 2 scripted steps → _narrated_clip_assignments branch,
     mirroring _render_narrated_variant's own branch selection exactly."""
@@ -6833,6 +6932,10 @@ def test_finalize_job_preserves_caption_cues(monkeypatch):
         "caption_font_user_edited": True,
         "caption_position_user_edited": True,
         "caption_language": "tr",
+        "narrated_storyboard": {"status": "ready", "matches": []},
+        "narrated_clip_assignments": [
+            {"step_id": "shot_1", "clip_id": "clip_1", "source_start_s": 1.25}
+        ],
     }
     gb._finalize_job(str(uuid.uuid4()), [result])
     v = job.assembly_plan["variants"][0]
@@ -6853,6 +6956,9 @@ def test_finalize_job_preserves_caption_cues(monkeypatch):
     assert v["caption_position_user_edited"] is True
     # subtitled: the language must survive or the editor chip + re-transcribe lose it.
     assert v["caption_language"] == "tr"
+    assert v["narrated_clip_assignments"] == [
+        {"step_id": "shot_1", "clip_id": "clip_1", "source_start_s": 1.25}
+    ]
 
 
 def test_finalize_job_preserves_guided_story_receipt(monkeypatch):

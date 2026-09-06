@@ -22,6 +22,7 @@ _EXPECTED = {
     "nova.compose.intro_writer",
     "nova.compose.sequence_emphasis",
     "nova.compose.sequence_quote",
+    "nova.compose.narrated_storyboard",
     "nova.compose.platform_copy",
     "nova.compose.creative_direction",
     "nova.compose.visual_treatment_planner",
