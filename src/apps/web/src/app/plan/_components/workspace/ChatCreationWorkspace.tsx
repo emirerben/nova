@@ -1183,22 +1183,24 @@ export default function ChatCreationWorkspace({
   }
 
   function openGallery() {
+    const activeThreadId = activeThreadIdRef.current;
     setProjectsOpen(false);
     setGalleryOpen(true);
     router.replace(
       productionPreview
         ? "/dev-qa/chat-first-creation?live=1&view=gallery"
-        : `${thread ? `/plan/${thread.id}` : "/plan"}?view=gallery`,
+        : `${activeThreadId ? `/plan/${activeThreadId}` : "/plan"}?view=gallery`,
       { scroll: false },
     );
   }
 
   function closeGallery() {
+    const activeThreadId = activeThreadIdRef.current;
     setGalleryOpen(false);
     router.replace(
       productionPreview
         ? `/dev-qa/chat-first-creation?live=1${thread ? `&project=${encodeURIComponent(thread.id)}` : ""}`
-        : thread ? `/plan/${thread.id}` : "/plan",
+        : activeThreadId ? `/plan/${activeThreadId}` : "/plan",
       { scroll: false },
     );
   }

@@ -1411,7 +1411,7 @@ describe("ChatCreationWorkspace", () => {
   it("keeps Gallery navigation and the URL projection in sync", async () => {
     render(<ChatCreationWorkspace />);
     fireEvent.click(await screen.findByRole("button", { name: "Gallery" }));
-    expect(mockReplace).toHaveBeenCalledWith("/plan?view=gallery", { scroll: false });
+    expect(mockReplace).toHaveBeenCalledWith("/plan/thread-1?view=gallery", { scroll: false });
     fireEvent.click(await screen.findByRole("button", { name: "Back to chat" }));
     expect(mockReplace).toHaveBeenLastCalledWith("/plan/thread-1", { scroll: false });
   });
