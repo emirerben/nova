@@ -521,6 +521,7 @@ async def test_message_after_terminal_creator_failure_starts_fresh_session(
     assert result is thread
     assert thread.active_creator_agent_session_id == new_session_id
     start.assert_awaited_once()
+    assert start.await_args.kwargs["allow_chat"] is True
     turn.assert_not_awaited()
     sync_agent.assert_awaited_once_with(db, thread)
 
@@ -572,6 +573,7 @@ async def test_message_after_render_budget_exhaustion_replenishes_current_sessio
     assert exhausted_session.max_render_attempts == 4
     start.assert_not_awaited()
     turn.assert_awaited_once()
+    assert turn.await_args.kwargs["allow_chat"] is True
     sync_agent.assert_awaited_once_with(db, thread)
 
 
@@ -2310,6 +2312,7 @@ async def test_retry_repairs_missing_job_projection_before_reopening_render(
     assert output is thread
     assert thread.active_job_id == job_id
     confirm.assert_awaited_once()
+    assert confirm.await_args.kwargs["allow_chat"] is True
     assert db.commit.await_count == 2
 
 
