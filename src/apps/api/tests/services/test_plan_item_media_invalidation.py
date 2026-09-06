@@ -17,6 +17,8 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
+import pytest
+
 from app.models import PlanItem
 from app.schemas.edit_proposal import (
     ApprovedProposalSnapshot,
@@ -122,3 +124,64 @@ def test_unrelated_metadata_edit_keeps_proposal_approved() -> None:
     )
 
     assert parse_edit_proposal(item.edit_proposal).status == "approved"
+
+
+@pytest.mark.parametrize("edit_format", ["montage", "subtitled", "talking_head", "narrated"])
+def test_footage_replacement_clears_legacy_optin_consent(edit_format: str) -> None:
+    """Opt-in consent is keyed to footage identity, not the narration fingerprint.
+
+    ``speech_cleanup.contract_for_item`` still turns ``speech_cleanup_enabled``
+    into a ``required_v1`` contract, so consent surviving a swap means the
+    renderer cuts bytes the creator never approved. The fingerprint is ``None``
+    for every format here (montage is unsupported; the others have no registered
+    generation or speech coverage), so it cannot carry this contract.
+    """
+
+    item = PlanItem()
+    item.clip_assignments = [{"gcs_path": "users/u/a.mp4", "shot_id": None, "media_id": "m0"}]
+    item.clip_gcs_paths = ["users/u/a.mp4"]
+    item.edit_format = edit_format
+    item.audio_mode = "kria"
+    item.speech_cleanup_enabled = True
+    item.speech_cleanup_notice = None
+
+    result = mutate_plan_item_media(
+        item,
+        detector_policy=current_detector_policy(),
+        current_analysis=None,
+        clip_assignments=[{"gcs_path": "users/u/b.mp4", "shot_id": None, "media_id": "n0"}],
+    )
+
+    assert result.source_changed is False
+    assert item.speech_cleanup_enabled is False
+    assert item.speech_cleanup_notice is not None
+    assert item.speech_cleanup_notice["reason"] == "main_footage_changed"
+
+
+def test_untouched_consent_needs_no_notice() -> None:
+    """A metadata-only edit must not clear consent or invent a notice."""
+
+    item = PlanItem()
+    item.clip_assignments = [{"gcs_path": "users/u/a.mp4", "shot_id": None, "media_id": "m0"}]
+    item.clip_gcs_paths = ["users/u/a.mp4"]
+    item.edit_format = "montage"
+    item.audio_mode = "kria"
+    item.speech_cleanup_enabled = True
+    item.speech_cleanup_notice = None
+
+    mutate_plan_item_media(
+        item,
+        detector_policy=current_detector_policy(),
+        current_analysis=None,
+        clip_assignments=[
+            {
+                "gcs_path": "users/u/a.mp4",
+                "shot_id": None,
+                "media_id": "m0",
+                "user_note": "hold on the wide",
+            }
+        ],
+    )
+
+    assert item.speech_cleanup_enabled is True
+    assert item.speech_cleanup_notice is None

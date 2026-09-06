@@ -234,7 +234,10 @@ def mutate_plan_item_media(
     # The fingerprint is None whenever no narration source resolves (montage
     # formats, clips without audio), so it cannot carry the legacy
     # "media changed -> approved proposal is stale" contract on its own.
-    from app.services.speech_cleanup import main_footage_identity  # noqa: PLC0415
+    from app.services.speech_cleanup import (  # noqa: PLC0415
+        main_footage_identity,
+        reconcile_consent,
+    )
 
     previous_footage = main_footage_identity(item)
     if clip_assignments is not _UNSET:
@@ -264,7 +267,15 @@ def mutate_plan_item_media(
     previous_fingerprint = previous.source.source_policy_fingerprint if previous.source else None
     current_fingerprint = current.source.source_policy_fingerprint if current.source else None
     changed = previous_fingerprint != current_fingerprint
-    footage_changed = main_footage_identity(item) != previous_footage
+    # The narration fingerprint is authoritative whenever a source resolves on
+    # either side: it already distinguishes "the voiceover still owns the
+    # speech, only the visuals moved" from a real speech change. It carries no
+    # information only when NO source resolves before or after -- montage
+    # formats, clips whose generation is not registered yet, multi-clip narrated
+    # items without speech coverage. Fall back to footage identity there, and
+    # only there, so a replacement cannot look unchanged.
+    footage_only = previous.source is None and current.source is None
+    footage_changed = footage_only and main_footage_identity(item) != previous_footage
     if changed:
         settled_at = now or datetime.now(UTC)
         if (
@@ -276,9 +287,13 @@ def mutate_plan_item_media(
         # decision is authoritative and is cleared by superseding its row.
         item.speech_cleanup_enabled = False
         item.speech_cleanup_notice = None
+    if footage_changed:
+        # Legacy opt-in consent still becomes a required_v1 contract via
+        # speech_cleanup.contract_for_item, so consent granted for the old
+        # footage must not survive a replacement and cut bytes the creator never
+        # approved. reconcile_consent is a no-op when consent was never given.
+        reconcile_consent(item, previous_footage)
     if changed or footage_changed:
-        # Base invalidated on footage identity alone; keep that contract so a
-        # replaced montage clip cannot keep driving an approved proposal.
         try:
             from app.services.edit_proposals import mark_edit_proposal_stale
 
