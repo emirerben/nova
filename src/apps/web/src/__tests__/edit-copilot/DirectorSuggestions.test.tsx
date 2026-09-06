@@ -64,6 +64,48 @@ describe("DirectorSuggestions applied receipts", () => {
     expect(screen.getByRole("button", { name: "Apply & rebuild" })).toBeInTheDocument();
   });
 
+  it("forwards Accept and Dismiss only from explicit suggestion actions", () => {
+    const suggestion: EditorSuggestion = {
+      id: "cut-1",
+      category: "hook_pacing",
+      title: "Tighten the pause",
+      rationale: "The opening pause slows the hook.",
+      expected_benefit: "A faster opening.",
+      confidence: 0.9,
+      start_s: 1,
+      end_s: 1.6,
+      apply_mode: "instant",
+      ops: [{ op: "set_title", title: "Faster" }],
+    };
+    const onAccept = jest.fn();
+    const onDismiss = jest.fn();
+
+    render(
+      <DirectorSuggestions
+        suggestions={[suggestion]}
+        appliedReceipts={[]}
+        historyVersion={0}
+        loading={false}
+        error={null}
+        modelUsed="gemini-3.1-pro-preview"
+        fallbackReason={null}
+        generation={null}
+        onAccept={onAccept}
+        onDismiss={onDismiss}
+        onRefresh={jest.fn()}
+        onRevealApplied={jest.fn()}
+        onCancelGeneration={jest.fn()}
+      />,
+    );
+
+    expect(onAccept).not.toHaveBeenCalled();
+    expect(onDismiss).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Accept" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss Tighten the pause" }));
+    expect(onAccept).toHaveBeenCalledWith(suggestion);
+    expect(onDismiss).toHaveBeenCalledWith(suggestion);
+  });
+
   it("keeps every accepted recommendation visible with its exact delta and replay action", () => {
     const receipts: DirectorAppliedReceipt[] = [
       {

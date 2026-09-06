@@ -53,6 +53,7 @@ test.describe("Kria chat-first creation fixture", () => {
     await expect(page).toHaveURL(/state=upload/);
     await page.getByRole("button", { name: "Continue with footage" }).click();
     await expect(page.getByTestId("confirm-state")).toBeVisible();
+    await expect(page.getByText("Create this video?")).toBeVisible();
     await page.getByRole("button", { name: "Confirm & render" }).click();
     await expect(page.getByTestId("rendering-state")).toBeVisible();
 
@@ -93,18 +94,18 @@ test.describe("Kria chat-first creation fixture", () => {
   });
 
   test("mobile uses a compact chat/editor surface without horizontal overflow", async ({ page }) => {
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 375, height: 812 });
     await page.goto(`${fixture}?state=choose`);
     const artifact = page.getByTestId("format-artifact");
     const formatGrid = page.getByTestId("format-choice-grid");
     await expect(artifact).toBeVisible();
     await expect(artifact.getByRole("radio")).toHaveCount(3);
     await expect(page.getByRole("button", { name: /Add footage/ })).toBeVisible();
-    await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
+    await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 375);
     const artifactBox = await artifact.boundingBox();
     expect(artifactBox).not.toBeNull();
     expect(artifactBox!.x).toBeGreaterThanOrEqual(0);
-    expect(artifactBox!.x + artifactBox!.width).toBeLessThanOrEqual(390);
+    expect(artifactBox!.x + artifactBox!.width).toBeLessThanOrEqual(375);
     expect(await formatGrid.evaluate((element) => element.scrollWidth)).toBeGreaterThan(
       await formatGrid.evaluate((element) => element.clientWidth),
     );
@@ -373,8 +374,8 @@ test.describe("Kria chat-first creation fixture", () => {
 
   test("uses meaningful timed thinking states instead of generic first-second copy", async ({ page }) => {
     const cases = [
-      ["0", "dots", ""],
-      ["1499", "dots", ""],
+      ["0", "initial", "Kria is thinking"],
+      ["1499", "initial", "Kria is thinking"],
       ["1500", "reading", "Reading your direction…"],
       ["7999", "reading", "Reading your direction…"],
       ["8000", "shaping", "Shaping the edit around your clips…"],
@@ -384,11 +385,7 @@ test.describe("Kria chat-first creation fixture", () => {
     for (const [elapsed, tier, copy] of cases) {
       await page.goto(`${fixture}?state=thinking&elapsed=${elapsed}`);
       await expect(page.getByTestId("thinking-state")).toHaveAttribute("data-thinking-tier", tier);
-      if (copy) {
-        await expect(page.getByRole("status")).toContainText(copy);
-      } else {
-        await expect(page.getByRole("status", { name: "Kria is thinking" })).toHaveText("");
-      }
+      await expect(page.getByRole("status")).toContainText(copy);
     }
   });
 
@@ -421,5 +418,17 @@ test.describe("Kria chat-first creation fixture", () => {
     await page.getByTestId("reduced-motion-toggle").evaluate((button) => (button as HTMLButtonElement).click());
     await expect(page.locator("main")).toHaveClass(/chat-fixture-reduced-motion/);
     await expect(page.locator(".beam-loader__line")).toHaveCSS("animation-name", "none");
+  });
+
+  test("dark OS preference keeps the creator surface light and reduced motion stops thinking shimmer", async ({ page }) => {
+    await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.goto(`${fixture}?state=thinking&elapsed=20000`);
+
+    await expect(page.locator(".chat-rail")).toHaveCSS("background-color", "rgb(255, 255, 255)");
+    await expect(page.getByRole("status")).toContainText("Still working — your direction is saved.");
+    await expect(page.getByRole("status").locator("span")).toHaveCSS("animation-name", "none");
+    await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 375);
+    await expect(page.getByLabel("Message Kria")).toBeVisible();
   });
 });

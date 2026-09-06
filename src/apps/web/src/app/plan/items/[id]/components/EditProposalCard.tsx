@@ -8,9 +8,9 @@
  * overridden for THIS surface per explicit founder direction: the durable
  * multi-turn server thread (`edit_proposal.conversation`, up to 20 turns)
  * reads better as a real chat — every turn visible, an optimistic echo while
- * Kria thinks, honest errors. Visual language matches the edit copilot's
- * bubbles (`_editor/CopilotDrawer.tsx`) via the shared `components/chat/`
- * primitives; CopilotDrawer itself is untouched.
+ * Kria thinks, honest errors. It shares the creator-agent message grammar
+ * and input primitives with `_editor/CopilotDrawer.tsx` while retaining its
+ * own guided-planning state machine.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -48,8 +48,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ArrowUp, ChevronDown, ChevronUp } from "lucide-react";
-import { ChatBubble } from "@/components/chat/ChatBubble";
+import { ChevronDown, ChevronUp } from "lucide-react";
+import { AgentApprovalCard } from "@/components/chat/AgentApprovalCard";
+import { AgentComposer } from "@/components/chat/AgentComposer";
+import { ChatMessage } from "@/components/chat/ChatMessage";
 import { ChatThinking } from "@/components/chat/ChatThinking";
 import { useAutoScrollToEnd } from "@/components/chat/useAutoScrollToEnd";
 
@@ -222,7 +224,7 @@ export default function EditProposalCard({
   // Local optimistic echo of the in-flight message: shown as a pending bubble
   // until the server's durable turn (onChanged) or a failure clears it.
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
   const working = workingAction !== null;
   const conversationInProgress = proposal?.conversation_in_progress === true;
   const conversationRetryRequired = proposal?.conversation_retry_required === true;
@@ -496,42 +498,19 @@ export default function EditProposalCard({
           </p>
         ) : null}
 
-        <form
-          className="mt-4 flex items-end gap-2 rounded-2xl border border-input bg-background px-3 py-2 focus-within:ring-1 focus-within:ring-ring"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void sendConversation(message, reviewing);
-          }}
-        >
-          <label htmlFor="edit-guide-message" className="sr-only">
-            Tell Kria what you want in the edit
-          </label>
-          <Textarea
-            ref={inputRef}
-            id="edit-guide-message"
-            value={message}
-            onChange={(event) => setMessage(event.currentTarget.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void sendConversation(message, reviewing);
-              }
-            }}
-            rows={1}
-            maxLength={1000}
-            placeholder={reviewing ? "For example: focus more on the food…" : "Tell me in your own words…"}
-            className="min-h-11 flex-1 resize-none border-0 bg-transparent px-0 py-2 shadow-none outline-none focus-visible:ring-0 [field-sizing:content]"
-          />
-          <Button
-            type="submit"
-            size="icon"
-            disabled={working || conversationInProgress || !message.trim() || !hasMedia}
-            aria-label="Send direction"
-            className="shrink-0 rounded-full"
-          >
-            <ArrowUp className="h-4 w-4" />
-          </Button>
-        </form>
+        <AgentComposer
+          ref={inputRef}
+          className="mt-4"
+          value={message}
+          onValueChange={setMessage}
+          onSubmit={() => void sendConversation(message, reviewing)}
+          submitDisabled={working || conversationInProgress || !hasMedia}
+          maxLength={1000}
+          placeholder={reviewing ? "For example: focus more on the food…" : "Tell me in your own words…"}
+          inputLabel="Tell Kria what you want in the edit"
+          submitLabel="Send direction"
+          inputClassName="[field-sizing:content]"
+        />
 
         {showBrief ? (
           <div className="mt-4 border-t border-border pt-4">
@@ -707,13 +686,34 @@ export default function EditProposalCard({
     : null;
   if (pendingDirection && !showDirectionConversation) {
     return (
-      <Card aria-labelledby="direction-confirmation-heading" className="mt-5">
-        <CardHeader>
-          <Badge variant="secondary" className="w-fit">I have a first guess</Badge>
-          <CardTitle id="direction-confirmation-heading">Is this the edit you want?</CardTitle>
-          <CardDescription>{pendingDirection.rationale}</CardDescription>
-        </CardHeader>
-        <CardContent>
+      <AgentApprovalCard
+        aria-labelledby="direction-confirmation-heading"
+        className="mt-5"
+        badge={<Badge variant="secondary" className="w-fit">I have a first guess</Badge>}
+        title={<span id="direction-confirmation-heading">Is this the edit you want?</span>}
+        description={pendingDirection.rationale}
+        actions={
+          <>
+            <Button type="button" disabled={working} onClick={() => void confirmDirection()}>
+              {workingAction === "confirm" ? "Starting plan…" : "Yes, build this edit"}
+            </Button>
+            {conversationEnabled ? (
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={working}
+                onClick={() => {
+                  setShowDirectionConversation(true);
+                  setConversationOpen(true);
+                }}
+              >
+                Tell Kria something else
+              </Button>
+            ) : null}
+            {error ? <p role="alert" className="basis-full text-sm text-destructive">{error}</p> : null}
+          </>
+        }
+      >
           <div className="flex flex-wrap gap-2">
             <Badge variant="outline">{DIRECTION_LABELS[pendingDirection.direction]}</Badge>
             <Badge variant="outline">{PACE_LABELS[pendingDirection.pace]} pace</Badge>
@@ -728,27 +728,7 @@ export default function EditProposalCard({
               ))}
             </ul>
           ) : null}
-        </CardContent>
-        <CardFooter className="flex-wrap gap-2">
-          <Button type="button" disabled={working} onClick={() => void confirmDirection()}>
-            {workingAction === "confirm" ? "Starting plan…" : "Yes, build this edit"}
-          </Button>
-          {conversationEnabled ? (
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={working}
-              onClick={() => {
-                setShowDirectionConversation(true);
-                setConversationOpen(true);
-              }}
-            >
-              Tell Kria something else
-            </Button>
-          ) : null}
-          {error ? <p role="alert" className="basis-full text-sm text-destructive">{error}</p> : null}
-        </CardFooter>
-      </Card>
+      </AgentApprovalCard>
     );
   }
 
@@ -891,10 +871,13 @@ export default function EditProposalCard({
   }
 
   return (
-    <Card aria-labelledby="draft-plan-heading" className="mt-5">
-      <CardHeader>
-        <Badge variant="secondary" className="w-fit">Kria’s draft</Badge>
-        <CardTitle id="draft-plan-heading" className="sr-only">Review edit plan</CardTitle>
+    <AgentApprovalCard
+      aria-labelledby="draft-plan-heading"
+      className="mt-5"
+      badge={<Badge variant="secondary" className="w-fit">Kria’s draft</Badge>}
+      title={<span id="draft-plan-heading" className="sr-only">Review edit plan</span>}
+    >
+      <div className="space-y-1.5">
         {conversationEnabled && conversationOpen ? (
           <div className="rounded-xl border border-border bg-background p-4">
             {conversationSurface({ reviewing: true })}
@@ -940,8 +923,8 @@ export default function EditProposalCard({
             className="mt-1 resize-none"
           />
         </label>
-      </CardHeader>
-      <CardContent className="space-y-4">
+      </div>
+      <div className="mt-4 space-y-4">
         <dl className="grid gap-3 sm:grid-cols-3">
           <div>
             <dt className="text-sm font-medium text-foreground">Direction</dt>
@@ -1107,9 +1090,9 @@ export default function EditProposalCard({
           ))}
         </ol>
         )}
-      </CardContent>
+      </div>
 
-      <CardFooter className="items-center gap-2">
+      <div className="mt-4 flex items-center gap-2">
         <Button
           type="button"
           className="flex-1"
@@ -1121,9 +1104,9 @@ export default function EditProposalCard({
         <InfoDot label="Plan approval">
           AI thoughts stay drafts until you approve this plan.
         </InfoDot>
-      </CardFooter>
-      {error && <p role="alert" className="px-6 pb-6 text-sm text-destructive">{error}</p>}
-    </Card>
+      </div>
+      {error && <p role="alert" className="mt-3 text-sm text-destructive">{error}</p>}
+    </AgentApprovalCard>
   );
 }
 
@@ -1161,19 +1144,19 @@ function ConversationThread({
           a live region on the whole thread would announce the creator's own
           pending echo back at them as if Kria had said it. */}
       <div role="log" tabIndex={0} className="space-y-3 p-4">
-        {showOpener && <ChatBubble role="assistant">{opener}</ChatBubble>}
+        {showOpener && <ChatMessage role="assistant">{opener}</ChatMessage>}
         {turns.map((turn, index) => (
-          <ChatBubble
+          <ChatMessage
             key={`${turn.role}-${turn.phase ?? "briefing"}-${index}-${turn.content.slice(0, 24)}`}
             role={turn.role === "user" ? "user" : "assistant"}
           >
             {turn.content}
-          </ChatBubble>
+          </ChatMessage>
         ))}
         {pendingMessage !== null && (
-          <ChatBubble role="user" pending>
+          <ChatMessage role="user" pending>
             {pendingMessage}
-          </ChatBubble>
+          </ChatMessage>
         )}
         {sending && <ChatThinking />}
       </div>

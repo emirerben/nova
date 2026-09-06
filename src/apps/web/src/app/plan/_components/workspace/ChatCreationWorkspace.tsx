@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useSession, signOut } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  ArrowUp, Check, Download, Film, FolderOpen, Menu, MoreHorizontal, PanelLeftClose,
+  Check, Download, Film, FolderOpen, Menu, MoreHorizontal, PanelLeftClose,
   PanelLeftOpen, Pencil, Play, Plus, RefreshCw, Sparkles, Trash2, WifiOff,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -26,8 +26,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
-import { ChatBubble } from "@/components/chat/ChatBubble";
+import { AgentApprovalCard } from "@/components/chat/AgentApprovalCard";
+import { AgentComposer } from "@/components/chat/AgentComposer";
+import { ChatMessage } from "@/components/chat/ChatMessage";
 import { ChatThinking } from "@/components/chat/ChatThinking";
 import { ChatArtifactCard } from "@/components/chat/ChatArtifactCard";
 import { BeamLoader } from "@/components/progress";
@@ -1353,15 +1354,14 @@ export default function ChatCreationWorkspace({
     />
   ) : null;
   const defaultConfirmationCard = (
-    <ChatArtifactCard
+    <AgentApprovalCard
       badge={<Badge variant="secondary">Creative direction</Badge>}
       title={`${creationFormatLabel(format)} is ready to make`}
       description={directionDescription}
-    >
-      <Button type="button" className="min-h-11 w-full" disabled={productionPreview || busy || clipCount === 0} onClick={() => void confirm("generate")}>
+      actions={<Button type="button" className="min-h-11 w-full" disabled={productionPreview || busy || clipCount === 0} onClick={() => void confirm("generate")}>
         <Sparkles />{busy ? "Starting…" : "Create this video"}
-      </Button>
-    </ChatArtifactCard>
+      </Button>}
+    />
   );
   const liveAnnouncement = speechCleanupAnnouncement(speechCleanup, {
     rendering: Boolean(thread && creationThreadInProgress(thread)),
@@ -1524,7 +1524,7 @@ export default function ChatCreationWorkspace({
             ref={index === messages.length - 1 ? latestMessageRef : undefined}
             className="space-y-3"
           >
-            {message.content ? <ChatBubble role={message.role}>{message.content}</ChatBubble> : null}
+            {message.content ? <ChatMessage role={message.role}>{message.content}</ChatMessage> : null}
             {message.artifact === "format" && (!format || formatPickerOpen) ? formatArtifact : null}
             {message.artifact === "upload" && !thread?.active_job_id ? <>{uploadArtifact}{visualsArtifact}</> : null}
             {message.artifact === "voiceover" && !thread?.active_job_id ? uploadArtifact : null}
@@ -1533,20 +1533,19 @@ export default function ChatCreationWorkspace({
               ? (cleanupCard ?? defaultConfirmationCard)
               : null}
             {message.artifact === "revision" && hasReady ? (
-              <ChatArtifactCard
+              <AgentApprovalCard
                 badge={<Badge variant="secondary">Revision ready</Badge>}
                 title="Apply this direction?"
                 description="This creates a new generation from the finished cut."
-              >
-                <Button
+                actions={<Button
                   type="button"
                   className="min-h-11 w-full"
                   disabled={productionPreview || busy}
                   onClick={() => void confirm("generate", { base_generation: thread?.job?.id })}
                 >
                   <RefreshCw /> Create revision
-                </Button>
-              </ChatArtifactCard>
+                </Button>}
+              />
             ) : null}
             {message.artifact === "progress"
               && thread?.active_job_id
@@ -1592,7 +1591,7 @@ export default function ChatCreationWorkspace({
         ))}
         {thinking ? <ChatThinking /> : null}
       </div></div>
-      <div className="shrink-0 border-t bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4"><form className="mx-auto flex max-w-2xl items-end gap-2 rounded-2xl border bg-background p-2 shadow-sm focus-within:ring-1 focus-within:ring-ring" onSubmit={(event) => { event.preventDefault(); void send(); }}><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Attach primary video clips" disabled={productionPreview || !thread || uploading || Boolean(thread?.active_job_id) || clipCount >= clipLimit} onClick={() => document.getElementById("creation-file-picker")?.click()}><Plus /></Button><input id="creation-file-picker" type="file" className="sr-only" accept="video/*" multiple={format !== "subtitled"} disabled={productionPreview} onChange={(event) => { void attach(event.target.files); event.target.value = ""; }} /><Textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder={productionPreview ? "Read-only production preview" : "Tell Kria what you’re imagining…"} aria-label="Message Kria" rows={1} disabled={productionPreview} className="max-h-32 min-h-11 resize-none border-0 bg-transparent py-3 shadow-none focus-visible:ring-0" /><Button type="submit" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Send message" disabled={productionPreview || !input.trim() || thinking || !thread}><ArrowUp /></Button></form>{offline ? <p className="mx-auto mt-2 flex max-w-2xl items-center gap-1 text-xs text-muted-foreground" role="status"><WifiOff className="size-3" /> Offline — messages stay in the composer until you reconnect.</p> : null}{pollReconnecting ? <p className="mx-auto mt-2 flex max-w-2xl items-center gap-1 text-xs text-muted-foreground" role="status"><RefreshCw className="size-3 motion-safe:animate-spin" /> Reconnecting…</p> : null}{error ? <p className="mx-auto mt-2 max-w-2xl text-sm text-destructive" role="alert">{error}</p> : null}</div>
+      <div className="shrink-0 border-t bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4"><AgentComposer className="mx-auto max-w-2xl" value={input} onValueChange={setInput} onSubmit={() => void send()} disabled={productionPreview} submitDisabled={thinking || !thread} placeholder={productionPreview ? "Read-only production preview" : "Tell Kria what you’re imagining…"} inputLabel="Message Kria" submitLabel="Send message" leadingAction={<><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Attach primary video clips" disabled={productionPreview || !thread || uploading || Boolean(thread?.active_job_id) || clipCount >= clipLimit} onClick={() => document.getElementById("creation-file-picker")?.click()}><Plus /></Button><input id="creation-file-picker" type="file" className="sr-only" accept="video/*" multiple={format !== "subtitled"} disabled={productionPreview} onChange={(event) => { void attach(event.target.files); event.target.value = ""; }} /></>} status={offline || pollReconnecting || error ? <>{offline ? <p className="flex items-center gap-1 text-xs text-muted-foreground" role="status"><WifiOff className="size-3" /> Offline — messages stay in the composer until you reconnect.</p> : null}{pollReconnecting ? <p className="flex items-center gap-1 text-xs text-muted-foreground" role="status"><RefreshCw className="size-3 motion-safe:animate-spin" /> Reconnecting to render status…</p> : null}{error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}</> : undefined} /></div>
     </section>
     {projectDialogs}
     </>

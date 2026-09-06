@@ -3,9 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Sparkles, X } from "lucide-react";
 
+import { AgentApprovalCard } from "@/components/chat/AgentApprovalCard";
+import { AgentComposer } from "@/components/chat/AgentComposer";
+import { ChatMessage } from "@/components/chat/ChatMessage";
+import { ChatThinking } from "@/components/chat/ChatThinking";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Textarea } from "@/components/ui/textarea";
 import {
   cancelCreatorAgentSession,
   confirmCreatorAgentPlan,
@@ -295,10 +298,9 @@ export default function MainCreatorAgentPanel({
         >
           {visibleEvents.map((event, eventIndex) => (
             <div key={event.id} className="text-sm text-[#27272a]">
-              <p className="mb-0.5 text-[11px] font-medium uppercase tracking-wide text-[#71717a]">
-                {event.role === "user" ? "You" : "Kria"}
-              </p>
-              <p>{eventText(event)}</p>
+              <ChatMessage role={event.role === "user" ? "user" : "assistant"}>
+                {eventText(event)}
+              </ChatMessage>
               {eventIndex === visibleEvents.length - 1 && event.event_type === "assistant_question" &&
                 eventOptions(event).length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-2" aria-label="Suggested answers">
@@ -330,13 +332,39 @@ export default function MainCreatorAgentPanel({
       )}
 
       {plan && session?.status === "awaiting_confirmation" && (
-        <div className="mt-4 rounded-lg border border-lime-300 bg-white p-3">
-          <p className="text-sm font-semibold text-[#18181b]">{plan.summary}</p>
-          {plan.creative_rationale && (
-            <p className="mt-1 text-sm text-[#52525b]">{plan.creative_rationale}</p>
-          )}
+        <AgentApprovalCard
+          className="mt-4 border-lime-300"
+          title={plan.summary}
+          description={plan.creative_rationale}
+          actions={
+            <>
+              {session.can_render ? (
+                <Button type="button" size="sm" disabled={sending} onClick={() => void confirm()}>
+                  {sending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    "Render this"
+                  )}
+                </Button>
+              ) : (
+                <p className="self-center text-xs text-[#71717a]">
+                  Rendering is not enabled for this preview yet.
+                </p>
+              )}
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={sending}
+                onClick={() => setMessage("I'd like to change this direction: ")}
+              >
+                Change direction
+              </Button>
+            </>
+          }
+        >
           {plan.intro_hook && (
-            <p className="mt-3 text-sm text-[#3f3f46]">
+            <p className="text-sm text-[#3f3f46]">
               <span className="font-medium text-[#18181b]">Opening idea:</span> {plan.intro_hook}
             </p>
           )}
@@ -358,38 +386,17 @@ export default function MainCreatorAgentPanel({
             {plan.caption_style && <span className="rounded-full bg-zinc-100 px-2 py-1">{plan.caption_style} captions</span>}
           </div>
           <TreatmentPreview plan={plan} />
-          <div className="mt-3 flex gap-2">
-            {session.can_render ? (
-              <Button type="button" size="sm" disabled={sending} onClick={() => void confirm()}>
-                {sending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                ) : (
-                  "Render this"
-                )}
-              </Button>
-            ) : (
-              <p className="self-center text-xs text-[#71717a]">
-                Rendering is not enabled for this preview yet.
-              </p>
-            )}
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={sending}
-              onClick={() => setMessage("I'd like to change this direction: ")}
-            >
-              Change direction
-            </Button>
-          </div>
-        </div>
+        </AgentApprovalCard>
       )}
 
       {busy && (
-        <div className="mt-4 flex items-center gap-2 text-sm text-[#52525b]" aria-live="polite">
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          {session?.status === "rendering" ? "Rendering the confirmed direction…" : "Kria is checking the edit…"}
-        </div>
+        <ChatThinking
+          className="mt-4"
+          initialLabel={session?.status === "rendering" ? "Rendering the confirmed direction…" : "Kria is checking the edit…"}
+          label={session?.status === "rendering" ? "Building your confirmed edit…" : "Reviewing the latest cut…"}
+          specificLabel={session?.status === "rendering" ? "Rendering your video…" : "Checking the edit against your direction…"}
+          longLabel={session?.status === "rendering" ? "Still rendering — your direction is saved." : "Still reviewing — your edit is safe."}
+        />
       )}
 
       {terminal && (
@@ -409,33 +416,43 @@ export default function MainCreatorAgentPanel({
       )}
 
       {!busy && !terminal && (
-        <div className="mt-4 space-y-2">
-          <Textarea
-            aria-label="Message Kria"
-            value={message}
-            onChange={(event) => setMessage(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void send();
-              }
-            }}
-            placeholder={prompt}
-            rows={2}
-          />
-          <div className="flex items-center justify-between gap-3">
+        <AgentComposer
+          className="mt-4"
+          value={message}
+          onValueChange={setMessage}
+          onSubmit={() => void send()}
+          submitDisabled={sending}
+          placeholder={prompt}
+          rows={2}
+          inputLabel="Message Kria"
+          submitLabel={session ? "Send" : "Start"}
+          status={sending ? (
+            <ChatThinking
+              initialLabel="Sending to Kria…"
+              label="Kria is reading your message…"
+              specificLabel="Kria is shaping a response…"
+              longLabel="Still working — your message is saved."
+            />
+          ) : (
             <p className="text-xs text-[#71717a]">Nothing renders until you confirm.</p>
-            <Button type="button" size="sm" disabled={!message.trim() || sending} onClick={() => void send()}>
-              {sending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : session ? "Send" : "Start"}
-            </Button>
-          </div>
-        </div>
+          )}
+        />
       )}
 
       {session?.last_review && <CreatorReviewReceipt review={session.last_review} />}
 
       {session?.auto_iteration?.available && session.status === "awaiting_feedback" && (
-        <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-3">
+        <AgentApprovalCard
+          density="compact"
+          className="mt-4"
+          title="Allow one automatic revision?"
+          description="Only objective issues from this review qualify, and you still review the result before publishing."
+          actions={autoOptIn ? (
+            <Button type="button" size="sm" disabled={autoSending} onClick={() => void optIntoAutoIteration()}>
+              {autoSending ? "Saving…" : "Confirm automatic revision"}
+            </Button>
+          ) : undefined}
+        >
           <div className="flex min-h-11 items-start gap-3 text-sm text-zinc-700">
             <Checkbox
               id="creator-auto-iteration-opt-in"
@@ -445,15 +462,9 @@ export default function MainCreatorAgentPanel({
             />
             <label htmlFor="creator-auto-iteration-opt-in" className="cursor-pointer leading-5">
               Allow one automatic revision if the review finds an objective issue.
-              <span className="mt-1 block text-xs text-zinc-500">You can still review the result before publishing.</span>
             </label>
           </div>
-          {autoOptIn && (
-            <Button type="button" size="sm" className="mt-3" disabled={autoSending} onClick={() => void optIntoAutoIteration()}>
-              {autoSending ? "Saving…" : "Confirm automatic revision"}
-            </Button>
-          )}
-        </div>
+        </AgentApprovalCard>
       )}
 
       {error && (
