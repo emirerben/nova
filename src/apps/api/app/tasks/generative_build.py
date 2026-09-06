@@ -16030,6 +16030,27 @@ def _narrated_storyboard_text_elements(
             return token
         return None
 
+    hybrid_score_re = re.compile(
+        r"(?P<left>[0-9]{1,3}|[a-z]+)(?P<separator>[-–:])"
+        r"(?P<right>[0-9]{1,3}|[a-z]+)$"
+    )
+
+    def _is_hybrid_score_token(text: Any) -> bool:
+        """Recognize Whisper's occasional single-token score normalization.
+
+        Whisper may emit ``1-all.`` or ``NIL-1`` as one token instead of two
+        spoken values.  Validate both sides against the same score vocabulary
+        used for separated words; the rendered text is still copied from the
+        transcript, never from an overlay/model hint.
+        """
+        token = re.sub(r"^[^a-z0-9]+|[^a-z0-9]+$", "", str(text).casefold())
+        match = hybrid_score_re.fullmatch(token)
+        if match is None:
+            return False
+        left = _score_value(match.group("left"))
+        right = _score_value(match.group("right"))
+        return left is not None and right is not None and (left.isdigit() or right.isdigit())
+
     def _score_has_context(start_index: int, end_index: int) -> bool:
         context = " ".join(
             str(words[index]["text"]).casefold()
@@ -16060,6 +16081,9 @@ def _narrated_storyboard_text_elements(
             score_spans.append((start_index, end_index))
 
     def _add_spoken_score_spans(start_index: int, end_index: int) -> None:
+        for index in range(start_index, end_index + 1):
+            if _is_hybrid_score_token(words[index]["text"]):
+                _add_score_span(index, index)
         for index in range(start_index, end_index):
             if _score_value(words[index]["text"]) and _score_value(words[index + 1]["text"]):
                 _add_score_span(index, index + 1)
