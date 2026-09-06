@@ -58,6 +58,10 @@ def test_storyboard_text_elements_keep_voiceover_timeline_and_spoken_score() -> 
         (["The", "final", "score", "was", "two", "one"], "two one"),
         (["The", "match", "score", "was", "six", "to", "four"], "six to four"),
         (["The", "game", "score", "was", "6", "to", "4"], "6 to 4"),
+        (["The", "match", "score", "was", "1-all."], "1-all."),
+        (["The", "match", "score", "was", "1-NIL,"], "1-NIL,"),
+        (["The", "match", "score", "was", "NIL-1"], "NIL-1"),
+        (["The", "match", "score", "was", "all–1."], "all–1."),
     ],
 )
 def test_transcript_score_fallback_ignores_missing_model_text_and_anchors(
@@ -89,6 +93,57 @@ def test_transcript_score_fallback_ignores_missing_model_text_and_anchors(
     ]
     assert [item["text"] for item in score_elements] == [expected]
     assert score_elements[0]["source_params"]["transcript_grounded"] is True
+
+
+def test_hybrid_score_token_still_requires_score_context() -> None:
+    transcript = Transcript(
+        words=[
+            Word("The", 0.0, 0.2, 1.0),
+            Word("format", 0.2, 0.4, 1.0),
+            Word("1-all.", 0.4, 0.6, 1.0),
+            Word("was", 0.6, 0.8, 1.0),
+            Word("unexpected", 0.8, 1.0, 1.0),
+        ],
+        language="en",
+    )
+    elements = gb._narrated_storyboard_text_elements(
+        transcript=transcript,
+        step_timings=[SimpleNamespace(step_id="step_0", start_s=0.0, end_s=1.0)],
+        clip_assignments=[],
+        clip_id_by_path={},
+        creator_request="Add the scores mentioned in the audio.",
+        explicit_opening_title=None,
+        storyboard={"overlays": []},
+    )
+
+    assert not any(
+        "score:" in item["source_params"].get("narrated_storyboard", "") for item in elements
+    )
+
+
+def test_hybrid_score_token_does_not_accept_arbitrary_words_or_model_text() -> None:
+    transcript = Transcript(
+        words=[
+            Word("The", 0.0, 0.2, 1.0),
+            Word("score", 0.2, 0.4, 1.0),
+            Word("was", 0.4, 0.6, 1.0),
+            Word("1-final", 0.6, 0.8, 1.0),
+        ],
+        language="en",
+    )
+    elements = gb._narrated_storyboard_text_elements(
+        transcript=transcript,
+        step_timings=[SimpleNamespace(step_id="step_0", start_s=0.0, end_s=1.0)],
+        clip_assignments=[],
+        clip_id_by_path={},
+        creator_request="Add the scores mentioned in the audio.",
+        explicit_opening_title=None,
+        storyboard={"overlays": [{"kind": "score", "text": "99-all"}]},
+    )
+
+    assert not any(
+        "score:" in item["source_params"].get("narrated_storyboard", "") for item in elements
+    )
 
 
 def test_transcript_score_fallback_ignores_hallucinated_model_text() -> None:
