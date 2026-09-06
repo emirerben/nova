@@ -1,4 +1,5 @@
 import {
+  applyCreationAction,
   creationFormat,
   creationClipLimit,
   creationJobFailed,
@@ -7,13 +8,16 @@ import {
   creationJobSettled,
   creationPlanningFailed,
   creationThreadInProgress,
+  creationThreadNeedsPolling,
   creationThreadPreparing,
   creationThreadProgressKey,
   creationThreadMediaCount,
   CreationThreadError,
+  creationSpeechCleanupActionId,
   getCreationCapabilities,
   deleteCreationThread,
   renameCreationThread,
+  isCreationSpeechCleanupStaleConflict,
   isCreationThreadRevisionConflict,
   refreshCreationThread,
   latestCreationDirection,
@@ -127,6 +131,21 @@ describe("creation thread projection", () => {
   it("recognizes revision conflict responses", () => {
     expect(isCreationThreadRevisionConflict(new CreationThreadError("Creation thread changed", 409))).toBe(true);
     expect(isCreationThreadRevisionConflict(new CreationThreadError("server", 500))).toBe(false);
+  });
+
+  it("does not mislabel unrelated 409s as a changed speech check", () => {
+    expect(isCreationSpeechCleanupStaleConflict(
+      new CreationThreadError("speech_cleanup_analysis_changed", 409),
+    )).toBe(true);
+    expect(isCreationSpeechCleanupStaleConflict(
+      new CreationThreadError("speech_cleanup_pending", 409),
+    )).toBe(false);
+    expect(isCreationSpeechCleanupStaleConflict(
+      new CreationThreadError("That render variant is unavailable", 409),
+    )).toBe(false);
+    expect(isCreationSpeechCleanupStaleConflict(
+      new CreationThreadError("speech_cleanup_analysis_changed", 500),
+    )).toBe(false);
   });
 
   it("hydrates media count from durable state", () => {
@@ -305,6 +324,141 @@ describe("creation thread projection", () => {
     expect(creationThreadInProgress(rendering)).toBe(true);
     expect(creationThreadInProgress(ready)).toBe(false);
     expect(creationThreadProgressKey(rendering)).not.toBe(creationThreadProgressKey(ready));
+  });
+
+  it("polls speech preflight without broadening render progress semantics", () => {
+    const queued = thread({
+      speech_cleanup: {
+        applicable: true,
+        analysis: { id: "analysis-1", status: "queued" },
+        decision: null,
+        requires_choice: false,
+        render_blocker: null,
+        outcome: null,
+      },
+    });
+    const running = {
+      ...queued,
+      speech_cleanup: {
+        ...queued.speech_cleanup!,
+        analysis: { id: "analysis-1", status: "running" as const },
+      },
+    };
+    const ready = {
+      ...queued,
+      speech_cleanup: {
+        ...queued.speech_cleanup!,
+        analysis: { id: "analysis-1", status: "ready" as const, has_findings: true },
+        requires_choice: true,
+      },
+    };
+
+    expect(creationThreadInProgress(queued)).toBe(false);
+    expect(creationThreadNeedsPolling(queued)).toBe(true);
+    expect(creationThreadNeedsPolling(running)).toBe(true);
+    expect(creationThreadNeedsPolling(ready)).toBe(false);
+    expect(creationThreadProgressKey(queued)).not.toBe(creationThreadProgressKey(running));
+    expect(creationThreadProgressKey(running)).not.toBe(creationThreadProgressKey(ready));
+  });
+
+  it("keeps old detail/list responses compatible and builds stable cleanup action IDs", () => {
+    expect(creationThreadNeedsPolling(thread())).toBe(false);
+    expect(creationSpeechCleanupActionId("analysis-1", "clean", 4)).toBe("speech-cleanup:analysis-1:r4:clean");
+    expect(creationSpeechCleanupActionId("analysis-1", "clean", 5)).toBe("speech-cleanup:analysis-1:r5:clean");
+    expect(creationSpeechCleanupActionId("analysis-1", "no_findings", 4)).toBe("speech-cleanup:analysis-1:r4:no_findings");
+    expect(creationSpeechCleanupActionId("analysis-1", "bypass", 5)).toBe("speech-cleanup:analysis-1:r5:bypass");
+  });
+
+  it("forwards AbortSignal and serializes an atomic cleanup generate action", async () => {
+    const previousFetch = global.fetch;
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => thread() } as Response);
+    const controller = new AbortController();
+    try {
+      await refreshCreationThread("thread-1", controller.signal);
+      expect(global.fetch).toHaveBeenCalledWith(
+        "/api/plan/creation-threads/thread-1",
+        expect.objectContaining({ cache: "no-store", signal: controller.signal }),
+      );
+
+      await applyCreationAction(
+        thread(),
+        "generate",
+        { speech_cleanup_analysis_id: "analysis-1", speech_cleanup_choice: "clean" },
+        creationSpeechCleanupActionId("analysis-1", "clean", 4),
+      );
+      expect(global.fetch).toHaveBeenLastCalledWith(
+        "/api/plan/creation-threads/thread-1/actions",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            action: "generate",
+            payload: { speech_cleanup_analysis_id: "analysis-1", speech_cleanup_choice: "clean" },
+            client_action_id: "speech-cleanup:analysis-1:r4:clean",
+            expected_revision: 4,
+          }),
+        }),
+      );
+    } finally {
+      global.fetch = previousFetch;
+    }
+  });
+
+  it("serializes no-findings, analysis retry, render retry, and bypass as distinct actions", async () => {
+    const previousFetch = global.fetch;
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => thread() } as Response);
+    try {
+      const source = thread();
+      await applyCreationAction(
+        source,
+        "generate",
+        { speech_cleanup_analysis_id: "analysis-1" },
+        creationSpeechCleanupActionId("analysis-1", "no_findings", source.revision),
+      );
+      await applyCreationAction(
+        source,
+        "retry_speech_cleanup",
+        { speech_cleanup_analysis_id: "analysis-1" },
+        creationSpeechCleanupActionId("analysis-1", "retry_analysis", source.revision),
+      );
+      await applyCreationAction(
+        source,
+        "retry",
+        { speech_cleanup_analysis_id: "analysis-1" },
+        creationSpeechCleanupActionId("analysis-1", "retry_render", source.revision),
+      );
+      await applyCreationAction(
+        source,
+        "create_without_cleanup",
+        { speech_cleanup_analysis_id: "analysis-1" },
+        creationSpeechCleanupActionId("analysis-1", "bypass", source.revision),
+      );
+
+      const bodies = jest.mocked(global.fetch).mock.calls.map(([, init]) => JSON.parse(String(init?.body)));
+      expect(bodies).toEqual([
+        expect.objectContaining({
+          action: "generate",
+          payload: { speech_cleanup_analysis_id: "analysis-1" },
+          client_action_id: "speech-cleanup:analysis-1:r4:no_findings",
+        }),
+        expect.objectContaining({
+          action: "retry_speech_cleanup",
+          payload: { speech_cleanup_analysis_id: "analysis-1" },
+          client_action_id: "speech-cleanup:analysis-1:r4:retry_analysis",
+        }),
+        expect.objectContaining({
+          action: "retry",
+          payload: { speech_cleanup_analysis_id: "analysis-1" },
+          client_action_id: "speech-cleanup:analysis-1:r4:retry_render",
+        }),
+        expect.objectContaining({
+          action: "create_without_cleanup",
+          payload: { speech_cleanup_analysis_id: "analysis-1" },
+          client_action_id: "speech-cleanup:analysis-1:r4:bypass",
+        }),
+      ]);
+    } finally {
+      global.fetch = previousFetch;
+    }
   });
 
   it("does not replay the initial strategy as a revision after the first cut is ready", () => {

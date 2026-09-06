@@ -2,6 +2,35 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { BeamLoader } from "@/components/progress";
+import {
+  SpeechCleanupDecisionCard,
+  SpeechCleanupReceipt,
+} from "@/app/plan/_components/workspace/SpeechCleanupDecisionCard";
+import { ChatArtifactCard } from "@/components/chat/ChatArtifactCard";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/cn";
+import type {
+  CreationSpeechCleanupChoice,
+  CreationSpeechCleanupOutcomeStatus,
+  CreationSpeechCleanupProjection,
+} from "@/lib/creation-thread-api";
+
+type SpeechFixtureState =
+  | "speech-checking"
+  | "speech-findings"
+  | "speech-no-findings"
+  | "speech-failed-retryable"
+  | "speech-failed-nonretryable"
+  | "speech-stale"
+  | "speech-saving"
+  | "speech-rendering"
+  | "speech-cleanup-failed"
+  | "speech-ready-applied"
+  | "speech-ready-no-change"
+  | "speech-ready-declined"
+  | "speech-ready-bypassed-unchecked"
+  | "speech-audio-only";
 
 type FixtureState =
   | "choose"
@@ -18,7 +47,8 @@ type FixtureState =
   | "partial"
   | "failed"
   | "thinking"
-  | "deleted";
+  | "deleted"
+  | SpeechFixtureState;
 type View = "chat" | "editor" | "projects" | "gallery";
 
 const STATES: FixtureState[] = [
@@ -37,13 +67,64 @@ const STATES: FixtureState[] = [
   "failed",
   "thinking",
   "deleted",
+  "speech-checking",
+  "speech-findings",
+  "speech-no-findings",
+  "speech-failed-retryable",
+  "speech-failed-nonretryable",
+  "speech-stale",
+  "speech-saving",
+  "speech-rendering",
+  "speech-cleanup-failed",
+  "speech-ready-applied",
+  "speech-ready-no-change",
+  "speech-ready-declined",
+  "speech-ready-bypassed-unchecked",
+  "speech-audio-only",
 ];
 
+const SPEECH_STATES = new Set<FixtureState>(STATES.filter((state) => state.startsWith("speech-")));
+
+function isSpeechFixtureState(state: FixtureState): state is SpeechFixtureState {
+  return SPEECH_STATES.has(state);
+}
+
+function speechFixtureAnnouncement(state: FixtureState): string {
+  if (state === "speech-checking" || state === "speech-stale") return "Checking for filler sounds.";
+  if (state === "speech-findings" || state === "speech-audio-only") return "Speech check complete. Choose whether to clean up the speech.";
+  if (state === "speech-no-findings") return "Speech check complete. No cleanup suggested.";
+  if (state === "speech-failed-retryable" || state === "speech-failed-nonretryable") return "Kria could not check the speech. Choose a recovery action.";
+  if (state === "speech-saving") return "Saving your speech cleanup choice.";
+  if (state === "speech-rendering") return "Cleaning speech and creating your video.";
+  if (state === "speech-cleanup-failed") return "Speech cleanup did not complete. Choose a recovery action.";
+  if (state === "speech-ready-applied") return "Your video is ready with speech cleanup applied.";
+  if (state === "speech-ready-no-change") return "Your video is ready. Speech was checked and no safe cuts were needed.";
+  if (state === "speech-ready-declined") return "Your video is ready with speech kept as recorded.";
+  if (state === "speech-ready-bypassed-unchecked") return "Your video is ready without a speech check.";
+  return "";
+}
+
 const FORMAT_COPY = {
-  montage: { title: "Montage", detail: "A quick, music-led cut", tone: "Classic" },
-  narrated: { title: "Narrated", detail: "Your voice tells the story", tone: "Voiceover" },
-  talking: { title: "Talking to camera", detail: "Keep the best moments of you", tone: "Captions" },
+  montage: { title: "Montage", detail: "Music-led cuts from your strongest moments." },
+  narrated: { title: "Narrated", detail: "Let your voice guide the story." },
+  talking: { title: "Talking to camera", detail: "A clean, captioned edit from your delivery." },
 } as const;
+
+const FIXTURE_STYLES = `
+  .chat-fixture * { box-sizing: border-box; }
+  .chat-fixture button, .chat-fixture input, .chat-fixture textarea { font: inherit; }
+  .chat-fixture button { cursor: pointer; }
+  .chat-fixture .fade { animation: fixture-fade 220ms ease-out both; }
+  .chat-fixture-reduced-motion .fade { animation: none; }
+  .chat-fixture-reduced-motion .beam-loader__beam,
+  .chat-fixture-reduced-motion .beam-loader__bloom,
+  .chat-fixture-reduced-motion .beam-loader__line { animation: none !important; }
+  .chat-fixture-reduced-motion .animate-bounce { animation: none !important; }
+  .chat-fixture[data-view="editor"] .editor-pane { display: flex; }
+  .chat-fixture[data-view="editor"] .chat-rail { flex: 0 0 420px; }
+  @keyframes fixture-fade { from { opacity: .1; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+  @media (max-width: 767px) { .chat-fixture .project-rail { display:none; } .chat-fixture .chat-rail { width:100%; border:0; } .chat-fixture .editor-pane { display:none; } .chat-fixture[data-view="editor"] .chat-rail { display:none; } .chat-fixture[data-view="editor"] .editor-pane { display:flex; width:100%; } }
+`;
 
 function readParam(name: string, fallback: string) {
   if (typeof window === "undefined") return fallback;
@@ -68,6 +149,7 @@ export default function ChatFirstCreationFixture() {
   const [deleted, setDeleted] = useState(initialState === "deleted");
   const projectId = readParam("project", "project-corfu");
   const thinkingElapsed = Number.parseInt(readParam("elapsed", "0"), 10) || 0;
+  const [speechChoice, setSpeechChoice] = useState<CreationSpeechCleanupChoice>("clean");
 
   useEffect(() => {
     const onOnline = () => setState("choose");
@@ -76,9 +158,9 @@ export default function ChatFirstCreationFixture() {
   }, []);
 
   const projectStatus = useMemo(() => {
-    if (state === "ready" || state === "revision" || state === "partial") return "Ready to review";
-    if (state === "rendering") return "Rendering";
-    if (state === "failed") return "Needs attention";
+    if (state === "ready" || state === "revision" || state === "partial" || state.startsWith("speech-ready-")) return "Ready to review";
+    if (state === "rendering" || state === "speech-rendering") return "Rendering";
+    if (state === "failed" || state.includes("failed")) return "Needs attention";
     return "In progress";
   }, [state]);
 
@@ -119,21 +201,15 @@ export default function ChatFirstCreationFixture() {
       data-view={view}
       data-project-id={projectId}
     >
-      <style>{`
-        .chat-fixture * { box-sizing: border-box; }
-        .chat-fixture button, .chat-fixture input, .chat-fixture textarea { font: inherit; }
-        .chat-fixture button { cursor: pointer; }
-        .chat-fixture .fade { animation: fixture-fade 220ms ease-out both; }
-        .chat-fixture-reduced-motion .fade { animation: none; }
-        .chat-fixture-reduced-motion .beam-loader__beam,
-        .chat-fixture-reduced-motion .beam-loader__bloom,
-        .chat-fixture-reduced-motion .beam-loader__line { animation: none !important; }
-        .chat-fixture-reduced-motion .animate-bounce { animation: none !important; }
-        .chat-fixture[data-view="editor"] .editor-pane { display: flex; }
-        .chat-fixture[data-view="editor"] .chat-rail { flex: 0 0 420px; }
-        @keyframes fixture-fade { from { opacity: .1; transform: translateY(5px); } to { opacity: 1; transform: none; } }
-        @media (max-width: 767px) { .chat-fixture .project-rail { display:none; } .chat-fixture .chat-rail { width:100%; border:0; } .chat-fixture .editor-pane { display:none; } .chat-fixture[data-view="editor"] .chat-rail { display:none; } .chat-fixture[data-view="editor"] .editor-pane { display:flex; width:100%; } }
-      `}</style>
+      <p
+        className="sr-only"
+        aria-live="polite"
+        aria-atomic="true"
+        data-testid="fixture-live-announcer"
+      >
+        {speechFixtureAnnouncement(state)}
+      </p>
+      <style dangerouslySetInnerHTML={{ __html: FIXTURE_STYLES }} />
 
       {!deleted && sidebarVisible ? <aside className="project-rail flex w-[260px] shrink-0 flex-col border-r border-[#deded9] bg-[#f1f1ee] p-5" aria-label="Projects">
         <div className="flex items-center justify-between">
@@ -185,12 +261,29 @@ export default function ChatFirstCreationFixture() {
             </header>
             <div className="flex-1 overflow-y-auto px-5 py-7 sm:px-10">
               <div className="mx-auto max-w-[620px]">
-                {state === "choose" ? <ChooseState format={format} setFormat={setFormat} onContinue={() => navigate("upload")} /> : <ConversationState state={state as Exclude<FixtureState, "choose">} mediaCount={mediaCount} onState={navigate} thinkingElapsed={thinkingElapsed} projectName={projectName} />}
+                {state === "choose" ? (
+                  <ChooseState format={format} setFormat={setFormat} onContinue={() => navigate("upload")} />
+                ) : isSpeechFixtureState(state) ? (
+                  <SpeechCleanupFixtureState
+                    state={state}
+                    speechChoice={speechChoice}
+                    setSpeechChoice={setSpeechChoice}
+                    onState={navigate}
+                  />
+                ) : (
+                  <ConversationState
+                    state={state}
+                    mediaCount={mediaCount}
+                    onState={navigate}
+                    thinkingElapsed={thinkingElapsed}
+                    projectName={projectName}
+                  />
+                )}
               </div>
             </div>
             <div className="shrink-0 border-t border-[#ededE8] bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-10">
               <div className="mx-auto flex max-w-[620px] items-end gap-2 rounded-xl border border-[#cfcfc8] bg-[#fafaf8] p-2 focus-within:border-[#8c8c85]">
-                <label className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#d7ff90] text-lg" aria-label="Attach primary video clips"><input className="sr-only" type="file" accept="video/*" multiple onChange={() => { setMediaCount((count) => count + 1); navigate("upload"); }} />＋</label>
+                <label className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-[#d7ff90] text-lg" aria-label="Attach primary video clips"><input className="sr-only" type="file" accept="video/*" multiple onChange={() => { setMediaCount((count) => count + 1); navigate(state === "speech-audio-only" ? "speech-findings" : "upload"); }} />＋</label>
                 <textarea aria-label="Message Kria" value={composer} onChange={(event) => setComposer(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); navigate(state === "ready" ? "revision" : "confirm"); } }} placeholder="Tell Kria what you want to make…" rows={1} className="max-h-28 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-[#9b9b94]" />
                 <button aria-label="Send message" className="h-10 rounded-lg bg-[#0c0c0e] px-4 text-sm font-semibold text-white disabled:opacity-40" disabled={!composer.trim()} onClick={() => { setComposer(""); navigate(state === "ready" ? "revision" : "confirm"); }}>Send</button>
               </div>
@@ -210,11 +303,215 @@ export default function ChatFirstCreationFixture() {
 }
 
 function ChooseState({ format, setFormat, onContinue }: { format: keyof typeof FORMAT_COPY; setFormat: (format: keyof typeof FORMAT_COPY) => void; onContinue: () => void }) {
-  return <div className="fade" data-testid="choose-state"><p className="text-xs font-semibold uppercase tracking-[.18em] text-[#77776f]">Start with a direction</p><h1 className="font-display mt-4 text-4xl font-medium leading-tight sm:text-5xl">What are we making?</h1><p className="mt-3 max-w-lg text-sm leading-6 text-[#686860]">Pick a format, add your footage, and talk me through the feeling you want.</p><div className="mt-8 flex snap-x gap-3 overflow-x-auto pb-2" role="radiogroup" aria-label="Video format">{(Object.keys(FORMAT_COPY) as Array<keyof typeof FORMAT_COPY>).map((key) => { const copy = FORMAT_COPY[key]; return <button key={key} role="radio" aria-checked={format === key} data-format={key} className={`min-w-[210px] snap-start rounded-xl border p-4 text-left transition ${format === key ? "border-[#0c0c0e] bg-[#d7ff90]" : "border-[#deded9] bg-[#f7f7f5]"}`} onClick={() => setFormat(key)}><span className="block text-sm font-semibold">{copy.title}</span><span className="mt-2 block text-xs leading-5 text-[#686860]">{copy.detail}</span><span className="mt-7 block text-[11px] uppercase tracking-[.14em] text-[#77776f]">{copy.tone}</span></button>; })}</div><button className="mt-8 rounded-full bg-[#0c0c0e] px-6 py-3 text-sm font-semibold text-white" onClick={onContinue}>Add footage <span aria-hidden>→</span></button></div>;
+  return (
+    <div className="fade space-y-4" data-testid="choose-state">
+      <ChatArtifactCard
+        data-testid="format-artifact"
+        title="What are you making?"
+        description="Pick a starting point. You can shape the creative direction together in chat."
+      >
+        <div
+          className="grid grid-flow-col auto-cols-[minmax(220px,85%)] snap-x gap-3 overflow-x-auto sm:grid-flow-row sm:auto-cols-auto sm:grid-cols-3 sm:overflow-visible"
+          data-testid="format-choice-grid"
+          role="radiogroup"
+          aria-label="Video format"
+        >
+          {(Object.keys(FORMAT_COPY) as Array<keyof typeof FORMAT_COPY>).map((key) => {
+            const copy = FORMAT_COPY[key];
+            return (
+              <Button
+                key={key}
+                type="button"
+                variant="outline"
+                role="radio"
+                aria-checked={format === key}
+                data-format={key}
+                className={cn(
+                  "h-auto min-h-[96px] snap-start flex-col items-start justify-start whitespace-normal p-4 text-left",
+                  format === key && "border-primary ring-1 ring-primary",
+                )}
+                onClick={() => setFormat(key)}
+              >
+                <span className="font-medium">{copy.title}</span>
+                <span className="mt-1 text-xs font-normal text-muted-foreground">{copy.detail}</span>
+              </Button>
+            );
+          })}
+        </div>
+      </ChatArtifactCard>
+      <Button type="button" onClick={onContinue}>Add footage <span aria-hidden>→</span></Button>
+    </div>
+  );
 }
 
-function ConversationState({ state, mediaCount, onState, thinkingElapsed, projectName }: { state: Exclude<FixtureState, "choose">; mediaCount: number; onState: (state: FixtureState, view?: View) => void; thinkingElapsed: number; projectName: string }) {
-  const copy: Record<Exclude<FixtureState, "choose">, { eyebrow: string; title: string; body: string }> = {
+function speechCleanupProjection(state: SpeechFixtureState): CreationSpeechCleanupProjection {
+  const projection: CreationSpeechCleanupProjection = {
+    applicable: true,
+    analysis: {
+      id: state === "speech-stale" ? "analysis-fixture-new" : "analysis-fixture",
+      status: "ready",
+      has_findings: true,
+      candidate_count: 5,
+      category_counts: { filler_sound: 4, long_pause: 1 },
+      estimated_removed_ms: 2800,
+      error: null,
+    },
+    decision: null,
+    requires_choice: true,
+    render_blocker: state === "speech-audio-only" ? "video_required" : null,
+    outcome: null,
+  };
+
+  if (state === "speech-checking" || state === "speech-stale") {
+    projection.analysis = { id: projection.analysis!.id, status: "running" };
+    projection.requires_choice = false;
+  } else if (state === "speech-no-findings") {
+    projection.analysis = {
+      id: projection.analysis!.id,
+      status: "no_findings",
+      has_findings: false,
+      candidate_count: 0,
+    };
+    projection.requires_choice = false;
+  } else if (state === "speech-failed-retryable") {
+    projection.analysis = {
+      id: projection.analysis!.id,
+      status: "failed",
+      error: { code: "analysis_timeout", retryable: true },
+    };
+    projection.requires_choice = false;
+  } else if (state === "speech-failed-nonretryable") {
+    projection.analysis = {
+      id: projection.analysis!.id,
+      status: "failed",
+      error: { code: "unsupported_media", retryable: false },
+    };
+    projection.requires_choice = false;
+  } else if (state === "speech-cleanup-failed") {
+    projection.decision = "clean";
+    projection.requires_choice = false;
+    projection.outcome = {
+      job_id: "job-fixture",
+      render_generation_id: "generation-fixture",
+      status: "failed",
+      error: { code: "audio_apply_failed", retryable: true },
+    };
+  }
+  return projection;
+}
+
+function readyOutcome(state: SpeechFixtureState): CreationSpeechCleanupOutcomeStatus | null {
+  if (state === "speech-ready-applied") return "applied";
+  if (state === "speech-ready-no-change") return "checked_no_change";
+  if (state === "speech-ready-declined") return "declined";
+  if (state === "speech-ready-bypassed-unchecked") return "bypassed_unchecked";
+  return null;
+}
+
+function SpeechCleanupFixtureState({
+  state,
+  speechChoice,
+  setSpeechChoice,
+  onState,
+}: {
+  state: SpeechFixtureState;
+  speechChoice: CreationSpeechCleanupChoice;
+  setSpeechChoice: (choice: CreationSpeechCleanupChoice) => void;
+  onState: (state: FixtureState, view?: View) => void;
+}) {
+  const outcomeStatus = readyOutcome(state);
+  if (outcomeStatus) {
+    return (
+      <div className="fade" data-testid={`${state}-state`}>
+        <ChatArtifactCard
+          className="rounded-2xl border-zinc-200 bg-white shadow-sm"
+          badge={<Badge variant="secondary">Ready</Badge>}
+          title={<h2>Your cut is ready</h2>}
+          description={<span className="text-base">Play it here, download it, open the editor, or keep chatting for a confirmed revision.</span>}
+        >
+          <div className="space-y-4">
+            <SpeechCleanupReceipt
+              outcome={{
+                job_id: "job-fixture",
+                render_generation_id: "generation-fixture",
+                status: outcomeStatus,
+                removal_count: outcomeStatus === "applied" ? 5 : null,
+                removed_ms: outcomeStatus === "applied" ? 2800 : null,
+              }}
+            />
+            <div className="flex flex-wrap gap-3">
+              <Button type="button">Play</Button>
+              <Button type="button" variant="outline">Download</Button>
+              <Button type="button" variant="outline" onClick={() => onState(state, "editor")}>Open editor</Button>
+            </div>
+          </div>
+        </ChatArtifactCard>
+      </div>
+    );
+  }
+
+  if (state === "speech-rendering") {
+    return (
+      <div className="fade" data-testid="speech-rendering-state">
+        <ChatArtifactCard
+          className="rounded-2xl border-zinc-200 bg-white shadow-sm"
+          badge={<Badge variant="secondary">Rendering</Badge>}
+          title={<h2>Creating your video</h2>}
+          description={<span className="text-base">Kria is applying the confirmed speech choice and keeping captions in sync.</span>}
+        >
+          <Button
+            type="button"
+            className="min-h-11"
+            onClick={() => onState(speechChoice === "clean" ? "speech-ready-applied" : "speech-ready-declined")}
+          >
+            Complete fixture render
+          </Button>
+        </ChatArtifactCard>
+      </div>
+    );
+  }
+
+  const cleanup = speechCleanupProjection(state);
+  return (
+    <div className="fade" data-testid={`${state}-state`}>
+      <SpeechCleanupDecisionCard
+        cleanup={cleanup}
+        formatLabel={state === "speech-audio-only" ? "Narrated" : "Talking to camera"}
+        direction="Keep the delivery crisp and add synchronized captions."
+        busy={state === "speech-saving"}
+        pendingAction={state === "speech-saving" ? "clean" : null}
+        onGenerate={(choice) => {
+          if (!choice) {
+            onState("speech-ready-no-change");
+            return;
+          }
+          setSpeechChoice(choice);
+          onState("speech-rendering");
+        }}
+        onRetryAnalysis={() => onState("speech-checking")}
+        onRetryRender={() => onState("speech-rendering")}
+        onCreateWithoutCleanup={() => onState("speech-ready-bypassed-unchecked")}
+      />
+    </div>
+  );
+}
+
+type ConversationFixtureState = Exclude<FixtureState, "choose" | SpeechFixtureState>;
+
+function ConversationState({
+  state,
+  mediaCount,
+  onState,
+  thinkingElapsed,
+  projectName,
+}: {
+  state: ConversationFixtureState;
+  mediaCount: number;
+  onState: (state: FixtureState, view?: View) => void;
+  thinkingElapsed: number;
+  projectName: string;
+}) {
+  const copy: Record<ConversationFixtureState, { eyebrow: string; title: string; body: string }> = {
     upload: { eyebrow: "Clips", title: "Show me the moments.", body: "Add primary video clips here. Supporting photos and short videos stay in Visuals; Narrated voiceover uses the recorder." },
     confirm: { eyebrow: "Direction", title: "Here’s the cut I’m proposing.", body: "A bright, quick montage with the ferry arrival first, then the blue-water swim. Keep the laughs and let the music breathe between scenes." },
     rendering: { eyebrow: "Rendering", title: "Your cut is taking shape.", body: "I’m assembling the footage and sound now. You can keep chatting; any new direction will wait for this render to finish." },

@@ -93,6 +93,14 @@ class Settings(BaseSettings):
     # required_v1/off_v1 contract; legacy_auto is historical-job compatibility
     # only and is intentionally rejected as a live setting.
     speech_cleanup_mode: Literal["opt_in", "disabled"] = "opt_in"
+    # Chat-first preflight is deployed dark, then advanced independently from
+    # the legacy render-time switch.  ``shadow`` persists bounded analysis but
+    # does not block creation; ``enforce`` exposes the decision contract.
+    speech_cleanup_preflight_mode: Literal["off", "shadow", "enforce"] = "off"
+    speech_cleanup_preflight_rollout_percent: int = Field(default=0, ge=0, le=100)
+    # Preflight downloads/transcription must never queue behind video renders or
+    # run on the small maintenance machine.
+    speech_cleanup_analysis_queue: str = "speech-analysis"
 
     # yt-dlp cookies for admin URL imports. Use YTDLP_COOKIES_B64 in hosted
     # environments (secret-safe, decoded into a short-lived 0600 temp file) or

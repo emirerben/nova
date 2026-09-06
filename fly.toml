@@ -73,6 +73,9 @@ kill_timeout = 300
   # Image/video metadata analysis is network-bound but downloads media, so it
   # must not share the 1GB maintenance VM or wait behind long render jobs.
   autoplace = "celery -A app.worker worker --loglevel=info --concurrency=2 -Q autoplace-jobs"
+  # Speech preflight has independent latency/SLOs and may run bounded FFmpeg +
+  # transcription work. Keep it off both the render and maintenance queues.
+  speech_analysis = "celery -A app.worker worker --loglevel=info --concurrency=1 -Q speech-analysis"
 
 # ---------------------------------------------------------------------------
 # HTTP service (api process only)
@@ -142,6 +145,11 @@ kill_timeout = 300
   auto_stop_machines = false
   auto_start_machines = true
 
+[[services]]
+  processes = ["speech_analysis"]
+  auto_stop_machines = false
+  auto_start_machines = true
+
 # ---------------------------------------------------------------------------
 # VM sizing per process group
 # ---------------------------------------------------------------------------
@@ -190,6 +198,14 @@ kill_timeout = 300
 # two bounded media downloads/probes.
 [[vm]]
   processes = ["autoplace"]
+  cpu_kind = "shared"
+  cpus = 2
+  memory_mb = 2048
+
+# Dedicated chat speech-preflight worker. One task at a time keeps local
+# Whisper/FFmpeg memory bounded while avoiding render head-of-line blocking.
+[[vm]]
+  processes = ["speech_analysis"]
   cpu_kind = "shared"
   cpus = 2
   memory_mb = 2048

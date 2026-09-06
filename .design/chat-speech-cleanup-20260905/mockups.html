@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nova speech cleanup directions</title>
+  <style>
+    @font-face {
+      font-family: Fraunces;
+      src: url("file:///Users/yasinberk/.codex/visualizations/2026/09/05/01a07141-0deb-7802-ac5e-140c8bc35cc7/nova-chat-speech-cleanup/src/apps/web/public/fonts/Fraunces-Bold.ttf");
+      font-weight: 600;
+    }
+    @font-face {
+      font-family: Inter;
+      src: url("file:///Users/yasinberk/.codex/visualizations/2026/09/05/01a07141-0deb-7802-ac5e-140c8bc35cc7/nova-chat-speech-cleanup/src/apps/web/public/fonts/Inter-Regular.ttf");
+      font-weight: 400;
+    }
+    @font-face {
+      font-family: Inter;
+      src: url("file:///Users/yasinberk/.codex/visualizations/2026/09/05/01a07141-0deb-7802-ac5e-140c8bc35cc7/nova-chat-speech-cleanup/src/apps/web/public/fonts/Inter-Bold.ttf");
+      font-weight: 600 800;
+    }
+    :root {
+      --ink: #0c0c0e;
+      --ink-2: #3f3f46;
+      --muted: #71717a;
+      --faint: #a1a1aa;
+      --line: #e4e4e7;
+      --wash: #f4f4f5;
+      --lime-50: #f7fee7;
+      --lime-200: #d9f99d;
+      --lime-600: #65a30d;
+      --lime-700: #4d7c0f;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      width: 1600px;
+      height: 1100px;
+      overflow: hidden;
+      color: var(--ink);
+      background: #f6f6f5;
+      font-family: Inter, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    button { font: inherit; }
+    .sheet { padding: 34px 40px 40px; }
+    .review-head {
+      height: 58px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+    }
+    .review-head h1 {
+      margin: 0;
+      font-family: Fraunces, serif;
+      font-size: 27px;
+      line-height: 1.05;
+      font-weight: 600;
+      letter-spacing: -0.025em;
+    }
+    .review-head p {
+      margin: 7px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .direction-tag {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: white;
+      padding: 8px 13px;
+      color: var(--ink-2);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .04em;
+    }
+    .devices { display: grid; grid-template-columns: 1160px 340px; gap: 20px; }
+    .device {
+      background: white;
+      border: 1px solid #d4d4d8;
+      overflow: hidden;
+      box-shadow: 0 18px 50px rgba(24,24,27,.08), 0 2px 6px rgba(24,24,27,.06);
+    }
+    .desktop { width: 1160px; height: 940px; border-radius: 22px; }
+    .phone { width: 340px; height: 740px; margin-top: 100px; border-radius: 28px; border-width: 2px; }
+    .desktop-app { display: grid; grid-template-columns: 230px 1fr; height: 100%; }
+    .rail {
+      border-right: 1px solid var(--line);
+      padding: 22px 16px;
+      background: #fbfbfb;
+      position: relative;
+    }
+    .wordmark {
+      font-family: Fraunces, serif;
+      font-size: 27px;
+      letter-spacing: -0.04em;
+      margin: 0 10px 30px;
+    }
+    .new-button {
+      min-height: 44px;
+      border: 0;
+      border-radius: 999px;
+      padding: 0 18px;
+      width: 100%;
+      background: var(--ink);
+      color: white;
+      text-align: left;
+      font-weight: 700;
+    }
+    .rail-label {
+      margin: 27px 10px 10px;
+      color: var(--faint);
+      text-transform: uppercase;
+      letter-spacing: .16em;
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .project {
+      padding: 12px 11px;
+      border-radius: 12px;
+      font-size: 13px;
+      line-height: 1.3;
+      margin-bottom: 4px;
+      color: var(--ink-2);
+    }
+    .project.active { background: white; border: 1px solid var(--line); color: var(--ink); }
+    .project small { display: block; color: var(--muted); margin-top: 4px; }
+    .rail-foot { position: absolute; bottom: 19px; left: 24px; color: var(--muted); font-size: 12px; }
+    .workspace { min-width: 0; display: grid; grid-template-rows: 58px 1fr 86px; }
+    .workspace-head {
+      height: 58px;
+      border-bottom: 1px solid var(--line);
+      padding: 0 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+    }
+    .workspace-head strong { font-size: 13px; }
+    .ready-dot { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); }
+    .ready-dot::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--lime-600); }
+    .transcript { overflow: hidden; padding: 38px 46px 18px; }
+    .conversation { width: min(720px, 100%); margin: 0 auto; }
+    .context-label {
+      font-size: 10px;
+      line-height: 1;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .15em;
+      color: var(--lime-700);
+      margin-bottom: 11px;
+    }
+    .direction-line {
+      border-left: 3px solid var(--lime-600);
+      padding: 2px 0 2px 16px;
+      color: var(--ink-2);
+      font-size: 13px;
+      line-height: 1.55;
+      margin-bottom: 24px;
+    }
+    .direction-line strong { color: var(--ink); }
+    .decision {
+      border: 1px solid var(--line);
+      background: white;
+      border-radius: 19px;
+      box-shadow: 0 2px 5px rgba(24,24,27,.06);
+      overflow: hidden;
+    }
+    .decision-inner { padding: 26px; }
+    .eyebrow {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--lime-700);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+      margin-bottom: 13px;
+    }
+    .eyebrow .check {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      display: inline-grid;
+      place-items: center;
+      background: var(--lime-50);
+      border: 1px solid var(--lime-200);
+      font-size: 11px;
+    }
+    .decision h2 {
+      font-family: Fraunces, serif;
+      font-size: 31px;
+      line-height: 1.05;
+      letter-spacing: -0.028em;
+      font-weight: 600;
+      margin: 0;
+    }
+    .decision .lede {
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+    .action {
+      min-height: 46px;
+      border-radius: 999px;
+      padding: 0 20px;
+      border: 1px solid var(--line);
+      background: white;
+      color: var(--ink);
+      font-weight: 700;
+      font-size: 13px;
+    }
+    .action.primary { color: white; background: var(--ink); border-color: var(--ink); }
+    .action small { font-weight: 500; opacity: .7; }
+    .state-family {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      margin-top: 22px;
+      border-top: 1px solid var(--line);
+      padding-top: 15px;
+    }
+    .state-sample { color: var(--muted); font-size: 11px; line-height: 1.45; }
+    .state-sample strong { display: block; color: var(--ink-2); font-size: 12px; margin-bottom: 2px; }
+    .state-sample .pulse { display: inline-block; width: 6px; height: 6px; background: var(--lime-600); border-radius: 50%; margin-right: 6px; }
+    .composer {
+      border-top: 1px solid var(--line);
+      padding: 15px 44px 17px;
+      display: flex;
+      align-items: center;
+    }
+    .composer-box {
+      width: min(720px, 100%);
+      margin: 0 auto;
+      height: 52px;
+      border: 1px solid #d4d4d8;
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      padding: 0 11px 0 16px;
+      color: var(--faint);
+      font-size: 13px;
+      justify-content: space-between;
+    }
+    .send { width: 34px; height: 34px; border: 0; border-radius: 50%; background: var(--wash); color: var(--muted); }
+
+    /* A — evidence as the anchor */
+    .variant-a .evidence-a { display: grid; }
+    .evidence-a { display: none; grid-template-columns: 120px 1fr; margin-top: 22px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .big-metric { padding: 18px 20px 17px 0; border-right: 1px solid var(--line); }
+    .big-metric strong { display: block; font-family: Fraunces, serif; font-size: 39px; line-height: .95; letter-spacing: -.03em; }
+    .big-metric span { display: block; color: var(--muted); font-size: 11px; margin-top: 6px; }
+    .evidence-copy { padding: 17px 0 16px 20px; }
+    .evidence-row { display: flex; gap: 14px; font-size: 12px; font-weight: 700; color: var(--ink-2); }
+    .time-saved { color: var(--lime-700); }
+    .timeline { height: 7px; border-radius: 999px; background: #e4e4e7; margin-top: 15px; display: flex; gap: 4px; overflow: hidden; }
+    .timeline i { height: 100%; background: var(--lime-600); display: block; border-radius: 999px; }
+    .timeline i:nth-child(1) { width: 8%; margin-left: 12%; }
+    .timeline i:nth-child(2) { width: 5%; margin-left: 17%; }
+    .timeline i:nth-child(3) { width: 11%; margin-left: 9%; }
+    .timeline i:nth-child(4) { width: 7%; margin-left: 5%; }
+    .assurance { margin-top: 12px; color: var(--ink-2); font-size: 12px; }
+
+    /* B — compact evidence ledger */
+    .variant-b .decision { border-radius: 15px; box-shadow: none; }
+    .variant-b .decision-inner { padding: 23px 25px 24px; }
+    .variant-b .decision h2 { font-size: 28px; }
+    .variant-b .evidence-b { display: grid; }
+    .evidence-b { display: none; grid-template-columns: 1fr 1fr 1fr; margin-top: 20px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+    .ledger-cell { padding: 15px 15px 14px; border-right: 1px solid var(--line); }
+    .ledger-cell:last-child { border: 0; background: var(--lime-50); }
+    .ledger-cell strong { display: block; font-family: Fraunces, serif; font-size: 25px; line-height: 1; }
+    .ledger-cell span { display: block; color: var(--muted); font-size: 10px; margin-top: 6px; }
+    .variant-b .actions { justify-content: space-between; align-items: center; }
+
+    /* C — editorial conversation treatment */
+    .variant-c .decision { border-color: #d9f99d; box-shadow: 0 2px 5px rgba(77,124,15,.06); }
+    .variant-c .decision-inner { padding: 0; }
+    .variant-c .editorial-top { display: block; }
+    .variant-c .eyebrow { display: none; }
+    .editorial-top { display: none; background: var(--lime-50); border-bottom: 1px solid var(--lime-200); padding: 12px 25px; color: var(--lime-700); font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .13em; }
+    .variant-c .editorial-body { padding: 25px; }
+    .variant-c .evidence-c { display: flex; }
+    .evidence-c { display: none; gap: 8px; flex-wrap: wrap; margin-top: 19px; }
+    .proof-pill { border: 1px solid var(--line); background: white; border-radius: 999px; padding: 8px 11px; color: var(--ink-2); font-size: 11px; font-weight: 700; }
+    .proof-pill.time { border-color: var(--lime-200); background: var(--lime-50); color: var(--lime-700); }
+    .variant-c .actions { border-top: 1px solid var(--line); margin: 22px -25px -25px; padding: 15px 25px; background: #fdfdfd; }
+
+    /* mobile */
+    .phone-app { height: 100%; display: grid; grid-template-rows: 55px 1fr 76px; }
+    .phone-head { border-bottom: 1px solid var(--line); padding: 0 16px; display: flex; align-items: center; justify-content: space-between; }
+    .phone-head .wordmark { margin: 0; font-size: 21px; }
+    .phone-head span { font-size: 11px; color: var(--muted); }
+    .phone-content { padding: 22px 14px; overflow: hidden; }
+    .phone .direction-line { font-size: 11px; padding-left: 12px; margin-bottom: 17px; line-height: 1.45; }
+    .phone .context-label { font-size: 9px; margin-bottom: 8px; }
+    .phone .decision { border-radius: 16px; }
+    .phone .decision-inner { padding: 18px; }
+    .phone .decision h2 { font-size: 25px; line-height: 1.02; }
+    .phone .decision .lede { font-size: 12px; line-height: 1.45; }
+    .phone .eyebrow { font-size: 9px; margin-bottom: 10px; }
+    .phone .evidence-a { grid-template-columns: 1fr; margin-top: 17px; }
+    .phone .big-metric { padding: 14px 0 11px; border-right: 0; border-bottom: 1px solid var(--line); }
+    .phone .big-metric strong { font-size: 31px; }
+    .phone .big-metric span { font-size: 9px; }
+    .phone .evidence-copy { padding: 12px 0 13px; }
+    .phone .evidence-row { display: block; font-size: 10px; line-height: 1.5; }
+    .phone .timeline { margin-top: 10px; }
+    .phone .assurance { font-size: 10px; line-height: 1.4; }
+    .phone .actions { display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 16px; }
+    .phone .action { width: 100%; min-height: 46px; padding: 0 10px; font-size: 12px; }
+    .phone .state-family { display: none; }
+    .phone .state-sample { font-size: 9px; }
+    .phone .state-sample + .state-sample { display: none; }
+    .phone .composer { padding: 11px 13px 16px; }
+    .phone .composer-box { height: 48px; border-radius: 15px; font-size: 11px; }
+    .phone .evidence-b { grid-template-columns: 1fr; margin-top: 16px; }
+    .phone .ledger-cell { display: flex; align-items: center; justify-content: space-between; border-right: 0; border-bottom: 1px solid var(--line); padding: 10px 12px; }
+    .phone .ledger-cell:last-child { border-bottom: 0; }
+    .phone .ledger-cell strong { font-size: 21px; }
+    .phone .ledger-cell span { margin: 0; }
+    .phone.variant-c .editorial-top { padding: 10px 18px; }
+    .phone.variant-c .editorial-body { padding: 18px; }
+    .phone.variant-c .actions { margin: 18px -18px -18px; padding: 13px 18px 18px; }
+    .phone .proof-pill { font-size: 9px; padding: 7px 9px; }
+  </style>
+</head>
+<body class="variant-a">
+  <main class="sheet">
+    <header class="review-head">
+      <div><h1>Speech cleanup, before the cut</h1><p>One truthful decision · desktop and mobile</p></div>
+      <div class="direction-tag" id="directionTag">DIRECTION A · EVIDENCE FIRST</div>
+    </header>
+    <div class="devices">
+      <section class="device desktop" aria-label="Desktop concept">
+        <div class="desktop-app">
+          <aside class="rail">
+            <div class="wordmark">Kria</div>
+            <button class="new-button">＋ New video</button>
+            <div class="rail-label">Projects</div>
+            <div class="project active">Founder update<small>Direction ready</small></div>
+            <div class="project">Morning routine<small>Cut ready</small></div>
+            <div class="project">Studio notes<small>Draft</small></div>
+            <div class="rail-foot">Gallery&nbsp;&nbsp;·&nbsp;&nbsp;Account</div>
+          </aside>
+          <div class="workspace">
+            <header class="workspace-head"><strong>Founder update</strong><span class="ready-dot">Direction ready</span></header>
+            <div class="transcript"><div class="conversation">
+              <div class="context-label">Direction locked</div>
+              <div class="direction-line"><strong>Talking to camera · 9:16</strong><br />A crisp, captioned founder update. Keep the candid delivery and open on the strongest claim.</div>
+              <div class="decision">
+                <div class="editorial-top">Speech check complete</div>
+                <div class="decision-inner editorial-body">
+                  <div class="eyebrow"><span class="check">✓</span><span>Speech check complete</span></div>
+                  <h2>Clean up 5 speech moments?</h2>
+                  <p class="lede">Kria found changes that can tighten the delivery without changing what you said.</p>
+                  <div class="evidence-a">
+                    <div class="big-metric"><strong>5</strong><span>safe edits</span></div>
+                    <div class="evidence-copy"><div class="evidence-row"><span>4 filler sounds</span><span>1 long pause</span><span class="time-saved">about 2.8s shorter</span></div><div class="assurance">Captions stay in sync.</div></div>
+                  </div>
+                  <div class="evidence-b">
+                    <div class="ledger-cell"><strong>4</strong><span>filler sounds</span></div><div class="ledger-cell"><strong>1</strong><span>long pause</span></div><div class="ledger-cell"><strong>−2.8s</strong><span>shorter</span></div>
+                  </div>
+                  <div class="evidence-c"><span class="proof-pill">4 filler sounds</span><span class="proof-pill">1 long pause</span><span class="proof-pill time">About 2.8s shorter</span></div>
+                  <div class="actions"><button class="action primary">Clean up and create</button><button class="action">Keep speech and create</button></div>
+                </div>
+              </div>
+              <div class="state-family"><div class="state-sample"><strong><span class="pulse"></span>Checking state</strong>Checking for filler sounds… You can keep chatting.</div><div class="state-sample"><strong>No-findings state</strong>Speech checked. No cleanup suggested.</div></div>
+            </div></div>
+            <div class="composer"><div class="composer-box"><span>Tell Kria what you want changed…</span><button class="send">↑</button></div></div>
+          </div>
+        </div>
+      </section>
+      <section class="device phone variant-a" id="phone" aria-label="Mobile concept">
+        <div class="phone-app">
+          <header class="phone-head"><div class="wordmark">Kria</div><span>Founder update⌄</span></header>
+          <div class="phone-content">
+            <div class="context-label">Direction locked</div>
+            <div class="direction-line"><strong>Talking to camera · 9:16</strong><br />A crisp, captioned founder update.</div>
+            <div class="decision">
+              <div class="editorial-top">Speech check complete</div>
+              <div class="decision-inner editorial-body">
+                <div class="eyebrow"><span class="check">✓</span><span>Speech check complete</span></div>
+                <h2>Clean up 5 speech moments?</h2>
+                <p class="lede">Kria found safe edits that can tighten the delivery.</p>
+                <div class="evidence-a"><div class="big-metric"><strong>5</strong><span>safe edits</span></div><div class="evidence-copy"><div class="evidence-row">4 filler sounds · 1 long pause<br /><span class="time-saved">about 2.8s shorter</span></div><div class="assurance">Captions stay in sync.</div></div></div>
+                <div class="evidence-b"><div class="ledger-cell"><strong>4</strong><span>filler sounds</span></div><div class="ledger-cell"><strong>1</strong><span>long pause</span></div><div class="ledger-cell"><strong>−2.8s</strong><span>shorter</span></div></div>
+                <div class="evidence-c"><span class="proof-pill">4 filler sounds</span><span class="proof-pill">1 long pause</span><span class="proof-pill time">About 2.8s shorter</span></div>
+                <div class="actions"><button class="action primary">Clean up and create</button><button class="action">Keep speech and create</button></div>
+              </div>
+            </div>
+            <div class="state-family"><div class="state-sample"><strong><span class="pulse"></span>Checking for filler sounds…</strong>You can keep chatting.</div></div>
+          </div>
+          <div class="composer"><div class="composer-box"><span>Tell Kria…</span><button class="send">↑</button></div></div>
+        </div>
+      </section>
+    </div>
+  </main>
+  <script>
+    const requested = new URLSearchParams(location.search).get('variant') || 'A';
+    const variant = ['A', 'B', 'C'].includes(requested.toUpperCase()) ? requested.toUpperCase() : 'A';
+    const labels = { A: 'EVIDENCE FIRST', B: 'COMPACT LEDGER', C: 'EDITORIAL PROMPT' };
+    document.body.className = `variant-${variant.toLowerCase()}`;
+    document.getElementById('phone').className = `device phone variant-${variant.toLowerCase()}`;
+    document.getElementById('directionTag').textContent = `DIRECTION ${variant} · ${labels[variant]}`;
+  </script>
+</body>
+</html>

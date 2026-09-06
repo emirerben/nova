@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import uuid
@@ -551,6 +552,7 @@ async def decide_relevance_proposal(
             raise HTTPException(status_code=409, detail="Proposal media is no longer owned")
 
     result_item_id: uuid.UUID | None = None
+    preflight_analysis_id: uuid.UUID | None = None
     if body.decision == "accept_existing":
         item = (
             await db.execute(
@@ -602,10 +604,31 @@ async def decide_relevance_proposal(
                     user_note=str(assignment.get("user_note") or ""),
                     machine_matched=bool(assignment.get("machine_matched", False)),
                     media_id=(str(assignment["media_id"]) if assignment.get("media_id") else None),
+                    duration_s=assignment.get("duration_s"),
+                    duration_probe_status=assignment.get("duration_probe_status"),
+                    duration_probe_generation=assignment.get("duration_probe_generation"),
+                    duration_probe_attempted_at=assignment.get("duration_probe_attempted_at"),
+                    storage_generation=assignment.get("storage_generation"),
+                    has_audio=assignment.get("has_audio"),
+                    manifest_identity=assignment.get("manifest_identity"),
+                    speech_coverage=assignment.get("speech_coverage"),
+                    foreground=assignment.get("foreground"),
+                    trim_start_s=assignment.get("trim_start_s"),
+                    trim_end_s=assignment.get("trim_end_s"),
                 )
                 for assignment in (item.clip_assignments or [])
                 if isinstance(assignment, dict) and assignment.get("gcs_path")
             ]
+            from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+                mutation_current_analysis_async,
+                schedule_item_preflight_async,
+            )
+
+            current_cleanup = await mutation_current_analysis_async(
+                db,
+                item.id,
+                for_update=True,
+            )
             set_item_clips(
                 item,
                 existing_assignments
@@ -616,7 +639,9 @@ async def decide_relevance_proposal(
                     )
                     for media in snapshots
                 ],
+                current_analysis=current_cleanup,
             )
+            preflight_analysis_id = await schedule_item_preflight_async(db, item)
         except (KeyError, ClipAssignmentError) as exc:
             raise HTTPException(
                 status_code=409,
@@ -631,6 +656,26 @@ async def decide_relevance_proposal(
     row.decision_client_event_id = body.client_event_id
     row.result_plan_item_id = result_item_id
     await db.commit()
+    if preflight_analysis_id is not None:
+        from app.services.plan_item_media import publish_preflight_after_commit  # noqa: PLC0415
+
+        await asyncio.to_thread(publish_preflight_after_commit, preflight_analysis_id)
+    if body.decision != "reject" and (
+        settings.speech_cleanup_preflight_mode != "off"
+        and settings.speech_cleanup_preflight_rollout_percent > 0
+    ):
+        # Legacy workspace media does not carry a storage generation in the
+        # proposal snapshot. The bounded metadata worker registers it and then
+        # schedules preflight through the same source-aware facade.
+        from app.tasks.creator_clip_metadata import (  # noqa: PLC0415
+            CREATOR_CLIP_METADATA_QUEUE,
+            analyze_creator_clip_metadata,
+        )
+
+        analyze_creator_clip_metadata.apply_async(
+            args=[str(item.id), int(plan.ownership_epoch or 0)],
+            queue=CREATOR_CLIP_METADATA_QUEUE,
+        )
     return _response(row)
 
 

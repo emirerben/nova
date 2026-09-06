@@ -17,7 +17,7 @@ import re
 import tempfile
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Literal, NoReturn
+from typing import Annotated, Any, Literal, NoReturn
 
 import structlog
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, status
@@ -840,6 +840,12 @@ async def edit_plan_item(
 
     item = await _load_owned_item(item_id, user.id, db, for_update=True)
     previous_speech_inputs = cleanup_inputs(item)
+    from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+        mutation_current_analysis_async,
+    )
+
+    current_cleanup = await mutation_current_analysis_async(db, item.id, for_update=True)
+    media_mutation: dict[str, object] = {}
 
     updates = edit.model_dump(exclude_none=True)
     smart_capability = None
@@ -873,8 +879,8 @@ async def edit_plan_item(
         raw = updates["scheduled_date"]
         item.scheduled_date = date_type.fromisoformat(raw) if raw else None
     if "edit_format" in updates:
-        item.edit_format = updates["edit_format"] or None
-        if item.edit_format != "subtitled":
+        media_mutation["edit_format"] = updates["edit_format"] or "montage"
+        if updates["edit_format"] != "subtitled":
             item.smart_captions_enabled = False
     if "smart_captions_enabled" in updates:
         item.smart_captions_enabled = updates["smart_captions_enabled"] is True
@@ -890,9 +896,21 @@ async def edit_plan_item(
     if "montage_preset" in updates and updates["montage_preset"] is not None:
         item.montage_preset = updates["montage_preset"]  # Pydantic Literal already validates
     if "audio_mode" in updates and updates["audio_mode"] is not None:
-        item.audio_mode = updates["audio_mode"]  # Pydantic Literal already validates
+        media_mutation["audio_mode"] = updates["audio_mode"]
     if "content_mode" in updates and updates["content_mode"] is not None:
         item.content_mode = updates["content_mode"]  # Pydantic Literal already validates
+    if media_mutation:
+        from app.services.plan_item_media import (  # noqa: PLC0415
+            current_detector_policy,
+            mutate_plan_item_media,
+        )
+
+        mutate_plan_item_media(
+            item,
+            detector_policy=current_detector_policy(),
+            current_analysis=current_cleanup,
+            **media_mutation,
+        )
     # Every PlanItem writer must reconcile stored consent after changing the
     # content inputs. Operational outages are intentionally not part of this
     # helper, so an explicit On preference survives a temporary unavailability.
@@ -922,7 +940,16 @@ async def edit_plan_item(
         flag_modified(item, "speech_cleanup_notice")
     if updates:
         item.user_edited = True
+    from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+        schedule_item_preflight_async,
+    )
+
+    preflight_analysis_id = await schedule_item_preflight_async(db, item)
     await db.commit()
+    if preflight_analysis_id is not None:
+        from app.services.plan_item_media import publish_preflight_after_commit  # noqa: PLC0415
+
+        await run_in_threadpool(publish_preflight_after_commit, preflight_analysis_id)
     # Reload with current_job eager-loaded (commit expired it) before serializing.
     reloaded = await _load_owned_item(item_id, user.id, db)
     instruction_level = await _get_instruction_level(reloaded, db)
@@ -1361,6 +1388,23 @@ async def attach_clips(
         for a in (item.clip_assignments or [])
         if isinstance(a, dict) and a.get("gcs_path")
     }
+    prior_registration: dict[str, dict[str, Any]] = {
+        str(a["gcs_path"]): {
+            key: a[key]
+            for key in (
+                "storage_generation",
+                "has_audio",
+                "manifest_identity",
+                "speech_coverage",
+                "foreground",
+                "trim_start_s",
+                "trim_end_s",
+            )
+            if key in a
+        }
+        for a in (item.clip_assignments or [])
+        if isinstance(a, dict) and a.get("gcs_path")
+    }
 
     if body.assignments is not None:
         # Shot-slot uploader path: validate prefix, then validate shot_ids.
@@ -1402,6 +1446,7 @@ async def attach_clips(
                 duration_probe_attempted_at=prior_duration_probe.get(a.gcs_path, {}).get(
                     "duration_probe_attempted_at"
                 ),
+                **prior_registration.get(a.gcs_path, {}),
             )
             for a in body.assignments
         ]
@@ -1427,6 +1472,7 @@ async def attach_clips(
                 duration_probe_attempted_at=prior_duration_probe.get(p, {}).get(
                     "duration_probe_attempted_at"
                 ),
+                **prior_registration.get(p, {}),
             )
             for p in body.clip_gcs_paths
         ]
@@ -1470,11 +1516,17 @@ async def attach_clips(
                     ),
                 )
 
+    from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+        mutation_current_analysis_async,
+        schedule_item_preflight_async,
+    )
+
+    current_cleanup = await mutation_current_analysis_async(db, item.id, for_update=True)
     try:
-        set_item_clips(item, assignments)
+        set_item_clips(item, assignments, current_analysis=current_cleanup)
         # Identity generation is cheap and belongs in the attach transaction;
         # duration extraction is delegated after commit to the worker below.
-        ensure_clip_media_ids(item)
+        ensure_clip_media_ids(item, current_analysis=current_cleanup)
     except ClipAssignmentError as exc:
         detail: str | dict[str, int | str] = str(exc)
         if len(assignments) > _MAX_CLIPS_PER_ITEM:
@@ -1493,7 +1545,12 @@ async def attach_clips(
     # D7: null conformance so the panel can never describe replaced footage.
     item.conformance = None
 
+    preflight_analysis_id = await schedule_item_preflight_async(db, item)
     await db.commit()
+    if preflight_analysis_id is not None:
+        from app.services.plan_item_media import publish_preflight_after_commit  # noqa: PLC0415
+
+        await run_in_threadpool(publish_preflight_after_commit, preflight_analysis_id)
     # Fire-and-forget conformance analysis (best-effort, never blocks this response).
     from app.tasks.conformance_build import analyze_item_conformance  # noqa: PLC0415
     from app.tasks.creator_clip_metadata import (  # noqa: PLC0415
@@ -1695,14 +1752,33 @@ async def set_clip_note(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="No such clip on this item"
         )
-    item.clip_assignments = updated
+    from app.services.plan_item_media import (  # noqa: PLC0415
+        current_detector_policy,
+        mutate_plan_item_media,
+        publish_preflight_after_commit,
+    )
+    from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+        mutation_current_analysis_async,
+        schedule_item_preflight_async,
+    )
+
+    current_cleanup = await mutation_current_analysis_async(db, item.id, for_update=True)
+    mutate_plan_item_media(
+        item,
+        detector_policy=current_detector_policy(),
+        clip_assignments=updated,
+        current_analysis=current_cleanup,
+    )
 
     # Carry only the contested flag through the re-run (suppression memory);
     # the old verdict itself must never render while the judge re-reads.
     prev = item.conformance or {}
     item.conformance = {"contested": True} if prev.get("contested") else None
 
+    preflight_analysis_id = await schedule_item_preflight_async(db, item)
     await db.commit()
+    if preflight_analysis_id is not None:
+        await run_in_threadpool(publish_preflight_after_commit, preflight_analysis_id)
     from app.tasks.conformance_build import analyze_item_conformance  # noqa: PLC0415
 
     analyze_item_conformance.delay(str(item.id), ownership_epoch)
@@ -1903,15 +1979,29 @@ async def set_item_voiceover(
     # trigger implicit async IO through ``user.id``.
     owner_id = user.id
     voiceover_path = body.voiceover_gcs_path
+    preflight_analysis_id: uuid.UUID | None = None
     if voiceover_path is None:
         item = await _load_owned_item(item_id, owner_id, db, for_update=True)
-        previous_speech_inputs = cleanup_inputs(item)
-        item.voiceover_gcs_path = None
-        if getattr(item, "audio_mode", None) == "voiceover":
-            # Clearing the only voiceover source must not leave a stale audio
-            # mode that permanently makes Speech cleanup look ineligible.
-            item.audio_mode = "kria"
-        reconcile_item_policy_change(item, previous_speech_inputs)
+        from app.services.plan_item_media import (  # noqa: PLC0415
+            current_detector_policy,
+            mutate_plan_item_media,
+        )
+        from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+            mutation_current_analysis_async,
+        )
+
+        current_cleanup = await mutation_current_analysis_async(db, item.id, for_update=True)
+        mutate_plan_item_media(
+            item,
+            detector_policy=current_detector_policy(),
+            current_analysis=current_cleanup,
+            voiceover_gcs_path=None,
+            voiceover_generation=None,
+            voiceover_duration_s=None,
+            audio_mode=(
+                "kria" if getattr(item, "audio_mode", None) == "voiceover" else item.audio_mode
+            ),
+        )
     else:
         # Establish item ownership before touching storage, but do not hold the
         # plan/persona/item lock chain across the external metadata call.
@@ -1971,12 +2061,58 @@ async def set_item_voiceover(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Voiceover recording must be audio",
             )
+        try:
+            source_url = await run_in_threadpool(
+                storage.signed_get_url_for_generation,
+                voiceover_path,
+                generation=str(metadata.generation),
+            )
+            from app.services.audio_download import (  # noqa: PLC0415
+                probe_duration,
+                probe_has_audio_stream,
+            )
+
+            duration_s = await run_in_threadpool(probe_duration, source_url)
+            has_audio = await run_in_threadpool(probe_has_audio_stream, source_url)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Voiceover changed during registration — upload it again",
+            ) from exc
+        if duration_s is None or duration_s <= 0 or not has_audio:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Voiceover recording could not be read",
+            )
         item = await _load_owned_item(item_id, owner_id, db, for_update=True)
-        previous_speech_inputs = cleanup_inputs(item)
-        item.voiceover_gcs_path = voiceover_path
-        item.audio_mode = "voiceover"
-        reconcile_item_policy_change(item, previous_speech_inputs)
+        from app.services.plan_item_media import (  # noqa: PLC0415
+            current_detector_policy,
+            mutate_plan_item_media,
+        )
+        from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+            mutation_current_analysis_async,
+        )
+
+        current_cleanup = await mutation_current_analysis_async(db, item.id, for_update=True)
+        mutate_plan_item_media(
+            item,
+            detector_policy=current_detector_policy(),
+            current_analysis=current_cleanup,
+            voiceover_gcs_path=voiceover_path,
+            voiceover_generation=str(metadata.generation),
+            voiceover_duration_s=float(duration_s),
+            audio_mode="voiceover",
+        )
+    from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+        schedule_item_preflight_async,
+    )
+
+    preflight_analysis_id = await schedule_item_preflight_async(db, item)
     await db.commit()
+    if preflight_analysis_id is not None:
+        from app.services.plan_item_media import publish_preflight_after_commit  # noqa: PLC0415
+
+        await run_in_threadpool(publish_preflight_after_commit, preflight_analysis_id)
     reloaded = await _load_owned_item(item_id, owner_id, db)
     instruction_level = await _get_instruction_level(reloaded, db)
     return plan_item_response(reloaded, instruction_level=instruction_level)

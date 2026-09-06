@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response,
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app import storage
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
@@ -34,6 +35,7 @@ from app.models import (
     CreationThreadEvent,
     CreationThreadUploadReservation,
     CreatorAgentEvent,
+    CreatorAgentExecution,
     CreatorAgentSession,
     EditArtifact,
     Job,
@@ -42,6 +44,7 @@ from app.models import (
     Persona,
     PlanItem,
     PlanItemAsset,
+    SpeechCleanupAnalysis,
     TikTokPublication,
     TrainingArtifactRetentionEvent,
 )
@@ -161,12 +164,33 @@ _ACTION_PAYLOAD_KEYS = {
     "set_intent": {"intent"},
     "select_format": {"format"},
     "select_edit_format": {"edit_format"},
-    "confirm_generation": {"session_revision", "plan_version", "plan_hash"},
-    "generate": {"session_revision", "plan_version", "plan_hash", "base_generation"},
+    "confirm_generation": {
+        "session_revision",
+        "plan_version",
+        "plan_hash",
+        "speech_cleanup_analysis_id",
+        "speech_cleanup_choice",
+    },
+    "generate": {
+        "session_revision",
+        "plan_version",
+        "plan_hash",
+        "base_generation",
+        "speech_cleanup_analysis_id",
+        "speech_cleanup_choice",
+    },
     "revise": {"intent", "session_revision", "plan_version", "plan_hash"},
-    "retry": {"session_revision", "plan_version", "plan_hash", "variant_id"},
+    "retry": {
+        "session_revision",
+        "plan_version",
+        "plan_hash",
+        "variant_id",
+        "speech_cleanup_analysis_id",
+    },
     "remove_media": {"media_id"},
     "select_variant": {"variant_id"},
+    "retry_speech_cleanup": {"speech_cleanup_analysis_id"},
+    "create_without_cleanup": {"speech_cleanup_analysis_id"},
 }
 _MAX_ACTION_PAYLOAD_BYTES = 8192
 
@@ -236,6 +260,8 @@ class ActionBody(StrictBody):
         "retry",
         "remove_media",
         "select_variant",
+        "retry_speech_cleanup",
+        "create_without_cleanup",
     ]
     payload: dict[str, Any] = Field(default_factory=dict)
     client_action_id: str = Field(min_length=1, max_length=160)
@@ -379,6 +405,7 @@ class CreationThreadOut(BaseModel):
     creator_agent: dict[str, Any] | None = None
     job: dict[str, Any] | None = None
     media_capabilities: dict[str, Any] | None = None
+    speech_cleanup: dict[str, Any] | None = None
     events: list[EventOut]
     created_at: datetime
     updated_at: datetime
@@ -453,6 +480,52 @@ def _media_capabilities(*, item: PlanItem, clip_count: int, visual_count: int) -
     }
 
 
+async def _ensure_speech_cleanup_preflight(
+    db: AsyncSession,
+    item: PlanItem,
+) -> uuid.UUID | None:
+    """Persist current-source work inside the caller's media transaction."""
+
+    from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+        schedule_item_preflight_async,
+    )
+
+    return await schedule_item_preflight_async(db, item)
+
+
+async def _probe_registered_media(
+    *,
+    object_path: str,
+    generation: str,
+    kind: str,
+) -> tuple[float, bool]:
+    """Range-probe one verified generation; never persist/log its signed URL."""
+
+    signed_url = await asyncio.to_thread(
+        storage.signed_get_url_for_generation,
+        object_path,
+        generation=generation,
+    )
+    if kind == "video":
+        from app.pipeline.probe import ProbeError, probe_video  # noqa: PLC0415
+
+        try:
+            probe = await asyncio.to_thread(probe_video, signed_url)
+        except ProbeError as exc:
+            raise HTTPException(status_code=422, detail="Video could not be read") from exc
+        return float(probe.duration_s), bool(probe.has_audio)
+    from app.services.audio_download import (  # noqa: PLC0415
+        probe_duration,
+        probe_has_audio_stream,
+    )
+
+    duration = await asyncio.to_thread(probe_duration, signed_url)
+    has_audio = await asyncio.to_thread(probe_has_audio_stream, signed_url)
+    if duration is None or duration <= 0 or not has_audio:
+        raise HTTPException(status_code=422, detail="Narration audio could not be read")
+    return float(duration), True
+
+
 def _reserved_media_id(client_upload_id: str, content_type: str) -> str:
     """Keep object keys opaque while retaining the canonical media suffix.
 
@@ -495,6 +568,243 @@ async def _reject_input_mutation_while_rendering(db: AsyncSession, thread: Creat
             status_code=409,
             detail="Wait for the current render before changing its source media or format",
         )
+
+
+def _speech_cleanup_application_failure(job: Job, plan: dict[str, Any]) -> str | None:
+    """Return the private failure class only for a required preflight Job."""
+
+    if (
+        job.status not in PLAN_ITEM_JOB_TERMINAL
+        or plan.get("speech_cleanup_contract") != "required_v1"
+        or plan.get("speech_cleanup_preflight_contract") != "snapshot_v1"
+    ):
+        return None
+    variants = plan.get("variants")
+    reports_cleanup_failure = bool(
+        job.failure_reason == "speech_cleanup_failed"
+        or any(
+            isinstance(value, dict) and value.get("error_class") == "speech_cleanup_failed"
+            for value in (variants if isinstance(variants, list) else [])
+        )
+    )
+    if not reports_cleanup_failure:
+        return None
+    reason = plan.get("speech_cleanup_failure_reason")
+    if isinstance(reason, str) and reason:
+        return reason
+    return next(
+        (
+            value.get("speech_cleanup_failure_reason")
+            for value in (variants if isinstance(variants, list) else [])
+            if isinstance(value, dict)
+            and isinstance(value.get("speech_cleanup_failure_reason"), str)
+            and value.get("speech_cleanup_failure_reason")
+        ),
+        None,
+    )
+
+
+async def _repair_stale_cleanup_failure_graph(
+    db: AsyncSession,
+    thread: CreationThread,
+    user: CurrentUser,
+) -> tuple[bool, uuid.UUID | None]:
+    """Detach an obsolete cleanup failure and reopen its typed Creator plan.
+
+    The failed Job remains an immutable audit row.  Only its three active
+    forward pointers are detached, after owner/item/epoch/snapshot validation,
+    so a replacement narration analysis is not hidden behind the generic
+    render-failure card.  A ``snapshot_mismatch`` always invalidates this render
+    envelope; an application failure is detached only after the active source
+    no longer matches its immutable snapshot.
+    """
+
+    item_id = thread.active_plan_item_id
+    job_id = thread.active_job_id
+    session_id = thread.active_creator_agent_session_id
+    if item_id is None or job_id is None or session_id is None:
+        return False, None
+    # Creation-thread mutations already hold the thread and follow their
+    # established PlanItem -> Job -> CreatorSession render-graph order.  Plan
+    # and Persona below are ownership-only MVCC reads, deliberately *not* row
+    # locks; acquiring a Plan lock here would invert the worker/dispatch order.
+    item = await db.get(PlanItem, item_id, with_for_update=True, populate_existing=True)
+    if item is None or item.current_job_id != job_id:
+        return False, None
+    plan = await db.get(ContentPlan, item.content_plan_id)
+    persona = await db.get(Persona, plan.persona_id) if plan is not None else None
+    if (
+        plan is None
+        or persona is None
+        or plan.id != thread.content_plan_id
+        or plan.user_id != user.id
+        or getattr(plan, "ownership_quarantined_at", None) is not None
+        or persona.id != plan.persona_id
+        or persona.user_id != plan.user_id
+    ):
+        return False, None
+    job = await db.get(Job, job_id, with_for_update=True, populate_existing=True)
+    session = await db.get(
+        CreatorAgentSession,
+        session_id,
+        with_for_update=True,
+        populate_existing=True,
+    )
+    if (
+        job is None
+        or session is None
+        or job.user_id != user.id
+        or job.content_plan_item_id != item.id
+        or int(job.content_plan_ownership_epoch or 0) != int(plan.ownership_epoch or 0)
+        or session.creator_id != user.id
+        or session.plan_item_id != item.id
+        or int(session.ownership_epoch or 0) != int(plan.ownership_epoch or 0)
+        or session.target_job_id != job.id
+    ):
+        return False, None
+    job_plan = job.assembly_plan if isinstance(job.assembly_plan, dict) else {}
+    failure_reason = _speech_cleanup_application_failure(job, job_plan)
+    if failure_reason not in {"apply_failed", "snapshot_mismatch"}:
+        return False, None
+    private = job_plan.get("_speech_cleanup_internal")
+    raw_snapshot = private.get("preflight_snapshot") if isinstance(private, dict) else None
+    snapshot = None
+    try:
+        from app.pipeline.speech_cleanup_apply import (  # noqa: PLC0415
+            SpeechCleanupSnapshotError,
+            hydrate_speech_cleanup_snapshot,
+        )
+
+        snapshot = hydrate_speech_cleanup_snapshot(raw_snapshot)
+    except (SpeechCleanupSnapshotError, TypeError, ValueError):
+        if failure_reason != "snapshot_mismatch":
+            # An apply retry/bypass must prove its exact immutable analysis.
+            # A renderer-authored snapshot_mismatch is different: the
+            # server-stamped contract and current Job graph are sufficient to
+            # retire the unusable envelope, but no malformed field is trusted.
+            return False, None
+
+    from app.services.plan_item_media import (  # noqa: PLC0415
+        current_detector_policy,
+        resolve_item_narration,
+    )
+
+    resolution = resolve_item_narration(item, detector_policy=current_detector_policy())
+    source = resolution.source
+    snapshot_is_current = bool(
+        source is not None
+        and snapshot is not None
+        and snapshot.source_kind == source.source_kind
+        and snapshot.media_identity == source.media_id
+        and snapshot.storage_path == source.storage_path
+        and snapshot.generation == source.generation
+        and snapshot.source_policy_fingerprint == source.source_policy_fingerprint
+    )
+    if failure_reason != "snapshot_mismatch" and snapshot_is_current:
+        # A transient application failure against the same immutable source is
+        # recovered by exact retry/bypass, not by silently replacing its plan.
+        return False, None
+
+    # Detach all active projections before resolving the replacement manifest;
+    # its context hash includes the current edit, so compiling first would pin
+    # the new plan to the failed Job we are intentionally retiring.
+    item.current_job_id = None
+    thread.active_job_id = None
+    state = dict(thread.state or {})
+    state.pop("generation", None)
+    state.pop("selected_variant_id", None)
+    state.pop("prepared_revision_job_id", None)
+    thread.state = state
+    session.target_job_id = None
+    session.target_variant_id = None
+    session.target_generation_id = None
+    session.last_review = None
+    session.last_good = None
+
+    from app.agents._schemas.creator_agent import CreatorEditPlan  # noqa: PLC0415
+    from app.agents._schemas.creator_policy import (  # noqa: PLC0415
+        normalize_creator_strategy_media,
+    )
+    from app.services.creator_sessions import (  # noqa: PLC0415
+        append_event as append_creator_event,
+    )
+    from app.services.creator_sessions import (
+        compile_active_plan,
+        resolve_item_creator_context,
+    )
+
+    active = session.active_plan if isinstance(session.active_plan, dict) else {}
+    try:
+        raw_edit_plan = active.get("edit_plan")
+        if not isinstance(raw_edit_plan, dict):
+            raise ValueError("missing typed creator plan")
+        edit_plan = CreatorEditPlan.model_validate(raw_edit_plan)
+        if edit_plan.strategy.render_program != "native":
+            raise ValueError("cleanup recovery requires a native plan")
+        if edit_plan.strategy.edit_format != item.edit_format:
+            raise ValueError("selected format changed")
+        manifest, _media_context = await resolve_item_creator_context(
+            db,
+            item,
+            persona=persona,
+        )
+        strategy = normalize_creator_strategy_media(
+            manifest,
+            edit_plan.strategy,
+            repair_model_output=True,
+        )
+        session.active_plan = compile_active_plan(
+            session,
+            manifest=manifest,
+            strategy=strategy,
+            summary=str(active.get("summary") or "Updated direction for your current footage."),
+            creator_request=str(active.get("creator_request") or ""),
+        )
+        session.manifest_hash = manifest.manifest_hash
+        session.status = "awaiting_confirmation"
+        session.last_error = None
+        # Replacing the narration is a new explicit generation opportunity,
+        # even if the failed cleanup retry consumed the old session's budget.
+        session.max_render_attempts = max(
+            int(session.max_render_attempts or 0),
+            int(session.render_attempts or 0) + 1,
+        )
+        await append_creator_event(
+            db,
+            session,
+            event_type="assistant_strategy",
+            payload={
+                "message": session.active_plan["summary"],
+                "plan_hash": session.active_plan["plan_hash"],
+                "reason": "speech_cleanup_source_changed",
+            },
+        )
+    except (HTTPException, ValueError):
+        # A removed cadence source or format switch can make the old strategy
+        # genuinely unsafe to carry forward. Retire the stale failure anyway,
+        # but require a new chat turn instead of silently weakening the edit.
+        session.active_plan = None
+        session.manifest_hash = None
+        session.status = "briefing"
+        session.last_error = {
+            "code": "source_changed_replan_required",
+            "message": "The source media changed; review the direction again.",
+        }
+        await append_creator_event(
+            db,
+            session,
+            event_type="assistant_question",
+            payload={
+                "message": "Your source changed. Tell me how you want to shape the updated edit.",
+                "reason": "source_changed_replan_required",
+            },
+        )
+
+    # Schedule after detaching the old Job so the same transaction exposes a
+    # coherent checking/confirmation state. Publication remains post-commit.
+    analysis_id = await _ensure_speech_cleanup_preflight(db, item)
+    await _sync_agent(db, thread)
+    return True, analysis_id
 
 
 async def _prepare_partial_variant_retry(
@@ -1093,15 +1403,28 @@ async def _other_project_input_references(
                 references.add(candidate)
 
     item_query = (
-        select(PlanItem.clip_gcs_paths, PlanItem.clip_assignments, PlanItem.voiceover_gcs_path)
+        select(
+            PlanItem.clip_gcs_paths,
+            PlanItem.clip_assignments,
+            PlanItem.voiceover_gcs_path,
+            SpeechCleanupAnalysis.source_storage_path,
+        )
+        .outerjoin(
+            SpeechCleanupAnalysis,
+            SpeechCleanupAnalysis.plan_item_id == PlanItem.id,
+        )
         .join(ContentPlan, ContentPlan.id == PlanItem.content_plan_id)
         .where(ContentPlan.user_id == user_id)
     )
     if excluded_item_id is not None:
         item_query = item_query.where(PlanItem.id != excluded_item_id)
     item_rows = (await db.execute(item_query)).all()
-    for clip_paths, assignments, voiceover_path in item_rows:
-        values = [voiceover_path]
+    for row in item_rows:
+        # The real query returns a fourth value for every historical preflight.
+        # Keep three-column test doubles compatible while the migration lands.
+        clip_paths, assignments, voiceover_path = row[:3]
+        analysis_source_path = row[3] if len(row) > 3 else None
+        values = [voiceover_path, analysis_source_path]
         if isinstance(clip_paths, list):
             values.extend(clip_paths)
         if isinstance(assignments, list):
@@ -1584,6 +1907,7 @@ async def _sync_agent(db: AsyncSession, thread: CreationThread) -> None:
 async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadOut:
     item, session, job = await _load_authorized_projection_rows(db, thread)
     media_capabilities = None
+    speech_cleanup = None
     # Unit route tests use lightweight mocks; the real response path uses the
     # authoritative PlanItem/PlanItemAsset rows for these counts.
     if isinstance(db, AsyncSession) and item is not None:
@@ -1605,6 +1929,53 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
             clip_count=len(item.clip_gcs_paths or []),
             visual_count=visual_count,
         )
+        active_job_plan = (
+            job.assembly_plan if job is not None and isinstance(job.assembly_plan, dict) else {}
+        )
+        stamped_required_job = active_job_plan.get("speech_cleanup_contract") == "required_v1"
+        cleanup_enforced = settings.speech_cleanup_preflight_mode == "enforce"
+        if cleanup_enforced or stamped_required_job:
+            from app.services.plan_item_media import (  # noqa: PLC0415
+                current_detector_policy,
+                resolve_item_narration,
+            )
+            from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+                current_analysis_async,
+                preflight_enabled_for_source,
+                public_projection,
+            )
+
+            resolution = resolve_item_narration(
+                item,
+                detector_policy=current_detector_policy(),
+            )
+            row = await current_analysis_async(db, item.id)
+            in_cohort = bool(
+                cleanup_enforced
+                and resolution.source
+                and preflight_enabled_for_source(
+                    resolution.source.source_policy_fingerprint,
+                    mode=settings.speech_cleanup_preflight_mode,
+                    rollout_percent=settings.speech_cleanup_preflight_rollout_percent,
+                )
+            )
+            speech_cleanup = public_projection(
+                row,
+                applicable=in_cohort or stamped_required_job,
+                unavailable_reason=resolution.reason,
+                video_present=resolution.video_present,
+                active_job=job,
+            )
+            if (
+                stamped_required_job
+                and not cleanup_enforced
+                and (speech_cleanup is None or speech_cleanup.get("outcome") is None)
+            ):
+                # The rollback carve-out exists only for an authoritative
+                # generation-bound receipt. If the current analysis/source no
+                # longer matches that Job, do not surface a new decision card
+                # while global enforcement is disabled.
+                speech_cleanup = None
     return CreationThreadOut(
         id=str(thread.id),
         title=getattr(thread, "title", None) or _DEFAULT_TITLE,
@@ -1620,6 +1991,7 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
         creator_agent=_creator_agent_projection(session),
         job=_job_projection(job),
         media_capabilities=media_capabilities,
+        speech_cleanup=speech_cleanup,
         events=[
             EventOut(
                 id=str(event.id),
@@ -1908,6 +2280,20 @@ async def get_thread(
     thread_id: str, user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)]
 ) -> CreationThreadOut:
     thread = await _load(thread_id, user, db, lock=True)
+    repaired_cleanup, repair_analysis_id = await _repair_stale_cleanup_failure_graph(
+        db,
+        thread,
+        user,
+    )
+    if repaired_cleanup:
+        await db.commit()
+        await db.refresh(thread)
+        if repair_analysis_id is not None:
+            from app.services.plan_item_media import (  # noqa: PLC0415
+                publish_preflight_after_commit,
+            )
+
+            await asyncio.to_thread(publish_preflight_after_commit, repair_analysis_id)
     if await _repair_missing_thread_job_projection(db, thread, user):
         await db.commit()
         await db.refresh(thread)
@@ -2114,7 +2500,20 @@ async def action_thread(
 ) -> CreationThreadOut:
     owner_id = user.id
     thread = await _load(thread_id, user, db, lock=True, creator_id=owner_id)
-    if body.action == "retry" and await _repair_missing_thread_job_projection(db, thread, user):
+    cleanup_application_retry = bool(
+        body.action == "retry"
+        and body.payload.get("speech_cleanup_analysis_id")
+        and not body.payload.get("variant_id")
+    )
+    # Creator confirmation commits its receipt + replacement Job before this
+    # route commits the thread projection/event. In that crash window the old
+    # failed Job is the only source for the private recovery digest. Let the
+    # Creator receipt replay run first; its result repairs the thread below.
+    if (
+        body.action == "retry"
+        and not cleanup_application_retry
+        and await _repair_missing_thread_job_projection(db, thread, user)
+    ):
         # Commit the repaired projection before idempotency/retry handling so a
         # later 409 cannot roll the self-healing link back out.
         await db.commit()
@@ -2137,6 +2536,7 @@ async def action_thread(
     state = dict(thread.state or {})
     delete_path: str | None = None
     enqueue_variant_retry: tuple[str, str, str] | None = None
+    preflight_analysis_id: uuid.UUID | None = None
     if body.action in {"select_format", "select_edit_format"}:
         await _reject_input_mutation_while_rendering(db, thread)
         selected = (
@@ -2155,8 +2555,50 @@ async def action_thread(
         state.update({"format": selected, "edit_format": edit_format})
         item = await db.get(PlanItem, thread.active_plan_item_id, with_for_update=True)
         if item is not None:
-            item.edit_format = edit_format
-            item.audio_mode = "voiceover" if edit_format in NARRATED_EDIT_FORMATS else "kria"
+            from app.services.plan_item_media import (  # noqa: PLC0415
+                current_detector_policy,
+                mutate_plan_item_media,
+            )
+            from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+                mutation_current_analysis_async,
+            )
+
+            current_cleanup = await mutation_current_analysis_async(
+                db,
+                item.id,
+                for_update=True,
+            )
+            # Selecting Narrated does not fabricate a voiceover. A retained take
+            # is active when present; otherwise the renderer's embedded spine is
+            # analyzed just like Talking to camera.
+            if edit_format in NARRATED_EDIT_FORMATS and item.voiceover_gcs_path:
+                next_audio_mode = "voiceover"
+            elif edit_format == "subtitled" or edit_format in NARRATED_EDIT_FORMATS:
+                # Both Talking to camera and self-narrated video preserve the
+                # foreground speech by definition. Persist that final audio
+                # policy before preflight so Creator confirmation cannot turn
+                # the same source into a newly-stale analysis.
+                next_audio_mode = "original"
+            else:
+                next_audio_mode = "kria"
+            mutation = mutate_plan_item_media(
+                item,
+                detector_policy=current_detector_policy(),
+                current_analysis=current_cleanup,
+                edit_format=edit_format,
+                audio_mode=next_audio_mode,
+            )
+            thread.state = state
+            preflight_analysis_id = await _ensure_speech_cleanup_preflight(db, item)
+            if mutation.source_changed is True:
+                repaired, repair_analysis_id = await _repair_stale_cleanup_failure_graph(
+                    db,
+                    thread,
+                    user,
+                )
+                preflight_analysis_id = preflight_analysis_id or repair_analysis_id
+                if repaired:
+                    state = dict(thread.state or {})
     elif body.action == "set_intent":
         intent = " ".join(str(body.payload.get("intent", "")).split())
         if not intent:
@@ -2200,19 +2642,52 @@ async def action_thread(
             legacy_candidates.append(item.voiceover_gcs_path)
         legacy_path = _legacy_media_path(media_id, legacy_candidates)
         media_path = legacy_path or _media_path(user.id, thread.id, media_id)
-        item.clip_gcs_paths = [path for path in paths if path != media_path]
-        item.clip_assignments = [
+        next_assignments = [
             assignment
             for assignment in (item.clip_assignments or [])
             if not isinstance(assignment, dict)
             or (assignment.get("gcs_path") != media_path and assignment.get("media_id") != media_id)
         ]
+        from app.services.plan_item_media import (  # noqa: PLC0415
+            current_detector_policy,
+            mutate_plan_item_media,
+        )
+        from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+            mutation_current_analysis_async,
+        )
+
+        current_cleanup = await mutation_current_analysis_async(
+            db,
+            item.id,
+            for_update=True,
+        )
+        mutation_kwargs: dict[str, Any] = {"clip_assignments": next_assignments}
         if item.voiceover_gcs_path == media_path:
-            item.voiceover_gcs_path = None
-            if item.audio_mode == "voiceover":
-                item.audio_mode = "kria"
+            mutation_kwargs.update(
+                voiceover_gcs_path=None,
+                voiceover_generation=None,
+                voiceover_duration_s=None,
+                audio_mode="kria" if item.audio_mode == "voiceover" else item.audio_mode,
+            )
+        mutation = mutate_plan_item_media(
+            item,
+            detector_policy=current_detector_policy(),
+            current_analysis=current_cleanup,
+            **mutation_kwargs,
+        )
         state["media"] = [entry for entry in media if entry.get("media_id") != media_id]
         state["media_count"] = len(state["media"])
+        thread.state = state
+        preflight_analysis_id = await _ensure_speech_cleanup_preflight(db, item)
+        if mutation.source_changed is True:
+            repaired, repair_analysis_id = await _repair_stale_cleanup_failure_graph(
+                db,
+                thread,
+                user,
+            )
+            preflight_analysis_id = preflight_analysis_id or repair_analysis_id
+            if repaired:
+                state = dict(thread.state or {})
         # Legacy paths may be shared with pre-chat drafts. Only delete objects
         # minted under this thread's exclusive prefix.
         if legacy_path is None:
@@ -2238,7 +2713,37 @@ async def action_thread(
             "render_generation_id": render_gen_id,
         }
         enqueue_variant_retry = (str(job.id), variant_id, render_gen_id)
-    elif body.action in {"confirm_generation", "generate", "retry", "revise"}:
+    elif body.action == "retry_speech_cleanup":
+        analysis_id = str(body.payload.get("speech_cleanup_analysis_id") or "")
+        try:
+            identifier = uuid.UUID(analysis_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail="speech_cleanup_analysis_id is required",
+            ) from exc
+        analysis = await db.get(SpeechCleanupAnalysis, identifier, with_for_update=True)
+        if (
+            analysis is None
+            or analysis.plan_item_id != thread.active_plan_item_id
+            or analysis.superseded_at is not None
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="speech_cleanup_analysis_changed",
+            )
+        from app.services.speech_cleanup_preflight import retry_failed_analysis  # noqa: PLC0415
+
+        if not retry_failed_analysis(analysis):
+            raise HTTPException(status_code=409, detail="Speech check cannot be retried")
+        preflight_analysis_id = analysis.id
+    elif body.action in {
+        "confirm_generation",
+        "generate",
+        "retry",
+        "revise",
+        "create_without_cleanup",
+    }:
         session = (
             await db.get(
                 CreatorAgentSession, thread.active_creator_agent_session_id, with_for_update=True
@@ -2251,6 +2756,169 @@ async def action_thread(
                 status_code=409, detail="Ask Kria for a direction before confirming"
             )
         payload = body.payload
+        recovery_action: (
+            Literal[
+                "retry_required",
+                "disable_and_create",
+                "retry_preflight_dispatch",
+            ]
+            | None
+        ) = None
+        recovery_job_id: uuid.UUID | None = None
+        recovery_generation_id: str | None = None
+        recovery_analysis_id: uuid.UUID | None = None
+        recovery_receipt_status: str | None = None
+        current_job = (
+            await db.get(Job, thread.active_job_id)
+            if body.action in {"retry", "create_without_cleanup"} and thread.active_job_id
+            else None
+        )
+        current_plan = (
+            current_job.assembly_plan
+            if current_job is not None
+            and isinstance(getattr(current_job, "assembly_plan", None), dict)
+            else {}
+        )
+        variants = current_plan.get("variants")
+        cleanup_failure_reason = current_plan.get("speech_cleanup_failure_reason")
+        if not isinstance(cleanup_failure_reason, str) or not cleanup_failure_reason:
+            cleanup_failure_reason = next(
+                (
+                    variant.get("speech_cleanup_failure_reason")
+                    for variant in (variants if isinstance(variants, list) else [])
+                    if isinstance(variant, dict)
+                    and isinstance(variant.get("speech_cleanup_failure_reason"), str)
+                    and variant.get("speech_cleanup_failure_reason")
+                ),
+                None,
+            )
+        reports_cleanup_failure = bool(
+            current_job is not None
+            and (
+                getattr(current_job, "failure_reason", None) == "speech_cleanup_failed"
+                or any(
+                    isinstance(variant, dict)
+                    and variant.get("error_class") == "speech_cleanup_failed"
+                    for variant in (variants if isinstance(variants, list) else [])
+                )
+            )
+        )
+        if body.action in {"retry", "create_without_cleanup"} and reports_cleanup_failure:
+            private = current_plan.get("_speech_cleanup_internal")
+            raw_snapshot = private.get("preflight_snapshot") if isinstance(private, dict) else None
+            raw_generation = current_plan.get("creator_generation_id")
+            raw_analysis_id = (
+                raw_snapshot.get("analysis_id") if isinstance(raw_snapshot, dict) else None
+            )
+            try:
+                recovery_job_id = uuid.UUID(str(current_job.id))
+                recovery_analysis_id = uuid.UUID(str(raw_analysis_id))
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Speech cleanup recovery changed",
+                ) from exc
+            if (
+                getattr(current_job, "user_id", None) != owner_id
+                or getattr(current_job, "content_plan_item_id", None) != thread.active_plan_item_id
+                or getattr(current_job, "status", None) not in PLAN_ITEM_JOB_TERMINAL
+                or current_plan.get("speech_cleanup_contract") != "required_v1"
+                or current_plan.get("speech_cleanup_preflight_contract") != "snapshot_v1"
+                or not cleanup_failure_reason
+                or (body.action == "retry" and cleanup_failure_reason != "apply_failed")
+                or not isinstance(raw_generation, str)
+                or not raw_generation
+            ):
+                raise HTTPException(status_code=409, detail="Speech cleanup recovery changed")
+            submitted_analysis_id = str(payload.get("speech_cleanup_analysis_id") or "")
+            if submitted_analysis_id != str(recovery_analysis_id):
+                raise HTTPException(status_code=409, detail="Speech cleanup recovery changed")
+            recovery_action = "retry_required" if body.action == "retry" else "disable_and_create"
+            recovery_generation_id = raw_generation
+            recovery_receipt_status = (
+                await db.execute(
+                    select(CreatorAgentExecution.status).where(
+                        CreatorAgentExecution.session_id == session.id,
+                        CreatorAgentExecution.idempotency_key == body.client_action_id,
+                    )
+                )
+            ).scalar_one_or_none()
+        elif (
+            body.action == "retry"
+            and current_job is not None
+            and getattr(current_job, "status", None) == "processing_failed"
+            and getattr(current_job, "failure_reason", None) == "dispatch_publish_failed"
+        ):
+            # The Job was durably minted after the user confirmed a preflight
+            # decision, but broker publication failed before any renderer ran.
+            # A generic Retry must preserve that exact consent envelope rather
+            # than re-entering mutable analysis selection or inventing a new
+            # choice. The sync dispatcher repeats every source/snapshot fence.
+            private = current_plan.get("_speech_cleanup_internal")
+            raw_snapshot = private.get("preflight_snapshot") if isinstance(private, dict) else None
+            raw_analysis_id = (
+                raw_snapshot.get("analysis_id")
+                if isinstance(raw_snapshot, dict)
+                else private.get("outcome_analysis_id")
+                if isinstance(private, dict)
+                else None
+            )
+            raw_generation = current_plan.get("creator_generation_id")
+            outcome = current_plan.get("speech_cleanup_outcome")
+            contract = current_plan.get("speech_cleanup_contract")
+            snapshot_contract = current_plan.get("speech_cleanup_preflight_contract")
+            has_preflight_evidence = bool(
+                isinstance(private, dict) or snapshot_contract is not None or outcome is not None
+            )
+            snapshot_retry = bool(
+                isinstance(raw_snapshot, dict)
+                and snapshot_contract == "snapshot_v1"
+                and contract in {"required_v1", "off_v1"}
+            )
+            bypass_retry = bool(
+                raw_snapshot is None
+                and snapshot_contract is None
+                and contract == "off_v1"
+                and isinstance(outcome, dict)
+                and outcome.get("status") == "bypassed_unchecked"
+                and outcome.get("removal_count") == 0
+                and outcome.get("removed_ms") == 0
+            )
+            if has_preflight_evidence:
+                try:
+                    recovery_job_id = uuid.UUID(str(current_job.id))
+                    recovery_analysis_id = uuid.UUID(str(raw_analysis_id))
+                except (TypeError, ValueError) as exc:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Speech cleanup recovery changed",
+                    ) from exc
+                if (
+                    getattr(current_job, "user_id", None) != owner_id
+                    or getattr(current_job, "content_plan_item_id", None)
+                    != thread.active_plan_item_id
+                    or not isinstance(raw_generation, str)
+                    or not raw_generation
+                    or not (snapshot_retry or bypass_retry)
+                    or (
+                        isinstance(outcome, dict)
+                        and (
+                            str(outcome.get("job_id") or "") != str(current_job.id)
+                            or str(outcome.get("render_generation_id") or "") != raw_generation
+                        )
+                    )
+                ):
+                    raise HTTPException(status_code=409, detail="Speech cleanup recovery changed")
+                recovery_action = "retry_preflight_dispatch"
+                recovery_generation_id = raw_generation
+                recovery_receipt_status = (
+                    await db.execute(
+                        select(CreatorAgentExecution.status).where(
+                            CreatorAgentExecution.session_id == session.id,
+                            CreatorAgentExecution.idempotency_key == body.client_action_id,
+                        )
+                    )
+                ).scalar_one_or_none()
         planned_format = (session.active_plan or {}).get("edit_format")
         if body.action != "revise" and (
             planned_format not in set(_available_formats().values())
@@ -2260,22 +2928,126 @@ async def action_thread(
                 status_code=409,
                 detail="Kria must prepare a direction in the selected Paper format",
             )
-        if body.action == "retry":
+        if body.action == "retry" or recovery_action == "disable_and_create":
             # A failed render (or a partial ready cut) is terminal at the Job
             # layer, but the exact Creator plan remains the source of truth
             # for a bounded retry. Reconcile first, then reopen confirmation
             # so the normal manifest/hash/ownership fences and dispatcher are
             # reused rather than creating a second retry state machine.
-            current_job = await db.get(Job, thread.active_job_id) if thread.active_job_id else None
-            if current_job is None or current_job.status not in PLAN_ITEM_JOB_TERMINAL:
+            if (
+                current_job is None
+                or getattr(current_job, "status", None) not in PLAN_ITEM_JOB_TERMINAL
+            ):
                 raise HTTPException(status_code=409, detail="There is no terminal render to retry")
-            await reconcile_render_state(db, session)
-            if session.render_attempts >= session.max_render_attempts:
+            # A running receipt owns its already-committed replacement Job.
+            # Reconciling that Job before the controller resumes can move the
+            # session out of its resumable executing/rendering phases.
+            if recovery_receipt_status != "running":
+                await reconcile_render_state(db, session)
+            if (
+                recovery_receipt_status not in {"running", "succeeded"}
+                and recovery_action != "disable_and_create"
+                and session.render_attempts >= session.max_render_attempts
+            ):
                 raise HTTPException(
                     status_code=409, detail="This session has used its render attempts"
                 )
-            if session.status in {"failed", "awaiting_feedback"}:
+            if recovery_receipt_status not in {"running", "succeeded"} and session.status in {
+                "failed",
+                "awaiting_feedback",
+            }:
                 session.status = "awaiting_confirmation"
+        cleanup_analysis_id: uuid.UUID | None = None
+        cleanup_choice: Literal["clean", "keep_original", "create_without_cleanup"] | None = None
+        if body.action == "create_without_cleanup" and recovery_action is None:
+            raw_analysis_id = str(payload.get("speech_cleanup_analysis_id") or "")
+            try:
+                cleanup_analysis_id = uuid.UUID(raw_analysis_id)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail="speech_cleanup_analysis_id is required",
+                ) from exc
+            cleanup_choice = "create_without_cleanup"
+        elif body.action in {"generate", "confirm_generation"}:
+            raw_analysis_id = payload.get("speech_cleanup_analysis_id")
+            if raw_analysis_id is not None:
+                try:
+                    cleanup_analysis_id = uuid.UUID(str(raw_analysis_id))
+                except ValueError as exc:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="speech_cleanup_analysis_id is invalid",
+                    ) from exc
+            raw_choice = payload.get("speech_cleanup_choice")
+            if raw_choice is not None:
+                if raw_choice not in {"clean", "keep_original"}:
+                    raise HTTPException(status_code=422, detail="Invalid speech cleanup choice")
+                cleanup_choice = raw_choice
+
+            if settings.speech_cleanup_preflight_mode == "enforce":
+                from app.services.plan_item_media import (  # noqa: PLC0415
+                    current_detector_policy,
+                    resolve_item_narration,
+                )
+                from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+                    current_analysis_async,
+                    preflight_enabled_for_source,
+                )
+
+                item = await db.get(PlanItem, thread.active_plan_item_id)
+                current_cleanup = (
+                    await current_analysis_async(db, item.id) if item is not None else None
+                )
+                resolution = (
+                    resolve_item_narration(
+                        item,
+                        detector_policy=current_detector_policy(),
+                    )
+                    if item is not None
+                    else None
+                )
+                enforced_for_source = bool(
+                    resolution
+                    and resolution.source
+                    and preflight_enabled_for_source(
+                        resolution.source.source_policy_fingerprint,
+                        mode=settings.speech_cleanup_preflight_mode,
+                        rollout_percent=settings.speech_cleanup_preflight_rollout_percent,
+                    )
+                )
+                if enforced_for_source and current_cleanup is None:
+                    raise HTTPException(status_code=409, detail="speech_cleanup_pending")
+                if current_cleanup is not None and (
+                    resolution is None
+                    or resolution.source is None
+                    or current_cleanup.source_policy_fingerprint
+                    != resolution.source.source_policy_fingerprint
+                ):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="speech_cleanup_analysis_changed",
+                    )
+                if enforced_for_source and current_cleanup is not None:
+                    if cleanup_analysis_id != current_cleanup.id:
+                        raise HTTPException(
+                            status_code=409,
+                            detail="speech_cleanup_analysis_changed",
+                        )
+                    if current_cleanup.status in {"queued", "running"}:
+                        raise HTTPException(status_code=409, detail="speech_cleanup_pending")
+                    if current_cleanup.status == "failed":
+                        raise HTTPException(status_code=409, detail="speech_cleanup_failed")
+                    if current_cleanup.status == "no_findings" and cleanup_choice is not None:
+                        raise HTTPException(
+                            status_code=409,
+                            detail="speech_cleanup_choice_not_allowed",
+                        )
+                    if current_cleanup.status == "ready" and cleanup_choice is None:
+                        raise HTTPException(
+                            status_code=409,
+                            detail="speech_cleanup_choice_required",
+                        )
         confirmation = creator_agent.ConfirmBody(
             session_id=session.id,
             expected_revision=int(payload.get("session_revision", session.revision)),
@@ -2286,6 +3058,8 @@ async def action_thread(
                 payload.get("plan_hash", (session.active_plan or {}).get("plan_hash", ""))
             ),
             client_event_id=body.client_action_id,
+            speech_cleanup_analysis_id=cleanup_analysis_id,
+            speech_cleanup_choice=cleanup_choice,
         )
         if body.action == "revise":
             revision_intent = " ".join(
@@ -2343,6 +3117,10 @@ async def action_thread(
             user,
             db,
             allow_chat=True,
+            speech_cleanup_recovery_action=recovery_action,
+            speech_cleanup_recovery_job_id=recovery_job_id,
+            speech_cleanup_recovery_generation_id=recovery_generation_id,
+            speech_cleanup_recovery_analysis_id=recovery_analysis_id,
         )
         # The Creator Agent controller owns and commits its transaction. Lock
         # the thread again before projecting the new Job/session so this
@@ -2372,6 +3150,10 @@ async def action_thread(
     )
     await db.commit()
     await db.refresh(thread)
+    if preflight_analysis_id is not None:
+        from app.services.plan_item_media import publish_preflight_after_commit  # noqa: PLC0415
+
+        await asyncio.to_thread(publish_preflight_after_commit, preflight_analysis_id)
     if enqueue_variant_retry is not None:
         from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
@@ -2550,13 +3332,8 @@ async def attach_media(
             status_code=422,
             detail=("Images belong in this item's Visuals pool. Upload them from the Visuals tab."),
         )
-    await _reject_input_mutation_while_rendering(db, thread)
-    existing_state = dict(getattr(thread, "state", None) or {})
-    existing_media = [entry for entry in existing_state.get("media", []) if isinstance(entry, dict)]
-    existing_media_ids = {str(entry.get("media_id")) for entry in existing_media}
-    if any(media.media_id in existing_media_ids for media in body.media):
-        raise HTTPException(status_code=409, detail="That media is already attached")
-    verified: list[dict[str, Any]] = []
+    # Validate the reservation capability before touching the database or
+    # storage. A caller-supplied path is never authoritative.
     for media in body.media:
         try:
             expected_path = _media_path(user.id, thread.id, media.media_id)
@@ -2564,6 +3341,32 @@ async def attach_media(
             raise HTTPException(status_code=422, detail="Invalid media identifier") from exc
         if media.gcs_path is not None and media.gcs_path != expected_path:
             raise HTTPException(status_code=422, detail="Media path does not match reservation")
+    await _reject_input_mutation_while_rendering(db, thread)
+    item = await db.get(PlanItem, thread.active_plan_item_id, with_for_update=True)
+    if item is None:
+        raise HTTPException(status_code=409, detail="Creation project is missing its draft")
+    existing_state = dict(getattr(thread, "state", None) or {})
+    existing_media = [entry for entry in existing_state.get("media", []) if isinstance(entry, dict)]
+    existing_media_ids = {str(entry.get("media_id")) for entry in existing_media}
+    if any(media.media_id in existing_media_ids for media in body.media):
+        raise HTTPException(status_code=409, detail="That media is already attached")
+    # Reject capacity conflicts before signing or probing any uploaded bytes.
+    # The storage verification below is intentionally the expensive part of
+    # registration and should only run for a request that can still succeed.
+    existing_paths = list(item.clip_gcs_paths or [])
+    requested_clips = sum(1 for source in body.media if source.kind == "video")
+    clip_limit = _format_clip_limit(getattr(item, "edit_format", None))
+    if len(existing_paths) + requested_clips > clip_limit:
+        raise HTTPException(
+            status_code=409,
+            detail=f"This item is capped at {clip_limit} clips",
+        )
+    requested_voiceovers = sum(1 for source in body.media if source.kind == "audio")
+    if item.voiceover_gcs_path and requested_voiceovers:
+        raise HTTPException(status_code=409, detail="This item already has a voiceover")
+    verified: list[dict[str, Any]] = []
+    for media in body.media:
+        expected_path = _media_path(user.id, thread.id, media.media_id)
         try:
             metadata = await asyncio.to_thread(storage.object_metadata, expected_path)
         except FileNotFoundError as exc:
@@ -2579,6 +3382,24 @@ async def attach_media(
         kind_limit = _MAX_BYTES_PER_FILE if media.kind == "video" else _MAX_VOICEOVER_BYTES
         if metadata.size <= 0 or metadata.size > kind_limit or not kind_allowed:
             raise HTTPException(status_code=422, detail="Media kind does not match upload")
+        generation = str(getattr(metadata, "generation", "") or "").strip()
+        if not generation:
+            raise HTTPException(status_code=503, detail="Upload identity is unavailable")
+        try:
+            duration_s, has_audio = await _probe_registered_media(
+                object_path=expected_path,
+                generation=generation,
+                kind=media.kind,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="Upload changed during registration",
+            ) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Media verification unavailable") from exc
         verified.append(
             {
                 "media_id": _client_id(media.media_id),
@@ -2586,25 +3407,14 @@ async def attach_media(
                 "filename": media.filename,
                 "content_type": content_type,
                 "size_bytes": int(metadata.size),
+                "generation": generation,
+                "duration_s": duration_s,
+                "has_audio": has_audio,
                 "_path": expected_path,
             }
         )
-    item = await db.get(PlanItem, thread.active_plan_item_id, with_for_update=True)
-    if item is None:
-        raise HTTPException(status_code=409, detail="Creation project is missing its draft")
     # Paths live only on the authoritative PlanItem.  The thread projection
     # stores opaque IDs/kinds and a count, never external storage locations.
-    existing_paths = list(item.clip_gcs_paths or [])
-    requested_clips = sum(1 for source in verified if source["kind"] == "video")
-    clip_limit = _format_clip_limit(getattr(item, "edit_format", None))
-    if len(existing_paths) + requested_clips > clip_limit:
-        raise HTTPException(
-            status_code=409,
-            detail=f"This item is capped at {clip_limit} clips",
-        )
-    requested_voiceovers = sum(1 for source in verified if source["kind"] == "audio")
-    if item.voiceover_gcs_path and requested_voiceovers:
-        raise HTTPException(status_code=409, detail="This item already has a voiceover")
     assignments = [
         assignment for assignment in (item.clip_assignments or []) if isinstance(assignment, dict)
     ]
@@ -2617,24 +3427,67 @@ async def attach_media(
                     "media_id": source["media_id"],
                     "kind": source["kind"],
                     "shot_id": None,
+                    "storage_generation": source["generation"],
+                    "duration_s": source["duration_s"],
+                    "has_audio": source["has_audio"],
+                    "manifest_identity": source["media_id"],
                 }
             )
-        existing_media.append({key: value for key, value in source.items() if key != "_path"})
-    item.clip_gcs_paths = existing_paths
-    item.clip_assignments = assignments
+        existing_media.append(
+            {
+                key: value
+                for key, value in source.items()
+                if key not in {"_path", "generation", "has_audio"}
+            }
+        )
+    from app.services.plan_item_media import (  # noqa: PLC0415
+        current_detector_policy,
+        mutate_plan_item_media,
+    )
+    from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+        mutation_current_analysis_async,
+    )
+
+    current_cleanup = await mutation_current_analysis_async(db, item.id, for_update=True)
+    mutation_kwargs: dict[str, Any] = {"clip_assignments": assignments}
     if any(source["kind"] == "audio" for source in verified):
         audio = next(source for source in reversed(verified) if source["kind"] == "audio")
-        audio_path = audio["_path"]
-        item.voiceover_gcs_path = audio_path
-        item.audio_mode = "voiceover"
+        mutation_kwargs.update(
+            voiceover_gcs_path=audio["_path"],
+            voiceover_generation=audio["generation"],
+            voiceover_duration_s=audio["duration_s"],
+            audio_mode="voiceover",
+        )
+    mutation = mutate_plan_item_media(
+        item,
+        detector_policy=current_detector_policy(),
+        current_analysis=current_cleanup,
+        **mutation_kwargs,
+    )
     state = {
         **existing_state,
         "media": existing_media,
         "media_count": len(existing_media),
     }
     thread.state = state
+    preflight_analysis_id = await _ensure_speech_cleanup_preflight(db, item)
+    if mutation.source_changed is True:
+        repaired, repair_analysis_id = await _repair_stale_cleanup_failure_graph(
+            db,
+            thread,
+            user,
+        )
+        preflight_analysis_id = preflight_analysis_id or repair_analysis_id
+        if repaired:
+            state = dict(thread.state or {})
+            thread.state = state
     public_media = [
-        {key: value for key, value in source.items() if key != "_path"} for source in verified
+        {
+            key: value
+            for key, value in source.items()
+            if key not in {"_path", "generation", "has_audio"}
+        }
+        for source in verified
     ]
     await _append(
         db,
@@ -2654,6 +3507,10 @@ async def attach_media(
     )
     await db.commit()
     await db.refresh(thread)
+    if preflight_analysis_id is not None:
+        from app.services.plan_item_media import publish_preflight_after_commit  # noqa: PLC0415
+
+        await asyncio.to_thread(publish_preflight_after_commit, preflight_analysis_id)
     return await _response(db, thread)
 
 
@@ -2776,6 +3633,7 @@ async def delete_thread(
                 thread.active_plan_item_id,
                 populate_existing=True,
                 with_for_update=True,
+                options=(selectinload(PlanItem.speech_cleanup_analyses),),
             )
             if item is None or item.content_plan_id != plan.id:
                 raise HTTPException(status_code=404, detail="Creation thread not found")
@@ -3010,6 +3868,25 @@ async def delete_thread(
                 ).scalar_one_or_none()
                 if shared_voiceover is None:
                     object_paths.append(voiceover_path)
+        # Superseded analyses may be the only remaining manifest reference to
+        # a replaced clip or direct voiceover. Add exact keys for every pinned
+        # generation; the external-reference scan below then conservatively
+        # removes anything another project still references.
+        for analysis in getattr(item, "speech_cleanup_analyses", ()) or ():
+            source_path = normalize_job_storage_path(analysis.source_storage_path)
+            if source_path is None:
+                continue
+            if owned := _project_storage_path(
+                source_path,
+                user_id=user.id,
+                thread_id=identifier,
+                item_id=item.id,
+            ):
+                object_paths.append(owned)
+            elif source_path.startswith(f"{DIRECT_VOICEOVER_PREFIX}{user.id}/"):
+                # Direct voiceovers live in a user-wide lane. Delete only the
+                # exact object; never add its enclosing shared prefix.
+                object_paths.append(source_path)
         for asset in assets:
             for path in (asset.gcs_path, asset.preview_gcs_path):
                 candidate = normalize_job_storage_path(path)

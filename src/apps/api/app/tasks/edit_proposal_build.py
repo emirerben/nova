@@ -958,8 +958,27 @@ def _checkpoint_analyzed_assignment(
         merged = _merge_analyzed_assignment(assignments, analyzed)
         if merged is None:
             return
-        item.clip_assignments = merged
+        from app.services.plan_item_media import (  # noqa: PLC0415
+            current_detector_policy,
+            mutate_plan_item_media,
+            publish_preflight_after_commit,
+        )
+        from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+            mutation_current_analysis_sync,
+            schedule_item_preflight_sync,
+        )
+
+        current_cleanup = mutation_current_analysis_sync(db, item.id, for_update=True)
+        mutate_plan_item_media(
+            item,
+            detector_policy=current_detector_policy(),
+            clip_assignments=merged,
+            current_analysis=current_cleanup,
+        )
+        preflight_analysis_id = schedule_item_preflight_sync(db, item)
         db.commit()
+        if preflight_analysis_id is not None:
+            publish_preflight_after_commit(preflight_analysis_id)
 
 
 def _dispatch_after_auto_design(
@@ -1460,7 +1479,23 @@ def _run_draft_attempt(
             )
 
             previous_speech_inputs = cleanup_inputs(item)
-            item.clip_assignments = merged_assignments
+            from app.services.plan_item_media import (  # noqa: PLC0415
+                current_detector_policy,
+                mutate_plan_item_media,
+                publish_preflight_after_commit,
+            )
+            from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+                mutation_current_analysis_sync,
+                schedule_item_preflight_sync,
+            )
+
+            current_cleanup = mutation_current_analysis_sync(db, item.id, for_update=True)
+            mutate_plan_item_media(
+                item,
+                detector_policy=current_detector_policy(),
+                clip_assignments=merged_assignments,
+                current_analysis=current_cleanup,
+            )
             reconcile_item_policy_change(item, previous_speech_inputs)
             drafting = current.model_copy(
                 update={
@@ -1471,7 +1506,10 @@ def _run_draft_attempt(
                 }
             )
             item.edit_proposal = drafting.model_dump(mode="json")
+            preflight_analysis_id = schedule_item_preflight_sync(db, item)
             db.commit()
+            if preflight_analysis_id is not None:
+                publish_preflight_after_commit(preflight_analysis_id)
 
         agent_media = [
             EditProposalMedia(

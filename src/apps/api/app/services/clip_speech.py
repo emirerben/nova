@@ -26,6 +26,7 @@ from __future__ import annotations
 import math
 import re
 import subprocess
+import wave
 from dataclasses import dataclass
 from typing import Literal
 
@@ -200,17 +201,24 @@ def _run_silencedetect_with_status(
     """Internal status-bearing form of :func:`_run_silencedetect`."""
     try:
         probe = probe_video(path)
-    except Exception as exc:  # ProbeError, timeout, anything — stay best-effort.
-        log.warning("speech_coverage_probe_failed", path=path, error=str(exc))
-        return None, "probe_failed"
-
-    try:
         duration = float(probe.duration_s)
+        has_audio = bool(probe.has_audio)
     except (TypeError, ValueError):
         return None, "invalid_duration"
+    except Exception as exc:  # ProbeError, timeout, anything — stay best-effort.
+        # Speech-cleanup preflight deliberately decodes the generation-pinned
+        # source to a bounded PCM WAV before detection. `probe_video` rejects
+        # that audio-only artifact even though it is the safest detector input.
+        # Accept only a structurally valid PCM WAV as the narrow fallback;
+        # every other probe failure keeps the historical best-effort result.
+        duration = _pcm_wave_duration(path)
+        if duration is None:
+            log.warning("speech_coverage_probe_failed", path=path, error=str(exc))
+            return None, "probe_failed"
+        has_audio = True
     if not math.isfinite(duration) or duration <= 0:
         return None, "invalid_duration"
-    if not probe.has_audio:
+    if not has_audio:
         # No audio track at all → no speech. (Distinct from "audio but silent".)
         return None, "no_audio"
 
@@ -260,6 +268,23 @@ def _run_silencedetect_with_status(
         log.warning("speech_coverage_parse_failed", path=path)
         return None, "parse_failed"
     return (stderr_text, duration), "ok"
+
+
+def _pcm_wave_duration(path: str) -> float | None:
+    """Return duration for a valid audio-only PCM WAV, otherwise ``None``."""
+
+    try:
+        with wave.open(path, "rb") as artifact:
+            channels = artifact.getnchannels()
+            sample_width = artifact.getsampwidth()
+            frame_rate = artifact.getframerate()
+            frame_count = artifact.getnframes()
+    except (EOFError, OSError, wave.Error):
+        return None
+    if channels <= 0 or sample_width <= 0 or frame_rate <= 0 or frame_count <= 0:
+        return None
+    duration = frame_count / frame_rate
+    return duration if math.isfinite(duration) and duration > 0 else None
 
 
 def _silence_intervals(stderr_text: str, duration: float) -> list[tuple[float, float]]:

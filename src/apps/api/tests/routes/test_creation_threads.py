@@ -788,6 +788,7 @@ async def test_project_input_reference_scan_includes_other_jobs_and_plan_items()
     job_clip = f"users/{user_id}/plan/item-a/shared.mp4"
     direct_voiceover = f"voiceover-uploads/direct/{user_id}/voice.m4a"
     assigned_clip = f"users/{user_id}/plan/item-b/assigned.mp4"
+    historical_voiceover = f"voiceover-uploads/direct/{user_id}/historical.m4a"
     db = Mock()
     db.execute = AsyncMock(
         side_effect=[
@@ -808,6 +809,7 @@ async def test_project_input_reference_scan_includes_other_jobs_and_plan_items()
                         [],
                         [{"gcs_path": assigned_clip}],
                         None,
+                        historical_voiceover,
                     )
                 ]
             ),
@@ -821,7 +823,7 @@ async def test_project_input_reference_scan_includes_other_jobs_and_plan_items()
         excluded_item_id=uuid.uuid4(),
     )
 
-    assert {job_clip, direct_voiceover, assigned_clip} <= references
+    assert {job_clip, direct_voiceover, assigned_clip, historical_voiceover} <= references
 
 
 def test_shared_input_suppresses_exact_key_and_enclosing_project_prefix() -> None:
@@ -1214,7 +1216,7 @@ async def test_delete_filters_exact_keys_and_project_prefixes_shared_by_external
 
 
 @pytest.mark.asyncio
-async def test_delete_filters_exact_keys_and_project_prefixes_shared_by_external_item(
+async def test_delete_includes_historical_analysis_sources_but_filters_external_references(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import app.routes.creation_threads as routes
@@ -1232,6 +1234,8 @@ async def test_delete_filters_exact_keys_and_project_prefixes_shared_by_external
     persona = SimpleNamespace(user_id=user.id)
     shared_path = f"users/{user.id}/plan/{item_id}/shared.mp4"
     unrelated_path = f"users/{user.id}/plan/{item_id}/unrelated.mp4"
+    shared_voiceover = f"voiceover-uploads/direct/{user.id}/shared-history.m4a"
+    private_voiceover = f"voiceover-uploads/direct/{user.id}/private-history.m4a"
     item = SimpleNamespace(
         id=item_id,
         content_plan_id=plan_id,
@@ -1239,8 +1243,14 @@ async def test_delete_filters_exact_keys_and_project_prefixes_shared_by_external
         clip_gcs_paths=[shared_path, unrelated_path],
         clip_assignments=[],
         voiceover_gcs_path=None,
+        speech_cleanup_analyses=[
+            SimpleNamespace(source_storage_path=shared_voiceover),
+            SimpleNamespace(source_storage_path=private_voiceover),
+        ],
     )
-    external_item = ([shared_path], [], None)
+    # Another project no longer has this voiceover selected, but its immutable
+    # historical analysis still references the exact generation-pinned object.
+    external_item = ([shared_path], [], None, shared_voiceover)
     monkeypatch.setattr(purge_job_storage, "apply_async", Mock())
     db = Mock()
     db.get = AsyncMock(side_effect=[plan, persona, item])
@@ -1271,8 +1281,11 @@ async def test_delete_filters_exact_keys_and_project_prefixes_shared_by_external
     deletion = next(manifest for manifest in manifests if hasattr(manifest, "object_paths"))
     assert shared_path not in deletion.object_paths
     assert unrelated_path in deletion.object_paths
+    assert shared_voiceover not in deletion.object_paths
+    assert private_voiceover in deletion.object_paths
     assert f"users/{user.id}/plan/{item_id}/" not in deletion.object_prefixes
     assert f"dev-user/{user.id}/plan-pool-reservations/{item_id}/" in deletion.object_prefixes
+    assert f"voiceover-uploads/direct/{user.id}/" not in deletion.object_prefixes
 
 
 @pytest.mark.asyncio
@@ -1526,14 +1539,17 @@ async def test_attach_persists_stable_mixed_media_manifest(
         status="active",
         revision=0,
         active_job_id=None,
+        active_creator_agent_session_id=None,
         active_plan_item_id=uuid.uuid4(),
         state={"media": [], "media_count": 0},
     )
     item = SimpleNamespace(
+        id=thread.active_plan_item_id,
         clip_gcs_paths=[],
         clip_assignments=[],
         voiceover_gcs_path=None,
         audio_mode="kria",
+        edit_proposal=None,
     )
     import app.routes.creation_threads as routes
 
@@ -1547,8 +1563,10 @@ async def test_attach_persists_stable_mixed_media_manifest(
         lambda path: SimpleNamespace(
             size=100,
             content_type="image/jpeg" if path.endswith(".jpg") else "video/mp4",
+            generation="1",
         ),
     )
+    monkeypatch.setattr(routes, "_probe_registered_media", AsyncMock(return_value=(10.0, True)))
     db = Mock()
     db.get = AsyncMock(return_value=item)
     db.execute = AsyncMock()
@@ -1581,14 +1599,19 @@ async def test_attach_consumes_the_matching_upload_reservation(
         status="active",
         revision=0,
         active_job_id=None,
+        active_creator_agent_session_id=None,
         active_plan_item_id=uuid.uuid4(),
         state={"media": [], "media_count": 0},
     )
     item = SimpleNamespace(
+        id=thread.active_plan_item_id,
+        edit_format="subtitled",
+        current_job_id=None,
         clip_gcs_paths=[],
         clip_assignments=[],
         voiceover_gcs_path=None,
         audio_mode="kria",
+        edit_proposal=None,
     )
     import app.routes.creation_threads as routes
 
@@ -1599,8 +1622,9 @@ async def test_attach_consumes_the_matching_upload_reservation(
     monkeypatch.setattr(
         routes.storage,
         "object_metadata",
-        lambda _path: SimpleNamespace(size=100, content_type="video/mp4"),
+        lambda _path: SimpleNamespace(size=100, content_type="video/mp4", generation="1"),
     )
+    monkeypatch.setattr(routes, "_probe_registered_media", AsyncMock(return_value=(10.0, True)))
     db = Mock()
     db.get = AsyncMock(return_value=item)
     db.execute = AsyncMock()
@@ -1633,16 +1657,20 @@ async def test_attach_persists_one_valid_voiceover(monkeypatch: pytest.MonkeyPat
         creator_id=user.id,
         status="active",
         revision=0,
+        active_job_id=None,
+        active_creator_agent_session_id=None,
         active_plan_item_id=uuid.uuid4(),
         state={"media": [], "media_count": 0},
     )
     item = SimpleNamespace(
+        id=thread.active_plan_item_id,
         edit_format="narrated_planned",
         current_job_id=None,
         clip_gcs_paths=[],
         clip_assignments=[],
         voiceover_gcs_path=None,
         audio_mode="kria",
+        edit_proposal=None,
     )
     import app.routes.creation_threads as routes
 
@@ -1653,8 +1681,9 @@ async def test_attach_persists_one_valid_voiceover(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(
         routes.storage,
         "object_metadata",
-        lambda path: SimpleNamespace(size=100, content_type="audio/webm"),
+        lambda path: SimpleNamespace(size=100, content_type="audio/webm", generation="1"),
     )
+    monkeypatch.setattr(routes, "_probe_registered_media", AsyncMock(return_value=(10.0, True)))
     db = Mock()
     db.get = AsyncMock(return_value=item)
     db.execute = AsyncMock()

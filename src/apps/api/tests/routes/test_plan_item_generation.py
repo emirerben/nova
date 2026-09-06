@@ -1032,15 +1032,23 @@ def test_set_voiceover_stores_path_and_selects_voiceover_audio_mode(
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
     gcs_path = f"voiceover-uploads/direct/{user.id}/some-vo.webm"
-    with patch(
-        "app.routes.plan_items.storage.object_metadata",
-        return_value=ObjectMetadata(
-            path=gcs_path,
-            generation="1",
-            etag=None,
-            size=10_000,
-            content_type="audio/webm",
+    with (
+        patch(
+            "app.routes.plan_items.storage.object_metadata",
+            return_value=ObjectMetadata(
+                path=gcs_path,
+                generation="1",
+                etag=None,
+                size=10_000,
+                content_type="audio/webm",
+            ),
         ),
+        patch(
+            "app.routes.plan_items.storage.signed_get_url_for_generation",
+            return_value="https://storage.test/voice.webm",
+        ),
+        patch("app.services.audio_download.probe_duration", return_value=12.0),
+        patch("app.services.audio_download.probe_has_audio_stream", return_value=True),
     ):
         resp = client.patch(
             f"/plan-items/{item.id}/voiceover", json={"voiceover_gcs_path": gcs_path}
@@ -1071,16 +1079,24 @@ def test_set_voiceover_flag_off_accepts_metadata_validated_old_client_path(
         if path_kind == "legacy"
         else f"voiceover-uploads/direct/{SYNTHETIC_USER_ID}/old-recorder/voice.webm"
     )
-    with patch(
-        "app.routes.plan_items.storage.object_metadata",
-        return_value=ObjectMetadata(
-            path=gcs_path,
-            generation="1",
-            etag=None,
-            size=10_000,
-            content_type="audio/webm",
+    with (
+        patch(
+            "app.routes.plan_items.storage.object_metadata",
+            return_value=ObjectMetadata(
+                path=gcs_path,
+                generation="1",
+                etag=None,
+                size=10_000,
+                content_type="audio/webm",
+            ),
+        ) as metadata,
+        patch(
+            "app.routes.plan_items.storage.signed_get_url_for_generation",
+            return_value="https://storage.test/voice.webm",
         ),
-    ) as metadata:
+        patch("app.services.audio_download.probe_duration", return_value=12.0),
+        patch("app.services.audio_download.probe_has_audio_stream", return_value=True),
+    ):
         resp = client.patch(
             f"/plan-items/{item.id}/voiceover", json={"voiceover_gcs_path": gcs_path}
         )

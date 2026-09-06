@@ -7,6 +7,7 @@ that makes content-plan hooks persona-coherent (intro_writer threading).
 
 from __future__ import annotations
 
+import copy
 import uuid
 from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -15,14 +16,55 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.agents._schemas.content_plan import PlanItemSpec
-from app.models import ContentPlan, PlanItem
+from app.models import ContentPlan, Job, PlanItem, SpeechCleanupAnalysis
 from app.models import Persona as PersonaRow
 from app.tasks.content_plan_build import (
+    _dispatch_item_render,
     _guided_render_queue,
+    dispatch_item_render_for,
     generate_content_plan,
     generate_plan_item_videos,
     regenerate_content_plan,
 )
+
+
+def _recovery_payload(source_fingerprint: str) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "source_fingerprint": source_fingerprint,
+        "detector_version": "mixed-gap-v1",
+        "source_window_start_s": 0.0,
+        "source_window_end_s": 12.0,
+        "language": "en",
+        "timed_words": [],
+        "cut_plan": {
+            "keep_segments": [{"start_s": 0.0, "end_s": 12.0}],
+            "removed": [],
+            "time_saved_s": 0.0,
+            "version": 2,
+            "bailout_reason": None,
+            "clamped": False,
+        },
+        "findings": [],
+        "safety_signals": {
+            "transcript_low_confidence": False,
+            "silence_detection_status": "ok",
+            "selected_plan": "baseline",
+            "candidate_status": "not_run",
+            "bailout_reason": None,
+            "clamped": False,
+        },
+        "diagnostics": {},
+        "public_receipt": {
+            "candidate_count": 0,
+            "category_counts": {
+                "filler_sounds": 0,
+                "long_pauses": 0,
+                "retakes": 0,
+            },
+            "estimated_removed_ms": 0,
+        },
+    }
 
 
 def test_mixed_media_guided_render_uses_deploy_fenced_queue() -> None:
@@ -368,6 +410,844 @@ def test_dispatch_snapshots_only_explicit_speech_cleanup_contracts(
     assert isinstance(job.assembly_plan["creator_generation_id"], str)
     assert job.assembly_plan["creator_generation_id"]
     assert mock_build.call_args.kwargs["creator_request"] == "x" * 1000
+
+
+def _cleanup_dispatch_item() -> SimpleNamespace:
+    item_id = uuid.uuid4()
+    clip_path = "users/u/plan/i/talking.mp4"
+    return SimpleNamespace(
+        id=item_id,
+        clip_gcs_paths=[clip_path],
+        clip_assignments=[
+            {
+                "media_id": "registered-spine",
+                "gcs_path": clip_path,
+                "storage_generation": "generation-17",
+                "duration_s": 12.0,
+                "has_audio": True,
+            }
+        ],
+        filming_guide=[],
+        theme="camera explanation",
+        idea="explain one idea",
+        edit_format="subtitled",
+        audio_mode="kria",
+        voiceover_gcs_path=None,
+        landscape_fit="fit",
+        montage_preset="classic",
+        voiceover_bed_level=None,
+        voiceover_caption_style=None,
+        smart_sound_design_enabled=True,
+        speech_cleanup_enabled=False,
+        speech_cleanup_notice=None,
+        current_job_id=None,
+        edit_proposal=None,
+    )
+
+
+def _cleanup_analysis(
+    item: SimpleNamespace,
+    *,
+    status: str = "ready",
+    candidate_count: int = 2,
+    fingerprint: str = "active-source-fingerprint",
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        plan_item_id=item.id,
+        source_kind="embedded_spine",
+        source_media_identity="registered-spine",
+        source_storage_path=item.clip_gcs_paths[0],
+        source_generation="generation-17",
+        window_start_s=0.0,
+        window_end_s=12.0,
+        source_policy_fingerprint=fingerprint,
+        engine_version="speech-cleanup-v2",
+        detector_version="mixed-gap-v2",
+        status=status,
+        superseded_at=None,
+        candidate_count=candidate_count,
+        decision=None,
+        decision_at=None,
+        analysis_payload={
+            "timed_words": [{"text": "private", "start_s": 0.2, "end_s": 0.6}],
+            "cut_plan": {
+                "version": 2,
+                "removed": [] if candidate_count == 0 else [{"start_s": 1.0, "end_s": 1.4}],
+            },
+        },
+    )
+
+
+def _run_cleanup_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    status: str,
+    candidate_count: int,
+    choice: str | None,
+) -> tuple[SimpleNamespace, SimpleNamespace, MagicMock, MagicMock]:
+    from app.config import settings
+
+    item = _cleanup_dispatch_item()
+    row = _cleanup_analysis(item, status=status, candidate_count=candidate_count)
+    plan = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        preference_summary="",
+        ownership_epoch=4,
+    )
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        assembly_plan={},
+        all_candidates={"clip_paths": list(item.clip_gcs_paths)},
+    )
+    session = MagicMock()
+    session.get.return_value = row
+
+    monkeypatch.setattr(settings, "speech_cleanup_mode", "opt_in")
+    monkeypatch.setattr(settings, "silence_cut_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "edit_format_talking_head_enabled", True)
+    monkeypatch.setattr(settings, "narrated_self_narration_enabled", True)
+    monkeypatch.setattr(
+        "app.services.plan_item_media.resolve_item_narration",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            source=SimpleNamespace(source_policy_fingerprint="active-source-fingerprint")
+        ),
+    )
+    enqueue = MagicMock()
+    with (
+        patch(
+            "app.services.smart_captions.resolve_smart_captions_context_sync",
+            return_value=None,
+        ),
+        patch("app.services.generative_jobs.build_generative_job", return_value=job),
+        patch("app.services.job_dispatch.enqueue_orchestrator_sync", enqueue),
+    ):
+        result = _dispatch_item_render(
+            session,
+            item,
+            plan,
+            {"tone": "direct", "content_pillars": []},
+            ownership_epoch=4,
+            speech_cleanup_analysis_id=str(row.id),
+            speech_cleanup_choice=choice,
+        )
+
+    assert result.outcome == "dispatched"
+    return item, row, session, job
+
+
+@pytest.mark.parametrize(
+    ("status", "candidate_count", "choice", "contract", "decision", "outcome"),
+    [
+        ("ready", 2, "clean", "required_v1", "clean", None),
+        ("ready", 2, "keep_original", "off_v1", "keep_original", "declined"),
+        ("no_findings", 0, None, "off_v1", None, "checked_no_change"),
+        (
+            "failed",
+            0,
+            "create_without_cleanup",
+            "off_v1",
+            "create_without_cleanup",
+            "bypassed_unchecked",
+        ),
+    ],
+)
+def test_preflight_decision_mints_truthful_immutable_job_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+    candidate_count: int,
+    choice: str | None,
+    contract: str,
+    decision: str | None,
+    outcome: str | None,
+) -> None:
+    item, row, session, job = _run_cleanup_dispatch(
+        monkeypatch,
+        status=status,
+        candidate_count=candidate_count,
+        choice=choice,
+    )
+
+    assert row.decision == decision
+    assert (row.decision_at is not None) is (decision is not None)
+    assert item.speech_cleanup_enabled is (choice == "clean")
+    assert job.assembly_plan["speech_cleanup_contract"] == contract
+    if choice == "create_without_cleanup":
+        private = job.assembly_plan["_speech_cleanup_internal"]
+        assert private == {"outcome_analysis_id": str(row.id)}
+        assert "preflight_snapshot" not in private
+    else:
+        assert job.assembly_plan["speech_cleanup_preflight_contract"] == "snapshot_v1"
+        private = job.assembly_plan["_speech_cleanup_internal"]
+        preflight = private["preflight_snapshot"]
+        assert preflight["analysis_id"] == str(row.id)
+        assert preflight["source"] == {
+            "kind": "embedded_spine",
+            "media_identity": "registered-spine",
+            "storage_path": "users/u/plan/i/talking.mp4",
+            "generation": "generation-17",
+            "window_start_s": 0.0,
+            "window_end_s": 12.0,
+            "source_policy_fingerprint": "active-source-fingerprint",
+        }
+        assert preflight["analysis"] == row.analysis_payload
+        binding = private["source_binding"]
+        assert binding["source_slot"] == 0
+        assert binding["source_instance_id"] == (job.all_candidates["clip_source_instance_ids"][0])
+    if outcome is None:
+        assert "speech_cleanup_outcome" not in job.assembly_plan
+    else:
+        receipt = job.assembly_plan["speech_cleanup_outcome"]
+        assert receipt == {
+            "status": outcome,
+            "removal_count": 0,
+            "removed_ms": 0,
+            "job_id": str(job.id),
+            "render_generation_id": job.assembly_plan["creator_generation_id"],
+        }
+    session.add.assert_called_once_with(job)
+    session.commit.assert_called_once_with()
+
+
+def _run_cleanup_application_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    action: str,
+    expected_generation: str = "failed-generation",
+    failure_reason: str = "apply_failed",
+    active_source_generation: str = "generation-17",
+) -> tuple[
+    object,
+    SimpleNamespace,
+    SimpleNamespace,
+    SimpleNamespace,
+    SimpleNamespace,
+    MagicMock,
+    MagicMock,
+]:
+    from app.config import settings
+    from app.services.speech_cleanup_preflight import analysis_snapshot
+
+    item = _cleanup_dispatch_item()
+    item.content_plan_id = uuid.uuid4()
+    item.speech_cleanup_enabled = True
+    fingerprint = "a" * 64
+    row = _cleanup_analysis(item, fingerprint=fingerprint)
+    row.engine_version = "preflight-v1-2026-09-05"
+    row.detector_version = "mixed-gap-v1"
+    row.analysis_payload = _recovery_payload(fingerprint)
+    row.decision = "clean"
+    row.decision_at = datetime.now(UTC)
+    raw_snapshot = analysis_snapshot(row)
+    old_binding = str(uuid.uuid4())
+    owner_id = uuid.uuid4()
+    old_job = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=owner_id,
+        content_plan_item_id=item.id,
+        content_plan_ownership_epoch=4,
+        status="variants_failed",
+        failure_reason="speech_cleanup_failed",
+        assembly_plan={
+            "creator_generation_id": "failed-generation",
+            "speech_cleanup_contract": "required_v1",
+            "speech_cleanup_preflight_contract": "snapshot_v1",
+            "speech_cleanup_failure_reason": failure_reason,
+            "variants": [
+                {
+                    "variant_id": "talking_head",
+                    "error_class": "speech_cleanup_failed",
+                    "speech_cleanup_failure_reason": failure_reason,
+                }
+            ],
+            "_speech_cleanup_internal": {
+                "preflight_snapshot": copy.deepcopy(raw_snapshot),
+                "source_binding": {
+                    "source_slot": 0,
+                    "source_instance_id": old_binding,
+                },
+            },
+        },
+    )
+    item.current_job_id = old_job.id
+    plan = SimpleNamespace(
+        id=item.content_plan_id,
+        user_id=owner_id,
+        preference_summary="",
+        ownership_epoch=4,
+    )
+    persona = SimpleNamespace(
+        persona={"tone": "direct", "content_pillars": []},
+        tiktok_profile=None,
+        style=None,
+    )
+    new_job = SimpleNamespace(
+        id=uuid.uuid4(),
+        assembly_plan={},
+        all_candidates={"clip_paths": list(item.clip_gcs_paths)},
+    )
+    session = MagicMock()
+
+    def get(model: object, identifier: object, **_kwargs: object) -> object | None:
+        if model is PlanItem:
+            return item
+        if model is Job and identifier == old_job.id:
+            return old_job
+        if model is SpeechCleanupAnalysis and identifier == row.id:
+            return row
+        return None
+
+    session.get.side_effect = get
+    context = MagicMock()
+    context.__enter__.return_value = session
+    context.__exit__.return_value = False
+    monkeypatch.setattr(
+        "app.tasks.content_plan_build.sync_session",
+        lambda: context,
+    )
+    monkeypatch.setattr(
+        "app.tasks.content_plan_build._lock_owned_plan_persona",
+        lambda *_args, **_kwargs: (plan, persona),
+    )
+    monkeypatch.setattr(settings, "speech_cleanup_mode", "opt_in")
+    monkeypatch.setattr(settings, "silence_cut_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "edit_format_talking_head_enabled", True)
+    monkeypatch.setattr(settings, "narrated_self_narration_enabled", True)
+    source = SimpleNamespace(
+        source_kind="embedded_spine",
+        media_id="registered-spine",
+        storage_path=item.clip_gcs_paths[0],
+        generation=active_source_generation,
+        source_policy_fingerprint=fingerprint,
+    )
+    monkeypatch.setattr(
+        "app.services.plan_item_media.resolve_item_narration",
+        lambda *_args, **_kwargs: SimpleNamespace(source=source),
+    )
+    monkeypatch.setattr(
+        "app.services.speech_cleanup.capability_for_item",
+        lambda *_args, **_kwargs: SimpleNamespace(available=True),
+    )
+    build = MagicMock(return_value=new_job)
+    enqueue = MagicMock()
+    with (
+        patch(
+            "app.services.smart_captions.resolve_smart_captions_context_sync",
+            return_value=None,
+        ),
+        patch("app.services.edit_proposals.proposal_generate_error", return_value=None),
+        patch("app.services.generative_jobs.build_generative_job", build),
+        patch("app.services.job_dispatch.enqueue_orchestrator_sync", enqueue),
+        patch(
+            "app.services.speech_cleanup_preflight.schedule_item_preflight_sync",
+            side_effect=AssertionError("recovery must not schedule analysis"),
+        ),
+    ):
+        result = dispatch_item_render_for(
+            str(item.id),
+            4,
+            speech_cleanup_action=action,
+            expected_job_id=str(old_job.id),
+            expected_render_generation_id=expected_generation,
+            expected_speech_cleanup_analysis_id=str(row.id),
+        )
+    return result, item, row, old_job, new_job, build, enqueue
+
+
+def test_retry_required_reuses_exact_failed_job_snapshot_without_analysis_rerun(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, item, row, old_job, new_job, build, enqueue = _run_cleanup_application_recovery(
+        monkeypatch, action="retry_required"
+    )
+
+    assert result.outcome == "dispatched"
+    assert item.current_job_id == new_job.id
+    assert row.decision == "clean"
+    assert new_job.assembly_plan["speech_cleanup_contract"] == "required_v1"
+    old_private = old_job.assembly_plan["_speech_cleanup_internal"]
+    new_private = new_job.assembly_plan["_speech_cleanup_internal"]
+    assert new_private["preflight_snapshot"] == old_private["preflight_snapshot"]
+    assert new_private["preflight_snapshot"] is not old_private["preflight_snapshot"]
+    assert new_private["source_binding"] != old_private["source_binding"]
+    assert (
+        new_private["source_binding"]["source_instance_id"]
+        == (new_job.all_candidates["clip_source_instance_ids"][0])
+    )
+    assert new_job.assembly_plan["creator_generation_id"] != "failed-generation"
+    build.assert_called_once()
+    enqueue.assert_called_once()
+
+
+def test_disable_and_create_after_ready_apply_failure_stamps_unchecked_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, item, row, _old_job, new_job, build, enqueue = _run_cleanup_application_recovery(
+        monkeypatch, action="disable_and_create"
+    )
+
+    assert result.outcome == "dispatched"
+    assert item.speech_cleanup_enabled is False
+    assert row.status == "ready"
+    assert row.decision == "create_without_cleanup"
+    assert new_job.assembly_plan["speech_cleanup_contract"] == "off_v1"
+    assert new_job.assembly_plan["_speech_cleanup_internal"] == {"outcome_analysis_id": str(row.id)}
+    assert new_job.assembly_plan["speech_cleanup_outcome"] == {
+        "status": "bypassed_unchecked",
+        "removal_count": 0,
+        "removed_ms": 0,
+        "job_id": str(new_job.id),
+        "render_generation_id": new_job.assembly_plan["creator_generation_id"],
+    }
+    build.assert_called_once()
+    enqueue.assert_called_once()
+
+
+def test_disable_and_create_is_available_after_snapshot_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, item, row, _old_job, new_job, build, enqueue = _run_cleanup_application_recovery(
+        monkeypatch,
+        action="disable_and_create",
+        failure_reason="snapshot_mismatch",
+    )
+
+    assert result.outcome == "dispatched"
+    assert item.speech_cleanup_enabled is False
+    assert row.decision == "create_without_cleanup"
+    assert new_job.assembly_plan["speech_cleanup_outcome"]["status"] == "bypassed_unchecked"
+    build.assert_called_once()
+    enqueue.assert_called_once()
+
+
+def test_retry_does_not_loop_a_known_snapshot_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, item, row, old_job, _new_job, build, enqueue = _run_cleanup_application_recovery(
+        monkeypatch,
+        action="retry_required",
+        failure_reason="snapshot_mismatch",
+    )
+
+    assert result.outcome == "speech_cleanup_recovery_conflict"
+    assert item.current_job_id == old_job.id
+    assert row.decision == "clean"
+    build.assert_not_called()
+    enqueue.assert_not_called()
+
+
+def test_cleanup_application_recovery_is_job_generation_fenced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, item, row, old_job, _new_job, build, enqueue = _run_cleanup_application_recovery(
+        monkeypatch,
+        action="retry_required",
+        expected_generation="stale-generation",
+    )
+
+    assert result.outcome == "speech_cleanup_recovery_conflict"
+    assert item.current_job_id == old_job.id
+    assert row.decision == "clean"
+    build.assert_not_called()
+    enqueue.assert_not_called()
+
+
+def test_cleanup_application_recovery_rejects_active_source_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, item, row, old_job, _new_job, build, enqueue = _run_cleanup_application_recovery(
+        monkeypatch,
+        action="retry_required",
+        active_source_generation="replacement-generation",
+    )
+
+    assert result.outcome == "speech_cleanup_recovery_conflict"
+    assert item.current_job_id == old_job.id
+    assert row.decision == "clean"
+    build.assert_not_called()
+    enqueue.assert_not_called()
+
+
+def _run_cleanup_preflight_publish_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    outcome_status: str | None,
+    active_source_generation: str = "generation-17",
+    expected_generation: str = "publish-failed-generation",
+) -> tuple[
+    object,
+    SimpleNamespace,
+    SimpleNamespace,
+    SimpleNamespace,
+    SimpleNamespace,
+    MagicMock,
+    MagicMock,
+]:
+    """Retry a Job that committed its cleanup contract before publish failed."""
+    from app.config import settings
+    from app.services.speech_cleanup_preflight import analysis_snapshot
+
+    item = _cleanup_dispatch_item()
+    item.content_plan_id = uuid.uuid4()
+    fingerprint = "b" * 64
+    status = "failed" if outcome_status == "bypassed_unchecked" else "ready"
+    candidate_count = 0 if outcome_status == "checked_no_change" else 2
+    if outcome_status == "checked_no_change":
+        status = "no_findings"
+    row = _cleanup_analysis(
+        item,
+        status=status,
+        candidate_count=candidate_count,
+        fingerprint=fingerprint,
+    )
+    row.engine_version = "preflight-v1-2026-09-05"
+    row.detector_version = "mixed-gap-v1"
+    row.analysis_payload = _recovery_payload(fingerprint)
+    row.decision = {
+        None: "clean",
+        "declined": "keep_original",
+        "checked_no_change": None,
+        "bypassed_unchecked": "create_without_cleanup",
+    }[outcome_status]
+    row.decision_at = datetime.now(UTC) if row.decision is not None else None
+    item.speech_cleanup_enabled = outcome_status is None
+    owner_id = uuid.uuid4()
+    old_job_id = uuid.uuid4()
+    old_generation = "publish-failed-generation"
+    old_plan: dict[str, object] = {
+        "creator_generation_id": old_generation,
+        "speech_cleanup_contract": "required_v1" if outcome_status is None else "off_v1",
+    }
+    if outcome_status == "bypassed_unchecked":
+        old_plan["_speech_cleanup_internal"] = {"outcome_analysis_id": str(row.id)}
+    else:
+        old_plan["speech_cleanup_preflight_contract"] = "snapshot_v1"
+        old_plan["_speech_cleanup_internal"] = {
+            "preflight_snapshot": analysis_snapshot(row),
+        }
+    if outcome_status is not None:
+        old_plan["speech_cleanup_outcome"] = {
+            "status": outcome_status,
+            "removal_count": 0,
+            "removed_ms": 0,
+            "job_id": str(old_job_id),
+            "render_generation_id": old_generation,
+        }
+    old_job = SimpleNamespace(
+        id=old_job_id,
+        user_id=owner_id,
+        content_plan_item_id=item.id,
+        content_plan_ownership_epoch=4,
+        status="processing_failed",
+        failure_reason="dispatch_publish_failed",
+        assembly_plan=old_plan,
+    )
+    item.current_job_id = old_job.id
+    plan = SimpleNamespace(
+        id=item.content_plan_id,
+        user_id=owner_id,
+        preference_summary="",
+        ownership_epoch=4,
+    )
+    persona = SimpleNamespace(
+        persona={"tone": "direct", "content_pillars": []},
+        tiktok_profile=None,
+        style=None,
+    )
+    new_job = SimpleNamespace(
+        id=uuid.uuid4(),
+        assembly_plan={},
+        all_candidates={"clip_paths": list(item.clip_gcs_paths)},
+    )
+    session = MagicMock()
+
+    def get(model: object, identifier: object, **_kwargs: object) -> object | None:
+        if model is PlanItem:
+            return item
+        if model is Job and identifier == old_job.id:
+            return old_job
+        if model is SpeechCleanupAnalysis and identifier == row.id:
+            return row
+        return None
+
+    session.get.side_effect = get
+    context = MagicMock()
+    context.__enter__.return_value = session
+    context.__exit__.return_value = False
+    monkeypatch.setattr("app.tasks.content_plan_build.sync_session", lambda: context)
+    monkeypatch.setattr(
+        "app.tasks.content_plan_build._lock_owned_plan_persona",
+        lambda *_args, **_kwargs: (plan, persona),
+    )
+    monkeypatch.setattr(settings, "speech_cleanup_mode", "opt_in")
+    monkeypatch.setattr(settings, "silence_cut_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "edit_format_talking_head_enabled", True)
+    monkeypatch.setattr(settings, "narrated_self_narration_enabled", True)
+    source = SimpleNamespace(
+        source_kind="embedded_spine",
+        media_id="registered-spine",
+        storage_path=item.clip_gcs_paths[0],
+        generation=active_source_generation,
+        source_policy_fingerprint=fingerprint,
+    )
+    monkeypatch.setattr(
+        "app.services.plan_item_media.resolve_item_narration",
+        lambda *_args, **_kwargs: SimpleNamespace(source=source),
+    )
+    build = MagicMock(return_value=new_job)
+    enqueue = MagicMock()
+    with (
+        patch(
+            "app.services.smart_captions.resolve_smart_captions_context_sync",
+            return_value=None,
+        ),
+        patch("app.services.edit_proposals.proposal_generate_error", return_value=None),
+        patch("app.services.generative_jobs.build_generative_job", build),
+        patch("app.services.job_dispatch.enqueue_orchestrator_sync", enqueue),
+        patch(
+            "app.services.speech_cleanup_preflight.schedule_item_preflight_sync",
+            side_effect=AssertionError("publish retry must not schedule analysis"),
+        ),
+    ):
+        result = dispatch_item_render_for(
+            str(item.id),
+            4,
+            speech_cleanup_action="retry_preflight_dispatch",
+            expected_job_id=str(old_job.id),
+            expected_render_generation_id=expected_generation,
+            expected_speech_cleanup_analysis_id=str(row.id),
+        )
+    return result, item, row, old_job, new_job, build, enqueue
+
+
+@pytest.mark.parametrize(
+    "outcome_status",
+    [None, "declined", "checked_no_change", "bypassed_unchecked"],
+)
+def test_preflight_publish_retry_preserves_every_exact_cleanup_decision(
+    monkeypatch: pytest.MonkeyPatch,
+    outcome_status: str | None,
+) -> None:
+    result, item, row, old_job, new_job, build, enqueue = _run_cleanup_preflight_publish_recovery(
+        monkeypatch,
+        outcome_status=outcome_status,
+    )
+
+    assert result.outcome == "dispatched"
+    assert item.current_job_id == new_job.id
+    assert new_job.assembly_plan["speech_cleanup_contract"] == (
+        "required_v1" if outcome_status is None else "off_v1"
+    )
+    if outcome_status is None:
+        assert (
+            new_job.assembly_plan["_speech_cleanup_internal"]["preflight_snapshot"]
+            == (old_job.assembly_plan["_speech_cleanup_internal"]["preflight_snapshot"])
+        )
+        assert "speech_cleanup_outcome" not in new_job.assembly_plan
+    else:
+        receipt = new_job.assembly_plan["speech_cleanup_outcome"]
+        assert receipt == {
+            "status": outcome_status,
+            "removal_count": 0,
+            "removed_ms": 0,
+            "job_id": str(new_job.id),
+            "render_generation_id": new_job.assembly_plan["creator_generation_id"],
+        }
+        if outcome_status == "bypassed_unchecked":
+            assert new_job.assembly_plan["_speech_cleanup_internal"] == {
+                "outcome_analysis_id": str(row.id)
+            }
+        else:
+            assert (
+                new_job.assembly_plan["_speech_cleanup_internal"]["preflight_snapshot"]
+                == old_job.assembly_plan["_speech_cleanup_internal"]["preflight_snapshot"]
+            )
+    assert new_job.assembly_plan["creator_generation_id"] != "publish-failed-generation"
+    build.assert_called_once()
+    enqueue.assert_called_once()
+
+
+def test_preflight_publish_retry_fails_closed_on_source_or_generation_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, item, _row, old_job, _new_job, build, enqueue = _run_cleanup_preflight_publish_recovery(
+        monkeypatch,
+        outcome_status="bypassed_unchecked",
+        active_source_generation="replacement-generation",
+    )
+
+    assert result.outcome == "speech_cleanup_recovery_conflict"
+    assert item.current_job_id == old_job.id
+    build.assert_not_called()
+    enqueue.assert_not_called()
+
+
+def test_cleanup_decision_and_job_commit_before_broker_publish(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.config import settings
+
+    item = _cleanup_dispatch_item()
+    row = _cleanup_analysis(item)
+    plan = SimpleNamespace(
+        id=uuid.uuid4(), user_id=uuid.uuid4(), preference_summary="", ownership_epoch=0
+    )
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        assembly_plan={},
+        all_candidates={"clip_paths": list(item.clip_gcs_paths)},
+    )
+    session = MagicMock()
+    session.get.return_value = row
+    order: list[str] = []
+
+    def commit() -> None:
+        assert row.decision == "clean"
+        session.add.assert_called_once_with(job)
+        assert job.assembly_plan["speech_cleanup_contract"] == "required_v1"
+        assert "preflight_snapshot" in job.assembly_plan["_speech_cleanup_internal"]
+        order.append("commit")
+
+    def enqueue(*_args: object, **_kwargs: object) -> None:
+        assert order == ["commit"]
+        order.append("publish")
+
+    session.commit.side_effect = commit
+    monkeypatch.setattr(settings, "speech_cleanup_mode", "opt_in")
+    monkeypatch.setattr(settings, "silence_cut_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(
+        "app.services.plan_item_media.resolve_item_narration",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            source=SimpleNamespace(source_policy_fingerprint="active-source-fingerprint")
+        ),
+    )
+    with (
+        patch(
+            "app.services.smart_captions.resolve_smart_captions_context_sync",
+            return_value=None,
+        ),
+        patch("app.services.generative_jobs.build_generative_job", return_value=job),
+        patch("app.services.job_dispatch.enqueue_orchestrator_sync", side_effect=enqueue),
+    ):
+        result = _dispatch_item_render(
+            session,
+            item,
+            plan,
+            {"tone": "direct", "content_pillars": []},
+            ownership_epoch=0,
+            speech_cleanup_analysis_id=str(row.id),
+            speech_cleanup_choice="clean",
+        )
+
+    assert result.outcome == "dispatched"
+    assert order == ["commit", "publish"]
+
+
+@pytest.mark.parametrize("failure", ["missing", "wrong_item", "superseded", "fingerprint"])
+def test_invalid_preflight_snapshot_mints_no_job(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    from app.config import settings
+
+    item = _cleanup_dispatch_item()
+    row = _cleanup_analysis(item)
+    if failure == "wrong_item":
+        row.plan_item_id = uuid.uuid4()
+    elif failure == "superseded":
+        row.superseded_at = datetime.now(UTC)
+    elif failure == "fingerprint":
+        row.source_policy_fingerprint = "obsolete-source"
+    plan = SimpleNamespace(
+        id=uuid.uuid4(), user_id=uuid.uuid4(), preference_summary="", ownership_epoch=0
+    )
+    job = SimpleNamespace(id=uuid.uuid4(), assembly_plan={})
+    session = MagicMock()
+    session.get.return_value = None if failure == "missing" else row
+    monkeypatch.setattr(settings, "speech_cleanup_mode", "opt_in")
+    monkeypatch.setattr(settings, "silence_cut_enabled", True)
+    monkeypatch.setattr(
+        "app.services.plan_item_media.resolve_item_narration",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            source=SimpleNamespace(source_policy_fingerprint="active-source-fingerprint")
+        ),
+    )
+    with (
+        patch(
+            "app.services.smart_captions.resolve_smart_captions_context_sync",
+            return_value=None,
+        ),
+        patch("app.services.generative_jobs.build_generative_job", return_value=job) as build,
+        patch("app.services.job_dispatch.enqueue_orchestrator_sync") as enqueue,
+    ):
+        result = _dispatch_item_render(
+            session,
+            item,
+            plan,
+            {"tone": "direct", "content_pillars": []},
+            ownership_epoch=0,
+            speech_cleanup_analysis_id=str(row.id),
+            speech_cleanup_choice="clean",
+        )
+
+    assert result.outcome == "speech_cleanup_analysis_conflict"
+    assert row.decision is None
+    build.assert_not_called()
+    session.add.assert_not_called()
+    session.commit.assert_not_called()
+    enqueue.assert_not_called()
+
+
+def test_audio_only_preflight_cannot_persist_choice_or_mint_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    item = _cleanup_dispatch_item()
+    row = _cleanup_analysis(item)
+    item.clip_gcs_paths = []
+    item.clip_assignments = []
+    item.edit_format = "narrated_planned"
+    item.audio_mode = "voiceover"
+    item.voiceover_gcs_path = "users/u/plan/i/voice.m4a"
+    item.voiceover_generation = "voice-generation-3"
+    item.voiceover_duration_s = 12.0
+    session = MagicMock()
+    session.get.return_value = row
+
+    with (
+        patch("app.services.generative_jobs.build_generative_job") as build,
+        patch(
+            "app.services.plan_item_media.resolve_item_narration",
+            return_value=SimpleNamespace(
+                source=SimpleNamespace(source_policy_fingerprint=row.source_policy_fingerprint)
+            ),
+        ),
+    ):
+        result = _dispatch_item_render(
+            session,
+            item,
+            SimpleNamespace(
+                id=uuid.uuid4(),
+                user_id=uuid.uuid4(),
+                preference_summary="",
+                ownership_epoch=0,
+            ),
+            {"tone": "direct", "content_pillars": []},
+            ownership_epoch=0,
+            speech_cleanup_analysis_id=str(row.id),
+            speech_cleanup_choice="clean",
+        )
+
+    assert result.outcome == "video_required"
+    assert row.decision is None
+    assert item.speech_cleanup_enabled is False
+    build.assert_not_called()
+    session.add.assert_not_called()
+    session.commit.assert_not_called()
 
 
 def test_missing_persona_rejects_before_job_or_queue() -> None:

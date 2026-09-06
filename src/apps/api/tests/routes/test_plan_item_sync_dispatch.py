@@ -175,15 +175,23 @@ def test_voiceover_attach_survives_metadata_validation_rollback(client: TestClie
     user_id, item_id = _seed_item()
     voiceover_path = f"voiceover-uploads/direct/{user_id}/{uuid.uuid4().hex}/voice.mp3"
 
-    with patch(
-        "app.routes.plan_items.storage.object_metadata",
-        return_value=ObjectMetadata(
-            path=voiceover_path,
-            generation="1",
-            etag=None,
-            size=345_645,
-            content_type="audio/mpeg",
+    with (
+        patch(
+            "app.routes.plan_items.storage.object_metadata",
+            return_value=ObjectMetadata(
+                path=voiceover_path,
+                generation="1",
+                etag=None,
+                size=345_645,
+                content_type="audio/mpeg",
+            ),
         ),
+        patch(
+            "app.routes.plan_items.storage.signed_get_url_for_generation",
+            return_value="https://storage.test/voice.mp3",
+        ),
+        patch("app.services.audio_download.probe_duration", return_value=12.0),
+        patch("app.services.audio_download.probe_has_audio_stream", return_value=True),
     ):
         response = client.patch(
             f"/plan-items/{item_id}/voiceover",

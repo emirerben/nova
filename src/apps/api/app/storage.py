@@ -798,6 +798,49 @@ def signed_get_url(object_path: str, expiration_minutes: int = 5) -> str:
     )
 
 
+def signed_get_url_for_generation(
+    object_path: str,
+    *,
+    generation: str,
+    expiration_minutes: int = 15,
+) -> str:
+    """Sign the exact object generation captured during media registration.
+
+    Speech-cleanup consent is bound to immutable bytes.  A path-only signed URL
+    can silently start reading a replacement object after analysis was queued,
+    so preflight callers must use this generation-aware primitive.  Local fixture
+    storage enforces the same contract before returning its URL; it never treats
+    the current file at a matching path as equivalent when its identity changed.
+    """
+
+    normalized_generation = str(generation or "").strip()
+    if not normalized_generation:
+        raise ValueError("generation is required")
+    if _uses_local_storage():
+        metadata = _local_metadata(object_path)
+        if metadata.generation != normalized_generation:
+            raise FileNotFoundError(object_path)
+        return _local_object_url(object_path)
+    try:
+        generation_number = int(normalized_generation)
+    except ValueError as exc:
+        raise ValueError("generation must be a storage generation number") from exc
+    bucket = _get_client().bucket(settings.storage_bucket)
+    blob = bucket.blob(object_path, generation=generation_number)
+    # The generation MUST be passed to generate_signed_url itself. Setting it on
+    # the Blob constructor does not reach the signer: generate_signed_url's own
+    # ``generation=None`` default is forwarded verbatim, so the signed URL would
+    # be path-only and silently read a replacement object -- exactly what this
+    # primitive exists to prevent. Pinned by
+    # test_signed_get_url_for_generation_pins_generation_in_query.
+    return blob.generate_signed_url(
+        version="v4",
+        expiration=datetime.timedelta(minutes=expiration_minutes),
+        method="GET",
+        generation=generation_number,
+    )
+
+
 def signed_download_url(
     object_path: str,
     filename: str,

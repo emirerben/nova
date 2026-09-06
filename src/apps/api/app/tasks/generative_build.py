@@ -67,6 +67,15 @@ from app.pipeline.look_presets import (
     normalize_look_adjustments,
     normalize_look_preset,
 )
+from app.pipeline.speech_cleanup_apply import (
+    PREFLIGHT_JOB_CONTRACT_FIELD,
+    PREFLIGHT_JOB_CONTRACT_VALUE,
+    HydratedSpeechCleanupSnapshot,
+    SpeechCleanupAudioApplyError,
+    SpeechCleanupSnapshotError,
+    apply_speech_cleanup_to_audio,
+    hydrate_job_speech_cleanup_snapshot,
+)
 from app.schemas.montage_preset import (
     DEFAULT_MONTAGE_PRESET,
     MASONRY_MONTAGE_PRESET,
@@ -1506,6 +1515,69 @@ def _speech_cleanup_assignment_map(
     return assignments
 
 
+def _speech_cleanup_snapshot_source_slot(
+    snapshot: HydratedSpeechCleanupSnapshot,
+    *,
+    original_clip_paths: list[str] | tuple[str, ...],
+    source_identity=None,  # noqa: ANN001
+) -> int:
+    """Resolve a preflight source to its immutable Job source slot."""
+
+    snapshot.require_source(kind="embedded_spine")
+    if snapshot.job_source_instance_id is not None:
+        if source_identity is None or not getattr(source_identity, "valid", False):
+            raise SpeechCleanupSnapshotError("embedded_source_identity")
+        matching_slots = [
+            index
+            for index, source_id in enumerate(source_identity.source_instance_ids)
+            if source_id == snapshot.job_source_instance_id
+        ]
+        if len(matching_slots) != 1:
+            raise SpeechCleanupSnapshotError("embedded_source_instance")
+        source_slot = matching_slots[0]
+    else:
+        # Compatibility for the short staged window before Job-local source
+        # bindings were stamped. This remains path-exact and therefore cannot
+        # survive a durable-source rewrite; all new Jobs use the branch above.
+        matching_slots = [
+            index for index, path in enumerate(original_clip_paths) if path == snapshot.storage_path
+        ]
+        if len(matching_slots) != 1:
+            raise SpeechCleanupSnapshotError("embedded_source_path")
+        source_slot = matching_slots[0]
+    return source_slot
+
+
+def _speech_cleanup_snapshot_clip_id(
+    snapshot: HydratedSpeechCleanupSnapshot,
+    *,
+    original_clip_paths: list[str] | tuple[str, ...],
+    assignment_by_clip_id: Mapping[str, Any],
+    source_identity=None,  # noqa: ANN001
+) -> str:
+    """Bind an embedded preflight source to the renderer's current clip id.
+
+    Ingest may replace the source path with a durable per-Job copy and Gemini
+    may replace its name with a provider clip id. The Job source-instance UUID
+    bridges both transformations. A duplicate or unavailable mapping fails a
+    required render closed.
+    """
+
+    source_slot = _speech_cleanup_snapshot_source_slot(
+        snapshot,
+        original_clip_paths=original_clip_paths,
+        source_identity=source_identity,
+    )
+    matching_ids = [
+        str(clip_id)
+        for clip_id, assignment in assignment_by_clip_id.items()
+        if getattr(assignment, "source_slot", None) == source_slot
+    ]
+    if len(matching_ids) != 1:
+        raise SpeechCleanupSnapshotError("embedded_source_slot")
+    return matching_ids[0]
+
+
 def _load_preprocessed_source_cache(job_id: str, clip_paths_gcs: list[str]) -> list[str] | None:
     cache = _read_all_candidates(job_id).get("preprocessed_source_cache")
     if not isinstance(cache, dict):
@@ -2101,17 +2173,61 @@ def _run_generative_job_impl(
         )
         raw_pacing = raw_creator_strategy.get("pacing")
         creator_pacing = raw_pacing if raw_pacing in {"fast", "relaxed"} else None
+        immutable_job_plan = job.assembly_plan or {}
         speech_cleanup_contract = str(
-            (job.assembly_plan or {}).get("speech_cleanup_contract") or "legacy_auto"
+            immutable_job_plan.get("speech_cleanup_contract") or "legacy_auto"
         )
         if speech_cleanup_contract not in {"legacy_auto", "required_v1", "off_v1"}:
             raise SpeechCleanupFailure("invalid_contract")
-        speech_cut_execution = (job.assembly_plan or {}).get("speech_cut_control") or {}
+        speech_cut_execution = immutable_job_plan.get("speech_cut_control") or {}
         if speech_cut_execution.get("execution_contract") == "restore_original_v1":
             speech_cleanup_contract = "off_v1"
         if speech_cleanup_contract == "required_v1" and not settings.silence_cut_enabled:
             raise SpeechCleanupFailure("engine_unavailable")
+        private_cleanup = immutable_job_plan.get("_speech_cleanup_internal")
+        has_private_snapshot = isinstance(private_cleanup, dict) and (
+            "preflight_snapshot" in private_cleanup
+        )
+        preflight_marker = immutable_job_plan.get(PREFLIGHT_JOB_CONTRACT_FIELD)
+        if preflight_marker not in {None, PREFLIGHT_JOB_CONTRACT_VALUE}:
+            raise SpeechCleanupFailure("snapshot_mismatch", "unknown preflight contract")
+        speech_cleanup_snapshot_contract = bool(
+            preflight_marker == PREFLIGHT_JOB_CONTRACT_VALUE or has_private_snapshot
+        )
+        if speech_cleanup_snapshot_contract and speech_cleanup_contract not in {
+            "required_v1",
+            "off_v1",
+        }:
+            raise SpeechCleanupFailure(
+                "snapshot_mismatch",
+                "snapshot contract is incompatible with render policy",
+            )
+        speech_cleanup_snapshot: HydratedSpeechCleanupSnapshot | None = None
+        if speech_cleanup_snapshot_contract and speech_cleanup_contract in {
+            "required_v1",
+            "off_v1",
+        }:
+            try:
+                speech_cleanup_snapshot = hydrate_job_speech_cleanup_snapshot(immutable_job_plan)
+            except SpeechCleanupSnapshotError as exc:
+                # A marker is an immutable promise that this Job consumes the
+                # accepted preflight evidence. Never fall back to render-time
+                # analysis when the promised snapshot is malformed or missing.
+                if preflight_marker == PREFLIGHT_JOB_CONTRACT_VALUE:
+                    raise SpeechCleanupFailure("snapshot_mismatch", exc.detail) from exc
+                if speech_cleanup_contract == "required_v1":
+                    raise SpeechCleanupFailure("snapshot_mismatch", exc.detail) from exc
+                speech_cleanup_snapshot = None
+        elif speech_cleanup_contract == "off_v1" and isinstance(private_cleanup, dict):
+            # A checked keep-original/no-findings Job may reuse the preflight
+            # words for captions while still applying no cuts.  Malformed
+            # optional evidence never turns an explicit opt-out into a failure.
+            try:
+                speech_cleanup_snapshot = hydrate_job_speech_cleanup_snapshot(immutable_job_plan)
+            except SpeechCleanupSnapshotError:
+                speech_cleanup_snapshot = None
         clip_paths_gcs: list[str] = all_candidates.get("clip_paths", []) or []
+        original_clip_paths_gcs = tuple(clip_paths_gcs)
         # Closed allowlist enforced at the API edge; legacy rows default to "en".
         language: str = all_candidates.get("language") or "en"
         # Persona/series context for persona-coherent hooks (content-plan jobs
@@ -2324,6 +2440,30 @@ def _run_generative_job_impl(
         # The locked row is authoritative if a concurrent editor changed the
         # ordered vector between the task's entry snapshot and provisioning.
         clip_paths_gcs = list(clip_source_identity.clip_paths)
+        original_clip_paths_gcs = tuple(clip_paths_gcs)
+
+    speech_cleanup_source_slot: int | None = None
+    generation_by_source_instance: dict[str, str] = {}
+    if speech_cleanup_snapshot is not None and speech_cleanup_snapshot.source_kind == (
+        "embedded_spine"
+    ):
+        try:
+            speech_cleanup_source_slot = _speech_cleanup_snapshot_source_slot(
+                speech_cleanup_snapshot,
+                original_clip_paths=original_clip_paths_gcs,
+                source_identity=clip_source_identity,
+            )
+            if clip_source_identity is not None and clip_source_identity.valid:
+                source_instance_id = clip_source_identity.source_instance_ids[
+                    speech_cleanup_source_slot
+                ]
+                generation_by_source_instance[source_instance_id] = (
+                    speech_cleanup_snapshot.generation
+                )
+        except SpeechCleanupSnapshotError as exc:
+            if speech_cleanup_snapshot_contract:
+                raise SpeechCleanupFailure("snapshot_mismatch", exc.detail) from exc
+            speech_cleanup_snapshot = None
 
     analyze_t0 = time.monotonic()
 
@@ -2342,6 +2482,27 @@ def _run_generative_job_impl(
             job_id,
             clip_paths_gcs,
             source_identity=clip_source_identity,
+            generation_by_source_instance=generation_by_source_instance,
+        )
+
+    current_clip_source_identity = _speech_cleanup_identity_for_paths(
+        job_id,
+        clip_paths_gcs,
+    )
+    exact_source_generations: dict[int, tuple[str, str]] = {}
+    if (
+        speech_cleanup_snapshot is not None
+        and speech_cleanup_snapshot.source_kind == "embedded_spine"
+        and speech_cleanup_source_slot is not None
+        and 0 <= speech_cleanup_source_slot < len(clip_paths_gcs)
+        and clip_paths_gcs[speech_cleanup_source_slot] == speech_cleanup_snapshot.storage_path
+    ):
+        # Timeline-source persistence was disabled or failed. Bind the local
+        # ingest to the exact accepted generation instead of reading whichever
+        # bytes currently occupy the mutable object name.
+        exact_source_generations[speech_cleanup_source_slot] = (
+            speech_cleanup_snapshot.storage_path,
+            speech_cleanup_snapshot.generation,
         )
 
     # ignore_cleanup_errors: on a soft-time-limit abort, an orphaned pre-tonemap
@@ -2377,7 +2538,11 @@ def _run_generative_job_impl(
             },
         ):
             ingest = _ingest_clips(
-                clip_paths_gcs, tmpdir, job_id=job_id, skip_analysis=_skip_clip_analysis
+                clip_paths_gcs,
+                tmpdir,
+                job_id=job_id,
+                skip_analysis=_skip_clip_analysis,
+                exact_source_generations=exact_source_generations,
             )
         clip_metas = ingest["clip_metas"]
         clip_id_to_gcs = ingest["clip_id_to_gcs"]
@@ -2385,6 +2550,29 @@ def _run_generative_job_impl(
         speech_cleanup_assignment_by_clip_id = (
             ingest.get("speech_cleanup_assignment_by_clip_id") or {}
         )
+        speech_cleanup_source_clip_id: str | None = None
+        if speech_cleanup_snapshot is not None:
+            try:
+                if speech_cleanup_snapshot.source_kind == "voiceover":
+                    if not voiceover_gcs_path:
+                        raise SpeechCleanupSnapshotError("voiceover_source_missing")
+                    speech_cleanup_snapshot.require_source(
+                        kind="voiceover",
+                        storage_path=voiceover_gcs_path,
+                    )
+                else:
+                    speech_cleanup_source_clip_id = _speech_cleanup_snapshot_clip_id(
+                        speech_cleanup_snapshot,
+                        original_clip_paths=original_clip_paths_gcs,
+                        assignment_by_clip_id=speech_cleanup_assignment_by_clip_id,
+                        source_identity=current_clip_source_identity,
+                    )
+            except SpeechCleanupSnapshotError as exc:
+                if speech_cleanup_snapshot_contract:
+                    raise SpeechCleanupFailure("snapshot_mismatch", exc.detail) from exc
+                # Legacy optional evidence (never a snapshot_v1 Job promise)
+                # remains a caption-reuse optimization only.
+                speech_cleanup_snapshot = None
         probe_map = ingest["probe_map"]
         clip_durations_s = {
             cid: float(getattr(probe_map.get(path), "duration_s", 0.0) or 0.0)
@@ -2644,16 +2832,22 @@ def _run_generative_job_impl(
                 # duration logic while preventing a revision from reshuffling
                 # clips the creator explicitly asked to preserve.
                 narrative_order = preserved_order
-        if (
-            speech_cleanup_contract == "required_v1"
-            and archetype == "montage"
-            and archetype_fallback_reason not in {"no_speech", "spine_too_short"}
-        ):
+        montage_cleanup_failure = (
+            _required_speech_montage_failure_reason(
+                speech_cleanup_contract,
+                uses_preflight=preflight_marker == PREFLIGHT_JOB_CONTRACT_VALUE,
+                fallback_reason=archetype_fallback_reason,
+            )
+            if archetype == "montage"
+            else None
+        )
+        if montage_cleanup_failure is not None:
             # A required cleanup job must never silently degrade to a generic
-            # montage when its declared renderer is unavailable. The two
-            # speech-absence fallbacks are explicit benign no-op receipts;
-            # every other downgrade is an actionable renderer failure.
-            raise SpeechCleanupFailure("unsupported_renderer")
+            # montage when its declared renderer is unavailable. Historical
+            # markerless Jobs retain their two speech-absence fallbacks while
+            # they drain. A marked snapshot already proved a supported speech
+            # lane, so losing that lane is a source mismatch, not a no-op.
+            raise SpeechCleanupFailure(montage_cleanup_failure)
         if (
             archetype == "talking_head"
             and speech_cut_pinned_spine
@@ -2707,10 +2901,10 @@ def _run_generative_job_impl(
             if speech_cleanup_contract == "off_v1"
             else _SilenceCutCache(os.path.join(tmpdir, "silence_cut"))
         )
-        required_speech_initial = speech_cleanup_contract == "required_v1" and archetype in {
-            "subtitled",
-            "talking_head",
-        }
+        required_speech_initial = _uses_required_speech_initial_ownership(
+            speech_cleanup_contract,
+            archetype,
+        )
         speech_cut_claim_generation = str(
             (speech_cut_execution.get("finalizer_claim") or {}).get("render_generation_id")
             or speech_cut_execution.get("render_generation_id")
@@ -2788,6 +2982,9 @@ def _run_generative_job_impl(
                         render_trace_id=render_trace_id,
                         storage_generation=spec.get("storage_generation"),
                         speech_cleanup_assignment_by_clip_id=(speech_cleanup_assignment_by_clip_id),
+                        speech_cleanup_snapshot=speech_cleanup_snapshot,
+                        speech_cleanup_source_clip_id=speech_cleanup_source_clip_id,
+                        speech_cleanup_uses_preflight=speech_cleanup_snapshot_contract,
                     )
                 elif spec.get("archetype") == "narrated":
                     result = _render_narrated_variant(
@@ -2803,6 +3000,9 @@ def _run_generative_job_impl(
                         explicit_opening_title=creator_opening_title,
                         variant_dir=variant_dir,
                         landscape_fit=landscape_fit,
+                        speech_cleanup_contract=speech_cleanup_contract,
+                        speech_cleanup_snapshot=speech_cleanup_snapshot,
+                        speech_cleanup_uses_preflight=speech_cleanup_snapshot_contract,
                     )
                 elif spec.get("archetype") == "subtitled":
                     result = _render_subtitled_variant(
@@ -2819,6 +3019,9 @@ def _run_generative_job_impl(
                         smart_captions=smart_captions,
                         render_trace_id=render_trace_id,
                         speech_cleanup_assignment_by_clip_id=(speech_cleanup_assignment_by_clip_id),
+                        speech_cleanup_snapshot=speech_cleanup_snapshot,
+                        speech_cleanup_source_clip_id=speech_cleanup_source_clip_id,
+                        speech_cleanup_uses_preflight=speech_cleanup_snapshot_contract,
                     )
                 elif spec.get("archetype") == "day_vlog":
                     result = _render_generative_variant(
@@ -2907,6 +3110,10 @@ def _run_generative_job_impl(
                         speech_cleanup_fallback_reason=archetype_fallback_reason,
                         creator_context_label=creator_context_label,
                     )
+                _raise_marked_snapshot_result_failure(
+                    result,
+                    preflight_marker=preflight_marker,
+                )
                 record_render_stage(
                     "variant_render",
                     elapsed_ms=int((time.monotonic() - variant_render_t0) * 1000),
@@ -2922,10 +3129,30 @@ def _run_generative_job_impl(
                     expected_operation_id=speech_cut_operation_id,
                     expected_attempt_id=speech_cut_attempt_id,
                 )
-                # Native first renders did not historically carry a generation
-                # token; stamp the dispatch identity before finalization writes
-                # the authoritative variant snapshot.
-                result["render_generation_id"] = render_generation_id
+                # Ordinary first renders use the Creator dispatch generation.
+                # Required cleanup renders are different: their media and
+                # private stage are owned by the separately reserved storage
+                # generation. Replacing that token here makes the generation-
+                # checked stage reject the result after the expensive render.
+                _bind_initial_result_generation(
+                    result,
+                    creator_generation_id=render_generation_id,
+                    required_speech=required_speech_initial,
+                    storage_generation=storage_generation,
+                )
+                if (
+                    speech_cleanup_snapshot_contract
+                    and speech_cleanup_contract == "required_v1"
+                    and result.get("ok") is True
+                    and _build_required_speech_terminal_outcome(result) is None
+                ):
+                    # A Ready result without the bounded apply capsule cannot
+                    # prove that the accepted snapshot reached pixels. Abort
+                    # before either the private stage or public variant write.
+                    raise SpeechCleanupFailure(
+                        "apply_failed",
+                        "required cleanup outcome evidence is missing",
+                    )
 
                 # Per-variant render_finished_at on success (D6 tile clock).
                 if result.get("ok"):
@@ -3146,6 +3373,18 @@ def _run_generative_job_impl(
         try:
             results = _render_spec_set(initial_specs, spine_clip_id)
         except SpineExtractionError as exc:
+            runtime_cleanup_failure = _required_speech_montage_failure_reason(
+                speech_cleanup_contract,
+                uses_preflight=preflight_marker == PREFLIGHT_JOB_CONTRACT_VALUE,
+                fallback_reason="spine_extraction_failed",
+            )
+            if preflight_marker == PREFLIGHT_JOB_CONTRACT_VALUE and runtime_cleanup_failure:
+                # The accepted snapshot proved this exact speech source before
+                # dispatch. A corrupt/disappeared runtime spine invalidates that
+                # evidence; publishing an ordinary montage would silently drop
+                # the cleanup the user accepted. Leave the private generation
+                # owned so _fail_job terminalizes it with the reanalysis reset.
+                raise SpeechCleanupFailure(runtime_cleanup_failure) from exc
             # Critical failure mode: a corrupt/unreadable spine clip degrades the whole
             # job to montage rather than hard-failing (best-effort invariant). Any
             # talking_head partials are discarded — _render_spec_set starts montage fresh.
@@ -4096,6 +4335,7 @@ def _ingest_clips(
     job_id: str,
     min_success_fraction: float = 0.5,
     skip_analysis: bool = False,
+    exact_source_generations: Mapping[int, tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Download → probe → Gemini upload → clip_metadata. Reuses the proven helpers.
 
@@ -4134,9 +4374,49 @@ def _ingest_clips(
     source_identity = _speech_cleanup_identity_for_paths(job_id, clip_paths_gcs)
 
     download_t0 = time.monotonic()
-    cached_sources = _load_preprocessed_source_cache(job_id, clip_paths_gcs)
+    # Generation-pinned preflight media must not reuse a cache created before
+    # the snapshot contract existed. A retry will rebuild from the exact source
+    # and then may reuse the ordinary within-Job caches on later phases.
+    cached_sources = (
+        None
+        if exact_source_generations
+        else _load_preprocessed_source_cache(job_id, clip_paths_gcs)
+    )
     source_paths_to_download = cached_sources or clip_paths_gcs
-    local_clip_paths = _download_clips_parallel(source_paths_to_download, tmpdir)
+    generation_by_index = {
+        source_slot: source_generation
+        for source_slot, (_source_path, source_generation) in (
+            exact_source_generations or {}
+        ).items()
+    }
+    if any(
+        source_slot < 0 or source_slot >= len(source_paths_to_download)
+        for source_slot in generation_by_index
+    ):
+        raise SpeechCleanupFailure("snapshot_mismatch", "source slot unavailable")
+    if any(
+        source_paths_to_download[source_slot] != source_path
+        for source_slot, (source_path, _source_generation) in (
+            exact_source_generations or {}
+        ).items()
+    ):
+        raise SpeechCleanupFailure("snapshot_mismatch", "source path changed")
+    try:
+        exact_download_kwargs = (
+            {"generation_by_index": generation_by_index} if generation_by_index else {}
+        )
+        local_clip_paths = _download_clips_parallel(
+            source_paths_to_download,
+            tmpdir,
+            **exact_download_kwargs,
+        )
+    except Exception as exc:
+        if generation_by_index:
+            raise SpeechCleanupFailure(
+                "snapshot_mismatch",
+                "source generation unavailable",
+            ) from exc
+        raise
     _record_render_subphase(
         job_id,
         "analyze_clips",
@@ -4494,6 +4774,7 @@ def _persist_durable_sources(
     clip_paths: list[str],
     *,
     source_identity=None,  # noqa: ANN001
+    generation_by_source_instance: Mapping[str, str] | None = None,
 ) -> list[str]:
     """Snapshot each uploaded clip to a durable per-job key and rewrite clip_paths.
 
@@ -4522,7 +4803,7 @@ def _persist_durable_sources(
     from app.services.speech_cleanup_identity import (  # noqa: PLC0415
         validate_clip_source_identity,
     )
-    from app.storage import copy_object  # noqa: PLC0415
+    from app.storage import copy_object, copy_object_generation  # noqa: PLC0415
 
     prefix = _durable_sources_prefix(job_id)
     original_paths = list(clip_paths)
@@ -4585,7 +4866,7 @@ def _persist_durable_sources(
         durable: list[str] = []
         copy_error: Exception | None = None
         try:
-            for source_slot, (src, _source_instance_id) in enumerate(captured_pairs):
+            for source_slot, (src, source_instance_id) in enumerate(captured_pairs):
                 if src.startswith(prefix):
                     durable.append(src)
                     continue
@@ -4604,7 +4885,15 @@ def _persist_durable_sources(
                 }:
                     extension = ".mp4"
                 dst = f"{prefix}copy-attempts/{attempt_id}/slot-{source_slot:04d}{extension}"
-                copy_object(src, dst)
+                exact_generation = (generation_by_source_instance or {}).get(source_instance_id)
+                if exact_generation:
+                    copy_object_generation(
+                        src,
+                        dst,
+                        source_generation=exact_generation,
+                    )
+                else:
+                    copy_object(src, dst)
                 durable.append(dst)
         except Exception as exc:  # noqa: BLE001 - original sources remain readable
             copy_error = exc
@@ -13758,6 +14047,33 @@ def _variant_storage_key(job_id: str, filename: str, generation: object = None) 
     return f"generative-jobs/{job_id}/{filename}"
 
 
+def _uses_required_speech_initial_ownership(contract: str, archetype: str) -> bool:
+    """Keep every cleanup-capable first render private until terminal proof wins."""
+
+    return contract == "required_v1" and archetype in {
+        "subtitled",
+        "talking_head",
+        "narrated",
+    }
+
+
+def _required_speech_montage_failure_reason(
+    contract: str,
+    *,
+    uses_preflight: bool,
+    fallback_reason: str | None,
+) -> str | None:
+    """Reject marked cleanup Jobs whose proven speech lane disappeared."""
+
+    if contract != "required_v1":
+        return None
+    if uses_preflight:
+        return "snapshot_mismatch"
+    if fallback_reason not in {"no_speech", "spine_too_short"}:
+        return "unsupported_renderer"
+    return None
+
+
 def _storage_generation_from_key(job_id: str, object_path: object) -> str | None:
     """Extract only this Job's syntactically valid render-generation token."""
 
@@ -15321,6 +15637,9 @@ def _render_talking_head_variant(
     render_trace_id: str | None = None,
     storage_generation: str | None = None,
     speech_cleanup_assignment_by_clip_id: Mapping[str, Any] | None = None,
+    speech_cleanup_snapshot: HydratedSpeechCleanupSnapshot | None = None,
+    speech_cleanup_source_clip_id: str | None = None,
+    speech_cleanup_uses_preflight: bool | None = None,
 ) -> dict[str, Any]:
     """Render the talking_head variant: spine audio + B-roll, then burn the AI intro.
 
@@ -15336,11 +15655,11 @@ def _render_talking_head_variant(
     Silence/filler/retake cut (plans/010 T6, behind SILENCE_CUT_ENABLED): the SPINE
     clip gets the same cut stage as subtitled — the flag/per-item gates live here,
     the mechanics (pre-cap, has_audio gate, keep_segments reframe, b-roll cut-point
-    anchors) live in the assembler, and the analysis routes through the shared
-    `_silence_cut_analysis` + per-job cache so a clip is never re-analyzed. Every
-    Historical legacy_auto gates/failures fall open to the uncut flow;
-    required_v1 is strict and off_v1 skips the stage. Flag off remains
-    byte-identical for non-required contracts (kill-switch pinned).
+    anchors) live in the assembler. Historical ``legacy_auto`` jobs route through
+    the shared render-time detector/cache. ``required_v1`` instead supplies the
+    exact preflight words/CutPlan through the same assembler hook, with no second
+    detection. ``off_v1`` skips cleanup. Flag off remains byte-identical for
+    non-required contracts (kill-switch pinned).
     """
     from app.pipeline.generative_overlays import build_persistent_intro_overlays  # noqa: PLC0415
     from app.pipeline.probe import probe_video  # noqa: PLC0415
@@ -15407,6 +15726,67 @@ def _render_talking_head_variant(
     silence_cut_out: dict[str, Any] = {}
     cleanup_required = speech_cleanup_contract == "required_v1"
     cleanup_off = speech_cleanup_contract == "off_v1"
+    if speech_cleanup_uses_preflight is None:
+        speech_cleanup_uses_preflight = speech_cleanup_snapshot is not None
+    cleanup_from_snapshot = cleanup_required and speech_cleanup_uses_preflight
+    if cleanup_from_snapshot:
+        if speech_cleanup_snapshot is None:
+            failure = SpeechCleanupFailure("snapshot_mismatch", "missing required snapshot")
+            return {
+                **base,
+                "ok": False,
+                "render_status": "failed",
+                "error": str(failure),
+                "error_class": _classify_error(failure),
+                "speech_cleanup_failure_reason": failure.reason,
+            }
+        try:
+            speech_cleanup_snapshot.require_source(kind="embedded_spine", window_start_s=0.0)
+        except SpeechCleanupSnapshotError as exc:
+            failure = SpeechCleanupFailure("snapshot_mismatch", exc.detail)
+            return {
+                **base,
+                "ok": False,
+                "render_status": "failed",
+                "error": str(failure),
+                "error_class": _classify_error(failure),
+                "speech_cleanup_failure_reason": failure.reason,
+            }
+        if speech_cleanup_source_clip_id is None:
+            speech_cleanup_source_clip_id = speech_cleanup_snapshot.media_identity
+        if speech_cleanup_source_clip_id not in clip_id_to_local:
+            failure = SpeechCleanupFailure("snapshot_mismatch", "snapshot spine is unavailable")
+            return {
+                **base,
+                "ok": False,
+                "render_status": "failed",
+                "error": str(failure),
+                "error_class": _classify_error(failure),
+                "speech_cleanup_failure_reason": failure.reason,
+            }
+        if spine_clip_id is not None and spine_clip_id != speech_cleanup_source_clip_id:
+            failure = SpeechCleanupFailure("snapshot_mismatch", "selected spine changed")
+            return {
+                **base,
+                "ok": False,
+                "render_status": "failed",
+                "error": str(failure),
+                "error_class": _classify_error(failure),
+                "speech_cleanup_failure_reason": failure.reason,
+            }
+        spine_clip_id = speech_cleanup_source_clip_id
+        spine_path = clip_id_to_local[spine_clip_id]
+        spine_probe = probe_map.get(spine_path) or probe_map.get(spine_clip_id)
+        if getattr(spine_probe, "has_audio", None) is False:
+            failure = SpeechCleanupFailure("snapshot_mismatch", "source audio changed")
+            return {
+                **base,
+                "ok": False,
+                "render_status": "failed",
+                "error": str(failure),
+                "error_class": _classify_error(failure),
+                "speech_cleanup_failure_reason": failure.reason,
+            }
     cleanup_assignment = _speech_cleanup_assignment_for_clip(
         speech_cleanup_assignment_by_clip_id,
         spine_clip_id,
@@ -15437,12 +15817,16 @@ def _render_talking_head_variant(
         # needs the SPINE probe, so it lives inside the assembler (same event).
         silence_cut_fn = None
         if cleanup_required:
-            base["_speech_cleanup_outcome_context"] = _speech_cleanup_outcome_context(
-                analysis_policy="required_v1",
-                assignment=cleanup_assignment,
-                render_trace_id=render_trace_id,
-                analysis_view="talking_head_spine_capped",
-                candidate_status="analysis_not_started",
+            base["_speech_cleanup_outcome_context"] = (
+                speech_cleanup_snapshot.outcome_context(analysis_view="talking_head_spine_capped")
+                if cleanup_from_snapshot and speech_cleanup_snapshot is not None
+                else _speech_cleanup_outcome_context(
+                    analysis_policy="required_v1",
+                    assignment=cleanup_assignment,
+                    render_trace_id=render_trace_id,
+                    analysis_view="talking_head_spine_capped",
+                    candidate_status="analysis_not_started",
+                )
             )
         if not cleanup_off and (
             cleanup_required or settings.silence_cut_enabled or settings.retake_cut_enabled
@@ -15463,10 +15847,31 @@ def _render_talking_head_variant(
                     cache_key: str | None = None,
                     source_fingerprint: str | None = None,
                 ) -> dict[str, Any]:
-                    # Shared analysis (7A): per-job cache ⇒ a clip analyzed for
-                    # one variant is never re-analyzed for another. `cache_key`
-                    # lets the assembler key a pre-capped analysis WAV by its
-                    # SOURCE spine (+cap), so the entry stays clip-addressed.
+                    if cleanup_from_snapshot:
+                        if speech_cleanup_snapshot is None:  # defensive after outer gate
+                            raise SpeechCleanupFailure("snapshot_mismatch")
+                        if (
+                            speech_cleanup_source_clip_id is not None
+                            and source_fingerprint != speech_cleanup_source_clip_id
+                        ):
+                            raise SpeechCleanupFailure(
+                                "snapshot_mismatch", "assembler selected another spine"
+                            )
+                        try:
+                            speech_cleanup_snapshot.require_source(
+                                kind="embedded_spine",
+                                window_start_s=0.0,
+                                window_duration_s=duration_s,
+                            )
+                        except SpeechCleanupSnapshotError as exc:
+                            raise SpeechCleanupFailure("snapshot_mismatch", exc.detail) from exc
+                        return speech_cleanup_snapshot.legacy_analysis_entry(
+                            analysis_view="talking_head_spine_capped"
+                        )
+
+                    # Historical shared analysis (7A): per-job cache means a
+                    # clip analyzed for one legacy variant is never re-analyzed
+                    # for another. `cache_key` keeps capped WAVs source-addressed.
                     kwargs: dict[str, Any] = {
                         "job_id": job_id,
                         "cache": silence_cut_cache,
@@ -15477,6 +15882,10 @@ def _render_talking_head_variant(
                         "analysis_view": "talking_head_spine_capped",
                     }
                     if cleanup_required:
+                        # Compatibility for Jobs produced by the pre-preflight
+                        # explicit-cleanup flow. Those rows intentionally have
+                        # required_v1 but no immutable snapshot, so preserve the
+                        # original strict render-time analysis until they drain.
                         kwargs.update(
                             include_retakes=False,
                             include_silence_and_fillers=True,
@@ -15636,7 +16045,16 @@ def _render_talking_head_variant(
                 else {}
             ),
         }
-    except SpineExtractionError:
+    except SpineExtractionError as exc:
+        if cleanup_from_snapshot:
+            # Preflight already proved this exact embedded-spine source. If the
+            # renderer can no longer extract it, the accepted evidence is stale;
+            # route through the Job-level mismatch transaction instead of the
+            # historical montage fallback or an ordinary per-variant failure.
+            raise SpeechCleanupFailure(
+                "snapshot_mismatch",
+                "accepted speech source could not be extracted",
+            ) from exc
         has_analysis_context = _adopt_analyzed_cleanup_context()
         if cleanup_required and not has_analysis_context:
             base["_speech_cleanup_outcome_context"] = _record_speech_cleanup_precheck(
@@ -16168,15 +16586,35 @@ def _render_narrated_variant(
     explicit_opening_title: str | None = None,
     variant_dir: str,
     landscape_fit: str = "fill",
+    speech_cleanup_contract: str = "legacy_auto",
+    speech_cleanup_snapshot: HydratedSpeechCleanupSnapshot | None = None,
+    speech_cleanup_uses_preflight: bool | None = None,
 ) -> dict[str, Any]:
-    """Render one narrated walkthrough variant."""
+    """Render one narrated walkthrough variant.
+
+    New ``required_v1`` Jobs consume the immutable voiceover snapshot: its exact
+    CutPlan produces the audio fed to the assembler and its exact timed words
+    produce captions.  This path never transcribes or detects again.  Explicit
+    ``off_v1`` renders never apply a cleanup plan; an already-checked snapshot
+    may still supply the identical source words for captions.  Historical Jobs
+    retain their original render-time caption transcription.
+    """
     from app.pipeline.narrated_assembler import assemble_narrated  # noqa: PLC0415
     from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
-    from app.storage import download_to_file, upload_public_read  # noqa: PLC0415
+    from app.storage import (  # noqa: PLC0415
+        download_generation_to_file,
+        download_to_file,
+        upload_public_read,
+    )
 
     variant_id = spec["variant_id"]
     voiceover_gcs_path = str(spec.get("voiceover_gcs_path") or "")
     bed_level = spec.get("voiceover_bed_level")
+    cleanup_required = speech_cleanup_contract == "required_v1"
+    cleanup_off = speech_cleanup_contract == "off_v1"
+    if speech_cleanup_uses_preflight is None:
+        speech_cleanup_uses_preflight = speech_cleanup_snapshot is not None
+    cleanup_from_snapshot = cleanup_required and speech_cleanup_uses_preflight
     # Caption style: "word" → one big word at a time (qbuilder); anything else →
     # "sentence" (today's sentence-block captions). Persisted on the variant so the
     # reburn re-burns edited cues in the same style.
@@ -16233,15 +16671,85 @@ def _render_narrated_variant(
         "media_overlays": None,
         "pre_media_overlay_video_path": None,
         "text_elements_user_edited": False,
+        "silence_cut": None,
+        "speech_cut_candidates": None,
+        "speech_cut_forced_removals": None,
+        "speech_cuts_disabled": False,
+        "silence_cut_outcome": None,
+        "speech_cleanup_failure_reason": None,
+        "render_generation_id": spec.get("storage_generation"),
     }
     try:
         if not voiceover_gcs_path:
             raise ValueError("narrated variant missing voiceover_gcs_path")
+        active_snapshot = speech_cleanup_snapshot if speech_cleanup_uses_preflight else None
+        if active_snapshot is not None:
+            try:
+                active_snapshot.require_source(
+                    kind="voiceover",
+                    storage_path=voiceover_gcs_path,
+                )
+            except SpeechCleanupSnapshotError as exc:
+                if speech_cleanup_uses_preflight:
+                    raise SpeechCleanupFailure("snapshot_mismatch", exc.detail) from exc
+                active_snapshot = None
+        elif speech_cleanup_uses_preflight:
+            raise SpeechCleanupFailure("snapshot_mismatch", "missing required snapshot")
+
         voiceover_local = os.path.join(variant_dir, "voiceover_src")
-        download_to_file(voiceover_gcs_path, voiceover_local)
-        # Caption accuracy: the narration becomes burned + editable captions, so use
-        # the larger narrated model (local backend; flag-gated, kill-switch in config).
-        transcript = transcribe_whisper(voiceover_local, model=settings.narrated_whisper_model)
+        if active_snapshot is not None:
+            try:
+                # The preflight snapshot is generation-bound. A mutable object
+                # name must never let the render consume different narration
+                # bytes than the bytes the creator approved.
+                download_generation_to_file(
+                    voiceover_gcs_path,
+                    voiceover_local,
+                    generation=active_snapshot.generation,
+                )
+            except Exception as exc:  # noqa: BLE001 - identity is mandatory
+                raise SpeechCleanupFailure(
+                    "snapshot_mismatch",
+                    "voiceover generation unavailable",
+                ) from exc
+        else:
+            download_to_file(voiceover_gcs_path, voiceover_local)
+        effective_voiceover_local = voiceover_local
+        if cleanup_from_snapshot:
+            if active_snapshot is None:  # defensive after the outer gate
+                raise SpeechCleanupFailure("snapshot_mismatch")
+            effective_voiceover_local = os.path.join(variant_dir, "voiceover_cleaned.wav")
+            try:
+                # Always materialize the accepted window, even for a no-change
+                # CutPlan.  That keeps non-zero trims and the shared 300-second
+                # analysis ceiling identical between consent and render.
+                apply_speech_cleanup_to_audio(
+                    active_snapshot,
+                    voiceover_local,
+                    effective_voiceover_local,
+                )
+            except SpeechCleanupAudioApplyError as exc:
+                raise SpeechCleanupFailure("apply_failed") from exc
+            transcript = active_snapshot.transcript(apply_cut=True)
+            base["_speech_cleanup_outcome_context"] = active_snapshot.outcome_context(
+                analysis_view="full_clip"
+            )
+            base["silence_cut"] = active_snapshot.summary()
+            base["silence_cut_outcome"] = (
+                "applied" if active_snapshot.cut_plan.removed else "no_change"
+            )
+        elif cleanup_off and active_snapshot is not None:
+            # Checked words are safe to reuse for captions, but explicit opt-out
+            # means neither their CutPlan nor filler filtering may alter output.
+            transcript = active_snapshot.transcript(apply_cut=False)
+        else:
+            # Caption accuracy: the narration becomes burned + editable captions,
+            # so use the larger narrated model (local backend; flag-gated,
+            # kill-switch in config). Historical behavior stays untouched.
+            transcript = transcribe_whisper(
+                voiceover_local,
+                model=settings.narrated_whisper_model,
+            )
         from app.pipeline.narrated_assembler import NarratedClip  # noqa: PLC0415
 
         script_steps = _narrated_script_steps(filming_guide)
@@ -16270,7 +16778,10 @@ def _render_narrated_variant(
             from app.tasks.template_orchestrate import _probe_duration  # noqa: PLC0415
 
             words = transcript.words
-            vo_dur = _probe_duration(voiceover_local) or 0.0
+            # Probe the audio the render actually uses: after an accepted
+            # cleanup that is the cut file, so the visual timeline matches the
+            # cleaned narration instead of the original length.
+            vo_dur = _probe_duration(effective_voiceover_local) or 0.0
             total_s = max((w.end_s for w in words), default=vo_dur or 1.0)
             phrases = split_phrases(words, video_duration_s=total_s)
             if not phrases:
@@ -16448,7 +16959,7 @@ def _render_narrated_variant(
         caption_cues = assemble_narrated(
             step_timings,
             clip_assignments,
-            voiceover_local,
+            effective_voiceover_local,
             final_path,
             variant_dir,
             landscape_fit=landscape_fit,
@@ -16486,7 +16997,12 @@ def _render_narrated_variant(
         if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
             raise RuntimeError("narrated variant produced empty output")
 
-        output_gcs = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}.mp4"
+        storage_generation = spec.get("storage_generation")
+        output_gcs = _variant_storage_key(
+            job_id,
+            f"variant_{rank}_{variant_id}.mp4",
+            storage_generation,
+        )
         output_url = upload_public_read(final_path, output_gcs)
         # Persist the caption-free base + editable cues so the on-video editor +
         # reburn work. Best-effort: a missing base just disables editing (the
@@ -16497,7 +17013,11 @@ def _render_narrated_variant(
             and os.path.exists(base_path)
             and os.path.getsize(base_path) > 0
         ):
-            base_gcs = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_base.mp4"
+            base_gcs = _variant_storage_key(
+                job_id,
+                f"variant_{rank}_{variant_id}_base.mp4",
+                storage_generation,
+            )
             upload_public_read(base_path, base_gcs)
         return {
             **base,
@@ -16549,6 +17069,7 @@ def _render_narrated_variant(
             "render_status": "failed",
             "error": err,
             "error_class": _classify_error(exc),
+            "speech_cleanup_failure_reason": getattr(exc, "reason", None),
         }
 
 
@@ -17816,6 +18337,9 @@ def _render_subtitled_variant(
     smart_captions: dict[str, str] | None = None,
     render_trace_id: str | None = None,
     speech_cleanup_assignment_by_clip_id: Mapping[str, Any] | None = None,
+    speech_cleanup_snapshot: HydratedSpeechCleanupSnapshot | None = None,
+    speech_cleanup_source_clip_id: str | None = None,
+    speech_cleanup_uses_preflight: bool | None = None,
 ) -> dict[str, Any]:
     """Render the subtitled single-clip variant.
 
@@ -17833,13 +18357,11 @@ def _render_subtitled_variant(
     unchanged. Both caption styles ship: "sentence" (default; pop-in blocks) and "word"
     (line-visible lime word-pop), selected via the item's caption-style toggle.
 
-    Silence/filler/retake cut (plans/010, behind SILENCE_CUT_ENABLED): the ORIGINAL
-    clip is transcribed verbatim + silence-scanned, the CutPlan executes inside the
-    reframe (`keep_segments` + alternating punch-in), and captions come from the
-    remapped transcript minus filler tokens — no second whisper call on the base.
-    Explicit opt-outs and ineligible clips fall OPEN to the flag-off flow above;
-    an enabled, eligible clip never silently publishes an uncut fallback after
-    silence-cut analysis or apply failure.
+    Historical ``legacy_auto`` jobs retain the plans/010 render-time detector.
+    ``required_v1`` consumes the immutable preflight words/CutPlan, executes it
+    inside the reframe, and remaps captions from those same words without a second
+    Whisper or detector call. ``off_v1`` never runs cleanup analysis; when its Job
+    carries checked preflight words, captions may reuse them without applying cuts.
     """
     from app.pipeline.caption_correct import correct_caption_cues  # noqa: PLC0415
     from app.pipeline.captions import (  # noqa: PLC0415
@@ -17871,6 +18393,9 @@ def _render_subtitled_variant(
     storage_generation = spec.get("storage_generation")
     cleanup_required = speech_cleanup_contract == "required_v1"
     cleanup_off = speech_cleanup_contract == "off_v1"
+    if speech_cleanup_uses_preflight is None:
+        speech_cleanup_uses_preflight = speech_cleanup_snapshot is not None
+    cleanup_from_snapshot = cleanup_required and speech_cleanup_uses_preflight
 
     def _stage_timer(
         stage: str,
@@ -18060,13 +18585,24 @@ def _render_subtitled_variant(
             speech_cleanup_assignment_by_clip_id,
             selected_clip_id,
         )
-        if cleanup_required:
-            base["_speech_cleanup_outcome_context"] = _speech_cleanup_outcome_context(
-                analysis_policy="required_v1",
-                assignment=cleanup_assignment,
-                render_trace_id=render_trace_id,
-                analysis_view="full_clip",
-                candidate_status="analysis_not_started",
+        active_snapshot = speech_cleanup_snapshot if speech_cleanup_uses_preflight else None
+        if active_snapshot is not None:
+            try:
+                active_snapshot.require_source(kind="embedded_spine")
+                if (
+                    speech_cleanup_source_clip_id is not None
+                    and selected_clip_id != speech_cleanup_source_clip_id
+                ):
+                    raise SpeechCleanupSnapshotError("selected_clip")
+            except SpeechCleanupSnapshotError as exc:
+                if speech_cleanup_uses_preflight:
+                    raise SpeechCleanupFailure("snapshot_mismatch", exc.detail) from exc
+                active_snapshot = None
+        elif speech_cleanup_uses_preflight:
+            raise SpeechCleanupFailure("snapshot_mismatch", "missing required snapshot")
+        if cleanup_from_snapshot:
+            base["_speech_cleanup_outcome_context"] = active_snapshot.outcome_context(
+                analysis_view="full_clip"
             )
         if len(clip_id_to_local) > 1:
             record_pipeline_event(
@@ -18091,6 +18627,17 @@ def _render_subtitled_variant(
             raise ValueError(
                 "subtitled clips are capped at 5 minutes — trim the clip and re-upload"
             )
+        if active_snapshot is not None:
+            try:
+                active_snapshot.require_source(
+                    kind="embedded_spine",
+                    window_start_s=0.0,
+                    window_duration_s=float(probe.duration_s),
+                )
+            except SpeechCleanupSnapshotError as exc:
+                if speech_cleanup_uses_preflight:
+                    raise SpeechCleanupFailure("snapshot_mismatch", exc.detail) from exc
+                active_snapshot = None
         aspect = "16:9" if getattr(probe, "aspect_ratio", "") == "16:9" else "9:16"
         fit = resolve_output_fit(probe, landscape_fit=landscape_fit)
         if smart_captions is not None:
@@ -18117,6 +18664,15 @@ def _render_subtitled_variant(
         sc_apply = False  # True ⇒ pass keep_segments into the reframe
         sc_apply_failed = False
         strict_silence_cut = False
+        # A checked keep-original/no-findings snapshot supplies the exact words
+        # for captions, but never its CutPlan. Keeping this lane separate from
+        # ``sc_words`` prevents both timeline remapping and filler filtering.
+        checked_uncut_words = (
+            active_snapshot.source_words() if cleanup_off and active_snapshot is not None else None
+        )
+        checked_uncut_language = (
+            active_snapshot.analysis.language if cleanup_off and active_snapshot is not None else ""
+        )
         if not cleanup_off and (
             cleanup_required or settings.silence_cut_enabled or settings.retake_cut_enabled
         ):
@@ -18147,6 +18703,12 @@ def _render_subtitled_variant(
                     "silence_cut", "silence_cut_skipped_disabled", {"variant_id": variant_id}
                 )
             elif not probe.has_audio:
+                if cleanup_from_snapshot:
+                    # The accepted snapshot was captured from a source with
+                    # foreground audio.  Rendering the same identity without an
+                    # audio stream is a source mismatch, never permission to
+                    # publish an uncleaned fallback.
+                    raise SpeechCleanupFailure("snapshot_mismatch", "source audio changed")
                 # No real audio stream: the reframe injects silent AAC, and whisper
                 # on digital silence hallucinates plausible words — skip BEFORE any
                 # ASR call (eng review 3A).
@@ -18162,20 +18724,38 @@ def _render_subtitled_variant(
                     duration_s=float(probe.duration_s),
                 )
             else:
-                with _stage_timer("silence_cut_analysis"):
-                    sc_entry = _silence_cut_analysis(
-                        clip_path,
-                        float(probe.duration_s),
-                        job_id=job_id,
-                        cache=silence_cut_cache,
-                        source_fingerprint=next(iter(clip_id_to_local)),
-                        include_retakes=False if cleanup_required else None,
-                        include_silence_and_fillers=True if cleanup_required else None,
-                        analysis_policy="required_v1" if cleanup_required else "legacy_auto",
-                        render_trace_id=render_trace_id,
-                        speech_cleanup_assignment=cleanup_assignment,
-                        analysis_view="full_clip",
-                    )
+                if cleanup_from_snapshot:
+                    if active_snapshot is None:  # defensive after the outer gate
+                        raise SpeechCleanupFailure("snapshot_mismatch")
+                    # This adapter only hydrates the exact preflight evidence.
+                    # No render-time Whisper, silencedetect, mixed-gap, or
+                    # retake detector is reachable from this branch.
+                    with _stage_timer("speech_cleanup_snapshot_hydration"):
+                        sc_entry = active_snapshot.legacy_analysis_entry(analysis_view="full_clip")
+                else:
+                    with _stage_timer("silence_cut_analysis"):
+                        analysis_kwargs: dict[str, Any] = {}
+                        if cleanup_required:
+                            # Compatibility for pre-preflight explicit cleanup
+                            # Jobs. Their required_v1 contract intentionally has
+                            # no snapshot and therefore retains the original
+                            # strict render-time analysis while those rows drain.
+                            analysis_kwargs.update(
+                                include_retakes=False,
+                                include_silence_and_fillers=True,
+                                analysis_policy="required_v1",
+                            )
+                        sc_entry = _silence_cut_analysis(
+                            clip_path,
+                            float(probe.duration_s),
+                            job_id=job_id,
+                            cache=silence_cut_cache,
+                            source_fingerprint=next(iter(clip_id_to_local)),
+                            render_trace_id=render_trace_id,
+                            speech_cleanup_assignment=cleanup_assignment,
+                            analysis_view="full_clip",
+                            **analysis_kwargs,
+                        )
                 if sc_entry.get("speech_cleanup_outcome_context") is not None:
                     base["_speech_cleanup_outcome_context"] = sc_entry[
                         "speech_cleanup_outcome_context"
@@ -18233,6 +18813,9 @@ def _render_subtitled_variant(
                 caption_words = _cut_caption_words(sc_words, sc_plan)
                 detected_lang = sc_language or detected_lang
                 cues = build_plain_cues(caption_words, attach_words=True)
+            elif checked_uncut_words is not None:
+                detected_lang = checked_uncut_language or detected_lang
+                cues = build_plain_cues(checked_uncut_words, attach_words=True)
             else:
                 # Content-addressed cache: re-renders of the same clip reuse the
                 # identical transcript (plan 012 P1-4), so captions stop drifting
@@ -18477,6 +19060,11 @@ def _render_subtitled_variant(
             caption_words = _cut_caption_words(sc_words, sc_plan)
             detected_lang = sc_language or (language or "en")
             cues = build_plain_cues(caption_words, attach_words=True)
+        elif not smart_v2 and checked_uncut_words is not None:
+            # Explicit keep-original means the exact accepted words and source
+            # timing reach captions verbatim, including fillers.
+            detected_lang = checked_uncut_language or (language or "en")
+            cues = build_plain_cues(checked_uncut_words, attach_words=True)
         elif not smart_v2:
             # Flag-off / gated / analysis-failed path — today's flow, unchanged.
             # Subtitled captions the SPOKEN language of the clip: auto-detect
@@ -22955,6 +23543,134 @@ def _compose_speech_cut_rerender(
 # ── Status helpers ──────────────────────────────────────────────────────────────
 
 
+def _bind_initial_result_generation(
+    result: dict[str, Any],
+    *,
+    creator_generation_id: str,
+    required_speech: bool,
+    storage_generation: object,
+) -> None:
+    """Bind the result to its publication owner without changing private ownership."""
+
+    if not required_speech:
+        result["render_generation_id"] = creator_generation_id
+        return
+    if not isinstance(storage_generation, str) or not storage_generation:
+        raise RuntimeError("required speech render has no storage generation")
+    if result.get("render_generation_id") != storage_generation:
+        raise RuntimeError("required speech render generation changed before staging")
+
+
+def _raise_marked_snapshot_result_failure(
+    result: Mapping[str, Any],
+    *,
+    preflight_marker: object,
+) -> None:
+    """Route variant-level source mismatches through the atomic Job failure path."""
+
+    if (
+        preflight_marker == PREFLIGHT_JOB_CONTRACT_VALUE
+        and result.get("speech_cleanup_failure_reason") == "snapshot_mismatch"
+    ):
+        raise SpeechCleanupFailure("snapshot_mismatch")
+
+
+def _nonnegative_receipt_count(value: object) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _build_preflight_public_outcome(
+    plan: Mapping[str, Any],
+    *,
+    job_id: str,
+    results: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None = None,
+    failure_reason: str | None = None,
+) -> dict[str, Any] | None:
+    """Build the bounded chat receipt for one immutable preflight Job.
+
+    The renderer's detailed outcome remains in ``pipeline_trace``. This receipt
+    deliberately carries only generation-bound scalar evidence consumed by the
+    creation-thread projection. Historical markerless ``required_v1`` Jobs keep
+    their existing behavior while they drain.
+    """
+
+    if (
+        plan.get(PREFLIGHT_JOB_CONTRACT_FIELD) != PREFLIGHT_JOB_CONTRACT_VALUE
+        or plan.get("speech_cleanup_contract") != "required_v1"
+    ):
+        return None
+    creator_generation = plan.get("creator_generation_id")
+    if not isinstance(creator_generation, str) or not creator_generation:
+        return None
+
+    bounded_results = [value for value in (results or ()) if isinstance(value, dict)]
+    result_failure_reason = next(
+        (
+            str(value.get("speech_cleanup_failure_reason"))
+            for value in bounded_results
+            if value.get("speech_cleanup_failure_reason")
+        ),
+        None,
+    )
+    effective_failure = failure_reason or result_failure_reason
+    if (
+        effective_failure
+        or not bounded_results
+        or any(value.get("ok") is not True for value in bounded_results)
+    ):
+        code = "snapshot_mismatch" if effective_failure == "snapshot_mismatch" else "internal_error"
+        return {
+            "job_id": str(job_id),
+            "render_generation_id": creator_generation,
+            "status": "failed",
+            "removal_count": 0,
+            "removed_ms": 0,
+            "error": {"code": code, "retryable": code != "snapshot_mismatch"},
+        }
+
+    contexts = [value.get("_speech_cleanup_outcome_context") for value in bounded_results]
+    if all(isinstance(context, dict) for context in contexts):
+        removal_count = max(
+            _nonnegative_receipt_count(context.get("output_removal_count"))
+            for context in contexts
+            if isinstance(context, dict)
+        )
+        removed_ms = max(
+            _nonnegative_receipt_count(context.get("output_removed_ms"))
+            for context in contexts
+            if isinstance(context, dict)
+        )
+    else:
+        # A marked required render without bounded apply evidence is not a
+        # truthful cleanup success. Surface failure rather than fabricate an
+        # applied receipt from a ready-looking output.
+        snapshot_mismatch = any(
+            value.get("silence_cut_outcome") == "insufficient_source_speech"
+            for value in bounded_results
+        )
+        return {
+            "job_id": str(job_id),
+            "render_generation_id": creator_generation,
+            "status": "failed",
+            "removal_count": 0,
+            "removed_ms": 0,
+            "error": {
+                "code": "snapshot_mismatch" if snapshot_mismatch else "internal_error",
+                "retryable": not snapshot_mismatch,
+            },
+        }
+    return {
+        "job_id": str(job_id),
+        "render_generation_id": creator_generation,
+        "status": "applied" if removal_count > 0 else "checked_no_change",
+        "removal_count": removal_count,
+        "removed_ms": removed_ms,
+    }
+
+
 def _build_required_speech_terminal_outcome(
     result: dict[str, Any],
     *,
@@ -23328,6 +24044,7 @@ def _finalize_job_decision(
         ),
         required_speech_results=required_speech_results,
         required_speech_outcomes=required_speech_outcomes,
+        speech_cleanup_public_results=results,
         retain_required_speech_ownership=bool(expected_operation_id and expected_attempt_id),
         _decision_sink=decision_sink,
         **speech_cut_status_kwargs,
@@ -23591,6 +24308,7 @@ def _set_status(
     expected_speech_cut_attempt_id: str | None = None,
     required_speech_results: dict[str, dict[str, Any]] | None = None,
     required_speech_outcomes: dict[str, dict[str, Any]] | None = None,
+    speech_cleanup_public_results: list[dict[str, Any]] | None = None,
     retain_required_speech_ownership: bool = False,
     _decision_sink: list[JobFinalizationResult] | None = None,
 ) -> bool:
@@ -23888,6 +24606,18 @@ def _set_status(
                     )
 
                     append_speech_cleanup_render_outcome_locked(job, payload)
+        if not retain_required_speech_ownership and speech_cleanup_public_results is not None:
+            public_plan = job.assembly_plan if isinstance(job.assembly_plan, dict) else existing
+            public_outcome = _build_preflight_public_outcome(
+                public_plan,
+                job_id=job_id,
+                results=speech_cleanup_public_results,
+            )
+            if public_outcome is not None:
+                job.assembly_plan = {
+                    **public_plan,
+                    "speech_cleanup_outcome": public_outcome,
+                }
         terminal_decision = JobFinalizationResult(
             "accepted",
             variants=tuple(variant_decisions),
@@ -23913,13 +24643,76 @@ def _fail_job(
     failure_reason: str | None = None,
     speech_cleanup_failure_reason: str | None = None,
 ) -> bool:
+    reanalysis_id: uuid.UUID | None = None
+    committed = False
     try:
         with _sync_session() as db:
-            # Row-locked: reconciling variant render_status below is a
-            # read-modify-write of assembly_plan. Without SELECT ... FOR UPDATE a
-            # concurrent variant/finalize write can be clobbered by this stale read
-            # (mirrors _upsert_variant_entry).
-            job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+            identifier = uuid.UUID(job_id)
+            # Snapshot mismatch owns one transaction across invalidating the
+            # accepted analysis and terminalizing its render.  The service must
+            # acquire Plan -> Persona -> PlanItem -> Job, so decide from an
+            # unlocked immutable-contract read before taking the ordinary Job
+            # lock.  Historical markerless required_v1 Jobs keep their legacy
+            # terminalization path.
+            job_ref = (
+                db.get(Job, identifier)
+                if speech_cleanup_failure_reason == "snapshot_mismatch"
+                else None
+            )
+            job_ref_plan = (
+                job_ref.assembly_plan
+                if job_ref is not None and isinstance(job_ref.assembly_plan, dict)
+                else {}
+            )
+            reset_marked_preflight = bool(
+                job_ref is not None
+                and getattr(job_ref, "content_plan_item_id", None) is not None
+                and job_ref_plan.get("speech_cleanup_contract") == "required_v1"
+                and job_ref_plan.get(PREFLIGHT_JOB_CONTRACT_FIELD) == PREFLIGHT_JOB_CONTRACT_VALUE
+            )
+            if reset_marked_preflight:
+                from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+                    prepare_snapshot_mismatch_reanalysis,
+                )
+
+                prepared = prepare_snapshot_mismatch_reanalysis(db, identifier)
+                job = prepared.job
+                reanalysis_id = prepared.analysis_id
+                if job is None:
+                    log.warning(
+                        "generative_fail_job_snapshot_reanalysis_lock_rejected",
+                        job_id=job_id,
+                    )
+                    return False
+            else:
+                # Row-locked: reconciling variant render_status below is a
+                # read-modify-write of assembly_plan. Without SELECT ... FOR UPDATE a
+                # concurrent variant/finalize write can be clobbered by this stale read
+                # (mirrors _upsert_variant_entry).
+                job = db.get(
+                    Job,
+                    identifier,
+                    with_for_update=True,
+                    populate_existing=True,
+                )
+                locked_plan = (
+                    job.assembly_plan if job and isinstance(job.assembly_plan, dict) else {}
+                )
+                if (
+                    speech_cleanup_failure_reason == "snapshot_mismatch"
+                    and getattr(job, "content_plan_item_id", None) is not None
+                    and locked_plan.get("speech_cleanup_contract") == "required_v1"
+                    and locked_plan.get(PREFLIGHT_JOB_CONTRACT_FIELD)
+                    == PREFLIGHT_JOB_CONTRACT_VALUE
+                ):
+                    # The immutable marker appeared after the pre-read.  Do not
+                    # invert the graph lock order; a redelivery will enter the
+                    # canonical branch above.
+                    log.warning(
+                        "generative_fail_job_snapshot_reanalysis_retry",
+                        job_id=job_id,
+                    )
+                    return False
             if job:
                 if _cancelled_job_write_rejected(job, operation="fail_job", db=db):
                     return False
@@ -24000,13 +24793,32 @@ def _fail_job(
                         patch["speech_cleanup_failure_reason"] = speech_cleanup_failure_reason
                     job.assembly_plan = {**ap, **patch} if patch else ap
 
+                    public_plan = job.assembly_plan
+                    public_outcome = _build_preflight_public_outcome(
+                        public_plan,
+                        job_id=job_id,
+                        failure_reason=speech_cleanup_failure_reason or "internal_error",
+                    )
+                    if public_outcome is not None:
+                        job.assembly_plan = {
+                            **public_plan,
+                            "speech_cleanup_outcome": public_outcome,
+                        }
+
                 job.status = "processing_failed"
                 job.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]
                 if failure_reason:
                     job.failure_reason = failure_reason
 
                 db.commit()
-                return True
+                committed = True
     except Exception as exc:
         log.error("generative_fail_job_db_error", job_id=job_id, error=str(exc))
-    return False
+        return False
+    if committed and reanalysis_id is not None:
+        from app.services.plan_item_media import (  # noqa: PLC0415
+            publish_preflight_after_commit,
+        )
+
+        publish_preflight_after_commit(reanalysis_id)
+    return committed

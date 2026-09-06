@@ -9,7 +9,7 @@ export function ChatArtifactCard({
   children,
   className,
   ...props
-}: ComponentProps<typeof Card> & {
+}: Omit<ComponentProps<typeof Card>, "title"> & {
   badge?: ReactNode;
   title: ReactNode;
   description?: ReactNode;

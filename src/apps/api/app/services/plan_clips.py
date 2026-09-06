@@ -15,8 +15,12 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from app.models import PlanItem
+
+if TYPE_CHECKING:
+    from app.services.plan_item_media import MediaMutationResult
 
 _MAX_CLIPS_PER_ITEM = 50  # mirrors routes/plan_items.py; kept in sync, not imported (avoids circ)
 
@@ -47,13 +51,22 @@ class ClipAssignment:
     duration_probe_status: str | None = None
     duration_probe_generation: str | None = None
     duration_probe_attempted_at: str | None = None
+    # Exact storage generation captured at registration. Speech preflight signs
+    # this generation rather than resolving the latest bytes at task time.
+    storage_generation: str | None = None
+    has_audio: bool | None = None
+    manifest_identity: str | None = None
+    speech_coverage: float | None = None
+    foreground: bool | None = None
+    trim_start_s: float | None = None
+    trim_end_s: float | None = None
 
 
 class ClipAssignmentError(ValueError):
     """Raised by set_item_clips on constraint violations (caller maps to 422)."""
 
 
-def ensure_clip_media_ids(item: PlanItem) -> bool:
+def ensure_clip_media_ids(item: PlanItem, *, current_analysis: object | None = None) -> bool:
     """Backfill stable proposal IDs without bypassing clip-assignment ownership."""
 
     changed = False
@@ -79,11 +92,26 @@ def ensure_clip_media_ids(item: PlanItem) -> bool:
             changed = True
         assignments.append(entry)
     if changed:
-        item.clip_assignments = assignments
+        from app.services.plan_item_media import (  # noqa: PLC0415
+            current_detector_policy,
+            mutate_plan_item_media,
+        )
+
+        mutate_plan_item_media(
+            item,
+            detector_policy=current_detector_policy(),
+            clip_assignments=assignments,
+            current_analysis=current_analysis,
+        )
     return changed
 
 
-def set_item_clips(item: PlanItem, assignments: list[ClipAssignment]) -> None:
+def set_item_clips(
+    item: PlanItem,
+    assignments: list[ClipAssignment],
+    *,
+    current_analysis: object | None = None,
+) -> MediaMutationResult:
     """Atomically update clip_assignments and clip_gcs_paths on *item*.
 
     Ordering contract: shot-slot clips come first (in assignment order),
@@ -110,14 +138,7 @@ def set_item_clips(item: PlanItem, assignments: list[ClipAssignment]) -> None:
     # Multiple clips per shot_id are allowed (a shot may request several clips,
     # e.g. "5+ clips from the run"). Only gcs_path must be unique.
 
-    # Derive clip_gcs_paths: shot-slot clips first, pool after.
-    slot_clips = [a.gcs_path for a in assignments if a.shot_id is not None]
-    pool_clips = [a.gcs_path for a in assignments if a.shot_id is None]
-
-    from app.services.speech_cleanup import main_footage_identity, reconcile_consent
-
-    previous_identity = main_footage_identity(item)
-    item.clip_assignments = [
+    normalized_assignments = [
         {
             "gcs_path": a.gcs_path,
             "shot_id": a.shot_id,
@@ -140,14 +161,24 @@ def set_item_clips(item: PlanItem, assignments: list[ClipAssignment]) -> None:
                 if a.duration_probe_attempted_at
                 else {}
             ),
+            **({"storage_generation": a.storage_generation} if a.storage_generation else {}),
+            **({"has_audio": a.has_audio} if a.has_audio is not None else {}),
+            **({"manifest_identity": a.manifest_identity} if a.manifest_identity else {}),
+            **({"speech_coverage": a.speech_coverage} if a.speech_coverage is not None else {}),
+            **({"foreground": a.foreground} if a.foreground is not None else {}),
+            **({"trim_start_s": a.trim_start_s} if a.trim_start_s is not None else {}),
+            **({"trim_end_s": a.trim_end_s} if a.trim_end_s is not None else {}),
         }
         for a in assignments
     ]
-    item.clip_gcs_paths = slot_clips + pool_clips
-    if main_footage_identity(item) != previous_identity:
-        reconcile_consent(item, previous_identity)
-        # Import locally to keep this low-level sole writer free of a module
-        # cycle at import time. No proposal means this is a cheap no-op.
-        from app.services.edit_proposals import mark_edit_proposal_stale  # noqa: PLC0415
+    from app.services.plan_item_media import (  # noqa: PLC0415
+        current_detector_policy,
+        mutate_plan_item_media,
+    )
 
-        mark_edit_proposal_stale(item)
+    return mutate_plan_item_media(
+        item,
+        detector_policy=current_detector_policy(),
+        clip_assignments=normalized_assignments,
+        current_analysis=current_analysis,
+    )

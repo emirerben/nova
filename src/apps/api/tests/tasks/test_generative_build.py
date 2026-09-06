@@ -850,6 +850,367 @@ def test_finalize_status_all_failed(monkeypatch):
     assert seen["status"] == "variants_failed"
 
 
+@pytest.mark.parametrize(
+    ("removal_count", "removed_ms", "expected_status"),
+    [(2, 720, "applied"), (0, 0, "checked_no_change")],
+)
+def test_marked_preflight_finalize_stamps_generation_bound_public_success(
+    monkeypatch,
+    removal_count,
+    removed_ms,
+    expected_status,
+):
+    job_id = str(uuid.uuid4())
+    creator_generation = uuid.uuid4().hex
+    result = {
+        "variant_id": "narrated",
+        "rank": 1,
+        "text_mode": "none",
+        "render_generation_id": creator_generation,
+        "render_status": "ready",
+        "ok": True,
+        "video_path": f"generative-jobs/{job_id}/narrated.mp4",
+        "output_url": "https://storage.example/signed",
+        "_speech_cleanup_outcome_context": {
+            "analysis_attempt_id": uuid.uuid4().hex,
+            "analysis_view": "full_clip",
+            "detector_version": "mixed-gap-v1",
+            "selected_plan": "candidate",
+            "candidate_status": "ready",
+            "output_removal_count": removal_count,
+            "output_removed_ms": removed_ms,
+        },
+    }
+    job = _FakeJob(
+        status="rendering",
+        job_id=job_id,
+        assembly_plan={
+            "creator_generation_id": creator_generation,
+            "speech_cleanup_contract": "required_v1",
+            "speech_cleanup_preflight_contract": "snapshot_v1",
+            "variants": [],
+        },
+    )
+    _patch_job_session(monkeypatch, job)
+    monkeypatch.setattr(
+        gb,
+        "_reconcile_retired_variant_posters_after_terminal_commit",
+        lambda *_args, **_kwargs: None,
+    )
+
+    assert gb._finalize_job(job_id, [result])
+
+    assert job.assembly_plan["speech_cleanup_outcome"] == {
+        "job_id": job_id,
+        "render_generation_id": creator_generation,
+        "status": expected_status,
+        "removal_count": removal_count,
+        "removed_ms": removed_ms,
+    }
+    assert "_speech_cleanup_outcome_context" not in job.assembly_plan["variants"][0]
+
+
+def test_marked_preflight_variant_apply_failure_stamps_bounded_public_failure(monkeypatch):
+    job_id = str(uuid.uuid4())
+    creator_generation = uuid.uuid4().hex
+    result = {
+        "variant_id": "narrated",
+        "rank": 1,
+        "text_mode": "none",
+        "render_generation_id": creator_generation,
+        "render_status": "failed",
+        "ok": False,
+        "error": "private ffmpeg detail /tmp/voiceover.wav",
+        "error_class": "speech_cleanup_failed",
+        "speech_cleanup_failure_reason": "apply_failed",
+    }
+    job = _FakeJob(
+        status="rendering",
+        job_id=job_id,
+        assembly_plan={
+            "creator_generation_id": creator_generation,
+            "speech_cleanup_contract": "required_v1",
+            "speech_cleanup_preflight_contract": "snapshot_v1",
+            "variants": [],
+        },
+    )
+    _patch_job_session(monkeypatch, job)
+    monkeypatch.setattr(
+        gb,
+        "_reconcile_retired_variant_posters_after_terminal_commit",
+        lambda *_args, **_kwargs: None,
+    )
+
+    assert gb._finalize_job(job_id, [result])
+
+    assert job.status == "variants_failed"
+    assert job.failure_reason == "speech_cleanup_failed"
+    receipt = job.assembly_plan["speech_cleanup_outcome"]
+    assert receipt == {
+        "job_id": job_id,
+        "render_generation_id": creator_generation,
+        "status": "failed",
+        "removal_count": 0,
+        "removed_ms": 0,
+        "error": {"code": "internal_error", "retryable": True},
+    }
+    assert "ffmpeg" not in str(receipt)
+    assert "/tmp/" not in str(receipt)
+
+
+def test_marked_preflight_fail_job_stamps_nonretryable_snapshot_failure(monkeypatch):
+    job_id = str(uuid.uuid4())
+    creator_generation = uuid.uuid4().hex
+    job = _FakeJob(
+        status="processing",
+        job_id=job_id,
+        assembly_plan={
+            "creator_generation_id": creator_generation,
+            "speech_cleanup_contract": "required_v1",
+            "speech_cleanup_preflight_contract": "snapshot_v1",
+            "variants": [],
+        },
+    )
+    _patch_job_session(monkeypatch, job)
+
+    assert gb._fail_job(
+        job_id,
+        "private snapshot parser detail",
+        failure_reason="speech_cleanup_failed",
+        speech_cleanup_failure_reason="snapshot_mismatch",
+    )
+
+    assert job.assembly_plan["speech_cleanup_outcome"] == {
+        "job_id": job_id,
+        "render_generation_id": creator_generation,
+        "status": "failed",
+        "removal_count": 0,
+        "removed_ms": 0,
+        "error": {"code": "snapshot_mismatch", "retryable": False},
+    }
+
+
+def test_snapshot_mismatch_reanalysis_commits_before_post_commit_publish(monkeypatch):
+    from app.services.speech_cleanup_preflight import SnapshotMismatchReanalysis
+
+    job_id = str(uuid.uuid4())
+    analysis_id = uuid.uuid4()
+    creator_generation = uuid.uuid4().hex
+    job = _FakeJob(
+        status="processing",
+        job_id=job_id,
+        assembly_plan={
+            "creator_generation_id": creator_generation,
+            "speech_cleanup_contract": "required_v1",
+            "speech_cleanup_preflight_contract": "snapshot_v1",
+            "variants": [],
+        },
+    )
+    job.content_plan_item_id = uuid.uuid4()
+    events: list[str] = []
+
+    class _Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, _model, _identifier, **kwargs):
+            if kwargs.get("with_for_update"):
+                raise AssertionError("snapshot mismatch must not lock Job before the graph")
+            events.append("pre-read")
+            return job
+
+        def commit(self):
+            events.append("commit")
+
+    session = _Session()
+    monkeypatch.setattr(gb, "_sync_session", lambda: session)
+
+    def _prepare(db, identifier):
+        assert db is session
+        assert identifier == uuid.UUID(job_id)
+        events.append("prepare")
+        return SnapshotMismatchReanalysis(job, analysis_id)
+
+    monkeypatch.setattr(
+        "app.services.speech_cleanup_preflight.prepare_snapshot_mismatch_reanalysis",
+        _prepare,
+    )
+    monkeypatch.setattr(
+        "app.services.plan_item_media.publish_preflight_after_commit",
+        lambda identifier: events.append(f"publish:{identifier}"),
+    )
+
+    assert gb._fail_job(
+        job_id,
+        "source bytes changed",
+        failure_reason="speech_cleanup_failed",
+        speech_cleanup_failure_reason="snapshot_mismatch",
+    )
+
+    assert events == ["pre-read", "prepare", "commit", f"publish:{analysis_id}"]
+    assert job.status == "processing_failed"
+    assert job.assembly_plan["speech_cleanup_outcome"]["error"] == {
+        "code": "snapshot_mismatch",
+        "retryable": False,
+    }
+
+
+def test_marked_variant_snapshot_mismatch_raises_before_private_staging():
+    result = {
+        "variant_id": "narrated",
+        "ok": False,
+        "render_status": "failed",
+        "speech_cleanup_failure_reason": "snapshot_mismatch",
+    }
+
+    with pytest.raises(gb.SpeechCleanupFailure) as raised:
+        gb._raise_marked_snapshot_result_failure(
+            result,
+            preflight_marker="snapshot_v1",
+        )
+
+    assert raised.value.reason == "snapshot_mismatch"
+    # Historical markerless required_v1 results retain their established
+    # per-variant terminalization path while those Jobs drain.
+    gb._raise_marked_snapshot_result_failure(result, preflight_marker=None)
+
+
+def test_initial_required_result_keeps_storage_generation_until_staging():
+    creator_generation = uuid.uuid4().hex
+    storage_generation = uuid.uuid4().hex
+    result = {"render_generation_id": storage_generation}
+
+    gb._bind_initial_result_generation(
+        result,
+        creator_generation_id=creator_generation,
+        required_speech=True,
+        storage_generation=storage_generation,
+    )
+
+    assert result["render_generation_id"] == storage_generation
+
+
+def test_ordinary_initial_result_uses_creator_generation():
+    creator_generation = uuid.uuid4().hex
+    result = {"render_generation_id": None}
+
+    gb._bind_initial_result_generation(
+        result,
+        creator_generation_id=creator_generation,
+        required_speech=False,
+        storage_generation=None,
+    )
+
+    assert result["render_generation_id"] == creator_generation
+
+
+def test_markerless_required_job_keeps_legacy_receipt_behavior():
+    assert (
+        gb._build_preflight_public_outcome(
+            {
+                "creator_generation_id": uuid.uuid4().hex,
+                "speech_cleanup_contract": "required_v1",
+            },
+            job_id=str(uuid.uuid4()),
+            results=[{"ok": True}],
+        )
+        is None
+    )
+
+
+def test_marked_required_montage_fallback_is_snapshot_mismatch_not_ready_noop():
+    assert (
+        gb._required_speech_montage_failure_reason(
+            "required_v1",
+            uses_preflight=True,
+            fallback_reason="no_speech",
+        )
+        == "snapshot_mismatch"
+    )
+    assert (
+        gb._required_speech_montage_failure_reason(
+            "required_v1",
+            uses_preflight=False,
+            fallback_reason="no_speech",
+        )
+        is None
+    )
+    creator_generation = uuid.uuid4().hex
+    receipt = gb._build_preflight_public_outcome(
+        {
+            "creator_generation_id": creator_generation,
+            "speech_cleanup_contract": "required_v1",
+            "speech_cleanup_preflight_contract": "snapshot_v1",
+        },
+        job_id="job-1",
+        results=[
+            {
+                "ok": True,
+                "silence_cut_outcome": "insufficient_source_speech",
+            }
+        ],
+    )
+    assert receipt is not None
+    assert receipt["status"] == "failed"
+    assert receipt["error"] == {"code": "snapshot_mismatch", "retryable": False}
+    assert (
+        gb._required_speech_montage_failure_reason(
+            "required_v1",
+            uses_preflight=True,
+            fallback_reason="spine_extraction_failed",
+        )
+        == "snapshot_mismatch"
+    )
+
+
+def test_marked_required_success_requires_evidence_for_every_result():
+    creator_generation = uuid.uuid4().hex
+    job_id = str(uuid.uuid4())
+    context = {
+        "analysis_attempt_id": uuid.uuid4().hex,
+        "analysis_view": "full_clip",
+        "detector_version": "mixed-gap-v1",
+        "selected_plan": "candidate",
+        "candidate_status": "ready",
+        "output_removal_count": 1,
+        "output_removed_ms": 500,
+    }
+
+    receipt = gb._build_preflight_public_outcome(
+        {
+            "creator_generation_id": creator_generation,
+            "speech_cleanup_contract": "required_v1",
+            "speech_cleanup_preflight_contract": "snapshot_v1",
+        },
+        job_id=job_id,
+        results=[
+            {"ok": True, "_speech_cleanup_outcome_context": context},
+            {"ok": True},
+        ],
+    )
+
+    assert receipt == {
+        "job_id": job_id,
+        "render_generation_id": creator_generation,
+        "status": "failed",
+        "removal_count": 0,
+        "removed_ms": 0,
+        "error": {"code": "internal_error", "retryable": True},
+    }
+
+
+def test_narrated_required_initial_render_uses_private_generation_ownership():
+    assert gb._uses_required_speech_initial_ownership("required_v1", "narrated") is True
+    assert gb._uses_required_speech_initial_ownership("off_v1", "narrated") is False
+    generation = uuid.uuid4().hex
+    assert gb._variant_storage_key("job-1", "narrated.mp4", generation) == (
+        f"generative-jobs/job-1/render-generations/{generation}/narrated.mp4"
+    )
+
+
 def _required_speech_stage(job_id: str, result: dict, *, plan: dict | None = None) -> dict:
     from app.services.speech_cleanup_terminal import (
         close_required_speech_generation_uploads,
@@ -883,6 +1244,67 @@ def _required_speech_stage(job_id: str, result: dict, *, plan: dict | None = Non
     stage_required_speech_generation(plan, result=result, generation=generation)
     close_required_speech_generation_uploads(plan, generation=generation)
     return plan
+
+
+def test_narrated_required_finalize_keeps_storage_generation_and_creator_receipt(monkeypatch):
+    job_id = str(uuid.uuid4())
+    storage_generation = uuid.uuid4().hex
+    creator_generation = uuid.uuid4().hex
+    result = {
+        "variant_id": "narrated",
+        "rank": 1,
+        "text_mode": "none",
+        "render_generation_id": storage_generation,
+        "render_status": "ready",
+        "ok": True,
+        "video_path": (
+            f"generative-jobs/{job_id}/render-generations/{storage_generation}/"
+            "variant_1_narrated.mp4"
+        ),
+        "output_url": "https://storage.example/signed",
+        "_speech_cleanup_outcome_context": {
+            "analysis_attempt_id": uuid.uuid4().hex,
+            "analysis_view": "full_clip",
+            "detector_version": "mixed-gap-v1",
+            "source_tag": "0123456789abcdef",
+            "selected_plan": "candidate",
+            "candidate_status": "ready",
+            "output_removal_count": 2,
+            "output_removed_ms": 720,
+        },
+    }
+    plan = _required_speech_stage(job_id, result)
+    plan.update(
+        {
+            "creator_generation_id": creator_generation,
+            "speech_cleanup_contract": "required_v1",
+            "speech_cleanup_preflight_contract": "snapshot_v1",
+        }
+    )
+    job = _FakeJob(status="rendering", job_id=job_id, assembly_plan=plan)
+    job.user_id = uuid.uuid4()
+    job.pipeline_trace = []
+    _patch_job_session(monkeypatch, job)
+    monkeypatch.setattr(
+        gb,
+        "_reconcile_retired_variant_posters_after_terminal_commit",
+        lambda *_args, **_kwargs: None,
+    )
+
+    assert gb._finalize_job(
+        job_id,
+        [result],
+        required_speech_results={"narrated": result},
+    )
+
+    assert job.assembly_plan["variants"][0]["render_generation_id"] == storage_generation
+    assert job.assembly_plan["speech_cleanup_outcome"] == {
+        "job_id": job_id,
+        "render_generation_id": creator_generation,
+        "status": "applied",
+        "removal_count": 2,
+        "removed_ms": 720,
+    }
 
 
 def test_required_speech_finalize_atomically_consumes_private_stage(monkeypatch):
@@ -3669,6 +4091,39 @@ def test_terminal_status_skips_rerun(monkeypatch):
     gb._run_generative_job("33333333-3333-3333-3333-333333333333")
 
     assert job.status == "variants_ready"  # untouched, never set back to "processing"
+
+
+def test_marked_preflight_missing_snapshot_fails_before_ingest_or_detection(monkeypatch):
+    """The new marker is a fail-closed promise, never a legacy-analysis fallback."""
+
+    job_id = "33333333-3333-3333-3333-333333333334"
+    creator_generation = uuid.uuid4().hex
+    job = _FakeJob(
+        status="queued",
+        job_id=job_id,
+        assembly_plan={
+            "creator_generation_id": creator_generation,
+            "speech_cleanup_contract": "required_v1",
+            "speech_cleanup_preflight_contract": "snapshot_v1",
+        },
+    )
+    job.mode = "generative"
+    job.all_candidates = {"clip_paths": ["users/u/plan/i/source.mp4"]}
+    _patch_job_session(monkeypatch, job)
+    monkeypatch.setattr(gb.settings, "text_renderer_skia_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+
+    def _forbidden(*_args, **_kwargs):
+        raise AssertionError("missing preflight snapshot reached render-time work")
+
+    monkeypatch.setattr(gb, "_ingest_clips", _forbidden)
+    monkeypatch.setattr(gb, "_silence_cut_analysis", _forbidden)
+
+    with pytest.raises(gb.SpeechCleanupFailure) as raised:
+        gb._run_generative_job_impl(job_id)
+
+    assert raised.value.reason == "snapshot_mismatch"
+    assert job.status == "processing"
 
 
 def test_mid_render_status_still_reruns(monkeypatch):

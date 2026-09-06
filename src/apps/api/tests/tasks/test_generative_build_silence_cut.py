@@ -46,6 +46,7 @@ the assertions stay self-consistent with the pure module.
 from __future__ import annotations
 
 import types
+import uuid
 
 import pytest
 
@@ -62,6 +63,11 @@ from app.pipeline.silence_cut import (
     is_filler_token,
     remap_words,
 )
+from app.pipeline.speech_cleanup_analysis import (
+    SpeechCleanupAnalysisInput,
+    analyze_speech_cleanup,
+)
+from app.pipeline.speech_cleanup_apply import hydrate_speech_cleanup_snapshot
 from app.pipeline.transcribe import Word
 
 JOB_ID = "00000000-0000-0000-0000-000000000042"
@@ -143,6 +149,82 @@ RETAKE_WORDS = [
 ]
 
 
+def _snapshot(
+    *,
+    words=None,
+    silences=None,
+    duration=DURATION,
+    silence_status="ok",
+    source_kind="embedded_spine",
+    media_identity="c1",
+    storage_path="uploads/source.mp4",
+    generation="generation-1",
+    window_start_s=0.0,
+    mixed_gap_mode="off",
+    over_budget_policy="clamp",
+):
+    """Build the same typed private snapshot the preflight task persists."""
+    from app.services.clip_speech import SilenceDetectionResult
+
+    snapshot_words = list(_cut_words() if words is None else words)
+    snapshot_silences = tuple(SILENCES if silences is None else silences)
+    fingerprint = "a" * 64
+    analysis = analyze_speech_cleanup(
+        SpeechCleanupAnalysisInput(
+            source_fingerprint=fingerprint,
+            local_media_path="preflight.wav",
+            duration_s=float(duration),
+            source_window_start_s=float(window_start_s),
+            source_window_end_s=float(window_start_s) + float(duration),
+            mixed_gap_mode=mixed_gap_mode,
+            over_budget_policy=over_budget_policy,
+        ),
+        transcribe_fn=lambda *_args, **_kwargs: types.SimpleNamespace(
+            words=snapshot_words,
+            language="en",
+            low_confidence=False,
+        ),
+        silence_detect_fn=lambda *_args, **_kwargs: SilenceDetectionResult(
+            spans=snapshot_silences,
+            status=silence_status,
+        ),
+    )
+    return hydrate_speech_cleanup_snapshot(
+        {
+            "schema_version": 1,
+            "analysis_id": str(uuid.UUID("00000000-0000-0000-0000-000000000099")),
+            "engine_version": "preflight-v1-2026-09-05",
+            "detector_version": analysis.detector_version,
+            "source": {
+                "kind": source_kind,
+                "media_identity": media_identity,
+                "storage_path": storage_path,
+                "generation": generation,
+                "window_start_s": float(window_start_s),
+                "window_end_s": float(window_start_s) + float(duration),
+                "source_policy_fingerprint": fingerprint,
+            },
+            "analysis": analysis.to_payload(),
+        }
+    )
+
+
+def _snapshot_from_patched_pipeline(*, duration=None):
+    values = getattr(gb, "_T6_TEST_SNAPSHOT_INPUT", {})
+    return _snapshot(
+        words=values.get("words", _cut_words()),
+        silences=values.get("silences", SILENCES),
+        duration=float(duration if duration is not None else values.get("duration", DURATION)),
+        silence_status=values.get("silence_status", "ok"),
+        mixed_gap_mode=getattr(gb.settings, "speech_cleanup_mixed_gap_mode", "off"),
+        over_budget_policy=(
+            "clamp"
+            if getattr(gb.settings, "speech_cleanup_budget_clamp_enabled", True)
+            else "bailout"
+        ),
+    )
+
+
 # ── Harness ──────────────────────────────────────────────────────────────────────
 
 
@@ -175,6 +257,17 @@ def _patch_pipeline(
         "events": [],
         "receipts": [],
     }
+    monkeypatch.setattr(
+        gb,
+        "_T6_TEST_SNAPSHOT_INPUT",
+        {
+            "words": list(_cut_words() if words is None else words),
+            "silences": list(SILENCES if silences is None else silences),
+            "duration": float(duration),
+            "silence_status": silence_status,
+        },
+        raising=False,
+    )
 
     monkeypatch.setattr(
         probe_mod,
@@ -294,12 +387,17 @@ def _render(
     render_trace_id=None,
     assignment_by_clip_id=None,
     storage_generation=None,
+    speech_cleanup_snapshot=None,
+    speech_cleanup_source_clip_id=None,
+    speech_cleanup_uses_preflight=None,
 ):
     # `subdir` mirrors prod: every variant render gets its OWN variant_dir
     # (variant_{rank}) — multi-render tests must not share one, or the cache's
     # hardlinked cut base would collide with its own inode on reuse.
     vdir = tmp_path / subdir
     vdir.mkdir(exist_ok=True)
+    if speech_cleanup_source_clip_id is None and speech_cleanup_snapshot is not None:
+        speech_cleanup_source_clip_id = "c1"
     return gb._render_subtitled_variant(
         job_id=JOB_ID,
         rank=1,
@@ -317,6 +415,9 @@ def _render(
         speech_cleanup_contract=speech_cleanup_contract,
         render_trace_id=render_trace_id,
         speech_cleanup_assignment_by_clip_id=assignment_by_clip_id,
+        speech_cleanup_snapshot=speech_cleanup_snapshot,
+        speech_cleanup_source_clip_id=speech_cleanup_source_clip_id,
+        speech_cleanup_uses_preflight=speech_cleanup_uses_preflight,
     )
 
 
@@ -409,6 +510,110 @@ def test_subtitled_text_lane_flag_off_keeps_no_cue_base_upload_unchanged(monkeyp
     assert res["caption_cues"] is None
     assert res["base_video_path"] is None
     assert [path.rsplit("/", 1)[-1] for path in uploads] == ["variant_1_subtitled.mp4"]
+
+
+# ── Immutable preflight snapshot consumption ─────────────────────────────────
+
+
+def test_required_preflight_snapshot_is_the_only_cut_and_caption_source(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", True, raising=False)
+    calls = _patch_pipeline(monkeypatch)
+    snapshot = _snapshot()
+
+    def _forbidden_analysis(*_args, **_kwargs):
+        raise AssertionError("preflight render must not run cleanup analysis")
+
+    monkeypatch.setattr(gb, "_silence_cut_analysis", _forbidden_analysis)
+    _bomb_retake_detector(monkeypatch)
+
+    result = _render(
+        monkeypatch,
+        tmp_path,
+        speech_cleanup_contract="required_v1",
+        speech_cleanup_snapshot=snapshot,
+    )
+
+    assert result["ok"] is True
+    assert calls["transcribe"] == []
+    assert calls["detect"] == []
+    assert calls["reframe"][0]["keep_segments"] == pytest.approx(snapshot.cut_plan.keep_segments)
+    assert [word.text for word in calls["cues"][0]] == [
+        "so",
+        "today",
+        "we",
+        "built",
+        "the",
+        "thing.",
+    ]
+    assert result["_speech_cleanup_outcome_context"] == snapshot.outcome_context(
+        analysis_view="full_clip"
+    )
+
+
+def test_checked_keep_original_snapshot_reuses_uncut_words_without_analysis(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", True, raising=False)
+    calls = _patch_pipeline(monkeypatch)
+    snapshot = _snapshot()
+
+    def _forbidden_analysis(*_args, **_kwargs):
+        raise AssertionError("keep-original render must not run cleanup analysis")
+
+    monkeypatch.setattr(gb, "_silence_cut_analysis", _forbidden_analysis)
+    _bomb_retake_detector(monkeypatch)
+
+    result = _render(
+        monkeypatch,
+        tmp_path,
+        speech_cleanup_contract="off_v1",
+        speech_cleanup_snapshot=snapshot,
+    )
+
+    assert result["ok"] is True
+    assert calls["transcribe"] == []
+    assert calls["detect"] == []
+    assert "keep_segments" not in calls["reframe"][0]
+    assert [(word.text, word.start_s, word.end_s) for word in calls["cues"][0]] == [
+        (word.text, word.start_s, word.end_s) for word in _cut_words()
+    ]
+    assert result["silence_cut"] is None
+
+
+@pytest.mark.parametrize(
+    ("snapshot", "failure_detail"),
+    [
+        (None, "missing required snapshot"),
+        (_snapshot(duration=DURATION + 0.5), "window_duration"),
+    ],
+)
+def test_new_preflight_contract_fails_closed_before_analysis(
+    monkeypatch,
+    tmp_path,
+    snapshot,
+    failure_detail,
+):
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    calls = _patch_pipeline(monkeypatch)
+
+    def _forbidden_analysis(*_args, **_kwargs):
+        raise AssertionError("invalid snapshot must fail before analysis")
+
+    monkeypatch.setattr(gb, "_silence_cut_analysis", _forbidden_analysis)
+    result = _render(
+        monkeypatch,
+        tmp_path,
+        speech_cleanup_contract="required_v1",
+        speech_cleanup_snapshot=snapshot,
+        speech_cleanup_uses_preflight=True,
+    )
+
+    assert result["ok"] is False
+    assert result["speech_cleanup_failure_reason"] == "snapshot_mismatch"
+    assert failure_detail in result["error"]
+    assert calls["transcribe"] == []
+    assert calls["detect"] == []
+    assert calls["reframe"] == []
 
 
 # ── Gates (explicitly ineligible clips fail-open) ────────────────────────────────
@@ -1465,9 +1670,14 @@ def _render_th(
     probe_map=None,
     target=60.0,
     speech_cleanup_contract="legacy_auto",
+    speech_cleanup_snapshot=None,
+    speech_cleanup_source_clip_id=None,
+    speech_cleanup_uses_preflight=None,
 ):
     vdir = tmp_path / "th_variant"
     vdir.mkdir(exist_ok=True)
+    if speech_cleanup_source_clip_id is None and speech_cleanup_snapshot is not None:
+        speech_cleanup_source_clip_id = "c1"
     return gb._render_talking_head_variant(
         job_id=JOB_ID,
         rank=1,
@@ -1485,6 +1695,9 @@ def _render_th(
         silence_cut_disabled=disabled,
         silence_cut_cache=cache,
         speech_cleanup_contract=speech_cleanup_contract,
+        speech_cleanup_snapshot=speech_cleanup_snapshot,
+        speech_cleanup_source_clip_id=speech_cleanup_source_clip_id,
+        speech_cleanup_uses_preflight=speech_cleanup_uses_preflight,
     )
 
 
@@ -1621,6 +1834,17 @@ def _patch_th_full(monkeypatch, *, words=None, silences=None, cut_dur=4.06):
     import app.storage as storage
 
     calls: dict = {"transcribe": [], "detect": [], "reframe": [], "cmds": [], "events": []}
+    monkeypatch.setattr(
+        gb,
+        "_T6_TEST_SNAPSHOT_INPUT",
+        {
+            "words": list(_cut_words() if words is None else words),
+            "silences": list(SILENCES if silences is None else silences),
+            "duration": DURATION,
+            "silence_status": "ok",
+        },
+        raising=False,
+    )
 
     # select_spine's coverage_fn default binds the real speech_coverage at
     # import time — stub the selection wholesale (spine=c1, broll=[c2]).
@@ -1691,6 +1915,65 @@ def _th_probe_map(*, duration, has_audio=True):
         "c1": types.SimpleNamespace(duration_s=duration, has_audio=has_audio),
         "c2": types.SimpleNamespace(duration_s=duration, has_audio=True),
     }
+
+
+def test_talking_head_preflight_snapshot_bypasses_every_detector(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", True, raising=False)
+    calls = _patch_th_full(monkeypatch, cut_dur=4.06)
+    snapshot = _snapshot()
+
+    def _forbidden_analysis(*_args, **_kwargs):
+        raise AssertionError("preflight talking-head render must not analyze again")
+
+    monkeypatch.setattr(gb, "_silence_cut_analysis", _forbidden_analysis)
+    _bomb_retake_detector(monkeypatch)
+
+    result = _render_th(
+        monkeypatch,
+        tmp_path,
+        probe_map=_th_probe_map(duration=DURATION),
+        target=DURATION,
+        speech_cleanup_contract="required_v1",
+        speech_cleanup_snapshot=snapshot,
+    )
+
+    assert result["ok"] is True
+    assert calls["transcribe"] == []
+    assert calls["detect"] == []
+    spine = next(call for call in calls["reframe"] if call["input"].endswith("a.mp4"))
+    assert spine["keep_segments"] == pytest.approx(snapshot.cut_plan.keep_segments)
+    assert result["_speech_cleanup_outcome_context"] == snapshot.outcome_context(
+        analysis_view="talking_head_spine_capped"
+    )
+
+
+def test_talking_head_preflight_spine_failure_is_snapshot_mismatch(monkeypatch, tmp_path):
+    from app.pipeline.talking_head_assembler import SpineExtractionError
+
+    snapshot = _snapshot()
+
+    def _raise_spine_error(**_kwargs):
+        raise SpineExtractionError("corrupt source bytes")
+
+    _patch_th_stub(monkeypatch)
+    monkeypatch.setattr(
+        "app.pipeline.talking_head_assembler.assemble_talking_head",
+        _raise_spine_error,
+    )
+
+    with pytest.raises(gb.SpeechCleanupFailure) as raised:
+        _render_th(
+            monkeypatch,
+            tmp_path,
+            probe_map=_th_probe_map(duration=DURATION),
+            target=DURATION,
+            speech_cleanup_contract="required_v1",
+            speech_cleanup_snapshot=snapshot,
+            speech_cleanup_uses_preflight=True,
+        )
+
+    assert raised.value.reason == "snapshot_mismatch"
 
 
 def test_talking_head_happy_path_cuts_spine_and_anchors_broll(monkeypatch, tmp_path):

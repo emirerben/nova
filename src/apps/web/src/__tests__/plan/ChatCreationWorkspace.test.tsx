@@ -14,6 +14,9 @@ import {
   refreshCreationThread,
   renameCreationThread,
   sendCreationMessage,
+  uploadCreationMedia,
+  type CreationSpeechCleanupProjection,
+  type CreationThread,
 } from "@/lib/creation-thread-api";
 import { listMyJobs, refreshMyJobPosters, type LibraryJob } from "@/lib/me-api";
 import { getPlanItemFresh } from "@/lib/plan-api";
@@ -31,7 +34,7 @@ jest.mock("next-auth/react", () => ({
 }));
 jest.mock("@/lib/creation-thread-api", () => {
   const actual = jest.requireActual("@/lib/creation-thread-api");
-  return { ...actual, applyCreationAction: jest.fn(), createCreationThread: jest.fn(), deleteCreationThread: jest.fn(), getCreationCapabilities: jest.fn(), listCreationThreads: jest.fn(), refreshCreationThread: jest.fn(), renameCreationThread: jest.fn(), sendCreationMessage: jest.fn() };
+  return { ...actual, applyCreationAction: jest.fn(), createCreationThread: jest.fn(), deleteCreationThread: jest.fn(), getCreationCapabilities: jest.fn(), listCreationThreads: jest.fn(), refreshCreationThread: jest.fn(), renameCreationThread: jest.fn(), sendCreationMessage: jest.fn(), uploadCreationMedia: jest.fn() };
 });
 jest.mock("@/lib/me-api", () => {
   const actual = jest.requireActual("@/lib/me-api");
@@ -64,6 +67,36 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+const confirmationEvent = {
+  id: "strategy",
+  sequence: 1,
+  revision: 1,
+  role: "assistant" as const,
+  event_type: "agent_assistant_strategy",
+  content: "This direction is ready.",
+  payload: null,
+  created_at: "2026-01-01T00:00:01Z",
+};
+
+function cleanupThread(
+  speechCleanup: CreationSpeechCleanupProjection,
+  overrides: Partial<CreationThread> = {},
+): CreationThread {
+  return {
+    ...baseThread,
+    revision: 3,
+    state: {
+      edit_format: "subtitled",
+      media: [{ media_id: "video-1", filename: "talk.mp4", kind: "video" }],
+      media_count: 1,
+    },
+    active_plan_item_id: "item-1",
+    events: [confirmationEvent],
+    speech_cleanup: speechCleanup,
+    ...overrides,
+  };
+}
+
 describe("ChatCreationWorkspace", () => {
   it.each([
     ["queued", "Your edit is queued…"],
@@ -83,6 +116,7 @@ describe("ChatCreationWorkspace", () => {
     jest.mocked(sendCreationMessage).mockReset();
     jest.mocked(deleteCreationThread).mockReset();
     jest.mocked(renameCreationThread).mockReset();
+    jest.mocked(uploadCreationMedia).mockReset();
     jest.mocked(applyCreationAction).mockReset();
     jest.mocked(getCreationCapabilities).mockReset();
     jest.mocked(listMyJobs).mockReset();
@@ -96,6 +130,7 @@ describe("ChatCreationWorkspace", () => {
     jest.mocked(sendCreationMessage).mockResolvedValue(baseThread);
     jest.mocked(deleteCreationThread).mockResolvedValue();
     jest.mocked(renameCreationThread).mockImplementation(async (thread, title) => ({ ...thread, title }));
+    jest.mocked(uploadCreationMedia).mockResolvedValue(baseThread);
     jest.mocked(listMyJobs).mockResolvedValue({ jobs: [], next_cursor: null });
     jest.mocked(refreshMyJobPosters).mockResolvedValue({ jobs: [] });
     jest.mocked(getPlanItemFresh).mockRejectedValue(new Error("No linked plan item"));
@@ -1198,8 +1233,8 @@ describe("ChatCreationWorkspace", () => {
 
     render(<ChatCreationWorkspace />);
 
-    expect(await screen.findByText("Reconnecting to render status…")).toBeInTheDocument();
-    expect(refreshCreationThread).toHaveBeenCalledWith("thread-1");
+    expect(await screen.findByText("Reconnecting…")).toBeInTheDocument();
+    expect(refreshCreationThread).toHaveBeenCalledWith("thread-1", expect.any(AbortSignal));
   });
 
   it("cancels a failed poll retry when the workspace unmounts", async () => {
@@ -1217,7 +1252,7 @@ describe("ChatCreationWorkspace", () => {
 
     try {
       const view = render(<ChatCreationWorkspace />);
-      expect(await screen.findByText("Reconnecting to render status…")).toBeInTheDocument();
+      expect(await screen.findByText("Reconnecting…")).toBeInTheDocument();
       expect(refreshCreationThread).toHaveBeenCalledTimes(2);
 
       view.unmount();
@@ -1355,7 +1390,7 @@ describe("ChatCreationWorkspace", () => {
     fireEvent.keyDown(composer, { key: "Enter" });
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/changed in another window/i));
     expect(composer).toHaveValue("Keep this intimate");
-    expect(refreshCreationThread).toHaveBeenCalledWith("thread-1");
+    expect(refreshCreationThread).toHaveBeenCalledWith("thread-1", expect.any(AbortSignal));
   });
 
   it("shows a specific busy conflict without stale-window copy", async () => {
@@ -1478,6 +1513,7 @@ describe("ChatCreationWorkspace", () => {
 
   it("keeps Gallery navigation and the URL projection in sync", async () => {
     render(<ChatCreationWorkspace />);
+    await screen.findByRole("heading", { name: "Untitled video" });
     fireEvent.click(await screen.findByRole("button", { name: "Gallery" }));
     expect(mockReplace).toHaveBeenCalledWith("/plan/thread-1?view=gallery", { scroll: false });
     fireEvent.click(await screen.findByRole("button", { name: "Back to chat" }));
@@ -1522,5 +1558,445 @@ describe("ChatCreationWorkspace", () => {
     fireEvent.keyDown(composer, { key: "Enter" });
     await waitFor(() => expect(screen.getAllByRole("button", { name: /Untitled video/ })[0]).toBeDisabled());
     resolveMessage?.(baseThread);
+  });
+
+  it("renders server-driven findings and sends clean as one atomic generate action", async () => {
+    const setup = cleanupThread({
+      applicable: true,
+      analysis: {
+        id: "analysis-1",
+        status: "ready",
+        has_findings: true,
+        candidate_count: 2,
+        category_counts: { filler_sound: 2 },
+        estimated_removed_ms: 900,
+      },
+      decision: null,
+      requires_choice: true,
+      render_blocker: null,
+      outcome: null,
+    });
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([setup]);
+    jest.mocked(refreshCreationThread).mockResolvedValueOnce(setup);
+    jest.mocked(applyCreationAction).mockResolvedValueOnce({
+      ...setup,
+      active_job_id: "job-1",
+      state: { ...setup.state, generation: { status: "queued" } },
+    });
+
+    render(<ChatCreationWorkspace />);
+    fireEvent.click(await screen.findByRole("button", { name: "Clean up and create" }));
+
+    await waitFor(() => expect(applyCreationAction).toHaveBeenCalledWith(
+      setup,
+      "generate",
+      { speech_cleanup_analysis_id: "analysis-1", speech_cleanup_choice: "clean" },
+      "speech-cleanup:analysis-1:r3:clean",
+    ));
+  });
+
+  it("dispatches only one atomic choice when both decision controls fire in the same tick", async () => {
+    const setup = cleanupThread({
+      applicable: true,
+      analysis: { id: "analysis-double", status: "ready", has_findings: true, candidate_count: 2 },
+      decision: null,
+      requires_choice: true,
+      render_blocker: null,
+      outcome: null,
+    });
+    let resolveAction!: (value: CreationThread) => void;
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([setup]);
+    jest.mocked(refreshCreationThread).mockResolvedValueOnce(setup);
+    jest.mocked(applyCreationAction).mockImplementationOnce(() => new Promise((resolve) => {
+      resolveAction = resolve;
+    }));
+    render(<ChatCreationWorkspace />);
+
+    const clean = await screen.findByRole("button", { name: "Clean up and create" });
+    const keep = screen.getByRole("button", { name: "Keep speech and create" });
+    act(() => {
+      clean.click();
+      keep.click();
+    });
+
+    expect(applyCreationAction).toHaveBeenCalledTimes(1);
+    expect(applyCreationAction).toHaveBeenCalledWith(
+      setup,
+      "generate",
+      { speech_cleanup_analysis_id: "analysis-double", speech_cleanup_choice: "clean" },
+      "speech-cleanup:analysis-double:r3:clean",
+    );
+    await act(async () => { resolveAction(setup); });
+  });
+
+  it("does not infer a cleanup decision card from chat prose", async () => {
+    const setup: CreationThread = {
+      ...cleanupThread({ applicable: false, analysis: null, decision: null }),
+      speech_cleanup: undefined,
+      events: [
+        {
+          id: "user-cleanup-request",
+          sequence: 0,
+          revision: 0,
+          role: "user",
+          event_type: "user_message",
+          content: "Remove every filler sound and awkward pause.",
+          payload: null,
+          created_at: "2026-01-01T00:00:00Z",
+        },
+        confirmationEvent,
+      ],
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([setup]);
+    jest.mocked(refreshCreationThread).mockResolvedValueOnce(setup);
+    render(<ChatCreationWorkspace />);
+
+    expect(await screen.findByText("Remove every filler sound and awkward pause.")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Speech cleanup" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create this video" })).toBeInTheDocument();
+  });
+
+  it("uses the identical decision box for Narrated embedded or uploaded narration", async () => {
+    const projection: CreationSpeechCleanupProjection = {
+      applicable: true,
+      analysis: { id: "analysis-2", status: "ready", has_findings: true, candidate_count: 1 },
+      decision: null,
+      requires_choice: true,
+      render_blocker: null,
+      outcome: null,
+    };
+    const narrated = cleanupThread(projection, {
+      state: {
+        edit_format: "narrated_planned",
+        media: [
+          { media_id: "video-1", filename: "story.mp4", kind: "video" },
+          { media_id: "audio-1", filename: "narration.mp3", kind: "audio" },
+        ],
+        media_count: 2,
+      },
+    });
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([narrated]);
+    jest.mocked(refreshCreationThread).mockResolvedValueOnce(narrated);
+    render(<ChatCreationWorkspace />);
+
+    expect(await screen.findByRole("heading", { name: "Speech cleanup" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Clean up and create" })).toBeInTheDocument();
+    expect(screen.getByText("narration.mp3")).toBeInTheDocument();
+  });
+
+  it("keeps audio-only findings pending until video attaches without changing analysis", async () => {
+    const projection: CreationSpeechCleanupProjection = {
+      applicable: true,
+      analysis: { id: "analysis-audio", status: "ready", has_findings: true, candidate_count: 3 },
+      decision: null,
+      requires_choice: true,
+      render_blocker: "video_required",
+      outcome: null,
+    };
+    const audioOnly = cleanupThread(projection, {
+      state: {
+        edit_format: "narrated_planned",
+        media: [{ media_id: "audio-1", filename: "voice.mp3", kind: "audio" }],
+        media_count: 1,
+      },
+    });
+    const withVideo = cleanupThread({ ...projection, render_blocker: null }, {
+      revision: 4,
+      state: {
+        edit_format: "narrated_planned",
+        media: [
+          { media_id: "audio-1", filename: "voice.mp3", kind: "audio" },
+          { media_id: "video-1", filename: "visual.mp4", kind: "video" },
+        ],
+        media_count: 2,
+      },
+    });
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([audioOnly]);
+    jest.mocked(refreshCreationThread).mockResolvedValueOnce(audioOnly);
+    jest.mocked(uploadCreationMedia).mockResolvedValueOnce(withVideo);
+    render(<ChatCreationWorkspace />);
+
+    expect(await screen.findByText("Add at least one video clip to make your video.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Clean up and create" })).not.toBeInTheDocument();
+    expect(applyCreationAction).not.toHaveBeenCalled();
+
+    const picker = document.getElementById("creation-file-picker") as HTMLInputElement;
+    fireEvent.change(picker, {
+      target: { files: [new File(["video"], "visual.mp4", { type: "video/mp4" })] },
+    });
+    expect(await screen.findByRole("button", { name: "Clean up and create" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Clean up 3 speech moments?" })).toBeInTheDocument();
+    expect(applyCreationAction).not.toHaveBeenCalled();
+  });
+
+  it("generates a checked no-findings video with analysis ID and no choice", async () => {
+    const setup = cleanupThread({
+      applicable: true,
+      analysis: { id: "analysis-none", status: "no_findings", has_findings: false },
+      decision: null,
+      requires_choice: false,
+      render_blocker: null,
+      outcome: null,
+    });
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([setup]);
+    jest.mocked(refreshCreationThread).mockResolvedValueOnce(setup);
+    jest.mocked(applyCreationAction).mockResolvedValueOnce(setup);
+    render(<ChatCreationWorkspace />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Create this video" }));
+    await waitFor(() => expect(applyCreationAction).toHaveBeenCalledWith(
+      setup,
+      "generate",
+      { speech_cleanup_analysis_id: "analysis-none" },
+      "speech-cleanup:analysis-none:r3:no_findings",
+    ));
+  });
+
+  it("polls analysis-only state without showing render progress", async () => {
+    const queued = cleanupThread({
+      applicable: true,
+      analysis: { id: "analysis-poll", status: "queued" },
+      decision: null,
+      requires_choice: false,
+      render_blocker: null,
+      outcome: null,
+    });
+    const ready = cleanupThread({
+      ...queued.speech_cleanup!,
+      analysis: { id: "analysis-poll", status: "ready", has_findings: true, candidate_count: 1 },
+      requires_choice: true,
+    });
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([queued]);
+    jest.mocked(refreshCreationThread)
+      .mockResolvedValueOnce(queued)
+      .mockResolvedValueOnce(ready);
+    render(<ChatCreationWorkspace />);
+
+    expect(await screen.findByRole("button", { name: "Clean up and create" })).toBeInTheDocument();
+    expect(screen.queryByText("Kria is building your first cut…")).not.toBeInTheDocument();
+    expect(screen.queryByText("Rendering", { selector: "div" })).not.toBeInTheDocument();
+    expect(refreshCreationThread).toHaveBeenLastCalledWith("thread-1", expect.any(AbortSignal));
+  });
+
+  it("uses neutral reconnecting copy when an analysis-only poll fails", async () => {
+    const queued = cleanupThread({
+      applicable: true,
+      analysis: { id: "analysis-offline", status: "running" },
+      decision: null,
+      requires_choice: false,
+      render_blocker: null,
+      outcome: null,
+    });
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([queued]);
+    jest.mocked(refreshCreationThread)
+      .mockResolvedValueOnce(queued)
+      .mockRejectedValueOnce(new Error("offline"));
+    render(<ChatCreationWorkspace />);
+
+    expect(await screen.findByText("Reconnecting…")).toBeInTheDocument();
+    expect(screen.getByText("Checking for filler sounds…")).toBeInTheDocument();
+    expect(screen.queryByText(/building your first cut/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Rendering$/)).not.toBeInTheDocument();
+  });
+
+  it("offers explicit failed-check bypass and keeps one workspace announcer", async () => {
+    const setup = cleanupThread({
+      applicable: true,
+      analysis: {
+        id: "analysis-failed",
+        status: "failed",
+        error: { code: "analysis_timeout", retryable: true },
+      },
+      decision: null,
+      requires_choice: false,
+      render_blocker: null,
+      outcome: null,
+    });
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([setup]);
+    jest.mocked(refreshCreationThread).mockResolvedValueOnce(setup);
+    jest.mocked(applyCreationAction).mockResolvedValueOnce(setup);
+    const { container } = render(<ChatCreationWorkspace />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Create without cleanup" }));
+    await waitFor(() => expect(applyCreationAction).toHaveBeenCalledWith(
+      setup,
+      "create_without_cleanup",
+      { speech_cleanup_analysis_id: "analysis-failed" },
+      "speech-cleanup:analysis-failed:r3:bypass",
+    ));
+    expect(container.querySelectorAll('[aria-live="polite"]')).toHaveLength(1);
+    expect(screen.getByTestId("creation-live-announcer")).toHaveTextContent(/could not check the speech/i);
+    expect(screen.getByRole("log", { name: "Conversation history" })).toHaveAttribute("aria-live", "off");
+  });
+
+  it("retries an audio-only failed check without allowing a premature render", async () => {
+    const setup = cleanupThread({
+      applicable: true,
+      analysis: {
+        id: "analysis-audio-failed",
+        status: "failed",
+        error: { code: "analysis_timeout", retryable: true },
+      },
+      decision: null,
+      requires_choice: false,
+      render_blocker: "video_required",
+      outcome: null,
+    }, {
+      state: {
+        edit_format: "narrated_planned",
+        media: [{ media_id: "audio-1", filename: "voice.mp3", kind: "audio" }],
+        media_count: 1,
+      },
+    });
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([setup]);
+    jest.mocked(refreshCreationThread).mockResolvedValueOnce(setup);
+    jest.mocked(applyCreationAction).mockResolvedValueOnce(setup);
+    render(<ChatCreationWorkspace />);
+
+    expect(await screen.findByText("Add at least one video clip to make your video.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create without cleanup" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry speech check" }));
+    await waitFor(() => expect(applyCreationAction).toHaveBeenCalledWith(
+      setup,
+      "retry_speech_cleanup",
+      { speech_cleanup_analysis_id: "analysis-audio-failed" },
+      "speech-cleanup:analysis-audio-failed:r3:retry_analysis",
+    ));
+  });
+
+  it("retries cleanup application with the existing retry payload and stable snapshot key", async () => {
+    const setup = cleanupThread({
+      applicable: true,
+      analysis: { id: "analysis-apply", status: "ready", has_findings: true, candidate_count: 2 },
+      decision: "clean",
+      requires_choice: false,
+      render_blocker: null,
+      outcome: {
+        job_id: "job-failed",
+        render_generation_id: "generation-failed",
+        status: "failed",
+        error: { code: "audio_apply_failed", retryable: true },
+      },
+    }, {
+      active_job_id: "job-failed",
+      job: { id: "job-failed", status: "processing_failed", variants: [] },
+    });
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([setup]);
+    jest.mocked(refreshCreationThread).mockResolvedValueOnce(setup);
+    jest.mocked(applyCreationAction).mockResolvedValueOnce(setup);
+    render(<ChatCreationWorkspace />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Retry cleanup" }));
+    await waitFor(() => expect(applyCreationAction).toHaveBeenCalledWith(
+      setup,
+      "retry",
+      { speech_cleanup_analysis_id: "analysis-apply" },
+      "speech-cleanup:analysis-apply:r3:retry_render",
+    ));
+    expect(screen.queryByRole("button", { name: "Play" })).not.toBeInTheDocument();
+  });
+
+  it("refreshes a stale cleanup choice and clears it before accepting another choice", async () => {
+    const setup = cleanupThread({
+      applicable: true,
+      analysis: { id: "analysis-old", status: "ready", has_findings: true, candidate_count: 2 },
+      decision: null,
+      requires_choice: true,
+      render_blocker: null,
+      outcome: null,
+    });
+    const current = cleanupThread({
+      ...setup.speech_cleanup!,
+      analysis: { id: "analysis-new", status: "ready", has_findings: true, candidate_count: 1 },
+    }, { revision: 4 });
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([setup]);
+    jest.mocked(refreshCreationThread)
+      .mockResolvedValueOnce(setup)
+      .mockResolvedValueOnce(current);
+    jest.mocked(applyCreationAction).mockRejectedValueOnce(
+      new CreationThreadError("speech_cleanup_analysis_changed", 409),
+    );
+    render(<ChatCreationWorkspace />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Clean up and create" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/speech check changed/i);
+    expect(screen.getByRole("group", { name: "Clean up 1 speech moment?" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Clean up and create" })).toBeEnabled();
+  });
+
+  it("aborts the one in-flight cleanup detail request on unmount", async () => {
+    const queued = cleanupThread({
+      applicable: true,
+      analysis: { id: "analysis-abort", status: "queued" },
+      decision: null,
+      requires_choice: false,
+      render_blocker: null,
+      outcome: null,
+    });
+    let pollSignal: AbortSignal | undefined;
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([queued]);
+    jest.mocked(refreshCreationThread)
+      .mockResolvedValueOnce(queued)
+      .mockImplementationOnce((_threadId, signal) => new Promise<CreationThread>(() => { pollSignal = signal; }));
+
+    const view = render(<ChatCreationWorkspace />);
+    await waitFor(() => expect(pollSignal).toBeDefined());
+    expect(pollSignal?.aborted).toBe(false);
+    view.unmount();
+    expect(pollSignal?.aborted).toBe(true);
+  });
+
+  it("aborts the prior cleanup fetch before opening another project", async () => {
+    const first = cleanupThread({
+      applicable: true,
+      analysis: { id: "analysis-switch", status: "running" },
+      decision: null,
+      requires_choice: false,
+      render_blocker: null,
+      outcome: null,
+    }, { state: { edit_format: "subtitled", intent: "First project", media: [{ kind: "video" }], media_count: 1 } });
+    const second: CreationThread = {
+      ...baseThread,
+      id: "thread-2",
+      state: { edit_format: "montage", intent: "Second project", media: [], media_count: 0 },
+    };
+    let firstPollSignal: AbortSignal | undefined;
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([first, second]);
+    jest.mocked(refreshCreationThread)
+      .mockResolvedValueOnce(first)
+      .mockImplementationOnce((_threadId, signal) => new Promise<CreationThread>(() => { firstPollSignal = signal; }))
+      .mockResolvedValueOnce(second);
+    render(<ChatCreationWorkspace />);
+    await waitFor(() => expect(firstPollSignal).toBeDefined());
+
+    fireEvent.click(screen.getByRole("button", { name: /Second project/ }));
+    await waitFor(() => expect(refreshCreationThread).toHaveBeenLastCalledWith("thread-2", expect.any(AbortSignal)));
+    expect(firstPollSignal?.aborted).toBe(true);
+    expect(await screen.findByText("Pick a format")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["applied", "Speech cleanup applied · 2 moments removed"],
+    ["checked_no_change", "Speech cleanup checked · no safe cuts applied"],
+    ["declined", "Speech kept as recorded"],
+    ["bypassed_unchecked", "Created without checking speech cleanup"],
+  ] as const)("shows the generation-bound %s Ready receipt", async (status, copy) => {
+    const ready = cleanupThread({
+      applicable: true,
+      analysis: { id: "analysis-ready", status: "ready", has_findings: true, candidate_count: 2 },
+      decision: status === "declined" ? "keep_original" : status === "bypassed_unchecked" ? "create_without_cleanup" : "clean",
+      requires_choice: false,
+      render_blocker: null,
+      outcome: { job_id: "job-1", render_generation_id: "generation-1", status, removal_count: status === "applied" ? 2 : null },
+    }, {
+      active_job_id: "job-1",
+      job: { id: "job-1", status: "ready", variants: [{ variant_id: "cut", render_status: "ready", render_generation_id: "generation-1", output_url: "/cut.mp4" }] },
+      events: [],
+    });
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([ready]);
+    jest.mocked(refreshCreationThread).mockResolvedValueOnce(ready);
+    render(<ChatCreationWorkspace />);
+    expect(await screen.findByText(copy)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
   });
 });

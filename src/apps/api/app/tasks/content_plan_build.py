@@ -10,6 +10,7 @@ clamps/dedupes before this task ever sees items.
 
 from __future__ import annotations
 
+import copy
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -573,6 +574,8 @@ DispatchOutcome = Literal[
     "creator_agent_plan_required",
     "speech_cleanup_unavailable",
     "speech_cleanup_recovery_conflict",
+    "speech_cleanup_analysis_conflict",
+    "video_required",
 ]
 
 
@@ -595,6 +598,274 @@ class DispatchResult:
 
     outcome: DispatchOutcome
     job_id: str | None = None
+
+
+def _speech_cleanup_dispatch_snapshot(
+    session,  # noqa: ANN001
+    item: PlanItem,
+    *,
+    analysis_id: str | None,
+    choice: str | None,
+) -> tuple[str | None, dict | None, dict | None] | DispatchResult:
+    """Validate and consume one current preflight decision under the item lock."""
+
+    if analysis_id is None and choice is None:
+        return None, None, None
+    from app.models import SpeechCleanupAnalysis  # noqa: PLC0415
+    from app.services.plan_item_media import (  # noqa: PLC0415
+        current_detector_policy,
+        resolve_item_narration,
+    )
+    from app.services.speech_cleanup_preflight import analysis_snapshot  # noqa: PLC0415
+
+    try:
+        identifier = uuid.UUID(str(analysis_id))
+    except (TypeError, ValueError):
+        return DispatchResult("speech_cleanup_analysis_conflict")
+    row = session.get(
+        SpeechCleanupAnalysis,
+        identifier,
+        with_for_update=True,
+        populate_existing=True,
+    )
+    resolution = resolve_item_narration(item, detector_policy=current_detector_policy())
+    if (
+        row is None
+        or row.plan_item_id != item.id
+        or row.superseded_at is not None
+        or resolution.source is None
+        or row.source_policy_fingerprint != resolution.source.source_policy_fingerprint
+    ):
+        return DispatchResult("speech_cleanup_analysis_conflict")
+    if not item.clip_gcs_paths:
+        # Standalone narration can be checked, but Nova remains a video
+        # creator. Never persist its choice before visuals exist.
+        return DispatchResult("video_required")
+
+    now = datetime.now(UTC)
+    if choice == "create_without_cleanup":
+        if row.status not in {"queued", "running", "failed"}:
+            return DispatchResult("speech_cleanup_analysis_conflict")
+        row.decision = "create_without_cleanup"
+        row.decision_at = now
+        item.speech_cleanup_enabled = False
+        return (
+            "off_v1",
+            None,
+            {
+                "status": "bypassed_unchecked",
+                "removal_count": 0,
+                "removed_ms": 0,
+            },
+        )
+
+    if row.status == "no_findings":
+        if choice is not None:
+            return DispatchResult("speech_cleanup_analysis_conflict")
+        item.speech_cleanup_enabled = False
+        return (
+            "off_v1",
+            analysis_snapshot(row),
+            {
+                "status": "checked_no_change",
+                "removal_count": 0,
+                "removed_ms": 0,
+            },
+        )
+    if row.status != "ready" or int(row.candidate_count or 0) <= 0:
+        return DispatchResult("speech_cleanup_analysis_conflict")
+    if choice not in {"clean", "keep_original"}:
+        return DispatchResult("speech_cleanup_analysis_conflict")
+    row.decision = choice
+    row.decision_at = now
+    item.speech_cleanup_enabled = choice == "clean"
+    if choice == "clean":
+        return "required_v1", analysis_snapshot(row), None
+    return (
+        "off_v1",
+        analysis_snapshot(row),
+        {
+            "status": "declined",
+            "removal_count": 0,
+            "removed_ms": 0,
+        },
+    )
+
+
+def _speech_cleanup_publish_retry_snapshot(
+    session,  # noqa: ANN001
+    item: PlanItem,
+    plan: ContentPlan,
+    current: Job,
+    current_plan: dict,
+    *,
+    ownership_epoch: int,
+    expected_job_id: str | None,
+    expected_render_generation_id: str | None,
+    expected_speech_cleanup_analysis_id: str | None,
+) -> tuple[str, dict | None, dict | None, str | None] | DispatchResult:
+    """Recover one preflight Job that committed before broker publication.
+
+    No renderer consumed this Job, so retry may mint a replacement while
+    preserving the exact user decision. Every value comes from the immutable
+    failed Job and is revalidated against the current analysis/source under the
+    canonical Plan -> Persona -> PlanItem -> Job -> Analysis lock graph.
+    """
+
+    from app.models import SpeechCleanupAnalysis  # noqa: PLC0415
+    from app.pipeline.speech_cleanup_apply import (  # noqa: PLC0415
+        PREFLIGHT_JOB_CONTRACT_FIELD,
+        PREFLIGHT_JOB_CONTRACT_VALUE,
+        SpeechCleanupSnapshotError,
+        hydrate_speech_cleanup_snapshot,
+    )
+    from app.services.plan_item_media import (  # noqa: PLC0415
+        current_detector_policy,
+        resolve_item_narration,
+    )
+    from app.services.speech_cleanup_preflight import analysis_snapshot  # noqa: PLC0415
+
+    generation = str(current_plan.get("creator_generation_id") or "")
+    if (
+        str(current.id) != str(expected_job_id or "")
+        or current.user_id != plan.user_id
+        or current.content_plan_item_id != item.id
+        or current.content_plan_ownership_epoch != ownership_epoch
+        or current.status != "processing_failed"
+        or current.failure_reason != "dispatch_publish_failed"
+        or not generation
+        or generation != str(expected_render_generation_id or "")
+    ):
+        return DispatchResult("speech_cleanup_recovery_conflict")
+
+    private = current_plan.get("_speech_cleanup_internal")
+    if not isinstance(private, dict):
+        return DispatchResult("speech_cleanup_recovery_conflict")
+    raw_snapshot = private.get("preflight_snapshot")
+    outcome = current_plan.get("speech_cleanup_outcome")
+    contract = current_plan.get("speech_cleanup_contract")
+    resolution = resolve_item_narration(item, detector_policy=current_detector_policy())
+    source = resolution.source
+    if source is None:
+        return DispatchResult("speech_cleanup_recovery_conflict")
+
+    analysis_uuid: uuid.UUID
+    snapshot: dict | None = None
+    if isinstance(raw_snapshot, dict):
+        if current_plan.get(
+            PREFLIGHT_JOB_CONTRACT_FIELD
+        ) != PREFLIGHT_JOB_CONTRACT_VALUE or contract not in {"required_v1", "off_v1"}:
+            return DispatchResult("speech_cleanup_recovery_conflict")
+        try:
+            hydrated = hydrate_speech_cleanup_snapshot(raw_snapshot)
+            analysis_uuid = uuid.UUID(hydrated.analysis_id)
+        except (SpeechCleanupSnapshotError, TypeError, ValueError):
+            return DispatchResult("speech_cleanup_recovery_conflict")
+        if (
+            hydrated.analysis_id != str(expected_speech_cleanup_analysis_id or "")
+            or hydrated.source_kind != source.source_kind
+            or hydrated.media_identity != source.media_id
+            or hydrated.storage_path != source.storage_path
+            or hydrated.generation != source.generation
+            or hydrated.source_policy_fingerprint != source.source_policy_fingerprint
+        ):
+            return DispatchResult("speech_cleanup_recovery_conflict")
+        snapshot = raw_snapshot
+    else:
+        if current_plan.get(PREFLIGHT_JOB_CONTRACT_FIELD) is not None or contract != "off_v1":
+            return DispatchResult("speech_cleanup_recovery_conflict")
+        try:
+            analysis_uuid = uuid.UUID(str(private.get("outcome_analysis_id") or ""))
+        except (TypeError, ValueError):
+            return DispatchResult("speech_cleanup_recovery_conflict")
+        if str(analysis_uuid) != str(expected_speech_cleanup_analysis_id or ""):
+            return DispatchResult("speech_cleanup_recovery_conflict")
+
+    analysis = session.get(
+        SpeechCleanupAnalysis,
+        analysis_uuid,
+        with_for_update=True,
+        populate_existing=True,
+    )
+    if (
+        analysis is None
+        or analysis.plan_item_id != item.id
+        or analysis.superseded_at is not None
+        or analysis.source_kind != source.source_kind
+        or analysis.source_media_identity != source.media_id
+        or analysis.source_storage_path != source.storage_path
+        or analysis.source_generation != source.generation
+        or analysis.source_policy_fingerprint != source.source_policy_fingerprint
+    ):
+        return DispatchResult("speech_cleanup_recovery_conflict")
+
+    if snapshot is not None:
+        try:
+            if analysis_snapshot(analysis) != snapshot:
+                return DispatchResult("speech_cleanup_recovery_conflict")
+        except ValueError:
+            return DispatchResult("speech_cleanup_recovery_conflict")
+        if contract == "required_v1":
+            if (
+                analysis.status != "ready"
+                or analysis.decision != "clean"
+                or not bool(getattr(item, "speech_cleanup_enabled", False))
+                or outcome is not None
+            ):
+                return DispatchResult("speech_cleanup_recovery_conflict")
+            return "required_v1", copy.deepcopy(snapshot), None, None
+
+        if not isinstance(outcome, dict):
+            return DispatchResult("speech_cleanup_recovery_conflict")
+        outcome_status = outcome.get("status")
+        compatible = bool(
+            (
+                outcome_status == "declined"
+                and analysis.status == "ready"
+                and int(analysis.candidate_count or 0) > 0
+                and analysis.decision == "keep_original"
+            )
+            or (
+                outcome_status == "checked_no_change"
+                and analysis.status == "no_findings"
+                and int(analysis.candidate_count or 0) == 0
+                and analysis.decision is None
+            )
+        )
+        if not compatible:
+            return DispatchResult("speech_cleanup_recovery_conflict")
+    else:
+        if (
+            analysis.status not in {"queued", "running", "failed"}
+            or analysis.decision != "create_without_cleanup"
+            or not isinstance(outcome, dict)
+        ):
+            return DispatchResult("speech_cleanup_recovery_conflict")
+        outcome_status = outcome.get("status")
+        if outcome_status != "bypassed_unchecked":
+            return DispatchResult("speech_cleanup_recovery_conflict")
+
+    if (
+        str(outcome.get("job_id") or "") != str(current.id)
+        or str(outcome.get("render_generation_id") or "") != generation
+        or outcome.get("removal_count") != 0
+        or outcome.get("removed_ms") != 0
+        or outcome.get("error") is not None
+    ):
+        return DispatchResult("speech_cleanup_recovery_conflict")
+
+    item.speech_cleanup_enabled = False
+    bounded_outcome = {
+        "status": str(outcome["status"]),
+        "removal_count": 0,
+        "removed_ms": 0,
+    }
+    return (
+        "off_v1",
+        copy.deepcopy(snapshot),
+        bounded_outcome,
+        str(analysis_uuid) if snapshot is None else None,
+    )
 
 
 def _narrative_clip_order(item: PlanItem, clip_paths: list[str]) -> tuple[list[str], int]:
@@ -691,6 +962,11 @@ def _dispatch_item_render(
     creator_request: str = "",
     creator_guided_attempt_id: str | None = None,
     speech_cleanup_contract: str | None = None,
+    speech_cleanup_analysis_id: str | None = None,
+    speech_cleanup_choice: str | None = None,
+    speech_cleanup_preflight_snapshot: dict | None = None,
+    speech_cleanup_preflight_outcome: dict | None = None,
+    speech_cleanup_outcome_analysis_id: str | None = None,
 ) -> DispatchResult:
     """Mint a generative Job for an item's clips, persist it, dispatch its render.
 
@@ -824,6 +1100,97 @@ def _dispatch_item_render(
     content_plan_id = plan.id
     plan_item_id = item.id
     item_clip_paths = list(item.clip_gcs_paths or [])
+    has_recovery_preflight = (
+        speech_cleanup_preflight_snapshot is not None
+        or speech_cleanup_preflight_outcome is not None
+    )
+    if has_recovery_preflight and (
+        speech_cleanup_analysis_id is not None or speech_cleanup_choice is not None
+    ):
+        # Recovery callers provide an already-validated immutable Job snapshot
+        # or an explicit unchecked-bypass receipt. Never combine that evidence
+        # with the normal mutable analysis-row decision path.
+        return DispatchResult("speech_cleanup_recovery_conflict")
+    preflight_snapshot = copy.deepcopy(speech_cleanup_preflight_snapshot)
+    preflight_outcome = copy.deepcopy(speech_cleanup_preflight_outcome)
+    outcome_analysis_id = speech_cleanup_outcome_analysis_id
+    if preflight_snapshot is not None:
+        if speech_cleanup_contract == "required_v1":
+            if preflight_outcome is not None or outcome_analysis_id is not None:
+                return DispatchResult("speech_cleanup_recovery_conflict")
+        elif speech_cleanup_contract == "off_v1":
+            if (
+                preflight_outcome
+                not in (
+                    {
+                        "status": "declined",
+                        "removal_count": 0,
+                        "removed_ms": 0,
+                    },
+                    {
+                        "status": "checked_no_change",
+                        "removal_count": 0,
+                        "removed_ms": 0,
+                    },
+                )
+                or outcome_analysis_id is not None
+            ):
+                return DispatchResult("speech_cleanup_recovery_conflict")
+        else:
+            return DispatchResult("speech_cleanup_recovery_conflict")
+    elif preflight_outcome is not None:
+        if (
+            speech_cleanup_contract != "off_v1"
+            or not outcome_analysis_id
+            or preflight_outcome
+            != {
+                "status": "bypassed_unchecked",
+                "removal_count": 0,
+                "removed_ms": 0,
+            }
+        ):
+            return DispatchResult("speech_cleanup_recovery_conflict")
+    elif outcome_analysis_id is not None:
+        return DispatchResult("speech_cleanup_recovery_conflict")
+    if (
+        speech_cleanup_analysis_id is None
+        and speech_cleanup_choice is None
+        and speech_cleanup_contract is None
+        and settings.speech_cleanup_preflight_mode == "enforce"
+    ):
+        from app.services.plan_item_media import (  # noqa: PLC0415
+            current_detector_policy,
+            resolve_item_narration,
+        )
+        from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+            preflight_enabled_for_source,
+        )
+
+        resolution = resolve_item_narration(
+            item,
+            detector_policy=current_detector_policy(),
+        )
+        if resolution.source is not None and preflight_enabled_for_source(
+            resolution.source.source_policy_fingerprint,
+            mode=settings.speech_cleanup_preflight_mode,
+            rollout_percent=settings.speech_cleanup_preflight_rollout_percent,
+        ):
+            return DispatchResult("speech_cleanup_analysis_conflict")
+    if speech_cleanup_analysis_id is not None or speech_cleanup_choice is not None:
+        preflight = _speech_cleanup_dispatch_snapshot(
+            session,
+            item,
+            analysis_id=speech_cleanup_analysis_id,
+            choice=speech_cleanup_choice,
+        )
+        if isinstance(preflight, DispatchResult):
+            return preflight
+        speech_cleanup_contract, preflight_snapshot, preflight_outcome = preflight
+        if preflight_outcome is not None:
+            # Snapshot-ready decisions bind through the full private snapshot.
+            # Failed/in-flight preflight bypasses have no valid snapshot, so
+            # retain their analysis UUID privately for truthful projection.
+            outcome_analysis_id = str(speech_cleanup_analysis_id)
     clip_paths = item_clip_paths
     clip_paths = _creator_selected_clip_paths(item, clip_paths, creator_strategy)
     if creator_clip_order:
@@ -1034,6 +1401,53 @@ def _dispatch_item_render(
         # the worker follows the immutable contract above. New contracts never
         # consult this mutable flag during normal execution.
         snapshot["silence_cut_disabled"] = speech_cleanup_contract == "off_v1"
+    if preflight_snapshot is not None:
+        from app.pipeline.speech_cleanup_apply import (  # noqa: PLC0415
+            PREFLIGHT_JOB_CONTRACT_FIELD,
+            PREFLIGHT_JOB_CONTRACT_VALUE,
+        )
+
+        private = snapshot.get("_speech_cleanup_internal")
+        if not isinstance(private, dict):
+            private = {}
+        source_binding: dict[str, object] | None = None
+        source = preflight_snapshot.get("source")
+        if isinstance(source, dict) and source.get("kind") == "embedded_spine":
+            from app.services.speech_cleanup_identity import (  # noqa: PLC0415
+                provision_clip_source_instance_ids,
+            )
+
+            candidates, identity = provision_clip_source_instance_ids(job.all_candidates or {})
+            source_path = str(source.get("storage_path") or "")
+            matching_slots = [
+                index for index, path in enumerate(identity.clip_paths) if path == source_path
+            ]
+            if not identity.valid or len(matching_slots) != 1:
+                return DispatchResult("speech_cleanup_analysis_conflict")
+            source_slot = matching_slots[0]
+            job.all_candidates = candidates
+            source_binding = {
+                "source_slot": source_slot,
+                "source_instance_id": identity.source_instance_ids[source_slot],
+            }
+        snapshot[PREFLIGHT_JOB_CONTRACT_FIELD] = PREFLIGHT_JOB_CONTRACT_VALUE
+        snapshot["_speech_cleanup_internal"] = {
+            **private,
+            "preflight_snapshot": preflight_snapshot,
+            **({"source_binding": source_binding} if source_binding is not None else {}),
+        }
+    if preflight_outcome is not None:
+        if preflight_snapshot is None:
+            if not outcome_analysis_id:
+                return DispatchResult("speech_cleanup_recovery_conflict")
+            private = snapshot.get("_speech_cleanup_internal")
+            if not isinstance(private, dict):
+                private = {}
+            snapshot["_speech_cleanup_internal"] = {
+                **private,
+                "outcome_analysis_id": outcome_analysis_id,
+            }
+        snapshot["speech_cleanup_outcome"] = dict(preflight_outcome)
     job.assembly_plan = snapshot
     # Caller holds Plan -> Persona -> PlanItem locks and has revalidated this
     # exact epoch. Job is last in the global lock/write order.
@@ -1046,6 +1460,14 @@ def _dispatch_item_render(
     # so the admin/reaper can correlate the Celery task with the Job row.
     job.celery_task_id = str(job.id)
     job_id = str(job.id)
+    if preflight_outcome is not None:
+        stamped = dict(preflight_outcome)
+        stamped["job_id"] = job_id
+        stamped["render_generation_id"] = snapshot.get("creator_generation_id")
+        job.assembly_plan = {
+            **(job.assembly_plan or {}),
+            "speech_cleanup_outcome": stamped,
+        }
     session.commit()
 
     # Dispatch onto the throttled plan-jobs queue (concurrency=1 worker) via the
@@ -1161,7 +1583,11 @@ def dispatch_item_render_for(
     creator_guided_attempt_id: str | None = None,
     speech_cleanup_contract: str | None = None,
     speech_cleanup_action: str | None = None,
+    speech_cleanup_analysis_id: str | None = None,
+    speech_cleanup_choice: str | None = None,
     expected_job_id: str | None = None,
+    expected_render_generation_id: str | None = None,
+    expected_speech_cleanup_analysis_id: str | None = None,
     reject_active_creator_session: bool = False,
 ) -> DispatchResult:
     """Load + lock a plan item, re-check for an active render, then dispatch.
@@ -1240,31 +1666,175 @@ def dispatch_item_render_for(
             ).scalar_one_or_none()
             if active_creator_session_id is not None:
                 return DispatchResult("creator_agent_plan_required")
+        recovery_snapshot: dict | None = None
+        recovery_outcome: dict | None = None
+        recovery_outcome_analysis_id: str | None = None
         if speech_cleanup_action is not None and item.current_job_id is None:
             return DispatchResult("speech_cleanup_recovery_conflict")
+        if speech_cleanup_action == "retry_preflight_dispatch":
+            current = session.get(
+                Job,
+                item.current_job_id,
+                with_for_update=True,
+                populate_existing=True,
+            )
+            current_plan = (
+                current.assembly_plan
+                if current is not None and isinstance(current.assembly_plan, dict)
+                else {}
+            )
+            if current is None:
+                return DispatchResult("speech_cleanup_recovery_conflict")
+            recovered = _speech_cleanup_publish_retry_snapshot(
+                session,
+                item,
+                plan,
+                current,
+                current_plan,
+                ownership_epoch=ownership_epoch,
+                expected_job_id=expected_job_id,
+                expected_render_generation_id=expected_render_generation_id,
+                expected_speech_cleanup_analysis_id=expected_speech_cleanup_analysis_id,
+            )
+            if isinstance(recovered, DispatchResult):
+                return recovered
+            (
+                speech_cleanup_contract,
+                recovery_snapshot,
+                recovery_outcome,
+                recovery_outcome_analysis_id,
+            ) = recovered
+            # The exact contract has been reconstructed and fenced. Skip the
+            # application-failure recovery branch below; it intentionally
+            # accepts only required-v1 apply failures.
+            speech_cleanup_action = None
         if item.current_job_id is not None:
             current = session.get(
                 Job, item.current_job_id, with_for_update=True, populate_existing=True
             )
             if speech_cleanup_action is not None:
                 expected = str(expected_job_id or "")
+                current_plan = (
+                    current.assembly_plan
+                    if current is not None and isinstance(current.assembly_plan, dict)
+                    else {}
+                )
+                current_generation = str(current_plan.get("creator_generation_id") or "")
                 failed_cleanup = bool(
                     current is not None
                     and current.id
                     and str(current.id) == expected
+                    and current.user_id == plan.user_id
+                    and current.content_plan_item_id == item.id
+                    and current.content_plan_ownership_epoch == ownership_epoch
                     and current.status
                     in {"processing_failed", "variants_failed", "variants_ready_partial"}
                     and (
                         current.failure_reason == "speech_cleanup_failed"
                         or any(
                             isinstance(v, dict) and v.get("error_class") == "speech_cleanup_failed"
-                            for v in ((current.assembly_plan or {}).get("variants") or [])
+                            for v in (current_plan.get("variants") or [])
                         )
                     )
                 )
+                if expected_render_generation_id is not None and (
+                    not current_generation or current_generation != expected_render_generation_id
+                ):
+                    failed_cleanup = False
                 if not failed_cleanup:
                     return DispatchResult("speech_cleanup_recovery_conflict")
+                private = current_plan.get("_speech_cleanup_internal")
+                raw_snapshot = (
+                    private.get("preflight_snapshot") if isinstance(private, dict) else None
+                )
+                # Recovery is supported only for the immutable preflight Job
+                # contract. Pre-snapshot required_v1 Jobs cannot prove which
+                # accepted analysis should be retried and therefore fail closed.
+                from app.models import SpeechCleanupAnalysis  # noqa: PLC0415
+                from app.pipeline.speech_cleanup_apply import (  # noqa: PLC0415
+                    PREFLIGHT_JOB_CONTRACT_FIELD,
+                    PREFLIGHT_JOB_CONTRACT_VALUE,
+                    SpeechCleanupSnapshotError,
+                    hydrate_job_speech_cleanup_snapshot,
+                    hydrate_speech_cleanup_snapshot,
+                )
+                from app.services.plan_item_media import (  # noqa: PLC0415
+                    current_detector_policy,
+                    resolve_item_narration,
+                )
+                from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+                    analysis_snapshot,
+                )
+
+                variants = current_plan.get("variants")
+                cleanup_failure_reason = current_plan.get("speech_cleanup_failure_reason")
+                if not isinstance(cleanup_failure_reason, str) or not cleanup_failure_reason:
+                    cleanup_failure_reason = next(
+                        (
+                            variant.get("speech_cleanup_failure_reason")
+                            for variant in (variants if isinstance(variants, list) else [])
+                            if isinstance(variant, dict)
+                            and isinstance(variant.get("speech_cleanup_failure_reason"), str)
+                            and variant.get("speech_cleanup_failure_reason")
+                        ),
+                        None,
+                    )
+                try:
+                    hydrated = hydrate_speech_cleanup_snapshot(raw_snapshot)
+                    analysis_uuid = uuid.UUID(hydrated.analysis_id)
+                except (SpeechCleanupSnapshotError, ValueError):
+                    return DispatchResult("speech_cleanup_recovery_conflict")
+                if expected_speech_cleanup_analysis_id is not None and (
+                    hydrated.analysis_id != expected_speech_cleanup_analysis_id
+                ):
+                    return DispatchResult("speech_cleanup_recovery_conflict")
+                resolution = resolve_item_narration(
+                    item,
+                    detector_policy=current_detector_policy(),
+                )
+                source = resolution.source
+                if (
+                    current_plan.get("speech_cleanup_contract") != "required_v1"
+                    or current_plan.get(PREFLIGHT_JOB_CONTRACT_FIELD)
+                    != PREFLIGHT_JOB_CONTRACT_VALUE
+                    or not cleanup_failure_reason
+                    or source is None
+                    or hydrated.source_kind != source.source_kind
+                    or hydrated.media_identity != source.media_id
+                    or hydrated.storage_path != source.storage_path
+                    or hydrated.generation != source.generation
+                    or hydrated.source_policy_fingerprint != source.source_policy_fingerprint
+                ):
+                    return DispatchResult("speech_cleanup_recovery_conflict")
+                analysis = session.get(
+                    SpeechCleanupAnalysis,
+                    analysis_uuid,
+                    with_for_update=True,
+                    populate_existing=True,
+                )
+                if (
+                    analysis is None
+                    or analysis.plan_item_id != item.id
+                    or analysis.superseded_at is not None
+                    or analysis.status != "ready"
+                    or analysis.decision != "clean"
+                ):
+                    return DispatchResult("speech_cleanup_recovery_conflict")
+                try:
+                    durable_snapshot = analysis_snapshot(analysis)
+                except ValueError:
+                    return DispatchResult("speech_cleanup_recovery_conflict")
+                if durable_snapshot != raw_snapshot:
+                    return DispatchResult("speech_cleanup_recovery_conflict")
                 if speech_cleanup_action == "retry_required":
+                    if cleanup_failure_reason != "apply_failed":
+                        # Snapshot/identity failures need a fresh preflight; they
+                        # must never loop the same known-invalid render envelope.
+                        return DispatchResult("speech_cleanup_recovery_conflict")
+                    try:
+                        hydrate_job_speech_cleanup_snapshot(current_plan)
+                    except SpeechCleanupSnapshotError:
+                        return DispatchResult("speech_cleanup_recovery_conflict")
                     if not bool(getattr(item, "speech_cleanup_enabled", False)):
                         return DispatchResult("speech_cleanup_recovery_conflict")
                     capability = capability_for_item(
@@ -1281,10 +1851,22 @@ def dispatch_item_render_for(
                     if not capability.available:
                         return DispatchResult("speech_cleanup_unavailable")
                     speech_cleanup_contract = "required_v1"
+                    # The failed Job is the immutable retry source. The new Job
+                    # receives an exact deep copy while minting a fresh Job-local
+                    # clip binding below; no analysis worker or detector runs.
+                    recovery_snapshot = copy.deepcopy(raw_snapshot)
                 elif speech_cleanup_action == "disable_and_create":
                     item.speech_cleanup_enabled = False
                     item.speech_cleanup_notice = None
                     speech_cleanup_contract = "off_v1"
+                    analysis.decision = "create_without_cleanup"
+                    analysis.decision_at = datetime.now(UTC)
+                    recovery_outcome = {
+                        "status": "bypassed_unchecked",
+                        "removal_count": 0,
+                        "removed_ms": 0,
+                    }
+                    recovery_outcome_analysis_id = hydrated.analysis_id
                 else:
                     return DispatchResult("speech_cleanup_recovery_conflict")
             if current is not None and current.status not in PLAN_ITEM_JOB_TERMINAL:
@@ -1305,6 +1887,11 @@ def dispatch_item_render_for(
             creator_request=creator_request,
             creator_guided_attempt_id=creator_guided_attempt_id,
             speech_cleanup_contract=speech_cleanup_contract,
+            speech_cleanup_analysis_id=speech_cleanup_analysis_id,
+            speech_cleanup_choice=speech_cleanup_choice,
+            speech_cleanup_preflight_snapshot=recovery_snapshot,
+            speech_cleanup_preflight_outcome=recovery_outcome,
+            speech_cleanup_outcome_analysis_id=recovery_outcome_analysis_id,
         )
 
 
@@ -1522,6 +2109,7 @@ def activate_content_plan(
         _set_activation_phase(session, owned[0], "starting_renders")
 
     for item_id, paths in by_item.items():
+        preflight_analysis_id: uuid.UUID | None = None
         with sync_session() as session:
             try:
                 owned = _lock_owned_plan_persona(
@@ -1564,8 +2152,18 @@ def activate_content_plan(
             # prefix check: it would break activation.
             # Route through set_item_clips (D16 single-writer contract).
             from app.services.plan_clips import ClipAssignment, set_item_clips  # noqa: PLC0415
+            from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+                mutation_current_analysis_sync,
+                schedule_item_preflight_sync,
+            )
 
-            set_item_clips(item, [ClipAssignment(gcs_path=p, shot_id=None) for p in paths])
+            current_cleanup = mutation_current_analysis_sync(session, item.id, for_update=True)
+            set_item_clips(
+                item,
+                [ClipAssignment(gcs_path=p, shot_id=None) for p in paths],
+                current_analysis=current_cleanup,
+            )
+            preflight_analysis_id = schedule_item_preflight_sync(session, item)
             session.flush()
             result = _dispatch_item_render(
                 session,
@@ -1579,6 +2177,12 @@ def activate_content_plan(
                 return
             if result.outcome == "dispatched":
                 dispatched += 1
+        if preflight_analysis_id is not None:
+            from app.services.plan_item_media import (  # noqa: PLC0415
+                publish_preflight_after_commit,
+            )
+
+            publish_preflight_after_commit(preflight_analysis_id)
 
     with sync_session() as session:
         try:
@@ -1819,6 +2423,7 @@ def _run_pool_match(plan_id: str, *, ownership_epoch: int | None = None) -> None
         by_item.setdefault(a.item_id, []).append(a.clip_gcs_path)
 
     assigned_paths: dict[str, str] = {}  # gcs_path → item_id actually attached
+    preflight_analysis_ids: list[uuid.UUID] = []
     with sync_session() as session:
         try:
             owned = _lock_owned_plan_persona(
@@ -1833,6 +2438,11 @@ def _run_pool_match(plan_id: str, *, ownership_epoch: int | None = None) -> None
             return
         plan, _persona_row = owned
         locked_by_id = {str(item.id): item for item in _lock_plan_items(session, list(plan.items))}
+        from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+            mutation_current_analysis_sync,
+            schedule_item_preflight_sync,
+        )
+
         for item_id, paths in by_item.items():
             item = locked_by_id.get(item_id)
             if item is None or item.content_plan_id != plan.id:
@@ -1840,10 +2450,19 @@ def _run_pool_match(plan_id: str, *, ownership_epoch: int | None = None) -> None
             if item.current_job_id is not None or (item.clip_gcs_paths or []):
                 continue  # raced: item got footage/render since the load
             # Same trusted-server prefix argument as activation seed paths.
+            current_cleanup = mutation_current_analysis_sync(
+                session,
+                item.id,
+                for_update=True,
+            )
             set_item_clips(
                 item,
                 [ClipAssignment(gcs_path=p, shot_id=None, machine_matched=True) for p in paths],
+                current_analysis=current_cleanup,
             )
+            preflight_id = schedule_item_preflight_sync(session, item)
+            if preflight_id is not None:
+                preflight_analysis_ids.append(preflight_id)
             session.flush()
             for p in paths:
                 assigned_paths[p] = item_id
@@ -1864,6 +2483,11 @@ def _run_pool_match(plan_id: str, *, ownership_epoch: int | None = None) -> None
         plan.pool = pool
         session.add(plan)
         session.commit()
+    if preflight_analysis_ids:
+        from app.services.plan_item_media import publish_preflight_after_commit  # noqa: PLC0415
+
+        for preflight_id in preflight_analysis_ids:
+            publish_preflight_after_commit(preflight_id)
     log.info("pool_match.done", plan_id=plan_id, assigned=len(assigned_paths))
 
 
@@ -2012,7 +2636,23 @@ def reroll_plan_item(
         item.filming_guide = [
             {**s.model_dump(), "shot_id": uuid.uuid4().hex} for s in (fresh.filming_guide or [])
         ]
-        item.edit_format = fresh.edit_format or "montage"
+        from app.services.plan_item_media import (  # noqa: PLC0415
+            current_detector_policy,
+            mutate_plan_item_media,
+            publish_preflight_after_commit,
+        )
+        from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+            mutation_current_analysis_sync,
+            schedule_item_preflight_sync,
+        )
+
+        current_cleanup = mutation_current_analysis_sync(session, item.id, for_update=True)
+        mutate_plan_item_media(
+            item,
+            detector_policy=current_detector_policy(),
+            edit_format=fresh.edit_format or "montage",
+            current_analysis=current_cleanup,
+        )
         item.item_status = "idea"
         item.user_edited = False
 
@@ -2033,16 +2673,30 @@ def reroll_plan_item(
                 user_note=str(a.get("user_note") or ""),
                 machine_matched=bool(a.get("machine_matched")),
                 media_id=str(a.get("media_id")) if a.get("media_id") else None,
+                duration_s=a.get("duration_s"),
+                duration_probe_status=a.get("duration_probe_status"),
+                duration_probe_generation=a.get("duration_probe_generation"),
+                duration_probe_attempted_at=a.get("duration_probe_attempted_at"),
+                storage_generation=a.get("storage_generation"),
+                has_audio=a.get("has_audio"),
+                manifest_identity=a.get("manifest_identity"),
+                speech_coverage=a.get("speech_coverage"),
+                foreground=a.get("foreground"),
+                trim_start_s=a.get("trim_start_s"),
+                trim_end_s=a.get("trim_end_s"),
             )
             for a in existing_assignments
             if isinstance(a, dict) and a.get("gcs_path")
         ]
-        set_item_clips(item, demoted)
+        set_item_clips(item, demoted, current_analysis=current_cleanup)
         # set_item_clips handles footage identity changes; this shared writer
         # reconciliation also covers the reroll's newly selected edit format.
         reconcile_item_policy_change(item, previous_speech_inputs)
 
+        preflight_analysis_id = schedule_item_preflight_sync(session, item)
         session.commit()
+        if preflight_analysis_id is not None:
+            publish_preflight_after_commit(preflight_analysis_id)
 
     log.info(
         "reroll_plan_item.done",
