@@ -512,10 +512,10 @@ export function threadMessages(thread: CreationThread): Array<{
     const payload = event.payload ?? {};
     const kind = String(payload.kind ?? event.event_type);
     const content = event.content?.trim();
-    if (!content && event.role === "user" && event.event_type !== "media_added") return [];
+    if (!content && event.role === "user") return [];
     let artifact: "format" | "upload" | "voiceover" | "confirmation" | "revision" | "progress" | "result" | "failure" | undefined;
     if (["select_format", "select_edit_format", "format_options"].includes(kind)) artifact = "format";
-    else if (["collect_media", "upload_prompt"].includes(kind) || event.event_type === "media_added") artifact = "upload";
+    else if (["collect_media", "upload_prompt"].includes(kind)) artifact = "upload";
     else if (["collect_voiceover", "voiceover_prompt"].includes(kind)) artifact = "voiceover";
     else if (["confirm_generation", "confirmation"].includes(kind)) artifact = "confirmation";
     else if (["confirm_revision", "revision"].includes(kind)) artifact = "revision";

@@ -331,13 +331,16 @@ describe("creation thread projection", () => {
     expect(projected.find((item) => item.id === "revision-strategy")?.artifact).toBe("revision");
   });
 
-  it("keeps media-added events in chronological transcript order", () => {
+  it("keeps media-added audit events out of the rendered transcript", () => {
     const projected = threadMessages(thread({ events: [
       { id: "direction", sequence: 0, revision: 1, role: "user", event_type: "user_message", content: "Keep the harbor opening", payload: null, created_at: "2026-01-01T00:00:00Z" },
-      { id: "media", sequence: 1, revision: 2, role: "user", event_type: "media_added", content: null, payload: { media_count: 1 }, created_at: "2026-01-01T00:00:01Z" },
-      { id: "follow-up", sequence: 2, revision: 3, role: "user", event_type: "user_message", content: "Use a quick pace", payload: null, created_at: "2026-01-01T00:00:02Z" },
+      { id: "upload-prompt", sequence: 1, revision: 2, role: "assistant", event_type: "upload_prompt", content: null, payload: { kind: "upload_prompt" }, created_at: "2026-01-01T00:00:01Z" },
+      { id: "media-one", sequence: 2, revision: 3, role: "user", event_type: "media_added", content: null, payload: { media_count: 1 }, created_at: "2026-01-01T00:00:02Z" },
+      { id: "media-two", sequence: 3, revision: 4, role: "user", event_type: "media_added", content: null, payload: { media_count: 2 }, created_at: "2026-01-01T00:00:03Z" },
+      { id: "media-three", sequence: 4, revision: 5, role: "user", event_type: "media_added", content: null, payload: { media_count: 3 }, created_at: "2026-01-01T00:00:04Z" },
+      { id: "follow-up", sequence: 5, revision: 6, role: "user", event_type: "user_message", content: "Use a quick pace", payload: null, created_at: "2026-01-01T00:00:05Z" },
     ] }));
-    expect(projected.map((item) => item.id)).toEqual(["direction", "media", "follow-up"]);
-    expect(projected[1]?.artifact).toBe("upload");
+    expect(projected.map((item) => item.id)).toEqual(["direction", "upload-prompt", "follow-up"]);
+    expect(projected.filter((item) => item.artifact === "upload")).toHaveLength(1);
   });
 });

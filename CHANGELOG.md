@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.61.0.1] — 2026-09-06
+
+### Fixed
+- **Uploading several clips now leaves one actionable upload card.** Durable media history no longer duplicates the complete attachment list in chat, and existing Kria projects render correctly when reopened.
+
 ## [0.61.0.0] — 2026-09-05
 
 ### Added
