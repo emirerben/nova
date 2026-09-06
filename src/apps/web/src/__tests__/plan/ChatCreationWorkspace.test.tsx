@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 import ChatCreationWorkspace, { renderPhaseLabel } from "@/app/plan/_components/workspace/ChatCreationWorkspace";
+import { POSTER_RECOVERY_DELAYS_MS } from "@/hooks/useLibraryPosterRecovery";
 import {
   applyCreationAction,
   CreationThreadError,
@@ -14,13 +15,14 @@ import {
   renameCreationThread,
   sendCreationMessage,
 } from "@/lib/creation-thread-api";
-import { listMyJobs } from "@/lib/me-api";
+import { listMyJobs, refreshMyJobPosters, type LibraryJob } from "@/lib/me-api";
 import { getPlanItemFresh } from "@/lib/plan-api";
 
 const mockReplace = jest.fn();
+let mockSearchParams = new URLSearchParams();
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ replace: mockReplace }),
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => mockSearchParams,
 }));
 
 jest.mock("next-auth/react", () => ({
@@ -33,7 +35,7 @@ jest.mock("@/lib/creation-thread-api", () => {
 });
 jest.mock("@/lib/me-api", () => {
   const actual = jest.requireActual("@/lib/me-api");
-  return { ...actual, listMyJobs: jest.fn() };
+  return { ...actual, listMyJobs: jest.fn(), refreshMyJobPosters: jest.fn() };
 });
 jest.mock("@/lib/plan-api", () => {
   const actual = jest.requireActual("@/lib/plan-api");
@@ -51,6 +53,16 @@ const baseThread = {
   active_job_id: null, events: [{ id: "event-1", sequence: 0, revision: 0, role: "assistant" as const, event_type: "format_prompt", content: "Pick a format", payload: { kind: "select_format" }, created_at: "2026-01-01T00:00:00Z" }],
   job: null, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
 };
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
 
 describe("ChatCreationWorkspace", () => {
   it.each([
@@ -74,8 +86,10 @@ describe("ChatCreationWorkspace", () => {
     jest.mocked(applyCreationAction).mockReset();
     jest.mocked(getCreationCapabilities).mockReset();
     jest.mocked(listMyJobs).mockReset();
+    jest.mocked(refreshMyJobPosters).mockReset();
     jest.mocked(getPlanItemFresh).mockReset();
     mockReplace.mockReset();
+    mockSearchParams = new URLSearchParams();
     jest.mocked(listCreationThreads).mockResolvedValue([baseThread]);
     jest.mocked(createCreationThread).mockResolvedValue(baseThread);
     jest.mocked(refreshCreationThread).mockResolvedValue(baseThread);
@@ -83,6 +97,7 @@ describe("ChatCreationWorkspace", () => {
     jest.mocked(deleteCreationThread).mockResolvedValue();
     jest.mocked(renameCreationThread).mockImplementation(async (thread, title) => ({ ...thread, title }));
     jest.mocked(listMyJobs).mockResolvedValue({ jobs: [], next_cursor: null });
+    jest.mocked(refreshMyJobPosters).mockResolvedValue({ jobs: [] });
     jest.mocked(getPlanItemFresh).mockRejectedValue(new Error("No linked plan item"));
     jest.mocked(getCreationCapabilities).mockResolvedValue({
       formats: [
@@ -201,6 +216,53 @@ describe("ChatCreationWorkspace", () => {
     expect(deleteCreationThread).not.toHaveBeenCalled();
   });
 
+  it("does not refresh posters while the production preview Gallery is open", async () => {
+    jest.useFakeTimers();
+    const posterlessProductionJob: LibraryJob = {
+      id: "prod-job-posterless",
+      mode: "generative",
+      status: "ready",
+      raw_status: "done",
+      output_url: "https://storage.example/real-video.mp4",
+      poster_url: null,
+      poster_identity: "generative-jobs/prod-job-posterless/video.mp4",
+      poster_status: "repairing",
+      output_variant_id: "original_text",
+      tiktok_publishable: false,
+      tiktok_publication: null,
+      created_at: "2026-08-30T10:00:00Z",
+      content_plan_item_id: null,
+      feedback_signal: null,
+    };
+    jest.mocked(listCreationThreads).mockRejectedValueOnce(new CreationThreadError("Unavailable", 404));
+    jest.mocked(getCreationCapabilities).mockRejectedValueOnce(new CreationThreadError("Unavailable", 404));
+    jest.mocked(listMyJobs).mockResolvedValueOnce({
+      next_cursor: null,
+      jobs: [posterlessProductionJob],
+    });
+
+    mockSearchParams = new URLSearchParams("view=gallery");
+    try {
+      render(<ChatCreationWorkspace productionPreview />);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(screen.getByRole("heading", { name: "Gallery" })).toBeInTheDocument();
+
+      await act(async () => {
+        jest.advanceTimersByTime(POSTER_RECOVERY_DELAYS_MS[0] + 1);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(refreshMyJobPosters).not.toHaveBeenCalled();
+    } finally {
+      mockSearchParams = new URLSearchParams();
+      jest.useRealTimers();
+    }
+  });
+
   it("uses PlanItem clip guidance and keeps supporting visuals separate", async () => {
     const previousVisualFlag = process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED;
     process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED = "true";
@@ -314,6 +376,42 @@ describe("ChatCreationWorkspace", () => {
     await waitFor(() => expect(createCreationThread).toHaveBeenCalledTimes(1));
   });
 
+  it("does not create a second project when New video is clicked during initial loading", async () => {
+    const listed = deferred<typeof baseThread[]>();
+    const capabilities = deferred<Awaited<ReturnType<typeof getCreationCapabilities>>>();
+    jest.mocked(listCreationThreads).mockReturnValueOnce(listed.promise);
+    jest.mocked(getCreationCapabilities).mockReturnValueOnce(capabilities.promise);
+
+    render(<ChatCreationWorkspace />);
+    const newVideo = screen.getByRole("button", { name: "New video" });
+    expect(newVideo).toBeDisabled();
+    fireEvent.click(newVideo);
+    expect(createCreationThread).not.toHaveBeenCalled();
+
+    listed.resolve([baseThread]);
+    capabilities.resolve({ formats: [], media: {} });
+    await screen.findByRole("heading", { name: "Untitled video" });
+    expect(createCreationThread).not.toHaveBeenCalled();
+    expect(mockReplace).not.toHaveBeenCalledWith("/plan/undefined", expect.anything());
+  });
+
+  it("coalesces repeated Retry clicks into one initial load", async () => {
+    jest.mocked(listCreationThreads).mockRejectedValueOnce(new CreationThreadError("down", 503));
+    render(<ChatCreationWorkspace />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn’t open/i);
+
+    const retry = deferred<typeof baseThread[]>();
+    jest.mocked(listCreationThreads).mockReturnValueOnce(retry.promise);
+    const retryButton = screen.getByRole("button", { name: "Retry" });
+    fireEvent.click(retryButton);
+    fireEvent.click(retryButton);
+    expect(listCreationThreads).toHaveBeenCalledTimes(2);
+
+    retry.resolve([baseThread]);
+    await screen.findByRole("heading", { name: "Untitled video" });
+    expect(createCreationThread).not.toHaveBeenCalled();
+  });
+
   it("sends a format action and uses the durable state for the next step", async () => {
     render(<ChatCreationWorkspace />);
     fireEvent.click(await screen.findByRole("button", { name: /Talking to camera A clean/ }));
@@ -324,14 +422,17 @@ describe("ChatCreationWorkspace", () => {
     ));
   });
 
-  it("falls back only when the capability endpoint is a deliberate 404", async () => {
+  it("keeps an unavailable API visible instead of switching experiences", async () => {
     jest.mocked(getCreationCapabilities).mockRejectedValueOnce(new CreationThreadError("off", 404));
-    const fallback = jest.fn();
-    render(<ChatCreationWorkspace onLegacyFallback={fallback} />);
-    await waitFor(() => expect(fallback).toHaveBeenCalledTimes(1));
+    render(<ChatCreationWorkspace />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn’t open/i);
     expect(getCreationCapabilities).toHaveBeenCalledTimes(1);
     expect(listCreationThreads).toHaveBeenCalledTimes(1);
     expect(createCreationThread).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(getCreationCapabilities).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole("button", { name: /Montage Music-led/ })).toBeInTheDocument();
   });
 
   it("keeps a server error visible instead of silently switching experiences", async () => {
@@ -352,11 +453,14 @@ describe("ChatCreationWorkspace", () => {
     };
     jest.mocked(sendCreationMessage).mockResolvedValueOnce(reply);
     render(<ChatCreationWorkspace />);
+    await screen.findByRole("heading", { name: "Untitled video" });
     fireEvent.click(await screen.findByRole("button", { name: "New video" }));
     await screen.findByRole("alert");
     const composer = screen.getByRole("textbox", { name: "Message Kria" });
     fireEvent.change(composer, { target: { value: "Keep this project" } });
-    fireEvent.keyDown(composer, { key: "Enter" });
+    await act(async () => {
+      fireEvent.keyDown(composer, { key: "Enter" });
+    });
     expect(await screen.findByText("Keep this project")).toBeInTheDocument();
   });
 
@@ -435,6 +539,58 @@ describe("ChatCreationWorkspace", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Gallery" }));
     expect(await screen.findByRole("button", { name: "Play preview" })).toBeInTheDocument();
     expect(screen.getByText("Ready to post")).toBeInTheDocument();
+  });
+
+  it("loads older Gallery pages from next_cursor and deduplicates jobs", async () => {
+    const job = (id: string): LibraryJob => ({
+      id, mode: "generative", status: "ready", raw_status: "ready",
+      output_url: `/${id}.mp4`, poster_url: null, output_variant_id: "original_text",
+      tiktok_publishable: false, tiktok_publication: null, created_at: "2026-01-01T00:00:00Z",
+      content_plan_item_id: null, feedback_signal: null,
+    });
+    jest.mocked(listMyJobs)
+      .mockResolvedValueOnce({ jobs: [job("job-1")], next_cursor: "cursor-1" })
+      .mockResolvedValueOnce({ jobs: [job("job-1"), job("job-2")], next_cursor: null });
+
+    render(<ChatCreationWorkspace />);
+    fireEvent.click(await screen.findByRole("button", { name: "Gallery" }));
+    expect(await screen.findAllByRole("button", { name: "Play preview" })).toHaveLength(1);
+    const loadMore = await screen.findByRole("button", { name: "Load more videos" });
+    expect(loadMore).toHaveClass("min-h-11");
+    fireEvent.click(loadMore);
+    await waitFor(() => expect(listMyJobs).toHaveBeenLastCalledWith({ cursor: "cursor-1" }));
+    expect(await screen.findAllByRole("button", { name: "Play preview" })).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "Load more videos" })).not.toBeInTheDocument();
+  });
+
+  it("shows a non-destructive Gallery error with retry", async () => {
+    jest.mocked(listMyJobs).mockRejectedValueOnce(new Error("network down"));
+    render(<ChatCreationWorkspace />);
+    fireEvent.click(await screen.findByRole("button", { name: "Gallery" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/saved videos are still safe/i);
+    expect(screen.getByRole("button", { name: "Retry" })).toHaveClass("min-h-11");
+  });
+
+  it("retries the failed Gallery page without dropping videos already loaded", async () => {
+    const job = (id: string): LibraryJob => ({
+      id, mode: "generative", status: "ready", raw_status: "ready",
+      output_url: `/${id}.mp4`, poster_url: null, output_variant_id: "original_text",
+      tiktok_publishable: false, tiktok_publication: null, created_at: "2026-01-01T00:00:00Z",
+      content_plan_item_id: null, feedback_signal: null,
+    });
+    jest.mocked(listMyJobs)
+      .mockResolvedValueOnce({ jobs: [job("job-1")], next_cursor: "cursor-1" })
+      .mockRejectedValueOnce(new Error("temporary failure"))
+      .mockResolvedValueOnce({ jobs: [job("job-2")], next_cursor: null });
+
+    render(<ChatCreationWorkspace />);
+    fireEvent.click(await screen.findByRole("button", { name: "Gallery" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Load more videos" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/load more videos/i);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(listMyJobs).toHaveBeenLastCalledWith({ cursor: "cursor-1" }));
+    expect(await screen.findAllByRole("button", { name: "Play preview" })).toHaveLength(2);
   });
 
   it("shows a partial ready cut and offers retry without hiding playable actions", async () => {
@@ -1244,6 +1400,7 @@ describe("ChatCreationWorkspace", () => {
     render(<ChatCreationWorkspace />);
     const changeFormat = await screen.findByRole("button", { name: "Change format" });
     await waitFor(() => expect(changeFormat).toBeEnabled());
+    expect(changeFormat).toHaveClass("min-h-11");
     fireEvent.click(changeFormat);
     expect(await screen.findByRole("button", { name: /Montage Music-led/ })).toBeInTheDocument();
   });
@@ -1309,7 +1466,9 @@ describe("ChatCreationWorkspace", () => {
       state: { ...withMedia.state, media: [], media_count: 0 },
     });
     render(<ChatCreationWorkspace />);
-    fireEvent.click(await screen.findByRole("button", { name: "Remove attached arrival.mp4" }));
+    const remove = await screen.findByRole("button", { name: "Remove attached arrival.mp4" });
+    expect(remove).toHaveClass("size-11");
+    fireEvent.click(remove);
     await waitFor(() => expect(applyCreationAction).toHaveBeenCalledWith(
       withMedia,
       "remove_media",
@@ -1320,9 +1479,20 @@ describe("ChatCreationWorkspace", () => {
   it("keeps Gallery navigation and the URL projection in sync", async () => {
     render(<ChatCreationWorkspace />);
     fireEvent.click(await screen.findByRole("button", { name: "Gallery" }));
-    expect(mockReplace).toHaveBeenCalledWith("/plan?view=gallery", { scroll: false });
+    expect(mockReplace).toHaveBeenCalledWith("/plan/thread-1?view=gallery", { scroll: false });
     fireEvent.click(await screen.findByRole("button", { name: "Back to chat" }));
     expect(mockReplace).toHaveBeenLastCalledWith("/plan/thread-1", { scroll: false });
+  });
+
+  it("preserves an initial Gallery deep link when hydrating the project URL", async () => {
+    mockSearchParams = new URLSearchParams("view=gallery");
+    render(<ChatCreationWorkspace />);
+
+    expect(await screen.findByRole("heading", { name: "Gallery" })).toBeInTheDocument();
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith(
+      "/plan/thread-1?view=gallery",
+      { scroll: false },
+    ));
   });
 
   it("hydrates the exact project from a canonical project URL", async () => {

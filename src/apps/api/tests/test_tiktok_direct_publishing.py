@@ -718,6 +718,8 @@ def test_callback_redirect_rejects_external_invalid_or_credentialed_targets() ->
     [
         ("/plan/items/item-1?tiktok=return", "/plan/items/item-1?tiktok=return"),
         ("/library", "/library"),
+        ("/plan/tiktok", "/plan/tiktok"),
+        ("/plan/tiktok?tiktok=connected", "/plan/tiktok?tiktok=connected"),
         ("//attacker.example/plan/items/item-1", None),
         ("https://attacker.example/plan/items/item-1", None),
         ("/plan/items/../admin", None),

@@ -1,6 +1,6 @@
 # Kria Chat-First Creation
 
-Status: approved for implementation
+Status: implemented; rollout gates and legacy fallback retired
 
 ## Outcome
 
@@ -9,8 +9,9 @@ conversation with Kria that accepts footage, proposes creative direction, asks
 for explicit confirmation, renders through Nova's existing pipeline, and keeps
 the existing editor available beside the conversation.
 
-The former plan home remains only as a kill-switch fallback. Legacy entry URLs
-redirect to the equivalent `/plan` chat or gallery state.
+The former plan home and onboarding funnel are removed. Legacy entry URLs
+redirect to the equivalent `/plan` chat or gallery state, and rollback is a
+deployment revert rather than a second product experience.
 
 ## Architecture
 
@@ -80,13 +81,12 @@ prepare action. In-flight output is never silently mutated.
   the existing PlanItem Visuals pool.
 - Server capabilities expose exactly Montage (`montage`, Classic default),
   Narrated (`narrated_planned`), and Talking to camera (`subtitled`).
-- `CREATION_THREADS_ENABLED` defaults on. A disabled route returns 404.
+- Creation-thread routes are authenticated and available to every account.
 
 ## Frontend Contract
 
-- `/plan` attempts chat-first capability before loading legacy persona/plan
-  state. Only an API 404 selects the legacy fallback. Network and 5xx failures
-  stay visible and recoverable.
+- `/plan` renders chat-first creation for every authenticated account. API
+  failures stay visible and recoverable inside the same workspace.
 - Desktop owns `h-dvh`: 260px project rail, full pre-render conversation, then
   a 420px chat rail with remaining width for the embedded editor. Only transcript
   and editor panes scroll.
@@ -100,7 +100,7 @@ prepare action. In-flight output is never silently mutated.
   mode forces the full overlay editor; direct editor breakpoints do not change.
 - `/plan/new`, `/create`, `/create/manual`, `/library`, and `/generative` redirect
   to `/plan` chat/gallery state. Persisted backend contracts remain supported.
-- `NEXT_PUBLIC_CHAT_FIRST_CREATION_ENABLED` defaults on.
+- There is no frontend rollout gate or alternate signed-in `/plan` experience.
 
 ## Failure Handling
 
@@ -134,11 +134,11 @@ full Jest/Playwright, and `bash scripts/preship-check.sh`.
 
 ## Deployment and Rollback
 
-Deploy database/API first, then web. Defaults are on in source. Before launch,
-verify no production override keeps either flag off. Roll back web with the
-frontend flag; roll back API with the backend flag after the web fallback is
-live. Existing PlanItems, Jobs, editor links, and completed Gallery entries stay
-valid in either mode.
+Deploy database/API first, then web. Chat-first creation is unconditional for
+authenticated users; there are no rollout flags or cohort overrides. Rollback is
+a normal deploy revert of the API and web releases, not a switch to the retired
+plan UI. Existing PlanItems, Jobs, editor links, and completed Gallery entries
+remain valid because their data and render contracts are unchanged.
 
 ## What Already Exists
 
@@ -147,7 +147,8 @@ valid in either mode.
 - Direct owned uploads, PlanItem media, generative Jobs, variant re-signing,
   render dispatch, Gallery data, voice recording, and EditorShell remain the
   production implementations.
-- Existing plan home is retained only as the rollback renderer.
+- Legacy entry URLs remain redirect-compatible; the former plan home and
+  onboarding renderer are removed.
 
 ## NOT in Scope
 
@@ -176,11 +177,11 @@ is sequential.
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | not run | Approved user plan is the product decision |
-| Codex Review | `/codex review` | Independent second opinion | 0 | pending diff | Runs before ship |
-| Eng Review | `/plan-eng-review` | Architecture & tests | 1 | clear | Existing contracts reused; ownership, deploy skew, pending intent, and rollback specified |
+| Codex Review | `/codex review` | Independent second opinion | 1 | fixes applied | Permanent access boundaries, Gallery poster recovery, and loading-state truthfulness covered |
+| Eng Review | `/plan-eng-review` | Architecture & tests | 1 | clear | Existing contracts reused; ownership, deploy skew, pending intent, and deploy-revert rollback specified |
 | Design Review | `/plan-design-review` | UI/UX gaps | 1 | clear | Paper desktop, mobile, and recovery states are acceptance criteria |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | not run | Local setup and complete gates specified |
 
-**VERDICT:** ENG + DESIGN CLEARED — ready to implement
+**VERDICT:** IMPLEMENTED — pre-landing review fixes applied; final ship gates pending
 
 NO UNRESOLVED DECISIONS

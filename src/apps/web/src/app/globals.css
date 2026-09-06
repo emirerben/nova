@@ -476,7 +476,7 @@
   .t-modal { transition: none !important; }
 }
 
-/* #8 t-page — derived step slide used in OnboardingShell's <StepSlide>.
+/* #8 t-page — derived step slide used in the transcript helper's <StepSlide>.
    The full t-page-slide/t-page pair requires all pages simultaneously mounted
    (position:absolute) which is unsuitable for wizard steps with async side
    effects. Instead, we derive a single-element entrance using the same tokens:

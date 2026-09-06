@@ -438,7 +438,7 @@ function ReleasePreparationPane({
                       Reconnect TikTok here
                     </Button>
                   ) : (
-                    <Link href="/plan#tiktok" className="mt-2 inline-flex min-h-11 items-center font-medium text-lime-700 underline underline-offset-4">
+                    <Link href="/plan/tiktok" className="mt-2 inline-flex min-h-11 items-center font-medium text-lime-700 underline underline-offset-4">
                       Reconnect TikTok
                     </Link>
                   )}
@@ -458,7 +458,7 @@ function ReleasePreparationPane({
                   Connect TikTok here
                 </Button>
               ) : (
-                <Link href="/plan#tiktok" className="mt-2 inline-flex min-h-11 items-center font-medium text-lime-700 underline underline-offset-4">
+                <Link href="/plan/tiktok" className="mt-2 inline-flex min-h-11 items-center font-medium text-lime-700 underline underline-offset-4">
                   Connect TikTok
                 </Link>
               )}

@@ -730,7 +730,7 @@ export default function PlanItemPage() {
       // `isGenerativeJobSettled` owns the three-way rule (not-terminal /
       // failed-terminal wins / success-terminal yields to a genuinely live
       // variant, bounded so a dead render can't spin forever). Shared with the
-      // public generative page and the onboarding EditPayoff panel — this used to
+      // historical creation surfaces — this used to
       // be hand-rolled per surface and drifted.
       //
       // The old all-terminal check made a live re-render look terminal; it only
@@ -1234,9 +1234,10 @@ export default function PlanItemPage() {
   const resolvedFormat = resolvePickerFormat(item?.edit_format, SUBTITLED_ENABLED);
   const montagePreset = item?.montage_preset ?? "classic";
   const isMontage = resolvedFormat === "montage";
-  // Lane J: "Back" returns one step into /plan/new — montage's immediate
-  // previous step is the style choice, everything else is the kind choice.
-  const backToFlowHref = `/plan/new?item=${itemId}&step=${isMontage ? "style" : "kind"}`;
+  // New-video setup is now owned by the canonical chat workspace. Persisted
+  // PlanItems remain reachable from Gallery, but must not link into the retired
+  // /plan/new chooser (which would drop this item's context on redirect).
+  const backToFlowHref = "/plan?view=gallery";
   const isCollagePreset =
     isMontage && COLLAGE_MONTAGE_PRESETS.has(montagePreset);
   const isNarrated = resolvedFormat === "narrated_planned";
@@ -2422,12 +2423,9 @@ export default function PlanItemPage() {
           <div>
             {!showReleaseDesk && (
               <>
-                {/* Lane J: "Back" returns one step into the creation flow
-                    (/plan/new) instead of home to /plan — montage items land
-                    on the style step since that's the immediate previous
-                    choice, everything else lands on the kind step. The old
-                    "your videos" destination stays reachable via the header
-                    logo/avatar menu. */}
+                {/* Return to the canonical Gallery; the former /plan/new
+                    chooser is retired and cannot preserve this item's setup
+                    context. */}
                 <Button
                   type="button"
                   variant="link"
@@ -2440,9 +2438,8 @@ export default function PlanItemPage() {
                     Back
                   </Link>
                 </Button>
-                {/* Setup receipt: type (+ montage style). Editing now happens by
-                    going Back into the /plan/new chooser (Lane J) — the inline
-                    "Change" toggle + poster picker are gone. */}
+                {/* Setup receipt: type (+ montage style). Editing happens from
+                    the canonical chat/editor surfaces. */}
                 <div className="mt-5 flex items-baseline justify-between gap-3">
                   <Badge variant="lime">{setupReceiptLabel}</Badge>
                 </div>

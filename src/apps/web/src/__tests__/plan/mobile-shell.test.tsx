@@ -1,15 +1,13 @@
 /**
  * Mobile baseline guard (plans/013, DESIGN.md §8).
  *
- * The split-rail setup shells shipped a fixed 224px (`w-56`) rail with no
+ * The transcript setup shell once shipped a fixed 224px (`w-56`) rail with no
  * breakpoint. On a 390px viewport that left 70px for content, and because flex
- * items default to `min-width: auto` the pane could not shrink into it — the
- * row overflowed the viewport instead of reflowing. The same defect existed
- * twice (onboarding + the record takeover) because the rail was copy-pasted.
+ * items default to `min-width: auto` the pane overflowed the viewport.
  *
  * These assertions pin the properties that keep it fixed:
  *   1. StepRail emits a phone strip AND a `md:`-gated desktop rail.
- *   2. Neither shell's <main> can overflow (`min-w-0`) and both stack below md.
+ *   2. The transcript shell's <main> can shrink and stacks below md.
  *   3. The editor's loading skeleton keeps its docked columns breakpoint-gated.
  *   4. The record wrapper uses dvh, not vh.
  *   5. No form control renders below the 16px iOS zoom-on-focus floor.
@@ -33,7 +31,6 @@ import {
 import { resolveLayoutMode } from "@/app/plan/items/[id]/_editor/useEditorLayoutMode";
 
 const WEB_SRC = path.join(__dirname, "..", "..");
-const ONBOARDING = "app/plan/_components/OnboardingShell.tsx";
 const TRANSCRIPT = "app/plan/items/[id]/transcript/page.tsx";
 const EDITOR_SHELL = "app/plan/items/[id]/_editor/EditorShell.tsx";
 
@@ -125,7 +122,6 @@ describe("StepRail — responsive presentations", () => {
 
 describe("split-rail shells cannot overflow a phone viewport", () => {
   const SHELLS: Array<{ rel: string; label: string }> = [
-    { rel: ONBOARDING, label: "onboarding" },
     { rel: TRANSCRIPT, label: "record takeover" },
   ];
 
@@ -149,15 +145,10 @@ describe("split-rail shells cannot overflow a phone viewport", () => {
     expect(src).not.toMatch(/<aside className="flex w-56/);
   });
 
-  it("no longer duplicates the rail — both shells use the shared component", () => {
+  it("uses the shared rail component", () => {
     for (const { rel } of SHELLS) {
       expect(readSrc(rel)).toMatch(/from "[^"]*ui\/StepRail"/);
     }
-  });
-
-  it("keeps the onboarding footage cards single-column on phones", () => {
-    // Two columns at 390px wrapped "Talking to camera" onto three lines.
-    expect(readSrc(ONBOARDING)).toMatch(/grid-cols-1[^"]*sm:grid-cols-2/);
   });
 
   it("uses dvh for the record wrapper so the record button stays on screen", () => {

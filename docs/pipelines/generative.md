@@ -212,8 +212,8 @@ CLAUDE.md — its size budget was full).
   `processing`/`rendering` job's beacon is older than
   `RENDER_HEARTBEAT_STALE_AFTER_S` but still inside the redelivery window
   (visibility_timeout + stale + 300s slack — past it no retry can come and
-  the claim stops). NULL beacon never flags. ProgressTheater and EditPayoff
-  swap in recovery copy and hide the ETA while retrying. Variant re-render /
+  the claim stops). NULL beacon never flags. ProgressTheater consumers swap in
+  recovery copy and hide the ETA while retrying. Variant re-render /
   reburn tasks do NOT heartbeat (accepted gap, TODOS.md). Guards:
   `tests/routes/test_generative_retrying.py`,
   `src/apps/web/src/__tests__/progress/retrying.test.tsx`.
@@ -256,8 +256,8 @@ orchestrator run, so a Celery redelivery can't restart a clock mid-render.
 `variants_ready`, so "terminal status wins" is the wrong poll predicate:
 
 - `isGenerativeJobSettled(status, variants)` (`src/apps/web/src/lib/generative-api.ts`)
-  is the single definition of settled for the item page, public `/generative`,
-  and the onboarding EditPayoff panel. `GENERATIVE_TERMINAL_STATUSES` is now
+  is the single definition of settled for the item page and retained API
+  consumers. `GENERATIVE_TERMINAL_STATUSES` is now
   composed from `GENERATIVE_SUCCESS_STATUSES` + `GENERATIVE_FAILED_STATUSES` so
   the two halves partition it and a new failure status can't go missing.
   Non-terminal ⇒ not settled; a FAILED terminal ⇒ settled whatever the variants

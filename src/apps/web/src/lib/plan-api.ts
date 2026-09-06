@@ -3467,7 +3467,7 @@ export interface PersonaContent {
 export interface PersonaQuestionnaire {
   // edits-first funnel: chosen path ("existing_footage" | "create_new" | "mixed")
   content_mode?: "existing_footage" | "create_new" | "mixed";
-  // optional context the user typed in EditContextStep
+  // optional context retained on historical onboarding payloads
   onboarding_topic?: string;
   onboarding_intent?: string;
   // generative job kicked off from the onboarding upload step

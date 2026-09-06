@@ -14,7 +14,6 @@ from starlette.requests import Request
 from app.agents._schemas.persona import Persona as PersonaSchema
 from app.auth import get_current_user
 from app.config import settings
-from app.database import get_db
 from app.main import app
 from app.models import ContentPlan, CreatorAgentSession, Job, PlanItem
 from app.models import Persona as PersonaRow
@@ -30,7 +29,6 @@ from app.routes.creation_threads import (
     _available_formats,
     _client_id,
     _creator_agent_projection,
-    _enabled,
     _exclude_referenced_project_storage,
     _format_clip_limit,
     _is_status_only_message,
@@ -53,6 +51,34 @@ from app.routes.creation_threads import (
     rename_thread,
     upload_urls,
 )
+
+
+def test_creation_thread_router_rejects_unauthenticated_http_requests() -> None:
+    client = TestClient(app, raise_server_exceptions=False)
+
+    capabilities_response = client.get("/creation-threads/capabilities")
+    create_response = client.post("/creation-threads", json={})
+
+    assert capabilities_response.status_code == 401
+    assert create_response.status_code == 401
+
+
+def test_creation_thread_capabilities_are_available_to_any_authenticated_account() -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), email="any-account@example.com")
+
+    async def current_user_override() -> object:
+        return user
+
+    app.dependency_overrides[get_current_user] = current_user_override
+    try:
+        response = TestClient(app, raise_server_exceptions=False).get(
+            "/creation-threads/capabilities"
+        )
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+    assert response.status_code == 200
+    assert response.json()["formats"][0]["id"] == "montage"
 
 
 @pytest.mark.asyncio
@@ -193,99 +219,13 @@ def test_attach_batch_rejects_duplicate_media_and_multiple_voiceovers() -> None:
         )
 
 
-def test_chat_first_backend_and_creator_defaults_are_on() -> None:
-    assert settings.creation_threads_enabled is True
-
-
-def test_chat_first_account_allowlist_matches_exact_email_or_user_id(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    user = SimpleNamespace(id=uuid.uuid4(), email="Creator@Example.com")
-    monkeypatch.setattr(settings, "creation_threads_enabled", True)
-
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "creator@example.com")
-    _enabled(user)
-
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", str(user.id))
-    _enabled(user)
-
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "other@example.com")
-    with pytest.raises(HTTPException) as exc:
-        _enabled(user)
-    assert exc.value.status_code == 404
-
-
-def test_chat_first_account_allowlist_never_uses_partial_matches(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    user = SimpleNamespace(id=uuid.uuid4(), email="creator@example.com")
-    monkeypatch.setattr(settings, "creation_threads_enabled", True)
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "creator@example.com.evil")
-
-    with pytest.raises(HTTPException) as exc:
-        _enabled(user)
-    assert exc.value.status_code == 404
-
-
-@pytest.mark.parametrize("cohort", ["", "  ", "*"])
-def test_chat_first_empty_or_wildcard_allowlist_preserves_global_rollout(
-    monkeypatch: pytest.MonkeyPatch, cohort: str
-) -> None:
-    user = SimpleNamespace(id=uuid.uuid4(), email="creator@example.com")
-    monkeypatch.setattr(settings, "creation_threads_enabled", True)
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", cohort)
-    _enabled(user)
-
-
-def test_chat_first_global_kill_switch_wins_over_account_allowlist(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    user = SimpleNamespace(id=uuid.uuid4(), email="creator@example.com")
-    monkeypatch.setattr(settings, "creation_threads_enabled", False)
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "*")
-
-    with pytest.raises(HTTPException) as exc:
-        _enabled(user)
-    assert exc.value.status_code == 404
-
-
 @pytest.mark.asyncio
-async def test_capabilities_returns_fallback_404_outside_account_cohort(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("email", ["creator@example.com", "new-account@example.com"])
+async def test_capabilities_are_available_to_every_authenticated_account(
+    email: str,
 ) -> None:
-    user = SimpleNamespace(id=uuid.uuid4(), email="not-launched@example.com")
-    monkeypatch.setattr(settings, "creation_threads_enabled", True)
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "launched@example.com")
-
-    with pytest.raises(HTTPException) as exc:
-        await capabilities(user)
-    assert exc.value.status_code == 404
-    assert exc.value.detail == "Creation chat unavailable"
-
-
-def test_account_rollout_gate_runs_before_creation_route_side_effects(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    user = SimpleNamespace(id=uuid.uuid4(), email="not-launched@example.com")
-
-    async def current_user_override() -> object:
-        return user
-
-    async def forbidden_db_override():
-        raise AssertionError("a denied account must not open a route database dependency")
-        yield  # pragma: no cover
-
-    monkeypatch.setattr(settings, "creation_threads_enabled", True)
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "launched@example.com")
-    app.dependency_overrides[get_current_user] = current_user_override
-    app.dependency_overrides[get_db] = forbidden_db_override
-    try:
-        client = TestClient(app, raise_server_exceptions=False)
-        assert client.get("/creation-threads/capabilities").status_code == 404
-        assert client.post("/creation-threads", json={}).status_code == 404
-    finally:
-        app.dependency_overrides.pop(get_current_user, None)
-        app.dependency_overrides.pop(get_db, None)
+    manifest = await capabilities(SimpleNamespace(id=uuid.uuid4(), email=email))
+    assert [item["id"] for item in manifest["formats"]]
 
 
 def test_creator_agent_projection_omits_executable_commands() -> None:
@@ -581,6 +521,7 @@ async def test_message_after_terminal_creator_failure_starts_fresh_session(
     assert result is thread
     assert thread.active_creator_agent_session_id == new_session_id
     start.assert_awaited_once()
+    assert start.await_args.kwargs["allow_chat"] is True
     turn.assert_not_awaited()
     sync_agent.assert_awaited_once_with(db, thread)
 
@@ -632,6 +573,7 @@ async def test_message_after_render_budget_exhaustion_replenishes_current_sessio
     assert exhausted_session.max_render_attempts == 4
     start.assert_not_awaited()
     turn.assert_awaited_once()
+    assert turn.await_args.kwargs["allow_chat"] is True
     sync_agent.assert_awaited_once_with(db, thread)
 
 
@@ -2370,6 +2312,7 @@ async def test_retry_repairs_missing_job_projection_before_reopening_render(
     assert output is thread
     assert thread.active_job_id == job_id
     confirm.assert_awaited_once()
+    assert confirm.await_args.kwargs["allow_chat"] is True
     assert db.commit.await_count == 2
 
 

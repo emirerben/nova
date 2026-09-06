@@ -2008,20 +2008,20 @@ describe("PlanItemPage — per-type setup truth table (V2 redesign)", () => {
     expect(screen.queryByText("Finishing upload…")).toBeNull();
   });
 
-  it("Lane J: Back returns to the chooser's style step for a montage item", async () => {
+  it("Back returns to the canonical Gallery for a montage item", async () => {
     await act(async () => {
       renderTyped({ edit_format: "montage", idea: "Montage", montage_preset: "masonry" });
     });
     const back = screen.getByRole("link", { name: /Back/ });
-    expect(back).toHaveAttribute("href", "/plan/new?item=test-item-id&step=style");
+    expect(back).toHaveAttribute("href", "/plan?view=gallery");
   });
 
-  it("Lane J: Back returns to the chooser's kind step for a non-montage item", async () => {
+  it("Back returns to the canonical Gallery for a non-montage item", async () => {
     await act(async () => {
       renderTyped({ edit_format: "narrated_ready", idea: "Voiceover" });
     });
     const back = screen.getByRole("link", { name: /Back/ });
-    expect(back).toHaveAttribute("href", "/plan/new?item=test-item-id&step=kind");
+    expect(back).toHaveAttribute("href", "/plan?view=gallery");
   });
 
   it("titled legacy items keep their real title (no type-label takeover)", async () => {

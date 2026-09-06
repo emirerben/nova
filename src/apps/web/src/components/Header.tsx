@@ -3,16 +3,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signIn, signOut, useSession } from "next-auth/react";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useState } from "react";
 
 import { BRAND_NAME } from "@/lib/brand";
 import KriaMark from "@/components/KriaMark";
-import {
-  CHAT_FIRST_CREATION_ENABLED,
-  getChatFirstFallback,
-  setChatFirstFallback,
-  subscribeChatFirstFallback,
-} from "@/lib/chat-first";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -27,7 +21,7 @@ import {
 export function isChatFirstPlanPath(pathname: string): boolean {
   if (pathname === "/plan") return true;
   if (!pathname.startsWith("/plan/")) return false;
-  return !["items", "new", "persona", "style"].some((segment) =>
+  return !["items", "new", "persona", "style", "tiktok"].some((segment) =>
     pathname === `/plan/${segment}` || pathname.startsWith(`/plan/${segment}/`),
   );
 }
@@ -36,33 +30,11 @@ export default function Header() {
   const pathname = usePathname() ?? "";
   const { status } = useSession();
   const isAdmin = pathname.startsWith("/admin");
-  const chatFallback = useSyncExternalStore(
-    subscribeChatFirstFallback,
-    getChatFirstFallback,
-    () => false,
-  );
   const isChatFirstWorkspace =
     pathname === "/dev-qa/chat-first-creation" ||
-    (isChatFirstPlanPath(pathname) && CHAT_FIRST_CREATION_ENABLED &&
-      !chatFallback &&
-      status !== "unauthenticated");
+    (isChatFirstPlanPath(pathname) && status !== "unauthenticated");
   const isLanding = pathname === "/" || pathname === "/auto-story";
   const [progress, setProgress] = useState(0);
-
-  useEffect(() => {
-    const handleFallback = () => setChatFirstFallback(true);
-    const handleReady = () => setChatFirstFallback(false);
-    window.addEventListener("nova:chat-first-fallback", handleFallback);
-    window.addEventListener("nova:chat-first-ready", handleReady);
-    return () => {
-      window.removeEventListener("nova:chat-first-fallback", handleFallback);
-      window.removeEventListener("nova:chat-first-ready", handleReady);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!isChatFirstPlanPath(pathname)) setChatFirstFallback(false);
-  }, [pathname]);
 
   useEffect(() => {
     if (isAdmin) return;

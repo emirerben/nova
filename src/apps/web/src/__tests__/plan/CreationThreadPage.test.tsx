@@ -3,10 +3,12 @@ import { render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
 const mockUseParams = jest.fn();
+const mockUseSearchParams = jest.fn();
 const mockUseSession = jest.fn();
 
 jest.mock("next/navigation", () => ({
   useParams: () => mockUseParams(),
+  useSearchParams: () => mockUseSearchParams(),
 }));
 
 jest.mock("next-auth/react", () => ({
@@ -32,6 +34,7 @@ import CreationThreadPage from "@/app/plan/[threadId]/page";
 describe("canonical creation thread route", () => {
   beforeEach(() => {
     mockUseParams.mockReturnValue({ threadId: "thread-42" });
+    mockUseSearchParams.mockReturnValue(new URLSearchParams());
     mockUseSession.mockReturnValue({ status: "authenticated" });
   });
 
@@ -46,6 +49,16 @@ describe("canonical creation thread route", () => {
     expect(screen.getByRole("link", { name: "Sign in to continue" })).toHaveAttribute(
       "href",
       "/plan/thread-42",
+    );
+  });
+
+  it("preserves the Gallery query in the sign-in callback", () => {
+    mockUseSession.mockReturnValue({ status: "unauthenticated" });
+    mockUseSearchParams.mockReturnValue(new URLSearchParams("view=gallery"));
+    render(<CreationThreadPage />);
+    expect(screen.getByRole("link", { name: "Sign in to continue" })).toHaveAttribute(
+      "href",
+      "/plan/thread-42?view=gallery",
     );
   });
 

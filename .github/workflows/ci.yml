@@ -101,7 +101,7 @@ jobs:
             src/__tests__/plan/items/inspector-panel-text-horizontal.test.tsx \
             src/__tests__/plan/ChatCreationWorkspace.test.tsx \
             src/__tests__/components/header.test.tsx \
-            src/__tests__/tiktok/TikTokConnectionCard.test.tsx \
+            src/__tests__/plan/TikTokConnectionPanel.test.tsx \
             src/__tests__/ui/select.test.tsx \
             src/__tests__/ui/dropdown-menu.test.tsx \
             src/__tests__/ui/tooltip.test.tsx \
@@ -117,7 +117,7 @@ jobs:
         # suite was red on main for multiple releases before anyone noticed.
         run: >-
           pnpm test --
-          --testPathIgnorePatterns='src/__tests__/(plan/edit-proposal-card|library/LibraryTile|plan/unified-timeline|plan/items/ToolDrawer-visuals|plan/items/inspector-panel-text-horizontal|plan/ChatCreationWorkspace|components/header|tiktok/TikTokConnectionCard|ui/(select|dropdown-menu|tooltip|popover))\.test\.tsx$'
+          --testPathIgnorePatterns='src/__tests__/(plan/edit-proposal-card|library/LibraryTile|plan/unified-timeline|plan/items/ToolDrawer-visuals|plan/items/inspector-panel-text-horizontal|plan/ChatCreationWorkspace|plan/TikTokConnectionPanel|components/header|ui/(select|dropdown-menu|tooltip|popover))\.test\.tsx$'
 
   test-api:
     runs-on: ubuntu-latest

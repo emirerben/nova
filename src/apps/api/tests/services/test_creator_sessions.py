@@ -747,6 +747,57 @@ async def test_context_caps_combined_clips_and_assets_at_manifest_limit() -> Non
 
 
 @pytest.mark.asyncio
+async def test_context_respects_direct_guided_proposal_gate(monkeypatch) -> None:
+    monkeypatch.setattr(creator_sessions.settings, "guided_edit_capability_enabled", False)
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        edit_format="montage",
+        audio_mode="kria",
+        voiceover_gcs_path=None,
+        current_job_id=None,
+        clip_gcs_paths=["users/u/clip.mp4"],
+        clip_assignments=[],
+    )
+    persona = SimpleNamespace(user_id=uuid.uuid4())
+    empty_result = MagicMock()
+    empty_result.scalars.return_value = []
+    db = AsyncMock()
+    db.execute.side_effect = [empty_result, empty_result, empty_result]
+
+    manifest, _ = await creator_sessions.resolve_item_creator_context(db, item, persona=persona)
+
+    assert manifest.capabilities["draft_guided_proposal"].available is False
+
+
+@pytest.mark.asyncio
+async def test_context_can_advertise_chat_internal_guided_proposals(monkeypatch) -> None:
+    monkeypatch.setattr(creator_sessions.settings, "guided_edit_capability_enabled", False)
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        edit_format="montage",
+        audio_mode="kria",
+        voiceover_gcs_path=None,
+        current_job_id=None,
+        clip_gcs_paths=["users/u/clip.mp4"],
+        clip_assignments=[],
+    )
+    persona = SimpleNamespace(user_id=uuid.uuid4())
+    empty_result = MagicMock()
+    empty_result.scalars.return_value = []
+    db = AsyncMock()
+    db.execute.side_effect = [empty_result, empty_result, empty_result]
+
+    manifest, _ = await creator_sessions.resolve_item_creator_context(
+        db,
+        item,
+        persona=persona,
+        guided_capability_enabled=True,
+    )
+
+    assert manifest.capabilities["draft_guided_proposal"].available is True
+
+
+@pytest.mark.asyncio
 async def test_context_preserves_analyzed_clip_assignment_duration() -> None:
     item = SimpleNamespace(
         id=uuid.uuid4(),

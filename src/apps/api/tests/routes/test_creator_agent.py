@@ -44,6 +44,7 @@ from app.routes.creator_agent import (
     _next_balanced_integer_duration_s,
     _previous_creator_clip_order,
     _requests_preserved_clip_order,
+    _require_feature,
     _reset_render_target,
     _resolved_cadence_for_turn,
     _seed_guided_specialist_brief,
@@ -3234,6 +3235,16 @@ def test_creator_route_rollout_gate_is_hidden_as_404(client: TestClient) -> None
     assert response.json()["detail"] == "Creator agent unavailable"
 
 
+@pytest.mark.parametrize("execution", [False, True])
+def test_chat_controller_bypasses_legacy_creator_rollout_gates(
+    monkeypatch: pytest.MonkeyPatch, execution: bool
+) -> None:
+    monkeypatch.setattr(creator_routes, "rollout_eligible", lambda _user_id: False)
+    monkeypatch.setattr(settings, "main_creator_agent_execution_enabled", False)
+
+    _require_feature(uuid.uuid4(), execution=execution, allow_chat=True)
+
+
 @pytest.mark.parametrize(
     ("path", "payload"),
     [
@@ -3540,7 +3551,7 @@ async def test_start_locks_an_existing_session_before_appending(monkeypatch) -> 
     planning = AsyncMock(return_value=SimpleNamespace(id="response"))
     monkeypatch.setattr(creator_routes, "_run_planning_turn", planning)
 
-    await creator_routes.start_creator_session(
+    await creator_routes.start_creator_session_controller(
         Request(
             {
                 "type": "http",
@@ -3557,10 +3568,123 @@ async def test_start_locks_an_existing_session_before_appending(monkeypatch) -> 
         StartBody(message="Make it personal", client_event_id="event-1"),
         user,
         db,
+        allow_chat=True,
     )
 
     load_session.assert_awaited_once_with(db, session.id, user.id, item.id, for_update=True)
     planning.assert_awaited_once()
+    assert planning.await_args.kwargs["allow_chat"] is True
+
+
+@pytest.mark.asyncio
+async def test_turn_controller_forwards_allow_chat_to_planning(monkeypatch) -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4())
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        plan_item_id=item.id,
+        status="briefing",
+        revision=0,
+        render_attempts=0,
+        active_plan=None,
+    )
+    db = AsyncMock()
+    duplicate_result = MagicMock()
+    duplicate_result.scalar_one_or_none.return_value = None
+    db.execute.return_value = duplicate_result
+
+    monkeypatch.setattr(creator_routes, "rollout_eligible", lambda _user_id: False)
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, SimpleNamespace(), SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(creator_routes, "append_event", AsyncMock())
+    planning = AsyncMock(return_value=SimpleNamespace(id="response"))
+    monkeypatch.setattr(creator_routes, "_run_planning_turn", planning)
+
+    await creator_routes.creator_session_turn_controller(
+        Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/",
+                "headers": [],
+                "client": ("test", 1),
+                "scheme": "http",
+                "server": ("test", 80),
+                "query_string": b"",
+            }
+        ),
+        str(item.id),
+        TurnBody(
+            session_id=session.id,
+            expected_revision=0,
+            message="Make it personal",
+            client_event_id="turn-1",
+        ),
+        user,
+        db,
+        allow_chat=True,
+    )
+
+    planning.assert_awaited_once()
+    assert planning.await_args.kwargs["allow_chat"] is True
+
+
+@pytest.mark.asyncio
+async def test_confirm_controller_forwards_chat_capability_to_context(monkeypatch) -> None:
+    user = SimpleNamespace(id=uuid.uuid4())
+    item = SimpleNamespace(id=uuid.uuid4(), current_job_id=None)
+    plan = SimpleNamespace(ownership_epoch=1)
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        plan_item_id=item.id,
+        status="awaiting_confirmation",
+        revision=0,
+        ownership_epoch=1,
+        manifest_hash="s" * 64,
+        active_plan={"version": 1, "plan_hash": "a" * 64},
+        render_attempts=0,
+        max_render_attempts=2,
+    )
+    db = AsyncMock()
+    receipt_result = MagicMock()
+    receipt_result.scalar_one_or_none.return_value = None
+    db.execute.return_value = receipt_result
+    resolve_context = AsyncMock(return_value=(SimpleNamespace(manifest_hash="f" * 64), []))
+
+    monkeypatch.setattr(creator_routes, "rollout_eligible", lambda _user_id: False)
+    monkeypatch.setattr(
+        creator_routes, "_owned_context", AsyncMock(return_value=(item, plan, SimpleNamespace()))
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(creator_routes, "_confirmed_edit_plan", lambda _active: object())
+    monkeypatch.setattr(creator_routes, "resolve_item_creator_context", resolve_context)
+    monkeypatch.setattr(settings, "main_creator_agent_execution_enabled", False)
+
+    with pytest.raises(HTTPException) as caught:
+        await creator_routes.confirm_creator_plan_controller(
+            str(item.id),
+            ConfirmBody(
+                session_id=session.id,
+                expected_revision=0,
+                plan_version=1,
+                plan_hash="a" * 64,
+                client_event_id="confirm-chat-1",
+            ),
+            user,
+            db,
+            allow_chat=True,
+        )
+
+    assert caught.value.status_code == 409
+    assert caught.value.detail == "Footage or capabilities changed; review the plan again"
+    resolve_context.assert_awaited_once()
+    assert resolve_context.await_args.kwargs["guided_capability_enabled"] is True
 
 
 @pytest.mark.asyncio

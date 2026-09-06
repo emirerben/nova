@@ -43,12 +43,12 @@ import {
   renameCreationThread,
   type CreationFormat, type CreationThread,
 } from "@/lib/creation-thread-api";
-import { setChatFirstFallback } from "@/lib/chat-first";
 import { cn } from "@/lib/cn";
 import { listMyJobs, type LibraryJob } from "@/lib/me-api";
 import { getPlanItemFresh, type PlanItem } from "@/lib/plan-api";
 import LibraryTile from "@/components/library/LibraryTile";
 import AssetPool from "@/app/plan/_components/AssetPool";
+import { useLibraryPosterRecovery } from "@/hooks/useLibraryPosterRecovery";
 
 const FORMATS: Array<{ value: CreationFormat; label: string; description: string }> = [
   { value: "montage", label: "Montage", description: "Music-led cuts from your strongest moments." },
@@ -351,7 +351,6 @@ function ReadyStatusCard({
 }
 
 export interface ChatCreationWorkspaceProps {
-  onLegacyFallback?: () => void;
   /** When present, hydrate this exact project instead of choosing the latest. */
   initialThreadId?: string;
   /** Preview-only mode: hydrate the signed-in account's production data, while
@@ -360,7 +359,6 @@ export interface ChatCreationWorkspaceProps {
 }
 
 export default function ChatCreationWorkspace({
-  onLegacyFallback,
   initialThreadId,
   productionPreview = false,
 }: ChatCreationWorkspaceProps) {
@@ -389,9 +387,19 @@ export default function ChatCreationWorkspace({
   const [projectActionBusy, setProjectActionBusy] = useState(false);
   const [projectActionError, setProjectActionError] = useState<string | null>(null);
   const [galleryJobs, setGalleryJobs] = useState<LibraryJob[]>([]);
+  const [galleryCursor, setGalleryCursor] = useState<string | null>(null);
+  const [galleryLoading, setGalleryLoading] = useState(false);
+  const [galleryLoadError, setGalleryLoadError] = useState<string | null>(null);
+  const [galleryRetryCursor, setGalleryRetryCursor] = useState<string | null>(null);
   const [formatPickerOpen, setFormatPickerOpen] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [availableFormats, setAvailableFormats] = useState<CreationFormat[]>(["montage", "narrated_planned", "subtitled"]);
   const [capabilities, setCapabilities] = useState<Awaited<ReturnType<typeof getCreationCapabilities>>>(() => ({ formats: [] }));
+  const posterRecovery = useLibraryPosterRecovery({
+    enabled: galleryOpen && !productionPreview,
+    jobs: galleryJobs,
+    setJobs: setGalleryJobs,
+  });
   const visualsEnabled = process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED === "true"
     || process.env.NEXT_PUBLIC_GUIDED_EDIT_ENABLED === "true";
   const editorFrameRef = useRef<HTMLIFrameElement>(null);
@@ -409,6 +417,8 @@ export default function ChatCreationWorkspace({
   const threadRequestSequenceRef = useRef(0);
   const latestAcceptedThreadSequenceRef = useRef(0);
   const loadStartedRef = useRef(false);
+  const loadInFlightRef = useRef<Promise<void> | null>(null);
+  const loadSequenceRef = useRef(0);
   const productionGalleryLoadedRef = useRef(false);
 
   useEffect(() => {
@@ -478,97 +488,112 @@ export default function ChatCreationWorkspace({
   }, [acceptThreadResponse]);
 
   const load = useCallback(async () => {
-    try {
-      if (productionPreview) {
-        const [threadsResult, capabilitiesResult, library] = await Promise.all([
-          listCreationThreads().catch((cause) => {
-            if (cause instanceof CreationThreadError && cause.status === 404) return [];
-            throw cause;
-          }),
-          getCreationCapabilities().catch((cause) => {
-            if (cause instanceof CreationThreadError && cause.status === 404) return { formats: [] };
-            throw cause;
-          }),
-          listMyJobs({ limit: 24 }),
-        ]);
-        const planItemIds = [...new Set(library.jobs.flatMap((job) => job.content_plan_item_id ? [job.content_plan_item_id] : []))];
-        const planItems = await Promise.all(planItemIds.map(async (itemId) => {
-          try {
-            return [itemId, await getPlanItemFresh(itemId)] as const;
-          } catch {
-            return [itemId, undefined] as const;
+    if (loadInFlightRef.current) return loadInFlightRef.current;
+    const loadSequence = ++loadSequenceRef.current;
+    const isCurrentLoad = () => loadSequence === loadSequenceRef.current;
+    setInitialLoading(true);
+    let loadPromise: Promise<void>;
+    loadPromise = (async () => {
+      setError(null);
+      try {
+        if (productionPreview) {
+          const [threadsResult, capabilitiesResult, library] = await Promise.all([
+            listCreationThreads().catch((cause) => {
+              if (cause instanceof CreationThreadError && cause.status === 404) return [];
+              throw cause;
+            }),
+            getCreationCapabilities().catch((cause) => {
+              if (cause instanceof CreationThreadError && cause.status === 404) return { formats: [] };
+              throw cause;
+            }),
+            listMyJobs({ limit: 24 }),
+          ]);
+          const planItemIds = [...new Set(library.jobs.flatMap((job) => job.content_plan_item_id ? [job.content_plan_item_id] : []))];
+          const planItems = await Promise.all(planItemIds.map(async (itemId) => {
+            try {
+              return [itemId, await getPlanItemFresh(itemId)] as const;
+            } catch {
+              return [itemId, undefined] as const;
+            }
+          }));
+          const planItemById = new Map(planItems);
+          const liveThreads = threadsResult.map((item) => ({ ...item, title: inferredProductionTitle(item) }));
+          const linkedJobIds = new Set(liveThreads.flatMap((item) => item.active_job_id ? [item.active_job_id] : []));
+          const libraryThreads = library.jobs
+            .filter((job) => !linkedJobIds.has(job.id))
+            .map((job) => productionLibraryThread(
+              job,
+              job.content_plan_item_id ? planItemById.get(job.content_plan_item_id) : undefined,
+            ));
+          const listed = [...liveThreads, ...libraryThreads]
+            .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at));
+          if (!isCurrentLoad()) return;
+          productionGalleryLoadedRef.current = true;
+          setGalleryJobs(library.jobs);
+          setAvailableFormats(capabilitiesResult.formats.map((item) => item.edit_format));
+          setCapabilities(capabilitiesResult);
+          setProjects(listed);
+          const requestedId = initialThreadId?.trim() || null;
+          const summary = requestedId
+            ? listed.find((item) => item.id === requestedId)
+            : listed[0];
+          if (!summary) {
+            activeThreadIdRef.current = null;
+            setThread(null);
+            setThreadUnavailable(Boolean(requestedId));
+            return;
           }
-        }));
-        const planItemById = new Map(planItems);
-        const liveThreads = threadsResult.map((item) => ({ ...item, title: inferredProductionTitle(item) }));
-        const linkedJobIds = new Set(liveThreads.flatMap((item) => item.active_job_id ? [item.active_job_id] : []));
-        const libraryThreads = library.jobs
-          .filter((job) => !linkedJobIds.has(job.id))
-          .map((job) => productionLibraryThread(
-            job,
-            job.content_plan_item_id ? planItemById.get(job.content_plan_item_id) : undefined,
-          ));
-        const listed = [...liveThreads, ...libraryThreads]
-          .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at));
-        productionGalleryLoadedRef.current = true;
-        setGalleryJobs(library.jobs);
-        setAvailableFormats(capabilitiesResult.formats.map((item) => item.edit_format));
-        setCapabilities(capabilitiesResult);
-        setProjects(listed);
-        const requestedId = initialThreadId?.trim() || null;
-        const summary = requestedId
-          ? listed.find((item) => item.id === requestedId)
-          : listed[0];
-        if (!summary) {
-          activeThreadIdRef.current = null;
-          setThread(null);
-          setThreadUnavailable(Boolean(requestedId));
+          const hydrated = isProductionLibraryThread(summary)
+            ? summary
+            : await refreshCreationThread(summary.id);
+          const next = { ...hydrated, title: inferredProductionTitle(hydrated) };
+          if (!isCurrentLoad()) return;
+          activateThread(next);
           return;
         }
-        const hydrated = isProductionLibraryThread(summary)
-          ? summary
-          : await refreshCreationThread(summary.id);
-        const next = { ...hydrated, title: inferredProductionTitle(hydrated) };
+        const [listed, capabilities] = await Promise.all([listCreationThreads(), getCreationCapabilities()]);
+        if (!isCurrentLoad()) return;
+        setAvailableFormats(capabilities.formats.map((item) => item.edit_format));
+        setCapabilities(capabilities);
+        setProjects(listed);
+        const requestedId = initialThreadId?.trim() || null;
+        const current = activeThreadIdRef.current
+          ? listed.find((item) => item.id === activeThreadIdRef.current)
+          : null;
+        const summary = requestedId
+          ? listed.find((item) => item.id === requestedId)
+          : current ?? listed.find((item) => item.status === "active");
+        const requestSequence = ++threadRequestSequenceRef.current;
+        const next = requestedId
+          ? await refreshCreationThread(requestedId)
+          : summary ? await refreshCreationThread(summary.id) : await createCreationThread();
+        if (!isCurrentLoad()) return;
+        latestAcceptedThreadSequenceRef.current = requestSequence;
         activateThread(next);
-        setChatFirstFallback(false);
-        window.dispatchEvent(new CustomEvent("nova:chat-first-ready"));
-        return;
+        if (!requestedId) {
+          const destination = galleryOpen
+            ? `/plan/${next.id}?view=gallery`
+            : `/plan/${next.id}`;
+          router.replace(destination, { scroll: false });
+        }
+        if (!current && !listed.some((item) => item.id === next.id)) setProjects((items) => [next, ...items]);
+      } catch (cause) {
+        if (!isCurrentLoad()) return;
+        if (initialThreadId && cause instanceof CreationThreadError && cause.status === 404) {
+          activeThreadIdRef.current = null;
+          setThread(null);
+          setThreadUnavailable(true);
+          return;
+        }
+        setError("I couldn’t open this creation chat. Check your connection and try again.");
       }
-      const [listed, capabilities] = await Promise.all([listCreationThreads(), getCreationCapabilities()]);
-      setAvailableFormats(capabilities.formats.map((item) => item.edit_format));
-      setCapabilities(capabilities);
-      setProjects(listed);
-      const requestedId = initialThreadId?.trim() || null;
-      const current = thread ? listed.find((item) => item.id === thread.id) : null;
-      const summary = requestedId
-        ? listed.find((item) => item.id === requestedId)
-        : current ?? listed.find((item) => item.status === "active");
-      const requestSequence = ++threadRequestSequenceRef.current;
-      const next = requestedId
-        ? await refreshCreationThread(requestedId)
-        : summary ? await refreshCreationThread(summary.id) : await createCreationThread();
-      latestAcceptedThreadSequenceRef.current = requestSequence;
-      activateThread(next);
-      if (!requestedId) router.replace(`/plan/${next.id}`, { scroll: false });
-      setChatFirstFallback(false);
-      window.dispatchEvent(new CustomEvent("nova:chat-first-ready"));
-      if (!current && !listed.some((item) => item.id === next.id)) setProjects((items) => [next, ...items]);
-    } catch (cause) {
-      if (initialThreadId && cause instanceof CreationThreadError && cause.status === 404) {
-        activeThreadIdRef.current = null;
-        setThread(null);
-        setThreadUnavailable(true);
-        return;
-      }
-      if (cause instanceof CreationThreadError && cause.status === 404) {
-        setChatFirstFallback(true);
-        window.dispatchEvent(new CustomEvent("nova:chat-first-fallback"));
-        onLegacyFallback?.();
-        return;
-      }
-      setError("I couldn’t open this creation chat. Check your connection and try again.");
-    }
-  }, [activateThread, initialThreadId, onLegacyFallback, productionPreview, router, thread]);
+    })().finally(() => {
+      if (isCurrentLoad()) setInitialLoading(false);
+      if (loadInFlightRef.current === loadPromise) loadInFlightRef.current = null;
+    });
+    loadInFlightRef.current = loadPromise;
+    return loadPromise;
+  }, [activateThread, galleryOpen, initialThreadId, productionPreview, router]);
 
   useEffect(() => {
     // React Strict Mode replays effects in local development. Keep the initial
@@ -665,13 +690,79 @@ export default function ChatCreationWorkspace({
   useEffect(() => {
     if (!galleryOpen) return;
     if (productionPreview && productionGalleryLoadedRef.current) return;
+    let cancelled = false;
+    setGalleryLoading(true);
+    setGalleryLoadError(null);
     void listMyJobs({ limit: productionPreview ? 24 : undefined })
       .then((page) => {
+        if (cancelled) return;
         if (productionPreview) productionGalleryLoadedRef.current = true;
         setGalleryJobs(page.jobs);
+        setGalleryCursor(productionPreview ? null : page.next_cursor);
+        setGalleryRetryCursor(null);
       })
-      .catch(() => setError("I couldn’t load your Gallery. Your saved videos are still safe."));
+      .catch(() => {
+        if (cancelled) return;
+        setGalleryRetryCursor(null);
+        setGalleryLoadError("I couldn’t load your Gallery. Your saved videos are still safe.");
+      })
+      .finally(() => {
+        if (!cancelled) setGalleryLoading(false);
+      });
+    return () => { cancelled = true; };
   }, [galleryOpen, productionPreview]);
+
+  async function loadMoreGallery() {
+    if (productionPreview || !galleryCursor || galleryLoading) return;
+    const cursor = galleryCursor;
+    setGalleryLoading(true);
+    setGalleryLoadError(null);
+    try {
+      const page = await listMyJobs({ cursor });
+      setGalleryJobs((current) => {
+        const jobsById = new Map(current.map((job) => [job.id, job]));
+        page.jobs.forEach((job) => jobsById.set(job.id, job));
+        return [...jobsById.values()];
+      });
+      setGalleryCursor(page.next_cursor);
+      setGalleryRetryCursor(null);
+    } catch {
+      setGalleryRetryCursor(cursor);
+      setGalleryLoadError("I couldn’t load more videos. Your saved videos are still safe.");
+    } finally {
+      setGalleryLoading(false);
+    }
+  }
+
+  async function retryGalleryLoad() {
+    if (galleryLoading) return;
+    const cursor = galleryRetryCursor;
+    setGalleryLoading(true);
+    setGalleryLoadError(null);
+    try {
+      const page = await listMyJobs(cursor
+        ? { cursor }
+        : { limit: productionPreview ? 24 : undefined });
+      if (cursor) {
+        setGalleryJobs((current) => {
+          const jobsById = new Map(current.map((job) => [job.id, job]));
+          page.jobs.forEach((job) => jobsById.set(job.id, job));
+          return [...jobsById.values()];
+        });
+      } else {
+        setGalleryJobs(page.jobs);
+      }
+      setGalleryCursor(productionPreview ? null : page.next_cursor);
+      setGalleryRetryCursor(null);
+      if (productionPreview) productionGalleryLoadedRef.current = true;
+    } catch {
+      setGalleryLoadError(cursor
+        ? "I couldn’t load more videos. Your saved videos are still safe."
+        : "I couldn’t load your Gallery. Your saved videos are still safe.");
+    } finally {
+      setGalleryLoading(false);
+    }
+  }
 
   useEffect(() => {
     if (!thread) return;
@@ -1047,7 +1138,7 @@ export default function ChatCreationWorkspace({
   }
 
   async function startNew() {
-    if (productionPreview || busy || thinking || uploading) return;
+    if (productionPreview || (initialLoading && !thread) || busy || thinking || uploading) return;
     const previousThreadId = activeThreadIdRef.current;
     setBusy(true);
     setError(null);
@@ -1097,22 +1188,24 @@ export default function ChatCreationWorkspace({
   }
 
   function openGallery() {
+    const activeThreadId = activeThreadIdRef.current;
     setProjectsOpen(false);
     setGalleryOpen(true);
     router.replace(
       productionPreview
         ? "/dev-qa/chat-first-creation?live=1&view=gallery"
-        : `${thread ? `/plan/${thread.id}` : "/plan"}?view=gallery`,
+        : `${activeThreadId ? `/plan/${activeThreadId}` : "/plan"}?view=gallery`,
       { scroll: false },
     );
   }
 
   function closeGallery() {
+    const activeThreadId = activeThreadIdRef.current;
     setGalleryOpen(false);
     router.replace(
       productionPreview
         ? `/dev-qa/chat-first-creation?live=1${thread ? `&project=${encodeURIComponent(thread.id)}` : ""}`
-        : thread ? `/plan/${thread.id}` : "/plan",
+        : activeThreadId ? `/plan/${activeThreadId}` : "/plan",
       { scroll: false },
     );
   }
@@ -1139,10 +1232,10 @@ export default function ChatCreationWorkspace({
     <aside className="flex h-full w-[260px] shrink-0 flex-col border-r border-border bg-background p-4" aria-label="Projects">
       <div className="flex items-center justify-between px-2">
         <span className="flex items-center gap-2 text-lg font-semibold"><Sparkles className="size-4" /> Kria</span>
-        <Button type="button" variant="ghost" size="icon" className="size-9" aria-label="Hide project sidebar" onClick={() => setSidebarHidden(true)}><PanelLeftClose /></Button>
+        <Button type="button" variant="ghost" size="icon" className="size-11 md:size-9" aria-label="Hide project sidebar" onClick={() => setSidebarHidden(true)}><PanelLeftClose /></Button>
       </div>
-      <Button type="button" className="mt-6 min-h-11 justify-start" disabled={productionPreview || busy || thinking || uploading} title={productionPreview ? "Production data is read-only in this preview." : undefined} onClick={() => void startNew()}><Film /> New video</Button>
-      <div className="mt-8 flex items-center justify-between px-2"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Projects</p><Button type="button" variant="ghost" className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground" disabled={busy || thinking || uploading} onClick={openGallery}>Gallery</Button></div>
+      <Button type="button" className="mt-6 min-h-11 justify-start" disabled={productionPreview || (initialLoading && !thread) || busy || thinking || uploading} title={productionPreview ? "Production data is read-only in this preview." : undefined} onClick={() => void startNew()}><Film /> New video</Button>
+      <div className="mt-8 flex items-center justify-between px-2"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Projects</p><Button type="button" variant="ghost" className="min-h-11 px-2 text-xs text-muted-foreground hover:text-foreground md:h-8 md:min-h-8" disabled={busy || thinking || uploading} onClick={openGallery}>Gallery</Button></div>
       <nav className="mt-2 space-y-1 overflow-y-auto" aria-label="Recent projects">
         {projects.slice(0, 10).map((project) => {
           const title = projectTitle(project);
@@ -1150,7 +1243,7 @@ export default function ChatCreationWorkspace({
             <div key={project.id} className="flex min-w-0 items-center gap-1">
               <Button type="button" variant={project.id === thread?.id ? "secondary" : "ghost"} className="h-auto min-h-11 min-w-0 flex-1 justify-start text-left" disabled={busy || thinking || uploading} onClick={() => void openProject(project)}><FolderOpen className="shrink-0" /><span className="min-w-0"><span className="block truncate">{title}</span><span className="block truncate text-[11px] font-normal text-muted-foreground">{projectStatusLabel(project)}</span></span></Button>
               <DropdownMenu>
-                <DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="icon" className="size-9 shrink-0" aria-label={`Project actions for ${title}`} disabled={busy || thinking || uploading}><MoreHorizontal /></Button></DropdownMenuTrigger>
+              <DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 md:size-9" aria-label={`Project actions for ${title}`} disabled={busy || thinking || uploading}><MoreHorizontal /></Button></DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onSelect={() => beginRename(project)}>Rename project{productionPreview ? " (preview)" : ""}</DropdownMenuItem>
                   <DropdownMenuSeparator />
@@ -1163,7 +1256,7 @@ export default function ChatCreationWorkspace({
       </nav>
       <div className="mt-auto border-t pt-4">
         <p className="truncate text-sm font-medium">{accountName}</p>
-        <div className="mt-2 flex items-center gap-1"><Button type="button" variant="ghost" className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground" onClick={openGallery}>My videos</Button><span className="text-muted-foreground">·</span><Button type="button" variant="ghost" className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground" onClick={() => void signOut({ callbackUrl: "/" })}>Sign out</Button></div>
+        <div className="mt-2 flex items-center gap-1"><Button type="button" variant="ghost" className="min-h-11 px-2 text-xs text-muted-foreground hover:text-foreground md:h-8 md:min-h-8" onClick={openGallery}>My videos</Button><span className="text-muted-foreground">·</span><Button type="button" variant="ghost" className="min-h-11 px-2 text-xs text-muted-foreground hover:text-foreground md:h-8 md:min-h-8" onClick={() => void signOut({ callbackUrl: "/" })}>Sign out</Button></div>
       </div>
     </aside>
   );
@@ -1174,7 +1267,7 @@ export default function ChatCreationWorkspace({
         "gap-3",
         hasReady && editorOpen
           ? "grid grid-cols-1"
-          : "grid grid-flow-col auto-cols-[minmax(220px,85%)] snap-x overflow-x-auto sm:grid-flow-row sm:auto-cols-auto sm:grid-cols-3 sm:overflow-visible",
+          : "grid grid-flow-col auto-cols-[minmax(220px,85%)] snap-x overflow-x-auto scrollbar-none sm:grid-flow-row sm:auto-cols-auto sm:grid-cols-3 sm:overflow-visible",
       )}>
         {FORMATS.map((item) => <Button key={item.value} type="button" variant="outline" disabled={productionPreview || busy || (Boolean(format) && !formatPickerOpen) || !availableFormats.includes(item.value)} className={cn("h-auto min-h-[96px] snap-start flex-col items-start justify-start whitespace-normal p-4 text-left", format === item.value && "border-primary ring-1 ring-primary", !availableFormats.includes(item.value) && "opacity-60")} onClick={() => void selectFormat(item.value)}><span className="font-medium">{item.label}</span><span className="mt-1 text-xs font-normal text-muted-foreground">{availableFormats.includes(item.value) ? item.description : "Temporarily unavailable — choose another format."}</span></Button>)}
       </div>
@@ -1184,10 +1277,10 @@ export default function ChatCreationWorkspace({
   const uploadArtifact = (
     <ChatArtifactCard title={format ? FORMAT_GUIDANCE[format].title : "Add clips"} description={format ? FORMAT_GUIDANCE[format].description : "Choose the footage for your story."}>
       {!productionPreview && format === "narrated_planned" && !latestAudio ? <VoiceRecorder upload={uploadRecordedVoice} onVoiceover={() => undefined} /> : null}
-      {format ? <Button type="button" variant="ghost" className="px-0 text-xs text-muted-foreground" disabled={productionPreview} onClick={() => setFormatPickerOpen(true)}>Change format</Button> : null}
+      {format ? <Button type="button" variant="ghost" className="min-h-11 px-2 text-xs text-muted-foreground md:h-8 md:min-h-8" disabled={productionPreview} onClick={() => setFormatPickerOpen(true)}>Change format</Button> : null}
       <Dropzone compact accept="video/*" multiple={format !== "subtitled"} disabled={productionPreview || uploading || clipCount >= clipLimit} title={productionPreview ? "Uploads are disabled in this read-only preview" : uploading ? "Uploading…" : clipCount >= clipLimit ? "Clip limit reached" : format === "subtitled" ? "Choose a clip or drop it here" : "Choose clips or drop them here"} subline={format === "subtitled" ? undefined : `Up to ${clipLimit} clips`} ariaLabel="Add primary video clips" inputAriaLabel="Upload primary video clips" onFiles={(files) => void attach(files)} />
-      {pendingFiles.length > 0 ? <div className="mt-2 space-y-1">{pendingFiles.map((file) => <div key={`${file.name}-${file.size}`} className="flex items-center justify-between gap-2 rounded-md bg-muted px-2 py-1 text-xs"><span className="truncate">{file.name}</span><div className="flex shrink-0 items-center gap-1"><Button type="button" variant="ghost" size="sm" className="h-7 px-2" disabled={uploading} onClick={() => void retryFile(file)}>Retry</Button><Button type="button" variant="ghost" size="icon" className="size-7" aria-label={`Remove ${file.name}`} onClick={() => setPendingFiles((items) => items.filter((item) => item !== file))}><Trash2 className="size-3" /></Button></div></div>)}</div> : null}
-      {media.length > 0 && !thread?.active_job_id ? <div className="mt-2 space-y-1" role="list">{media.map((item) => <div key={item.media_id} className="flex items-center justify-between gap-2 rounded-md bg-muted px-3 py-2 text-sm" role="listitem"><span className="min-w-0 truncate">{item.filename}{item.kind === "audio" ? <span className="ml-2 text-xs text-muted-foreground">Voiceover</span> : null}</span><Button type="button" variant="ghost" size="icon" className="size-8 shrink-0" disabled={productionPreview || busy || uploading} aria-label={`Remove attached ${item.filename}`} onClick={() => void removeMedia(item.media_id)}><Trash2 className="size-4" /></Button></div>)}</div> : null}
+      {pendingFiles.length > 0 ? <div className="mt-2 space-y-1">{pendingFiles.map((file) => <div key={`${file.name}-${file.size}`} className="flex items-center justify-between gap-2 rounded-md bg-muted px-2 py-1 text-xs"><span className="truncate">{file.name}</span><div className="flex shrink-0 items-center gap-1"><Button type="button" variant="ghost" size="sm" className="min-h-11 px-3 md:h-7 md:min-h-7" disabled={uploading} onClick={() => void retryFile(file)}>Retry</Button><Button type="button" variant="ghost" size="icon" className="size-11 md:size-7" aria-label={`Remove ${file.name}`} onClick={() => setPendingFiles((items) => items.filter((item) => item !== file))}><Trash2 className="size-3" /></Button></div></div>)}</div> : null}
+      {media.length > 0 && !thread?.active_job_id ? <div className="mt-2 space-y-1" role="list">{media.map((item) => <div key={item.media_id} className="flex items-center justify-between gap-2 rounded-md bg-muted px-3 py-2 text-sm" role="listitem"><span className="min-w-0 truncate">{item.filename}{item.kind === "audio" ? <span className="ml-2 text-xs text-muted-foreground">Voiceover</span> : null}</span><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 md:size-8" disabled={productionPreview || busy || uploading} aria-label={`Remove attached ${item.filename}`} onClick={() => void removeMedia(item.media_id)}><Trash2 className="size-4" /></Button></div>)}</div> : null}
     </ChatArtifactCard>
   );
 
@@ -1269,7 +1362,8 @@ export default function ChatCreationWorkspace({
         </div>
       </header>
       <div ref={transcriptRef} role="log" aria-label="Conversation history" aria-live="polite" aria-relevant="additions text" tabIndex={0} className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]"><div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-6 sm:px-8">
-        {!thread ? <div className="space-y-3" role="status"><div className="h-5 w-40 motion-safe:animate-pulse rounded bg-muted" /><div className="h-20 w-full motion-safe:animate-pulse rounded bg-muted" /></div> : null}
+        {!thread && !error ? <div className="space-y-3" role="status"><div className="h-5 w-40 motion-safe:animate-pulse rounded bg-muted" /><div className="h-20 w-full motion-safe:animate-pulse rounded bg-muted" /></div> : null}
+        {!thread && error ? <ChatArtifactCard title="Creation chat couldn’t load" description="Your projects are safe. Check your connection, then try again."><Button type="button" variant="outline" disabled={initialLoading} onClick={() => void load()}><RefreshCw /> {initialLoading ? "Retrying…" : "Retry"}</Button></ChatArtifactCard> : null}
         {messages.map((message, index) => <div key={message.id} ref={index === messages.length - 1 ? latestMessageRef : undefined} className="space-y-3">{message.content ? <ChatBubble role={message.role}>{message.content}</ChatBubble> : null}{message.artifact === "format" && (!format || formatPickerOpen) ? formatArtifact : null}{message.artifact === "upload" && !thread?.active_job_id ? <>{uploadArtifact}{visualsArtifact}</> : null}{message.artifact === "voiceover" && !thread?.active_job_id ? uploadArtifact : null}{(message.artifact === "confirmation" || (message.artifact === "revision" && !hasReady)) && canConfirmDirection ? <ChatArtifactCard badge={<Badge variant="secondary">Creative direction</Badge>} title={`${creationFormatLabel(format)} is ready to make`} description={typeof thread?.state.intent === "string" && thread.state.intent ? thread.state.intent : "I’ll find the strongest opening and shape your footage into a concise first cut."}><Button type="button" className="min-h-11 w-full" disabled={productionPreview || busy || clipCount === 0} onClick={() => void confirm("generate")}><Sparkles />{busy ? "Starting…" : "Create this video"}</Button></ChatArtifactCard> : null}{message.artifact === "revision" && hasReady ? <ChatArtifactCard badge={<Badge variant="secondary">Revision ready</Badge>} title="Apply this direction?" description="This creates a new generation from the finished cut."><Button type="button" className="min-h-11 w-full" disabled={productionPreview || busy} onClick={() => void confirm("generate", { base_generation: thread?.job?.id })}><RefreshCw /> Create revision</Button></ChatArtifactCard> : null}{message.artifact === "progress" && thread?.active_job_id && !creationJobFailed(thread) ? <RenderStatusCard thread={thread} /> : null}{message.artifact === "failure" && thread && (creationJobFailed(thread) || planningFailed) && (!hasPendingConfirmation || planningFailed) ? <FailureStatusCard thread={thread} busy={busy} readOnly={productionPreview} planningFailure={planningFailed} onRetry={creationJobFailed(thread) ? () => void confirm("retry") : undefined} onAdjust={() => setInput(latestCreationDirection(thread) || "Try a different opening and keep the pacing quick.")} /> : null}{message.artifact === "result" && thread && hasReady ? <ReadyStatusCard thread={thread} isPartial={isPartial} selectedReadyVariant={selectedReadyVariant} selectedFailedVariant={selectedFailedVariant} busy={busy} readOnly={productionPreview} onSelectVariant={(id) => void selectVariant(id)} onOpenEditor={() => { setEditorOpen(true); setMobileTab("editor"); }} onRetryVariant={(id) => void confirm("retry", { variant_id: id })} /> : null}</div>)}
         {thinking ? <ChatThinking /> : null}
       </div></div>
@@ -1281,11 +1375,11 @@ export default function ChatCreationWorkspace({
 
   const editor = <section className="flex min-w-0 flex-1 flex-col overflow-hidden border-l bg-muted/10" aria-label={productionPreview ? "Production video preview" : "Video editor"}><header className="flex h-14 shrink-0 items-center justify-between border-b bg-background px-4"><div><p className="text-sm font-medium">{productionPreview ? "Production video" : "Editor"}</p><p className="text-xs text-muted-foreground">{productionPreview ? "Real output · read-only playback" : "Feature-complete overlay editor"}</p></div><Badge variant="secondary"><Check /> Ready</Badge></header>{productionPreview && selectedReadyVariant?.output_url ? <div className="flex min-h-0 flex-1 items-center justify-center bg-zinc-950 p-4"><video key={selectedReadyVariant.output_url} controls playsInline preload="metadata" poster={selectedReadyVariant.poster_url ?? undefined} src={selectedReadyVariant.output_url} className="max-h-full max-w-full rounded-lg shadow-2xl" data-testid="production-video-player">Your browser cannot play this video.</video></div> : editorUrl ? <iframe ref={editorFrameRef} src={editorUrl} title="Full video editor" className="min-h-0 flex-1 border-0 bg-background" /> : <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">The editor will appear when your first cut is ready.</div>}</section>;
 
-  if (galleryOpen) return <div className="flex h-dvh flex-col overflow-hidden bg-background">{productionPreview ? <div className="border-b border-lime-300 bg-lime-50 px-4 py-2 text-center text-xs text-lime-950"><strong>Live production data</strong> · Read-only playback</div> : null}<header className="flex h-14 shrink-0 items-center justify-between border-b px-4"><div><h1 className="text-lg font-semibold">Gallery</h1>{productionPreview ? <p className="text-xs text-muted-foreground">{accountName} · {galleryJobs.length} recent videos</p> : null}</div><Button type="button" onClick={closeGallery}>Back to chat</Button></header><main className="min-h-0 flex-1 overflow-y-auto p-6"><ul className="mx-auto grid max-w-5xl grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">{galleryJobs.map((job) => {
-    if (!productionPreview) return <li key={job.id}><LibraryTile job={job} /></li>;
+  if (galleryOpen) return <div className="flex h-dvh flex-col overflow-hidden bg-background">{productionPreview ? <div className="border-b border-lime-300 bg-lime-50 px-4 py-2 text-center text-xs text-lime-950"><strong>Live production data</strong> · Read-only playback</div> : null}<header className="flex h-14 shrink-0 items-center justify-between border-b px-4"><div><h1 className="text-lg font-semibold">Gallery</h1>{productionPreview ? <p className="text-xs text-muted-foreground">{accountName} · {galleryJobs.length} recent videos</p> : null}</div><Button type="button" className="min-h-11" onClick={closeGallery}>Back to chat</Button></header><main className="min-h-0 flex-1 overflow-y-auto p-6">{galleryLoading && galleryJobs.length === 0 ? <div className="py-16 text-center text-sm text-muted-foreground" role="status">Loading your videos…</div> : null}{galleryLoadError ? <div className="mx-auto mb-4 flex max-w-md items-center justify-between gap-3 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm" role="alert"><span>{galleryLoadError}</span><Button type="button" variant="outline" className="min-h-11 shrink-0" onClick={() => void retryGalleryLoad()}>Retry</Button></div> : null}<ul className="mx-auto grid max-w-5xl grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">{galleryJobs.map((job) => {
+    if (!productionPreview) return <li key={job.id}><LibraryTile job={job} onDeleted={(jobId) => setGalleryJobs((current) => current.filter((item) => item.id !== jobId))} onPosterLoadError={posterRecovery.onPosterLoadError} onPosterLoadSuccess={posterRecovery.onPosterLoadSuccess} posterRecoveryExhausted={posterRecovery.exhaustedJobIds.has(job.id)} posterRefreshUnavailable={posterRecovery.refreshUnavailableJobIds.has(job.id)} /></li>;
     const matchingProject = projects.find((project) => project.active_job_id === job.id || project.id === `${PRODUCTION_LIBRARY_THREAD_PREFIX}${job.id}`);
     return <li key={job.id}><ProductionPreviewVideoCard job={job} title={matchingProject ? projectTitle(matchingProject) : productionLibraryTitle(job)} /></li>;
-  })}</ul>{galleryJobs.length === 0 ? <p className="mx-auto max-w-md py-16 text-center text-sm text-muted-foreground">Your finished cuts will appear here.</p> : null}</main></div>;
+  })}</ul>{galleryJobs.length === 0 && !galleryLoading && !galleryLoadError ? <p className="mx-auto max-w-md py-16 text-center text-sm text-muted-foreground">Your finished cuts will appear here.</p> : null}{galleryCursor && !galleryLoadError ? <div className="flex justify-center py-8"><Button type="button" variant="outline" className="min-h-11" disabled={galleryLoading} onClick={() => void loadMoreGallery()}>{galleryLoading ? "Loading more videos…" : "Load more videos"}</Button></div> : null}</main></div>;
 
   return (
     <div className="relative flex h-dvh min-h-0 overflow-hidden bg-background text-foreground">

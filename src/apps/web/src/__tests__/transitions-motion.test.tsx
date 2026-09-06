@@ -1,9 +1,8 @@
 /**
  * Transitions-motion feature tests.
  *
- * Covers the new animation state paths introduced by the transitions.dev slice:
- *   1. VariantRenderCard t-skel reveal — 3 logic paths
- *   2. OnboardingShell StepSlide class — 1 smoke path
+ * Covers the VariantRenderCard t-skel reveal paths introduced by the
+ * transitions.dev slice.
  *
  * Uses synchronous rAF mock so CSS-class effects settle without fake timers.
  */
@@ -113,27 +112,5 @@ describe("VariantRenderCard — t-skel revealed state", () => {
       );
     });
     expect(container.querySelector(".t-skel")!.classList).toContain("is-revealed");
-  });
-});
-
-// ============================================================================
-// 2. OnboardingShell — StepSlide class present
-// ============================================================================
-
-import OnboardingShell from "@/app/plan/_components/OnboardingShell";
-
-const SHELL_PROPS = {
-  onTikTokContinue: async () => {},
-  persona: null,
-  onSavePersona: async () => {},
-  onChatComplete: () => {},
-  onContinueToPlan: () => {},
-};
-
-describe("OnboardingShell — StepSlide wrapper", () => {
-  it("test_onboarding_step_slide_class_present: step-slide class wraps the current step content", () => {
-    const { container } = render(<OnboardingShell {...SHELL_PROPS} />);
-    // StepSlide renders a div.step-slide on every step — verify it exists
-    expect(container.querySelector(".step-slide")).not.toBeNull();
   });
 });

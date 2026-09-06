@@ -6,7 +6,7 @@ describe("isChatFirstPlanPath", () => {
     (pathname) => expect(isChatFirstPlanPath(pathname)).toBe(true),
   );
 
-  it.each(["/plan/items", "/plan/items/item-1", "/plan/new", "/plan/persona", "/plan/style"]) (
+  it.each(["/plan/items", "/plan/items/item-1", "/plan/new", "/plan/persona", "/plan/style", "/plan/tiktok"]) (
     "keeps %s on its existing route",
     (pathname) => expect(isChatFirstPlanPath(pathname)).toBe(false),
   );

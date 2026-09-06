@@ -40,7 +40,7 @@ function guideDurationS(item: PlanItem | null): number {
   return total > 0 ? total : 30;
 }
 
-// ── Step slide transition (mirrors OnboardingShell.StepSlide, t-page tokens) ──
+// ── Step slide transition (t-page tokens) ───────────────────────────────────
 
 function StepSlide({ children }: { children: React.ReactNode }) {
   const [entered, setEntered] = useState(false);
