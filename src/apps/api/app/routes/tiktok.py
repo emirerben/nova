@@ -265,7 +265,7 @@ def _safe_oauth_return_to(value: str | None) -> str | None:
     path = parsed.path.rstrip("/") or "/"
     if any(segment in {".", ".."} for segment in path.split("/")):
         return None
-    if path != "/library" and not path.startswith("/plan/items/"):
+    if path not in {"/library", "/plan/tiktok"} and not path.startswith("/plan/items/"):
         return None
     query = f"?{parsed.query}" if parsed.query else ""
     return f"{path}{query}"

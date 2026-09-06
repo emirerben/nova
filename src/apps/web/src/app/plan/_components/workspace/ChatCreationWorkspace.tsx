@@ -385,6 +385,10 @@ export default function ChatCreationWorkspace({
   const [projectActionBusy, setProjectActionBusy] = useState(false);
   const [projectActionError, setProjectActionError] = useState<string | null>(null);
   const [galleryJobs, setGalleryJobs] = useState<LibraryJob[]>([]);
+  const [galleryCursor, setGalleryCursor] = useState<string | null>(null);
+  const [galleryLoading, setGalleryLoading] = useState(false);
+  const [galleryLoadError, setGalleryLoadError] = useState<string | null>(null);
+  const [galleryRetryCursor, setGalleryRetryCursor] = useState<string | null>(null);
   const [formatPickerOpen, setFormatPickerOpen] = useState(false);
   const [availableFormats, setAvailableFormats] = useState<CreationFormat[]>(["montage", "narrated_planned", "subtitled"]);
   const [capabilities, setCapabilities] = useState<Awaited<ReturnType<typeof getCreationCapabilities>>>(() => ({ formats: [] }));
@@ -662,13 +666,79 @@ export default function ChatCreationWorkspace({
   useEffect(() => {
     if (!galleryOpen) return;
     if (productionPreview && productionGalleryLoadedRef.current) return;
+    let cancelled = false;
+    setGalleryLoading(true);
+    setGalleryLoadError(null);
     void listMyJobs({ limit: productionPreview ? 24 : undefined })
       .then((page) => {
+        if (cancelled) return;
         if (productionPreview) productionGalleryLoadedRef.current = true;
         setGalleryJobs(page.jobs);
+        setGalleryCursor(productionPreview ? null : page.next_cursor);
+        setGalleryRetryCursor(null);
       })
-      .catch(() => setError("I couldn’t load your Gallery. Your saved videos are still safe."));
+      .catch(() => {
+        if (cancelled) return;
+        setGalleryRetryCursor(null);
+        setGalleryLoadError("I couldn’t load your Gallery. Your saved videos are still safe.");
+      })
+      .finally(() => {
+        if (!cancelled) setGalleryLoading(false);
+      });
+    return () => { cancelled = true; };
   }, [galleryOpen, productionPreview]);
+
+  async function loadMoreGallery() {
+    if (productionPreview || !galleryCursor || galleryLoading) return;
+    const cursor = galleryCursor;
+    setGalleryLoading(true);
+    setGalleryLoadError(null);
+    try {
+      const page = await listMyJobs({ cursor });
+      setGalleryJobs((current) => {
+        const jobsById = new Map(current.map((job) => [job.id, job]));
+        page.jobs.forEach((job) => jobsById.set(job.id, job));
+        return [...jobsById.values()];
+      });
+      setGalleryCursor(page.next_cursor);
+      setGalleryRetryCursor(null);
+    } catch {
+      setGalleryRetryCursor(cursor);
+      setGalleryLoadError("I couldn’t load more videos. Your saved videos are still safe.");
+    } finally {
+      setGalleryLoading(false);
+    }
+  }
+
+  async function retryGalleryLoad() {
+    if (galleryLoading) return;
+    const cursor = galleryRetryCursor;
+    setGalleryLoading(true);
+    setGalleryLoadError(null);
+    try {
+      const page = await listMyJobs(cursor
+        ? { cursor }
+        : { limit: productionPreview ? 24 : undefined });
+      if (cursor) {
+        setGalleryJobs((current) => {
+          const jobsById = new Map(current.map((job) => [job.id, job]));
+          page.jobs.forEach((job) => jobsById.set(job.id, job));
+          return [...jobsById.values()];
+        });
+      } else {
+        setGalleryJobs(page.jobs);
+      }
+      setGalleryCursor(productionPreview ? null : page.next_cursor);
+      setGalleryRetryCursor(null);
+      if (productionPreview) productionGalleryLoadedRef.current = true;
+    } catch {
+      setGalleryLoadError(cursor
+        ? "I couldn’t load more videos. Your saved videos are still safe."
+        : "I couldn’t load your Gallery. Your saved videos are still safe.");
+    } finally {
+      setGalleryLoading(false);
+    }
+  }
 
   useEffect(() => {
     if (!thread) return;
@@ -1133,10 +1203,10 @@ export default function ChatCreationWorkspace({
     <aside className="flex h-full w-[260px] shrink-0 flex-col border-r border-border bg-background p-4" aria-label="Projects">
       <div className="flex items-center justify-between px-2">
         <span className="flex items-center gap-2 text-lg font-semibold"><Sparkles className="size-4" /> Kria</span>
-        <Button type="button" variant="ghost" size="icon" className="size-9" aria-label="Hide project sidebar" onClick={() => setSidebarHidden(true)}><PanelLeftClose /></Button>
+        <Button type="button" variant="ghost" size="icon" className="size-11 md:size-9" aria-label="Hide project sidebar" onClick={() => setSidebarHidden(true)}><PanelLeftClose /></Button>
       </div>
       <Button type="button" className="mt-6 min-h-11 justify-start" disabled={productionPreview || busy || thinking || uploading} title={productionPreview ? "Production data is read-only in this preview." : undefined} onClick={() => void startNew()}><Film /> New video</Button>
-      <div className="mt-8 flex items-center justify-between px-2"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Projects</p><Button type="button" variant="ghost" className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground" disabled={busy || thinking || uploading} onClick={openGallery}>Gallery</Button></div>
+      <div className="mt-8 flex items-center justify-between px-2"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Projects</p><Button type="button" variant="ghost" className="min-h-11 px-2 text-xs text-muted-foreground hover:text-foreground md:h-8 md:min-h-8" disabled={busy || thinking || uploading} onClick={openGallery}>Gallery</Button></div>
       <nav className="mt-2 space-y-1 overflow-y-auto" aria-label="Recent projects">
         {projects.slice(0, 10).map((project) => {
           const title = projectTitle(project);
@@ -1144,7 +1214,7 @@ export default function ChatCreationWorkspace({
             <div key={project.id} className="flex min-w-0 items-center gap-1">
               <Button type="button" variant={project.id === thread?.id ? "secondary" : "ghost"} className="h-auto min-h-11 min-w-0 flex-1 justify-start text-left" disabled={busy || thinking || uploading} onClick={() => void openProject(project)}><FolderOpen className="shrink-0" /><span className="min-w-0"><span className="block truncate">{title}</span><span className="block truncate text-[11px] font-normal text-muted-foreground">{projectStatusLabel(project)}</span></span></Button>
               <DropdownMenu>
-                <DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="icon" className="size-9 shrink-0" aria-label={`Project actions for ${title}`} disabled={busy || thinking || uploading}><MoreHorizontal /></Button></DropdownMenuTrigger>
+              <DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 md:size-9" aria-label={`Project actions for ${title}`} disabled={busy || thinking || uploading}><MoreHorizontal /></Button></DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onSelect={() => beginRename(project)}>Rename project{productionPreview ? " (preview)" : ""}</DropdownMenuItem>
                   <DropdownMenuSeparator />
@@ -1157,7 +1227,7 @@ export default function ChatCreationWorkspace({
       </nav>
       <div className="mt-auto border-t pt-4">
         <p className="truncate text-sm font-medium">{accountName}</p>
-        <div className="mt-2 flex items-center gap-1"><Button type="button" variant="ghost" className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground" onClick={openGallery}>My videos</Button><span className="text-muted-foreground">·</span><Button type="button" variant="ghost" className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground" onClick={() => void signOut({ callbackUrl: "/" })}>Sign out</Button></div>
+        <div className="mt-2 flex items-center gap-1"><Button type="button" variant="ghost" className="min-h-11 px-2 text-xs text-muted-foreground hover:text-foreground md:h-8 md:min-h-8" onClick={openGallery}>My videos</Button><span className="text-muted-foreground">·</span><Button type="button" variant="ghost" className="min-h-11 px-2 text-xs text-muted-foreground hover:text-foreground md:h-8 md:min-h-8" onClick={() => void signOut({ callbackUrl: "/" })}>Sign out</Button></div>
       </div>
     </aside>
   );
@@ -1168,7 +1238,7 @@ export default function ChatCreationWorkspace({
         "gap-3",
         hasReady && editorOpen
           ? "grid grid-cols-1"
-          : "grid grid-flow-col auto-cols-[minmax(220px,85%)] snap-x overflow-x-auto sm:grid-flow-row sm:auto-cols-auto sm:grid-cols-3 sm:overflow-visible",
+          : "grid grid-flow-col auto-cols-[minmax(220px,85%)] snap-x overflow-x-auto scrollbar-none sm:grid-flow-row sm:auto-cols-auto sm:grid-cols-3 sm:overflow-visible",
       )}>
         {FORMATS.map((item) => <Button key={item.value} type="button" variant="outline" disabled={productionPreview || busy || (Boolean(format) && !formatPickerOpen) || !availableFormats.includes(item.value)} className={cn("h-auto min-h-[96px] snap-start flex-col items-start justify-start whitespace-normal p-4 text-left", format === item.value && "border-primary ring-1 ring-primary", !availableFormats.includes(item.value) && "opacity-60")} onClick={() => void selectFormat(item.value)}><span className="font-medium">{item.label}</span><span className="mt-1 text-xs font-normal text-muted-foreground">{availableFormats.includes(item.value) ? item.description : "Temporarily unavailable — choose another format."}</span></Button>)}
       </div>
@@ -1178,10 +1248,10 @@ export default function ChatCreationWorkspace({
   const uploadArtifact = (
     <ChatArtifactCard title={format ? FORMAT_GUIDANCE[format].title : "Add clips"} description={format ? FORMAT_GUIDANCE[format].description : "Choose the footage for your story."}>
       {!productionPreview && format === "narrated_planned" && !latestAudio ? <VoiceRecorder upload={uploadRecordedVoice} onVoiceover={() => undefined} /> : null}
-      {format ? <Button type="button" variant="ghost" className="px-0 text-xs text-muted-foreground" disabled={productionPreview} onClick={() => setFormatPickerOpen(true)}>Change format</Button> : null}
+      {format ? <Button type="button" variant="ghost" className="min-h-11 px-2 text-xs text-muted-foreground md:h-8 md:min-h-8" disabled={productionPreview} onClick={() => setFormatPickerOpen(true)}>Change format</Button> : null}
       <Dropzone compact accept="video/*" multiple={format !== "subtitled"} disabled={productionPreview || uploading || clipCount >= clipLimit} title={productionPreview ? "Uploads are disabled in this read-only preview" : uploading ? "Uploading…" : clipCount >= clipLimit ? "Clip limit reached" : format === "subtitled" ? "Choose a clip or drop it here" : "Choose clips or drop them here"} subline={format === "subtitled" ? undefined : `Up to ${clipLimit} clips`} ariaLabel="Add primary video clips" inputAriaLabel="Upload primary video clips" onFiles={(files) => void attach(files)} />
-      {pendingFiles.length > 0 ? <div className="mt-2 space-y-1">{pendingFiles.map((file) => <div key={`${file.name}-${file.size}`} className="flex items-center justify-between gap-2 rounded-md bg-muted px-2 py-1 text-xs"><span className="truncate">{file.name}</span><div className="flex shrink-0 items-center gap-1"><Button type="button" variant="ghost" size="sm" className="h-7 px-2" disabled={uploading} onClick={() => void retryFile(file)}>Retry</Button><Button type="button" variant="ghost" size="icon" className="size-7" aria-label={`Remove ${file.name}`} onClick={() => setPendingFiles((items) => items.filter((item) => item !== file))}><Trash2 className="size-3" /></Button></div></div>)}</div> : null}
-      {media.length > 0 && !thread?.active_job_id ? <div className="mt-2 space-y-1" role="list">{media.map((item) => <div key={item.media_id} className="flex items-center justify-between gap-2 rounded-md bg-muted px-3 py-2 text-sm" role="listitem"><span className="min-w-0 truncate">{item.filename}{item.kind === "audio" ? <span className="ml-2 text-xs text-muted-foreground">Voiceover</span> : null}</span><Button type="button" variant="ghost" size="icon" className="size-8 shrink-0" disabled={productionPreview || busy || uploading} aria-label={`Remove attached ${item.filename}`} onClick={() => void removeMedia(item.media_id)}><Trash2 className="size-4" /></Button></div>)}</div> : null}
+      {pendingFiles.length > 0 ? <div className="mt-2 space-y-1">{pendingFiles.map((file) => <div key={`${file.name}-${file.size}`} className="flex items-center justify-between gap-2 rounded-md bg-muted px-2 py-1 text-xs"><span className="truncate">{file.name}</span><div className="flex shrink-0 items-center gap-1"><Button type="button" variant="ghost" size="sm" className="min-h-11 px-3 md:h-7 md:min-h-7" disabled={uploading} onClick={() => void retryFile(file)}>Retry</Button><Button type="button" variant="ghost" size="icon" className="size-11 md:size-7" aria-label={`Remove ${file.name}`} onClick={() => setPendingFiles((items) => items.filter((item) => item !== file))}><Trash2 className="size-3" /></Button></div></div>)}</div> : null}
+      {media.length > 0 && !thread?.active_job_id ? <div className="mt-2 space-y-1" role="list">{media.map((item) => <div key={item.media_id} className="flex items-center justify-between gap-2 rounded-md bg-muted px-3 py-2 text-sm" role="listitem"><span className="min-w-0 truncate">{item.filename}{item.kind === "audio" ? <span className="ml-2 text-xs text-muted-foreground">Voiceover</span> : null}</span><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 md:size-8" disabled={productionPreview || busy || uploading} aria-label={`Remove attached ${item.filename}`} onClick={() => void removeMedia(item.media_id)}><Trash2 className="size-4" /></Button></div>)}</div> : null}
     </ChatArtifactCard>
   );
 
@@ -1276,11 +1346,11 @@ export default function ChatCreationWorkspace({
 
   const editor = <section className="flex min-w-0 flex-1 flex-col overflow-hidden border-l bg-muted/10" aria-label={productionPreview ? "Production video preview" : "Video editor"}><header className="flex h-14 shrink-0 items-center justify-between border-b bg-background px-4"><div><p className="text-sm font-medium">{productionPreview ? "Production video" : "Editor"}</p><p className="text-xs text-muted-foreground">{productionPreview ? "Real output · read-only playback" : "Feature-complete overlay editor"}</p></div><Badge variant="secondary"><Check /> Ready</Badge></header>{productionPreview && selectedReadyVariant?.output_url ? <div className="flex min-h-0 flex-1 items-center justify-center bg-zinc-950 p-4"><video key={selectedReadyVariant.output_url} controls playsInline preload="metadata" poster={selectedReadyVariant.poster_url ?? undefined} src={selectedReadyVariant.output_url} className="max-h-full max-w-full rounded-lg shadow-2xl" data-testid="production-video-player">Your browser cannot play this video.</video></div> : editorUrl ? <iframe ref={editorFrameRef} src={editorUrl} title="Full video editor" className="min-h-0 flex-1 border-0 bg-background" /> : <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">The editor will appear when your first cut is ready.</div>}</section>;
 
-  if (galleryOpen) return <div className="flex h-dvh flex-col overflow-hidden bg-background">{productionPreview ? <div className="border-b border-lime-300 bg-lime-50 px-4 py-2 text-center text-xs text-lime-950"><strong>Live production data</strong> · Read-only playback</div> : null}<header className="flex h-14 shrink-0 items-center justify-between border-b px-4"><div><h1 className="text-lg font-semibold">Gallery</h1>{productionPreview ? <p className="text-xs text-muted-foreground">{accountName} · {galleryJobs.length} recent videos</p> : null}</div><Button type="button" onClick={closeGallery}>Back to chat</Button></header><main className="min-h-0 flex-1 overflow-y-auto p-6"><ul className="mx-auto grid max-w-5xl grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">{galleryJobs.map((job) => {
+  if (galleryOpen) return <div className="flex h-dvh flex-col overflow-hidden bg-background">{productionPreview ? <div className="border-b border-lime-300 bg-lime-50 px-4 py-2 text-center text-xs text-lime-950"><strong>Live production data</strong> · Read-only playback</div> : null}<header className="flex h-14 shrink-0 items-center justify-between border-b px-4"><div><h1 className="text-lg font-semibold">Gallery</h1>{productionPreview ? <p className="text-xs text-muted-foreground">{accountName} · {galleryJobs.length} recent videos</p> : null}</div><Button type="button" className="min-h-11" onClick={closeGallery}>Back to chat</Button></header><main className="min-h-0 flex-1 overflow-y-auto p-6">{galleryLoading && galleryJobs.length === 0 ? <div className="py-16 text-center text-sm text-muted-foreground" role="status">Loading your videos…</div> : null}{galleryLoadError ? <div className="mx-auto mb-4 flex max-w-md items-center justify-between gap-3 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm" role="alert"><span>{galleryLoadError}</span><Button type="button" variant="outline" className="min-h-11 shrink-0" onClick={() => void retryGalleryLoad()}>Retry</Button></div> : null}<ul className="mx-auto grid max-w-5xl grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">{galleryJobs.map((job) => {
     if (!productionPreview) return <li key={job.id}><LibraryTile job={job} onDeleted={(jobId) => setGalleryJobs((current) => current.filter((item) => item.id !== jobId))} onPosterLoadError={posterRecovery.onPosterLoadError} onPosterLoadSuccess={posterRecovery.onPosterLoadSuccess} posterRecoveryExhausted={posterRecovery.exhaustedJobIds.has(job.id)} posterRefreshUnavailable={posterRecovery.refreshUnavailableJobIds.has(job.id)} /></li>;
     const matchingProject = projects.find((project) => project.active_job_id === job.id || project.id === `${PRODUCTION_LIBRARY_THREAD_PREFIX}${job.id}`);
     return <li key={job.id}><ProductionPreviewVideoCard job={job} title={matchingProject ? projectTitle(matchingProject) : productionLibraryTitle(job)} /></li>;
-  })}</ul>{galleryJobs.length === 0 ? <p className="mx-auto max-w-md py-16 text-center text-sm text-muted-foreground">Your finished cuts will appear here.</p> : null}</main></div>;
+  })}</ul>{galleryJobs.length === 0 && !galleryLoading && !galleryLoadError ? <p className="mx-auto max-w-md py-16 text-center text-sm text-muted-foreground">Your finished cuts will appear here.</p> : null}{galleryCursor && !galleryLoadError ? <div className="flex justify-center py-8"><Button type="button" variant="outline" className="min-h-11" disabled={galleryLoading} onClick={() => void loadMoreGallery()}>{galleryLoading ? "Loading more videos…" : "Load more videos"}</Button></div> : null}</main></div>;
 
   return (
     <div className="relative flex h-dvh min-h-0 overflow-hidden bg-background text-foreground">

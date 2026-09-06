@@ -492,6 +492,58 @@ describe("ChatCreationWorkspace", () => {
     expect(screen.getByText("Ready to post")).toBeInTheDocument();
   });
 
+  it("loads older Gallery pages from next_cursor and deduplicates jobs", async () => {
+    const job = (id: string): LibraryJob => ({
+      id, mode: "generative", status: "ready", raw_status: "ready",
+      output_url: `/${id}.mp4`, poster_url: null, output_variant_id: "original_text",
+      tiktok_publishable: false, tiktok_publication: null, created_at: "2026-01-01T00:00:00Z",
+      content_plan_item_id: null, feedback_signal: null,
+    });
+    jest.mocked(listMyJobs)
+      .mockResolvedValueOnce({ jobs: [job("job-1")], next_cursor: "cursor-1" })
+      .mockResolvedValueOnce({ jobs: [job("job-1"), job("job-2")], next_cursor: null });
+
+    render(<ChatCreationWorkspace />);
+    fireEvent.click(await screen.findByRole("button", { name: "Gallery" }));
+    expect(await screen.findAllByRole("button", { name: "Play preview" })).toHaveLength(1);
+    const loadMore = await screen.findByRole("button", { name: "Load more videos" });
+    expect(loadMore).toHaveClass("min-h-11");
+    fireEvent.click(loadMore);
+    await waitFor(() => expect(listMyJobs).toHaveBeenLastCalledWith({ cursor: "cursor-1" }));
+    expect(await screen.findAllByRole("button", { name: "Play preview" })).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "Load more videos" })).not.toBeInTheDocument();
+  });
+
+  it("shows a non-destructive Gallery error with retry", async () => {
+    jest.mocked(listMyJobs).mockRejectedValueOnce(new Error("network down"));
+    render(<ChatCreationWorkspace />);
+    fireEvent.click(await screen.findByRole("button", { name: "Gallery" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/saved videos are still safe/i);
+    expect(screen.getByRole("button", { name: "Retry" })).toHaveClass("min-h-11");
+  });
+
+  it("retries the failed Gallery page without dropping videos already loaded", async () => {
+    const job = (id: string): LibraryJob => ({
+      id, mode: "generative", status: "ready", raw_status: "ready",
+      output_url: `/${id}.mp4`, poster_url: null, output_variant_id: "original_text",
+      tiktok_publishable: false, tiktok_publication: null, created_at: "2026-01-01T00:00:00Z",
+      content_plan_item_id: null, feedback_signal: null,
+    });
+    jest.mocked(listMyJobs)
+      .mockResolvedValueOnce({ jobs: [job("job-1")], next_cursor: "cursor-1" })
+      .mockRejectedValueOnce(new Error("temporary failure"))
+      .mockResolvedValueOnce({ jobs: [job("job-2")], next_cursor: null });
+
+    render(<ChatCreationWorkspace />);
+    fireEvent.click(await screen.findByRole("button", { name: "Gallery" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Load more videos" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/load more videos/i);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(listMyJobs).toHaveBeenLastCalledWith({ cursor: "cursor-1" }));
+    expect(await screen.findAllByRole("button", { name: "Play preview" })).toHaveLength(2);
+  });
+
   it("shows a partial ready cut and offers retry without hiding playable actions", async () => {
     const partial = {
       ...baseThread,
@@ -1273,6 +1325,7 @@ describe("ChatCreationWorkspace", () => {
     render(<ChatCreationWorkspace />);
     const changeFormat = await screen.findByRole("button", { name: "Change format" });
     await waitFor(() => expect(changeFormat).toBeEnabled());
+    expect(changeFormat).toHaveClass("min-h-11");
     fireEvent.click(changeFormat);
     expect(await screen.findByRole("button", { name: /Montage Music-led/ })).toBeInTheDocument();
   });
@@ -1296,7 +1349,9 @@ describe("ChatCreationWorkspace", () => {
       state: { ...withMedia.state, media: [], media_count: 0 },
     });
     render(<ChatCreationWorkspace />);
-    fireEvent.click(await screen.findByRole("button", { name: "Remove attached arrival.mp4" }));
+    const remove = await screen.findByRole("button", { name: "Remove attached arrival.mp4" });
+    expect(remove).toHaveClass("size-11");
+    fireEvent.click(remove);
     await waitFor(() => expect(applyCreationAction).toHaveBeenCalledWith(
       withMedia,
       "remove_media",

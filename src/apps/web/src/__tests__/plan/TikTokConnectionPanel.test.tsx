@@ -59,7 +59,7 @@ describe("TikTokConnectionPanel", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/couldn.t load/i);
     await user.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("button", { name: "Connect TikTok" })).toBeInTheDocument();
-    expect(getTikTokConnection.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(jest.mocked(getTikTokConnection).mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
   it("explains when TikTok is unavailable for the account", async () => {

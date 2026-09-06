@@ -102,7 +102,7 @@ export default function TikTokConnectionPanel() {
         {!loading && !connection ? (
           <div className="flex flex-wrap items-center gap-3">
             <p className="text-sm text-muted-foreground" role="alert">{error ?? "TikTok connection is unavailable."}</p>
-            <Button type="button" variant="outline" onClick={() => void load()}>Retry</Button>
+            <Button type="button" variant="outline" className="min-h-11" onClick={() => void load()}>Retry</Button>
           </div>
         ) : null}
         {!loading && connection && !connection.available ? (
@@ -122,13 +122,13 @@ export default function TikTokConnectionPanel() {
             {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
             <div className="flex flex-wrap gap-2">
               {showConnect ? (
-                <Button type="button" disabled={busy} onClick={() => void connect()}>
+                <Button type="button" className="min-h-11" disabled={busy} onClick={() => void connect()}>
                   {busy ? "Connecting…" : connection.connected ? "Reconnect TikTok" : "Connect TikTok"}
                 </Button>
               ) : (
                 <>
-                  {connection.can_analyze ? <Button type="button" variant="outline" disabled={busy} onClick={() => void sync()}>Sync performance</Button> : null}
-                  <Button type="button" variant="outline" disabled={busy} onClick={() => setDisconnectOpen(true)}>Disconnect</Button>
+                  {connection.can_analyze ? <Button type="button" variant="outline" className="min-h-11" disabled={busy} onClick={() => void sync()}>Sync performance</Button> : null}
+                  <Button type="button" variant="outline" className="min-h-11" disabled={busy} onClick={() => setDisconnectOpen(true)}>Disconnect</Button>
                 </>
               )}
             </div>
@@ -144,8 +144,8 @@ export default function TikTokConnectionPanel() {
             <AlertDialogDescription>Removes TikTok access from Kria. Your videos remain in Kria and on TikTok.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void disconnect()}>Disconnect</AlertDialogAction>
+            <AlertDialogCancel className="min-h-11">Cancel</AlertDialogCancel>
+            <AlertDialogAction className="min-h-11" onClick={() => void disconnect()}>Disconnect</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
