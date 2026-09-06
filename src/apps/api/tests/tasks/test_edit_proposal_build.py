@@ -1833,6 +1833,11 @@ def test_main_creator_guided_dispatch_preserves_exact_render_contract(monkeypatc
         "_creator_strategy_for_guided_attempt",
         lambda *_a, **_kw: creator_strategy,
     )
+    monkeypatch.setattr(
+        proposal_build,
+        "_creator_request_for_guided_attempt",
+        lambda *_a, **_kw: "Match the storyline and add player names.",
+    )
     dispatch_calls = []
     bind_job = Mock(return_value=True)
     monkeypatch.setattr(proposal_build, "_bind_creator_job_after_auto_design", bind_job)
@@ -1854,6 +1859,7 @@ def test_main_creator_guided_dispatch_preserves_exact_render_contract(monkeypatc
                 "bypass_guided_edit_gate": False,
                 "creator_guided_attempt_id": "attempt-1",
                 "creator_strategy": creator_strategy,
+                "creator_request": "Match the storyline and add player names.",
                 "reject_active_creator_session": False,
             },
         )

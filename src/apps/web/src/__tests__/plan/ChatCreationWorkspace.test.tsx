@@ -525,7 +525,33 @@ describe("ChatCreationWorkspace", () => {
     render(<ChatCreationWorkspace />);
 
     expect(await screen.findByRole("button", { name: "Retry render" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Adjust direction" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Edit direction and try again" })).toBeInTheDocument();
+  });
+
+  it("surfaces creator planning failures without a Job and restores the last direction", async () => {
+    const direction = "Match the content with the videos, add intro texts, and show the scores from my voiceover.";
+    const failed = {
+      ...baseThread,
+      state: { format: "narrated_planned", edit_format: "narrated_planned", media: [], media_count: 1 },
+      creator_agent: { status: "failed" },
+      events: [
+        { id: "direction", sequence: 0, revision: 1, role: "user" as const, event_type: "user_message", content: direction, payload: null, created_at: "2026-01-01T00:00:00Z" },
+        { id: "strategy", sequence: 1, revision: 2, role: "assistant" as const, event_type: "agent_assistant_strategy", content: "I’ll shape the story around your voiceover.", payload: null, created_at: "2026-01-01T00:00:01Z" },
+        { id: "planning-error", sequence: 2, revision: 3, role: "assistant" as const, event_type: "agent_assistant_error", content: null, payload: { message: "This direction needs another pass." }, created_at: "2026-01-01T00:00:02Z" },
+      ],
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([failed]);
+    jest.mocked(refreshCreationThread).mockResolvedValue(failed);
+
+    render(<ChatCreationWorkspace />);
+
+    const editDirection = await screen.findByRole("button", { name: "Edit direction and try again" });
+    expect(screen.queryByRole("button", { name: "Retry render" })).not.toBeInTheDocument();
+    fireEvent.click(editDirection);
+    const composer = screen.getByRole("textbox", { name: "Message Kria" });
+    expect(composer).toHaveValue(direction);
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(sendCreationMessage).toHaveBeenCalledWith(failed, direction));
   });
 
   it("keeps state-only lifecycle cards before later user turns", async () => {

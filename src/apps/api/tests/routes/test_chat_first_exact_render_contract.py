@@ -246,6 +246,64 @@ def test_model_cannot_invent_exact_render_fields_without_creator_wording() -> No
     assert parsed.text_color is None
 
 
+def test_plural_intro_texts_are_direction_not_an_opening_title() -> None:
+    """The repro's generic text request must not become the title ``s``."""
+
+    from app.routes.creator_agent import _apply_explicit_render_intent
+
+    parsed = _apply_explicit_render_intent(
+        CreativeStrategy(opening_title="Model-authored title"),
+        (
+            "Match the content with the videos. Add intro texts, add a placeholder name "
+            "for everyone involved, and add the scores mentioned in the audio."
+        ),
+    )
+
+    assert parsed.opening_title is None
+
+
+@pytest.mark.parametrize("directive", ["Add intro texts", "Add intro copies"])
+def test_plural_intro_directives_never_become_literal_copy(directive: str) -> None:
+    from app.routes.creator_agent import _apply_explicit_render_intent
+
+    parsed = _apply_explicit_render_intent(
+        CreativeStrategy(opening_title="Model-authored title"),
+        f"{directive}, add player placeholders and scores.",
+    )
+
+    assert parsed.opening_title is None
+
+
+def test_quoted_intro_text_remains_exact_creator_copy() -> None:
+    from app.routes.creator_agent import _apply_explicit_render_intent
+
+    parsed = _apply_explicit_render_intent(
+        CreativeStrategy(),
+        'Add intro text "Match Day" with player placeholders.',
+    )
+
+    assert parsed.opening_title == "Match Day"
+
+
+@pytest.mark.parametrize(
+    "creator_text",
+    [
+        "Add intro copy, then add player names.",
+        "Add intro text, then add player names.",
+        "Do not add an intro title; use 'Match Day' as an example only.",
+        "Use the phrase 'Match Day' in the intro title.",
+    ],
+)
+def test_generic_or_negated_title_directions_never_become_pixels(creator_text: str) -> None:
+    from app.routes.creator_agent import _apply_explicit_render_intent
+
+    parsed = _apply_explicit_render_intent(
+        CreativeStrategy(opening_title="Model-authored title"), creator_text
+    )
+
+    assert parsed.opening_title is None
+
+
 def test_model_authored_sfx_is_stripped_without_explicit_creator_request() -> None:
     """Licensed effects must only enter the render contract from user wording."""
 

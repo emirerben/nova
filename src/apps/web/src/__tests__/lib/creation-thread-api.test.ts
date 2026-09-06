@@ -5,6 +5,7 @@ import {
   creationJobPartial,
   creationJobReady,
   creationJobSettled,
+  creationPlanningFailed,
   creationThreadInProgress,
   creationThreadPreparing,
   creationThreadProgressKey,
@@ -15,6 +16,7 @@ import {
   renameCreationThread,
   isCreationThreadRevisionConflict,
   refreshCreationThread,
+  latestCreationDirection,
   threadMessages,
   type CreationThread,
 } from "@/lib/creation-thread-api";
@@ -173,6 +175,58 @@ describe("creation thread projection", () => {
         output_url: "/last-good-cut.mp4",
       },
     ] } }))).toBe(true);
+  });
+
+  it("classifies creator planning errors separately from render Jobs", () => {
+    const planningFailure = thread({
+      creator_agent: { status: "failed" },
+      events: [{ id: "error", sequence: 1, revision: 1, role: "assistant", event_type: "agent_assistant_error", content: null, payload: { message: "Unavailable" }, created_at: "2026-01-01T00:00:00Z" }],
+    });
+    expect(creationPlanningFailed(planningFailure)).toBe(true);
+    expect(creationPlanningFailed(thread({
+      ...planningFailure,
+      job: { id: "job-1", status: "processing_failed", variants: [] },
+    }))).toBe(false);
+    expect(creationPlanningFailed(thread({
+      ...planningFailure,
+      creator_agent: { status: "planning" },
+      events: [
+        ...planningFailure.events,
+        { id: "retry", sequence: 2, revision: 2, role: "user", event_type: "user_message", content: "Try again", payload: null, created_at: "2026-01-01T00:00:02Z" },
+      ],
+    }))).toBe(false);
+    expect(creationPlanningFailed(thread({
+      ...planningFailure,
+      creator_agent: null,
+      events: [
+        ...planningFailure.events,
+        { id: "retry", sequence: 2, revision: 2, role: "user", event_type: "user_message", content: "Try again", payload: null, created_at: "2026-01-01T00:00:02Z" },
+      ],
+    }))).toBe(false);
+    expect(creationPlanningFailed(thread({
+      ...planningFailure,
+      creator_agent: null,
+      events: [
+        ...planningFailure.events,
+        { id: "retry", sequence: 2, revision: 2, role: "user", event_type: "user_message", content: "Try again", payload: null, created_at: "2026-01-01T00:00:02Z" },
+        { id: "strategy-retry", sequence: 3, revision: 3, role: "assistant", event_type: "agent_assistant_strategy", content: "Here is the revised direction", payload: null, created_at: "2026-01-01T00:00:03Z" },
+      ],
+    }))).toBe(false);
+    expect(latestCreationDirection(thread({
+      ...planningFailure,
+      events: [
+        { id: "old", sequence: 0, revision: 1, role: "user", event_type: "user_message", content: "Old direction", payload: null, created_at: "2026-01-01T00:00:00Z" },
+        { id: "new", sequence: 2, revision: 2, role: "user", event_type: "user_message", content: "New direction", payload: null, created_at: "2026-01-01T00:00:02Z" },
+      ],
+    }))).toBe("New direction");
+  });
+
+  it.each(["assistant_error", "agent_assistant_error"]) ("projects %s as a failure artifact", (eventType) => {
+    const result = threadMessages(thread({ events: [{
+      id: "error", sequence: 1, revision: 1, role: "assistant", event_type: eventType, content: null,
+      payload: { message: "Planning failed" }, created_at: "2026-01-01T00:00:00Z",
+    }] }));
+    expect(result).toEqual([expect.objectContaining({ artifact: "failure", content: "Planning failed" })]);
   });
 
   it("keeps polling while one variant is ready and another is still rendering", () => {

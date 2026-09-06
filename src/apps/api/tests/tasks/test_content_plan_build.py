@@ -348,7 +348,7 @@ def test_dispatch_snapshots_only_explicit_speech_cleanup_contracts(
             "app.services.smart_captions.resolve_smart_captions_context_sync",
             return_value=None,
         ),
-        patch("app.services.generative_jobs.build_generative_job", return_value=job),
+        patch("app.services.generative_jobs.build_generative_job", return_value=job) as mock_build,
         patch("app.services.job_dispatch.enqueue_orchestrator_sync"),
     ):
         result = _dispatch_item_render(
@@ -357,6 +357,7 @@ def test_dispatch_snapshots_only_explicit_speech_cleanup_contracts(
             plan,
             {"tone": "direct", "content_pillars": []},
             ownership_epoch=0,
+            creator_request="x" * 2000,
         )
 
     assert result.outcome == "dispatched"
@@ -366,6 +367,7 @@ def test_dispatch_snapshots_only_explicit_speech_cleanup_contracts(
     assert job.assembly_plan["speech_cleanup_contract"] != "legacy_auto"
     assert isinstance(job.assembly_plan["creator_generation_id"], str)
     assert job.assembly_plan["creator_generation_id"]
+    assert mock_build.call_args.kwargs["creator_request"] == "x" * 1000
 
 
 def test_missing_persona_rejects_before_job_or_queue() -> None:

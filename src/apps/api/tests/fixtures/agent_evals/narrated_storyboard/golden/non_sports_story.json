@@ -1,0 +1,35 @@
+{
+  "agent":"nova.compose.narrated_storyboard",
+  "prompt_version":"2026-09-06.4",
+  "input":{
+    "words":[
+      {"word_id":"w000000","text":"We","start_s":0.0,"end_s":0.2},
+      {"word_id":"w000001","text":"mixed","start_s":0.2,"end_s":0.5},
+      {"word_id":"w000002","text":"the","start_s":0.5,"end_s":0.6},
+      {"word_id":"w000003","text":"dough","start_s":0.6,"end_s":0.9},
+      {"word_id":"w000004","text":"then","start_s":1.2,"end_s":1.4},
+      {"word_id":"w000005","text":"baked","start_s":1.4,"end_s":1.7},
+      {"word_id":"w000006","text":"the","start_s":1.7,"end_s":1.8},
+      {"word_id":"w000007","text":"bread","start_s":1.8,"end_s":2.1}
+    ],
+    "segments":[
+      {"segment_id":"seg_0","start_s":0.0,"end_s":1.2,"transcript":"We mixed the dough"},
+      {"segment_id":"seg_1","start_s":1.2,"end_s":2.1,"transcript":"then baked the bread"}
+    ],
+    "clips":[
+      {"clip_id":"clip-oven","summary":"bread entering an oven","duration_s":5.0},
+      {"clip_id":"clip-mix","summary":"hands mixing bread dough","duration_s":6.0}
+    ],
+    "creator_request":"Match the content with the videos and add a short intro.",
+    "language":"en"
+  },
+  "raw_text":"{\"matches\":[{\"segment_id\":\"seg_0\",\"clip_id\":\"clip-mix\",\"confidence\":\"high\"},{\"segment_id\":\"seg_1\",\"clip_id\":\"clip-oven\",\"confidence\":\"high\"}],\"overlays\":[{\"kind\":\"intro\",\"text\":\"From Dough to Loaf\",\"anchor_word_id\":\"w000000\"}]}",
+  "output":{
+    "matches":[
+      {"segment_id":"seg_0","clip_id":"clip-mix","confidence":"high","source_start_s":null,"reason":""},
+      {"segment_id":"seg_1","clip_id":"clip-oven","confidence":"high","source_start_s":null,"reason":""}
+    ],
+    "overlays":[{"kind":"intro","anchor_word_id":"w000000","end_word_id":null,"placeholder_index":null,"text":"From Dough to Loaf","reason":""}]
+  },
+  "meta":{"source":"hand_authored_golden","scenario":"non-sports semantic ordering"}
+}

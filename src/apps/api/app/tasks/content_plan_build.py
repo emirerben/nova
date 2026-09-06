@@ -688,6 +688,7 @@ def _dispatch_item_render(
     bypass_guided_edit_gate: bool = False,
     creator_strategy: dict | None = None,
     creator_clip_order: list[int] | None = None,
+    creator_request: str = "",
     creator_guided_attempt_id: str | None = None,
     speech_cleanup_contract: str | None = None,
 ) -> DispatchResult:
@@ -958,6 +959,7 @@ def _dispatch_item_render(
             smart_captions=smart_context,
             creator_strategy=creator_strategy,
             creator_clip_order=creator_clip_order,
+            creator_request=str(creator_request or "")[:1000],
         )
         # Pin one immutable identity for this Creator-confirmed render before
         # the worker is queued.  Native variants historically received no
@@ -1155,6 +1157,7 @@ def dispatch_item_render_for(
     bypass_guided_edit_gate: bool = False,
     creator_strategy: dict | None = None,
     creator_clip_order: list[int] | None = None,
+    creator_request: str = "",
     creator_guided_attempt_id: str | None = None,
     speech_cleanup_contract: str | None = None,
     speech_cleanup_action: str | None = None,
@@ -1299,6 +1302,7 @@ def dispatch_item_render_for(
             bypass_guided_edit_gate=bypass_guided_edit_gate,
             creator_strategy=creator_strategy,
             creator_clip_order=creator_clip_order,
+            creator_request=creator_request,
             creator_guided_attempt_id=creator_guided_attempt_id,
             speech_cleanup_contract=speech_cleanup_contract,
         )

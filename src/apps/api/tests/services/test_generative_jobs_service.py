@@ -77,6 +77,21 @@ def test_confirmed_creator_strategy_is_schema_bounded_and_persisted() -> None:
         )
 
 
+def test_creator_request_is_bounded_and_persisted_for_retries() -> None:
+    request = "  Match the voiceover to the clips. " + ("Add score text. " * 200)
+    job = build_generative_job(
+        user_id=uuid.uuid4(),
+        clip_paths=["users/u/plan/i/a.mp4"],
+        mode="content_plan",
+        content_plan_item_id=uuid.uuid4(),
+        content_plan_ownership_epoch=0,
+        creator_request=request,
+    )
+
+    assert len(job.all_candidates["creator_request"]) == 1000
+    assert job.all_candidates["creator_request"] == request.strip()[:1000]
+
+
 def test_content_plan_original_audio_policy_is_persisted() -> None:
     job = build_generative_job(
         user_id=uuid.uuid4(),
