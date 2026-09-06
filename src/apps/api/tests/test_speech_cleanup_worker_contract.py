@@ -124,6 +124,51 @@ def test_task_streams_generation_without_full_video_download_or_hash() -> None:
     assert "os.killpg" in source
 
 
+def test_signed_get_url_for_generation_pins_generation_in_query(monkeypatch) -> None:
+    """The signed URL must carry the exact generation, not just the path.
+
+    Consent binds to immutable bytes. ``bucket.blob(path, generation=...)`` does
+    NOT propagate into ``generate_signed_url`` -- its own ``generation=None``
+    default is forwarded to the signer -- so a path-only URL would silently read
+    a replacement object. Behavioural guard: the name-only source grep above
+    cannot catch this, and the local-storage branch enforces identity by a
+    different route, so only GCS regresses.
+    """
+    from app import storage
+
+    signed: dict[str, object] = {}
+
+    class _FakeBlob:
+        def __init__(self, name: str, generation: int | None) -> None:
+            self.name = name
+            self.generation = generation
+
+        def generate_signed_url(self, **kwargs: object) -> str:
+            signed.update(kwargs)
+            gen = kwargs.get("generation")
+            query = f"?generation={gen}" if gen is not None else ""
+            return f"https://signed.test/{self.name}{query}"
+
+    class _FakeBucket:
+        def blob(self, name: str, generation: int | None = None) -> _FakeBlob:
+            return _FakeBlob(name, generation)
+
+    class _FakeClient:
+        def bucket(self, _name: str) -> _FakeBucket:
+            return _FakeBucket()
+
+    monkeypatch.setattr(storage, "_uses_local_storage", lambda: False)
+    monkeypatch.setattr(storage, "_get_client", _FakeClient)
+
+    url = storage.signed_get_url_for_generation(
+        "voiceover-uploads/direct/u/voice.mp3",
+        generation="1758000000000001",
+    )
+
+    assert signed["generation"] == 1758000000000001
+    assert "generation=1758000000000001" in url
+
+
 def test_pure_engine_has_no_job_orm_celery_or_render_task_imports() -> None:
     engine_path = API_ROOT / "app/pipeline/speech_cleanup_analysis.py"
     imported = _imported_modules(engine_path)

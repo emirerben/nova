@@ -827,10 +827,17 @@ def signed_get_url_for_generation(
         raise ValueError("generation must be a storage generation number") from exc
     bucket = _get_client().bucket(settings.storage_bucket)
     blob = bucket.blob(object_path, generation=generation_number)
+    # The generation MUST be passed to generate_signed_url itself. Setting it on
+    # the Blob constructor does not reach the signer: generate_signed_url's own
+    # ``generation=None`` default is forwarded verbatim, so the signed URL would
+    # be path-only and silently read a replacement object -- exactly what this
+    # primitive exists to prevent. Pinned by
+    # test_signed_get_url_for_generation_pins_generation_in_query.
     return blob.generate_signed_url(
         version="v4",
         expiration=datetime.timedelta(minutes=expiration_minutes),
         method="GET",
+        generation=generation_number,
     )
 
 
