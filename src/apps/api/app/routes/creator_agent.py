@@ -14,7 +14,7 @@ import math
 import re
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -156,6 +156,11 @@ class ConfirmBody(_StrictBody):
     plan_version: int = Field(ge=1)
     plan_hash: str = Field(min_length=64, max_length=64)
     client_event_id: str = Field(min_length=1, max_length=128)
+    # Chat-first speech preflight passes these through to the row-locked Job
+    # mint. They are optional here so non-chat Creator surfaces retain their
+    # existing contract until that rollout reaches them.
+    speech_cleanup_analysis_id: uuid.UUID | None = None
+    speech_cleanup_choice: Literal["clean", "keep_original", "create_without_cleanup"] | None = None
 
 
 class CancelBody(_StrictBody):
@@ -1890,22 +1895,40 @@ async def creator_session_turn(
     return await creator_session_turn_controller(request, item_id, body, user, db)
 
 
-def _apply_plan_intent(item: PlanItem, plan: CreatorEditPlan) -> None:
+def _apply_plan_intent(
+    item: PlanItem,
+    plan: CreatorEditPlan,
+    current_analysis: object | None = None,
+) -> None:
+    edit_format = item.edit_format
     for command in plan.commands:
         if command.command == "set_item_intent":
-            item.edit_format = command.edit_format
+            edit_format = command.edit_format
     strategy = plan.strategy
     audio = getattr(strategy, "audio_strategy", None)
+    audio_mode = item.audio_mode
     if audio == "original_audio":
-        item.audio_mode = "original"
+        audio_mode = "original"
     elif audio == "voiceover":
         if not item.voiceover_gcs_path:
             raise HTTPException(
                 status_code=409, detail="Record a voiceover before confirming this plan"
             )
-        item.audio_mode = "voiceover"
+        audio_mode = "voiceover"
     elif audio == "licensed_music":
-        item.audio_mode = "kria"
+        audio_mode = "kria"
+    from app.services.plan_item_media import (  # noqa: PLC0415
+        current_detector_policy,
+        mutate_plan_item_media,
+    )
+
+    mutate_plan_item_media(
+        item,
+        detector_policy=current_detector_policy(),
+        edit_format=edit_format,
+        audio_mode=audio_mode,
+        current_analysis=current_analysis,
+    )
     caption = getattr(strategy, "caption_style", None)
     # Translate the creative vocabulary into the renderer's existing typed
     # sentence/word contract. "auto" preserves the creator's current choice;
@@ -2074,6 +2097,18 @@ async def _lock_confirmed_render_graph(
     return await _load_session(db, session_id, user_id, item.id, for_update=True)
 
 
+class _SpeechCleanupRecoveryChanged(RuntimeError):
+    """The task-side immutable recovery fence rejected a stale request."""
+
+
+class _CommittedRenderPublishFailure(RuntimeError):
+    """Dispatch minted a terminal Job but could not publish it to the broker."""
+
+    def __init__(self, job_id: uuid.UUID) -> None:
+        super().__init__("render dispatch publication failed")
+        self.job_id = job_id
+
+
 async def confirm_creator_plan_controller(
     item_id: str,
     body: ConfirmBody,
@@ -2081,8 +2116,34 @@ async def confirm_creator_plan_controller(
     db: Annotated[AsyncSession, Depends(get_db)],
     *,
     allow_chat: bool = False,
+    speech_cleanup_recovery_action: Literal[
+        "retry_required",
+        "disable_and_create",
+        "retry_preflight_dispatch",
+    ]
+    | None = None,
+    speech_cleanup_recovery_job_id: uuid.UUID | None = None,
+    speech_cleanup_recovery_generation_id: str | None = None,
+    speech_cleanup_recovery_analysis_id: uuid.UUID | None = None,
 ) -> CreatorSessionResponse:
     _require_feature(user.id, execution=True, allow_chat=allow_chat)
+    recovery_values = (
+        speech_cleanup_recovery_action,
+        speech_cleanup_recovery_job_id,
+        speech_cleanup_recovery_generation_id,
+        speech_cleanup_recovery_analysis_id,
+    )
+    recovery_requested = any(value is not None for value in recovery_values)
+    if recovery_requested and (
+        not allow_chat
+        or speech_cleanup_recovery_action is None
+        or speech_cleanup_recovery_job_id is None
+        or not speech_cleanup_recovery_generation_id
+        or speech_cleanup_recovery_analysis_id is None
+        or body.speech_cleanup_analysis_id is not None
+        or body.speech_cleanup_choice is not None
+    ):
+        raise HTTPException(status_code=409, detail="Speech cleanup recovery changed")
     item, plan_row, persona = await _owned_context(db, item_id, user.id, for_update=True)
     session = await _load_session(db, body.session_id, user.id, item.id, for_update=True)
     # Keep identity/ownership scalars local.  The guided auto-design helper
@@ -2093,7 +2154,19 @@ async def confirm_creator_plan_controller(
     plan_item_id = item.id
     creator_session_id = session.id
     creator_ownership_epoch = getattr(session, "ownership_epoch", None)
-    request_digest = canonical_context_hash(body.model_dump(mode="json"))
+    digest_input = body.model_dump(mode="json")
+    if recovery_requested:
+        # The private recovery target participates in idempotency even though it
+        # is intentionally absent from the public Creator confirm schema.
+        digest_input["speech_cleanup_recovery_action"] = speech_cleanup_recovery_action
+        digest_input["speech_cleanup_recovery_job_id"] = str(speech_cleanup_recovery_job_id)
+        digest_input["speech_cleanup_recovery_generation_id"] = (
+            speech_cleanup_recovery_generation_id
+        )
+        digest_input["speech_cleanup_recovery_analysis_id"] = str(
+            speech_cleanup_recovery_analysis_id
+        )
+    request_digest = canonical_context_hash(digest_input)
     receipt = (
         await db.execute(
             select(CreatorAgentExecution).where(
@@ -2104,9 +2177,17 @@ async def confirm_creator_plan_controller(
     ).scalar_one_or_none()
     active = session.active_plan or {}
     resuming = receipt is not None
+    preflight_analysis_id: uuid.UUID | None = None
     if receipt is not None:
         if receipt.request_digest != request_digest:
             raise HTTPException(status_code=409, detail="Idempotency key reused")
+        if (
+            recovery_requested
+            and receipt.status == "stale"
+            and isinstance(receipt.error, dict)
+            and receipt.error.get("code") == "speech_cleanup_recovery_changed"
+        ):
+            raise HTTPException(status_code=409, detail="speech_cleanup_analysis_changed")
         if receipt.status != "running":
             return await _response(db, session)
         if session.status not in {"executing", "rendering"}:
@@ -2121,7 +2202,17 @@ async def confirm_creator_plan_controller(
         if session.ownership_epoch != int(plan_row.ownership_epoch or 0):
             raise HTTPException(status_code=409, detail="Creator ownership changed")
         if session.render_attempts >= session.max_render_attempts:
-            raise HTTPException(status_code=409, detail="This session has used its render attempts")
+            if speech_cleanup_recovery_action == "disable_and_create":
+                # A required cleanup render and its one allowed same-snapshot
+                # retry can consume the ordinary budget. Reserve exactly one
+                # counted escape attempt so unchecked bypass cannot strand the
+                # user's otherwise-renderable video.
+                session.max_render_attempts = session.render_attempts + 1
+            else:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This session has used its render attempts",
+                )
         if item.current_job_id:
             current_job = await db.get(Job, item.current_job_id, with_for_update=True)
             if current_job is not None and current_job.status not in PLAN_ITEM_JOB_TERMINAL:
@@ -2169,14 +2260,25 @@ async def confirm_creator_plan_controller(
             status="running",
         )
         db.add(receipt)
-        from app.services.speech_cleanup import (  # noqa: PLC0415
-            cleanup_inputs,
-            reconcile_item_policy_change,
-        )
+        if recovery_requested:
+            if edit_plan.strategy.render_program != "native":
+                raise HTTPException(status_code=409, detail="Speech cleanup recovery changed")
+        else:
+            from app.services.speech_cleanup import (  # noqa: PLC0415
+                cleanup_inputs,
+                reconcile_item_policy_change,
+            )
 
-        previous_speech_inputs = cleanup_inputs(item)
-        _apply_plan_intent(item, edit_plan)
-        reconcile_item_policy_change(item, previous_speech_inputs)
+            previous_speech_inputs = cleanup_inputs(item)
+            from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+                mutation_current_analysis_async,
+                schedule_item_preflight_async,
+            )
+
+            current_cleanup = await mutation_current_analysis_async(db, item.id, for_update=True)
+            _apply_plan_intent(item, edit_plan, current_cleanup)
+            reconcile_item_policy_change(item, previous_speech_inputs)
+            preflight_analysis_id = await schedule_item_preflight_async(db, item)
         if edit_plan.strategy.render_program == "guided":
             _seed_guided_specialist_brief(
                 item,
@@ -2204,6 +2306,15 @@ async def confirm_creator_plan_controller(
             client_event_id=body.client_event_id,
         )
         await db.commit()
+        if preflight_analysis_id is not None:
+            from app.services.plan_item_media import (  # noqa: PLC0415
+                publish_preflight_after_commit,
+            )
+
+            await asyncio.to_thread(
+                publish_preflight_after_commit,
+                preflight_analysis_id,
+            )
 
     assert receipt is not None  # narrowed after new-or-resume handling
     receipt_id = receipt.id
@@ -2220,6 +2331,7 @@ async def confirm_creator_plan_controller(
         if guided and isinstance(raw_guided_attempt, str) and raw_guided_attempt
         else None
     )
+    resumed_publish_failure_job_id: uuid.UUID | None = None
     if resuming and item.current_job_id:
         candidate = await db.get(Job, item.current_job_id)
         expected_strategy = edit_plan.strategy.model_dump(mode="json", exclude_none=True)
@@ -2247,6 +2359,15 @@ async def confirm_creator_plan_controller(
             and (guided_matches or (not guided and candidate_strategy == expected_strategy))
         ):
             job_id = candidate.id
+            if (
+                getattr(candidate, "status", None) == "processing_failed"
+                and getattr(candidate, "failure_reason", None) == "dispatch_publish_failed"
+            ):
+                # The sync dispatcher committed the Job before broker
+                # publication, then this process died before compensating the
+                # still-running receipt. Resume through the same refund/bind
+                # path instead of mislabeling a terminal Job as rendering.
+                resumed_publish_failure_job_id = candidate.id
             if guided:
                 guided_generation_attempt_id = str(expected_guided_attempt)
                 guided_proposal_version = (
@@ -2255,6 +2376,8 @@ async def confirm_creator_plan_controller(
                     else None
                 )
     try:
+        if resumed_publish_failure_job_id is not None:
+            raise _CommittedRenderPublishFailure(resumed_publish_failure_job_id)
         if job_id is not None:
             pass
         elif guided:
@@ -2348,6 +2471,24 @@ async def confirm_creator_plan_controller(
                 creator_strategy=edit_plan.strategy.model_dump(mode="json", exclude_none=True),
                 creator_clip_order=preserved_clip_order,
                 creator_request=str(active.get("creator_request") or "")[:1000],
+                speech_cleanup_analysis_id=(
+                    str(body.speech_cleanup_analysis_id)
+                    if body.speech_cleanup_analysis_id is not None
+                    else None
+                ),
+                speech_cleanup_choice=body.speech_cleanup_choice,
+                speech_cleanup_action=speech_cleanup_recovery_action,
+                expected_job_id=(
+                    str(speech_cleanup_recovery_job_id)
+                    if speech_cleanup_recovery_job_id is not None
+                    else None
+                ),
+                expected_render_generation_id=speech_cleanup_recovery_generation_id,
+                expected_speech_cleanup_analysis_id=(
+                    str(speech_cleanup_recovery_analysis_id)
+                    if speech_cleanup_recovery_analysis_id is not None
+                    else None
+                ),
             )
             if outcome.outcome == "already_active":
                 return await _concurrent_render_response(
@@ -2357,9 +2498,83 @@ async def confirm_creator_plan_controller(
                     user_id=user_id,
                     receipt=receipt,
                 )
+            if recovery_requested and outcome.outcome == "speech_cleanup_recovery_conflict":
+                raise _SpeechCleanupRecoveryChanged
+            if outcome.outcome == "publish_failed" and outcome.job_id:
+                raise _CommittedRenderPublishFailure(uuid.UUID(outcome.job_id))
             if outcome.outcome != "dispatched":
                 raise RuntimeError(f"render dispatch failed: {outcome.outcome}")
             job_id = uuid.UUID(outcome.job_id) if outcome.job_id else None
+    except _SpeechCleanupRecoveryChanged as exc:
+        # The sync dispatcher revalidated Job/source/analysis under its own
+        # canonical lock graph and rejected a race after this controller's
+        # intent receipt commit. Compensate the one reserved attempt exactly
+        # once and surface a refreshable 409 instead of corrupting the session
+        # into a durable generic failure with no Job.
+        await db.rollback()
+        changed = await _load_session(
+            db,
+            creator_session_id,
+            user_id,
+            plan_item_id,
+            for_update=True,
+        )
+        changed_receipt = await db.get(
+            CreatorAgentExecution,
+            receipt_id,
+            with_for_update=True,
+        )
+        if changed_receipt is not None and changed_receipt.status == "running":
+            changed.status = "awaiting_confirmation"
+            changed.render_attempts = max(0, int(changed.render_attempts or 0) - 1)
+            changed.iteration_count = max(0, int(changed.iteration_count or 0) - 1)
+            changed_receipt.status = "stale"
+            changed_receipt.error = {"code": "speech_cleanup_recovery_changed"}
+            changed_receipt.completed_at = datetime.now(UTC)
+        await db.commit()
+        raise HTTPException(status_code=409, detail="speech_cleanup_analysis_changed") from exc
+    except _CommittedRenderPublishFailure as exc:
+        # The Job is already durable and terminal. Bind that exact row to the
+        # Creator session before returning failure so the outer chat route can
+        # project/retry it instead of retaining the superseded failed Job.
+        await db.rollback()
+        failed = await _lock_confirmed_render_graph(
+            db,
+            item_id=plan_item_id,
+            user_id=user_id,
+            session_id=creator_session_id,
+            job_id=exc.job_id,
+        )
+        failed.target_job_id = exc.job_id
+        failed.status = "failed"
+        failed.last_error = {
+            "code": "dispatch_publish_failed",
+            "message": "The render couldn't be handed to the queue. Give it another go.",
+        }
+        failed_receipt = await db.get(
+            CreatorAgentExecution,
+            receipt_id,
+            with_for_update=True,
+        )
+        if failed_receipt is not None and failed_receipt.status == "running":
+            # Publication failed before a render worker could run. Refund this
+            # reserved attempt exactly once so a bypass taken at the ordinary
+            # cap still has a bounded way to retry the queue handoff.
+            failed.render_attempts = max(0, int(failed.render_attempts or 0) - 1)
+            failed.iteration_count = max(0, int(failed.iteration_count or 0) - 1)
+            failed_receipt.status = "failed"
+            failed_receipt.error = failed.last_error
+            failed_receipt.result = {"job_id": str(exc.job_id)}
+            failed_receipt.completed_at = datetime.now(UTC)
+        await append_event(
+            db,
+            failed,
+            event_type="assistant_error",
+            payload={
+                "message": "I couldn't hand that render to the queue. Your direction is saved."
+            },
+        )
+        return await _response(db, failed)
     except Exception as exc:  # noqa: BLE001
         # A failed helper/dispatch may have left the transaction aborted or
         # expired its ORM state.  Start the failure transition from a clean

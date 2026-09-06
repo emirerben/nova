@@ -46,6 +46,7 @@ from app.services.queue_state import (
     get_queue_snapshot,
 )
 from app.services.render_summary import build_render_summary
+from app.services.speech_cleanup_rollout import project_admin_speech_cleanup_trace
 from app.services.speech_cleanup_terminal import active_speech_claim_task_id
 
 log = structlog.get_logger()
@@ -217,6 +218,9 @@ class JobDebugResponse(BaseModel):
     runtime: JobRuntimePayload
     render_summary: Any = None
     render_timing: RenderTimingBreakdownPayload
+    # Scalar-only correlation. The underlying preflight snapshot remains private:
+    # no media path, generation, fingerprint, words, or cut intervals are exposed.
+    speech_cleanup_preflight: dict[str, Any] | None = None
 
 
 class CancelJobResponse(BaseModel):
@@ -718,6 +722,7 @@ async def get_job_debug(
         context_runs_cap=CONTEXT_RUNS_CAP,
         runtime=runtime,
         render_summary=build_render_summary(job, runs),
+        speech_cleanup_preflight=project_admin_speech_cleanup_trace(job.assembly_plan),
         render_timing=_render_timing_breakdown(job, runs),
     )
 

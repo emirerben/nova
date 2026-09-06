@@ -3,11 +3,34 @@ import { expect, test } from "@playwright/test";
 const fixture = "/dev-qa/chat-first-creation";
 
 test.describe("Kria chat-first creation fixture", () => {
+  test.describe.configure({ timeout: 90_000 });
+
   test("desktop choose state exposes the three Paper formats and bounded panes", async ({ page }) => {
+    const hydrationErrors: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error" && /Text content did not match|Hydration failed/i.test(message.text())) {
+        hydrationErrors.push(message.text());
+      }
+    });
     await page.goto(`${fixture}?state=choose`);
-    await expect(page.getByTestId("choose-state")).toBeVisible();
-    await expect(page.getByRole("radio")).toHaveCount(3);
+    const chooseState = page.getByTestId("choose-state");
+    const artifact = page.getByTestId("format-artifact");
+    const formats = artifact.getByRole("radio");
+    await expect(chooseState).toBeVisible();
+    await expect(artifact).toBeVisible();
+    await expect(artifact).toHaveClass(/max-w-xl/);
+    await expect(artifact.getByText("Pick a starting point. You can shape the creative direction together in chat.")).toBeVisible();
+    await expect(formats).toHaveCount(3);
     await expect(page.getByRole("button", { name: /Add footage/ })).toBeVisible();
+
+    const formatBoxes = await formats.evaluateAll((elements) => elements.map((element) => {
+      const rect = element.getBoundingClientRect();
+      return { width: rect.width, height: rect.height, y: rect.y };
+    }));
+    expect(new Set(formatBoxes.map(({ width }) => width)).size).toBe(1);
+    expect(new Set(formatBoxes.map(({ height }) => height)).size).toBe(1);
+    expect(new Set(formatBoxes.map(({ y }) => y)).size).toBe(1);
+    expect(hydrationErrors).toEqual([]);
 
     const panes = await page.evaluate(() =>
       [".project-rail", ".chat-rail"].map((selector) => {
@@ -72,9 +95,19 @@ test.describe("Kria chat-first creation fixture", () => {
   test("mobile uses a compact chat/editor surface without horizontal overflow", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${fixture}?state=choose`);
-    await expect(page.getByRole("radio")).toHaveCount(3);
+    const artifact = page.getByTestId("format-artifact");
+    const formatGrid = page.getByTestId("format-choice-grid");
+    await expect(artifact).toBeVisible();
+    await expect(artifact.getByRole("radio")).toHaveCount(3);
     await expect(page.getByRole("button", { name: /Add footage/ })).toBeVisible();
     await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
+    const artifactBox = await artifact.boundingBox();
+    expect(artifactBox).not.toBeNull();
+    expect(artifactBox!.x).toBeGreaterThanOrEqual(0);
+    expect(artifactBox!.x + artifactBox!.width).toBeLessThanOrEqual(390);
+    expect(await formatGrid.evaluate((element) => element.scrollWidth)).toBeGreaterThan(
+      await formatGrid.evaluate((element) => element.clientWidth),
+    );
 
     await page.goto(`${fixture}?state=ready&view=editor`);
     await expect(page.getByTestId("embedded-editor-canvas")).toBeVisible();
@@ -96,6 +129,113 @@ test.describe("Kria chat-first creation fixture", () => {
       { height: 720, bottom: 720 },
     ]);
     await expect(page.getByLabel("Message Kria")).toBeVisible();
+  });
+
+  test("production speech card supports clean and keep keyboard flows on desktop", async ({ page }) => {
+    for (const viewport of [{ width: 1440, height: 900 }, { width: 1280, height: 720 }]) {
+      await page.setViewportSize(viewport);
+      await page.goto(`${fixture}?state=speech-findings`);
+
+      const card = page.getByTestId("speech-cleanup-findings");
+      await expect(card).toBeVisible();
+      await expect(card).toHaveClass(/rounded-2xl/);
+      await expect(page.getByRole("heading", { name: "Speech cleanup" })).toBeVisible();
+      await expect(page.getByRole("group", { name: "Clean up 5 speech moments?" })).toBeVisible();
+      await expect(page.getByTestId("chat-first-creation-fixture").locator('[aria-live="polite"]')).toHaveCount(1);
+      await expect(card.locator('[aria-live]')).toHaveCount(0);
+
+      const clean = page.getByRole("button", { name: "Clean up and create" });
+      const keep = page.getByRole("button", { name: "Keep speech and create" });
+      const [cleanBox, keepBox] = await Promise.all([clean.boundingBox(), keep.boundingBox()]);
+      expect(cleanBox).not.toBeNull();
+      expect(keepBox).not.toBeNull();
+      expect(Math.abs(cleanBox!.height - keepBox!.height)).toBeLessThanOrEqual(1);
+      expect(Math.abs(cleanBox!.y - keepBox!.y)).toBeLessThanOrEqual(1);
+      await expect(clean).not.toHaveAttribute("aria-pressed");
+      await expect(keep).not.toHaveAttribute("aria-pressed");
+      expect(await clean.evaluate((element) => getComputedStyle(element).backgroundColor))
+        .toBe(await keep.evaluate((element) => getComputedStyle(element).backgroundColor));
+      expect(await clean.evaluate((element) => getComputedStyle(element).borderColor))
+        .toBe(await keep.evaluate((element) => getComputedStyle(element).borderColor));
+      await clean.focus();
+      await expect(clean).toBeFocused();
+      expect(await clean.evaluate((element) => element.matches(":focus-visible"))).toBe(true);
+      await page.keyboard.press("Tab");
+      await expect(keep).toBeFocused();
+      await page.keyboard.press("Shift+Tab");
+      await expect(clean).toBeFocused();
+      await clean.press("Enter");
+      await expect(page.getByTestId("speech-rendering-state")).toBeVisible();
+      await page.getByRole("button", { name: "Complete fixture render" }).click();
+      await expect(page.getByTestId("speech-cleanup-receipt")).toHaveText("Speech cleanup applied · 5 moments removed");
+
+      await page.goto(`${fixture}?state=speech-findings`);
+      await keep.focus();
+      await expect(keep).toBeFocused();
+      await keep.press("Space");
+      await expect(page.getByTestId("speech-rendering-state")).toBeVisible();
+      await page.getByRole("button", { name: "Complete fixture render" }).click();
+      await expect(page.getByTestId("speech-cleanup-receipt")).toHaveText("Speech kept as recorded");
+    }
+  });
+
+  test("speech choices stack at mobile widths with 44px targets and no overflow", async ({ page }) => {
+    for (const width of [390, 375]) {
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto(`${fixture}?state=speech-findings`);
+      const clean = page.getByRole("button", { name: "Clean up and create" });
+      const keep = page.getByRole("button", { name: "Keep speech and create" });
+      const [cleanBox, keepBox] = await Promise.all([clean.boundingBox(), keep.boundingBox()]);
+      expect(cleanBox).not.toBeNull();
+      expect(keepBox).not.toBeNull();
+      expect(cleanBox!.height).toBeGreaterThanOrEqual(44);
+      expect(keepBox!.height).toBeGreaterThanOrEqual(44);
+      expect(keepBox!.y).toBeGreaterThan(cleanBox!.y + cleanBox!.height - 1);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+      await expect(page.getByLabel("Message Kria")).toBeVisible();
+    }
+  });
+
+  test("speech fixture covers truthful recovery, audio-only, receipts, and reduced motion", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto(`${fixture}?state=speech-checking`);
+    await expect(page.getByText("Checking for filler sounds…")).toBeVisible();
+    await expect(page.getByTestId("chat-first-creation-fixture").locator('[aria-live="polite"]')).toHaveCount(1);
+    await expect(page.getByTestId("speech-cleanup-checking").locator('[aria-live]')).toHaveCount(0);
+    const animationName = await page.locator(".motion-safe\\:animate-pulse").evaluate(
+      (element) => window.getComputedStyle(element).animationName,
+    );
+    expect(animationName).toBe("none");
+
+    await page.goto(`${fixture}?state=speech-failed-retryable`);
+    await expect(page.getByRole("button", { name: "Retry speech check" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Create without cleanup" })).toBeVisible();
+    await page.goto(`${fixture}?state=speech-failed-nonretryable`);
+    await expect(page.getByText(/Replace the narration/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry speech check" })).toHaveCount(0);
+
+    await page.goto(`${fixture}?state=speech-audio-only`);
+    await expect(page.getByText("Add at least one video clip to make your video.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Clean up and create" })).toHaveCount(0);
+    await page.getByLabel("Attach primary video clips").setInputFiles({
+      name: "visual.mp4",
+      mimeType: "video/mp4",
+      buffer: Buffer.from("fixture"),
+    });
+    await expect(page.getByRole("button", { name: "Clean up and create" })).toBeVisible();
+    await expect(page.getByText(/4 filler sounds and 1 long pause/)).toBeVisible();
+
+    const receipts = [
+      ["speech-ready-applied", "Speech cleanup applied · 5 moments removed"],
+      ["speech-ready-no-change", "Speech cleanup checked · no safe cuts applied"],
+      ["speech-ready-declined", "Speech kept as recorded"],
+      ["speech-ready-bypassed-unchecked", "Created without checking speech cleanup"],
+    ] as const;
+    for (const [state, copy] of receipts) {
+      await page.goto(`${fixture}?state=${state}`);
+      await expect(page.getByTestId("speech-cleanup-receipt")).toHaveText(copy);
+      await expect(page.getByRole("button", { name: "Play" })).toBeVisible();
+    }
   });
 
   test("authenticated canonical plan boots the real chat workspace", async ({ page }) => {
@@ -164,8 +304,19 @@ test.describe("Kria chat-first creation fixture", () => {
   });
 
   test("200% zoom retains an actionable composer", async ({ page }) => {
-    await page.goto(`${fixture}?state=ready`);
-    await page.evaluate(() => { document.body.style.zoom = "2"; });
+    // A 720px CSS viewport is the reflow width of a 1440px desktop at 200%
+    // browser zoom. This exercises responsive layout rather than visual scaling.
+    await page.setViewportSize({ width: 720, height: 450 });
+    await page.goto(`${fixture}?state=speech-findings`);
+    const clean = page.getByRole("button", { name: "Clean up and create" });
+    const keep = page.getByRole("button", { name: "Keep speech and create" });
+    await expect(clean).toBeVisible();
+    await expect(keep).toBeVisible();
+    const [cleanBox, keepBox] = await Promise.all([clean.boundingBox(), keep.boundingBox()]);
+    expect(cleanBox).not.toBeNull();
+    expect(keepBox).not.toBeNull();
+    expect(keepBox!.y).toBeGreaterThan(cleanBox!.y + cleanBox!.height - 1);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(720);
     await expect(page.getByLabel("Message Kria")).toBeVisible();
     await expect(page.getByRole("button", { name: "Send message" })).toBeVisible();
   });

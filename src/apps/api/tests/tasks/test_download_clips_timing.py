@@ -168,6 +168,38 @@ def test_download_propagates_underlying_errors(captured_logs, tmp_path):
             template_orchestrate._download_clips_parallel(gcs_paths, str(tmp_path))
 
 
+def test_generation_bound_index_never_reads_mutable_latest(captured_logs, tmp_path):
+    gcs_paths = ["users/u1/spine.mp4", "users/u1/broll.mp4"]
+    calls: list[tuple[str, str, str | None]] = []
+
+    def _latest(storage_path: str, local_path: str) -> None:
+        calls.append(("latest", storage_path, None))
+        _fake_download(storage_path, local_path)
+
+    def _exact(storage_path: str, local_path: str, *, generation: str) -> None:
+        calls.append(("exact", storage_path, generation))
+        _fake_download(storage_path, local_path)
+
+    with (
+        patch.object(template_orchestrate, "download_to_file", side_effect=_latest),
+        patch.object(
+            template_orchestrate,
+            "download_generation_to_file",
+            side_effect=_exact,
+        ),
+    ):
+        template_orchestrate._download_clips_parallel(
+            gcs_paths,
+            str(tmp_path),
+            generation_by_index={0: "generation-17"},
+        )
+
+    assert sorted(calls) == [
+        ("exact", "users/u1/spine.mp4", "generation-17"),
+        ("latest", "users/u1/broll.mp4", None),
+    ]
+
+
 def test_concurrent_appends_under_lock_yield_correct_count(captured_logs, tmp_path):
     """The 5 existing tests use a `_fake_download` that's so fast threads
     never overlap — they effectively serialize, so the threading.Lock is

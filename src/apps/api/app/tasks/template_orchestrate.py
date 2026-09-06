@@ -30,7 +30,7 @@ import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -109,7 +109,13 @@ from app.services.video_poster_cleanup import (
     append_retired_top_level_poster_receipts,
     reconcile_video_poster_cleanup_receipts,
 )
-from app.storage import copy_object, copy_object_signed_url, download_to_file, upload_public_read
+from app.storage import (
+    copy_object,
+    copy_object_signed_url,
+    download_generation_to_file,
+    download_to_file,
+    upload_public_read,
+)
 from app.tasks._finalization_commit import (
     FinalizationCommitState,
     confirm_job_plan_finalization,
@@ -2059,6 +2065,7 @@ def _download_clips_parallel(
     tmpdir: str,
     *,
     job_id: str | None = None,
+    generation_by_index: Mapping[int, str] | None = None,
 ) -> list[str]:
     """Download all clips from GCS in parallel. Returns local file paths.
 
@@ -2101,7 +2108,15 @@ def _download_clips_parallel(
     def _download_one(args: tuple[int, str, str]) -> str:
         idx, gcs_path, local_path = args
         t0 = time.monotonic()
-        download_to_file(gcs_path, local_path)
+        exact_generation = (generation_by_index or {}).get(idx)
+        if exact_generation is not None:
+            download_generation_to_file(
+                gcs_path,
+                local_path,
+                generation=exact_generation,
+            )
+        else:
+            download_to_file(gcs_path, local_path)
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         if is_image_file(local_path):
             normalize_ms = 0

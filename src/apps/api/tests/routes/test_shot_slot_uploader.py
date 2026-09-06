@@ -145,7 +145,7 @@ def test_set_item_clips_derives_paths_shots_first() -> None:
         "users/u/plan/p/b.mp4",
         "users/u/plan/p/pool.mp4",
     ]
-    assert item.clip_assignments == [
+    expected = [
         {
             "gcs_path": "users/u/plan/p/a.mp4",
             "shot_id": "sid-a",
@@ -165,6 +165,10 @@ def test_set_item_clips_derives_paths_shots_first() -> None:
             "machine_matched": False,
         },  # noqa: E501
     ]
+    assert len(item.clip_assignments) == len(expected)
+    for actual, base in zip(item.clip_assignments, expected, strict=True):
+        assert {key: actual[key] for key in base} == base
+        uuid.UUID(actual["media_id"])
 
 
 def test_set_item_clips_raises_on_cap() -> None:

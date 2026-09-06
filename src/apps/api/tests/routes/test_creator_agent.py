@@ -2,7 +2,7 @@
 
 import copy
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -3778,6 +3778,322 @@ async def test_confirm_without_an_active_plan_returns_conflict(monkeypatch) -> N
 
     assert caught.value.status_code == 409
     assert caught.value.detail == "Creator plan changed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "recovery_action",
+    ["retry_required", "retry_preflight_dispatch"],
+)
+@pytest.mark.parametrize(
+    ("dispatch_outcome", "expected_status"),
+    [
+        ("dispatched", "rendering"),
+        ("publish_failed", "failed"),
+        ("speech_cleanup_recovery_conflict", "conflict"),
+    ],
+)
+async def test_chat_cleanup_recovery_reaches_dispatch_without_rescheduling_analysis(
+    monkeypatch,
+    recovery_action: str,
+    dispatch_outcome: str,
+    expected_status: str,
+) -> None:
+    from app.tasks import content_plan_build
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    item_id = uuid.uuid4()
+    failed_job_id = uuid.uuid4()
+    recovered_job_id = uuid.uuid4()
+    analysis_id = uuid.uuid4()
+    manifest = _manifest(monkeypatch)
+    strategy = CreativeStrategy(
+        direction="fast_montage",
+        edit_format="montage",
+        audio_strategy="licensed_music",
+        render_program="native",
+        selected_media_ids=["clip-1"],
+    )
+    edit_plan = compile_strategy_to_plan(manifest, strategy)
+    active = {
+        "version": 1,
+        "plan_hash": "a" * 64,
+        "creator_request": "Make a clean montage",
+        "edit_plan": edit_plan.model_dump(mode="json", exclude_none=True),
+    }
+    item = SimpleNamespace(id=item_id, current_job_id=failed_job_id)
+    plan = SimpleNamespace(ownership_epoch=4)
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        plan_item_id=item_id,
+        status="awaiting_confirmation",
+        revision=3,
+        ownership_epoch=4,
+        manifest_hash=manifest.manifest_hash,
+        active_plan=active,
+        render_attempts=1,
+        max_render_attempts=3,
+        iteration_count=1,
+        target_variant_id=None,
+        target_job_id=None,
+        last_error=None,
+    )
+    failed_job = SimpleNamespace(id=failed_job_id, status="variants_failed")
+    receipt_result = MagicMock()
+    receipt_result.scalar_one_or_none.return_value = None
+    receipt_holder: dict[str, CreatorAgentExecution] = {}
+    db = AsyncMock()
+    db.execute.return_value = receipt_result
+
+    def add(row) -> None:
+        if isinstance(row, CreatorAgentExecution):
+            row.id = uuid.uuid4()
+            receipt_holder["receipt"] = row
+
+    async def get(model, identifier, **_kwargs):
+        if model is Job and identifier == failed_job_id:
+            return failed_job
+        if model is CreatorAgentExecution:
+            return receipt_holder.get("receipt")
+        return None
+
+    db.add = MagicMock(side_effect=add)
+    db.get.side_effect = get
+    dispatch = MagicMock(
+        return_value=SimpleNamespace(
+            outcome=dispatch_outcome,
+            job_id=(
+                str(recovered_job_id)
+                if dispatch_outcome != "speech_cleanup_recovery_conflict"
+                else None
+            ),
+        )
+    )
+    monkeypatch.setattr(settings, "creation_threads_enabled", True)
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, plan, SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(manifest, [])),
+    )
+    monkeypatch.setattr(
+        creator_routes,
+        "_apply_plan_intent",
+        MagicMock(side_effect=AssertionError("recovery must not reapply mutable plan intent")),
+    )
+    monkeypatch.setattr(
+        creator_routes,
+        "_previous_creator_clip_order",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        creator_routes,
+        "_lock_confirmed_render_graph",
+        AsyncMock(return_value=session),
+    )
+    monkeypatch.setattr(creator_routes, "append_event", AsyncMock())
+    response = SimpleNamespace(status=expected_status)
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+    monkeypatch.setattr(content_plan_build, "dispatch_item_render_for", dispatch)
+
+    call = creator_routes.confirm_creator_plan_controller(
+        str(item_id),
+        ConfirmBody(
+            session_id=session.id,
+            expected_revision=3,
+            plan_version=1,
+            plan_hash="a" * 64,
+            client_event_id="cleanup-retry:r7",
+        ),
+        user,
+        db,
+        allow_chat=True,
+        speech_cleanup_recovery_action=recovery_action,
+        speech_cleanup_recovery_job_id=failed_job_id,
+        speech_cleanup_recovery_generation_id="failed-generation",
+        speech_cleanup_recovery_analysis_id=analysis_id,
+    )
+    if expected_status == "conflict":
+        with pytest.raises(HTTPException) as caught:
+            await call
+        assert caught.value.status_code == 409
+        assert caught.value.detail == "speech_cleanup_analysis_changed"
+    else:
+        returned = await call
+        assert returned is response
+    dispatch.assert_called_once_with(
+        str(item_id),
+        4,
+        creator_strategy=edit_plan.strategy.model_dump(mode="json", exclude_none=True),
+        creator_clip_order=None,
+        speech_cleanup_analysis_id=None,
+        speech_cleanup_choice=None,
+        speech_cleanup_action=recovery_action,
+        expected_job_id=str(failed_job_id),
+        expected_render_generation_id="failed-generation",
+        expected_speech_cleanup_analysis_id=str(analysis_id),
+    )
+    creator_routes._apply_plan_intent.assert_not_called()
+    receipt = receipt_holder["receipt"]
+    if expected_status == "conflict":
+        assert session.target_job_id is None
+        assert session.status == "awaiting_confirmation"
+        assert session.render_attempts == 1
+        assert session.iteration_count == 1
+        assert receipt.status == "stale"
+        assert receipt.error == {"code": "speech_cleanup_recovery_changed"}
+    else:
+        assert session.target_job_id == recovered_job_id
+        assert session.status == expected_status
+        assert receipt.status == ("succeeded" if expected_status == "rendering" else "failed")
+        if expected_status == "failed":
+            assert receipt.result == {"job_id": str(recovered_job_id)}
+            assert session.last_error["code"] == "dispatch_publish_failed"
+            assert session.render_attempts == 1
+            assert session.iteration_count == 1
+
+
+@pytest.mark.asyncio
+async def test_chat_cleanup_publish_failure_crash_replay_refunds_once(
+    monkeypatch,
+) -> None:
+    """A crash after terminalizing the Job must resume through compensation."""
+    from app.tasks import content_plan_build
+
+    user = SimpleNamespace(id=uuid.uuid4())
+    item_id = uuid.uuid4()
+    failed_job_id = uuid.uuid4()
+    analysis_id = uuid.uuid4()
+    manifest = _manifest(monkeypatch)
+    strategy = CreativeStrategy(
+        direction="fast_montage",
+        edit_format="montage",
+        audio_strategy="licensed_music",
+        render_program="native",
+        selected_media_ids=["clip-1"],
+    )
+    edit_plan = compile_strategy_to_plan(manifest, strategy)
+    active = {
+        "version": 1,
+        "plan_hash": "a" * 64,
+        "creator_request": "Make a clean montage",
+        "edit_plan": edit_plan.model_dump(mode="json", exclude_none=True),
+    }
+    item = SimpleNamespace(id=item_id, current_job_id=failed_job_id)
+    plan = SimpleNamespace(ownership_epoch=4)
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        creator_id=user.id,
+        plan_item_id=item_id,
+        status="executing",
+        revision=3,
+        ownership_epoch=4,
+        manifest_hash=manifest.manifest_hash,
+        active_plan=active,
+        render_attempts=2,
+        max_render_attempts=3,
+        iteration_count=2,
+        target_variant_id=None,
+        target_job_id=None,
+        last_error=None,
+    )
+    body = ConfirmBody(
+        session_id=session.id,
+        expected_revision=3,
+        plan_version=1,
+        plan_hash="a" * 64,
+        client_event_id="cleanup-publish-replay:r7",
+    )
+    digest_input = body.model_dump(mode="json")
+    digest_input.update(
+        {
+            "speech_cleanup_recovery_action": "retry_preflight_dispatch",
+            "speech_cleanup_recovery_job_id": str(failed_job_id),
+            "speech_cleanup_recovery_generation_id": "failed-generation",
+            "speech_cleanup_recovery_analysis_id": str(analysis_id),
+        }
+    )
+    now = datetime.now(UTC)
+    receipt = SimpleNamespace(
+        id=uuid.uuid4(),
+        request_digest=canonical_context_hash(digest_input),
+        status="running",
+        created_at=now,
+        error=None,
+        result=None,
+        completed_at=None,
+    )
+    failed_job = SimpleNamespace(
+        id=failed_job_id,
+        user_id=user.id,
+        content_plan_item_id=item_id,
+        content_plan_ownership_epoch=4,
+        status="processing_failed",
+        failure_reason="dispatch_publish_failed",
+        created_at=now + timedelta(microseconds=1),
+        all_candidates={
+            "creator_strategy": edit_plan.strategy.model_dump(mode="json", exclude_none=True)
+        },
+        assembly_plan={"creator_generation_id": "failed-generation"},
+    )
+    receipt_result = MagicMock()
+    receipt_result.scalar_one_or_none.return_value = receipt
+    db = AsyncMock()
+    db.execute.return_value = receipt_result
+
+    async def get(model, identifier, **_kwargs):
+        if model is Job and identifier == failed_job_id:
+            return failed_job
+        if model is CreatorAgentExecution and identifier == receipt.id:
+            return receipt
+        return None
+
+    db.get.side_effect = get
+    monkeypatch.setattr(settings, "creation_threads_enabled", True)
+    monkeypatch.setattr(
+        creator_routes,
+        "_owned_context",
+        AsyncMock(return_value=(item, plan, SimpleNamespace())),
+    )
+    monkeypatch.setattr(creator_routes, "_load_session", AsyncMock(return_value=session))
+    monkeypatch.setattr(
+        creator_routes,
+        "_lock_confirmed_render_graph",
+        AsyncMock(return_value=session),
+    )
+    monkeypatch.setattr(creator_routes, "append_event", AsyncMock())
+    response = SimpleNamespace(status="failed")
+    monkeypatch.setattr(creator_routes, "_response", AsyncMock(return_value=response))
+    dispatch = MagicMock()
+    monkeypatch.setattr(content_plan_build, "dispatch_item_render_for", dispatch)
+
+    returned = await creator_routes.confirm_creator_plan_controller(
+        str(item_id),
+        body,
+        user,
+        db,
+        allow_chat=True,
+        speech_cleanup_recovery_action="retry_preflight_dispatch",
+        speech_cleanup_recovery_job_id=failed_job_id,
+        speech_cleanup_recovery_generation_id="failed-generation",
+        speech_cleanup_recovery_analysis_id=analysis_id,
+    )
+
+    assert returned is response
+    dispatch.assert_not_called()
+    assert session.target_job_id == failed_job_id
+    assert session.status == "failed"
+    assert session.render_attempts == 1
+    assert session.iteration_count == 1
+    assert session.last_error["code"] == "dispatch_publish_failed"
+    assert receipt.status == "failed"
+    assert receipt.result == {"job_id": str(failed_job_id)}
 
 
 @pytest.mark.asyncio

@@ -335,10 +335,14 @@ async def test_chat_first_can_attach_four_owned_clips_before_exact_request(
         state={"edit_format": "montage", "media": [], "media_count": 0},
     )
     item = SimpleNamespace(
+        id=ITEM_ID,
+        edit_format="montage",
+        current_job_id=None,
         clip_gcs_paths=[],
         clip_assignments=[],
         voiceover_gcs_path=None,
         audio_mode="kria",
+        edit_proposal=None,
     )
     db = Mock()
     db.get = AsyncMock(return_value=item)
@@ -355,8 +359,9 @@ async def test_chat_first_can_attach_four_owned_clips_before_exact_request(
     monkeypatch.setattr(
         routes.storage,
         "object_metadata",
-        lambda _path: SimpleNamespace(size=100, content_type="video/mp4"),
+        lambda _path: SimpleNamespace(size=100, content_type="video/mp4", generation="1"),
     )
+    monkeypatch.setattr(routes, "_probe_registered_media", AsyncMock(return_value=(10.0, True)))
 
     for index in range(1, 5):
         media_id = f"clip-{index}.mp4"

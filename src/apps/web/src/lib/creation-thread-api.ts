@@ -10,6 +10,8 @@ export type CreationAction =
   | "generate"
   | "revise"
   | "retry"
+  | "retry_speech_cleanup"
+  | "create_without_cleanup"
   | "remove_media"
   | "select_variant"
   | "archive";
@@ -44,6 +46,60 @@ export interface CreationJob {
   variants: CreationVariant[];
 }
 
+export type CreationSpeechCleanupAnalysisStatus =
+  | "queued"
+  | "running"
+  | "ready"
+  | "no_findings"
+  | "failed";
+
+export type CreationSpeechCleanupChoice = "clean" | "keep_original";
+export type CreationSpeechCleanupDecision =
+  | CreationSpeechCleanupChoice
+  | "create_without_cleanup";
+
+export type CreationSpeechCleanupOutcomeStatus =
+  | "applied"
+  | "checked_no_change"
+  | "declined"
+  | "bypassed_unchecked"
+  | "failed";
+
+export interface CreationSpeechCleanupError {
+  code: string;
+  retryable: boolean;
+}
+
+export interface CreationSpeechCleanupAnalysis {
+  id: string;
+  status: CreationSpeechCleanupAnalysisStatus;
+  detector_version?: string | null;
+  has_findings?: boolean | null;
+  candidate_count?: number | null;
+  category_counts?: Record<string, number> | null;
+  estimated_removed_ms?: number | null;
+  error?: CreationSpeechCleanupError | null;
+}
+
+export interface CreationSpeechCleanupOutcome {
+  job_id: string;
+  render_generation_id?: string | null;
+  status: CreationSpeechCleanupOutcomeStatus;
+  removal_count?: number | null;
+  removed_ms?: number | null;
+  error?: CreationSpeechCleanupError | null;
+}
+
+export interface CreationSpeechCleanupProjection {
+  applicable: boolean;
+  unavailable_reason?: string | null;
+  analysis?: CreationSpeechCleanupAnalysis | null;
+  decision?: CreationSpeechCleanupDecision | null;
+  requires_choice?: boolean;
+  render_blocker?: "video_required" | null;
+  outcome?: CreationSpeechCleanupOutcome | null;
+}
+
 const PLAYABLE_VARIANT_STATUSES = new Set(["ready", "failed", "error", "render_failed"]);
 const FAILED_VARIANT_STATUSES = new Set(["failed", "error", "render_failed"]);
 
@@ -75,6 +131,8 @@ export interface CreationThread {
     [key: string]: unknown;
   } | null;
   media_capabilities?: CreationMediaCapabilities | null;
+  /** Detail-only projection. Older APIs and list summaries omit it. */
+  speech_cleanup?: CreationSpeechCleanupProjection | null;
   events: CreationThreadEvent[];
   job: CreationJob | null;
   created_at: string;
@@ -318,6 +376,17 @@ export function creationThreadInProgress(thread: CreationThread): boolean {
     || CREATOR_PROGRESS_STATES.has(creatorStatus(thread) ?? "");
 }
 
+/** Whether the current automatic speech preflight still needs detail polling. */
+export function creationSpeechCleanupPending(thread: CreationThread): boolean {
+  const status = thread.speech_cleanup?.analysis?.status;
+  return status === "queued" || status === "running";
+}
+
+/** Polling transport state, intentionally separate from render/Creator UI state. */
+export function creationThreadNeedsPolling(thread: CreationThread): boolean {
+  return creationThreadInProgress(thread) || creationSpeechCleanupPending(thread);
+}
+
 /** A Creator execution has committed, but its Job may not exist yet. */
 export function creationThreadPreparing(thread: CreationThread): boolean {
   return !thread.job && (
@@ -337,12 +406,24 @@ export function creationThreadProgressKey(thread: CreationThread): string {
     ].join("/"))
     .sort()
     .join(",");
-  return [
+  const renderKey = [
     thread.active_job_id ?? "",
     thread.job?.status ?? "",
     creatorStatus(thread) ?? "",
     generationStatus(thread) ?? "",
     variants,
+  ].join(":");
+  const cleanup = thread.speech_cleanup;
+  if (!cleanup) return renderKey;
+  const analysis = cleanup.analysis;
+  const outcome = cleanup.outcome;
+  return [
+    renderKey,
+    analysis?.id ?? "",
+    analysis?.status ?? "",
+    outcome?.job_id ?? "",
+    outcome?.render_generation_id ?? "",
+    outcome?.status ?? "",
   ].join(":");
 }
 
@@ -351,6 +432,13 @@ export function isCreationThreadRevisionConflict(cause: unknown): boolean {
   return cause instanceof CreationThreadError
     && cause.status === 409
     && cause.message === "Creation thread changed";
+}
+
+/** Only a generation-pinned cleanup analysis mismatch gets stale-check copy. */
+export function isCreationSpeechCleanupStaleConflict(cause: unknown): boolean {
+  return cause instanceof CreationThreadError
+    && cause.status === 409
+    && cause.message === "speech_cleanup_analysis_changed";
 }
 
 export async function listCreationThreads(): Promise<CreationThread[]> {
@@ -387,8 +475,19 @@ export function createCreationThread(message?: string): Promise<CreationThread> 
   });
 }
 
-export function refreshCreationThread(threadId: string): Promise<CreationThread> {
-  return request<CreationThread>(`/${threadId}`, { cache: "no-store" });
+export function refreshCreationThread(threadId: string, signal?: AbortSignal): Promise<CreationThread> {
+  return request<CreationThread>(`/${threadId}`, { cache: "no-store", signal });
+}
+
+export function creationSpeechCleanupActionId(
+  analysisId: string,
+  action: CreationSpeechCleanupChoice | "no_findings" | "retry_analysis" | "retry_render" | "bypass",
+  revision: number,
+): string {
+  // A lost response must replay the same mutation, while a later failure of a
+  // newly-created Job must remain retryable even when it reuses the same
+  // immutable analysis. The thread revision distinguishes those two cases.
+  return `speech-cleanup:${analysisId}:r${revision}:${action}`;
 }
 
 export function sendCreationMessage(thread: CreationThread, message: string): Promise<CreationThread> {

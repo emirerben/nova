@@ -4,6 +4,7 @@ signal; silence ranges for the silence-cut pipeline, plans/010)."""
 from __future__ import annotations
 
 import subprocess
+import wave
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -119,6 +120,26 @@ def test_no_audio_stream_is_zero_without_ffmpeg():
 def test_probe_failure_is_zero():
     with patch.object(clip_speech, "probe_video", side_effect=RuntimeError("boom")):
         assert speech_coverage("x.mp4") == 0.0
+
+
+def test_status_detector_accepts_bounded_audio_only_pcm_wave(
+    tmp_path,
+) -> None:
+    artifact = tmp_path / "preflight.wav"
+    with wave.open(str(artifact), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(16_000)
+        output.writeframes(b"\x00\x00" * 16_000)
+    stderr = "silence_start: 0.0\nsilence_end: 1.0 | silence_duration: 1.0\n"
+
+    with (
+        patch.object(clip_speech, "probe_video", side_effect=RuntimeError("no video stream")),
+        patch.object(clip_speech.subprocess, "run", return_value=_ffmpeg_result(stderr)),
+    ):
+        result = detect_silences_with_status(str(artifact), min_silence_s=0.1)
+
+    assert result == SilenceDetectionResult(spans=((0.0, 1.0),), status="ok")
 
 
 def test_zero_duration_is_zero():

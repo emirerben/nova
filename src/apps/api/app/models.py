@@ -1661,6 +1661,13 @@ class PlanItem(Base):
     # Set via PATCH /plan-items/{id}/voiceover; threaded to build_generative_job at
     # generate time so the narrated archetype can do force-alignment + per-step trimming.
     voiceover_gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Immutable object generation verified when the voiceover is registered. Speech
+    # analysis and render dispatch must consume this exact generation rather than a
+    # later object that happens to reuse voiceover_gcs_path.
+    voiceover_generation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Server-verified duration for the captured generation. The active-narration
+    # resolver needs this to bind the same full-audio window at preflight and render.
+    voiceover_duration_s: Mapped[float | None] = mapped_column(Float, nullable=True)
     # Server-authoritative soundtrack policy selected during item setup.
     # "kria" lets the primary-variant policy choose, "original" forces the
     # no-track original-audio variant, and "voiceover" activates the separately
@@ -1715,6 +1722,9 @@ class PlanItem(Base):
     edit_feedback_annotations: Mapped[list["EditFeedbackAnnotation"]] = relationship(
         back_populates="plan_item", cascade="all, delete-orphan"
     )
+    speech_cleanup_analyses: Mapped[list["SpeechCleanupAnalysis"]] = relationship(
+        back_populates="plan_item", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         CheckConstraint(
@@ -1724,6 +1734,142 @@ class PlanItem(Base):
         Index("idx_plan_items_current_job_id", "current_job_id"),
         Index("idx_plan_items_content_plan_id_day", "content_plan_id", "day_index"),
         Index("idx_plan_items_content_plan_id_position", "content_plan_id", "position"),
+    )
+
+
+class SpeechCleanupAnalysis(Base):
+    """Generation-pinned preflight analysis for one active narration source.
+
+    queued --claim(token + lease)--> running --> ready | no_findings | failed
+      ^                                  |
+      +------ publish/redelivery --------+ expired lease -> new token
+
+    any current row --source/policy change--> superseded (history only)
+    terminal write requires: id + attempt token + current fingerprint
+
+    ``analysis_payload`` and source location fields are private worker inputs. API
+    projections must use only the bounded receipt columns below.
+    """
+
+    __tablename__ = "speech_cleanup_analyses"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    plan_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_items.id", ondelete="CASCADE"), nullable=False
+    )
+
+    # Server-resolved active foreground narration. The identity can represent an
+    # uploaded/recorded voiceover or the renderer's pinned embedded-audio spine.
+    source_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    source_media_identity: Mapped[str] = mapped_column(Text, nullable=False)
+    source_storage_path: Mapped[str] = mapped_column(Text, nullable=False)
+    source_generation: Mapped[str] = mapped_column(Text, nullable=False)
+    window_start_s: Mapped[float] = mapped_column(Float, nullable=False, server_default="0")
+    # NULL means through the generation-pinned source's natural end.
+    window_end_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source_policy_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # engine_version is the idempotency boundary; detector_version is the bounded,
+    # user-safe version surfaced by the active-thread detail projection.
+    engine_version: Mapped[str] = mapped_column(Text, nullable=False)
+    detector_version: Mapped[str] = mapped_column(Text, nullable=False)
+    analysis_payload_version: Mapped[str] = mapped_column(Text, nullable=False, server_default="1")
+
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
+    attempt_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    dispatched_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    next_dispatch_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    superseded_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+
+    # Private, versioned evidence. This may contain timed words, safety signals,
+    # serialized CutPlan intervals, and detector diagnostics and must never be
+    # serialized through an ordinary PlanItem, thread, or Job response.
+    analysis_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    # Bounded public evidence. These columns intentionally avoid transcripts,
+    # source paths, intervals, signed URLs, and provider exception text.
+    candidate_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    category_counts: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    estimated_removed_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    diagnostic_receipt: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    failure_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_retryable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    decision: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decision_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    plan_item: Mapped["PlanItem"] = relationship(back_populates="speech_cleanup_analyses")
+
+    __table_args__ = (
+        CheckConstraint(
+            "source_kind IN ('voiceover', 'embedded_spine')",
+            name="ck_speech_cleanup_analyses_source_kind",
+        ),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'ready', 'no_findings', 'failed')",
+            name="ck_speech_cleanup_analyses_status",
+        ),
+        CheckConstraint(
+            "decision IS NULL OR decision IN ('clean', 'keep_original', 'create_without_cleanup')",
+            name="ck_speech_cleanup_analyses_decision",
+        ),
+        CheckConstraint(
+            "window_start_s >= 0 AND (window_end_s IS NULL OR window_end_s > window_start_s)",
+            name="ck_speech_cleanup_analyses_window",
+        ),
+        CheckConstraint("attempt_count >= 0", name="ck_speech_cleanup_analyses_attempt_count"),
+        CheckConstraint(
+            "candidate_count IS NULL OR candidate_count >= 0",
+            name="ck_speech_cleanup_analyses_candidate_count",
+        ),
+        CheckConstraint(
+            "estimated_removed_ms IS NULL OR estimated_removed_ms >= 0",
+            name="ck_speech_cleanup_analyses_removed_ms",
+        ),
+        CheckConstraint(
+            "(decision IS NULL AND decision_at IS NULL) OR "
+            "(decision IS NOT NULL AND decision_at IS NOT NULL)",
+            name="ck_speech_cleanup_analyses_decision_at",
+        ),
+        Index(
+            "uq_speech_cleanup_analysis_identity",
+            "plan_item_id",
+            "source_policy_fingerprint",
+            "engine_version",
+            unique=True,
+        ),
+        Index(
+            "uq_speech_cleanup_analysis_current",
+            "plan_item_id",
+            unique=True,
+            postgresql_where=text("superseded_at IS NULL"),
+        ),
+        Index(
+            "idx_speech_cleanup_analysis_dispatch",
+            "next_dispatch_at",
+            "created_at",
+            postgresql_where=text(
+                "status = 'queued' AND dispatched_at IS NULL "
+                "AND next_dispatch_at IS NOT NULL AND superseded_at IS NULL"
+            ),
+        ),
+        Index(
+            "idx_speech_cleanup_analysis_lease",
+            "lease_expires_at",
+            "id",
+            postgresql_where=text(
+                "status IN ('queued', 'running') AND lease_expires_at IS NOT NULL "
+                "AND superseded_at IS NULL"
+            ),
+        ),
     )
 
 

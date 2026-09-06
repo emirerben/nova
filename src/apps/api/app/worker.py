@@ -62,6 +62,7 @@ celery_app = Celery(
         "app.tasks.edit_training_artifacts",
         "app.tasks.creator_quality_review",
         "app.tasks.creator_workspace",
+        "app.tasks.speech_cleanup_analysis",
         # Deliberately NOT in MAINTENANCE_TASK_NAMES: repair_job_poster downloads
         # a full MP4 into the RAM-backed /tmp, which is exactly the workload that
         # OOM'd the 1GB `light`/Beat machine on 2026-08-02. It is dispatched with
@@ -100,6 +101,7 @@ MAINTENANCE_TASK_NAMES: tuple[str, ...] = (
     # The render-worker lifecycle task itself MUST run on `light`, never on
     # the `worker` machine it's managing — obviously.
     "tasks.manage_render_worker_lifecycle",
+    "tasks.reconcile_speech_cleanup_analyses",
 )
 
 celery_app.conf.update(
@@ -182,6 +184,7 @@ celery_app.conf.update(
         # the default `celery` queue — the concurrency=1 render worker — and
         # head-of-line-block renders behind a full-MP4 download.
         "tasks.repair_job_poster": {"queue": settings.poster_repair_queue},
+        "tasks.analyze_speech_cleanup": {"queue": settings.speech_cleanup_analysis_queue},
     },
     # Beat schedule — picked up only by the Beat scheduler, which runs
     # embedded (`-B`) in the `light` process (see fly.toml). Other worker
@@ -232,6 +235,13 @@ celery_app.conf.update(
         "manage-render-worker-lifecycle-every-2-min": {
             "task": "tasks.manage_render_worker_lifecycle",
             "schedule": 120.0,
+        },
+        # Recover the commit-before-publish window and abandoned analysis
+        # leases. The reconciler claims a small SKIP LOCKED page, so duplicate
+        # Beat ticks remain safe even during deploy overlap.
+        "reconcile-speech-cleanup-analyses-every-30s": {
+            "task": "tasks.reconcile_speech_cleanup_analyses",
+            "schedule": 30.0,
         },
     },
 )

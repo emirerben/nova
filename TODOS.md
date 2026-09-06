@@ -27,6 +27,29 @@ keep-fragments between the flank cut and the envelope cut.
 **Priority:** P3
 **Decision:** 726ad4cf (gstack decision log, 2026-08-31)
 
+## Narrated audio-to-video — deferred product slice (plan 022 eng review, 2026-09-05)
+
+### Generate a complete video from narration audio alone
+**What:** Add a zero-visual Narrated render path that can turn standalone narration
+audio into a complete 9:16 video using one explicitly chosen visual treatment, such
+as a static canvas, waveform, kinetic captions, or generated supporting visuals.
+**Why:** Plan 022 deliberately analyzes and cleans standalone narration audio before
+video exists, but Nova's current render contract still requires at least one video
+clip. Selecting a visual policy inside speech cleanup would couple two separate
+product decisions and make the cleanup launch much larger and riskier.
+**Context:** Start with product and design validation of the visual treatment. Then
+update the Creator media manifest, dispatch and Job contracts, Narrated assembly,
+preview/editor behavior, accessibility, and API-to-worker-to-FFmpeg tests. Preserve
+the plan 022 guarantee that cleanup consent binds to the exact analyzed narration
+source and CutPlan.
+**Pros:** Unlocks podcast, memo, and voice-note creation without forcing users to
+source footage first; reuses the durable narration-analysis contract from plan 022.
+**Cons:** Requires a new creative system and render mode, not just removal of the
+existing video-presence guard.
+**Effort:** XL
+**Priority:** P3
+**Depends on:** Plan 022 speech cleanup shipping and production Narrated usage data.
+
 ## Guided-story / guided-edit train — deferred follow-ups (from #847–#862, backlog audit 2026-08-21)
 
 Context: the guided-story/guided-edit train (#847–#862, the AI-designed-edit

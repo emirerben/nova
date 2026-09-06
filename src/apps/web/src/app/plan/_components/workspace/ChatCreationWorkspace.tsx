@@ -37,11 +37,13 @@ import {
   creationJobPartial, creationJobReady, creationJobSettled, creationPlanningFailed, creationThreadMediaCount, createCreationThread,
   CreationThreadError, deleteCreationThread, getCreationCapabilities, listCreationThreads, refreshCreationThread,
   creationClipLimit, sendCreationMessage, threadMessages, uploadCreationMedia,
-  creationThreadInProgress, creationThreadPreparing, creationThreadProgressKey,
+  creationSpeechCleanupActionId, creationThreadInProgress, creationThreadNeedsPolling,
+  creationThreadPreparing, creationThreadProgressKey,
+  isCreationSpeechCleanupStaleConflict,
   isCreationThreadRevisionConflict,
   creationVariantPlayable, latestCreationDirection,
   renameCreationThread,
-  type CreationFormat, type CreationThread,
+  type CreationFormat, type CreationSpeechCleanupChoice, type CreationThread,
 } from "@/lib/creation-thread-api";
 import { cn } from "@/lib/cn";
 import { listMyJobs, type LibraryJob } from "@/lib/me-api";
@@ -49,6 +51,12 @@ import { getPlanItemFresh, type PlanItem } from "@/lib/plan-api";
 import LibraryTile from "@/components/library/LibraryTile";
 import AssetPool from "@/app/plan/_components/AssetPool";
 import { useLibraryPosterRecovery } from "@/hooks/useLibraryPosterRecovery";
+import {
+  SpeechCleanupDecisionCard,
+  SpeechCleanupReceipt,
+  speechCleanupAnnouncement,
+  type SpeechCleanupPendingAction,
+} from "./SpeechCleanupDecisionCard";
 
 const FORMATS: Array<{ value: CreationFormat; label: string; description: string }> = [
   { value: "montage", label: "Montage", description: "Music-led cuts from your strongest moments." },
@@ -83,8 +91,22 @@ function projectTitle(thread: CreationThread): string {
   return "Untitled video";
 }
 
+function projectSidebarTitle(thread: CreationThread): string {
+  const title = projectTitle(thread);
+  if (title !== "Untitled video") return title;
+  const intent = thread.state.intent;
+  if (typeof intent === "string" && intent.trim()) return intent.trim();
+  const creatorAgent = thread.state.creator_agent;
+  if (creatorAgent && typeof creatorAgent === "object" && "summary" in creatorAgent) {
+    const summary = creatorAgent.summary;
+    if (typeof summary === "string" && summary.trim()) return summary.trim();
+  }
+  return title;
+}
+
 function projectStatusLabel(thread: CreationThread): string {
   if (thread.status === "archived") return "Archived";
+  if (thread.speech_cleanup?.outcome?.status === "failed") return "Needs attention";
   if (creationJobFailed(thread) || creationPlanningFailed(thread)) return "Needs attention";
   if (thread.job?.status === "variants_ready_partial") return "Partially ready";
   if (thread.job && ["done", "variants_ready"].includes(thread.job.status)) return "Ready";
@@ -344,8 +366,9 @@ function ReadyStatusCard({
 }) {
   return (
     <ChatArtifactCard badge={<Badge variant="secondary"><Check /> {isPartial ? "Partially ready" : "Ready"}</Badge>} title={isPartial ? "Your cut is ready; one variant needs another pass" : "Your cut is ready"} description={isPartial ? "The playable cut is available now. Retry the failed variant whenever you’re ready." : "Play it here, download it, open the editor, or keep chatting for a confirmed revision."}>
-      {readyVariants(thread).length > 1 ? <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label="Available cuts">{readyVariants(thread).map((variant) => <Button key={variant.variant_id} type="button" variant={selectedReadyVariant?.variant_id === variant.variant_id ? "secondary" : "outline"} aria-pressed={selectedReadyVariant?.variant_id === variant.variant_id} disabled={busy || readOnly} onClick={() => onSelectVariant(variant.variant_id ?? "")}>{variantLabel(variant.variant_id)}</Button>)}</div> : null}
-      <div className="flex flex-wrap gap-2">{selectedReadyVariant?.output_url ? <><Button type="button" onClick={() => window.open(selectedReadyVariant.output_url ?? "", "_blank", "noopener,noreferrer")}><Play /> Play</Button><Button type="button" variant="outline" asChild><a href={selectedReadyVariant.output_url ?? ""} download><Download /> Download</a></Button></> : null}<Button type="button" variant="outline" onClick={onOpenEditor} disabled={!thread.active_plan_item_id && !readOnly}><Pencil /> {readOnly ? "View video" : "Open editor"}</Button>{isPartial && selectedFailedVariant?.variant_id ? <Button type="button" variant="ghost" onClick={() => onRetryVariant(selectedFailedVariant.variant_id ?? "")} disabled={busy || readOnly}><RefreshCw /> Retry failed variant</Button> : null}</div>
+      <SpeechCleanupReceipt outcome={thread.speech_cleanup?.outcome} />
+      {readyVariants(thread).length > 1 ? <div className="mb-3 mt-3 flex flex-wrap gap-2" role="group" aria-label="Available cuts">{readyVariants(thread).map((variant) => <Button key={variant.variant_id} type="button" variant={selectedReadyVariant?.variant_id === variant.variant_id ? "secondary" : "outline"} aria-pressed={selectedReadyVariant?.variant_id === variant.variant_id} disabled={busy || readOnly} onClick={() => onSelectVariant(variant.variant_id ?? "")}>{variantLabel(variant.variant_id)}</Button>)}</div> : null}
+      <div className="mt-3 flex flex-wrap gap-2">{selectedReadyVariant?.output_url ? <><Button type="button" onClick={() => window.open(selectedReadyVariant.output_url ?? "", "_blank", "noopener,noreferrer")}><Play /> Play</Button><Button type="button" variant="outline" asChild><a href={selectedReadyVariant.output_url ?? ""} download><Download /> Download</a></Button></> : null}<Button type="button" variant="outline" onClick={onOpenEditor} disabled={!thread.active_plan_item_id && !readOnly}><Pencil /> {readOnly ? "View video" : "Open editor"}</Button>{isPartial && selectedFailedVariant?.variant_id ? <Button type="button" variant="ghost" onClick={() => onRetryVariant(selectedFailedVariant.variant_id ?? "")} disabled={busy || readOnly}><RefreshCw /> Retry failed variant</Button> : null}</div>
     </ChatArtifactCard>
   );
 }
@@ -393,6 +416,7 @@ export default function ChatCreationWorkspace({
   const [galleryRetryCursor, setGalleryRetryCursor] = useState<string | null>(null);
   const [formatPickerOpen, setFormatPickerOpen] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [speechCleanupPendingAction, setSpeechCleanupPendingAction] = useState<SpeechCleanupPendingAction>(null);
   const [availableFormats, setAvailableFormats] = useState<CreationFormat[]>(["montage", "narrated_planned", "subtitled"]);
   const [capabilities, setCapabilities] = useState<Awaited<ReturnType<typeof getCreationCapabilities>>>(() => ({ formats: [] }));
   const posterRecovery = useLibraryPosterRecovery({
@@ -420,6 +444,8 @@ export default function ChatCreationWorkspace({
   const loadInFlightRef = useRef<Promise<void> | null>(null);
   const loadSequenceRef = useRef(0);
   const productionGalleryLoadedRef = useRef(false);
+  const detailRequestRef = useRef<{ threadId: string; controller: AbortController } | null>(null);
+  const speechCleanupActionInFlightRef = useRef(false);
 
   useEffect(() => {
     const sidebarNode = desktopSidebarRef.current;
@@ -434,6 +460,7 @@ export default function ChatCreationWorkspace({
     }
     activeThreadIdRef.current = next.id;
     setThreadUnavailable(false);
+    setSpeechCleanupPendingAction(null);
     setThread(next);
   }, []);
 
@@ -468,9 +495,16 @@ export default function ChatCreationWorkspace({
   }, []);
 
   const refreshThreadProjection = useCallback(async (threadId: string) => {
+    detailRequestRef.current?.controller.abort();
+    const controller = new AbortController();
+    detailRequestRef.current = { threadId, controller };
     const requestSequence = ++threadRequestSequenceRef.current;
-    const next = await refreshCreationThread(threadId);
-    return { next, requestSequence };
+    try {
+      const next = await refreshCreationThread(threadId, controller.signal);
+      return { next, requestSequence };
+    } finally {
+      if (detailRequestRef.current?.controller === controller) detailRequestRef.current = null;
+    }
   }, []);
 
   // Every async mutation gets a sequence at request start. A poll or refresh
@@ -659,10 +693,10 @@ export default function ChatCreationWorkspace({
 
   const threadProgressKey = thread ? creationThreadProgressKey(thread) : null;
   const progressThreadId = thread?.id ?? null;
-  const threadInProgress = Boolean(thread && creationThreadInProgress(thread));
+  const threadNeedsPolling = Boolean(thread && creationThreadNeedsPolling(thread));
 
   useEffect(() => {
-    if (!progressThreadId || !threadInProgress) return;
+    if (!progressThreadId || !threadNeedsPolling) return;
     let cancelled = false;
     let timer: number | undefined;
     const poll = async () => {
@@ -673,10 +707,11 @@ export default function ChatCreationWorkspace({
         const accepted = acceptThreadResponse(progressThreadId, next, requestSequence);
         const awaitingEditorGeneration = expectedEditorRenderRef.current?.threadId
           === progressThreadId;
-        if ((accepted && creationThreadInProgress(next)) || awaitingEditorGeneration) {
+        if ((accepted && creationThreadNeedsPolling(next)) || awaitingEditorGeneration) {
           timer = window.setTimeout(() => void poll(), 2500);
         }
-      } catch {
+      } catch (cause) {
+        if (cause instanceof Error && cause.name === "AbortError") return;
         if (!cancelled && activeThreadIdRef.current === progressThreadId) {
           setPollReconnecting(true);
           timer = window.setTimeout(() => void poll(), 5000);
@@ -684,8 +719,15 @@ export default function ChatCreationWorkspace({
       }
     };
     void poll();
-    return () => { cancelled = true; if (timer) window.clearTimeout(timer); };
-  }, [acceptThreadResponse, progressThreadId, refreshThreadProjection, threadInProgress, threadProgressKey]);
+    return () => {
+      cancelled = true;
+      if (detailRequestRef.current?.threadId === progressThreadId) {
+        detailRequestRef.current.controller.abort();
+        detailRequestRef.current = null;
+      }
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [acceptThreadResponse, progressThreadId, refreshThreadProjection, threadNeedsPolling, threadProgressKey]);
 
   useEffect(() => {
     if (!galleryOpen) return;
@@ -793,7 +835,9 @@ export default function ChatCreationWorkspace({
   const format = formatFromThread(thread);
   const clipLimit = creationClipLimit(capabilities.formats, format);
   const mediaCount = creationThreadMediaCount(thread);
-  const hasReady = Boolean(thread && creationJobReady(thread));
+  const speechCleanup = thread?.speech_cleanup ?? null;
+  const speechCleanupOutcomeFailed = speechCleanup?.outcome?.status === "failed";
+  const hasReady = Boolean(thread && creationJobReady(thread) && !speechCleanupOutcomeFailed);
   const isPartial = Boolean(thread && creationJobPartial(thread));
   const eventMessages = useMemo(() => thread ? threadMessages(thread) : [], [thread]);
   const eventSequenceById = useMemo(
@@ -849,9 +893,12 @@ export default function ChatCreationWorkspace({
     const lifecycleAnchor = (row: (typeof rows)[number]) =>
       ["confirmation", "revision", "progress"].includes(String(row.artifact))
       || ["action_generate", "action_confirm_generation", "agent_user_confirmation", "agent_assistant_execution"].includes(row.eventType);
-    const lifecycleArtifact = (creationJobFailed(thread) || planningFailed)
-      && (!hasPendingConfirmation || planningFailed)
+    const lifecycleArtifact = speechCleanupOutcomeFailed
+      || ((creationJobFailed(thread) || planningFailed)
+        && (!hasPendingConfirmation || planningFailed))
       ? "failure"
+      : creationJobFailed(thread) && !hasPendingConfirmation
+        ? "failure"
       : thread.active_job_id && (!creationJobSettled(thread) || variantStillRendering)
         ? "progress"
         : hasReady ? "result" : null;
@@ -866,7 +913,7 @@ export default function ChatCreationWorkspace({
       }
     }
     return rows;
-  }, [eventMessages, format, formatPickerOpen, hasPendingConfirmation, hasReady, planningFailed, productionPreview, thread, variantStillRendering]);
+  }, [eventMessages, format, formatPickerOpen, hasPendingConfirmation, hasReady, planningFailed, productionPreview, speechCleanupOutcomeFailed, thread, variantStillRendering]);
   const lastMessageId = messages[messages.length - 1]?.id;
   const latestAudio = [...media].reverse().find((item) => item.kind === "audio") ?? null;
   const clipMedia = media.filter((item) => item.kind === "video");
@@ -1137,6 +1184,80 @@ export default function ChatCreationWorkspace({
     }
   }
 
+  async function runSpeechCleanupAction(
+    action: "generate" | "retry" | "retry_speech_cleanup" | "create_without_cleanup",
+    pendingAction: Exclude<SpeechCleanupPendingAction, null>,
+    payload: Record<string, unknown>,
+    stableAction: CreationSpeechCleanupChoice | "no_findings" | "retry_analysis" | "retry_render" | "bypass",
+  ) {
+    const analysisId = speechCleanup?.analysis?.id;
+    const actionNeedsVideo = action !== "retry_speech_cleanup";
+    if (
+      productionPreview
+      || !thread
+      || !analysisId
+      || busy
+      || speechCleanupActionInFlightRef.current
+      || (actionNeedsVideo && speechCleanup?.render_blocker === "video_required")
+    ) return;
+    const sourceThread = thread;
+    // React state disables the controls on the next render. The ref closes the
+    // smaller same-tick window so a rapid clean/keep double action can never
+    // dispatch two mutations before that render lands.
+    speechCleanupActionInFlightRef.current = true;
+    setBusy(true);
+    setSpeechCleanupPendingAction(pendingAction);
+    setError(null);
+    try {
+      const actionPayload = { ...payload, speech_cleanup_analysis_id: analysisId };
+      await requestThreadResponse(sourceThread.id, () => applyCreationAction(
+        sourceThread,
+        action,
+        actionPayload,
+        creationSpeechCleanupActionId(analysisId, stableAction, sourceThread.revision),
+      ));
+    } catch (cause) {
+      if (isCreationSpeechCleanupStaleConflict(cause)) {
+        try {
+          const { next, requestSequence } = await refreshThreadProjection(sourceThread.id);
+          acceptThreadResponse(sourceThread.id, next, requestSequence);
+          setError("The speech check changed with your media. Review the latest result and choose again.");
+        } catch {
+          setError("The speech check changed with your media. Refresh the project and choose again.");
+        }
+      } else {
+        setError(action === "retry_speech_cleanup"
+          ? "I couldn’t restart the speech check. Try again in a moment."
+          : "I couldn’t start that video. Your project and speech choice are safe—try again.");
+      }
+    } finally {
+      speechCleanupActionInFlightRef.current = false;
+      setBusy(false);
+      setSpeechCleanupPendingAction(null);
+    }
+  }
+
+  function generateWithSpeechCleanup(choice?: CreationSpeechCleanupChoice) {
+    void runSpeechCleanupAction(
+      "generate",
+      choice ?? "no_findings",
+      choice ? { speech_cleanup_choice: choice } : {},
+      choice ?? "no_findings",
+    );
+  }
+
+  function retrySpeechCleanupAnalysis() {
+    void runSpeechCleanupAction("retry_speech_cleanup", "retry_analysis", {}, "retry_analysis");
+  }
+
+  function createWithoutSpeechCleanup() {
+    void runSpeechCleanupAction("create_without_cleanup", "bypass", {}, "bypass");
+  }
+
+  function retrySpeechCleanupRender() {
+    void runSpeechCleanupAction("retry", "retry_render", {}, "retry_render");
+  }
+
   async function startNew() {
     if (productionPreview || (initialLoading && !thread) || busy || thinking || uploading) return;
     const previousThreadId = activeThreadIdRef.current;
@@ -1215,6 +1336,37 @@ export default function ChatCreationWorkspace({
   const editorUrl = !productionPreview && thread?.active_plan_item_id
     ? `/plan/items/${thread.active_plan_item_id}/edit?embedded=1${selectedReadyVariant?.variant_id ? `&variant=${selectedReadyVariant.variant_id}` : ""}`
     : null;
+  const directionDescription = typeof thread?.state.intent === "string" && thread.state.intent
+    ? thread.state.intent
+    : "I’ll find the strongest opening and shape your footage into a concise first cut.";
+  const cleanupCard = speechCleanup?.applicable ? (
+    <SpeechCleanupDecisionCard
+      cleanup={speechCleanup}
+      formatLabel={creationFormatLabel(format)}
+      direction={directionDescription}
+      busy={busy || productionPreview}
+      pendingAction={speechCleanupPendingAction}
+      onGenerate={generateWithSpeechCleanup}
+      onRetryAnalysis={retrySpeechCleanupAnalysis}
+      onRetryRender={retrySpeechCleanupRender}
+      onCreateWithoutCleanup={createWithoutSpeechCleanup}
+    />
+  ) : null;
+  const defaultConfirmationCard = (
+    <ChatArtifactCard
+      badge={<Badge variant="secondary">Creative direction</Badge>}
+      title={`${creationFormatLabel(format)} is ready to make`}
+      description={directionDescription}
+    >
+      <Button type="button" className="min-h-11 w-full" disabled={productionPreview || busy || clipCount === 0} onClick={() => void confirm("generate")}>
+        <Sparkles />{busy ? "Starting…" : "Create this video"}
+      </Button>
+    </ChatArtifactCard>
+  );
+  const liveAnnouncement = speechCleanupAnnouncement(speechCleanup, {
+    rendering: Boolean(thread && creationThreadInProgress(thread)),
+    ready: hasReady,
+  });
 
   if (threadUnavailable) {
     return (
@@ -1239,9 +1391,10 @@ export default function ChatCreationWorkspace({
       <nav className="mt-2 space-y-1 overflow-y-auto" aria-label="Recent projects">
         {projects.slice(0, 10).map((project) => {
           const title = projectTitle(project);
+          const sidebarTitle = projectSidebarTitle(project);
           return (
             <div key={project.id} className="flex min-w-0 items-center gap-1">
-              <Button type="button" variant={project.id === thread?.id ? "secondary" : "ghost"} className="h-auto min-h-11 min-w-0 flex-1 justify-start text-left" disabled={busy || thinking || uploading} onClick={() => void openProject(project)}><FolderOpen className="shrink-0" /><span className="min-w-0"><span className="block truncate">{title}</span><span className="block truncate text-[11px] font-normal text-muted-foreground">{projectStatusLabel(project)}</span></span></Button>
+              <Button type="button" variant={project.id === thread?.id ? "secondary" : "ghost"} className="h-auto min-h-11 min-w-0 flex-1 justify-start text-left" disabled={busy || thinking || uploading} onClick={() => void openProject(project)}><FolderOpen className="shrink-0" /><span className="min-w-0"><span className="block truncate">{sidebarTitle}</span><span className="block truncate text-[11px] font-normal text-muted-foreground">{projectStatusLabel(project)}</span></span></Button>
               <DropdownMenu>
               <DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 md:size-9" aria-label={`Project actions for ${title}`} disabled={busy || thinking || uploading}><MoreHorizontal /></Button></DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
@@ -1358,16 +1511,88 @@ export default function ChatCreationWorkspace({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          <Button type="button" variant="ghost" size="icon" className="size-11 md:hidden" aria-label="Open projects" onClick={() => setProjectsOpen(true)}><Menu /></Button>
-        </div>
-      </header>
-      <div ref={transcriptRef} role="log" aria-label="Conversation history" aria-live="polite" aria-relevant="additions text" tabIndex={0} className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]"><div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-6 sm:px-8">
+	          <Button type="button" variant="ghost" size="icon" className="size-11 md:hidden" aria-label="Open projects" onClick={() => setProjectsOpen(true)}><Menu /></Button>
+	        </div>
+	      </header>
+	      <p className="sr-only" aria-live="polite" aria-atomic="true" data-testid="creation-live-announcer">{liveAnnouncement}</p>
+	      <div ref={transcriptRef} role="log" aria-label="Conversation history" aria-live="off" tabIndex={0} className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]"><div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-6 sm:px-8">
         {!thread && !error ? <div className="space-y-3" role="status"><div className="h-5 w-40 motion-safe:animate-pulse rounded bg-muted" /><div className="h-20 w-full motion-safe:animate-pulse rounded bg-muted" /></div> : null}
         {!thread && error ? <ChatArtifactCard title="Creation chat couldn’t load" description="Your projects are safe. Check your connection, then try again."><Button type="button" variant="outline" disabled={initialLoading} onClick={() => void load()}><RefreshCw /> {initialLoading ? "Retrying…" : "Retry"}</Button></ChatArtifactCard> : null}
-        {messages.map((message, index) => <div key={message.id} ref={index === messages.length - 1 ? latestMessageRef : undefined} className="space-y-3">{message.content ? <ChatBubble role={message.role}>{message.content}</ChatBubble> : null}{message.artifact === "format" && (!format || formatPickerOpen) ? formatArtifact : null}{message.artifact === "upload" && !thread?.active_job_id ? <>{uploadArtifact}{visualsArtifact}</> : null}{message.artifact === "voiceover" && !thread?.active_job_id ? uploadArtifact : null}{(message.artifact === "confirmation" || (message.artifact === "revision" && !hasReady)) && canConfirmDirection ? <ChatArtifactCard badge={<Badge variant="secondary">Creative direction</Badge>} title={`${creationFormatLabel(format)} is ready to make`} description={typeof thread?.state.intent === "string" && thread.state.intent ? thread.state.intent : "I’ll find the strongest opening and shape your footage into a concise first cut."}><Button type="button" className="min-h-11 w-full" disabled={productionPreview || busy || clipCount === 0} onClick={() => void confirm("generate")}><Sparkles />{busy ? "Starting…" : "Create this video"}</Button></ChatArtifactCard> : null}{message.artifact === "revision" && hasReady ? <ChatArtifactCard badge={<Badge variant="secondary">Revision ready</Badge>} title="Apply this direction?" description="This creates a new generation from the finished cut."><Button type="button" className="min-h-11 w-full" disabled={productionPreview || busy} onClick={() => void confirm("generate", { base_generation: thread?.job?.id })}><RefreshCw /> Create revision</Button></ChatArtifactCard> : null}{message.artifact === "progress" && thread?.active_job_id && !creationJobFailed(thread) ? <RenderStatusCard thread={thread} /> : null}{message.artifact === "failure" && thread && (creationJobFailed(thread) || planningFailed) && (!hasPendingConfirmation || planningFailed) ? <FailureStatusCard thread={thread} busy={busy} readOnly={productionPreview} planningFailure={planningFailed} onRetry={creationJobFailed(thread) ? () => void confirm("retry") : undefined} onAdjust={() => setInput(latestCreationDirection(thread) || "Try a different opening and keep the pacing quick.")} /> : null}{message.artifact === "result" && thread && hasReady ? <ReadyStatusCard thread={thread} isPartial={isPartial} selectedReadyVariant={selectedReadyVariant} selectedFailedVariant={selectedFailedVariant} busy={busy} readOnly={productionPreview} onSelectVariant={(id) => void selectVariant(id)} onOpenEditor={() => { setEditorOpen(true); setMobileTab("editor"); }} onRetryVariant={(id) => void confirm("retry", { variant_id: id })} /> : null}</div>)}
+        {messages.map((message, index) => (
+          <div
+            key={message.id}
+            ref={index === messages.length - 1 ? latestMessageRef : undefined}
+            className="space-y-3"
+          >
+            {message.content ? <ChatBubble role={message.role}>{message.content}</ChatBubble> : null}
+            {message.artifact === "format" && (!format || formatPickerOpen) ? formatArtifact : null}
+            {message.artifact === "upload" && !thread?.active_job_id ? <>{uploadArtifact}{visualsArtifact}</> : null}
+            {message.artifact === "voiceover" && !thread?.active_job_id ? uploadArtifact : null}
+            {(message.artifact === "confirmation" || (message.artifact === "revision" && !hasReady))
+              && canConfirmDirection && !speechCleanupOutcomeFailed
+              ? (cleanupCard ?? defaultConfirmationCard)
+              : null}
+            {message.artifact === "revision" && hasReady ? (
+              <ChatArtifactCard
+                badge={<Badge variant="secondary">Revision ready</Badge>}
+                title="Apply this direction?"
+                description="This creates a new generation from the finished cut."
+              >
+                <Button
+                  type="button"
+                  className="min-h-11 w-full"
+                  disabled={productionPreview || busy}
+                  onClick={() => void confirm("generate", { base_generation: thread?.job?.id })}
+                >
+                  <RefreshCw /> Create revision
+                </Button>
+              </ChatArtifactCard>
+            ) : null}
+            {message.artifact === "progress"
+              && thread?.active_job_id
+              && !creationJobFailed(thread)
+              && !speechCleanupOutcomeFailed
+              ? <RenderStatusCard thread={thread} />
+              : null}
+            {message.artifact === "failure"
+              && thread
+              && (speechCleanupOutcomeFailed
+                || ((creationJobFailed(thread) || planningFailed)
+                  && (!hasPendingConfirmation || planningFailed)))
+              ? speechCleanupOutcomeFailed
+                ? cleanupCard
+                : (
+                  <FailureStatusCard
+                    thread={thread}
+                    busy={busy}
+                    readOnly={productionPreview}
+                    planningFailure={planningFailed}
+                    onRetry={creationJobFailed(thread) ? () => void confirm("retry") : undefined}
+                    onAdjust={() => setInput(latestCreationDirection(thread) || "Try a different opening and keep the pacing quick.")}
+                  />
+                )
+              : null}
+            {message.artifact === "result" && thread && hasReady ? (
+              <ReadyStatusCard
+                thread={thread}
+                isPartial={isPartial}
+                selectedReadyVariant={selectedReadyVariant}
+                selectedFailedVariant={selectedFailedVariant}
+                busy={busy}
+                readOnly={productionPreview}
+                onSelectVariant={(id) => void selectVariant(id)}
+                onOpenEditor={() => {
+                  setEditorOpen(true);
+                  setMobileTab("editor");
+                }}
+                onRetryVariant={(id) => void confirm("retry", { variant_id: id })}
+              />
+            ) : null}
+          </div>
+        ))}
         {thinking ? <ChatThinking /> : null}
       </div></div>
-      <div className="shrink-0 border-t bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4"><form className="mx-auto flex max-w-2xl items-end gap-2 rounded-2xl border bg-background p-2 shadow-sm focus-within:ring-1 focus-within:ring-ring" onSubmit={(event) => { event.preventDefault(); void send(); }}><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Attach primary video clips" disabled={productionPreview || !thread || uploading || Boolean(thread?.active_job_id) || clipCount >= clipLimit} onClick={() => document.getElementById("creation-file-picker")?.click()}><Plus /></Button><input id="creation-file-picker" type="file" className="sr-only" accept="video/*" multiple={format !== "subtitled"} disabled={productionPreview} onChange={(event) => { void attach(event.target.files); event.target.value = ""; }} /><Textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder={productionPreview ? "Read-only production preview" : "Tell Kria what you’re imagining…"} aria-label="Message Kria" rows={1} disabled={productionPreview} className="max-h-32 min-h-11 resize-none border-0 bg-transparent py-3 shadow-none focus-visible:ring-0" /><Button type="submit" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Send message" disabled={productionPreview || !input.trim() || thinking || !thread}><ArrowUp /></Button></form>{offline ? <p className="mx-auto mt-2 flex max-w-2xl items-center gap-1 text-xs text-muted-foreground" role="status"><WifiOff className="size-3" /> Offline — messages stay in the composer until you reconnect.</p> : null}{pollReconnecting ? <p className="mx-auto mt-2 flex max-w-2xl items-center gap-1 text-xs text-muted-foreground" role="status"><RefreshCw className="size-3 motion-safe:animate-spin" /> Reconnecting to render status…</p> : null}{error ? <p className="mx-auto mt-2 max-w-2xl text-sm text-destructive" role="alert">{error}</p> : null}</div>
+      <div className="shrink-0 border-t bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4"><form className="mx-auto flex max-w-2xl items-end gap-2 rounded-2xl border bg-background p-2 shadow-sm focus-within:ring-1 focus-within:ring-ring" onSubmit={(event) => { event.preventDefault(); void send(); }}><Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Attach primary video clips" disabled={productionPreview || !thread || uploading || Boolean(thread?.active_job_id) || clipCount >= clipLimit} onClick={() => document.getElementById("creation-file-picker")?.click()}><Plus /></Button><input id="creation-file-picker" type="file" className="sr-only" accept="video/*" multiple={format !== "subtitled"} disabled={productionPreview} onChange={(event) => { void attach(event.target.files); event.target.value = ""; }} /><Textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder={productionPreview ? "Read-only production preview" : "Tell Kria what you’re imagining…"} aria-label="Message Kria" rows={1} disabled={productionPreview} className="max-h-32 min-h-11 resize-none border-0 bg-transparent py-3 shadow-none focus-visible:ring-0" /><Button type="submit" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Send message" disabled={productionPreview || !input.trim() || thinking || !thread}><ArrowUp /></Button></form>{offline ? <p className="mx-auto mt-2 flex max-w-2xl items-center gap-1 text-xs text-muted-foreground" role="status"><WifiOff className="size-3" /> Offline — messages stay in the composer until you reconnect.</p> : null}{pollReconnecting ? <p className="mx-auto mt-2 flex max-w-2xl items-center gap-1 text-xs text-muted-foreground" role="status"><RefreshCw className="size-3 motion-safe:animate-spin" /> Reconnecting…</p> : null}{error ? <p className="mx-auto mt-2 max-w-2xl text-sm text-destructive" role="alert">{error}</p> : null}</div>
     </section>
     {projectDialogs}
     </>

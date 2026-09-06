@@ -475,6 +475,42 @@ def test_durable_sources_rewrites_order_preserving(monkeypatch):
     assert "_speech_cleanup_internal" not in job.assembly_plan
 
 
+def test_durable_preflight_source_copy_is_generation_bound(monkeypatch):
+    import app.storage as storage
+
+    originals = ["music-uploads/spine.mp4", "slot-uploads/broll.mov"]
+    source_ids = [
+        "00000000-0000-4000-8000-000000000001",
+        "00000000-0000-4000-8000-000000000002",
+    ]
+    job = _FakeJob(originals, [])
+    job.all_candidates["clip_source_instance_ids"] = source_ids
+    exact: list[tuple[str, str, str]] = []
+    latest: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        storage,
+        "copy_object_generation",
+        lambda src, dst, *, source_generation: exact.append((src, dst, source_generation)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        storage,
+        "copy_object",
+        lambda src, dst: latest.append((src, dst)),
+        raising=False,
+    )
+    _patch_sessions(monkeypatch, job)
+
+    result = gb._persist_durable_sources(
+        JOB_ID,
+        originals,
+        generation_by_source_instance={source_ids[0]: "generation-17"},
+    )
+
+    assert exact == [(originals[0], result[0], "generation-17")]
+    assert latest == [(originals[1], result[1])]
+
+
 def test_durable_sources_copy_failure_keeps_all_originals(monkeypatch):
     """All-or-nothing: one failed copy → the ENTIRE original list survives (no mix)."""
     import app.storage as storage
