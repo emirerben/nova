@@ -1222,6 +1222,48 @@ describe("ChatCreationWorkspace", () => {
     expect(await screen.findByRole("button", { name: /Montage Music-led/ })).toBeInTheDocument();
   });
 
+  it("hydrates several media-added events into one uploader with one copy of each file", async () => {
+    const filenames = ["arrival.mp4", "harbor.mp4", "sunset.mp4"];
+    const hydrated = {
+      ...baseThread,
+      revision: 4,
+      state: {
+        format: "narrated",
+        edit_format: "narrated_planned",
+        media: filenames.map((filename, index) => ({
+          media_id: `media-${index + 1}.mp4`,
+          kind: "video",
+          filename,
+        })),
+        media_count: filenames.length,
+      },
+      events: [
+        ...baseThread.events,
+        ...filenames.map((filename, index) => ({
+          id: `media-added-${index + 1}`,
+          sequence: index + 1,
+          revision: index + 2,
+          role: "user" as const,
+          event_type: "media_added",
+          content: null,
+          payload: { filename, media_count: index + 1 },
+          created_at: `2026-01-01T00:00:0${index + 1}Z`,
+        })),
+      ],
+    };
+    jest.mocked(listCreationThreads).mockResolvedValueOnce([hydrated]);
+    jest.mocked(refreshCreationThread).mockResolvedValueOnce(hydrated);
+
+    render(<ChatCreationWorkspace />);
+
+    expect(await screen.findByText("Add clips and voiceover")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Add primary video clips" })).toHaveLength(1);
+    for (const filename of filenames) {
+      expect(screen.getAllByText(filename)).toHaveLength(1);
+      expect(screen.getAllByRole("button", { name: `Remove attached ${filename}` })).toHaveLength(1);
+    }
+  });
+
   it("removes an attached server media item through a revision-fenced action", async () => {
     const withMedia = {
       ...baseThread,
