@@ -2,11 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.62.0.0] — 2026-09-05
+## [0.62.0.0] — 2026-09-06
 
 ### Changed
 - **Chat-first creation is now the permanent product for every signed-in account.** `/plan` always opens the durable Kria conversation workspace, and creation-thread APIs no longer depend on a frontend flag, backend kill switch, or account allowlist.
 - **Operational failures stay inside one coherent product.** An unavailable creation API is shown as a recoverable chat error with an explicit retry instead of silently switching the creator into another workflow.
+- **TikTok connection returns creators to the canonical workspace.** The dedicated connection route preserves a safe internal return target and keeps authentication, account linking, and creation in one journey.
 
 ### Removed
 - **The former plan home and onboarding creation funnel are retired.** The old workspace, interview, footage fork/grouping, standalone payoff, cohort fallback store, and their UI-only helpers and tests are removed; there is no second `/plan` implementation to drift from the standard.
@@ -14,7 +15,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **Direct guided-edit routes retain their independent safety switch.** Chat creation opts into guided planning explicitly without bypassing the existing kill switch for other PlanItem entry points.
-- **Gallery thumbnails retain automatic poster recovery.** The canonical workspace re-signs or repairs missing posters without disturbing project lifecycle and production-preview behavior.
+- **Gallery browsing and thumbnails recover without losing place.** Cursor pagination, retry handling, and automatic poster repair keep older finished edits reachable without disturbing project lifecycle or production-preview behavior.
+- **Starting a new project is race-safe.** Kria coalesces concurrent startup retries and prevents a quick “New video” action from creating or adopting duplicate orphan projects while the initial project is still loading.
 
 ## [0.61.0.0] — 2026-09-05
 
