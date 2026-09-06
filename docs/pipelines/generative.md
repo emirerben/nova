@@ -155,6 +155,8 @@ preset secrets empty; stored assignments remain pinned.
 
 - `src/apps/api/app/tasks/generative_build.py` — `orchestrate_generative_job` Celery
   task
+- `src/apps/api/app/agents/narrated_storyboard.py` — transcript-grounded narrated
+  clip matching and editable overlay planner
 - `src/apps/api/app/pipeline/look_presets.py` — canonical validation and shared
   FFmpeg graph for source-media looks; `none` is an exact bypass.
 - `src/apps/api/app/pipeline/generative_overlays.py` — intro overlay builder
