@@ -185,3 +185,39 @@ def test_untouched_consent_needs_no_notice() -> None:
 
     assert item.speech_cleanup_enabled is True
     assert item.speech_cleanup_notice is None
+
+
+def test_media_id_backfill_does_not_revoke_consent() -> None:
+    """creator_clip_metadata assigns stable media_ids through this same facade.
+
+    That rewrites the identity from ``legacy-0`` to a uuid without touching a
+    byte of footage, so keying invalidation on the (media_id, gcs_path) pair
+    would let a background backfill revoke the creator's consent.
+    """
+
+    item = PlanItem()
+    # A legacy row: paths only, no media_id.
+    item.clip_assignments = [{"gcs_path": "users/u/a.mp4", "shot_id": None}]
+    item.clip_gcs_paths = ["users/u/a.mp4"]
+    item.edit_format = "montage"
+    item.audio_mode = "kria"
+    item.speech_cleanup_enabled = True
+    item.speech_cleanup_notice = None
+    item.edit_proposal = _approved_proposal("users/u/a.mp4")
+
+    mutate_plan_item_media(
+        item,
+        detector_policy=current_detector_policy(),
+        current_analysis=None,
+        clip_assignments=[
+            {
+                "gcs_path": "users/u/a.mp4",
+                "shot_id": None,
+                "media_id": "0f9c1b7e4a5d4f7c8b2e1a6d3c5f9abc",
+            }
+        ],
+    )
+
+    assert item.speech_cleanup_enabled is True
+    assert item.speech_cleanup_notice is None
+    assert parse_edit_proposal(item.edit_proposal).status == "approved"

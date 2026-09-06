@@ -240,6 +240,7 @@ def mutate_plan_item_media(
     )
 
     previous_footage = main_footage_identity(item)
+    previous_footage_paths = tuple(path for _, path in previous_footage)
     if clip_assignments is not _UNSET:
         normalized = _normalize_assignments(list(clip_assignments))
         item.clip_assignments = normalized
@@ -275,7 +276,14 @@ def mutate_plan_item_media(
     # items without speech coverage. Fall back to footage identity there, and
     # only there, so a replacement cannot look unchanged.
     footage_only = previous.source is None and current.source is None
-    footage_changed = footage_only and main_footage_identity(item) != previous_footage
+    # Compare paths, not the (media_id, gcs_path) pairs. creator_clip_metadata
+    # backfills stable media_ids onto legacy rows through this same facade, which
+    # rewrites "legacy-0" to a uuid without touching a single byte of footage.
+    # Keying on the pair would let that bookkeeping revoke consent, which
+    # main_footage_identity's own contract forbids ("adding notes or analysis
+    # metadata cannot revoke consent while replacing/reordering a source can").
+    current_footage_paths = tuple(path for _, path in main_footage_identity(item))
+    footage_changed = footage_only and current_footage_paths != previous_footage_paths
     if changed:
         settled_at = now or datetime.now(UTC)
         if (
