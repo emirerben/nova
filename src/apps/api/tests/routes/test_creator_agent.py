@@ -3932,6 +3932,7 @@ async def test_chat_cleanup_recovery_reaches_dispatch_without_rescheduling_analy
         4,
         creator_strategy=edit_plan.strategy.model_dump(mode="json", exclude_none=True),
         creator_clip_order=None,
+        creator_request="Make a clean montage",
         speech_cleanup_analysis_id=None,
         speech_cleanup_choice=None,
         speech_cleanup_action=recovery_action,

@@ -137,6 +137,16 @@ def test_protected_plan_item_media_fields_have_one_writer() -> None:
         if protected_assignment.search(source) is None:
             continue
         tree = ast.parse(source, filename=str(path))
+        # A protected name is only protected on a PlanItem row. Other objects may
+        # legitimately carry an attribute of the same name -- CreatorPolicyError
+        # records the ``edit_format`` it rejected, for instance -- so a bare
+        # ``self.<field>`` write is out of scope unless the enclosing class IS the
+        # PlanItem model.
+        own_class: dict[ast.AST, str] = {}
+        for parent in ast.walk(tree):
+            if isinstance(parent, ast.ClassDef):
+                for child in ast.walk(parent):
+                    own_class.setdefault(child, parent.name)
         for node in ast.walk(tree):
             targets: list[ast.Attribute] = []
             if isinstance(node, (ast.Assign, ast.AnnAssign)):
@@ -149,8 +159,14 @@ def test_protected_plan_item_media_fields_have_one_writer() -> None:
             elif isinstance(node, ast.AugAssign):
                 targets = _attribute_targets(node.target)
             for target in targets:
-                if target.attr in PROTECTED_PLAN_ITEM_MEDIA_FIELDS and path.resolve() != owner:
-                    offenders.append(f"{path.relative_to(app_root)}:{target.lineno}:{target.attr}")
+                if target.attr not in PROTECTED_PLAN_ITEM_MEDIA_FIELDS or path.resolve() == owner:
+                    continue
+                writes_own_attribute = (
+                    isinstance(target.value, ast.Name) and target.value.id == "self"
+                )
+                if writes_own_attribute and own_class.get(node) != "PlanItem":
+                    continue
+                offenders.append(f"{path.relative_to(app_root)}:{target.lineno}:{target.attr}")
 
     assert offenders == [], "protected PlanItem media writes outside facade:\n" + "\n".join(
         offenders
