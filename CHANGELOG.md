@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.65.0.0] — 2026-09-06
+
+### Added
+- **Kria now asks whether to clean up your speech before it renders.** When a talk-to-camera clip, narration embedded in your footage, or an uploaded/recorded voiceover is ready, a boxed card in the chat offers **Clean up speech** or **Keep original**, shows what was found, and stays truthful about no-findings, retry, failure, and source-changed states. What you type in chat never turns the analysis on or off. Narration-only projects can be analysed early but still need video before rendering.
+- **Speech analysis runs on its own worker.** A dedicated `speech-analysis` queue and `speech_analysis` Fly process group keep preflight transcription off the render and maintenance workers, with leases, bounded retries, terminal failure states, and a Beat reconciler for abandoned work.
+
+### Changed
+- **Renders honour exactly the cleanup you accepted.** A confirmed decision is stamped immutably onto the render Job (`required_v1` or `off_v1`); the renderer never re-detects fillers for a stamped Job, `off_v1` never cuts anything, and any drift in the analysed source, storage generation, or Job generation fails closed instead of guessing. Legacy Jobs keep their historical behaviour.
+- **Interrupted confirmations recover safely.** If the render Job was saved but the queue publish failed, retrying reuses the persisted contract, refunds the reserved attempt exactly once, and reports a conflict rather than dispatching stale evidence.
+
+### Internal
+- Ships dark: `SPEECH_CLEANUP_PREFLIGHT_MODE=off`, `SPEECH_CLEANUP_PREFLIGHT_ROLLOUT_PERCENT=0`. Ramp through shadow and enforce cohorts only with signed audit receipts per `docs/runbooks/chat-speech-cleanup-rollout.md`. Migration 0095 is additive (`speech_cleanup_analyses` table + two nullable `plan_items` columns).
+
 ## [0.64.0.1] — 2026-09-06
 
 ### Fixed
@@ -27,7 +40,6 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **Narrated sports edits now turn ordinary spoken results into editable score text.** Transcript-grounded parsing recognizes phrases such as “one nil,” “one all,” “two one,” and “six to four,” repairs missing or narrow storyboard anchors, and never trusts model-authored score copy.
-
 ## [0.63.0.0] — 2026-09-06
 
 ### Added
@@ -36,7 +48,6 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Creative directions such as “add intro texts” no longer become a one-letter title or a misleading rollout error.** Generic text requests remain creative intent, exact quoted titles stay exact, and planning failures offer an actionable retry without losing uploaded media.
 - **Narrated text and visual layers survive the complete editing lifecycle.** Initial renders, text and caption edits, music-bed reburns, and visual autoplan all use the same ordered compositor and retain validated storyboard assignments.
-
 ## [0.61.0.1] — 2026-09-06
 
 ### Fixed
