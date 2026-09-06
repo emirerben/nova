@@ -62,8 +62,8 @@ Rules:
 - `src/apps/api/app/tasks/generative_build.py` — `orchestrate_generative_job` Celery task (see `docs/pipelines/generative.md`)
 - `src/apps/api/app/pipeline/generative_overlays.py` — agent-authored intro overlay injector
 - `src/apps/web/src/app/generative/` — redirects to /plan (v0.45; siblings = shared editor modules); `admin/generative/` — admin dashboard
-- `src/apps/web/src/app/plan/` — canonical chat-first creation workspace; `/plan/new` redirects into it, while `/plan/items/*` retains persisted item/editor compatibility
-- `src/apps/web/src/app/create/` — `/create` and `/create/manual` redirect compatibility into canonical `/plan`; `src/apps/api/app/routes/{me,manual_drafts}.py` remains live for persisted jobs/editor contracts; `PlanItem.audio_mode` is `kria|original|voiceover` (`plans/017-qendresa-creation-flow.md`)
+- `src/apps/web/src/app/plan/` — canonical chat-first creation workspace; `/plan/new` redirects there, while `/plan/items/*` retains item/editor contracts
+- `src/apps/web/src/app/create/` — `/create` and `/create/manual` redirect to `/plan`; `src/apps/api/app/routes/{me,manual_drafts}.py` serves persisted jobs/editor contracts; `PlanItem.audio_mode` is `kria|original|voiceover` (`plans/017-qendresa-creation-flow.md`)
 - `src/apps/api/app/pipeline/music_recipe.py` — beat-snap recipe generator (see `docs/pipelines/music.md`)
 - `src/apps/api/app/tasks/music_orchestrate.py` — Celery tasks: beat analysis + music job orchestration
 - `src/apps/api/app/services/audio_download.py` — yt-dlp audio download + beat detection via FFmpeg
