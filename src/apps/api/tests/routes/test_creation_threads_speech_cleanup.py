@@ -779,8 +779,6 @@ async def test_get_thread_commits_stale_cleanup_repair_before_publishing(
 
     db.commit = AsyncMock(side_effect=commit)
     db.refresh = AsyncMock()
-    monkeypatch.setattr(settings, "creation_threads_enabled", True)
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "*")
     monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
     monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
     monkeypatch.setattr(
@@ -943,8 +941,6 @@ async def test_thread_list_omits_cleanup_without_analysis_queries(
     result.scalars.return_value.all.return_value = [row]
     db = Mock()
     db.execute = AsyncMock(return_value=result)
-    monkeypatch.setattr(settings, "creation_threads_enabled", True)
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "*")
 
     summaries = await routes.list_threads(
         SimpleNamespace(id=owner_id, email="u@example.com"), db, limit=20
@@ -1014,8 +1010,6 @@ async def test_format_selection_schedules_preflight_without_any_chat_prose(
     db.commit.side_effect = commit
     mutate = Mock()
     schedule = AsyncMock(return_value=analysis_id)
-    monkeypatch.setattr(settings, "creation_threads_enabled", True)
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "*")
     monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
     monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
     monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
@@ -1077,8 +1071,6 @@ async def _run_generate_action(
     controller = AsyncMock(
         return_value=SimpleNamespace(id=str(session.id), current_job_id=str(result_job_id))
     )
-    monkeypatch.setattr(settings, "creation_threads_enabled", True)
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "*")
     monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
     monkeypatch.setattr(settings, "speech_cleanup_preflight_mode", "enforce")
     monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
@@ -1273,8 +1265,6 @@ async def test_cleanup_application_recovery_is_pinned_to_failed_job_and_reaches_
     controller = AsyncMock(
         return_value=SimpleNamespace(id=str(session.id), current_job_id=str(new_job_id))
     )
-    monkeypatch.setattr(settings, "creation_threads_enabled", True)
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "*")
     monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
     monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
     monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
@@ -1390,8 +1380,6 @@ async def test_publish_failure_retry_preserves_exact_preflight_contract(
     controller = AsyncMock(
         return_value=SimpleNamespace(id=str(session.id), current_job_id=str(new_job_id))
     )
-    monkeypatch.setattr(settings, "creation_threads_enabled", True)
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "*")
     monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
     monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
     monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
@@ -1463,8 +1451,6 @@ async def test_generic_publish_failure_retries_without_inventing_cleanup_recover
     controller = AsyncMock(
         return_value=SimpleNamespace(id=str(session.id), current_job_id=str(new_job_id))
     )
-    monkeypatch.setattr(settings, "creation_threads_enabled", True)
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "*")
     monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
     monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
     monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
@@ -1566,8 +1552,6 @@ async def test_retry_speech_check_requeues_current_retryable_analysis_after_comm
         return True
 
     db.commit.side_effect = commit
-    monkeypatch.setattr(settings, "creation_threads_enabled", True)
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "*")
     monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
     monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
     monkeypatch.setattr(routes, "_append", AsyncMock())
@@ -1602,8 +1586,6 @@ async def test_retry_speech_check_reports_only_cleanup_staleness_conflict(
     stale.failure_retryable = True
     db = Mock()
     db.get = AsyncMock(return_value=stale)
-    monkeypatch.setattr(settings, "creation_threads_enabled", True)
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "*")
     monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
     monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
 
@@ -1633,8 +1615,6 @@ async def test_cleanup_action_is_revision_fenced_before_analysis_or_job_work(
     thread, _session, _item = _action_graph()
     db = Mock()
     db.get = AsyncMock()
-    monkeypatch.setattr(settings, "creation_threads_enabled", True)
-    monkeypatch.setattr(settings, "creation_threads_user_allowlist", "*")
     monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread))
     monkeypatch.setattr(routes, "_duplicate", AsyncMock(return_value=None))
     controller = AsyncMock()

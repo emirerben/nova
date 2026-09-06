@@ -3870,7 +3870,6 @@ async def test_chat_cleanup_recovery_reaches_dispatch_without_rescheduling_analy
             ),
         )
     )
-    monkeypatch.setattr(settings, "creation_threads_enabled", True)
     monkeypatch.setattr(
         creator_routes,
         "_owned_context",
@@ -4056,7 +4055,6 @@ async def test_chat_cleanup_publish_failure_crash_replay_refunds_once(
         return None
 
     db.get.side_effect = get
-    monkeypatch.setattr(settings, "creation_threads_enabled", True)
     monkeypatch.setattr(
         creator_routes,
         "_owned_context",
