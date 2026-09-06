@@ -230,6 +230,13 @@ def mutate_plan_item_media(
     """
 
     previous = resolve_item_narration(item, detector_policy=detector_policy)
+    # Footage identity is tracked separately from the narration fingerprint.
+    # The fingerprint is None whenever no narration source resolves (montage
+    # formats, clips without audio), so it cannot carry the legacy
+    # "media changed -> approved proposal is stale" contract on its own.
+    from app.services.speech_cleanup import main_footage_identity  # noqa: PLC0415
+
+    previous_footage = main_footage_identity(item)
     if clip_assignments is not _UNSET:
         normalized = _normalize_assignments(list(clip_assignments))
         item.clip_assignments = normalized
@@ -257,6 +264,7 @@ def mutate_plan_item_media(
     previous_fingerprint = previous.source.source_policy_fingerprint if previous.source else None
     current_fingerprint = current.source.source_policy_fingerprint if current.source else None
     changed = previous_fingerprint != current_fingerprint
+    footage_changed = main_footage_identity(item) != previous_footage
     if changed:
         settled_at = now or datetime.now(UTC)
         if (
@@ -268,6 +276,9 @@ def mutate_plan_item_media(
         # decision is authoritative and is cleared by superseding its row.
         item.speech_cleanup_enabled = False
         item.speech_cleanup_notice = None
+    if changed or footage_changed:
+        # Base invalidated on footage identity alone; keep that contract so a
+        # replaced montage clip cannot keep driving an approved proposal.
         try:
             from app.services.edit_proposals import mark_edit_proposal_stale
 
