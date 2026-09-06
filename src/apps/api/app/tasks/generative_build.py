@@ -15978,8 +15978,9 @@ def _narrated_storyboard_text_elements(
             )
 
     # Scores are copied only from a transcript-grounded span. Clip metadata and
-    # model rationale cannot invent numbers. Prefer the agent's validated span,
-    # then use the deterministic parser for model omissions.
+    # model rationale cannot invent numbers. Agent anchors are advisory hints;
+    # the deterministic parser canonicalizes them to the smallest score phrase
+    # and also handles missing or narrow anchors.
     request_wants_scores = _creator_requests_narrated_treatment(
         request, r"\b(?:score|scores|scoreboard|result|results)\b"
     )
@@ -16013,7 +16014,63 @@ def _narrated_storyboard_text_elements(
         "eighty",
         "ninety",
     }
+    # Score copy is always derived from the canonical transcript.  The
+    # storyboard agent is allowed to omit score text (and may omit anchors),
+    # so this parser is the safety net for the common spoken forms used by
+    # sports narration: "one nil", "one all", "two one", and "six to four".
+    score_value_words = number_words | {"nil", "all"}
+    score_context_re = re.compile(
+        r"\b(?:score|scores|scoreboard|result|results|final|won|wins|winner|beat|beats|"
+        r"defeated|level|levels|tied|tie|game|games|match|matches|takes|took)\b"
+    )
+
+    def _score_value(text: Any) -> str | None:
+        token = re.sub(r"^[^a-z0-9]+|[^a-z0-9]+$", "", str(text).casefold())
+        if token.isdigit() or token in score_value_words:
+            return token
+        return None
+
+    def _score_has_context(start_index: int, end_index: int) -> bool:
+        context = " ".join(
+            str(words[index]["text"]).casefold()
+            for index in range(max(0, start_index - 5), min(len(words), end_index + 6))
+        )
+        return bool(score_context_re.search(context))
+
     score_spans: list[tuple[int, int]] = []
+
+    def _add_score_span(start_index: int, end_index: int) -> None:
+        if (
+            request_wants_scores
+            and 0 <= start_index <= end_index < len(words)
+            and _score_has_context(start_index, end_index)
+        ):
+            # Model hints and the whole-transcript fallback may discover the
+            # same canonical phrase. Keep one stable transcript-start identity.
+            if any(
+                existing_start <= start_index and end_index <= existing_end
+                for existing_start, existing_end in score_spans
+            ):
+                return
+            score_spans[:] = [
+                (existing_start, existing_end)
+                for existing_start, existing_end in score_spans
+                if not (start_index <= existing_start and existing_end <= end_index)
+            ]
+            score_spans.append((start_index, end_index))
+
+    def _add_spoken_score_spans(start_index: int, end_index: int) -> None:
+        for index in range(start_index, end_index):
+            if _score_value(words[index]["text"]) and _score_value(words[index + 1]["text"]):
+                _add_score_span(index, index + 1)
+        for index in range(start_index, end_index - 1):
+            if (
+                _score_value(words[index]["text"])
+                and str(words[index + 1]["text"]).strip().casefold() == "to"
+                and _score_value(words[index + 2]["text"])
+            ):
+                _add_score_span(index, index + 2)
+
     for overlay in raw_overlays:
         if overlay.get("kind") != "score":
             continue
@@ -16025,21 +16082,7 @@ def _narrated_storyboard_text_elements(
         end_index = index_by_id[end_id]
         if end_index < start_index or end_index - start_index > 8:
             continue
-        tokens = [
-            str(words[index]["text"]).strip().casefold()
-            for index in range(start_index, end_index + 1)
-        ]
-        numeric = [token for token in tokens if token.isdigit() or token in number_words]
-        context = " ".join(
-            str(words[index]["text"]).casefold()
-            for index in range(max(0, start_index - 5), min(len(words), end_index + 6))
-        )
-        if (
-            request_wants_scores
-            and len(numeric) >= 2
-            and re.search(r"\b(?:score|result|final|won|beat)\b", context)
-        ):
-            score_spans.append((start_index, end_index))
+        _add_spoken_score_spans(start_index, end_index)
 
     transcript_text = " ".join(str(word["text"]) for word in words)
     score_re = re.compile(r"\b\d{1,3}\s*[-–:]\s*\d{1,3}\b")
@@ -16056,34 +16099,13 @@ def _narrated_storyboard_text_elements(
             cursor = next_cursor + 1
         if start_index is None or end_index is None:
             continue
-        context_start = max(0, start_index - 5)
-        context_end = min(len(words), end_index + 6)
-        context = " ".join(
-            str(words[index]["text"]).casefold() for index in range(context_start, context_end)
-        )
-        if not request_wants_scores or not re.search(
-            r"\b(?:score|result|won|beat|final)\b", context
-        ):
-            continue
-        score_spans.append((start_index, end_index))
+        _add_score_span(start_index, end_index)
 
-    # Consecutive spoken number words, e.g. “six four”, are common in voiceovers.
-    for index in range(len(words) - 1):
-        first = str(words[index]["text"]).strip().casefold()
-        second = str(words[index + 1]["text"]).strip().casefold()
-        if not (
-            (first.isdigit() or first in number_words)
-            and (second.isdigit() or second in number_words)
-        ):
-            continue
-        context = " ".join(
-            str(words[offset]["text"]).casefold()
-            for offset in range(max(0, index - 5), min(len(words), index + 7))
-        )
-        if request_wants_scores and re.search(r"\b(?:score|result|final|won|beat)\b", context):
-            score_spans.append((index, index + 1))
+    # Consecutive spoken numbers and “six to four” / “6 to 4” are common
+    # speech-recognition shapes.
+    _add_spoken_score_spans(0, len(words) - 1)
 
-    for start_index, end_index in score_spans:
+    for start_index, end_index in sorted(score_spans):
         start_s = float(words[start_index]["start_s"])
         end_s = float(words[end_index]["end_s"])
         source = f"narrated_storyboard:score:{start_index}"

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.63.1.0] — 2026-09-06
+
+### Fixed
+- **Narrated sports edits now turn ordinary spoken results into editable score text.** Transcript-grounded parsing recognizes phrases such as “one nil,” “one all,” “two one,” and “six to four,” repairs missing or narrow storyboard anchors, and never trusts model-authored score copy.
+
 ## [0.63.0.0] — 2026-09-06
 
 ### Added
