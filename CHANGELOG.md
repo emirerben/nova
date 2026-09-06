@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.64.0.1] — 2026-09-06
+
+### Fixed
+- **Narrated score text now survives transcription normalization such as `1-all`.** Hybrid numeric-word score tokens are accepted only when transcript-grounded, requested by the creator, and surrounded by match context; arbitrary hyphenated words and model-authored score copy remain rejected.
+
 ## [0.64.0.0] — 2026-09-06
 
 ### Changed
