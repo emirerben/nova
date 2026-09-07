@@ -62,6 +62,7 @@ celery_app = Celery(
         "app.tasks.edit_training_artifacts",
         "app.tasks.creator_quality_review",
         "app.tasks.creator_workspace",
+        "app.tasks.kria_runtime",
         "app.tasks.creator_memory",
         "app.tasks.speech_cleanup_analysis",
         # Deliberately NOT in MAINTENANCE_TASK_NAMES: repair_job_poster downloads
@@ -104,6 +105,9 @@ MAINTENANCE_TASK_NAMES: tuple[str, ...] = (
     # The render-worker lifecycle task itself MUST run on `light`, never on
     # the `worker` machine it's managing — obviously.
     "tasks.manage_render_worker_lifecycle",
+    "tasks.reconcile_kria_turns",
+    "tasks.prune_kria_drafts",
+    "tasks.execute_kria_approval",
     "tasks.reconcile_speech_cleanup_analyses",
 )
 
@@ -182,6 +186,7 @@ celery_app.conf.update(
     # queue) — this dict is additive, not a full routing table.
     task_routes={
         **{name: {"queue": "maintenance"} for name in MAINTENANCE_TASK_NAMES},
+        "tasks.run_kria_turn": {"queue": "agent-control"},
         # Make the queue a property of the TASK, not of each dispatcher. A
         # future bare `repair_job_poster.delay(...)` would otherwise land on
         # the default `celery` queue — the concurrency=1 render worker — and
@@ -224,6 +229,14 @@ celery_app.conf.update(
         "schedule-tiktok-syncs-every-15-min": {
             "task": "app.tasks.tiktok.schedule_tiktok_account_syncs",
             "schedule": 900.0,
+        },
+        "reconcile-kria-turns-every-minute": {
+            "task": "tasks.reconcile_kria_turns",
+            "schedule": 60.0,
+        },
+        "prune-kria-draft-bodies-daily": {
+            "task": "tasks.prune_kria_drafts",
+            "schedule": crontab(hour=4, minute=15),
         },
         "cleanup-tiktok-snapshots-daily": {
             "task": "app.tasks.tiktok.cleanup_tiktok_publications",

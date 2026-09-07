@@ -21,6 +21,7 @@ from app.routes.creation_threads import (
     ActionBody,
     ArchiveBody,
     AttachBody,
+    CreateBody,
     MediaInput,
     MessageBody,
     RenameBody,
@@ -39,12 +40,14 @@ from app.routes.creation_threads import (
     _project_job_storage_paths,
     _record_partial_variant_retry_enqueue_failure,
     _render_projection,
+    _require_runtime_v1_mutation,
     _response,
     _status_message,
     action_thread,
     archive_thread,
     attach_media,
     capabilities,
+    create_thread,
     get_thread,
     list_threads,
     message_thread,
@@ -217,6 +220,181 @@ def test_attach_batch_rejects_duplicate_media_and_multiple_voiceovers() -> None:
             client_event_id="attach-voices",
             expected_revision=0,
         )
+
+
+def test_thread_creation_remains_v1_unless_client_explicitly_opts_in() -> None:
+    assert CreateBody().runtime_version == 1
+    assert CreateBody(runtime_version=2).runtime_version == 2
+    assert CreateBody(runtime_version=2, message="make a travel diary").message
+
+
+@pytest.mark.asyncio
+async def test_runtime_v2_thread_creation_fails_closed_while_backend_flag_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "kria_runtime_v2_enabled", False)
+    user = SimpleNamespace(id=uuid.uuid4(), email="creator@example.com")
+
+    response = await create_thread(
+        request=Request({"type": "http", "method": "POST", "path": "/creation-threads"}),
+        body=CreateBody(runtime_version=2),
+        user=user,
+        db=SimpleNamespace(),
+    )
+
+    assert response.status_code == 404
+    assert b'"code":"kria_runtime_unavailable"' in response.body
+
+
+@pytest.mark.asyncio
+async def test_runtime_v2_inline_message_uses_typed_validation_problem(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "kria_runtime_v2_enabled", True)
+    user = SimpleNamespace(id=uuid.uuid4(), email="creator@example.com")
+
+    response = await create_thread(
+        request=Request({"type": "http", "method": "POST", "path": "/creation-threads"}),
+        body=CreateBody(runtime_version=2, message="make a travel diary"),
+        user=user,
+        db=SimpleNamespace(),
+    )
+
+    assert response.status_code == 422
+    assert b'"code":"request_invalid"' in response.body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", ["message", "action"])
+async def test_legacy_mutation_routes_cannot_take_authority_over_runtime_v2(
+    endpoint: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_v2_thread = SimpleNamespace(runtime_version=2)
+    monkeypatch.setattr(
+        "app.routes.creation_threads._load",
+        AsyncMock(return_value=runtime_v2_thread),
+    )
+    user = SimpleNamespace(id=uuid.uuid4(), email="creator@example.com")
+    db = SimpleNamespace()
+
+    with pytest.raises(HTTPException) as failure:
+        if endpoint == "message":
+            await message_thread(
+                request=Request(
+                    {"type": "http", "method": "POST", "path": "/creation-threads/id/messages"}
+                ),
+                thread_id=str(uuid.uuid4()),
+                body=MessageBody(
+                    message="render this",
+                    client_event_id="legacy-message",
+                    expected_revision=0,
+                ),
+                user=user,
+                db=db,
+            )
+        else:
+            await action_thread(
+                request=Request(
+                    {"type": "http", "method": "POST", "path": "/creation-threads/id/actions"}
+                ),
+                thread_id=str(uuid.uuid4()),
+                body=ActionBody(
+                    action="generate",
+                    payload={},
+                    client_action_id="legacy-generate",
+                    expected_revision=0,
+                ),
+                user=user,
+                db=db,
+            )
+
+    assert failure.value.status_code == 409
+    assert "new Kria experience" in str(failure.value.detail)
+
+
+@pytest.mark.parametrize(
+    "action",
+    ["select_format", "select_edit_format", "remove_media", "select_variant"],
+)
+def test_runtime_v2_shares_only_non_agent_source_configuration_actions(action: str) -> None:
+    _require_runtime_v1_mutation(SimpleNamespace(runtime_version=2), action=action)
+
+    with pytest.raises(HTTPException):
+        _require_runtime_v1_mutation(SimpleNamespace(runtime_version=2), action="generate")
+
+
+@pytest.mark.asyncio
+async def test_thread_create_idempotency_key_cannot_change_runtime_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "kria_runtime_v2_enabled", True)
+    user = SimpleNamespace(id=uuid.uuid4(), email="creator@example.com")
+    prior_result = Mock()
+    prior_result.first.return_value = (
+        SimpleNamespace(content=None),
+        SimpleNamespace(runtime_version=1),
+    )
+    db = SimpleNamespace(
+        get=AsyncMock(return_value=user),
+        execute=AsyncMock(return_value=prior_result),
+    )
+
+    with pytest.raises(HTTPException) as failure:
+        await create_thread(
+            request=Request({"type": "http", "method": "POST", "path": "/creation-threads"}),
+            body=CreateBody(client_event_id="create-1", runtime_version=2),
+            user=user,
+            db=db,
+        )
+
+    assert failure.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_runtime_v2_thread_creation_provisions_receipt_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "kria_runtime_v2_enabled", True)
+    user = SimpleNamespace(id=uuid.uuid4(), email="creator@example.com")
+    item = SimpleNamespace(id=uuid.uuid4())
+    plan = SimpleNamespace(id=uuid.uuid4())
+    added: list[object] = []
+
+    async def flush() -> None:
+        for row in added:
+            if getattr(row, "id", None) is None:
+                row.id = uuid.uuid4()
+
+    db = SimpleNamespace(
+        get=AsyncMock(return_value=user),
+        add=added.append,
+        flush=flush,
+        commit=AsyncMock(),
+        refresh=AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "app.routes.creation_threads._project",
+        AsyncMock(return_value=(plan, item)),
+    )
+    monkeypatch.setattr("app.routes.creation_threads._append", AsyncMock())
+    monkeypatch.setattr(
+        "app.routes.creation_threads._response",
+        AsyncMock(return_value=SimpleNamespace(runtime_version=2)),
+    )
+
+    response = await create_thread(
+        request=Request({"type": "http", "method": "POST", "path": "/creation-threads"}),
+        body=CreateBody(runtime_version=2),
+        user=user,
+        db=db,
+    )
+
+    thread = next(row for row in added if row.__class__.__name__ == "CreationThread")
+    session = next(row for row in added if isinstance(row, CreatorAgentSession))
+    assert response.runtime_version == 2
+    assert session.plan_item_id == item.id
+    assert thread.active_creator_agent_session_id == session.id
 
 
 @pytest.mark.asyncio

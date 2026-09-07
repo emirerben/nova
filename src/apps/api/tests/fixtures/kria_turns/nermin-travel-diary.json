@@ -1,0 +1,27 @@
+{
+  "fixture_id": "nermin-travel-diary",
+  "user_message": "Turn these airport, cafe, and beach clips into a dreamy travel diary.",
+  "snapshot": {
+    "edit_format": "day_vlog",
+    "media_labels": ["airport departure", "cafe detail", "beach arrival"],
+    "strongest_moment": "the beach arrival",
+    "editorial_decision": "Use the beach arrival as the payoff. Build from departure through the small cafe detail, then let the destination breathe.",
+    "goal": "dreamy travel diary"
+  },
+  "plan": {
+    "schema_version": 2,
+    "mode": "act",
+    "turn_value": "decision",
+    "evidence_ids": ["snapshot:media"],
+    "intents": [
+      {
+        "intent_id": "inspect-project",
+        "tool_name": "project.inspect",
+        "tool_version": 1,
+        "arguments": {},
+        "depends_on": []
+      }
+    ]
+  },
+  "expected_message": "Use the beach arrival as the payoff. Build from departure through the small cafe detail, then let the destination breathe."
+}

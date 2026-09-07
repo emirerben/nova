@@ -1,4 +1,23 @@
 import { uploadContentTypeForFile, uploadToGcs } from "@/lib/plan-api";
+import type {
+  KriaApprovalDecision,
+  KriaApprovalSnapshot,
+  KriaDelta,
+  KriaDraftSnapshot,
+  KriaProblem,
+  KriaTurnAccepted,
+  TurnCancelled,
+} from "@/lib/kria-runtime-v2.generated";
+
+export type {
+  KriaApprovalDecision,
+  KriaApprovalSnapshot,
+  KriaDelta,
+  KriaDraftSnapshot,
+  KriaProblem,
+  KriaTurnAccepted,
+  TurnCancelled,
+} from "@/lib/kria-runtime-v2.generated";
 
 const BASE = "/api/plan/creation-threads";
 
@@ -149,6 +168,8 @@ export function creationVariantFailed(variant: CreationVariant): boolean {
 
 export interface CreationThread {
   id: string;
+  /** Immutable controller owner. Omitted only during old-server deploy skew. */
+  runtime_version?: 1 | 2;
   /** User-authored project label. Older rows may omit it while they hydrate. */
   title?: string | null;
   status: "active" | "archived" | "failed";
@@ -305,10 +326,12 @@ export interface CreationCapabilitiesResponse {
 
 export class CreationThreadError extends Error {
   readonly status: number;
-  constructor(message: string, status: number) {
+  readonly problem?: KriaProblem;
+  constructor(message: string, status: number, problem?: KriaProblem) {
     super(message);
     this.name = "CreationThreadError";
     this.status = status;
+    this.problem = problem;
   }
 }
 
@@ -331,13 +354,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     let message = `Request failed (${response.status})`;
+    let problem: KriaProblem | undefined;
     try {
-      const body = (await response.json()) as { detail?: string };
-      if (body.detail) message = body.detail;
+      const body = (await response.json()) as { detail?: string; problem?: KriaProblem };
+      problem = body.problem;
+      if (problem?.message) message = problem.message;
+      else if (body.detail) message = body.detail;
     } catch {
       // Keep the HTTP status when a proxy returns a non-JSON response.
     }
-    throw new CreationThreadError(message, response.status);
+    throw new CreationThreadError(message, response.status, problem);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
@@ -577,18 +603,21 @@ export async function getCreationCapabilities(): Promise<CreationCapabilitiesRes
   };
 }
 
+export const kriaRuntimeV2Enabled = process.env.NEXT_PUBLIC_KRIA_RUNTIME_V2_ENABLED === "true";
+
 export function createCreationThread(message?: string): Promise<CreationThread> {
   return request<CreationThread>("", {
     method: "POST",
     body: JSON.stringify({
       client_event_id: id("thread"),
-      ...(message ? { message } : {}),
+      ...(kriaRuntimeV2Enabled ? { runtime_version: 2 } : {}),
+      ...(!kriaRuntimeV2Enabled && message ? { message } : {}),
     }),
   });
 }
 
 export function refreshCreationThread(threadId: string, signal?: AbortSignal): Promise<CreationThread> {
-  return request<CreationThread>(`/${threadId}`, { cache: "no-store", signal });
+  return request<CreationThread>(`/${threadId}?projection=full`, { cache: "no-store", signal });
 }
 
 export function creationSpeechCleanupActionId(
@@ -600,6 +629,89 @@ export function creationSpeechCleanupActionId(
   // newly-created Job must remain retryable even when it reuses the same
   // immutable analysis. The thread revision distinguishes those two cases.
   return `speech-cleanup:${analysisId}:r${revision}:${action}`;
+}
+
+export function getKriaApproval(
+  threadId: string,
+  approvalId: string,
+): Promise<KriaApprovalSnapshot> {
+  return request<KriaApprovalSnapshot>(`/${threadId}/approvals/${approvalId}`, {
+    cache: "no-store",
+  });
+}
+
+export function decideKriaApproval(
+  threadId: string,
+  approval: KriaApprovalSnapshot,
+  decision: "approve" | "deny",
+  expectedThreadRevision: number,
+): Promise<KriaApprovalDecision> {
+  if (approval.draft_revision === null) {
+    throw new Error("Kria approval is missing its pinned draft revision");
+  }
+  return request<KriaApprovalDecision>(
+    `/${threadId}/approvals/${approval.approval_id}/${decision}`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        expected_thread_revision: expectedThreadRevision,
+        expected_draft_revision: approval.draft_revision,
+        expected_approval_fingerprint: approval.approval_fingerprint,
+      }),
+    },
+  );
+}
+
+export function sendKriaTurn(
+  thread: CreationThread,
+  message: string,
+  clientEventId = id("turn"),
+): Promise<KriaTurnAccepted> {
+  return request<KriaTurnAccepted>(`/${thread.id}/turns`, {
+    method: "POST",
+    body: JSON.stringify({
+      message,
+      client_event_id: clientEventId,
+      expected_thread_revision: thread.revision,
+    }),
+  });
+}
+
+export function cancelKriaTurn(
+  threadId: string,
+  turnId: string,
+  expectedThreadRevision: number,
+): Promise<TurnCancelled> {
+  return request<TurnCancelled>(`/${threadId}/turns/${turnId}/cancel`, {
+    method: "POST",
+    body: JSON.stringify({ expected_thread_revision: expectedThreadRevision }),
+  });
+}
+
+export function getKriaDelta(
+  threadId: string,
+  afterSequence = -1,
+  limit = 100,
+): Promise<KriaDelta> {
+  const query = new URLSearchParams({
+    after_sequence: String(afterSequence),
+    limit: String(limit),
+  });
+  return request<KriaDelta>(`/${threadId}?${query.toString()}`, { cache: "no-store" });
+}
+
+export function getKriaDraft(threadId: string): Promise<KriaDraftSnapshot> {
+  return request<KriaDraftSnapshot>(`/${threadId}/draft`, { cache: "no-store" });
+}
+
+export function undoKriaDraft(
+  threadId: string,
+  expectedDraftRevision: number,
+): Promise<KriaDraftSnapshot> {
+  return request<KriaDraftSnapshot>(`/${threadId}/draft/undo`, {
+    method: "POST",
+    body: JSON.stringify({ expected_draft_revision: expectedDraftRevision }),
+  });
 }
 
 export function sendCreationMessage(thread: CreationThread, message: string): Promise<CreationThread> {
@@ -729,14 +841,104 @@ export function deleteCreationThread(thread: CreationThread): Promise<void> {
   });
 }
 
-/** Render append-only server events as conversation rows. */
-export function threadMessages(thread: CreationThread): Array<{
+export type CreationThreadArtifact =
+  | "format"
+  | "upload"
+  | "voiceover"
+  | "confirmation"
+  | "revision"
+  | "draft"
+  | "approval"
+  | "progress"
+  | "result"
+  | "failure";
+
+export interface CreationThreadMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
   eventType: string;
-  artifact?: "format" | "upload" | "voiceover" | "confirmation" | "revision" | "progress" | "result" | "failure";
-}> {
+  artifact?: CreationThreadArtifact;
+  /** Stable identity for an append-only event group rendered as one card. */
+  artifactKey?: string;
+  payload?: Record<string, unknown>;
+}
+
+const ASSISTANT_CONVERSATION_EVENTS = new Set([
+  "format_prompt",
+  "media_prompt",
+  "upload_prompt",
+  "voiceover_prompt",
+  "confirm_generation",
+  "confirmation",
+  "revision_queued",
+  "status_update",
+  "assistant_question",
+  "assistant_response",
+  "draft_applied",
+  "assistant_strategy",
+  "assistant_review",
+  "assistant_error",
+  "assistant_render_failed",
+  "memory_updated",
+  "creator_memory_receipt",
+  "agent_assistant_question",
+  "agent_assistant_strategy",
+  "agent_assistant_review",
+  "agent_assistant_error",
+  "agent_assistant_render_failed",
+]);
+
+const LIFECYCLE_ARTIFACTS = new Set<CreationThreadArtifact>([
+  "progress",
+  "result",
+  "failure",
+]);
+
+function normalizedMessage(value: unknown): string {
+  return typeof value === "string"
+    ? value.trim().replace(/\s+/g, " ").toLowerCase()
+    : "";
+}
+
+/** Identity for the active Job generation. Status/output fields are excluded so
+ * polling updates the existing card instead of remounting a new one. A variant
+ * rerender changes the key once the API exposes its render_generation_id. */
+export function creationGenerationArtifactKey(thread: CreationThread): string {
+  const jobId = thread.job?.id ?? thread.active_job_id ?? "pending";
+  const variantGenerations = [...new Set((thread.job?.variants ?? []).flatMap((variant) =>
+    typeof variant.render_generation_id === "string" && variant.render_generation_id
+      ? [`${variant.variant_id ?? "variant"}:${variant.render_generation_id}`]
+      : [],
+  ))].sort();
+  return variantGenerations.length > 0
+    ? `job:${jobId}:generations:${variantGenerations.join(",")}`
+    : `job:${jobId}`;
+}
+
+function eventGenerationArtifactKey(
+  thread: CreationThread,
+  event: CreationThreadEvent,
+): string {
+  const payload = event.payload ?? {};
+  const payloadJobId = typeof payload.job_id === "string" ? payload.job_id : null;
+  const currentJobId = thread.job?.id ?? thread.active_job_id;
+  const jobId = payloadJobId ?? currentJobId;
+  const variantId = typeof payload.variant_id === "string" ? payload.variant_id : null;
+  const generationId = typeof payload.render_generation_id === "string"
+    ? payload.render_generation_id
+    : typeof payload.generation_id === "string" ? payload.generation_id : null;
+  if (jobId && generationId) {
+    return `job:${jobId}:${variantId ? `variant:${variantId}:` : ""}generation:${generationId}`;
+  }
+  if (jobId && variantId) return `job:${jobId}:variant:${variantId}`;
+  if (jobId && jobId === currentJobId) return creationGenerationArtifactKey(thread);
+  if (jobId) return `job:${jobId}`;
+  return creationGenerationArtifactKey(thread);
+}
+
+/** Render append-only server events as conversation rows. */
+export function threadMessages(thread: CreationThread): CreationThreadMessage[] {
   // The first strategy is the initial creation direction. A strategy becomes
   // a revision proposal only after durable evidence that the Creator Agent
   // confirmed/started a render; otherwise a ready first cut would replay that
@@ -761,18 +963,22 @@ export function threadMessages(thread: CreationThread): Array<{
       : latest,
     -1,
   );
-  return events.flatMap((event) => {
+  const normalizedIntent = normalizedMessage(thread.state.intent);
+  let precedingUserMessage = "";
+  const projected = events.flatMap((event): CreationThreadMessage[] => {
     const payload = event.payload ?? {};
     const kind = String(payload.kind ?? event.event_type);
-    const content = (event.content
-      ?? (typeof payload.message === "string" ? payload.message : undefined))?.trim();
+    let content = (event.content
+      ?? (typeof payload.message === "string" ? payload.message : undefined))?.trim() ?? "";
     if (!content && event.role === "user") return [];
-    let artifact: "format" | "upload" | "voiceover" | "confirmation" | "revision" | "progress" | "result" | "failure" | undefined;
+    let artifact: CreationThreadArtifact | undefined;
     if (["select_format", "select_edit_format", "format_options"].includes(kind)) artifact = "format";
     else if (["collect_media", "upload_prompt"].includes(kind)) artifact = "upload";
     else if (["collect_voiceover", "voiceover_prompt"].includes(kind)) artifact = "voiceover";
     else if (["confirm_generation", "confirmation"].includes(kind)) artifact = "confirmation";
     else if (["confirm_revision", "revision"].includes(kind)) artifact = "revision";
+    else if (event.event_type === "draft_applied") artifact = "draft";
+    else if (event.event_type === "approval_requested") artifact = "approval";
     else if (event.event_type === "agent_assistant_strategy") {
       // Strategies are durable agent history, not a queue of confirmation
       // buttons. Keep only the newest strategy actionable; older attempts
@@ -783,19 +989,61 @@ export function threadMessages(thread: CreationThread): Array<{
           : "confirmation";
       }
     }
-    else if (["generation_started", "rendering"].includes(event.event_type)
+    else if (["generation_started", "render_queued", "render_started", "rendering"].includes(event.event_type)
       || (event.event_type === "agent_assistant_execution" && ["started", "rendering", "queued"].includes(String(payload.status)))) artifact = "progress";
     else if (["generation_failed", "render_failed", "assistant_error", "agent_assistant_error"].includes(event.event_type)
       || (event.event_type === "agent_assistant_execution" && ["failed", "error"].includes(String(payload.status)))) artifact = "failure";
     else if (event.event_type === "generation_ready"
       || (event.event_type === "agent_assistant_execution" && ["ready", "completed"].includes(String(payload.status)))) artifact = "result";
+
+    // The transcript is an outcome ledger, not a dump of append-only audit
+    // rows. In particular, thread_created contains the initial prompt and
+    // agent_user_message mirrors it; rendering callbacks are status-card data.
+    const isUserMessage = event.role === "user" && event.event_type === "user_message";
+    const isAssistantMessage = ASSISTANT_CONVERSATION_EVENTS.has(event.event_type);
+    if (!isUserMessage && !isAssistantMessage && !artifact) return [];
+    if (isUserMessage && content) precedingUserMessage = content;
+    const isStateOnlyLifecycle = artifact
+      && LIFECYCLE_ARTIFACTS.has(artifact)
+      && !["assistant_error", "agent_assistant_error"].includes(event.event_type);
+    if (isStateOnlyLifecycle) content = "";
+    const echoCandidates = new Set([
+      normalizedIntent,
+      normalizedMessage(precedingUserMessage),
+    ].filter(Boolean));
+    if (!isUserMessage && content && echoCandidates.has(normalizedMessage(content))) content = "";
     if (!content && !artifact) return [];
+
+    const artifactKey = artifact && LIFECYCLE_ARTIFACTS.has(artifact)
+      ? eventGenerationArtifactKey(thread, event)
+      : undefined;
     return [{
-      id: event.id,
-      role: event.role === "user" ? "user" : "assistant",
-      content: content ?? "",
+      id: artifactKey ? `${thread.id}:generation:${artifactKey}` : event.id,
+      role: isUserMessage ? "user" : "assistant",
+      content,
       eventType: event.event_type,
+      payload,
       ...(artifact ? { artifact } : {}),
+      ...(artifactKey ? { artifactKey } : {}),
     }];
   });
+
+  // Append-only worker callbacks for the same exact generation project to one
+  // mutable-looking card. Keep its first transcript position so a late callback
+  // cannot jump above a newer user message after refresh.
+  const lifecycleIndexByKey = new Map<string, number>();
+  return projected.reduce<CreationThreadMessage[]>((rows, message) => {
+    if (!message.artifactKey) {
+      rows.push(message);
+      return rows;
+    }
+    const existingIndex = lifecycleIndexByKey.get(message.artifactKey);
+    if (existingIndex === undefined) {
+      lifecycleIndexByKey.set(message.artifactKey, rows.length);
+      rows.push(message);
+    } else {
+      rows[existingIndex] = message;
+    }
+    return rows;
+  }, []);
 }

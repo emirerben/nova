@@ -1,0 +1,1340 @@
+{
+  "api": {
+    "ApprovalDecisionBody": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_approval_fingerprint": {
+          "maxLength": 64,
+          "minLength": 64,
+          "title": "Expected Approval Fingerprint",
+          "type": "string"
+        },
+        "expected_draft_revision": {
+          "minimum": 0,
+          "title": "Expected Draft Revision",
+          "type": "integer"
+        },
+        "expected_thread_revision": {
+          "minimum": 0,
+          "title": "Expected Thread Revision",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "expected_thread_revision",
+        "expected_draft_revision",
+        "expected_approval_fingerprint"
+      ],
+      "title": "ApprovalDecisionBody",
+      "type": "object"
+    },
+    "ApprovalDecisionOut": {
+      "properties": {
+        "approval_id": {
+          "title": "Approval Id",
+          "type": "string"
+        },
+        "render_dispatched": {
+          "const": false,
+          "default": false,
+          "title": "Render Dispatched",
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "approved",
+            "denied"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "thread_revision": {
+          "title": "Thread Revision",
+          "type": "integer"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "approval_id",
+        "turn_id",
+        "status",
+        "thread_revision"
+      ],
+      "title": "ApprovalDecisionOut",
+      "type": "object"
+    },
+    "ApprovalSnapshotOut": {
+      "properties": {
+        "approval_fingerprint": {
+          "maxLength": 64,
+          "minLength": 64,
+          "title": "Approval Fingerprint",
+          "type": "string"
+        },
+        "approval_id": {
+          "title": "Approval Id",
+          "type": "string"
+        },
+        "consequence_summary": {
+          "title": "Consequence Summary",
+          "type": "string"
+        },
+        "cost_summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cost Summary"
+        },
+        "draft_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Draft Id"
+        },
+        "draft_revision": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Draft Revision"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "approved",
+            "denied",
+            "expired",
+            "cancelled",
+            "consumed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "approval_id",
+        "turn_id",
+        "status",
+        "consequence_summary",
+        "expires_at",
+        "approval_fingerprint"
+      ],
+      "title": "ApprovalSnapshotOut",
+      "type": "object"
+    },
+    "DraftSnapshotOut": {
+      "properties": {
+        "base_generation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Base Generation Id"
+        },
+        "base_job_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Base Job Id"
+        },
+        "can_undo": {
+          "title": "Can Undo",
+          "type": "boolean"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "draft_id": {
+          "title": "Draft Id",
+          "type": "string"
+        },
+        "draft_revision": {
+          "minimum": 0,
+          "title": "Draft Revision",
+          "type": "integer"
+        },
+        "etag": {
+          "title": "Etag",
+          "type": "string"
+        },
+        "item_id": {
+          "title": "Item Id",
+          "type": "string"
+        },
+        "snapshot": {
+          "additionalProperties": true,
+          "title": "Snapshot",
+          "type": "object"
+        },
+        "snapshot_hash": {
+          "maxLength": 64,
+          "minLength": 64,
+          "title": "Snapshot Hash",
+          "type": "string"
+        },
+        "variant_key": {
+          "title": "Variant Key",
+          "type": "string"
+        }
+      },
+      "required": [
+        "draft_id",
+        "item_id",
+        "variant_key",
+        "draft_revision",
+        "snapshot_hash",
+        "etag",
+        "snapshot",
+        "can_undo",
+        "created_at"
+      ],
+      "title": "DraftSnapshotOut",
+      "type": "object"
+    },
+    "DraftUndoBody": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_draft_revision": {
+          "minimum": 0,
+          "title": "Expected Draft Revision",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "expected_draft_revision"
+      ],
+      "title": "DraftUndoBody",
+      "type": "object"
+    },
+    "DraftWriteBody": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_draft_revision": {
+          "minimum": 0,
+          "title": "Expected Draft Revision",
+          "type": "integer"
+        },
+        "snapshot": {
+          "additionalProperties": true,
+          "title": "Snapshot",
+          "type": "object"
+        }
+      },
+      "required": [
+        "expected_draft_revision",
+        "snapshot"
+      ],
+      "title": "DraftWriteBody",
+      "type": "object"
+    },
+    "KriaProblemOut": {
+      "$defs": {
+        "KriaProblem": {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "pattern": "^[a-z][a-z0-9_]{2,79}$",
+              "title": "Code",
+              "type": "string"
+            },
+            "current_revision": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Current Revision"
+            },
+            "message": {
+              "title": "Message",
+              "type": "string"
+            },
+            "phase": {
+              "enum": [
+                "accept",
+                "plan",
+                "policy",
+                "tool",
+                "approval",
+                "dispatch",
+                "observe"
+              ],
+              "title": "Phase",
+              "type": "string"
+            },
+            "recovery": {
+              "default": "none",
+              "enum": [
+                "retry",
+                "refresh_replan",
+                "ask_user",
+                "manual",
+                "none"
+              ],
+              "title": "Recovery",
+              "type": "string"
+            },
+            "retryable": {
+              "default": false,
+              "title": "Retryable",
+              "type": "boolean"
+            },
+            "target": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "title": "Target",
+              "type": "object"
+            },
+            "trace_id": {
+              "title": "Trace Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "phase",
+            "message",
+            "trace_id"
+          ],
+          "title": "KriaProblem",
+          "type": "object"
+        }
+      },
+      "properties": {
+        "problem": {
+          "$ref": "#/$defs/KriaProblem"
+        }
+      },
+      "required": [
+        "problem"
+      ],
+      "title": "KriaProblemOut",
+      "type": "object"
+    },
+    "SubmitTurnBody": {
+      "additionalProperties": false,
+      "properties": {
+        "client_event_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Client Event Id",
+          "type": "string"
+        },
+        "expected_thread_revision": {
+          "minimum": 0,
+          "title": "Expected Thread Revision",
+          "type": "integer"
+        },
+        "message": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message",
+        "client_event_id",
+        "expected_thread_revision"
+      ],
+      "title": "SubmitTurnBody",
+      "type": "object"
+    },
+    "ThreadDeltaOut": {
+      "$defs": {
+        "DeltaEvent": {
+          "properties": {
+            "content": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Content"
+            },
+            "created_at": {
+              "format": "date-time",
+              "title": "Created At",
+              "type": "string"
+            },
+            "event_type": {
+              "title": "Event Type",
+              "type": "string"
+            },
+            "id": {
+              "title": "Id",
+              "type": "string"
+            },
+            "payload": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Payload"
+            },
+            "revision": {
+              "title": "Revision",
+              "type": "integer"
+            },
+            "role": {
+              "enum": [
+                "user",
+                "assistant",
+                "system"
+              ],
+              "title": "Role",
+              "type": "string"
+            },
+            "sequence": {
+              "title": "Sequence",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "id",
+            "sequence",
+            "revision",
+            "role",
+            "event_type",
+            "created_at"
+          ],
+          "title": "DeltaEvent",
+          "type": "object"
+        }
+      },
+      "properties": {
+        "after_sequence": {
+          "title": "After Sequence",
+          "type": "integer"
+        },
+        "before_sequence": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Before Sequence"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/DeltaEvent"
+          },
+          "title": "Events",
+          "type": "array"
+        },
+        "has_more": {
+          "title": "Has More",
+          "type": "boolean"
+        },
+        "next_after_sequence": {
+          "title": "Next After Sequence",
+          "type": "integer"
+        },
+        "previous_before_sequence": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Previous Before Sequence"
+        },
+        "runtime_version": {
+          "const": 2,
+          "title": "Runtime Version",
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "archived",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "thread_id": {
+          "title": "Thread Id",
+          "type": "string"
+        },
+        "thread_revision": {
+          "title": "Thread Revision",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "thread_id",
+        "runtime_version",
+        "status",
+        "thread_revision",
+        "events",
+        "after_sequence",
+        "next_after_sequence",
+        "has_more"
+      ],
+      "title": "ThreadDeltaOut",
+      "type": "object"
+    },
+    "TurnAccepted": {
+      "properties": {
+        "replayed": {
+          "default": false,
+          "title": "Replayed",
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "queued",
+            "planning",
+            "executing",
+            "awaiting_approval",
+            "observing",
+            "completed",
+            "failed",
+            "cancelled",
+            "superseded"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "thread_revision": {
+          "title": "Thread Revision",
+          "type": "integer"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id",
+        "thread_revision",
+        "status"
+      ],
+      "title": "TurnAccepted",
+      "type": "object"
+    },
+    "TurnCancelBody": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_thread_revision": {
+          "minimum": 0,
+          "title": "Expected Thread Revision",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "expected_thread_revision"
+      ],
+      "title": "TurnCancelBody",
+      "type": "object"
+    },
+    "TurnCancelled": {
+      "properties": {
+        "approval_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Approval Ids",
+          "type": "array"
+        },
+        "status": {
+          "const": "cancelled",
+          "title": "Status",
+          "type": "string"
+        },
+        "thread_revision": {
+          "title": "Thread Revision",
+          "type": "integer"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id",
+        "thread_revision",
+        "status"
+      ],
+      "title": "TurnCancelled",
+      "type": "object"
+    }
+  },
+  "schema_version": 2,
+  "tools": [
+    {
+      "argument_schema": {
+        "additionalProperties": false,
+        "description": "Portable EditCopilot operations; target and generation pins are server-owned.",
+        "properties": {
+          "operations": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Operations",
+            "type": "array"
+          },
+          "summary": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operations",
+          "summary"
+        ],
+        "title": "ApplyEditorOpsArguments",
+        "type": "object"
+      },
+      "capability": "editor_operations",
+      "description": "Apply a validated reversible operation bundle to the authoritative editor draft.",
+      "execution_mode": "sync",
+      "failure_class": "editor_draft_apply_failed",
+      "name": "draft.apply_editor_ops",
+      "result_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "changes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Changes",
+            "type": "array"
+          },
+          "draft_id": {
+            "title": "Draft Id",
+            "type": "string"
+          },
+          "draft_revision": {
+            "minimum": 0,
+            "title": "Draft Revision",
+            "type": "integer"
+          },
+          "snapshot_hash": {
+            "title": "Snapshot Hash",
+            "type": "string"
+          }
+        },
+        "required": [
+          "draft_id",
+          "draft_revision",
+          "snapshot_hash",
+          "changes"
+        ],
+        "title": "ApplyStrategyResult",
+        "type": "object"
+      },
+      "retry": "idempotent",
+      "risk": "reversible_draft",
+      "version": 1
+    },
+    {
+      "argument_schema": {
+        "$defs": {
+          "ContextLabelIntent": {
+            "additionalProperties": false,
+            "description": "Bounded intent for a trusted pipeline-resolved contextual label.\n\nThis carries no label text. Clip metadata is descriptive evidence and must\nbe resolved and confirmed by the trusted render pipeline before rendering.",
+            "properties": {
+              "kind": {
+                "const": "sport",
+                "default": "sport",
+                "title": "Kind",
+                "type": "string"
+              },
+              "per_clip": {
+                "default": true,
+                "title": "Per Clip",
+                "type": "boolean"
+              },
+              "placement": {
+                "const": "bottom_right",
+                "default": "bottom_right",
+                "title": "Placement",
+                "type": "string"
+              },
+              "size": {
+                "const": "small",
+                "default": "small",
+                "title": "Size",
+                "type": "string"
+              },
+              "source": {
+                "default": "clip_metadata",
+                "enum": [
+                  "clip_metadata",
+                  "user_provided"
+                ],
+                "title": "Source",
+                "type": "string"
+              }
+            },
+            "title": "ContextLabelIntent",
+            "type": "object"
+          },
+          "CreativeStrategy": {
+            "additionalProperties": false,
+            "description": "Bounded editorial choices selected by the orchestrator.\n\n``intro_hook`` remains an advisory concept for backwards compatibility.\n``opening_title`` is the separate, confirmed copy contract: when present it\nis burned verbatim (after the renderer's normal surrounding trim), rather\nthan being sent back through an LLM.  The optional typography fields use\nthe same font/color vocabulary as the authoritative TextElement schema.",
+            "properties": {
+              "archetype": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "montage",
+                      "talking_head",
+                      "day_vlog",
+                      "single_hero",
+                      "subtitled",
+                      "narrated",
+                      "narrated_planned",
+                      "narrated_ready"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Archetype"
+              },
+              "audio_strategy": {
+                "default": "licensed_music",
+                "enum": [
+                  "licensed_music",
+                  "original_audio",
+                  "voiceover"
+                ],
+                "title": "Audio Strategy",
+                "type": "string"
+              },
+              "caption_style": {
+                "default": "auto",
+                "enum": [
+                  "none",
+                  "clean",
+                  "kinetic",
+                  "karaoke",
+                  "editorial",
+                  "auto"
+                ],
+                "title": "Caption Style",
+                "type": "string"
+              },
+              "context_label": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContextLabelIntent"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Confirmed request for a server-resolved contextual label; this carries no model-authored label text."
+              },
+              "direction": {
+                "default": "fast_montage",
+                "enum": [
+                  "guided_story",
+                  "fast_montage",
+                  "text_explainer",
+                  "native"
+                ],
+                "title": "Direction",
+                "type": "string"
+              },
+              "edit_format": {
+                "default": "montage",
+                "enum": [
+                  "montage",
+                  "talking_head",
+                  "day_vlog",
+                  "single_hero",
+                  "subtitled",
+                  "narrated",
+                  "narrated_planned",
+                  "narrated_ready"
+                ],
+                "title": "Edit Format",
+                "type": "string"
+              },
+              "font_family": {
+                "anyOf": [
+                  {
+                    "maxLength": 160,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Confirmed intro font registry key.",
+                "title": "Font Family"
+              },
+              "image_layout": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "fullscreen",
+                      "supporting_card"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Confirmed image-only layout. supporting_card shows the full image; fullscreen fills the canvas with a cover crop.",
+                "title": "Image Layout"
+              },
+              "intro_hook": {
+                "anyOf": [
+                  {
+                    "maxLength": 280,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Opening concept shown for creative approval; never treated as trusted or burned verbatim by the renderer",
+                "title": "Intro Hook"
+              },
+              "licensed_sfx": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/LicensedSfxIntent"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "mixed_media_timing": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MixedMediaTimingProfile"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "montage_audio": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MontageAudioPlan"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "montage_cadence": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MontageCadenceConstraint"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "opening_title": {
+                "anyOf": [
+                  {
+                    "maxLength": 280,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Confirmed exact opening title copy; never an LLM-generated suggestion.",
+                "title": "Opening Title"
+              },
+              "optional_treatments": {
+                "items": {
+                  "enum": [
+                    "overlays",
+                    "sfx",
+                    "transitions",
+                    "looks"
+                  ],
+                  "type": "string"
+                },
+                "maxItems": 4,
+                "title": "Optional Treatments",
+                "type": "array"
+              },
+              "pacing": {
+                "default": "balanced",
+                "enum": [
+                  "relaxed",
+                  "balanced",
+                  "fast"
+                ],
+                "title": "Pacing",
+                "type": "string"
+              },
+              "rationale": {
+                "default": "",
+                "maxLength": 2000,
+                "title": "Rationale",
+                "type": "string"
+              },
+              "render_program": {
+                "default": "guided",
+                "enum": [
+                  "guided",
+                  "native"
+                ],
+                "title": "Render Program",
+                "type": "string"
+              },
+              "selected_media_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 50,
+                "title": "Selected Media Ids",
+                "type": "array"
+              },
+              "story_structure": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 8,
+                "title": "Story Structure",
+                "type": "array"
+              },
+              "target_duration_s": {
+                "default": 24,
+                "maximum": 60,
+                "minimum": 3,
+                "title": "Target Duration S",
+                "type": "integer"
+              },
+              "text_color": {
+                "anyOf": [
+                  {
+                    "maxLength": 16,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Confirmed intro color (#RRGGBB or a supported color alias).",
+                "title": "Text Color"
+              }
+            },
+            "title": "CreativeStrategy",
+            "type": "object"
+          },
+          "LicensedSfxIntent": {
+            "additionalProperties": false,
+            "description": "A bounded request for the funny-moments licensed SFX treatment.",
+            "properties": {
+              "effect_id": {
+                "maxLength": 160,
+                "minLength": 1,
+                "title": "Effect Id",
+                "type": "string"
+              },
+              "max_placements": {
+                "default": 6,
+                "maximum": 6,
+                "minimum": 1,
+                "title": "Max Placements",
+                "type": "integer"
+              },
+              "semantics": {
+                "const": "funny_moments",
+                "default": "funny_moments",
+                "title": "Semantics",
+                "type": "string"
+              }
+            },
+            "required": [
+              "effect_id"
+            ],
+            "title": "LicensedSfxIntent",
+            "type": "object"
+          },
+          "MixedMediaTimingProfile": {
+            "description": "Typed timing intent for mixed photo/video edits.\n\nThe profile is optional so old proposals keep their exact timing behavior.\nValues describe preferences, not permission to exceed source duration.",
+            "properties": {
+              "boundary_style": {
+                "default": "crossfade",
+                "enum": [
+                  "cut",
+                  "crossfade"
+                ],
+                "title": "Boundary Style",
+                "type": "string"
+              },
+              "image_grouping": {
+                "default": "scattered",
+                "enum": [
+                  "scattered",
+                  "runs"
+                ],
+                "title": "Image Grouping",
+                "type": "string"
+              },
+              "image_hold": {
+                "default": "standard",
+                "enum": [
+                  "very_fast",
+                  "standard"
+                ],
+                "title": "Image Hold",
+                "type": "string"
+              },
+              "image_hold_s": {
+                "anyOf": [
+                  {
+                    "maximum": 0.8,
+                    "minimum": 0.1,
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Image Hold S"
+              },
+              "sequence_group_order": {
+                "items": {
+                  "enum": [
+                    "football",
+                    "basketball",
+                    "beach_volleyball",
+                    "tennis",
+                    "track_and_field"
+                  ],
+                  "type": "string"
+                },
+                "maxItems": 5,
+                "title": "Sequence Group Order",
+                "type": "array"
+              },
+              "sequence_grouping": {
+                "default": "none",
+                "enum": [
+                  "none",
+                  "sport_context"
+                ],
+                "title": "Sequence Grouping",
+                "type": "string"
+              },
+              "video_hold": {
+                "default": "standard",
+                "enum": [
+                  "longer",
+                  "standard"
+                ],
+                "title": "Video Hold",
+                "type": "string"
+              }
+            },
+            "title": "MixedMediaTimingProfile",
+            "type": "object"
+          },
+          "MontageAudioPlan": {
+            "description": "Generic audio intent for a source-aware montage timeline.",
+            "properties": {
+              "preserve_source_audio": {
+                "default": true,
+                "title": "Preserve Source Audio",
+                "type": "boolean"
+              },
+              "preview_source_beds": {
+                "default": false,
+                "title": "Preview Source Beds",
+                "type": "boolean"
+              },
+              "source_media_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 12,
+                "title": "Source Media Ids",
+                "type": "array"
+              }
+            },
+            "title": "MontageAudioPlan",
+            "type": "object"
+          },
+          "MontageCadenceConstraint": {
+            "description": "Exact creator-authored source cadence for a fast montage.",
+            "properties": {
+              "cut_duration_s": {
+                "maximum": 3.0,
+                "minimum": 0.4,
+                "title": "Cut Duration S",
+                "type": "number"
+              },
+              "mode": {
+                "const": "round_robin",
+                "default": "round_robin",
+                "title": "Mode",
+                "type": "string"
+              },
+              "reuse_policy": {
+                "default": "no_repeat",
+                "enum": [
+                  "no_repeat",
+                  "allow_repeat"
+                ],
+                "title": "Reuse Policy",
+                "type": "string"
+              },
+              "source_media_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 12,
+                "minItems": 2,
+                "title": "Source Media Ids",
+                "type": "array"
+              }
+            },
+            "required": [
+              "source_media_ids",
+              "cut_duration_s"
+            ],
+            "title": "MontageCadenceConstraint",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "strategy": {
+            "$ref": "#/$defs/CreativeStrategy"
+          },
+          "summary": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "strategy",
+          "summary"
+        ],
+        "title": "ApplyStrategyArguments",
+        "type": "object"
+      },
+      "capability": "editorial_strategy",
+      "description": "Apply a reversible editorial strategy to the authoritative server draft.",
+      "execution_mode": "sync",
+      "failure_class": "draft_apply_failed",
+      "name": "draft.apply_strategy",
+      "result_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "changes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Changes",
+            "type": "array"
+          },
+          "draft_id": {
+            "title": "Draft Id",
+            "type": "string"
+          },
+          "draft_revision": {
+            "minimum": 0,
+            "title": "Draft Revision",
+            "type": "integer"
+          },
+          "snapshot_hash": {
+            "title": "Snapshot Hash",
+            "type": "string"
+          }
+        },
+        "required": [
+          "draft_id",
+          "draft_revision",
+          "snapshot_hash",
+          "changes"
+        ],
+        "title": "ApplyStrategyResult",
+        "type": "object"
+      },
+      "retry": "idempotent",
+      "risk": "reversible_draft",
+      "version": 1
+    },
+    {
+      "argument_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "title": "EmptyArguments",
+        "type": "object"
+      },
+      "capability": "project_inspection",
+      "description": "Inspect the trusted project snapshot and return an editorial next step.",
+      "execution_mode": "sync",
+      "failure_class": "project_inspection_failed",
+      "name": "project.inspect",
+      "result_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "available_media": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Available Media",
+            "type": "array"
+          },
+          "edit_format": {
+            "title": "Edit Format",
+            "type": "string"
+          },
+          "editorial_decision": {
+            "title": "Editorial Decision",
+            "type": "string"
+          },
+          "next_action": {
+            "title": "Next Action",
+            "type": "string"
+          }
+        },
+        "required": [
+          "editorial_decision",
+          "available_media",
+          "edit_format",
+          "next_action"
+        ],
+        "title": "InspectProjectResult",
+        "type": "object"
+      },
+      "retry": "idempotent",
+      "risk": "read",
+      "version": 1
+    },
+    {
+      "argument_schema": {
+        "additionalProperties": false,
+        "description": "The model may request consent but never authors target pins.",
+        "properties": {},
+        "title": "RequestRenderArguments",
+        "type": "object"
+      },
+      "capability": "render_request",
+      "description": "Prepare exact approval for one initial render or rerender.",
+      "execution_mode": "async",
+      "failure_class": "render_approval_failed",
+      "name": "render.request",
+      "result_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_id": {
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "consequence": {
+            "title": "Consequence",
+            "type": "string"
+          }
+        },
+        "required": [
+          "approval_id",
+          "consequence"
+        ],
+        "title": "RequestRenderResult",
+        "type": "object"
+      },
+      "retry": "never",
+      "risk": "approval_required",
+      "version": 1
+    }
+  ]
+}

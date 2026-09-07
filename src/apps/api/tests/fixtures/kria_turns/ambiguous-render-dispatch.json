@@ -1,0 +1,35 @@
+{
+  "fixture_id": "ambiguous-render-dispatch",
+  "scenario": "ambiguous_dispatch",
+  "user_message": "Start the approved travel cut.",
+  "snapshot": {
+    "edit_format": "day_vlog",
+    "draft_id": "draft-travel-4",
+    "draft_revision": 4,
+    "media_labels": ["airport departure", "beach arrival"],
+    "editorial_decision": "Build from departure to the beach arrival payoff."
+  },
+  "plan": {
+    "schema_version": 2,
+    "mode": "act",
+    "turn_value": "action",
+    "evidence_ids": ["approval:travel:4"],
+    "intents": [
+      {
+        "intent_id": "inspect-project",
+        "tool_name": "project.inspect",
+        "tool_version": 1,
+        "arguments": {},
+        "depends_on": []
+      },
+      {
+        "intent_id": "request-render",
+        "tool_name": "render.request",
+        "tool_version": 1,
+        "arguments": {},
+        "depends_on": ["inspect-project"]
+      }
+    ]
+  },
+  "expected_message": "I’m checking whether the render started. I won’t start another one until that is confirmed."
+}
