@@ -108,7 +108,7 @@ it("stops a preference and offers the shared ten-minute Undo", async () => {
   await waitFor(() =>
     expect(memoryApi.undoCreatorMemoryOperation).toHaveBeenCalledWith("operation-forget-1", 3),
   );
-}, 15_000);
+});
 
 it("preserves a typed key when editing a remembered preference", async () => {
   await renderPage();
