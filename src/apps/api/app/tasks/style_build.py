@@ -19,6 +19,7 @@ import structlog
 from app.config import settings
 from app.database import sync_session
 from app.models import Persona
+from app.services.creator_direction import CreatorDirectionService
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -169,7 +170,7 @@ def derive_user_style(self, persona_id: str, force: bool = False) -> None:  # no
             if row is not None and (row.style or {}).get("status") != "edited":
                 prior = dict(row.style or {})
                 prior["status"] = "failed"
-                row.style = prior
+                CreatorDirectionService.set_compatibility_persona_style(row, prior)
                 session.commit()
         return
 
@@ -184,19 +185,22 @@ def derive_user_style(self, persona_id: str, force: bool = False) -> None:  # no
         if not force and (row.style or {}).get("status") == "edited":
             log.info("style_build.skip_edited_race", persona_id=persona_id)
             return
-        row.style = {
-            **derived_style.model_dump(),
-            "derived_from": {
-                "persona_id": str(persona_id),
-                "derived_at": datetime.now(UTC).isoformat(),
-                "style_version": derived_style.style_version,
-                "source": (
-                    "tiktok_official"
-                    if (row.tiktok_profile or {}).get("official_analysis")
-                    else "persona"
-                ),
+        CreatorDirectionService.set_compatibility_persona_style(
+            row,
+            {
+                **derived_style.model_dump(),
+                "derived_from": {
+                    "persona_id": str(persona_id),
+                    "derived_at": datetime.now(UTC).isoformat(),
+                    "style_version": derived_style.style_version,
+                    "source": (
+                        "tiktok_official"
+                        if (row.tiktok_profile or {}).get("official_analysis")
+                        else "persona"
+                    ),
+                },
             },
-        }
+        )
         session.commit()
     log.info(
         "style_build.ready",

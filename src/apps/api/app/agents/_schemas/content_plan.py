@@ -66,7 +66,7 @@ from app.agents._schemas.persona import Persona
 #              Persona.idea_seeds → byte-identical to baseline when seeds are absent.
 #              Directive: prefer and deepen the user's own ideas first; use the
 #              market IDEA_BANK only to fill remaining slots.
-CONTENT_PLAN_PROMPT_VERSION = "2026-07-11-kria"
+CONTENT_PLAN_PROMPT_VERSION = "2026-09-06-v3-creator-direction"
 
 DEFAULT_HORIZON_DAYS = 30
 MAX_HORIZON_DAYS = 60
@@ -123,6 +123,9 @@ class ContentPlanInput(BaseModel):
     # (no user-ideas block injected, so plans generated without seeds are
     # unchanged). Populated from the build path when seeds exist.
     user_idea_seeds: list[str] = Field(default_factory=list)
+    # Account-wide creator direction, resolved at dispatch and sanitized by the
+    # agent boundary. Empty means memory is disabled or has no active rows.
+    creator_direction: str = ""
 
 
 class PlanItemSpec(BaseModel):

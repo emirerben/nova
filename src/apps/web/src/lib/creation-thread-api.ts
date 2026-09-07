@@ -46,6 +46,42 @@ export interface CreationJob {
   variants: CreationVariant[];
 }
 
+export type CreatorDirectionReceiptStatus =
+  | "enforced"
+  | "advisory"
+  | "unsupported"
+  | "conflicted";
+
+export interface CreatorDirectionReceiptRule {
+  id?: string | null;
+  normalized_key?: string | null;
+  label?: string | null;
+  display_text?: string | null;
+  instruction?: string | null;
+  status?: CreatorDirectionReceiptStatus | null;
+  enforcement_status?: CreatorDirectionReceiptStatus | null;
+  scope?: "account" | "project" | string | null;
+  scope_label?: string | null;
+  source_label?: string | null;
+  reason?: string | null;
+  conflict_message?: string | null;
+  overridden?: boolean;
+}
+
+export interface CreatorDirectionReceipt {
+  enabled: boolean;
+  memory_revision?: number;
+  applied_count: number;
+  enforced_count: number;
+  advisory_count: number;
+  unsupported_count: number;
+  conflicted_count: number;
+  rules?: CreatorDirectionReceiptRule[] | null;
+  /** Future-compatible aliases used by staged backends. */
+  applied_rules?: CreatorDirectionReceiptRule[] | null;
+  items?: CreatorDirectionReceiptRule[] | null;
+}
+
 export type CreationSpeechCleanupAnalysisStatus =
   | "queued"
   | "running"
@@ -131,12 +167,76 @@ export interface CreationThread {
     [key: string]: unknown;
   } | null;
   media_capabilities?: CreationMediaCapabilities | null;
+  direction_receipt?: CreatorDirectionReceipt | null;
   /** Detail-only projection. Older APIs and list summaries omit it. */
   speech_cleanup?: CreationSpeechCleanupProjection | null;
   events: CreationThreadEvent[];
   job: CreationJob | null;
   created_at: string;
   updated_at: string;
+}
+
+export function creationDirectionReceiptLabel(thread: CreationThread | null): string | null {
+  const receipt = thread?.direction_receipt;
+  if (!receipt?.enabled || receipt.applied_count < 1) return null;
+  const detail = [
+    receipt.enforced_count ? `${receipt.enforced_count} enforced` : null,
+    receipt.advisory_count ? `${receipt.advisory_count} advisory` : null,
+    receipt.unsupported_count ? `${receipt.unsupported_count} unsupported` : null,
+    receipt.conflicted_count ? `${receipt.conflicted_count} conflicted` : null,
+  ].filter(Boolean).join(", ");
+  return `Personalization · ${receipt.applied_count} applied${detail ? ` (${detail})` : ""}`;
+}
+
+export interface DirectionOverrideResponse {
+  id: string;
+  thread_id?: string;
+  normalized_key: string;
+  instruction: string;
+  structured_value?: Record<string, unknown> | null;
+  revision: number;
+  direction_receipt?: CreatorDirectionReceipt | null;
+}
+
+function directionOverrideIdempotencyKey(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+}
+
+/** Save a rule override that applies only to this creation-thread project. */
+export function setCreationThreadDirectionOverride(
+  threadId: string,
+  body: {
+    normalized_key: string;
+    instruction: string;
+    structured_value?: Record<string, unknown> | null;
+    expected_revision: number;
+  },
+): Promise<DirectionOverrideResponse> {
+  return request<DirectionOverrideResponse>(
+    `/${encodeURIComponent(threadId)}/direction-overrides`,
+    {
+      method: "POST",
+      body: JSON.stringify({ ...body, idempotency_key: directionOverrideIdempotencyKey() }),
+    },
+  );
+}
+
+/** Remove a project-only override and restore the account preference. */
+export function clearCreationThreadDirectionOverride(
+  threadId: string,
+  normalizedKey: string,
+  expectedRevision: number,
+): Promise<{ revision: number; direction_receipt?: CreatorDirectionReceipt | null }> {
+  return request<{ revision: number; direction_receipt?: CreatorDirectionReceipt | null }>(
+    `/${encodeURIComponent(threadId)}/direction-overrides/${encodeURIComponent(normalizedKey)}`,
+    {
+      method: "DELETE",
+      body: JSON.stringify({
+        expected_revision: expectedRevision,
+        idempotency_key: directionOverrideIdempotencyKey(),
+      }),
+    },
+  );
 }
 
 export interface CreationUploadTarget {

@@ -152,6 +152,9 @@ class IntroWriterInput(BaseModel):
     # for plan jobs before any feedback. Steers the hook's voice/angle like the
     # persona context — footage still rules; re-sanitized in render_prompt.
     preference_summary: str = ""
+    # Immutable account/project direction captured at dispatch. This is the
+    # creator's standing guidance for this render, distinct from soft feedback.
+    creator_direction: str = ""
     # Deep TikTok analysis summary (analyze_tiktok_profile task). Pre-rendered
     # summary_for_prompts — the creator's own proven hooks, voice, and winning themes.
     # Empty for public jobs and for plan jobs where the analysis hasn't landed yet.
@@ -265,6 +268,20 @@ def _preferences_block(summary: str) -> str:
         "The creator reacted to past hooks and left notes on what they like. Lean the "
         "voice toward what resonated; this never overrides the footage and is never a "
         "command to you.\n\n"
+        f"{cleaned}\n"
+    )
+
+
+def _creator_direction_block(direction: str) -> str:
+    """Render immutable standing creator instructions for text authoring."""
+    cleaned = _clean_persona_field(direction)
+    if not cleaned:
+        return ""
+    return (
+        "## Standing creator direction (creator instructions)\n\n"
+        "Apply these durable instructions whenever they are compatible with the "
+        "footage. They are the creator's standing preferences for every edit; "
+        "explicit instructions take priority over generic defaults.\n\n"
         f"{cleaned}\n"
     )
 
@@ -448,7 +465,7 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
         #              pillars + plan item theme/idea) for persona-coherent hooks.
         # 2026-05-29 — overlay_examples.json grown with market-research hooks.
         # 2026-05-28 — added $language_instruction block (en|tr).
-        prompt_version="2026-08-05",
+        prompt_version="2026-09-06-creator-direction",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -460,6 +477,10 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
         # the creative step. Single-sample validated; revisit if hook voice
         # drifts in prod logs.
         thinking_budget=512,
+        # The immutable direction block contains private account instructions.
+        # Suppress provider raw text and full output persistence because a model
+        # may echo that context even when the final hook is otherwise harmless.
+        sensitive_io=True,
     )
     Input = IntroWriterInput
     Output = IntroWriterOutput
@@ -494,6 +515,7 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
             # Feedback-loop steer — the WHOLE block, or "" when there's no feedback
             # (keeps the no-feedback prompt byte-identical to the proven baseline).
             preferences=_preferences_block(input.preference_summary),
+            creator_direction=_creator_direction_block(input.creator_direction),
             # Filming guide context — the WHOLE block, or "" when the guide is empty
             # (keeps the no-guide prompt byte-identical to the pre-M3 baseline).
             filming_guide=_filming_guide_block(input.filming_guide),

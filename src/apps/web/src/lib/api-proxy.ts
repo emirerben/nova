@@ -24,7 +24,11 @@ const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY ?? "";
 // worth showing a creator verbatim (guided-edit chat failures) — everything
 // else on a 5xx stays the generic safe envelope below. Length-capped so an
 // unexpectedly large upstream message can't blow up the response.
-const PASSTHROUGH_5XX_CODES = new Set(["edit_guide_failed", "proposal_dispatch_failed"]);
+const PASSTHROUGH_5XX_CODES = new Set([
+  "edit_guide_failed",
+  "proposal_dispatch_failed",
+  "creator_memory_disabled",
+]);
 const PASSTHROUGH_MESSAGE_MAX = 300;
 
 type RouteCtx = { params: Promise<{ path: string[] }> };

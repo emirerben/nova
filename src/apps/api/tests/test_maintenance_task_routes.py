@@ -106,3 +106,13 @@ def test_poster_repair_queue_is_a_property_of_the_task_not_the_dispatcher() -> N
     assert route == {"queue": settings.poster_repair_queue}
     assert "tasks.repair_job_poster" not in MAINTENANCE_TASK_NAMES
     assert route["queue"] != "maintenance"
+
+
+def test_creator_memory_claim_and_process_use_maintenance_queue() -> None:
+    from app.worker import MAINTENANCE_TASK_NAMES, celery_app
+
+    assert "app.tasks.creator_memory.claim_outbox" in MAINTENANCE_TASK_NAMES
+    assert "app.tasks.creator_memory.process_outbox" in MAINTENANCE_TASK_NAMES
+    assert celery_app.conf.task_routes["app.tasks.creator_memory.process_outbox"] == {
+        "queue": "maintenance"
+    }

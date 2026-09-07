@@ -37,6 +37,14 @@ def _input(horizon: int = 30) -> ContentPlanInput:
     )
 
 
+def test_spec_budgets_long_structured_generation() -> None:
+    spec = ContentPlanGeneratorAgent.spec
+    assert spec.model == "gemini-3.6-flash"
+    assert spec.thinking_budget is None
+    assert spec.thinking_level == "medium"
+    assert spec.timeout_s == 90.0
+
+
 def _items(*specs: tuple[int, str, str]) -> str:
     return json.dumps({"items": [{"day_index": d, "theme": t, "idea": i} for d, t, i in specs]})
 

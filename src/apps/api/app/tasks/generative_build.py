@@ -919,6 +919,14 @@ def _owned_job_task_fence(job_id: str):  # noqa: ANN202
             entry = _lock_owned_entry_job(db, job_id)
             if entry is not None and entry[0].status != _CANCELLED_JOB_STATUS:
                 job, ownership_epoch = entry
+                from app.services.creator_direction_snapshot import (
+                    bind_typed_overrides,
+                    typed_overrides_from_container,
+                )
+
+                bind_typed_overrides(
+                    typed_overrides_from_container(getattr(job, "assembly_plan", None))
+                )
                 if ownership_epoch is not None:
                     _CONTENT_PLAN_FENCE.set((str(job.id), ownership_epoch))
                 accepted = True
@@ -984,7 +992,9 @@ def _with_owned_job_fence(fn):  # noqa: ANN001, ANN202
 
     @wraps(fn)
     def wrapped(self, job_id: str, *args, **kwargs):  # noqa: ANN001, ANN202
-        with _owned_job_task_fence(job_id) as accepted:
+        from app.services.creator_direction_snapshot import renderer_policy_scope
+
+        with renderer_policy_scope(), _owned_job_task_fence(job_id) as accepted:
             if not accepted:
                 log.info("generative_task_entry_rejected", job_id=job_id, task=fn.__name__)
                 return None
@@ -2055,17 +2065,20 @@ def _run_generative_job(
 ) -> None:
     """Run with a task-local ownership epoch that every late writer can see."""
 
-    # Preserve an outer task-entry fence. Re-setting the current value gives us
-    # a token for direct-call cleanup without erasing the durable bound epoch.
-    token = _CONTENT_PLAN_FENCE.set(_CONTENT_PLAN_FENCE.get())
-    try:
-        _run_generative_job_impl(
-            job_id,
-            speech_cut_operation_id=speech_cut_operation_id,
-            speech_cut_attempt_id=speech_cut_attempt_id,
-        )
-    finally:
-        _CONTENT_PLAN_FENCE.reset(token)
+    from app.services.creator_direction_snapshot import renderer_policy_scope
+
+    with renderer_policy_scope():
+        # Preserve an outer task-entry fence. Re-setting the current value gives us
+        # a token for direct-call cleanup without erasing the durable bound epoch.
+        token = _CONTENT_PLAN_FENCE.set(_CONTENT_PLAN_FENCE.get())
+        try:
+            _run_generative_job_impl(
+                job_id,
+                speech_cut_operation_id=speech_cut_operation_id,
+                speech_cut_attempt_id=speech_cut_attempt_id,
+            )
+        finally:
+            _CONTENT_PLAN_FENCE.reset(token)
 
 
 def _run_generative_job_impl(
@@ -2090,6 +2103,14 @@ def _run_generative_job_impl(
             return
         job, ownership_epoch = entry
         assembly = dict(job.assembly_plan or {})
+        from app.services.creator_direction_snapshot import ensure_job_snapshot  # noqa: PLC0415
+
+        ensure_job_snapshot(db, job, source="generative_worker")
+        assembly = dict(job.assembly_plan or {})
+        creator_direction_typed_overrides = _pinned_creator_direction_typed_overrides(assembly)
+        creator_direction_prompt = str(
+            (assembly.get("_creator_direction_snapshot_v1") or {}).get("prompt_block") or ""
+        )
         render_generation_id = str(assembly.get("creator_generation_id") or "") or uuid.uuid4().hex
         if assembly.get("creator_generation_id") != render_generation_id:
             # Legacy jobs may not have a Creator dispatch token.  Backfill one
@@ -2658,6 +2679,7 @@ def _run_generative_job_impl(
                     persona=persona,
                     filming_guide=filming_guide_candidates,
                     clip_notes=clip_notes_candidates,
+                    creator_direction=creator_direction_prompt,
                 )
             # Creator Agent M1: if the user has a pinned style_set_id, bypass the
             # per-render AgenticStyleSelectorAgent and use it directly. This ensures
@@ -2888,6 +2910,7 @@ def _run_generative_job_impl(
                 language=language,
                 persona=persona,
                 filming_guide=filming_guide_candidates,
+                creator_direction=creator_direction_prompt,
             )
 
         # Once-per-clip silence-cut artifacts (plans/010 7A): verbatim transcript,
@@ -3000,6 +3023,7 @@ def _run_generative_job_impl(
                         explicit_opening_title=creator_opening_title,
                         variant_dir=variant_dir,
                         landscape_fit=landscape_fit,
+                        creator_direction_typed_overrides=creator_direction_typed_overrides,
                         speech_cleanup_contract=speech_cleanup_contract,
                         speech_cleanup_snapshot=speech_cleanup_snapshot,
                         speech_cleanup_uses_preflight=speech_cleanup_snapshot_contract,
@@ -3019,6 +3043,7 @@ def _run_generative_job_impl(
                         smart_captions=smart_captions,
                         render_trace_id=render_trace_id,
                         speech_cleanup_assignment_by_clip_id=(speech_cleanup_assignment_by_clip_id),
+                        creator_direction_typed_overrides=creator_direction_typed_overrides,
                         speech_cleanup_snapshot=speech_cleanup_snapshot,
                         speech_cleanup_source_clip_id=speech_cleanup_source_clip_id,
                         speech_cleanup_uses_preflight=speech_cleanup_snapshot_contract,
@@ -4720,6 +4745,86 @@ def _creator_strategy_from_candidates(all_candidates: dict[str, Any]):
     if all_candidates.get("creator_render_contract_version") != CREATOR_RENDER_CONTRACT_VERSION:
         raise ValueError("Creator render contract version mismatch")
     return CreativeStrategy.model_validate(raw)
+
+
+def _pinned_creator_direction_typed_overrides(container: Any) -> dict[str, Any]:
+    """Read the immutable job snapshot without consulting creator memory.
+
+    Caption renders can happen long after dispatch (including editor reburns), so
+    they must use the snapshot already stored in ``assembly_plan``.  In
+    particular, do not call ``ensure_job_snapshot`` here: that helper is allowed
+    to resolve live memory when handling a legacy job.
+    """
+
+    from app.services.creator_direction_snapshot import (  # noqa: PLC0415
+        typed_overrides_from_container,
+    )
+
+    return typed_overrides_from_container(container)
+
+
+def _caption_font_with_direction(
+    caption_font: str | None,
+    typed_overrides: Mapping[str, Any] | None,
+) -> str | None:
+    """Apply the pinned Creator font to both first burns and caption reburns."""
+
+    candidate = typed_overrides.get("font_family") if typed_overrides else None
+    if not isinstance(candidate, str) or not candidate.strip():
+        return caption_font
+    from app.pipeline.narrated_assembler import is_valid_caption_font  # noqa: PLC0415
+
+    candidate = candidate.strip()
+    return candidate if is_valid_caption_font(candidate) else caption_font
+
+
+def _caption_appearance_with_direction(
+    appearance: dict[str, Any] | None,
+    typed_overrides: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Merge the pinned caption appearance into user/Smart style values.
+
+    ``shadow_enabled=False`` is a hard policy.  The caption outline remains a
+    separate legibility treatment; only the ASS shadow is disabled.
+    """
+
+    merged = dict(appearance or {})
+    if typed_overrides and typed_overrides.get("shadow_enabled") is False:
+        merged["shadow_enabled"] = False
+    return merged or None
+
+
+def _strip_caption_shadow_treatment(
+    ass_path: str,
+    typed_overrides: Mapping[str, Any] | None,
+) -> None:
+    """Remove inline and style-level shadow tags for a pinned off policy."""
+
+    if not typed_overrides or typed_overrides.get("shadow_enabled") is not False:
+        return
+    try:
+        with open(ass_path, encoding="utf-8") as handle:
+            content = handle.read()
+    except OSError:
+        return
+    lines: list[str] = []
+    for line in content.splitlines(keepends=True):
+        if line.startswith("Style:"):
+            fields = line.rstrip("\r\n").split(",")
+            # ASS V4+ style fields: Outline=16, Shadow=17. Keep the outline;
+            # it is independent of the Creator's shadow policy.
+            if len(fields) > 17:
+                fields[17] = "0"
+                newline = "\n" if line.endswith("\n") else ""
+                line = ",".join(fields) + newline
+        if line.startswith("Dialogue:"):
+            line = re.sub(r"\\(?:x?shad|yshad)\\?-?\d+(?:\.\d+)?", "", line)
+        lines.append(line)
+    try:
+        with open(ass_path, "w", encoding="utf-8") as handle:
+            handle.write("".join(lines))
+    except OSError:
+        return
 
 
 def _resolve_regen_narrative_order(
@@ -10784,6 +10889,8 @@ def _run_regenerate_variant(
             log.info("generative_regenerate_cancelled_job_skipped", job_id=job_id)
             return
         all_candidates = job.all_candidates or {}
+        pinned_direction = (job.assembly_plan or {}).get("_creator_direction_snapshot_v1") or {}
+        creator_direction_prompt = str(pinned_direction.get("prompt_block") or "")
         creator_strategy = _creator_strategy_from_candidates(all_candidates)
         creator_opening_title = (
             creator_strategy.opening_title if creator_strategy is not None else None
@@ -11604,6 +11711,7 @@ def _run_regenerate_variant(
                     persona=persona,
                     filming_guide=filming_guide_regen,
                     clip_notes=clip_notes_regen,
+                    creator_direction=creator_direction_prompt,
                 ),
                 persisted_layout=persisted_layout,
                 persisted_word_roles=persisted_word_roles,
@@ -11622,6 +11730,7 @@ def _run_regenerate_variant(
                     language=language,
                     persona=persona,
                     filming_guide=filming_guide_regen,
+                    creator_direction=creator_direction_prompt,
                 )
 
         spec: dict[str, Any] = {
@@ -13259,6 +13368,7 @@ def _run_text_agents(
     persona: dict | None = None,
     filming_guide: list[dict] | None = None,
     clip_notes: dict | None = None,
+    creator_direction: str = "",
 ) -> tuple[Any, dict]:
     """Run overlay_format_matcher → intro_writer. Returns (IntroWriterOutput|None, form dict).
 
@@ -13334,6 +13444,7 @@ def _run_text_agents(
             # Creator clip notes (WS5). Per-clip context the creator typed before
             # submitting. DATA only, re-sanitized in intro_writer. Empty → byte-identical.
             clip_notes=clip_notes,
+            creator_direction=creator_direction,
             form=form.model_dump(),
             exemplars=exemplars,
             language=language,
@@ -13367,6 +13478,7 @@ def _author_sequence_quote(
     language: str = "en",
     persona: dict | None = None,
     filming_guide: list[dict] | None = None,
+    creator_direction: str = "",
 ) -> str | None:
     """Run SequenceQuoteWriterAgent for a rhythm-mode sequence. Returns the
     sanitized quote, or None on ANY failure.
@@ -13398,6 +13510,7 @@ def _author_sequence_quote(
                 preference_summary=str(persona.get("preference_summary", "") or ""),
                 tiktok_analysis=str(persona.get("tiktok_summary", "") or ""),
                 filming_guide=filming_guide or [],
+                creator_direction=creator_direction,
                 video_duration_s=max(float(video_duration_s), 0.1),
             ),
             ctx=RunContext(job_id=job_id),
@@ -16586,6 +16699,7 @@ def _render_narrated_variant(
     explicit_opening_title: str | None = None,
     variant_dir: str,
     landscape_fit: str = "fill",
+    creator_direction_typed_overrides: Mapping[str, Any] | None = None,
     speech_cleanup_contract: str = "legacy_auto",
     speech_cleanup_snapshot: HydratedSpeechCleanupSnapshot | None = None,
     speech_cleanup_uses_preflight: bool | None = None,
@@ -16624,7 +16738,10 @@ def _render_narrated_variant(
     # Caption font (a font-registry key; None → the default TikTok Sans). Applies to
     # both caption styles. Persisted on the variant so the editor shows the choice and
     # the reburn re-burns in the same font. The render resolves it to a libass family.
-    caption_font = spec.get("voiceover_caption_font") or None
+    caption_font = _caption_font_with_direction(
+        spec.get("voiceover_caption_font") or None,
+        creator_direction_typed_overrides,
+    )
     base = {
         "variant_id": variant_id,
         "rank": rank,
@@ -16992,8 +17109,30 @@ def _render_narrated_variant(
                 job_id=job_id,
                 variant_id=variant_id,
                 upload_key_base=f"generative-jobs/{job_id}/variant_{rank}_{variant_id}",
+                creator_direction_typed_overrides=creator_direction_typed_overrides,
             )
             shutil.copy2(composed, final_path)
+        elif (
+            caption_cues
+            and creator_direction_typed_overrides
+            and creator_direction_typed_overrides.get("shadow_enabled") is False
+        ):
+            # ``assemble_narrated`` owns the efficient first render, but its
+            # legacy caption adapter has no appearance argument. Reburn from
+            # the clean twin only when a pinned direction needs to change the
+            # caption treatment; font-only policy was already passed above.
+            _burn_persisted_captions_with_direction(
+                base_path,
+                final_path,
+                {
+                    **base,
+                    "resolved_archetype": "narrated",
+                    "caption_cues": caption_cues,
+                    "captions_enabled": True,
+                },
+                variant_dir,
+                creator_direction_typed_overrides,
+            )
         if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
             raise RuntimeError("narrated variant produced empty output")
 
@@ -18337,6 +18476,7 @@ def _render_subtitled_variant(
     smart_captions: dict[str, str] | None = None,
     render_trace_id: str | None = None,
     speech_cleanup_assignment_by_clip_id: Mapping[str, Any] | None = None,
+    creator_direction_typed_overrides: Mapping[str, Any] | None = None,
     speech_cleanup_snapshot: HydratedSpeechCleanupSnapshot | None = None,
     speech_cleanup_source_clip_id: str | None = None,
     speech_cleanup_uses_preflight: bool | None = None,
@@ -18457,7 +18597,10 @@ def _render_subtitled_variant(
     caption_style = "word" if spec.get("caption_style") == "word" else "sentence"
     # v1: no font chosen at render time — the editor sets it later (None → default
     # TikTok Sans). Reuses the narrated caption-font key so the editor/reburn work.
-    caption_font = spec.get("caption_font") or None
+    caption_font = _caption_font_with_direction(
+        spec.get("caption_font") or None,
+        creator_direction_typed_overrides,
+    )
     caption_margin_v = _resolve_caption_margin_v(spec)
     smart_v2 = _is_smart_captions_v2(smart_captions)
     smart_render_started = time.monotonic()
@@ -18568,6 +18711,7 @@ def _render_subtitled_variant(
             base,
             ass_font=resolve_caption_font(caption_font),
             margin_v=caption_margin_v,
+            typed_overrides=creator_direction_typed_overrides,
         )
     if getattr(settings, "subtitled_text_lane_enabled", False) or smart_captions is not None:
         base["text_elements"] = []
@@ -19339,6 +19483,7 @@ def _render_subtitled_variant(
                         else base_gcs_key
                     ),
                     created_storage_paths=subtitled_created_storage,
+                    creator_direction_typed_overrides=creator_direction_typed_overrides,
                 )
                 final_path = composed_final
                 if camera_render_applied:
@@ -19351,7 +19496,7 @@ def _render_subtitled_variant(
         elif cues:
             ass_path = os.path.join(variant_dir, "captions.ass")
             ass_font = resolve_caption_font(caption_font)
-            caption_appearance = _caption_style_overrides(base)
+            caption_appearance = _caption_style_overrides(base, creator_direction_typed_overrides)
             caption_appearance_kwargs = (
                 {"appearance": caption_appearance} if caption_appearance is not None else {}
             )
@@ -19359,6 +19504,7 @@ def _render_subtitled_variant(
                 base,
                 ass_font=ass_font,
                 margin_v=caption_margin_v,
+                typed_overrides=creator_direction_typed_overrides,
             )
             with _stage_timer("caption_burn", counts={"cue_count": len(cues)}):
                 if caption_style == "word":
@@ -19384,6 +19530,7 @@ def _render_subtitled_variant(
                             else {}
                         ),
                     )
+                _strip_caption_shadow_treatment(ass_path, creator_direction_typed_overrides)
                 burn_captions_on_video(caption_base_path, ass_path, FONTS_DIR, final_path)
         else:
             # No detectable speech → ship the clean clip; the UI shows the empty-caption
@@ -20095,6 +20242,7 @@ def _effective_smart_caption_policy(
     *,
     ass_font: str,
     margin_v: int | None,
+    typed_overrides: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Merge explicit creator caption overrides into the pinned Smart policy."""
 
@@ -20117,10 +20265,20 @@ def _effective_smart_caption_policy(
         policy["stroke_width"] = variant.get("caption_stroke_width")
     if variant.get("caption_shadow_enabled") is not None:
         policy["shadow_enabled"] = bool(variant.get("caption_shadow_enabled"))
+    direction_font = _caption_font_with_direction(None, typed_overrides)
+    if direction_font:
+        from app.pipeline.narrated_assembler import resolve_caption_font  # noqa: PLC0415
+
+        policy["font_family"] = resolve_caption_font(direction_font)
+    if typed_overrides and typed_overrides.get("shadow_enabled") is False:
+        policy["shadow_enabled"] = False
     return policy
 
 
-def _caption_style_overrides(variant: dict) -> dict[str, Any] | None:
+def _caption_style_overrides(
+    variant: dict,
+    typed_overrides: Mapping[str, Any] | None = None,
+) -> dict[str, Any] | None:
     appearance = {
         "font_size_px": variant.get("caption_size_px"),
         "color": variant.get("caption_text_color"),
@@ -20128,7 +20286,10 @@ def _caption_style_overrides(variant: dict) -> dict[str, Any] | None:
         "stroke_width": variant.get("caption_stroke_width"),
         "shadow_enabled": variant.get("caption_shadow_enabled"),
     }
-    return appearance if any(value is not None for value in appearance.values()) else None
+    return _caption_appearance_with_direction(
+        appearance if any(value is not None for value in appearance.values()) else None,
+        typed_overrides,
+    )
 
 
 def _resolve_cue_font_overrides(cues: list[dict]) -> list[dict]:
@@ -20229,6 +20390,7 @@ def _compose_subtitled_final(
     variant_id: str,
     upload_key_base: str,
     created_storage_paths: list[str] | None = None,
+    creator_direction_typed_overrides: Mapping[str, Any] | None = None,
 ) -> tuple[str, str | None]:
     """Compose a captioned final: authored text first, persisted captions last.
 
@@ -20291,7 +20453,13 @@ def _compose_subtitled_final(
         captions_input = text_burned
 
     final_path = os.path.join(tmpdir, "subtitled_final.mp4")
-    _burn_persisted_captions_onto_base(captions_input, final_path, variant, tmpdir)
+    _burn_persisted_captions_onto_base(
+        captions_input,
+        final_path,
+        variant,
+        tmpdir,
+        creator_direction_typed_overrides=creator_direction_typed_overrides,
+    )
     return final_path, matte_gcs_path
 
 
@@ -20324,7 +20492,12 @@ def _should_compose_subtitled_final(variant: dict) -> bool:
 
 
 def _burn_persisted_captions_onto_base(
-    base_local: str, out_local: str, variant: dict, tmpdir: str
+    base_local: str,
+    out_local: str,
+    variant: dict,
+    tmpdir: str,
+    *,
+    creator_direction_typed_overrides: Mapping[str, Any] | None = None,
 ) -> None:
     """Burn (or skip) a variant's persisted caption cues onto its caption-free base.
 
@@ -20382,13 +20555,18 @@ def _burn_persisted_captions_onto_base(
     # Re-burn in the variant's chosen caption font (registry key → libass family;
     # None/unknown → the default). Both narrated AND subtitled persist the font under
     # `voiceover_caption_font` (render + caption-font route + finalize whitelist).
-    ass_font = resolve_caption_font(variant.get("voiceover_caption_font"))
+    caption_font = _caption_font_with_direction(
+        variant.get("voiceover_caption_font"),
+        creator_direction_typed_overrides,
+    )
+    ass_font = resolve_caption_font(caption_font)
     smart_policy = _effective_smart_caption_policy(
         variant,
         ass_font=ass_font,
         margin_v=margin_v,
+        typed_overrides=creator_direction_typed_overrides,
     )
-    appearance = _caption_style_overrides(variant)
+    appearance = _caption_style_overrides(variant, creator_direction_typed_overrides)
     appearance_kwargs = {"appearance": appearance} if appearance is not None else {}
     ass_path = os.path.join(tmpdir, "captions.ass")
     if subtitled_word_pop:
@@ -20411,7 +20589,29 @@ def _burn_persisted_captions_onto_base(
             **appearance_kwargs,
             **({"smart_policy": smart_policy} if smart_policy is not None else {}),
         )
+    _strip_caption_shadow_treatment(ass_path, creator_direction_typed_overrides)
     burn_captions_on_video(base_local, ass_path, FONTS_DIR, out_local)
+
+
+def _burn_persisted_captions_with_direction(
+    base_local: str,
+    out_local: str,
+    variant: dict,
+    tmpdir: str,
+    typed_overrides: Mapping[str, Any] | None,
+) -> None:
+    """Call the caption terminal compatibly for legacy/mocked workers."""
+
+    if typed_overrides:
+        _burn_persisted_captions_onto_base(
+            base_local,
+            out_local,
+            variant,
+            tmpdir,
+            creator_direction_typed_overrides=typed_overrides,
+        )
+    else:
+        _burn_persisted_captions_onto_base(base_local, out_local, variant, tmpdir)
 
 
 def _run_rerender_caption_camera_effects(
@@ -20438,6 +20638,9 @@ def _run_rerender_caption_camera_effects(
         if job is None:
             log.error("caption_camera_rerender_job_not_found", job_id=job_id)
             return
+        creator_direction_typed_overrides = _pinned_creator_direction_typed_overrides(
+            job.assembly_plan or {}
+        )
         variants = (job.assembly_plan or {}).get("variants") or []
         variant = next((v for v in variants if v.get("variant_id") == variant_id), None)
     if variant is None:
@@ -20541,6 +20744,7 @@ def _run_rerender_caption_camera_effects(
                     else str(old_base_path)
                 ),
                 created_storage_paths=camera_created_storage,
+                creator_direction_typed_overrides=creator_direction_typed_overrides,
             )
             camera_matte_persist = not pixels_modified
             if pixels_modified:
@@ -20548,8 +20752,12 @@ def _run_rerender_caption_camera_effects(
                 camera_created_storage.clear()
         else:
             final_local = os.path.join(tmpdir, "out.mp4")
-            _burn_persisted_captions_onto_base(
-                caption_base_local, final_local, fresh_variant, tmpdir
+            _burn_persisted_captions_with_direction(
+                caption_base_local,
+                final_local,
+                fresh_variant,
+                tmpdir,
+                creator_direction_typed_overrides,
             )
 
         output_url = upload_public_read(final_local, new_video_gcs)
@@ -20657,6 +20865,9 @@ def _run_reburn_narrated_captions(
         if job is None:
             log.error("narrated_caption_reburn_job_not_found", job_id=job_id)
             return
+        creator_direction_typed_overrides = _pinned_creator_direction_typed_overrides(
+            job.assembly_plan or {}
+        )
         variants = (job.assembly_plan or {}).get("variants") or []
         variant = next((v for v in variants if v.get("variant_id") == variant_id), None)
     if variant is None:
@@ -20723,11 +20934,18 @@ def _run_reburn_narrated_captions(
                 variant_id=variant_id,
                 upload_key_base=new_gcs,
                 created_storage_paths=caption_created_storage,
+                creator_direction_typed_overrides=creator_direction_typed_overrides,
             )
             reburn_matte_persist = not custom_effect_applied
         else:
             out_local = os.path.join(tmpdir, "out.mp4")
-            _burn_persisted_captions_onto_base(base_local, out_local, variant, tmpdir)
+            _burn_persisted_captions_with_direction(
+                base_local,
+                out_local,
+                variant,
+                tmpdir,
+                creator_direction_typed_overrides,
+            )
         # New key so CDN / signed-URL caches never serve the pre-edit captions.
         output_url = upload_public_read(out_local, new_gcs)
 
@@ -20931,6 +21149,9 @@ def _run_reburn_narrated_bed_level(
         if job is None:
             log.error("narrated_bed_level_reburn_job_not_found", job_id=job_id)
             return
+        creator_direction_typed_overrides = _pinned_creator_direction_typed_overrides(
+            job.assembly_plan or {}
+        )
         variants = (job.assembly_plan or {}).get("variants") or []
         variant = next((v for v in variants if v.get("variant_id") == variant_id), None)
         all_candidates = job.all_candidates or {}
@@ -21116,6 +21337,7 @@ def _run_reburn_narrated_bed_level(
                 variant_id=variant_id,
                 upload_key_base=new_base_gcs,
                 created_storage_paths=bed_created_storage,
+                creator_direction_typed_overrides=creator_direction_typed_overrides,
             )
             bed_matte_persist = not custom_effect_applied
             if custom_effect_applied:
@@ -21123,7 +21345,13 @@ def _run_reburn_narrated_bed_level(
                 bed_created_storage.clear()
         else:
             out_local = os.path.join(tmpdir, "out.mp4")
-            _burn_persisted_captions_onto_base(caption_base_path, out_local, variant, tmpdir)
+            _burn_persisted_captions_with_direction(
+                caption_base_path,
+                out_local,
+                variant,
+                tmpdir,
+                creator_direction_typed_overrides,
+            )
         output_url = upload_public_read(out_local, new_video_gcs)
         upload_public_read(new_base_path, new_base_gcs)
 
@@ -21309,6 +21537,9 @@ def _run_retranscribe_subtitled(
         if job is None:
             log.error("subtitled_retranscribe_job_not_found", job_id=job_id)
             return
+        creator_direction_typed_overrides = _pinned_creator_direction_typed_overrides(
+            job.assembly_plan or {}
+        )
         variants = (job.assembly_plan or {}).get("variants") or []
         variant = next((v for v in variants if v.get("variant_id") == variant_id), None)
     if variant is None:
@@ -21322,9 +21553,14 @@ def _run_retranscribe_subtitled(
         raise ValueError("variant has no caption-free base — cannot re-transcribe")
     rank = variant.get("rank")
     word_pop = variant.get("voiceover_caption_style") == "word"
-    ass_font = resolve_caption_font(variant.get("voiceover_caption_font"))
+    ass_font = resolve_caption_font(
+        _caption_font_with_direction(
+            variant.get("voiceover_caption_font"),
+            creator_direction_typed_overrides,
+        )
+    )
     caption_margin_v = _resolve_caption_margin_v(variant)
-    caption_appearance = _caption_style_overrides(variant)
+    caption_appearance = _caption_style_overrides(variant, creator_direction_typed_overrides)
 
     if not _update_variant_entry(
         job_id,
@@ -21424,6 +21660,7 @@ def _run_retranscribe_subtitled(
                 variant_id=variant_id,
                 upload_key_base=new_gcs,
                 created_storage_paths=retranscribe_created_storage,
+                creator_direction_typed_overrides=creator_direction_typed_overrides,
             )
             retx_matte_persist = not custom_effect_applied
         else:
@@ -21450,6 +21687,7 @@ def _run_retranscribe_subtitled(
                     pop_in=True,
                     **caption_appearance_kwargs,
                 )
+            _strip_caption_shadow_treatment(ass_path, creator_direction_typed_overrides)
             burn_captions_on_video(caption_base_local, ass_path, FONTS_DIR, out_local)
         output_url = upload_public_read(out_local, new_gcs)
 

@@ -5,6 +5,7 @@ Every retry/refusal/schema/fallback path is exercised against the MockModelClien
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import ClassVar
 
 import pytest
@@ -191,6 +192,71 @@ def test_refusal_twice_terminal(sample_agent: SampleAgent, mock_client: MockMode
     with pytest.raises(TerminalError) as exc_info:
         sample_agent.run(SampleInput(topic="x"))
     assert "refusal" in str(exc_info.value).lower()
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"answer": "PRIVATE-MODEL-OUTPUT", "score": 999},  # schema failure
+        {"answer": "PRIVATE-MODEL-OUTPUT"},  # refusal: missing score
+    ],
+)
+def test_sensitive_failures_never_expose_model_text(
+    response: dict[str, object], mock_client: MockModelClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Creator-authored/model text stays out of exceptions and log payloads."""
+
+    class SensitiveSampleAgent(SampleAgent):
+        spec = replace(
+            SampleAgent.spec,
+            name="test.sensitive",
+            max_attempts=1,
+            fallback_models=(),
+            enable_clarification_retries=False,
+            sensitive_io=True,
+        )
+
+    captured: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "app.agents._runtime.log.info",
+        lambda _event, **kwargs: captured.append(kwargs),
+    )
+    monkeypatch.setattr("app.agents._runtime.log.warning", lambda *_args, **_kwargs: None)
+    mock_client.queue("gemini-2.5-flash", response)
+
+    with pytest.raises(TerminalError) as exc_info:
+        SensitiveSampleAgent(mock_client).run(SampleInput(topic="private creator direction"))
+
+    assert "PRIVATE-MODEL-OUTPUT" not in str(exc_info.value)
+    run_payload = captured[0]
+    assert run_payload["error"] == "sensitive_agent_error"
+    assert "raw_text_preview" not in run_payload
+
+
+def test_sensitive_terminal_failure_never_exposes_provider_text(
+    mock_client: MockModelClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class SensitiveSampleAgent(SampleAgent):
+        spec = replace(
+            SampleAgent.spec,
+            name="test.sensitive",
+            max_attempts=1,
+            fallback_models=(),
+            sensitive_io=True,
+        )
+
+    captured: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "app.agents._runtime.log.info",
+        lambda _event, **kwargs: captured.append(kwargs),
+    )
+    mock_client.queue("gemini-2.5-flash", TerminalError("provider leaked PRIVATE-MODEL-OUTPUT"))
+
+    with pytest.raises(TerminalError) as exc_info:
+        SensitiveSampleAgent(mock_client).run(SampleInput(topic="private creator direction"))
+
+    assert "PRIVATE-MODEL-OUTPUT" not in str(exc_info.value)
+    assert captured[0]["error"] == "sensitive_agent_error"
 
 
 # ── Schema errors ─────────────────────────────────────────────────────────────

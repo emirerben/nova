@@ -32,6 +32,7 @@ from app.models import (
     VideoFeedback,
 )
 from app.routes.personas import StyleEdit
+from app.services.creator_direction import CreatorDirectionService
 from app.services.feedback_summary import MAX_NOTES_IN_SUMMARY, build_preference_summary
 from app.services.job_status import PLAN_ITEM_JOB_FAILED, PLAN_ITEM_JOB_READY
 from app.services.media_filenames import safe_media_basename
@@ -1225,7 +1226,7 @@ async def record_workspace_preference_signal(
                 raw[key] = value
         raw["status"] = "edited"
         style = UserStyle.model_validate(raw).model_dump(mode="json")
-        persona.style = style
+        CreatorDirectionService.set_compatibility_persona_style(persona, style)
 
     signal = CreatorWorkspacePreferenceSignal(
         creator_id=user.id,
