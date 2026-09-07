@@ -2392,3 +2392,12 @@ async def test_auto_design_dispatches_directly_for_an_already_approved_proposal(
     assert dispatch_calls == [(str(item.id), 1, True)]
     db.rollback.assert_awaited()
     assert item.edit_proposal["status"] == "approved"  # untouched
+
+
+def test_narrated_proposal_uses_fidelity_worker_queue():
+    from types import SimpleNamespace
+
+    from app.routes import plan_items
+
+    proposal = SimpleNamespace(brief=SimpleNamespace(narration=object()))
+    assert plan_items._proposal_analysis_queue(proposal) == "creator-fidelity-v1"

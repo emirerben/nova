@@ -265,6 +265,14 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.narrated_storyboard import NarratedStoryboardAgent
 
         return NarratedStoryboardAgent
+    if agent_name == "nova.compose.narration_annotations":
+        from app.agents.narration_annotations import NarrationAnnotationAgent
+
+        return NarrationAnnotationAgent
+    if agent_name == "nova.compose.narration_focus":
+        from app.agents.narration_focus import NarrationFocusAgent
+
+        return NarrationFocusAgent
     if agent_name == "nova.compose.smart_edit_planner":
         from app.agents.smart_edit_planner import SmartEditPlannerAgent
 

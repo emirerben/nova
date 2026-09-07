@@ -52,7 +52,7 @@ set -a
 source "$REPO/.env"
 set +a
 export NOVA_CELERY_QUEUE_NAMESPACE="$(bash "$REPO/scripts/dev-namespace.sh" "$REPO")"
-CELERY_DEV_QUEUES="celery,plan-jobs,overlay-jobs,creator-guided-jobs,creator-render-v2,agent-control"
+CELERY_DEV_QUEUES="celery,plan-jobs,overlay-jobs,creator-guided-jobs,creator-render-v2,agent-control,creator-fidelity-v1"
 log "Celery namespace: $NOVA_CELERY_QUEUE_NAMESPACE (Redis key prefix nova-dev:$NOVA_CELERY_QUEUE_NAMESPACE:)"
 
 # ── Migrations ───────────────────────────────────────────────────────────────

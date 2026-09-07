@@ -67,6 +67,17 @@ def test_accepts_every_source_for_a_small_upload() -> None:
     assert output.title == "What I noticed in Corfu"
 
 
+def test_all_media_scope_requires_every_available_source() -> None:
+    agent = EditProposalAgent(None)  # type: ignore[arg-type]
+    agent_input = _input(4)
+    agent_input.media_scope = "all"
+    agent_input.selected_media_ids = [media.media_id for media in agent_input.media]
+    output = agent.parse(_raw([media.media_id for media in agent_input.media]), agent_input)
+
+    used = {media_id for beat in output.story_beats for media_id in beat.media_ids}
+    assert used == set(agent_input.selected_media_ids)
+
+
 def test_fast_montage_uses_cut_sources_for_mixed_media_variety() -> None:
     agent = EditProposalAgent(None)  # type: ignore[arg-type]
     agent_input = _input(3)
@@ -352,6 +363,74 @@ def test_mixed_timing_parse_accepts_only_sources_that_fit_low_target() -> None:
         json.dumps(payload), agent_input
     )
     assert len({cut.media_id for cut in output.fast_cuts or []}) == 6
+
+
+def test_mixed_timing_narration_normalizes_fractional_video_windows_before_approval() -> None:
+    profile = MixedMediaTimingProfile(
+        image_hold="very_fast",
+        image_hold_s=0.3,
+        video_hold="longer",
+        boundary_style="cut",
+    )
+    agent_input = EditProposalAgentInput(
+        direction="fast_montage",
+        pace="fast",
+        target_duration_s=4,
+        media_scope="all",
+        selected_media_ids=["video-a", "photo-a", "video-b"],
+        narration_duration_s=4.2,
+        mixed_media_timing=profile,
+        media=[
+            EditProposalMedia(media_id="video-a", lane="clip", kind="video", duration_s=8),
+            EditProposalMedia(media_id="photo-a", lane="asset", kind="image"),
+            EditProposalMedia(media_id="video-b", lane="clip", kind="video", duration_s=8),
+        ],
+    )
+    payload = {
+        "title": "A quick mixed cut",
+        "duration_s": 4,
+        "story_beats": [],
+        "fast_cuts": [
+            {
+                "cut_id": "cut-a",
+                "media_id": "video-a",
+                "source_start_s": 0.0,
+                "source_end_s": 1.95,
+                "output_duration_s": 1.95,
+                "role": "hook",
+            },
+            {
+                "cut_id": "cut-photo",
+                "media_id": "photo-a",
+                "source_start_s": 0.0,
+                "source_end_s": 0.3,
+                "output_duration_s": 0.3,
+                "role": "build",
+            },
+            {
+                "cut_id": "cut-b",
+                "media_id": "video-b",
+                "source_start_s": 0.0,
+                "source_end_s": 1.95,
+                "output_duration_s": 1.95,
+                "role": "payoff",
+            },
+        ],
+    }
+
+    output = EditProposalAgent(None).parse(  # type: ignore[arg-type]
+        json.dumps(payload), agent_input
+    )
+
+    cuts = output.fast_cuts or []
+    assert sum(cut.output_duration_s for cut in cuts) == pytest.approx(4.2, abs=0.01)
+    photo = next(cut for cut in cuts if cut.media_id == "photo-a")
+    assert photo.output_duration_s == pytest.approx(0.3)
+    assert round(photo.output_duration_s * 30) == 9
+    for cut in cuts:
+        assert cut.source_end_s - cut.source_start_s == pytest.approx(
+            cut.output_duration_s, abs=0.001
+        )
 
 
 def test_fast_montage_both_kind_check_ignores_unprobed_video() -> None:
@@ -1170,6 +1249,19 @@ def test_rejects_context_free_action_lead() -> None:
         agent.parse(json.dumps(payload), _input())
 
 
+def test_accepts_neutral_observation_with_wandering_gerund() -> None:
+    """A scene observation must not be misclassified as unsupported first person."""
+    agent = EditProposalAgent(None)  # type: ignore[arg-type]
+    payload = json.loads(_raw([f"media-{index}" for index in range(7)]))
+    payload["story_beats"][0]["thought"] = (
+        "Wandering through narrow, colorful streets reveals old town charm."
+    )
+
+    output = agent.parse(json.dumps(payload), _input())
+
+    assert output.story_beats[0].thought == payload["story_beats"][0]["thought"]
+
+
 def test_neutralizes_context_free_sensory_modifier() -> None:
     agent = EditProposalAgent(None)  # type: ignore[arg-type]
     payload = json.loads(_raw([f"media-{index}" for index in range(7)]))
@@ -1217,3 +1309,23 @@ def test_rejects_render_critical_story_contradictions(mutate, message: str) -> N
 
     with pytest.raises(SchemaError, match=message):
         agent.parse(json.dumps(payload), _input(3))
+
+
+def test_narrated_long_window_is_not_split_or_interleaved():
+    from app.agents.edit_proposal import _compile_fast_cuts
+
+    raw = [
+        {
+            "cut_id": "long",
+            "media_id": "video",
+            "source_start_s": 0,
+            "source_end_s": 7,
+            "output_duration_s": 7,
+            "role": "hook",
+        }
+    ]
+    cuts, repaired, duration = _compile_fast_cuts(raw, narrated=True)
+    assert len(cuts) == 1 and cuts[0].output_duration_s == 7
+    assert not repaired and duration == 7
+    with pytest.raises(SchemaError, match="non-narrated"):
+        _compile_fast_cuts(raw)

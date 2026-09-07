@@ -157,6 +157,8 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         "edit_guide",
         "main_creator",
         "sfx_placement",
+        "narration_annotations",
+        "narration_focus",
     ):
         fixture_paths.extend(discover_fixtures(agent_dir))
 

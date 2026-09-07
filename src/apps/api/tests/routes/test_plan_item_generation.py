@@ -2038,3 +2038,62 @@ def test_plan_item_response_landscape_fit_defaults_to_fit() -> None:
     resp = plan_item_response(item)
     assert resp.landscape_fit == "fit"
     assert resp.montage_preset == "classic"
+
+
+@pytest.mark.parametrize(
+    "enabled,attempt,voiceover,contract,allowed",
+    [
+        (True, "attempt", True, True, True),
+        (False, "attempt", True, True, False),
+        (True, None, True, True, False),
+        (True, "attempt", False, True, False),
+        (True, "attempt", True, False, False),
+    ],
+)
+async def test_guided_voiceover_auto_design_requires_confirmed_contract(
+    monkeypatch, enabled, attempt, voiceover, contract, allowed
+):
+    from types import SimpleNamespace
+
+    from app.config import settings
+    from app.routes import plan_items
+
+    monkeypatch.setattr(settings, "guided_auto_design_enabled", True)
+    monkeypatch.setattr(settings, "creator_prompt_fidelity_enabled", enabled)
+    monkeypatch.setattr(plan_items, "_guided_edit_is_applicable", lambda item: False)
+    item = SimpleNamespace(
+        audio_mode="voiceover",
+        voiceover_gcs_path="voice.m4a" if voiceover else None,
+        clip_gcs_paths=["clip.mp4"],
+    )
+    strategy = (
+        {
+            "execution_contract": "guided_voiceover_v1",
+            "render_program": "guided",
+            "audio_strategy": "voiceover",
+        }
+        if contract
+        else None
+    )
+
+    class EnteredOwnedReservation(Exception):
+        pass
+
+    async def owned(*args, **kwargs):
+        raise EnteredOwnedReservation
+
+    monkeypatch.setattr(plan_items, "_load_owned_item", owned)
+    call = plan_items._maybe_auto_design_generate(
+        "item",
+        item,
+        SimpleNamespace(ownership_epoch=0),
+        SimpleNamespace(id="owner"),
+        None,
+        generation_attempt_id=attempt,
+        creator_strategy=strategy,
+    )
+    if allowed:
+        with pytest.raises(EnteredOwnedReservation):
+            await call
+    else:
+        assert await call is None

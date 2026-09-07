@@ -441,6 +441,22 @@ def guided_editor_revision_from_approval(
         start_s=music_start_s,
         end_s=(float(music.get("end_s") or music_start_s + story_duration_s) if music else None),
     )
+    # The browser's existing text editor owns one full replacement list. Keep
+    # the renderer's separate narration-label lane in that canonical editor
+    # union so PLAYER placeholders are visible and editable on the first read,
+    # while the guided compiler can still split the labels back out for render.
+    text_elements: list[dict[str, Any]] = []
+    seen_text_ids: set[str] = set()
+    for row in [
+        *list(execution_plan.get("text_elements") or []),
+        *list(execution_plan.get("narration_label_text_elements") or []),
+    ]:
+        row_id = row.get("id") if isinstance(row, dict) else None
+        if isinstance(row_id, str) and row_id in seen_text_ids:
+            continue
+        if isinstance(row_id, str):
+            seen_text_ids.add(row_id)
+        text_elements.append(row)
     return normalize_guided_editor_revision(
         GuidedEditorRevision(
             approval_proposal_version=proposal_version,
@@ -451,6 +467,6 @@ def guided_editor_revision_from_approval(
             sources=sources,
             segments=segments,
             audio=audio,
-            text_elements=list(execution_plan.get("text_elements") or []),
+            text_elements=text_elements,
         )
     )

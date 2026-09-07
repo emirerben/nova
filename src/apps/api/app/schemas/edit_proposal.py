@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.agents._schemas.sfx_intent import LicensedSfxIntent
 
@@ -37,6 +37,20 @@ AudioRole = Literal["music_led", "original_audio", "voiceover", "mixed"]
 OutputOrientation = Literal["portrait", "landscape"]
 MediaLane = Literal["clip", "asset"]
 MediaKind = Literal["image", "video"]
+MediaScope = Literal["all", "selected"]
+NARRATION_FPS = 30
+
+
+def canonical_narration_duration_s(duration_s: float) -> float:
+    """Return the first 30 fps visual frame at or after the pinned audio."""
+
+    value = float(duration_s)
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError("narration duration must be finite and positive")
+    frames = max(1, math.ceil(value * NARRATION_FPS - 1e-6))
+    return round(frames / NARRATION_FPS, 6)
+
+
 BeatLayout = Literal["fullscreen", "supporting_card"]
 ImageGrouping = Literal["scattered", "runs"]
 SequenceGrouping = Literal["none", "sport_context"]
@@ -529,6 +543,46 @@ class MediaRef(BaseModel):
     analysis: dict = Field(default_factory=dict)
 
 
+class NarrationWord(BaseModel):
+    """One server-transcribed word from the pinned creator voiceover."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    text: str = Field(min_length=1, max_length=200)
+    start_s: float = Field(ge=0)
+    end_s: float = Field(ge=0)
+    confidence: float = Field(default=1.0, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def validate_interval(self) -> NarrationWord:
+        if self.end_s < self.start_s:
+            raise ValueError("narration word end_s must not precede start_s")
+        return self
+
+
+class NarrationTrack(BaseModel):
+    """Generation-pinned recorded narration and its authoritative word timing."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    gcs_path: str = Field(min_length=1)
+    generation: str = Field(min_length=1)
+    duration_s: float = Field(gt=0)
+    words: list[NarrationWord] = Field(default_factory=list)
+    language: str = Field(default="", max_length=16)
+
+    @model_validator(mode="after")
+    def validate_words(self) -> NarrationTrack:
+        previous_start = 0.0
+        for word in self.words:
+            if word.start_s + 0.001 < previous_start:
+                raise ValueError("narration word starts must be ordered")
+            if word.end_s > self.duration_s + 0.15:
+                raise ValueError("narration word exceeds its track duration")
+            previous_start = word.start_s
+        return self
+
+
 class StoryBeat(BaseModel):
     beat_id: str = Field(min_length=1, max_length=100)
     topic: str = Field(min_length=1, max_length=80)
@@ -550,7 +604,7 @@ class FastMontageCut(BaseModel):
     media_id: str = Field(min_length=1, max_length=100)
     source_start_s: float = Field(ge=0)
     source_end_s: float = Field(gt=0)
-    output_duration_s: float = Field(ge=0.1, le=3.0)
+    output_duration_s: float = Field(ge=0.1, le=60.0)
     role: Literal["hook", "build", "payoff"]
     transition: Literal["none"] = "none"
     beat_align: bool = False
@@ -622,6 +676,24 @@ class EditProposalSnapshot(BaseModel):
         validation_alias=AliasChoices("licensed_sfx", "sfx_intent"),
         exclude_if=lambda value: value is None,
     )
+    # Explicit source coverage is an intent constraint. ``None`` is omitted
+    # from legacy snapshots; ``all`` means every ref in the immutable manifest
+    # must appear in the compiled timeline.
+    media_scope: MediaScope | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    selected_media_ids: list[str] | None = Field(
+        default=None,
+        max_length=MAX_EDIT_PROPOSAL_MEDIA,
+        exclude_if=lambda value: value is None,
+    )
+    # Present only for the guided voiceover contract. The task fills timed
+    # words from the pinned audio before this snapshot is approved.
+    narration: NarrationTrack | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
     @field_validator("font_family")
     @classmethod
@@ -678,6 +750,14 @@ class EditProposalSnapshot(BaseModel):
                 raise ValueError(f"beat {beat.beat_id} references missing media IDs")
         if len({b.beat_id for b in self.story_beats}) != len(self.story_beats):
             raise ValueError("story beat IDs must be unique")
+        if self.selected_media_ids is not None:
+            if len(set(self.selected_media_ids)) != len(self.selected_media_ids):
+                raise ValueError("selected media IDs must be unique")
+            if not set(self.selected_media_ids) <= known:
+                raise ValueError("selected media IDs reference missing media")
+        if self.media_scope == "all" and self.selected_media_ids is not None:
+            if set(self.selected_media_ids) != known:
+                raise ValueError("all media scope must include the complete media manifest")
         if self.fast_cuts:
             if self.direction != "fast_montage":
                 raise ValueError("fast cuts are only valid for fast montage proposals")
@@ -690,7 +770,8 @@ class EditProposalSnapshot(BaseModel):
             by_id = {ref.media_id: ref for ref in self.media}
             quick_mixed_timing = uses_quick_photo_long_video_timing(self.mixed_media_timing)
             if (
-                self.montage_cadence is None
+                self.narration is None
+                and self.montage_cadence is None
                 and not quick_mixed_timing
                 and any(cut.output_duration_s > 1.2 + 0.001 for cut in self.fast_cuts)
             ):
@@ -760,7 +841,9 @@ class EditProposalSnapshot(BaseModel):
                         if (
                             remaining_for_cut_s >= bounds.minimum_s - 0.001
                             and output_duration_s < bounds.minimum_s - 0.001
-                        ) or output_duration_s > bounds.maximum_s + 0.001:
+                        ) or (
+                            self.narration is None and output_duration_s > bounds.maximum_s + 0.001
+                        ):
                             raise ValueError(
                                 "mixed-media videos must hold for 1.5-3.0s when source permits"
                             )
@@ -775,7 +858,8 @@ class EditProposalSnapshot(BaseModel):
             if any(cut.transition != "none" for cut in self.fast_cuts):
                 raise ValueError("fast montage cuts must use hard cuts")
             cut_duration_s = sum(cut.output_duration_s for cut in self.fast_cuts)
-            if abs(cut_duration_s - self.duration_s) > 0.15:
+            timing_duration_s = self.narration.duration_s if self.narration else self.duration_s
+            if abs(cut_duration_s - timing_duration_s) > 0.15:
                 raise ValueError("fast montage cut durations must match the proposal duration")
         if self.montage_cadence is not None:
             if self.direction != "fast_montage":
@@ -935,7 +1019,20 @@ class ProposalBrief(BaseModel):
     # footage is actually available (draft_edit_proposal clamps this against
     # analyzed media before it reaches the agent). See agents/DECISIONS.md.
     duration_s: int = Field(default=24, ge=3, le=60)
-    creator_request: str = Field(default="", max_length=1000)
+    creator_request: str = Field(default="", max_length=12000)
+    media_scope: MediaScope | None = Field(default=None, exclude_if=lambda value: value is None)
+    selected_media_ids: list[str] | None = Field(
+        default=None,
+        max_length=MAX_EDIT_PROPOSAL_MEDIA,
+        exclude_if=lambda value: value is None,
+    )
+    # The route seeds path/generation/duration from PlanItem. The proposal
+    # worker replaces an empty words list with an ASR transcript of that exact
+    # generation before persisting the draft.
+    narration: NarrationTrack | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     # Confirmed Main Creator fields copied into the immutable snapshot by the
     # async proposal worker.
     opening_title: str | None = Field(default=None, max_length=280)
@@ -1076,8 +1173,17 @@ class EditProposalResponse(EditProposal):
     last_approved: ApprovedProposalSnapshotResponse | None = None
 
 
-def canonical_media_digest(media: list[MediaRef]) -> str:
-    """Hash only immutable media identities; editorial order is not media state."""
+def canonical_media_digest(
+    media: list[MediaRef],
+    narration: NarrationTrack | None = None,
+) -> str:
+    """Hash immutable visual identities and, when present, audio identity.
+
+    The optional narration argument keeps legacy digests byte-identical while
+    making a voiceover swap invalidate the same approval/cache boundary as a
+    visual generation change. Word timings are intentionally excluded: they
+    are derived from the pinned audio and do not change its identity.
+    """
 
     identities = sorted(
         (
@@ -1093,7 +1199,23 @@ def canonical_media_digest(media: list[MediaRef]) -> str:
         ),
         key=lambda row: (row["lane"], row["media_id"]),
     )
-    payload = json.dumps(identities, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    if narration is None:
+        # Preserve the exact pre-narration digest for already persisted plans.
+        payload = json.dumps(identities, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    else:
+        payload = json.dumps(
+            {
+                "media": identities,
+                "narration": {
+                    "gcs_path": narration.gcs_path,
+                    "generation": narration.generation,
+                    "duration_s": round(float(narration.duration_s), 6),
+                },
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 

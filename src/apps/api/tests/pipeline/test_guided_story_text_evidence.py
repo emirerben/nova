@@ -205,3 +205,69 @@ def test_strict_burn_rejects_a_nonempty_request_with_no_renderable_sequences(
             required_element_ids=["title"],
             canvas=Canvas(100, 200),
         )
+
+
+@pytest.mark.parametrize("label_effect", ["static", "pop-in", "fade-in"])
+def test_many_static_captions_keep_receipts_but_use_one_ffmpeg_input(
+    tmp_path, monkeypatch, label_effect
+):
+    from app.pipeline import text_overlay_skia as renderer
+
+    base = tmp_path / "base.mp4"
+    output = tmp_path / "final.mp4"
+    base.write_bytes(b"base")
+    monkeypatch.setattr(renderer, "_validate_input_canvas", lambda *a, **k: None)
+    overlays = [
+        {
+            "text": f"Word {i}",
+            "element_id": f"caption-{i}",
+            "role": "generative_narration_caption",
+            "effect": "static",
+            "text_size_px": 16,
+            "font_family": "Inter-Bold",
+            "start_s": i * 0.1,
+            "end_s": i * 0.1 + 0.09,
+        }
+        for i in range(18)
+    ]
+    overlays.append(
+        {**overlays[0], "element_id": "label", "effect": label_effect, "start_s": 0.1, "end_s": 1.5}
+    )
+    from app.services import creator_direction_snapshot
+
+    monkeypatch.setattr(
+        creator_direction_snapshot,
+        "current_typed_overrides",
+        lambda: {"shadow_enabled": False, "font_family": "Inter-Bold"},
+    )
+    original_composite = renderer._render_sequence_composite
+
+    def composite(rows, *args, **kwargs):
+        assert all(row["shadow_enabled"] is False for row in rows)
+        assert all(row["font_family"] == "Inter-Bold" for row in rows)
+        return original_composite(rows, *args, **kwargs)
+
+    monkeypatch.setattr(renderer, "_render_sequence_composite", composite)
+    captured = []
+
+    def burn(_input, sequences, _output, **kwargs):
+        assert len(sequences) == 1
+        sequence = sequences[0]
+        assert sequence["n_frames"] >= 54
+        with Image.open(sequence["first_frame"]).convert("RGBA") as frame:
+            assert frame.getchannel("A").getbbox() is not None
+        captured.extend(sequences)
+        output.write_bytes(b"rendered")
+
+    monkeypatch.setattr(renderer, "_ffmpeg_burn_pngs", burn)
+    evidence = renderer.burn_text_overlays_skia_with_evidence(
+        str(base),
+        overlays,
+        str(output),
+        str(tmp_path),
+        required_element_ids=[row["element_id"] for row in overlays],
+        canvas=Canvas(320, 568),
+    )
+    assert len(captured) == 1
+    assert len(evidence) == 19
+    assert all(row["visible"] for row in evidence)

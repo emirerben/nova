@@ -830,6 +830,8 @@ class Settings(BaseSettings):
     # mutate a PlanItem or spend render capacity. Execution always requires an
     # explicit user confirmation; automatic iteration remains a later-stage
     # capability with its own kill switch.
+    # New plans only; persisted legacy narrated jobs retain their renderer.
+    creator_prompt_fidelity_enabled: bool = False
     main_creator_agent_enabled: bool = False
     main_creator_agent_execution_enabled: bool = False
     main_creator_agent_review_enabled: bool = False

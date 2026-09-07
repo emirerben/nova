@@ -77,8 +77,9 @@ def test_confirmed_creator_strategy_is_schema_bounded_and_persisted() -> None:
         )
 
 
-def test_creator_request_is_bounded_and_persisted_for_retries() -> None:
-    request = "  Match the voiceover to the clips. " + ("Add score text. " * 200)
+@pytest.mark.parametrize("repeat", [200, 2000])
+def test_creator_request_is_bounded_and_persisted_for_retries(repeat: int) -> None:
+    request = "  Match the voiceover to the clips. " + ("Add score text. " * repeat)
     job = build_generative_job(
         user_id=uuid.uuid4(),
         clip_paths=["users/u/plan/i/a.mp4"],
@@ -88,8 +89,8 @@ def test_creator_request_is_bounded_and_persisted_for_retries() -> None:
         creator_request=request,
     )
 
-    assert len(job.all_candidates["creator_request"]) == 1000
-    assert job.all_candidates["creator_request"] == request.strip()[:1000]
+    assert len(job.all_candidates["creator_request"]) == min(len(request.strip()), 12000)
+    assert job.all_candidates["creator_request"] == request.strip()[:12000]
 
 
 def test_content_plan_original_audio_policy_is_persisted() -> None:

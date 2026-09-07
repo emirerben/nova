@@ -2416,6 +2416,12 @@ def _run_generative_job_impl(
         render_intent_value,
         has_voiceover=bool(voiceover_gcs_path),
     )
+    from app.services.creator_execution_contract import validate_execution_binding  # noqa: PLC0415
+
+    if validate_execution_binding(
+        guided_snapshot, all_candidates.get("creator_strategy"), voiceover_gcs_path
+    ):
+        guided_applicable = True
     if guided_snapshot is not None and not guided_applicable:
         if not _guided_snapshot_has_genuine_clip_input(guided_snapshot, clip_paths_gcs):
             record_pipeline_event(
@@ -3517,6 +3523,14 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
         raw_strategy = copy.deepcopy(
             (getattr(job, "all_candidates", None) or {}).get("creator_strategy")
         )
+        voiceover_path = (getattr(job, "all_candidates", None) or {}).get("voiceover_gcs_path")
+        creator_request = str(
+            (getattr(job, "all_candidates", None) or {}).get("creator_request") or ""
+        )
+
+    from app.services.creator_execution_contract import validate_execution_binding  # noqa: PLC0415
+
+    validate_execution_binding(guided_snapshot, raw_strategy, voiceover_path)
 
     def context_label_intent() -> dict[str, Any] | None:
         persisted_intent = guided_snapshot.get("context_label_intent")
@@ -3650,6 +3664,18 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
             ) from exc
 
     def materialize_context_labels(plan: dict[str, Any]) -> dict[str, Any]:
+        if snapshot.narration is not None:
+            from app.services.guided_narration_labels import (
+                materialize_guided_narration_labels,  # noqa: PLC0415
+            )
+
+            return materialize_guided_narration_labels(
+                plan,
+                snapshot=snapshot,
+                strategy=raw_strategy or {},
+                creator_request=creator_request,
+                job_id=job_id,
+            )
         intent = context_label_intent()
         if intent is None:
             return plan
@@ -3766,7 +3792,12 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
             effect_payload = load_licensed_sfx_effect(intent)
             validate_licensed_sfx_runtime(plan, intent, effect_payload)
     else:
-        matched = _match_best_track(matcher_clip_metas(snapshot), job_id=job_id)
+        # A pinned narration is the chosen audio; never silently add auto-matched music.
+        matched = (
+            None
+            if getattr(snapshot, "narration", None) is not None
+            else _match_best_track(matcher_clip_metas(snapshot), job_id=job_id)
+        )
         track_payload = None
         if matched is not None and matched.audio_gcs_path:
             from app.storage import object_metadata  # noqa: PLC0415
@@ -8237,7 +8268,12 @@ def _reburn_text_on_base(
                     tmpdir,
                     required_element_ids=[
                         str(row.get("id"))
-                        for row in existing.get("text_elements") or []
+                        for row in (
+                            guided_editor_elements
+                            if guided_editor_elements is not None
+                            else existing.get("text_elements") or []
+                        )
+                        if isinstance(row, dict)
                         if row.get("id")
                     ],
                     matte=matte,
@@ -8256,6 +8292,11 @@ def _reburn_text_on_base(
                 )
 
         guided_text_evidence: list[dict] | None = None
+        guided_editor_elements = (
+            _guided_text_editor_elements(existing)
+            if existing.get("resolved_archetype") == "guided_story"
+            else None
+        )
 
         if existing.get("resolved_archetype") == "subtitled":
             # A Carousel full rebuild creates a fresh caption-free base. Burn
@@ -8468,7 +8509,16 @@ def _reburn_text_on_base(
                 "orientation": orientation,
                 "intro_text_size_px": existing.get("intro_text_size_px"),
                 "intro_size_source": existing.get("intro_size_source"),
-                "text_elements": existing.get("text_elements") or [],
+                "text_elements": (
+                    guided_editor_elements
+                    if guided_editor_elements is not None
+                    else existing.get("text_elements") or []
+                ),
+                "narration_label_text_elements": _guided_narration_label_elements(
+                    guided_editor_elements
+                    if guided_editor_elements is not None
+                    else existing.get("text_elements") or []
+                ),
                 "text_elements_user_edited": True,
                 "text_placement_candidates": existing.get("text_placement_candidates"),
                 "subject_matte_path": _te_matte_path,
@@ -10738,6 +10788,9 @@ def _rerender_guided_story_revision(
             "render_generation_id": attempt_id,
             "base_video_stale": False,
             "guided_edit_revision": revision,
+            "narration_label_text_elements": runtime_plan.get("narration_label_text_elements")
+            or [],
+            "narration_label_receipt": runtime_plan.get("narration_label_receipt"),
         }
     )
     validate_ready_result(runtime_plan, result, job_id=job_id, verify_storage=False)
@@ -20328,7 +20381,12 @@ def _text_element_burn_dicts(variant: dict) -> list[dict]:
     from app.agents._schemas.text_element import coerce_text_elements  # noqa: PLC0415
     from app.pipeline.generative_overlays import build_overlays_from_text_elements  # noqa: PLC0415
 
-    elements = coerce_text_elements(variant.get("text_elements") or []) or []
+    text_elements = (
+        _guided_text_editor_elements(variant)
+        if variant.get("resolved_archetype") == "guided_story"
+        else variant.get("text_elements") or []
+    )
+    elements = coerce_text_elements(text_elements) or []
     # Lyrics-as-optional-elements: on a `lyrics_baked=False` variant, saved
     # `role=lyric_line` elements are ordinary burnable elements (they were
     # accepted at write time by `validate_text_elements_payload`), so burn
@@ -20379,6 +20437,56 @@ def _text_element_burn_dicts(variant: dict) -> list[dict]:
             )
         )
     return overlays
+
+
+def _guided_text_editor_elements(variant: dict) -> list[dict]:
+    """Return the one editable text union consumed by a guided fast reburn.
+
+    Guided full renders persist labels both in the editor-facing union and in
+    the renderer lane. A text Save replaces the union but can leave the older
+    renderer lane beside it until the next terminal write. Once the editor has
+    authored the union, that union is authoritative, which makes deleting a
+    label stick. Before the first edit, merge the renderer lane in and let it
+    win by ID so source-projected PLAYER timing is not replaced by a stale
+    canonical copy.
+    """
+
+    source_rows = list(variant.get("text_elements") or [])
+    if variant.get("text_elements_user_edited"):
+        label_rows: list[dict] = []
+    else:
+        label_rows = [
+            row
+            for row in variant.get("narration_label_text_elements") or []
+            if isinstance(row, dict)
+        ]
+    rows: list[dict] = []
+    positions: dict[str, int] = {}
+    for row in [
+        *[value for value in source_rows if isinstance(value, dict)],
+        *label_rows,
+    ]:
+        row_id = row.get("id")
+        if not isinstance(row_id, str) or not row_id:
+            rows.append(dict(row))
+            continue
+        prior = positions.get(row_id)
+        if prior is None:
+            positions[row_id] = len(rows)
+            rows.append(dict(row))
+        else:
+            rows[prior] = dict(row)
+    return rows
+
+
+def _guided_narration_label_elements(elements: list[dict]) -> list[dict]:
+    return [
+        dict(row)
+        for row in elements
+        if isinstance(row, dict)
+        and isinstance(row.get("source_params"), dict)
+        and row["source_params"].get("narration_label_kind")
+    ]
 
 
 def _compose_subtitled_final(
@@ -24159,6 +24267,8 @@ def _finalize_job_decision(
                     "text_elements": r.get("text_elements"),
                     "text_elements_user_edited": r.get("text_elements_user_edited"),
                     "context_label_text_elements": r.get("context_label_text_elements"),
+                    "narration_label_text_elements": r.get("narration_label_text_elements"),
+                    "narration_label_receipt": r.get("narration_label_receipt"),
                     # Lyrics editor state — MUST survive finalization or the editor
                     # sees no lyric projections and capabilities report
                     # no_renderable_lyrics until the first re-render. Pinned by

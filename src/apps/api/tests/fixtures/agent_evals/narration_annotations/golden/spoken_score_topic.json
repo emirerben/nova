@@ -1,0 +1,22 @@
+{
+  "agent": "nova.compose.narration_annotations",
+  "prompt_version": "2026-09-07.2",
+  "input": {
+    "creator_request": "Show the spoken score and the named topic.",
+    "words": [
+      {"word_id": "w000000", "text": "The", "start_s": 0.0, "end_s": 0.1},
+      {"word_id": "w000001", "text": "score", "start_s": 0.1, "end_s": 0.3},
+      {"word_id": "w000002", "text": "was", "start_s": 0.3, "end_s": 0.4},
+      {"word_id": "w000003", "text": "one", "start_s": 0.4, "end_s": 0.6},
+      {"word_id": "w000004", "text": "nil", "start_s": 0.6, "end_s": 0.8},
+      {"word_id": "w000005", "text": "in", "start_s": 0.8, "end_s": 0.9},
+      {"word_id": "w000006", "text": "football", "start_s": 0.9, "end_s": 1.2}
+    ],
+    "media_analysis": [{"asset_id": "asset-a"}],
+    "timeline": [{"timeline_id": "shot-a", "asset_id": "asset-a", "start_s": 0.0, "end_s": 1.5}],
+    "requirements": {"score_labels": true, "context_labels": ["sport"]}
+  },
+  "raw_text": "{\"annotations\":[{\"kind\":\"score\",\"start_word_id\":\"w000003\",\"end_word_id\":\"w000004\",\"confidence\":\"high\",\"reason\":\"exact spoken pair\"},{\"kind\":\"topic\",\"start_word_id\":\"w000006\",\"end_word_id\":\"w000006\",\"text\":\"football\",\"confidence\":\"high\",\"reason\":\"exact topic word\"}]}",
+  "output": {},
+  "meta": {"source": "synthetic-safe-golden", "contract": "spoken score and generic requested topic"}
+}

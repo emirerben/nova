@@ -13,11 +13,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents._schemas.creator_agent import (
+    CREATOR_REQUEST_MAX_CHARS,
     CreativeStrategy,
     CreatorCatalogRef,
     CreatorEditPlan,
     CreatorEditSnapshot,
     CreatorMediaRef,
+    CreatorNarrationIdentity,
     canonical_context_hash,
 )
 from app.config import settings
@@ -102,6 +104,24 @@ def _positive_duration_s(value: object) -> float | None:
     if duration_s is None or duration_s <= 0 or not math.isfinite(duration_s):
         return None
     return duration_s
+
+
+def creator_narration_identity(item: PlanItem) -> CreatorNarrationIdentity | None:
+    """Return the exact recorded voiceover identity when fully pinned."""
+
+    path = str(getattr(item, "voiceover_gcs_path", None) or "").strip()
+    generation = str(getattr(item, "voiceover_generation", None) or "").strip()
+    duration_s = _positive_duration_s(getattr(item, "voiceover_duration_s", None))
+    if not path or not generation or duration_s is None:
+        return None
+    try:
+        return CreatorNarrationIdentity(
+            gcs_path=path,
+            generation=generation,
+            duration_s=duration_s,
+        )
+    except ValueError:
+        return None
 
 
 def _job_matches_guided_attempt(job: Job | None, attempt_id: str | None) -> bool:
@@ -390,6 +410,7 @@ async def resolve_item_creator_context(
         item_id=str(item.id),
         edit_format=item.edit_format,
         has_voiceover=(item.audio_mode == "voiceover" and bool(item.voiceover_gcs_path)),
+        narration=creator_narration_identity(item),
         media=media_refs,
         catalog=catalog,
         current_edit=current_edit,
@@ -481,9 +502,19 @@ def compile_active_plan(
             else None
         ),
         "target_duration_s": strategy.target_duration_s,
+        "manifest_hash": edit_plan.manifest_hash,
+        "context_hash": edit_plan.context_hash,
+        "strategy_hash": canonical_context_hash(
+            edit_plan.strategy.model_dump(mode="json", exclude_none=True)
+        ),
+        "execution_contract": strategy.execution_contract,
+        "media_scope": strategy.media_scope,
+        "participant_labels": strategy.participant_labels,
+        "score_labels": strategy.score_labels,
+        "sport_labels": strategy.sport_labels,
         "edit_plan": edit_plan.model_dump(mode="json", exclude_none=True),
     }
-    clean_request = _clean(creator_request, 1000)
+    clean_request = _clean(creator_request, CREATOR_REQUEST_MAX_CHARS)
     if clean_request:
         receipt["creator_request"] = clean_request
     if strategy.mixed_media_timing is not None:
@@ -987,6 +1018,7 @@ __all__ = [
     "append_event",
     "compile_active_plan",
     "creator_context",
+    "creator_narration_identity",
     "reconcile_render_state",
     "resolve_item_creator_context",
     "rollout_eligible",

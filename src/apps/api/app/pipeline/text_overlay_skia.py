@@ -4326,6 +4326,10 @@ def burn_text_overlays_skia_with_evidence(
 ) -> list[dict[str, Any]]:
     """Strict guided burn returning per-TextElement rendered-alpha evidence."""
 
+    from app.services.creator_direction_snapshot import apply_direction_overrides  # noqa: PLC0415
+
+    # Both the evidence pass and the combined stream must honor the same pinned policy.
+    overlays = apply_direction_overrides(overlays)
     _validate_input_canvas(input_path, canvas, input_probe=input_probe)
     input_sha256 = _sha256_file(input_path)
     sequences, work_dir = render_text_overlay_sequences(
@@ -4342,6 +4346,24 @@ def burn_text_overlays_skia_with_evidence(
         )
         if not sequences:
             raise RuntimeError("strict guided text burn produced no renderable overlays")
+        # Keep individual alpha receipts, but do not open hundreds of image2
+        # inputs for ordinary captions. The existing compositor draws the same
+        # caption and label overlays into one stream with unchanged timing and z-order.
+        if len(sequences) > 16 and all(
+            overlay.get("effect", "none") in {"static", "none", "pop-in", "fade-in"}
+            and not overlay.get("behind_subject")
+            and _masonry_layer_origin(overlay) is None
+            and _theme_transition_type(overlay) is None
+            for overlay in overlays
+        ):
+            composite = _render_sequence_composite(
+                overlays,
+                max(float(overlay.get("end_s", 0.0)) for overlay in overlays) + 1.0,
+                work_dir,
+                **_render_canvas_kwargs(canvas),
+            )
+            if composite is not None:
+                sequences = [composite]
         # `_ffmpeg_burn_pngs` intentionally remains fail-open for the generic
         # renderer.  A guided story is receipt-backed, so ask it to fail closed
         # and then verify the bytes that actually came out of FFmpeg.  This

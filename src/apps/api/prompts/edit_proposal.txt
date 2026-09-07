@@ -16,6 +16,7 @@ TARGET LENGTH: about $target_duration_s seconds
 $fast_timing_note
 $mixed_timing_note
 $montage_note
+$narration_note
 $review_note
 FOOTAGE CONSTRAINT: $footage_note
 
@@ -74,6 +75,8 @@ Editorial rules:
 - Creator-written user_context outranks generated analysis. Preserve its meaning without adding facts.
 - Use only the exact short media_id aliases shown above. Do not repeat one source across many beats
   unless it is necessary.
+- When a recorded voiceover contract is present, group semantically related visuals around its
+  timed words, preserve the full narration duration, and keep every required source in the plan.
 - Mostly use fullscreen sequential moments. Use supporting_card only when it clarifies a topic.
 - Keep each thought readable, specific to the visible subject, and under 18 words.
 - For fast_montage, each fast cut's source_start_s/source_end_s must be an exact window inside

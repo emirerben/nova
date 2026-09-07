@@ -1,0 +1,24 @@
+{
+  "agent": "nova.compose.narration_annotations",
+  "prompt_version": "2026-09-07.2",
+  "input": {
+    "creator_request": "Highlight the score if the narration says one.",
+    "words": [
+      {"word_id": "w000000", "text": "We", "start_s": 0.0, "end_s": 0.1},
+      {"word_id": "w000001", "text": "had", "start_s": 0.1, "end_s": 0.2},
+      {"word_id": "w000002", "text": "ten", "start_s": 0.2, "end_s": 0.4},
+      {"word_id": "w000003", "text": "minutes", "start_s": 0.4, "end_s": 0.6},
+      {"word_id": "w000004", "text": "left", "start_s": 0.6, "end_s": 0.8},
+      {"word_id": "w000005", "text": "and", "start_s": 0.8, "end_s": 0.9},
+      {"word_id": "w000006", "text": "one", "start_s": 0.9, "end_s": 1.1},
+      {"word_id": "w000007", "text": "game", "start_s": 1.1, "end_s": 1.3},
+      {"word_id": "w000008", "text": "left", "start_s": 1.3, "end_s": 1.5}
+    ],
+    "media_analysis": [{"asset_id": "asset-a"}],
+    "timeline": [{"timeline_id": "shot-a", "asset_id": "asset-a", "start_s": 0.0, "end_s": 1.8}],
+    "requirements": {"score_labels": true}
+  },
+  "raw_text": "{\"annotations\":[]}",
+  "output": {},
+  "meta": {"source": "synthetic-safe-golden", "contract": "incidental duration and count are not scores"}
+}

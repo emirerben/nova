@@ -63,6 +63,16 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
         "app.agents.narrated_storyboard",
         "NarratedStoryboardAgent",
     ),
+    (
+        "nova.compose.narration_annotations",
+        "app.agents.narration_annotations",
+        "NarrationAnnotationAgent",
+    ),
+    (
+        "nova.compose.narration_focus",
+        "app.agents.narration_focus",
+        "NarrationFocusAgent",
+    ),
     ("nova.compose.sequence_emphasis", "app.agents.sequence_emphasis", "SequenceEmphasisAgent"),
     (
         "nova.compose.sequence_quote",

@@ -122,6 +122,15 @@ def test_chat_creator_render_uses_version_fenced_queue() -> None:
     assert _guided_render_queue(None, {"edit_format": "montage"}) == "creator-render-v2"
 
 
+def test_guided_voiceover_never_reaches_an_old_worker_queue() -> None:
+    strategy = {
+        "execution_contract": "guided_voiceover_v1",
+        "render_program": "guided",
+        "audio_strategy": "voiceover",
+    }
+    assert _guided_render_queue(None, strategy) == "creator-fidelity-v1"
+
+
 def test_cadence_guided_render_uses_deploy_fenced_queue() -> None:
     approved = {
         "snapshot": {
@@ -445,7 +454,7 @@ def test_dispatch_snapshots_only_explicit_speech_cleanup_contracts(
     assert job.assembly_plan["speech_cleanup_contract"] != "legacy_auto"
     assert isinstance(job.assembly_plan["creator_generation_id"], str)
     assert job.assembly_plan["creator_generation_id"]
-    assert mock_build.call_args.kwargs["creator_request"] == "x" * 1000
+    assert mock_build.call_args.kwargs["creator_request"] == "x" * 2000
 
 
 def _cleanup_dispatch_item() -> SimpleNamespace:

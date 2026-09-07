@@ -237,3 +237,25 @@ def test_authored_montage_review_returns_empty_when_provider_fails(monkeypatch) 
         )
         == []
     )
+
+
+@pytest.mark.parametrize("duration", [0.3, 5.0])
+def test_reviewer_accepts_source_bounded_narrated_cut_lengths(duration):
+    from app.agents.montage_reviewer import MontageReviewInput
+
+    value = MontageReviewInput(
+        file_uri="files/test",
+        source_media_id="video",
+        source_duration_s=6,
+        creator_request="Detailed request " * 100,
+        proposed_cuts=[
+            {
+                "cut_id": "cut",
+                "media_id": "video",
+                "source_start_s": 0,
+                "source_end_s": duration,
+                "output_duration_s": duration,
+            }
+        ],
+    )
+    assert value.proposed_cuts[0].output_duration_s == duration

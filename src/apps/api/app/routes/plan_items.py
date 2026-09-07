@@ -2605,6 +2605,10 @@ def _snapshot_from_edit_guide_revision(  # noqa: ANN001
 def _proposal_analysis_queue(proposal) -> str:  # noqa: ANN001
     """Keep new guided timing contracts away from rolling legacy workers."""
 
+    if getattr(proposal.brief, "narration", None) is not None:
+        from app.services.creator_execution_contract import CREATOR_FIDELITY_QUEUE  # noqa: PLC0415
+
+        return CREATOR_FIDELITY_QUEUE
     return queue_for_guided_contract(
         proposal.brief.mixed_media_timing,
         proposal.brief.montage_cadence,
@@ -2884,6 +2888,7 @@ async def _maybe_auto_design_generate(
     db: AsyncSession,
     *,
     generation_attempt_id: str | None = None,
+    creator_strategy: dict | None = None,
 ) -> PlanItemResponse | None:
     """GUIDED_AUTO_DESIGN_ENABLED: reserve+draft instead of 409ing Generate.
 
@@ -2925,7 +2930,15 @@ async def _maybe_auto_design_generate(
 
     if not settings.guided_auto_design_enabled:
         return None
-    if not _guided_edit_is_applicable(item):
+    from app.services.creator_execution_contract import requests_guided_voiceover  # noqa: PLC0415
+
+    creator_voiceover = bool(
+        settings.creator_prompt_fidelity_enabled
+        and generation_attempt_id
+        and requests_guided_voiceover(creator_strategy)
+        and _item_has_voiceover_contract(item)
+    )
+    if not (_guided_edit_is_applicable(item) or creator_voiceover):
         return None
     if not (item.clip_gcs_paths or []):
         ready_assets = int(
@@ -3139,6 +3152,19 @@ async def _proposal_media_is_current(
         asset_ref_matches,
         clip_ref_matches,
     )
+
+    narration = getattr(snapshot, "narration", None)
+    if narration is not None:
+        from app.services.creator_execution_contract import narration_matches_item  # noqa: PLC0415
+
+        if not narration_matches_item(narration.model_dump(mode="json"), item):
+            return False
+        try:
+            audio_metadata = await asyncio.to_thread(storage.object_metadata, narration.gcs_path)
+        except Exception:  # noqa: BLE001 - replaced or missing narration invalidates approval
+            return False
+        if str(audio_metadata.generation) != str(narration.generation):
+            return False
 
     clip_by_id = {
         str(a.get("media_id")): a
@@ -3649,7 +3675,7 @@ async def confirm_item_edit_direction(
         )
 
     current_refs = await _current_direction_media_refs(item, db, user_id=user.id)
-    current_digest = canonical_media_digest(current_refs)
+    current_digest = canonical_media_digest(current_refs, current.brief.narration)
     if (
         not current.media_digest
         or current_digest != current.media_digest
@@ -3745,7 +3771,8 @@ async def update_item_edit_proposal(
         current is None
         or current.draft is None
         or current.status not in {"draft", "approved"}
-        or current.media_digest != canonical_media_digest(body.snapshot.media)
+        or current.media_digest
+        != canonical_media_digest(body.snapshot.media, body.snapshot.narration)
     ):
         raise _proposal_http_conflict(
             "proposal_stale", "The uploaded media no longer matches this edit plan."

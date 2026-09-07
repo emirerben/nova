@@ -31,7 +31,9 @@ from app.schemas.edit_proposal import (
     EditProposalSnapshot,
     MixedMediaTimingProfile,
     MontageCadenceConstraint,
+    NarrationTrack,
     canonical_media_digest,
+    canonical_narration_duration_s,
     mixed_media_hold_bounds,
     uses_quick_photo_long_video_timing,
 )
@@ -39,6 +41,7 @@ from app.schemas.edit_proposal import (
 log = structlog.get_logger()
 
 COMPILER_VERSION = 4
+VOICEOVER_COMPILER_VERSION = 5
 VARIANT_ID = "guided_story"
 _FRAME_S = 1.0 / 30.0
 _ALLOCATION_EPSILON_S = 0.0005
@@ -142,7 +145,7 @@ class GuidedStoryExecutionPlan(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    compiler_version: Literal[1, 2, 3, 4]
+    compiler_version: Literal[1, 2, 3, 4, 5]
     proposal_version: int = Field(ge=1)
     media_digest: str = Field(min_length=64, max_length=64)
     direction: Literal["guided_story", "fast_montage", "text_explainer"]
@@ -161,6 +164,8 @@ class GuidedStoryExecutionPlan(BaseModel):
     # approved text identity set, but they are still receipt-verified pixels.
     context_label_intent: dict[str, Any] | None = None
     context_label_text_elements: list[TextElement] = Field(default_factory=list)
+    narration_label_text_elements: list[TextElement] = Field(default_factory=list)
+    narration_label_receipt: dict[str, Any] | None = None
     licensed_sfx_intent: dict[str, Any] | None = None
     transition_policy: GuidedStoryTransitionPolicy
     mixed_media_timing: MixedMediaTimingProfile | None = None
@@ -172,6 +177,12 @@ class GuidedStoryExecutionPlan(BaseModel):
     montage_audio: dict[str, Any] | None = None
     typography: GuidedStoryTypography
     music: GuidedStoryMusic | None = None
+    # Optional generation-pinned creator narration. Legacy plans omit this
+    # field and retain their existing audio path exactly.
+    narration: NarrationTrack | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     # Optional post-approval runtime projection.  Canonical approved plans
     # leave these unset; v2 revisions carry them without changing approval.
     editor_revision_number: int | None = Field(default=None, ge=1)
@@ -197,6 +208,9 @@ class GuidedStoryExecutionPlan(BaseModel):
             raise ValueError("approved guided stories require at least one text element")
         if len(self.selected_media_ids) != len(set(self.selected_media_ids)):
             raise ValueError("selected media IDs must be unique")
+        label_ids = [element.id for element in self.narration_label_text_elements]
+        if len(label_ids) != len(set(label_ids)):
+            raise ValueError("narration label IDs must be unique")
         timeline_media: list[str] = []
         for moment in self.story_timeline:
             if moment.media_id not in timeline_media:
@@ -207,6 +221,15 @@ class GuidedStoryExecutionPlan(BaseModel):
                 raise ValueError("output windows must be ordered")
         if timeline_media != self.selected_media_ids:
             raise ValueError("timeline media must exactly match selected media")
+        if (
+            self.narration is not None
+            and abs(
+                float(self.resolved_duration_s)
+                - canonical_narration_duration_s(self.narration.duration_s)
+            )
+            > 0.001
+        ):
+            raise ValueError("voiceover-led plans must use the narration frame budget")
         beat_ids = [window.beat_id for window in self.beat_windows]
         actual_beats: list[str] = []
         for moment in self.story_timeline:
@@ -255,6 +278,8 @@ class GuidedStoryRenderReceipt(BaseModel):
     actual_text_ids: list[str]
     expected_context_label_ids: list[str] = Field(default_factory=list)
     actual_context_label_ids: list[str] = Field(default_factory=list)
+    expected_narration_label_ids: list[str] = Field(default_factory=list)
+    actual_narration_label_ids: list[str] = Field(default_factory=list)
     approved_text_ids: list[str] | None = None
     text_edited_after_approval: bool = False
     media_count: int = Field(ge=1)
@@ -284,6 +309,12 @@ class GuidedStoryRenderReceipt(BaseModel):
     renderer_version: str | None = None
     effect_schema_version: str | None = None
     source_audio_options: list[dict[str, Any]] = Field(default_factory=list)
+    narration: NarrationTrack | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    narration_applied: bool = False
+    narration_label_receipt: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def validate_strict_equality(self) -> GuidedStoryRenderReceipt:
@@ -293,6 +324,7 @@ class GuidedStoryRenderReceipt(BaseModel):
             (self.expected_media_ids, self.actual_media_ids),
             (self.expected_text_ids, self.actual_text_ids),
             (self.expected_context_label_ids, self.actual_context_label_ids),
+            (self.expected_narration_label_ids, self.actual_narration_label_ids),
         )
         if any(expected != actual for expected, actual in pairs):
             raise ValueError("receipt expected/actual identities must match exactly")
@@ -302,6 +334,8 @@ class GuidedStoryRenderReceipt(BaseModel):
             raise ValueError("receipt media kinds do not add up to its media count")
         if self.music_applied != (self.music is not None):
             raise ValueError("receipt music identity does not match application state")
+        if self.narration_applied != (self.narration is not None):
+            raise ValueError("receipt narration identity does not match application state")
         if self.music is not None and self.music_window_applied is not None:
             expected_window = max(
                 0.0,
@@ -434,11 +468,22 @@ def _quantize_quick_mixed_timeline(
 
 def _selected_media_ids(snapshot: EditProposalSnapshot) -> list[str]:
     if snapshot.fast_cuts:
-        selected: list[str] = []
-        for cut in snapshot.fast_cuts:
-            if cut.media_id not in selected:
-                selected.append(cut.media_id)
+        selected = list(dict.fromkeys(cut.media_id for cut in snapshot.fast_cuts))
+        required = (
+            [ref.media_id for ref in snapshot.media]
+            if snapshot.media_scope == "all"
+            else snapshot.selected_media_ids
+        )
+        if required is not None and set(selected) != set(required):
+            raise GuidedStoryError(
+                "guided_story_snapshot_invalid", "The timeline does not cover the selected media."
+            )
+        # Selection is a coverage set; the approved cut sequence owns order.
         return selected
+    if snapshot.media_scope == "all":
+        return [ref.media_id for ref in snapshot.media]
+    if snapshot.selected_media_ids is not None:
+        return list(snapshot.selected_media_ids)
     selected: list[str] = []
     for beat in snapshot.story_beats:
         for media_id in beat.media_ids:
@@ -577,7 +622,10 @@ def validate_guided_snapshot(raw: object) -> tuple[int, str, EditProposalSnapsho
         raise GuidedStoryError(
             "guided_story_snapshot_invalid", "The approved edit snapshot is incomplete."
         ) from exc
-    if proposal_version < 1 or canonical_media_digest(snapshot.media) != media_digest:
+    if (
+        proposal_version < 1
+        or canonical_media_digest(snapshot.media, snapshot.narration) != media_digest
+    ):
         raise GuidedStoryError(
             "guided_story_snapshot_invalid", "The approved edit no longer matches its media."
         )
@@ -700,6 +748,11 @@ def _allocate_beat_windows(
     duration_impossible after approval -- job 0be72363).
     """
 
+    target_duration_s = (
+        canonical_narration_duration_s(snapshot.narration.duration_s)
+        if snapshot.narration is not None
+        else float(snapshot.duration_s)
+    )
     weight_total = sum(float(beat.duration_s) for beat in snapshot.story_beats)
     moment_count = sum(len(beat.media_ids) for beat in snapshot.story_beats)
     min_moment_s = float(policy["min_moment_s"])
@@ -742,13 +795,13 @@ def _allocate_beat_windows(
                 )
             )
         caps.append(sum(capacities_b))
-        ideals.append(float(snapshot.duration_s) * float(beat.duration_s) / weight_total)
+        ideals.append(target_duration_s * float(beat.duration_s) / weight_total)
         moment_index += len(beat_refs)
 
     allocated = [
         min(max(ideal, floor), cap) for ideal, floor, cap in zip(ideals, floors, caps, strict=True)
     ]
-    deficit = float(snapshot.duration_s) - sum(allocated)
+    deficit = target_duration_s - sum(allocated)
     if deficit > _ALLOCATION_EPSILON_S:
         active = [
             index
@@ -818,7 +871,7 @@ def _allocate_beat_windows(
             rounded_value = min(rounded_value, round(frame_cap, 3))
         resolved.append(rounded_value)
 
-    residual = round(float(snapshot.duration_s) - sum(resolved), 3)
+    residual = round(target_duration_s - sum(resolved), 3)
     if residual > 0:
         for index in reversed(range(len(resolved))):
             headroom = caps[index] - resolved[index]
@@ -1020,13 +1073,24 @@ def _text_elements(
     beat_windows: list[dict],
     policy: dict,
     *,
-    compiler_version: Literal[1, 2, 3, 4],
+    compiler_version: Literal[1, 2, 3, 4, 5],
 ) -> list[dict]:
-    total_s = float(snapshot.duration_s)
+    total_s = (
+        canonical_narration_duration_s(snapshot.narration.duration_s)
+        if snapshot.narration
+        else float(snapshot.duration_s)
+    )
     title_end = min(total_s, 3.2 if snapshot.direction != "fast_montage" else 2.2)
     # Explicit Main Creator copy is immutable. Specialist montage bindings are
     # advisory and must not replace a confirmed title with generated words.
-    if snapshot.montage_text_bindings and snapshot.fast_cuts and not snapshot.opening_title:
+    # Narrated plans use grounded labels and timed captions. Advisory montage
+    # copy can invent participant names and collide with those dedicated lanes.
+    if (
+        snapshot.montage_text_bindings
+        and snapshot.fast_cuts
+        and not snapshot.opening_title
+        and snapshot.narration is None
+    ):
         text_by_source = {entry.media_id: entry.text for entry in snapshot.montage_text_bindings}
         elements: list[dict] = []
         for cut, window in zip(snapshot.fast_cuts, beat_windows, strict=True):
@@ -1057,7 +1121,7 @@ def _text_elements(
                     max_width_frac=0.82,
                 ).model_dump(mode="json", exclude_none=True)
             )
-        return elements
+        return [*elements, *_narration_caption_elements(snapshot)]
     # New fast-montage proposals carry their own dense cut list. Keep only the
     # short hook/title; generated chapter thoughts would turn a music-led cut
     # back into an information card edit. Legacy fast snapshots have no
@@ -1085,7 +1149,7 @@ def _text_elements(
                 alignment="center",
                 max_width_frac=0.8 if compiler_version >= 3 else 0.86,
             ).model_dump(mode="json", exclude_none=True)
-        ]
+        ] + _narration_caption_elements(snapshot)
     if compiler_version < 3:
         elements = [
             TextElement(
@@ -1129,7 +1193,7 @@ def _text_elements(
                     max_width_frac=0.84,
                 ).model_dump(mode="json", exclude_none=True)
             )
-        return elements
+        return [*elements, *_narration_caption_elements(snapshot)]
 
     elements = [
         TextElement(
@@ -1183,6 +1247,63 @@ def _text_elements(
                 max_width_frac=0.76,
             ).model_dump(mode="json", exclude_none=True)
         )
+    return [*elements, *_narration_caption_elements(snapshot)]
+
+
+def _narration_caption_elements(snapshot: EditProposalSnapshot) -> list[dict]:
+    """Project pinned speech words into the existing text renderer's caption lane."""
+
+    narration = snapshot.narration
+    if narration is None or not narration.words:
+        return []
+    # Whisper legitimately emits point timestamps. Retain those tokens in a
+    # neighboring caption instead of dropping words or inventing speech time.
+    groups: list[list] = []
+    pending: list = []
+    for word in narration.words:
+        if round(word.end_s - word.start_s, 3) <= 0:
+            if groups and groups[-1][-1].end_s >= word.start_s - 0.001:
+                groups[-1].append(word)
+            else:
+                pending.append(word)
+            continue
+        groups.append([*pending, word])
+        pending = []
+    if pending and groups:
+        groups[-1].extend(pending)
+    elements: list[dict] = []
+    for index, words in enumerate(groups):
+        start_s = max(0.0, round(min(word.start_s for word in words), 3))
+        end_s = min(float(narration.duration_s), round(max(word.end_s for word in words), 3))
+        if end_s <= start_s:
+            continue
+        elements.append(
+            TextElement(
+                id=f"narration-caption-{index + 1}",
+                text=" ".join(word.text.strip() for word in words),
+                start_s=start_s,
+                end_s=end_s,
+                role="generative_sequence",
+                position="custom",
+                x_frac=0.5,
+                y_frac=0.82,
+                font_family=snapshot.font_family or "Inter-Bold",
+                size_px=58,
+                color="#FFFFFF",
+                highlight_color="#FFFFFF",
+                stroke_width=6,
+                shadow_enabled=True,
+                effect="static",
+                alignment="center",
+                max_width_frac=0.84,
+                word_timings=[word.model_dump(mode="json") for word in words],
+                source_params={
+                    "source": "caption_cue",
+                    "key": str(index),
+                    "identity": f"pinned-narration-caption-{index}",
+                },
+            ).model_dump(mode="json", exclude_none=True)
+        )
     return elements
 
 
@@ -1190,7 +1311,7 @@ def _compile_execution_plan_version(
     guided_snapshot: object,
     *,
     track: dict[str, Any] | None,
-    compiler_version: Literal[1, 2, 3, 4],
+    compiler_version: Literal[1, 2, 3, 4, 5],
 ) -> dict[str, Any]:
     """Compile a deterministic plan with an explicitly versioned allocator."""
 
@@ -1226,6 +1347,11 @@ def _compile_execution_plan_version(
         output_orientation = "portrait"
         output_orientation_reason = "Legacy guided stories used the portrait canvas."
 
+    target_duration_s = (
+        canonical_narration_duration_s(snapshot.narration.duration_s)
+        if snapshot.narration is not None
+        else float(snapshot.duration_s)
+    )
     weight_total = sum(float(beat.duration_s) for beat in snapshot.story_beats)
     if weight_total <= 0:
         raise GuidedStoryError(
@@ -1237,7 +1363,7 @@ def _compile_execution_plan_version(
         cursor = 0.0
         output_windows = _fast_montage_output_windows(
             snapshot.fast_cuts,
-            duration_s=float(snapshot.duration_s),
+            duration_s=target_duration_s,
             track=track,
             video_media_ids={ref.media_id for ref in snapshot.media if ref.kind == "video"},
             mixed_media_timing=snapshot.mixed_media_timing,
@@ -1301,7 +1427,7 @@ def _compile_execution_plan_version(
                 }
             )
             cursor = end_s
-        if abs(cursor - float(snapshot.duration_s)) > 0.15:
+        if abs(cursor - target_duration_s) > 0.15:
             raise GuidedStoryError(
                 "guided_story_duration_impossible",
                 "Fast montage cut durations do not match the approved duration.",
@@ -1310,7 +1436,7 @@ def _compile_execution_plan_version(
             cursor = _quantize_quick_mixed_timeline(
                 moments,
                 beat_windows,
-                target_s=cursor,
+                target_s=target_duration_s,
                 mixed_media_timing=mixed_timing,
             )
         normalized_track = _music_payload(track, duration_s=cursor)
@@ -1349,6 +1475,7 @@ def _compile_execution_plan_version(
                     }
                 ),
                 music=normalized_track,
+                narration=snapshot.narration,
             )
         except Exception as exc:  # noqa: BLE001
             raise GuidedStoryError(
@@ -1373,10 +1500,10 @@ def _compile_execution_plan_version(
         if planned_beats is not None:
             resolved_beat_s = planned_beats[beat_index]
         elif beat_index == len(snapshot.story_beats) - 1:
-            resolved_beat_s = round(float(snapshot.duration_s) - cursor, 3)
+            resolved_beat_s = round(target_duration_s - cursor, 3)
         else:
             resolved_beat_s = _round_frame(
-                float(snapshot.duration_s) * float(beat.duration_s) / weight_total
+                target_duration_s * float(beat.duration_s) / weight_total
             )
         beat_refs = [by_id[media_id] for media_id in beat.media_ids]
         overlaps_s = [
@@ -1453,7 +1580,7 @@ def _compile_execution_plan_version(
                 "end_s": round(cursor, 3),
             }
         )
-    if abs(cursor - float(snapshot.duration_s)) > 0.05:
+    if abs(cursor - target_duration_s) > 0.05:
         raise GuidedStoryError(
             "guided_story_duration_impossible", "The approved story timing could not be resolved."
         )
@@ -1513,6 +1640,7 @@ def _compile_execution_plan_version(
                 else {"style_id": "guided_story_v1", "font": snapshot.font_family or "Inter-Bold"}
             ),
             music=normalized_track,
+            narration=snapshot.narration,
         )
     except Exception as exc:  # noqa: BLE001
         raise GuidedStoryError(
@@ -1528,10 +1656,13 @@ def compile_execution_plan(
 ) -> dict[str, Any]:
     """Compile a deterministic task-owned plan with the current compiler."""
 
+    _proposal_version, _media_digest, snapshot = validate_guided_snapshot(guided_snapshot)
     return _compile_execution_plan_version(
         guided_snapshot,
         track=track,
-        compiler_version=COMPILER_VERSION,
+        compiler_version=(
+            VOICEOVER_COMPILER_VERSION if snapshot.narration is not None else COMPILER_VERSION
+        ),
     )
 
 
@@ -1567,7 +1698,7 @@ def validate_proposal_timing(snapshot: EditProposalSnapshot) -> None:
                             "Fast montage cuts cannot reuse overlapping video footage.",
                         )
 
-    media_digest = canonical_media_digest(snapshot.media)
+    media_digest = canonical_media_digest(snapshot.media, snapshot.narration)
     compile_execution_plan(
         {
             "proposal_version": 1,
@@ -1628,6 +1759,10 @@ def validate_execution_plan(plan: object, guided_snapshot: object) -> dict[str, 
     # rematerialized by the worker on each render/revision.
     normalized.pop("context_label_text_elements", None)
     canonical.pop("context_label_text_elements", None)
+    normalized.pop("narration_label_text_elements", None)
+    canonical.pop("narration_label_text_elements", None)
+    normalized.pop("narration_label_receipt", None)
+    canonical.pop("narration_label_receipt", None)
     # The intent is persisted by the Creator dispatch envelope rather than the
     # proposal compiler. It is independently constrained by the worker's
     # closed allowlist before any label can reach pixels.
@@ -1643,6 +1778,10 @@ def validate_execution_plan(plan: object, guided_snapshot: object) -> dict[str, 
     normalized["context_label_text_elements"] = [
         element.model_dump(mode="json") for element in validated.context_label_text_elements
     ]
+    normalized["narration_label_text_elements"] = [
+        element.model_dump(mode="json") for element in validated.narration_label_text_elements
+    ]
+    normalized["narration_label_receipt"] = validated.narration_label_receipt
     if runtime_sfx and validated.editor_revision_number is None:
         from app.agents._schemas.sound_effect import (  # noqa: PLC0415
             SoundEffectPlacement,
@@ -1695,17 +1834,43 @@ def execution_plan_with_editor_state(
 
     try:
         typed = GuidedStoryExecutionPlan.model_validate(plan)
+        label_ids = {element.id for element in typed.narration_label_text_elements}
+        next_text_elements = typed.text_elements
+        next_label_elements = typed.narration_label_text_elements
+        if text_elements is not None:
+            supplied = [TextElement.model_validate(row) for row in text_elements]
+            supplied_by_id = {element.id: element for element in supplied}
+            approved_text_ids = {element.id for element in typed.text_elements}
+            supplied_text_ids = {
+                element.id for element in supplied if element.id in approved_text_ids
+            }
+            if supplied_text_ids != approved_text_ids:
+                raise ValueError("edited text identities must match approval")
+            if label_ids.intersection(supplied_by_id):
+                if label_ids - supplied_by_id.keys():
+                    raise ValueError("edited narration label identities must match approval")
+                next_label_elements = [
+                    supplied_by_id[element.id] for element in typed.narration_label_text_elements
+                ]
+            next_text_elements = [
+                element
+                if (
+                    typed.narration is not None
+                    and (element.source_params or {}).get("source") == "caption_cue"
+                )
+                else supplied_by_id[element.id]
+                if element.id in supplied_by_id
+                else element
+                for element in typed.text_elements
+            ]
         updated = typed.model_copy(
             update={
                 "output_orientation": output_orientation,
                 "output_orientation_reason": (
                     "The creator selected this output format in the editor."
                 ),
-                "text_elements": (
-                    [TextElement.model_validate(row) for row in text_elements]
-                    if text_elements is not None
-                    else typed.text_elements
-                ),
+                "text_elements": next_text_elements,
+                "narration_label_text_elements": next_label_elements,
             }
         )
         approved_ids = [element.id for element in typed.text_elements]
@@ -1719,6 +1884,43 @@ def execution_plan_with_editor_state(
             "guided_story_snapshot_invalid",
             "The approved story could not be safely resized.",
         ) from exc
+
+
+def _project_source_bound_narration_labels(
+    labels: list[TextElement], moments: list[dict[str, Any]]
+) -> list[TextElement]:
+    """Move participant labels with their authored timeline/asset anchor.
+
+    Labels without one of these source parameters retain their absolute
+    narration times, which is required for score and sport annotations.
+    """
+
+    by_timeline_id = {str(moment.get("moment_id")): moment for moment in moments}
+    by_asset_id: dict[str, dict[str, Any]] = {}
+    for moment in moments:
+        by_asset_id.setdefault(str(moment.get("media_id")), moment)
+    projected: list[TextElement] = []
+    for label in labels:
+        params = dict(label.source_params or {})
+        anchor = None
+        timeline_id = str(params.get("source_timeline_id") or "")
+        asset_id = str(params.get("source_asset_id") or "")
+        if timeline_id:
+            anchor = by_timeline_id.get(timeline_id)
+        elif asset_id:
+            anchor = by_asset_id.get(asset_id)
+        if anchor is None:
+            projected.append(label)
+            continue
+        projected.append(
+            label.model_copy(
+                update={
+                    "start_s": float(anchor["output_start_s"]),
+                    "end_s": float(anchor["output_end_s"]),
+                }
+            )
+        )
+    return projected
 
 
 def compile_guided_runtime_plan(
@@ -1771,7 +1973,8 @@ def compile_guided_runtime_plan(
                 "guided_story_revision_invalid",
                 "The revision source pool no longer matches the approved snapshot.",
             )
-        approved_text_ids = [element.id for element in canonical.text_elements]
+        approved_label_ids = [element.id for element in canonical.narration_label_text_elements]
+        approved_text_ids = [element.id for element in canonical.text_elements] + approved_label_ids
         revision_text_ids = [
             str(row.get("id")) for row in normalized_revision.get("text_elements") or []
         ]
@@ -1873,6 +2076,39 @@ def compile_guided_runtime_plan(
                 ),
                 "level": float(audio.get("level", 1.0)),
             }
+        canonical_text_by_id = {element.id: element for element in canonical.text_elements}
+        revision_elements = [
+            TextElement.model_validate(row)
+            for row in normalized_revision.get("text_elements") or []
+        ]
+        revision_by_id = {element.id: element for element in revision_elements}
+        if canonical.narration is not None:
+            revised_elements: list[TextElement] = []
+            for element in revision_elements:
+                canonical_element = canonical_text_by_id.get(element.id)
+                if (
+                    canonical_element is not None
+                    and (canonical_element.source_params or {}).get("source") == "caption_cue"
+                ):
+                    # Caption copy and styling are editor-owned. Their timing
+                    # and timed-word identity remain pinned to the approved
+                    # narration so a text edit cannot move a cue on the audio.
+                    element = element.model_copy(
+                        update={
+                            "start_s": canonical_element.start_s,
+                            "end_s": canonical_element.end_s,
+                            "word_timings": canonical_element.word_timings,
+                            "source_params": canonical_element.source_params,
+                        }
+                    )
+                revised_elements.append(element)
+            revision_elements = revised_elements
+        active_labels = [
+            revision_by_id[label_id]
+            for label_id in approved_label_ids
+            if label_id in revision_by_id
+        ]
+        projected_labels = _project_source_bound_narration_labels(active_labels, moments)
         runtime_payload = canonical.model_dump(mode="json", exclude_none=False)
         runtime_payload.update(
             {
@@ -1887,7 +2123,14 @@ def compile_guided_runtime_plan(
                 "selected_media_ids": selected_ids,
                 "story_timeline": moments,
                 "beat_windows": beat_windows,
-                "text_elements": list(normalized_revision.get("text_elements") or []),
+                "text_elements": [
+                    element.model_dump(mode="json")
+                    for element in revision_elements
+                    if element.id not in set(approved_label_ids)
+                ],
+                "narration_label_text_elements": [
+                    element.model_dump(mode="json") for element in projected_labels
+                ],
                 "music": music,
                 "editor_revision_number": normalized_revision["revision_number"],
                 "editor_revision_hash": normalized_revision["state_hash"],
@@ -1914,7 +2157,7 @@ def compile_guided_runtime_plan(
         # never leaks into a neighboring segment. The raw intent carries no
         # copy; sport text is resolved from the approved clip metadata only.
         context_intent = runtime_payload.get("context_label_intent")
-        if context_intent:
+        if context_intent and canonical.narration is None:
             from app.tasks.generative_build import (  # noqa: PLC0415
                 _canonical_context_sport_labels,
                 _compact_context_sport_text_elements,
@@ -1990,6 +2233,18 @@ def validate_guided_source_pool_generations(guided_snapshot: object) -> None:
             "guided_story_media_missing",
             "One or more approved media files changed or are no longer available.",
         )
+    if snapshot.narration is not None:
+        try:
+            from app.storage import object_metadata
+
+            current = object_metadata(snapshot.narration.gcs_path)
+            if str(current.generation) != snapshot.narration.generation:
+                raise ValueError("narration generation changed")
+        except Exception as exc:  # noqa: BLE001 — exact audio identity is a render fence
+            raise GuidedStoryError(
+                "guided_story_media_missing",
+                "The approved voiceover changed or is no longer available.",
+            ) from exc
 
 
 def _sha256(path: str) -> str:
@@ -2058,6 +2313,76 @@ def _attach_silent_aac(source: str, output: str) -> None:
     if result.returncode != 0 or not os.path.exists(output) or os.path.getsize(output) == 0:
         raise GuidedStoryError(
             "guided_story_render_failed", "The story audio track could not be finalized."
+        )
+
+
+def _mix_pinned_narration(
+    source: str,
+    output: str,
+    narration: NarrationTrack,
+    *,
+    tmpdir: str,
+    duration_s: float,
+) -> None:
+    """Mux the generation-pinned creator recording over the visual timeline."""
+
+    from app.storage import download_generation_to_file, object_metadata  # noqa: PLC0415
+
+    try:
+        metadata = object_metadata(narration.gcs_path)
+        if str(metadata.generation) != narration.generation:
+            raise ValueError("voiceover generation changed")
+        suffix = Path(narration.gcs_path).suffix.lower() or ".m4a"
+        voiceover_path = os.path.join(tmpdir, f"guided_narration{suffix}")
+        download_generation_to_file(
+            narration.gcs_path,
+            voiceover_path,
+            generation=narration.generation,
+        )
+    except Exception as exc:  # noqa: BLE001 — narration identity is an approval fence
+        raise GuidedStoryError(
+            "guided_story_media_missing",
+            "The approved voiceover changed or is no longer available.",
+        ) from exc
+
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-i",
+            source,
+            "-i",
+            voiceover_path,
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-t",
+            f"{duration_s:.6f}",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-movflags",
+            "+faststart",
+            "-y",
+            output,
+        ],
+        capture_output=True,
+        timeout=180,
+        check=False,
+    )
+    if (
+        result.returncode != 0
+        or not os.path.exists(output)
+        or os.path.getsize(output) == 0
+        or abs(float(probe_video(output).duration_s) - duration_s)
+        > STRICT_MIXED_MEDIA_DURATION_TOLERANCE_S
+    ):
+        raise GuidedStoryError(
+            "guided_story_receipt_mismatch",
+            "The recorded voiceover could not be applied at the approved duration.",
         )
 
 
@@ -2469,6 +2794,7 @@ def _verify_receipt(
     final_path: str,
     *,
     music_applied: bool,
+    narration_applied: bool = False,
     text_stage_input_path: str | None = None,
     text_stage_output_path: str | None = None,
 ) -> dict[str, Any]:
@@ -2486,9 +2812,15 @@ def _verify_receipt(
             actual_media.append(row["media_id"])
     expected_text = [row["id"] for row in plan["text_elements"]]
     expected_context = [row["id"] for row in plan.get("context_label_text_elements") or []]
+    expected_narration_labels = [
+        row["id"] for row in plan.get("narration_label_text_elements") or []
+    ]
     visible_text = [row["element_id"] for row in text_receipts if row.get("visible")]
     actual_text = [element_id for element_id in visible_text if element_id in expected_text]
     actual_context = [element_id for element_id in visible_text if element_id in expected_context]
+    actual_narration_labels = [
+        element_id for element_id in visible_text if element_id in expected_narration_labels
+    ]
     probe = probe_video(final_path)
     canvas = _story_canvas(str(plan["output_orientation"]))
     audio_codec = _audio_codec(final_path)
@@ -2512,7 +2844,7 @@ def _verify_receipt(
     # renderer is mocked or an older worker silently copies the clean base,
     # that artifact can never become a verified guided result.
     text_artifact_ok = True
-    if text_stage_input_path and (expected_text or expected_context):
+    if text_stage_input_path and (expected_text or expected_context or expected_narration_labels):
         try:
             text_artifact = text_stage_output_path or final_path
             text_artifact_ok = _sha256(text_artifact) != _sha256(text_stage_input_path)
@@ -2524,12 +2856,14 @@ def _verify_receipt(
         and expected_media == actual_media
         and set(expected_text) == set(actual_text)
         and expected_context == actual_context
+        and expected_narration_labels == actual_narration_labels
         and len(media_receipts) == len(expected_media)
         and duration_ok
         and probe.width == canvas.width
         and probe.height == canvas.height
         and probe.codec == "h264"
         and audio_codec == "aac"
+        and narration_applied == (plan.get("narration") is not None)
         and text_artifact_ok
         and os.path.getsize(final_path) > 0
     )
@@ -2548,6 +2882,8 @@ def _verify_receipt(
         "actual_text_ids": actual_text,
         "expected_context_label_ids": expected_context,
         "actual_context_label_ids": actual_context,
+        "expected_narration_label_ids": expected_narration_labels,
+        "actual_narration_label_ids": actual_narration_labels,
         "media_count": len(actual_media),
         "image_count": len({r["media_id"] for r in moment_receipts if r["kind"] == "image"}),
         "video_count": len({r["media_id"] for r in moment_receipts if r["kind"] == "video"}),
@@ -2570,6 +2906,9 @@ def _verify_receipt(
             if music_applied and plan.get("music")
             else None
         ),
+        "narration": plan.get("narration") if narration_applied else None,
+        "narration_applied": narration_applied,
+        "narration_label_receipt": plan.get("narration_label_receipt"),
         "output": {
             "width": probe.width,
             "height": probe.height,
@@ -2605,6 +2944,11 @@ def _verify_receipt(
             raise GuidedStoryError(
                 "guided_story_context_label_missing",
                 "One or more approved context labels disappeared.",
+            )
+        if expected_narration_labels != actual_narration_labels:
+            raise GuidedStoryError(
+                "guided_story_narration_label_missing",
+                "One or more approved participant labels disappeared.",
             )
         raise GuidedStoryError(
             "guided_story_receipt_mismatch", "The finished video did not match the approved edit."
@@ -2717,7 +3061,9 @@ def validate_ready_result(
     expected_moments = [row.moment_id for row in typed_plan.story_timeline]
     expected_text = [row.id for row in typed_plan.text_elements]
     expected_context = [row.id for row in typed_plan.context_label_text_elements]
+    expected_narration_labels = [row.id for row in typed_plan.narration_label_text_elements]
     current_text = [str(row.get("id")) for row in list(result.get("text_elements") or [])]
+    expected_editable_text = [*expected_text, *expected_narration_labels]
     approved_text = receipt.approved_text_ids or receipt.expected_text_ids
     timeline_by_media: dict[str, GuidedStoryMoment] = {}
     for moment in typed_plan.story_timeline:
@@ -2794,6 +3140,9 @@ def validate_ready_result(
     staged_context = [
         element_id for element_id in staged_visible_text if element_id in expected_context
     ]
+    staged_narration_labels = [
+        element_id for element_id in staged_visible_text if element_id in expected_narration_labels
+    ]
     exact_story = [row.model_dump(mode="json") for row in typed_plan.story_timeline]
     prefix = f"generative-jobs/{job_id}/"
     base_path = str(result.get("base_video_path") or "")
@@ -2821,7 +3170,7 @@ def validate_ready_result(
         and result.get("proposal_version") == typed_plan.proposal_version
         and result.get("media_digest") == typed_plan.media_digest
         and result.get("story_timeline") == exact_story
-        and current_text == receipt.expected_text_ids
+        and current_text == expected_editable_text
         and approved_text == (typed_plan.editor_approved_text_ids or expected_text)
         and receipt.proposal_version == typed_plan.proposal_version
         and receipt.media_digest == typed_plan.media_digest
@@ -2835,6 +3184,11 @@ def validate_ready_result(
         and staged_text == receipt.actual_text_ids
         and receipt.expected_context_label_ids == expected_context
         and receipt.actual_context_label_ids == staged_context
+        and receipt.expected_narration_label_ids == expected_narration_labels
+        and receipt.actual_narration_label_ids == staged_narration_labels
+        and receipt.narration == typed_plan.narration
+        and receipt.narration_applied == (typed_plan.narration is not None)
+        and receipt.narration_label_receipt == typed_plan.narration_label_receipt
         and receipt.expected_duration_s == typed_plan.resolved_duration_s
         and abs(receipt.actual_duration_s - typed_plan.resolved_duration_s)
         <= (
@@ -3233,6 +3587,40 @@ def _resolved_transition_boundaries(plan: dict[str, Any]) -> list[str]:
     ]
 
 
+def _tag_guided_text_overlays(
+    compiled: list[dict[str, Any]], source_elements: list[TextElement]
+) -> list[dict[str, Any]]:
+    """Attach strict receipt IDs and isolate pinned narration captions.
+
+    The Skia renderer coalesces ``generative_sequence`` overlays for speed.
+    Captions are individually receipt-backed, so they must use an ordinary
+    renderer role just like the separately-rendered narration-label lane.
+    """
+
+    by_timing = {
+        (element.text, element.start_s, element.end_s): element.id for element in source_elements
+    }
+    by_id = {element.id: element for element in source_elements}
+    for index, overlay in enumerate(compiled):
+        # Static context and caption elements compile one-to-one. Positional
+        # tagging survives renderer timestamp normalization and avoids matching
+        # on mutable display text.
+        if len(compiled) == len(source_elements) and index < len(source_elements):
+            element = source_elements[index]
+            overlay["element_id"] = element.id
+        else:
+            key = (
+                str(overlay.get("text") or ""),
+                float(overlay.get("start_s") or 0.0),
+                float(overlay.get("end_s") or 0.0),
+            )
+            overlay["element_id"] = by_timing.get(key)
+            element = by_id.get(overlay.get("element_id"))
+        if element is not None and (element.source_params or {}).get("source") == "caption_cue":
+            overlay["role"] = "generative_narration_caption"
+    return compiled
+
+
 def render_execution_plan(
     plan: dict[str, Any],
     *,
@@ -3337,7 +3725,24 @@ def render_execution_plan(
             attempt_id=attempt_id,
         )
     music = plan.get("music")
-    if music is not None:
+    narration = plan.get("narration")
+    if music is not None and narration is not None:
+        raise GuidedStoryError(
+            "guided_story_snapshot_invalid",
+            "A recorded voiceover plan cannot also select a music track.",
+        )
+    if narration is not None:
+        clean_base = os.path.join(tmpdir, "guided_story_base.mp4")
+        _mix_pinned_narration(
+            assembled,
+            clean_base,
+            NarrationTrack.model_validate(narration),
+            tmpdir=tmpdir,
+            duration_s=float(plan["resolved_duration_s"]),
+        )
+        music_applied = False
+        narration_applied = True
+    elif music is not None:
         clean_base = os.path.join(tmpdir, "guided_story_base.mp4")
         _mix_pinned_music(
             assembled,
@@ -3349,6 +3754,7 @@ def render_execution_plan(
             strict_duration=strict_mixed_duration,
         )
         music_applied = True
+        narration_applied = False
     else:
         if _audio_codec(assembled) == "aac":
             clean_base = assembled
@@ -3356,6 +3762,7 @@ def render_execution_plan(
             clean_base = os.path.join(tmpdir, "guided_story_base.mp4")
             _attach_silent_aac(assembled, clean_base)
         music_applied = False
+        narration_applied = False
 
     clean_base = _compose_guided_pretext_lanes(
         clean_base,
@@ -3376,7 +3783,10 @@ def render_execution_plan(
     context_elements = [
         TextElement.model_validate(row) for row in plan.get("context_label_text_elements") or []
     ]
-    render_elements = [*elements, *context_elements]
+    narration_label_elements = [
+        TextElement.model_validate(row) for row in plan.get("narration_label_text_elements") or []
+    ]
+    render_elements = [*elements, *context_elements, *narration_label_elements]
     if render_elements:
         # Context labels historically use ``generative_sequence`` so the editor
         # can project them as a separate lane. The Skia renderer coalesces that
@@ -3385,36 +3795,26 @@ def render_execution_plan(
         # verifier). Keep the lane projection but render these server-derived
         # labels as independent burn sequences in the authoritative pass.
         def compile_and_tag(source_elements: list[TextElement]) -> list[dict]:
-            compiled = build_overlays_from_text_elements(
+            return _tag_guided_text_overlays(
+                build_overlays_from_text_elements(
+                    source_elements,
+                    video_duration_s=float(plan["resolved_duration_s"]),
+                    independent_box_alignment=True,
+                ),
                 source_elements,
-                video_duration_s=float(plan["resolved_duration_s"]),
-                independent_box_alignment=True,
             )
-            by_timing = {
-                (element.text, element.start_s, element.end_s): element.id
-                for element in source_elements
-            }
-            for index, overlay in enumerate(compiled):
-                # Static context elements compile one-to-one. Positional tagging
-                # is intentional here: it survives the renderer's timestamp
-                # normalization and avoids matching on mutable display text.
-                if len(compiled) == len(source_elements) and index < len(source_elements):
-                    overlay["element_id"] = source_elements[index].id
-                    continue
-                key = (
-                    str(overlay.get("text") or ""),
-                    float(overlay.get("start_s") or 0.0),
-                    float(overlay.get("end_s") or 0.0),
-                )
-                overlay["element_id"] = by_timing.get(key)
-            return compiled
 
         overlays = compile_and_tag(elements)
         context_overlays = compile_and_tag(context_elements)
+        narration_label_overlays = compile_and_tag(narration_label_elements)
         for overlay in context_overlays:
             if overlay.get("role") == "generative_sequence":
                 overlay["role"] = "generative_context_label"
         overlays.extend(context_overlays)
+        for overlay in narration_label_overlays:
+            if overlay.get("role") == "generative_sequence":
+                overlay["role"] = "generative_narration_label"
+        overlays.extend(narration_label_overlays)
         text_receipts = burn_text_overlays_skia_with_evidence(
             clean_base,
             overlays,
@@ -3448,6 +3848,7 @@ def render_execution_plan(
         text_receipts,
         final_path,
         music_applied=music_applied,
+        narration_applied=narration_applied,
         text_stage_input_path=clean_base,
         text_stage_output_path=(
             os.path.join(tmpdir, "guided_story_final.mp4") if render_elements else None
@@ -3488,8 +3889,16 @@ def render_execution_plan(
         "orientation": plan["output_orientation"],
         "orientation_reason": plan["output_orientation_reason"],
         "duration_s": plan["resolved_duration_s"],
-        "text_elements": plan["text_elements"],
+        # The editor's existing text projection is the public editable surface.
+        # Keep the canonical narration-label lane alongside it so runtime
+        # validation can still distinguish server-derived labels from ordinary
+        # creator copy without hiding the labels from the editor.
+        "text_elements": [
+            *plan["text_elements"],
+            *(plan.get("narration_label_text_elements") or []),
+        ],
         "context_label_text_elements": plan.get("context_label_text_elements") or [],
+        "narration_label_text_elements": plan.get("narration_label_text_elements") or [],
         "sound_effects": list(plan.get("editor_sound_effects") or []),
         "media_overlays": list(plan.get("editor_media_overlays") or []),
         "visual_blocks": list(plan.get("editor_visual_blocks") or []),

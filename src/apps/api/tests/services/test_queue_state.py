@@ -382,7 +382,14 @@ def test_render_worker_queues_constant_matches_fly_toml_worker_queues() -> None:
     a literal between TOML and Python). A drift here silently breaks BOTH
     the wake-hook signal filter and this idle-check."""
     assert RENDER_WORKER_QUEUES == frozenset(
-        {"celery", "plan-jobs", "overlay-jobs", "creator-guided-jobs", "creator-render-v2"}
+        {
+            "celery",
+            "plan-jobs",
+            "overlay-jobs",
+            "creator-guided-jobs",
+            "creator-render-v2",
+            "creator-fidelity-v1",
+        }
     )
 
 
